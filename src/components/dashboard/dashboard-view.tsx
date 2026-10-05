@@ -182,10 +182,22 @@ function WidgetCard({
               >
                 <Pencil className="size-4 text-zinc-500" /> Edit
               </MenuItem>
-              <MenuItem disabled={first} onClick={() => run(() => moveWidget(widget.id, -1))}>
+              <MenuItem
+                disabled={first}
+                onClick={() => {
+                  close();
+                  run(() => moveWidget(widget.id, -1));
+                }}
+              >
                 <ChevronUp className="size-4 text-zinc-500" /> Move earlier
               </MenuItem>
-              <MenuItem disabled={last} onClick={() => run(() => moveWidget(widget.id, 1))}>
+              <MenuItem
+                disabled={last}
+                onClick={() => {
+                  close();
+                  run(() => moveWidget(widget.id, 1));
+                }}
+              >
                 <ChevronDown className="size-4 text-zinc-500" /> Move later
               </MenuItem>
               <MenuItem

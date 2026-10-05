@@ -266,10 +266,22 @@ function ViewTab({
               >
                 <Copy className="size-4 text-zinc-500" /> Duplicate
               </MenuItem>
-              <MenuItem disabled={first} onClick={() => run(() => moveView(view.id, -1))}>
+              <MenuItem
+                disabled={first}
+                onClick={() => {
+                  close();
+                  run(() => moveView(view.id, -1));
+                }}
+              >
                 <ChevronLeft className="size-4 text-zinc-500" /> Move left
               </MenuItem>
-              <MenuItem disabled={last} onClick={() => run(() => moveView(view.id, 1))}>
+              <MenuItem
+                disabled={last}
+                onClick={() => {
+                  close();
+                  run(() => moveView(view.id, 1));
+                }}
+              >
                 <ChevronRight className="size-4 text-zinc-500" /> Move right
               </MenuItem>
               <MenuItem

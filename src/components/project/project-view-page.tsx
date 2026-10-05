@@ -79,7 +79,7 @@ export async function ProjectViewPage({
   return (
     <main className={`flex min-h-0 flex-1 flex-col ${layout === "list" ? "overflow-auto" : ""}`}>
       <ViewToolbar
-        key={view?.id ?? layout}
+        key={`toolbar-${view?.id ?? layout}`}
         projectId={projectId}
         view={view}
         layout={layout}
@@ -87,8 +87,8 @@ export async function ProjectViewPage({
         config={config}
         context={{ sections, profiles, fields }}
       />
-      {layout === "list" ? <ListView key={view?.id ?? "list"} {...props} /> : null}
-      {layout === "board" ? <BoardView key={view?.id ?? "board"} {...props} /> : null}
+      {layout === "list" ? <ListView key={`list-${view?.id ?? "default"}`} {...props} /> : null}
+      {layout === "board" ? <BoardView key={`board-${view?.id ?? "default"}`} {...props} /> : null}
       {layout === "calendar" ? (
         <CalendarView tasks={visible} profiles={profiles} openTaskId={openTaskId} />
       ) : null}
