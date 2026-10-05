@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useOptimistic } from "react";
-import { AtSign, CheckCircle2, Inbox, MessageSquare, UserPlus } from "lucide-react";
+import { AtSign, CheckCircle2, Inbox, MessageSquare, ShieldCheck, UserPlus, Workflow } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { useTaskHref } from "@/components/project/shared";
 import { Timestamp } from "@/components/timestamp";
@@ -16,7 +16,34 @@ const KIND = {
   comment: { icon: MessageSquare, verb: "commented on" },
   mention: { icon: AtSign, verb: "mentioned you on" },
   completed: { icon: CheckCircle2, verb: "completed" },
+  approval_requested: { icon: ShieldCheck, verb: "asked for your approval on" },
+  approval_decided: { icon: ShieldCheck, verb: "decided an approval on" },
+  rule: { icon: Workflow, verb: "notified you about" },
 } as const;
+
+const DECISION_VERB: Record<string, string> = {
+  approved: "approved",
+  changes_requested: "requested changes on",
+  rejected: "rejected",
+};
+
+function dataText(data: InboxItem["data"], key: string): string | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = data[key];
+  return typeof value === "string" && value ? value : null;
+}
+
+function describe(item: InboxItem) {
+  const ruleName = dataText(item.data, "rule_name");
+  let verb: string = KIND[item.kind].verb;
+  if (item.kind === "approval_decided") verb = DECISION_VERB[dataText(item.data, "status") ?? ""] ?? verb;
+  if (item.kind === "approval_requested" && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.resubmitted) {
+    verb = "resubmitted for your approval";
+  }
+  const detail =
+    item.commentBody ?? dataText(item.data, "message") ?? dataText(item.data, "note") ?? null;
+  return { ruleName, verb, detail };
+}
 
 export function InboxView({
   items,
@@ -82,8 +109,8 @@ export function InboxView({
           <Inbox className="mx-auto size-8 text-zinc-300" />
           <h2 className="mt-3 text-sm font-medium text-zinc-900">No notifications yet</h2>
           <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-600">
-            You’ll hear about assignments, @mentions, and comments or completions on tasks you
-            follow.
+            You’ll hear about assignments, @mentions, approvals, rule notifications, and comments or
+            completions on tasks you follow.
           </p>
         </div>
       ) : (
@@ -91,8 +118,9 @@ export function InboxView({
           {items.map((item) => {
             const read = isRead(item);
             const actor = item.actorId ? profilesById.get(item.actorId) : undefined;
-            const actorName = actor ? displayName(actor) : "Someone";
-            const { icon: Icon, verb } = KIND[item.kind];
+            const { ruleName, verb, detail } = describe(item);
+            const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : "Someone";
+            const { icon: Icon } = KIND[item.kind];
             const open = openTaskId === item.taskId;
             return (
               <li
@@ -125,9 +153,7 @@ export function InboxView({
                     </span>
                     {read ? null : <span className="sr-only"> (unread)</span>}
                   </Link>
-                  {item.commentBody ? (
-                    <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{item.commentBody}</p>
-                  ) : null}
+                  {detail ? <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{detail}</p> : null}
                   <p className="mt-1 flex items-center gap-1 text-xs text-zinc-400">
                     <Icon className="size-3.5" aria-hidden />
                     <Timestamp iso={item.createdAt} />

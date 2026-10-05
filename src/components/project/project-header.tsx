@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { List, SlidersHorizontal, SquareKanban, Trash2 } from "lucide-react";
+import {
+  FileInput,
+  List,
+  Settings,
+  SlidersHorizontal,
+  SquareKanban,
+  Trash2,
+  Workflow,
+} from "lucide-react";
 import { useServerAction } from "@/components/toast";
 import { deleteProject, updateProject } from "@/lib/actions";
 import type { Project } from "@/lib/data";
@@ -16,6 +24,9 @@ export function ProjectHeader({ project }: { project: Project }) {
     { href: `${base}/list`, label: "List", icon: List },
     { href: `${base}/board`, label: "Board", icon: SquareKanban },
     { href: `${base}/fields`, label: "Fields", icon: SlidersHorizontal },
+    { href: `${base}/forms`, label: "Forms", icon: FileInput },
+    { href: `${base}/rules`, label: "Rules", icon: Workflow },
+    { href: `${base}/settings`, label: "Settings", icon: Settings },
   ];
 
   function saveName(value: string) {
@@ -81,9 +92,9 @@ export function ProjectHeader({ project }: { project: Project }) {
         </button>
       </div>
 
-      <nav aria-label="Project views" className="mt-3 flex gap-1">
+      <nav aria-label="Project views" className="mt-3 flex gap-1 overflow-x-auto">
         {tabs.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href;
+          const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link
               key={href}
