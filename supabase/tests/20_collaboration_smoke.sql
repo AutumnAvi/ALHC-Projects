@@ -27,6 +27,8 @@ declare
 begin
   insert into public.projects (workspace_id, name) values (ws, 'Collab') returning id into p;
   insert into public.projects (workspace_id, name) values (ws, 'Elsewhere') returning id into other_p;
+  -- Since Teams & permissions, other people need a membership to read or be notified about a project.
+  perform public.add_project_member(p, 'later@example.com', 'editor');
   insert into public.sections (project_id, name, sort_order) values (p, 'Backlog', 1) returning id into s1;
   insert into public.sections (project_id, name, sort_order) values (p, 'Doing', 2) returning id into s2;
 

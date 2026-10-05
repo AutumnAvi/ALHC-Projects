@@ -8,6 +8,7 @@ import { useServerAction } from "@/components/toast";
 import { addComment, deleteComment, setFollowing } from "@/lib/actions";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile, TaskComment, TaskDetail, TaskStory } from "@/lib/data";
+import { hasRole } from "@/lib/roles";
 import { fieldChips } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { useRealtimeRefresh } from "@/lib/realtime";
@@ -247,6 +248,8 @@ export function CommentComposer({
     .map((followerId) => profiles.find((p) => p.id === followerId))
     .filter((p): p is Profile => Boolean(p));
 
+  const canComment = hasRole(task.viewerRole, "commenter");
+
   function submit() {
     const body = ref.current?.value.trim();
     if (!ref.current || !body) return;
@@ -256,50 +259,56 @@ export function CommentComposer({
 
   return (
     <div className="shrink-0 border-t border-zinc-200 bg-zinc-50/80 px-6 py-3">
-      <label htmlFor="new-comment" className="sr-only">
-        Add a comment
-      </label>
-      <textarea
-        ref={ref}
-        id="new-comment"
-        rows={2}
-        placeholder="Add a comment. Mention teammates with @Name"
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        className="field-sizing-content min-h-16 w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
-      />
-      <div className="mt-2 flex items-center gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-zinc-500">
-          <span className="shrink-0">Followers</span>
-          <span className="flex -space-x-1" aria-label={`Followers: ${followers.map(displayName).join(", ")}`}>
-            {followers.slice(0, 6).map((p) => (
-              <span key={p.id} className="rounded-full ring-2 ring-zinc-50">
-                <Avatar name={displayName(p)} />
+      {canComment ? (
+        <>
+          <label htmlFor="new-comment" className="sr-only">
+            Add a comment
+          </label>
+          <textarea
+            ref={ref}
+            id="new-comment"
+            rows={2}
+            placeholder="Add a comment. Mention teammates with @Name"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            className="field-sizing-content min-h-16 w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-zinc-500">
+              <span className="shrink-0">Followers</span>
+              <span className="flex -space-x-1" aria-label={`Followers: ${followers.map(displayName).join(", ")}`}>
+                {followers.slice(0, 6).map((p) => (
+                  <span key={p.id} className="rounded-full ring-2 ring-zinc-50">
+                    <Avatar name={displayName(p)} />
+                  </span>
+                ))}
               </span>
-            ))}
-          </span>
-          <button
-            type="button"
-            onClick={() => run(() => setFollowing(task.id, memberId, !following))}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-zinc-200/70 hover:text-zinc-800"
-          >
-            {following ? <BellOff className="size-3.5" /> : <Bell className="size-3.5" />}
-            {following ? "Unfollow" : "Follow"}
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={submit}
-          disabled={pending}
-          className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-        >
-          Comment
-        </button>
-      </div>
+              <button
+                type="button"
+                onClick={() => run(() => setFollowing(task.id, memberId, !following))}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-zinc-200/70 hover:text-zinc-800"
+              >
+                {following ? <BellOff className="size-3.5" /> : <Bell className="size-3.5" />}
+                {following ? "Unfollow" : "Follow"}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={pending}
+              className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+            >
+              Comment
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-zinc-600">You can view this task. Commenters and above can comment and follow.</p>
+      )}
     </div>
   );
 }

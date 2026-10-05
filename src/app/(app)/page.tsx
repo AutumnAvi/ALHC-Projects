@@ -14,7 +14,7 @@ export default async function HomePage() {
       <div className="mx-auto max-w-4xl px-6 py-10">
         <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
         <p className="mt-1 text-sm text-zinc-600">
-          Pick a project to open its list or board, or start a new one.
+          Projects you’re a member of. Pick one to open it, or start a new one — you’ll be its owner.
         </p>
 
         <div className="mt-6 max-w-md">
@@ -26,8 +26,8 @@ export default async function HomePage() {
             <FolderClosed className="mx-auto size-8 text-zinc-300" />
             <h2 className="mt-3 text-sm font-medium text-zinc-900">No projects yet</h2>
             <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-600">
-              Create your first project above. It starts with “To do”, “In progress”, and “Done”
-              sections you can rename or replace.
+              You’re not a member of any project. Create one above, or ask a project’s owner or admin to
+              invite you. New projects start with “To do”, “In progress”, and “Done” sections.
             </p>
           </div>
         ) : (

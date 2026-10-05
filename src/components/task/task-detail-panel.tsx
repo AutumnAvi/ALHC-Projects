@@ -21,12 +21,14 @@ import {
   updateTask,
 } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
+import { hasRole } from "@/lib/roles";
 import { CommentComposer, TaskActivity } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
 import { TaskAttachments } from "./task-attachments";
 import { TaskFields } from "./task-fields";
 
-type ProjectOption = { id: string; name: string };
+// canAdd: the viewer is an Editor there, so the task can be added to that project.
+type ProjectOption = { id: string; name: string; canAdd: boolean };
 
 function useClosePane() {
   const router = useRouter();
@@ -106,174 +108,191 @@ export function TaskDetailPanel({
   const completed = Boolean(completedAt);
 
   const memberProjectIds = new Set(task.memberships.map((m) => m.projectId));
-  const addableProjects = projects.filter((p) => !memberProjectIds.has(p.id));
+  const canEdit = hasRole(task.viewerRole, "editor");
+  const addableProjects = canEdit ? projects.filter((p) => p.canAdd && !memberProjectIds.has(p.id)) : [];
+  // Only people with access to one of the task's projects can be assigned (others couldn't see it).
+  const assignable = profiles.filter((p) => p.id in task.memberRoles || p.id === task.assigneeId);
 
   return (
     <PaneShell label={`Task: ${task.title}`}>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
-        <button
-          type="button"
-          onClick={() =>
-            run(
-              () => setTaskCompleted(task.id, !completed),
-              () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
-            )
-          }
-          className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm font-medium transition ${
-            completed
-              ? "border-accent-200 bg-accent-50 text-accent-700"
-              : "border-zinc-300 text-zinc-700 hover:border-accent-500 hover:text-accent-700"
-          }`}
-        >
-          <Check className="size-4" />
-          {completed ? "Completed" : "Mark complete"}
-        </button>
-        <div className="ml-auto flex items-center gap-1">
+        {canEdit ? (
           <button
             type="button"
-            onClick={() => {
-              if (window.confirm(`Delete “${task.title}”? It will be removed from every project.`)) {
-                run(async () => {
-                  const result = await deleteTask(task.id);
-                  if (!result.error) close();
-                  return result;
-                });
-              }
-            }}
-            aria-label="Delete task"
-            title="Delete task"
-            className="rounded-md p-1.5 text-zinc-500 hover:bg-red-50 hover:text-red-700"
+            onClick={() =>
+              run(
+                () => setTaskCompleted(task.id, !completed),
+                () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
+              )
+            }
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm font-medium transition ${
+              completed
+                ? "border-accent-200 bg-accent-50 text-accent-700"
+                : "border-zinc-300 text-zinc-700 hover:border-accent-500 hover:text-accent-700"
+            }`}
           >
-            <Trash2 className="size-4" />
+            <Check className="size-4" />
+            {completed ? "Completed" : "Mark complete"}
           </button>
+        ) : (
+          <span className="text-xs text-zinc-500">
+            {completed ? "Completed · " : ""}
+            {task.viewerRole === "commenter" ? "You can comment on this task" : "View only"}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Delete “${task.title}”? It will be removed from every project.`)) {
+                  run(async () => {
+                    const result = await deleteTask(task.id);
+                    if (!result.error) close();
+                    return result;
+                  });
+                }
+              }}
+              aria-label="Delete task"
+              title="Delete task"
+              className="rounded-md p-1.5 text-zinc-500 hover:bg-red-50 hover:text-red-700"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          ) : null}
           <CloseButton href={href} />
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        <label htmlFor="task-title" className="sr-only">
-          Task name
-        </label>
-        <textarea
-          id="task-title"
-          defaultValue={task.title}
-          rows={1}
-          onBlur={(e) => {
-            const title = e.currentTarget.value.trim();
-            if (!title) e.currentTarget.value = task.title;
-            else if (title !== task.title) run(() => updateTask(task.id, { title }));
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              e.currentTarget.blur();
-            }
-          }}
-          className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent px-2 py-1 text-xl font-semibold tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
-            completed ? "text-zinc-500" : "text-zinc-900"
-          }`}
-        />
-
-        <RequestBadges task={task} />
-
-        <dl className="mt-5 grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-4 gap-y-3 text-sm">
-          <dt className="text-zinc-500">
-            <label htmlFor="task-assignee">Assignee</label>
-          </dt>
-          <dd>
-            <select
-              id="task-assignee"
-              key={task.assigneeId ?? "none"}
-              defaultValue={task.assigneeId ?? ""}
-              onChange={(e) =>
-                run(() => updateTask(task.id, { assigneeId: e.target.value || null }))
-              }
-              className="w-full max-w-64 rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
-            >
-              <option value="">No assignee</option>
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {displayName(profile)}
-                </option>
-              ))}
-            </select>
-          </dd>
-
-          <dt className="text-zinc-500">
-            <label htmlFor="task-start">Start date</label>
-          </dt>
-          <dd className="flex items-center gap-2">
-            <input
-              id="task-start"
-              type="date"
-              key={task.startOn ?? "none"}
-              defaultValue={task.startOn ?? ""}
-              max={task.dueOn ?? undefined}
-              onChange={(e) => {
-                const input = e.currentTarget;
-                run(async () => {
-                  const result = await updateTask(task.id, { startOn: input.value || null });
-                  if (result.error) input.value = task.startOn ?? "";
-                  return result;
-                });
-              }}
-              className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
-            />
-          </dd>
-
-          <dt className="text-zinc-500">
-            <label htmlFor="task-due">Due date</label>
-          </dt>
-          <dd className="flex items-center gap-2">
-            <input
-              id="task-due"
-              type="date"
-              key={task.dueOn ?? "none"}
-              defaultValue={task.dueOn ?? ""}
-              min={task.startOn ?? undefined}
-              onChange={(e) => {
-                const input = e.currentTarget;
-                run(async () => {
-                  const result = await updateTask(task.id, { dueOn: input.value || null });
-                  if (result.error) input.value = task.dueOn ?? "";
-                  return result;
-                });
-              }}
-              className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
-            />
-          </dd>
-
-          <dt className="self-start pt-1.5 text-zinc-500">Projects</dt>
-          <dd>
-            <Memberships task={task} addableProjects={addableProjects} />
-          </dd>
-        </dl>
-
-        <TaskFields task={task} profiles={profiles} />
-
-        <div className="mt-6">
-          <label htmlFor="task-notes" className="text-sm font-medium text-zinc-900">
-            Description
+        {/* Below Editor every control in here is disabled; links (projects) still work. RLS enforces it. */}
+        <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
+          <label htmlFor="task-title" className="sr-only">
+            Task name
           </label>
           <textarea
-            id="task-notes"
-            defaultValue={task.notes ?? ""}
-            placeholder="Add details, links, or context for this task"
+            id="task-title"
+            defaultValue={task.title}
+            rows={1}
             onBlur={(e) => {
-              if (e.currentTarget.value.trim() !== (task.notes ?? "")) {
-                const notes = e.currentTarget.value;
-                run(() => updateTask(task.id, { notes }));
+              const title = e.currentTarget.value.trim();
+              if (!title) e.currentTarget.value = task.title;
+              else if (title !== task.title) run(() => updateTask(task.id, { title }));
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.currentTarget.blur();
               }
             }}
-            className="mt-1.5 field-sizing-content min-h-24 w-full resize-y rounded-md border border-zinc-200 px-3 py-2 text-sm leading-relaxed placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
+            className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent px-2 py-1 text-xl font-semibold tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
+              completed ? "text-zinc-500" : "text-zinc-900"
+            }`}
           />
-        </div>
 
-        <Subtasks task={task} />
+          <RequestBadges task={task} />
+
+          <dl className="mt-5 grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-4 gap-y-3 text-sm">
+            <dt className="text-zinc-500">
+              <label htmlFor="task-assignee">Assignee</label>
+            </dt>
+            <dd>
+              <select
+                id="task-assignee"
+                key={task.assigneeId ?? "none"}
+                defaultValue={task.assigneeId ?? ""}
+                onChange={(e) =>
+                  run(() => updateTask(task.id, { assigneeId: e.target.value || null }))
+                }
+                className="w-full max-w-64 rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
+              >
+                <option value="">No assignee</option>
+                {assignable.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {displayName(profile)}
+                  </option>
+                ))}
+              </select>
+            </dd>
+
+            <dt className="text-zinc-500">
+              <label htmlFor="task-start">Start date</label>
+            </dt>
+            <dd className="flex items-center gap-2">
+              <input
+                id="task-start"
+                type="date"
+                key={task.startOn ?? "none"}
+                defaultValue={task.startOn ?? ""}
+                max={task.dueOn ?? undefined}
+                onChange={(e) => {
+                  const input = e.currentTarget;
+                  run(async () => {
+                    const result = await updateTask(task.id, { startOn: input.value || null });
+                    if (result.error) input.value = task.startOn ?? "";
+                    return result;
+                  });
+                }}
+                className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
+              />
+            </dd>
+
+            <dt className="text-zinc-500">
+              <label htmlFor="task-due">Due date</label>
+            </dt>
+            <dd className="flex items-center gap-2">
+              <input
+                id="task-due"
+                type="date"
+                key={task.dueOn ?? "none"}
+                defaultValue={task.dueOn ?? ""}
+                min={task.startOn ?? undefined}
+                onChange={(e) => {
+                  const input = e.currentTarget;
+                  run(async () => {
+                    const result = await updateTask(task.id, { dueOn: input.value || null });
+                    if (result.error) input.value = task.dueOn ?? "";
+                    return result;
+                  });
+                }}
+                className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
+              />
+            </dd>
+
+            <dt className="self-start pt-1.5 text-zinc-500">Projects</dt>
+            <dd>
+              <Memberships task={task} addableProjects={addableProjects} />
+            </dd>
+          </dl>
+
+          <TaskFields task={task} profiles={profiles} />
+
+          <div className="mt-6">
+            <label htmlFor="task-notes" className="text-sm font-medium text-zinc-900">
+              Description
+            </label>
+            <textarea
+              id="task-notes"
+              defaultValue={task.notes ?? ""}
+              placeholder="Add details, links, or context for this task"
+              onBlur={(e) => {
+                if (e.currentTarget.value.trim() !== (task.notes ?? "")) {
+                  const notes = e.currentTarget.value;
+                  run(() => updateTask(task.id, { notes }));
+                }
+              }}
+              className="mt-1.5 field-sizing-content min-h-24 w-full resize-y rounded-md border border-zinc-200 px-3 py-2 text-sm leading-relaxed placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
+            />
+          </div>
+
+          <Subtasks task={task} />
+        </fieldset>
 
         <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
 
-        <TaskAttachments taskId={task.id} attachments={task.attachments} />
+        <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
+          <TaskAttachments taskId={task.id} attachments={task.attachments} />
+        </fieldset>
 
         <TaskActivity task={task} profiles={profiles} memberId={memberId} />
       </div>

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { CompleteToggle } from "@/components/complete-toggle";
+import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { setTaskCompleted } from "@/lib/actions";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
@@ -31,6 +32,7 @@ const COLUMN_WIDTH: Record<string, string> = { assignee: "9rem", due: "6rem", st
 export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
+  const canEdit = useCan("editor");
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
   const groups = groupTasks(optimisticTasks, config, { sections, profilesById, fields });
@@ -55,7 +57,16 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
     profilesById,
     sectionNames: new Map(sections.map((s) => [s.id, s.name])),
   };
-  const rowProps = { profilesById, openTaskId, onToggle: toggle, columns, fieldsById, fieldContext, gridStyle };
+  const rowProps = {
+    profilesById,
+    openTaskId,
+    onToggle: toggle,
+    canEdit,
+    columns,
+    fieldsById,
+    fieldContext,
+    gridStyle,
+  };
 
   return (
     <div className="px-6 py-4" style={{ minWidth: `${28 + columns.length * 8.75}rem` }}>
@@ -161,6 +172,7 @@ function TaskRow({
   profilesById,
   openTaskId,
   onToggle,
+  canEdit,
   columns,
   fieldsById,
   fieldContext,
@@ -170,6 +182,7 @@ function TaskRow({
   profilesById: Map<string, Profile>;
   openTaskId: string | null;
   onToggle: (task: ProjectTask) => void;
+  canEdit: boolean;
   columns: ColumnKey[];
   fieldsById: Map<string, FieldDef>;
   fieldContext: FieldContext;
@@ -188,6 +201,7 @@ function TaskRow({
       <div className="flex min-w-0 items-center gap-2.5">
         <CompleteToggle
           completed={completed}
+          disabled={!canEdit}
           onToggle={() => onToggle(task)}
           label={completed ? `Mark “${task.title}” incomplete` : `Mark “${task.title}” complete`}
         />

@@ -29,6 +29,8 @@ begin
   insert into public.projects (workspace_id, name) values (ws, 'Requests') returning id into p;
   insert into public.projects (workspace_id, name) values (ws, 'Other') returning id into other_p;
   insert into ids values ('p', p), ('other_p', other_p);
+  -- Since Teams & permissions, other people need a membership to read or be notified about a project.
+  perform public.add_project_member(p, 'later@example.com', 'editor');
   foreach section_name in array array['Intake', 'Review', 'Doing', 'Approved', 'Changes', 'Shipped', 'Loop A', 'Loop B'] loop
     insert into public.sections (project_id, name, sort_order) values (p, section_name, 1) returning id into s;
     insert into ids values ('s_' || lower(replace(section_name, ' ', '_')), s);
@@ -252,6 +254,7 @@ declare
   a uuid;
 begin
   insert into public.projects (workspace_id, name, approval_completes_task) values (ws, 'Approvals', true) returning id into p;
+  perform public.add_project_member(p, 'later@example.com', 'commenter');
   t := public.create_task(p, null, 'Brochure');
   insert into ids values ('approval_task', t);
 end $$;

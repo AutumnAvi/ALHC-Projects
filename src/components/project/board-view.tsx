@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type DragEvent } from "react";
 import { CompleteToggle } from "@/components/complete-toggle";
+import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { moveTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
@@ -32,6 +33,7 @@ const DRAG_TYPE = "application/x-alhc-task";
 export function BoardView({ projectId, sections, tasks, profiles, fields, config, openTaskId }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
+  const canEdit = useCan("editor");
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
 
@@ -56,7 +58,8 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
     sectionNames: new Map(sections.map((s) => [s.id, s.name])),
   };
 
-  const moveOptions = groups.filter((g) => g.target.kind !== "none");
+  // Viewers and commenters can't move cards: no drag, no "Move to" menu.
+  const moveOptions = canEdit ? groups.filter((g) => g.target.kind !== "none") : [];
 
   function move(task: ProjectTask, group: TaskGroup, beforeId: string | null) {
     const target = group.target;
@@ -162,6 +165,7 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
                     moveOptions={moveOptions}
                     cardFields={cardFields}
                     fieldContext={fieldContext}
+                    canEdit={canEdit}
                     onToggle={() => toggle(task)}
                     onMove={(key) => {
                       const target = groups.find((g) => g.key === key);
@@ -217,6 +221,7 @@ function TaskCard({
   moveOptions,
   cardFields,
   fieldContext,
+  canEdit,
   onToggle,
   onMove,
   onDragStart,
@@ -232,6 +237,7 @@ function TaskCard({
   moveOptions: TaskGroup[];
   cardFields: FieldDef[];
   fieldContext: FieldContext;
+  canEdit: boolean;
   onToggle: () => void;
   onMove: (groupKey: string) => void;
   onDragStart: (e: DragEvent) => void;
@@ -256,6 +262,7 @@ function TaskCard({
           <CompleteToggle
             size="sm"
             completed={completed}
+            disabled={!canEdit}
             onToggle={onToggle}
             label={completed ? `Mark “${task.title}” incomplete` : `Mark “${task.title}” complete`}
           />

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { RoleGate } from "@/components/project/project-access";
 import { RulesView } from "@/components/rules/rules-view";
 import {
   getProject,
@@ -33,18 +34,20 @@ export default async function ProjectRulesPage({ params }: PageProps<"/projects/
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
-      <RulesView
-        projectId={projectId}
-        rules={rules}
-        runs={runs}
-        presets={presets}
-        context={{
-          sections: sections.map((s) => ({ id: s.id, name: s.name })),
-          fields,
-          people: profiles.map((p) => ({ id: p.id, name: p.full_name || p.email })),
-          forms: forms.map((f) => ({ id: f.id, title: f.title })),
-        }}
-      />
+      <RoleGate need="admin" what="rules">
+        <RulesView
+          projectId={projectId}
+          rules={rules}
+          runs={runs}
+          presets={presets}
+          context={{
+            sections: sections.map((s) => ({ id: s.id, name: s.name })),
+            fields,
+            people: profiles.map((p) => ({ id: p.id, name: p.full_name || p.email })),
+            forms: forms.map((f) => ({ id: f.id, title: f.title })),
+          }}
+        />
+      </RoleGate>
     </main>
   );
 }

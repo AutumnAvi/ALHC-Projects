@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { RoleGate } from "@/components/project/project-access";
 import { notFound } from "next/navigation";
 import { FormBuilder } from "@/components/forms/form-builder";
 import { getForm, listProjectFields, listSections } from "@/lib/data";
@@ -26,13 +27,15 @@ export default async function FormBuilderPage({ params }: PageProps<"/projects/[
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
-      <FormBuilder
-        key={form.id}
-        form={form}
-        sections={sections.map((s) => ({ id: s.id, name: s.name }))}
-        fields={fields}
-        origin={origin}
-      />
+      <RoleGate need="admin" what="forms">
+        <FormBuilder
+          key={form.id}
+          form={form}
+          sections={sections.map((s) => ({ id: s.id, name: s.name }))}
+          fields={fields}
+          origin={origin}
+        />
+      </RoleGate>
     </main>
   );
 }

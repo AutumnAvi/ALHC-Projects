@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { RoleGate } from "@/components/project/project-access";
 import { FieldsManager } from "@/components/project/fields-manager";
 import { getProject, listProjectFields, listSections } from "@/lib/data";
 
@@ -21,11 +22,13 @@ export default async function ProjectFieldsPage({
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
-      <FieldsManager
-        projectId={projectId}
-        fields={fields}
-        sectionNames={sections.map((s) => s.name)}
-      />
+      <RoleGate need="editor" what="fields">
+        <FieldsManager
+          projectId={projectId}
+          fields={fields}
+          sectionNames={sections.map((s) => s.name)}
+        />
+      </RoleGate>
     </main>
   );
 }

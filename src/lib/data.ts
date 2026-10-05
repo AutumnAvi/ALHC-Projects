@@ -1,5 +1,6 @@
 import "server-only";
 import { cache } from "react";
+import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { parseOptions, type FieldDef, type FieldType } from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
@@ -10,6 +11,7 @@ import {
   type RulePreset,
   type RuleRun,
 } from "@/lib/rules";
+import { PROJECT_ROLES as ROLE_ORDER, isProjectRole, type ProjectRole } from "@/lib/roles";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
   isViewLayout,
@@ -81,6 +83,10 @@ export type TaskDetail = {
   attachments: TaskAttachment[];
   comments: TaskComment[];
   stories: TaskStory[];
+  // The viewer's highest role across the task's projects (null: read access through nothing).
+  viewerRole: ProjectRole | null;
+  // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
+  memberRoles: Record<string, ProjectRole>;
 };
 
 export type TaskAttachment = {
@@ -165,6 +171,61 @@ export const getProject = cache(async (projectId: string): Promise<Project | nul
     .is("deleted_at", null)
     .maybeSingle();
   return maybe(result, "project");
+});
+
+// The viewer's role in a project, or null when they are not a member.
+export const getProjectRole = cache(async (projectId: string): Promise<ProjectRole | null> => {
+  const supabase = await createClient();
+  const role = maybe(await supabase.rpc("project_role", { target_project: projectId }), "project role");
+  return isProjectRole(role) ? role : null;
+});
+
+// The viewer's own role in every project they belong to.
+export const listMyProjectRoles = cache(async (): Promise<Map<string, ProjectRole>> => {
+  const { user } = await getViewer();
+  if (!user) return new Map();
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_members")
+    .select("project_id, role")
+    .eq("profile_id", user.id)
+    .is("deleted_at", null);
+  return new Map(
+    rows(result, "project roles")
+      .filter((m) => isProjectRole(m.role))
+      .map((m) => [m.project_id, m.role as ProjectRole] as const),
+  );
+});
+
+export type ProjectMember = {
+  profileId: string;
+  role: ProjectRole;
+  email: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+  addedAt: string;
+};
+
+export const listProjectMembers = cache(async (projectId: string): Promise<ProjectMember[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_members")
+    .select(
+      "profile_id, role, created_at, profile:profiles!project_members_profile_id_fkey!inner(email, full_name, avatar_url)",
+    )
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("created_at");
+  return rows(result, "members")
+    .filter((m) => isProjectRole(m.role))
+    .map((m) => ({
+      profileId: m.profile_id,
+      role: m.role as ProjectRole,
+      email: m.profile.email,
+      fullName: m.profile.full_name,
+      avatarUrl: m.profile.avatar_url,
+      addedAt: m.created_at,
+    }));
 });
 
 export const listProfiles = cache(async (): Promise<Profile[]> => {
@@ -311,8 +372,20 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       )
     : [];
 
-  const [fields, values, followers, attachments, comments, stories, approvals, submissions, label, numbering] =
-    await Promise.all([
+  const [
+    fields,
+    values,
+    followers,
+    attachments,
+    comments,
+    stories,
+    approvals,
+    submissions,
+    label,
+    numbering,
+    viewerRole,
+    projectMembers,
+  ] = await Promise.all([
     projectIds.length ? listFieldsForProjects(projectIds) : Promise.resolve([]),
     supabase.from("task_field_values").select("field_id, value").eq("task_id", taskId),
     supabase
@@ -364,7 +437,23 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("enabled", true)
       .is("deleted_at", null)
       .maybeSingle(),
+    supabase.rpc("task_role", { target_task: taskId }),
+    projectIds.length
+      ? supabase
+          .from("project_members")
+          .select("profile_id, role")
+          .in("project_id", projectIds)
+          .is("deleted_at", null)
+      : Promise.resolve({ data: [], error: null }),
   ]);
+
+  const memberRoles: Record<string, ProjectRole> = {};
+  for (const m of rows(projectMembers, "task members")) {
+    if (!isProjectRole(m.role)) continue;
+    const current = memberRoles[m.profile_id];
+    if (!current || ROLE_ORDER.indexOf(m.role) < ROLE_ORDER.indexOf(current)) memberRoles[m.profile_id] = m.role;
+  }
+  const role = maybe(viewerRole, "task role");
 
   const commentRows = rows(comments, "comments");
   const approvalRows = rows(approvals, "approvals");
@@ -448,6 +537,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       decisionNote: a.decision_note,
       createdAt: a.created_at,
     })),
+    viewerRole: isProjectRole(role) ? role : null,
+    memberRoles,
     subtasks: rows(subtasks, "subtasks"),
     memberships: membershipRows
       .map((m) => ({
@@ -501,18 +592,18 @@ export type MyTask = {
   projectName: string;
 };
 
+// Tasks come back only when RLS lets the viewer read them (membership in one of their projects).
+// Each is labelled with its home project when the viewer can see it, else another visible project.
 export const listMyTasks = cache(async (profileId: string) => {
   const supabase = await createClient();
-  const select =
-    "id, title, completed_at, due_on, project:projects!tasks_home_project_id_fkey!inner(id, name)";
-  const [open, done] = await Promise.all([
+  const select = "id, title, completed_at, due_on, home_project_id";
+  const [open, done, projects] = await Promise.all([
     supabase
       .from("tasks")
       .select(select)
       .eq("assignee_id", profileId)
       .is("deleted_at", null)
       .is("completed_at", null)
-      .is("project.deleted_at", null)
       .order("due_on", { nullsFirst: false })
       .order("created_at"),
     supabase
@@ -521,27 +612,44 @@ export const listMyTasks = cache(async (profileId: string) => {
       .eq("assignee_id", profileId)
       .is("deleted_at", null)
       .not("completed_at", "is", null)
-      .is("project.deleted_at", null)
       .order("completed_at", { ascending: false })
       .limit(30),
+    listProjects(),
   ]);
-  const toMyTask = (t: {
-    id: string;
-    title: string;
-    completed_at: string | null;
-    due_on: string | null;
-    project: { id: string; name: string };
-  }): MyTask => ({
-    id: t.id,
-    title: t.title,
-    completedAt: t.completed_at,
-    dueOn: t.due_on,
-    projectId: t.project.id,
-    projectName: t.project.name,
-  });
+  const openRows = rows(open, "my tasks");
+  const doneRows = rows(done, "completed tasks");
+  const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
+  const taskIds = [...openRows, ...doneRows].map((t) => t.id);
+  const memberships = taskIds.length
+    ? rows(
+        await supabase
+          .from("task_projects")
+          .select("task_id, project_id")
+          .in("task_id", taskIds)
+          .is("deleted_at", null)
+          .order("created_at"),
+        "task projects",
+      )
+    : [];
+
+  const toMyTask = (t: (typeof openRows)[number]): MyTask | null => {
+    const projectId = projectName.has(t.home_project_id)
+      ? t.home_project_id
+      : memberships.find((m) => m.task_id === t.id && projectName.has(m.project_id))?.project_id;
+    if (!projectId) return null;
+    return {
+      id: t.id,
+      title: t.title,
+      completedAt: t.completed_at,
+      dueOn: t.due_on,
+      projectId,
+      projectName: projectName.get(projectId)!,
+    };
+  };
+  const present = (t: MyTask | null): t is MyTask => t !== null;
   return {
-    open: rows(open, "my tasks").map(toMyTask),
-    completed: rows(done, "completed tasks").map(toMyTask),
+    open: openRows.map(toMyTask).filter(present),
+    completed: doneRows.map(toMyTask).filter(present),
   };
 });
 

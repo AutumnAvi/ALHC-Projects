@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { RoleGate } from "@/components/project/project-access";
 import { ProjectSettings } from "@/components/project/project-settings";
 import { getProject, getRequestSequence } from "@/lib/data";
 
@@ -19,8 +20,8 @@ export default async function ProjectSettingsPage({
   if (!project) notFound();
 
   return (
-    <main className="min-h-0 flex-1 overflow-auto">
+    <RoleGate need="admin" what="project settings">
       <ProjectSettings project={project} sequence={sequence} />
-    </main>
+    </RoleGate>
   );
 }
