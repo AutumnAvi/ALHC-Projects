@@ -386,7 +386,8 @@ export type MyTask = {
 
 export const listMyTasks = cache(async (profileId: string) => {
   const supabase = await createClient();
-  const select = "id, title, completed_at, due_on, project:projects!inner(id, name)";
+  const select =
+    "id, title, completed_at, due_on, project:projects!tasks_home_project_id_fkey!inner(id, name)";
   const [open, done] = await Promise.all([
     supabase
       .from("tasks")
@@ -448,16 +449,18 @@ export const listInbox = cache(async (): Promise<InboxItem[]> => {
     .is("task.deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(100);
-  return rows(result, "inbox").map((item) => ({
-    id: item.id,
-    kind: item.kind as InboxItem["kind"],
-    actorId: item.actor_id,
-    readAt: item.read_at,
-    createdAt: item.created_at,
-    taskId: item.task.id,
-    taskTitle: item.task.title,
-    commentBody: item.comment && !item.comment.deleted_at ? item.comment.body : null,
-  }));
+  return rows(result, "inbox")
+    .filter((item) => !item.comment?.deleted_at)
+    .map((item) => ({
+      id: item.id,
+      kind: item.kind as InboxItem["kind"],
+      actorId: item.actor_id,
+      readAt: item.read_at,
+      createdAt: item.created_at,
+      taskId: item.task.id,
+      taskTitle: item.task.title,
+      commentBody: item.comment?.body ?? null,
+    }));
 });
 
 export const countUnreadInbox = cache(async () => {
