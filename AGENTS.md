@@ -45,7 +45,11 @@ src/
     (app)/                     Authenticated shell; layout calls requireMember() and loads the inbox unread count
       page.tsx                 Project home
       my-tasks/, inbox/, search/  Cross-project views; `?task=<id>` opens the pane on each
-      projects/[projectId]/list|board|fields  Views + field management; `?task=<id>` opens the task detail pane
+      projects/[projectId]/    Redirects to the project's first saved view
+      projects/[projectId]/views/[viewId]     A saved view (list / board / calendar); `?f=` = unsaved filter draft, `?task=<id>` opens the pane
+      projects/[projectId]/list|board|calendar  Redirect to the first view with that layout (old links keep working)
+      projects/[projectId]/dashboard          Project dashboard widgets (counts + bar charts)
+      projects/[projectId]/fields             Field management
       projects/[projectId]/forms[/[formId]]  Form list + builder
       projects/[projectId]/rules              Rules, templates, run log
       projects/[projectId]/settings           Req # numbering, approval-completes-task
@@ -64,7 +68,9 @@ src/
     email.ts                   Outbox rendering + Resend delivery (server-only; mocked without a key)
     supabase/admin.ts          Service-role client, used only by email delivery and the cron route
     origin.ts                  Absolute origin for share links (NEXT_PUBLIC_APP_URL or request host)
-  components/                  UI; project/ (list, board, fields, settings), task/ (pane, activity, fields, files, approvals), forms/, rules/, my-tasks/, inbox/, search/, shell/
+    views.ts                   View config types, parser/sanitizer (mirrors the SQL validators), `?f=` encoding
+    timezone.ts                getViewerTimeZone() from the `tz` cookie (server-only); timezone-shared.ts holds the cookie name
+  components/                  UI; project/ (view page + toolbar, filter editor, list, board, calendar, fields, settings), dashboard/, task/ (pane, activity, fields, files, approvals), forms/, rules/, my-tasks/, inbox/, search/, shell/, popover.tsx
 supabase/
   migrations/                  Schema, triggers, RLS (source of truth for the data model)
   seed.sql                     Placeholder allowlist entry (local `supabase db reset` only)
@@ -82,7 +88,7 @@ Allowlist entries are managed in SQL (dashboard SQL editor or service role) — 
 
 ## Data model rules
 
-- **Tables:** `allowed_emails`, `profiles`, `workspaces`, `projects`, `sections`, `tasks`, `task_projects`, `subtasks` (core spine); `comments`, `comment_mentions`, `task_followers`, `task_stories`, `inbox_items`, `custom_fields`, `task_field_values`, `task_attachments` (collaboration); `request_sequences`, `approval_requests`, `forms`, `form_submissions`, `rules`, `rule_runs`, `scheduled_rule_actions`, `rule_presets`, `email_outbox` (workflows).
+- **Tables:** `allowed_emails`, `profiles`, `workspaces`, `projects`, `sections`, `tasks`, `task_projects`, `subtasks` (core spine); `comments`, `comment_mentions`, `task_followers`, `task_stories`, `inbox_items`, `custom_fields`, `task_field_values`, `task_attachments` (collaboration); `request_sequences`, `approval_requests`, `forms`, `form_submissions`, `rules`, `rule_runs`, `scheduled_rule_actions`, `rule_presets`, `email_outbox` (workflows); `project_views`, `dashboard_widgets` (views & insights).
 - **Single workspace this phase:** migration seeds workspace `00000000-0000-4000-8000-000000000001` ("ALHC"); the app uses the oldest active workspace.
 - **Profiles** mirror allowlisted auth users (name/avatar from Google) via triggers on `auth.users` and on `allowed_emails` inserts. Assignees reference `profiles.id`.
 - **Multi-homing:** `task_projects (task_id, project_id)` is the membership join. Section and `sort_order` live on the membership, so one task can sit in different sections/positions per project.
@@ -170,11 +176,56 @@ Migration `20261005020000_workflows.sql`, tests in `supabase/tests/30_workflows_
 - **Mocking:** without `RESEND_API_KEY` + `EMAIL_FROM` rows are marked `mocked` and logged as `[email:mocked]`. Without `SUPABASE_SERVICE_ROLE_KEY` rows stay `pending` until a configured deployment drains them.
 - **Scheduling:** `vercel.json` runs `/api/cron/workflows` daily (the Hobby-plan limit); on Pro, raise the schedule (e.g. `*/15 * * * *`) or point any external scheduler at it with `Authorization: Bearer $CRON_SECRET`.
 
+## Views & Insights model
+
+Migration `20261005030000_views_insights.sql`, tests in `supabase/tests/40_views_insights_smoke.sql`. Views and dashboards are generic project features; nothing knows about a team or request type.
+
+### Saved views (`project_views`)
+
+- `project_views (project_id, name 1–100, layout list|board|calendar, config jsonb, sort_order, created_by)`, soft delete, full `_{select,insert,update}_allowlisted` RLS. Views are shared by everyone in the project (no private views yet). `project_id` is immutable and `config` is validated on write by `validate_view_config` (trigger `project_views_validate`): unknown keys/values, sections or fields from another project, a non-single-select or section-bound `group_by` field, or more than 3 sorts raise `check_violation`.
+- **Defaults:** `projects_create_default_views` (SECURITY DEFINER) gives every new project **List**, **Board**, and **Calendar** views with an empty config; the migration backfilled existing projects. The last remaining view of a project can't be deleted (`deleteView`), so a project always has a tab. `/projects/<id>` redirects to the first view by `sort_order`; `/list`, `/board`, `/calendar` redirect to the first view with that layout (or render the default config if there is none).
+- **Config schema** (documented in full at the top of the migration, mirrored by `src/lib/views.ts`):
+
+  ```
+  filters:  completion incomplete|completed|all (default incomplete = "show completed" off)
+            completed_within_days N (requires completion = completed)
+            sections [uuid | null]     assignees [uuid | "me" | null]   (any-of; null = none)
+            due { kind: overdue | today | upcoming (days, default 7) | no_date | range (from, to) }
+            fields [{ field_id, op: in | equals | empty | not_empty, values? | value? }]   (all must match)
+            text   (title or notes contains, case-insensitive)
+  sort:     up to 3 × { key: manual | due | title | created | assignee | field:<uuid>, dir }   default manual
+  group_by: section (default) | assignee | none | field:<uuid> (single-select, not section-bound)
+  columns:  [assignee | due | section | field:<uuid>]   List columns / Board card fields;
+            absent = assignee, due, and every field pinned with show_in_views
+  ```
+
+  `show_completed` is not a separate key: the toolbar's "Show completed" checkbox toggles `filters.completion` between `incomplete` and `all`. Field conditions follow the field type: selects/people use `in` (any of the option/profile ids; multi-select and people match on overlap), text/number/date/checkbox use `equals` (text compares case-insensitively), and every type supports `empty` / `not_empty` (`null`, `""`, `[]`, and `false` count as empty). A section-bound Status field compares the task's section in the project.
+- **Evaluation:** filtering happens in Postgres. `rpc("filter_project_tasks", { target_project, filters, tz })` (SECURITY INVOKER, so RLS applies) returns the matching active task ids in the project; `data.ts` `filterProjectTaskIds()` calls it and the page keeps only those tasks. Sorting, grouping, and columns are applied in the browser (`components/project/view-groups.ts`) because they don't change membership. `"me"` resolves to `auth.uid()`. The browser parser (`parseViewConfig`) drops invalid parts and `pruneConfig` drops references to deleted sections, fields, and people, so a stale view still renders.
+- **Relative dates use the viewer's time zone.** `TimeZoneCookie` (in the app layout) writes the browser's IANA zone to the `tz` cookie and refreshes when it changes; `getViewerTimeZone()` validates it and `safe_timezone()` falls back to UTC. "Overdue" = due before local today and incomplete; "today", "upcoming", and "completed in the last N days" use local days.
+- **Unsaved changes live in the URL.** Editing filters, sort, group, columns, or search in the toolbar writes the canonical config to `?f=` (max 8000 chars) without saving. The toolbar then shows "Unsaved changes" with **Reset**, **Save view** (`updateView`), and **Save as new view** (`createView`). Filter chips under the toolbar show every active filter and remove it on click. Shared `?f=` links reproduce the same view.
+- **Tabs:** the project header lists views by `sort_order`, then fixed tabs (Dashboard, Fields, Forms, Rules, Settings). "+ View" creates a list/board/calendar view; each tab's menu has Rename, Duplicate ("<name> copy"), Move left/right, and Delete (soft).
+- **List / Board with views:** groups come from `group_by`. Section groups show "No section" plus every section (only the filtered ones when a section filter is set), assignee groups end with "Unassigned", field groups end with "No <field>". Drag-and-drop on Board changes what the column represents: section → `moveTask`, assignee → `updateTask({ assigneeId })`, field option → `setFieldValue`. A precise drop position (fractional `sort_order`) is only used with manual sort and section grouping; otherwise the card is appended. Adding tasks inline is offered only in section groups.
+- **Subtasks are never shown on views** (List, Board, or Calendar): subtasks have no due date, assignee filter, or project membership in this schema, so views list tasks only and the pane shows subtasks.
+
+### Calendar
+
+- Month view (weeks start Sunday) and week view; the period is in the URL (`?d=YYYY-MM-DD`, `?cal=week`), with Today and previous/next controls. Tasks are placed by **`tasks.due_on`** — the only due field (there is no due time or start date). Completed tasks that pass the view's filters are shown struck through; overdue incomplete tasks get a red dot.
+- The view's filters apply to the grid. The right-hand **No due date** tray lists the filtered tasks that have no due date and are incomplete.
+- Clicking a task opens the normal task pane (`?task=`). Dragging a task to a day sets its due date (`updateTask({ dueOn })`, optimistic, logged as `due_changed`); dropping it on the tray clears the due date. Month cells show three tasks, then "+N more" expands the day.
+
+### Dashboard (`dashboard_widgets`)
+
+- `dashboard_widgets (project_id, kind count|by_section|by_assignee, title, filters, sort_order, created_by)`, soft delete, full allowlisted RLS. `filters` uses the same filter schema as views and is validated by `validate_view_filters` (trigger `dashboard_widgets_validate`).
+- Metrics come from `rpc("project_metrics", { target_project, filters, group_by: none|section|assignee, tz })` (SECURITY INVOKER over `filter_project_tasks`, so counts never include rows the caller can't read): one row per bucket with `task_count`; a `null` bucket is "No section" / "Unassigned".
+- Widgets: **number card** (`count`), **bar chart by section** (`by_section`, project section order, "No section" only if non-zero), **bar chart by assignee** (`by_assignee`, largest first, Unassigned last). Charts use Recharts (MIT) with an `sr-only` table for screen readers. Each widget shows its filters as chips and a "View tasks" link that opens the List view with the same filters as a `?f=` draft.
+- Widgets can be added (blank or "Add starter widgets": Incomplete tasks, Overdue, Completed in the last 7 days, Incomplete by section, Incomplete by assignee), edited (title, kind, filters), moved earlier/later, and removed (soft).
+
 ## Conventions
 
 - Server Components fetch via `src/lib/data.ts`; Client Components mutate via `src/lib/actions.ts` wrapped in `useServerAction()` (toasts errors, supports optimistic updates).
 - Route params/searchParams are Promises (`await params`). Use `PageProps<"/route">` / `LayoutProps<"/route">` global types.
-- Schema changes: add a new timestamped file in `supabase/migrations/`, update `database.types.ts` (or run `npm run db:types`), extend or add a `supabase/tests/NN_<area>_smoke.sql` suite (`10_core_smoke.sql`, `20_collaboration_smoke.sql`, `30_workflows_smoke.sql`), run `npm run db:test`.
+- Schema changes: add a new timestamped file in `supabase/migrations/`, update `database.types.ts` (or run `npm run db:types`), extend or add a `supabase/tests/NN_<area>_smoke.sql` suite (`10_core_smoke.sql`, `20_collaboration_smoke.sql`, `30_workflows_smoke.sql`, `40_views_insights_smoke.sql`), run `npm run db:test`.
+- Task filters (views, dashboard widgets, and anything new that needs "tasks matching X") go through `filter_project_tasks` and the one config schema in the views migration + `src/lib/views.ts`. Extend that schema (validators, parser, and smoke tests together) instead of adding a second filter format.
 - Trigger functions that write on the user's behalf are `SECURITY DEFINER` with `set search_path = ''`, and their helpers are revoked from `public`, `anon`, and `authenticated`.
 - Keep the UI restrained: zinc neutrals, one accent (`accent-*` in `globals.css`), no gradients, accessible labels on every control.
 
@@ -183,8 +234,9 @@ Migration `20261005020000_workflows.sql`, tests in `supabase/tests/30_workflows_
 - **Core spine** (done): auth + allowlist, projects/sections/tasks/subtasks, multi-homing, List/Board/pane.
 - **Collaboration** (done): comments + @mentions, followers, activity stories, custom fields (incl. section-bound status), attachments, My Tasks, Inbox, search, Realtime.
 - **Workflows** (done): approvals, public/branching forms (intake → task), rules engine with installable templates, native Req # sequences, email outbox + Resend. A request type is a project + fields + form + rules, not a schema of its own.
-- **Next phase candidates:** Asana importer (read-only export files, never the Asana API; imported rules land disabled), Calendar view, dashboards/reporting, saved views and filters, Slack/webhook actions, per-project membership.
+- **Views & Insights** (done): saved per-project views (list / board / calendar) with filters, sorts, grouping, and columns; removable filter chips and `?f=` drafts; month/week Calendar with a no-date tray and drag-to-reschedule; project Dashboard with count cards and section/assignee bar charts.
+- **Next phase candidates:** Asana importer (read-only export files, never the Asana API; imported rules land disabled), Slack/webhook rule actions, per-project membership, iCal feed, Timeline.
 
 ## Follow-ups (not yet built)
 
-Asana importer (read-only export files, never the Asana API), Calendar view, dashboards, saved views, Slack and outbound webhook rule actions, form file-upload questions and per-form submitter accounts, rule editing history and dry-run, email open/bounce tracking and unsubscribe, @mention autocomplete, comment editing and reactions, workspace-level field library and field reordering, field filters/sorting in List, manual My Tasks sections, attachment previews/thumbnails and Storage cleanup of removed files, push notifications and an inbox email digest, inbox archive, per-project membership/permissions (replace the "any allowlisted user" policies), restore/trash UI, reordering sections and list drag-and-drop, and Autumn Lake workflow migration (e.g. Creative Requests as a project template on the generic model). Never call the Asana API.
+Asana importer (read-only export files, never the Asana API), iCal feed for Calendar views, Timeline/Gantt, Slack incoming-webhook and outbound webhook rule actions (needs an outbox drain like email plus new rule actions), a Slack OAuth app, recurring tasks, universal cross-project reporting and portfolios, a richer dashboard builder (more chart types, grouping by custom field, date-series charts, widget sizes), My Tasks filter builder (My Tasks keeps its fixed due-date buckets; saved views are per project), private/personal views, creating a task on a Calendar day and keyboard rescheduling, start dates / due times, form file-upload questions and per-form submitter accounts, rule editing history and dry-run, email open/bounce tracking and unsubscribe, @mention autocomplete, comment editing and reactions, workspace-level field library and field reordering, manual My Tasks sections, attachment previews/thumbnails and Storage cleanup of removed files, push notifications and an inbox email digest, inbox archive, per-project membership/permissions (replace the "any allowlisted user" policies), restore/trash UI, reordering sections and list drag-and-drop, and Autumn Lake workflow migration (e.g. Creative Requests as a project template on the generic model). Never call the Asana API.

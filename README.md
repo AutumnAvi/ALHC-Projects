@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with List and Board views, a task detail pane, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, and Calendar views, project dashboards, a task detail pane, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -9,7 +9,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - Google sign-in through Supabase Auth, gated by an email allowlist (`public.allowed_emails`). Non-allowlisted accounts are signed out and shown a denied screen.
 - Data model: workspaces, projects, sections, tasks, subtasks, multi-project task membership (`task_projects`), and profiles. All deletes are soft (`deleted_at`).
 - Row Level Security on every table. In this phase, any allowlisted user can read, create, and update all workspace data.
-- Project home, List view (grouped by section), Board view (columns are sections, with drag-and-drop or a "move to section" menu), and a task detail pane (title, description, assignee, due date, subtasks, project memberships, delete).
+- Project home, List view, Board view (drag-and-drop or a "move to" menu), and a task detail pane (title, description, assignee, due date, subtasks, project memberships, delete).
 
 ## What's here (collaboration)
 
@@ -28,6 +28,14 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Request numbers** (Settings tab): a per-project counter with a prefix and zero padding (e.g. `Req #042`), optionally added to the task name, for every task or only form submissions. Set the next number to continue an existing sequence.
 - **Rules** (Rules tab): when a task is added, moves into a section, has a field or assignee change, is due soon, gets an approval decision, or comes from a form, check conditions and then move it, set a field or assignee, comment, add followers, send an inbox notification, request approval, send an email, or wait N hours before continuing. Rules are off until enabled. They can't trigger themselves in a loop, and each run is logged. Templates cover common patterns: due-tomorrow reminder, requester update when a section is entered, 24-hour nudge, tracking/shipping email, approval routing, and intake triage. You fill in the sections, fields, and people when installing a template.
 - **Email** through [Resend](https://resend.com): form confirmations, requester updates, and due-tomorrow reminders. With no key configured, emails are mocked (logged and marked `mocked`) so everything else still works.
+
+## What's here (views & insights)
+
+- **Saved views.** Each project has tabs for its views. Every project starts with List, Board, and Calendar views. Add more with **+ View**, and use a tab's **…** menu to rename, duplicate, reorder, or delete it (the last view can't be deleted). Views are shared by everyone in the project.
+- **Filters, sort, group, columns.** The toolbar above every view can filter by completion (including "completed in the last N days"), due date (overdue, today, next N days, no date, or a date range), section, assignee (including "Me" and Unassigned), any custom field, and text. You can sort by up to three keys, group by section, assignee, or a single-select field, and choose which columns or card fields to show. Active filters show as removable chips. Changes stay in the URL as "Unsaved changes" until you **Save view** or **Save as new view**, so you can also share a filtered link. On Board, dragging a card between columns moves its section, assignee, or field value, depending on how the board is grouped.
+- **Calendar.** Month and week views place tasks on their due date. Incomplete tasks without a due date sit in a **No due date** tray. Drag a task to another day to reschedule it, or onto the tray to clear its date. Click a task to open it.
+- **Dashboard** (Dashboard tab): number cards and bar charts by section or by assignee, each with its own filters. Click **Add starter widgets** for a ready-made set (incomplete, overdue, completed this week, by section, by assignee). Widgets can be edited, reordered, and removed. "View tasks" opens the List view with the widget's filters.
+- "Today", "overdue", and "last N days" use your browser's time zone. No new environment variables are needed.
 
 ## Local development
 
