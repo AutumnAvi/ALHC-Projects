@@ -196,6 +196,31 @@ begin
   assert affected = 0, 'only the author can soft-delete a comment';
 end $$;
 
+-- Retracting a comment clears the recipient's unread item for it.
+
+select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', false) is not null as ok \gset
+
+do $$
+declare
+  t uuid := (select id from ids where name = 'task');
+  c uuid;
+begin
+  insert into public.comments (task_id, body) values (t, 'Retracted note') returning id into c;
+  update public.comments set deleted_at = now() where id = c;
+  insert into ids values ('retracted', c);
+end $$;
+
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-8444-444444444444', false) is not null as ok \gset
+
+do $$
+begin
+  assert exists (
+    select 1 from public.inbox_items where comment_id = (select id from ids where name = 'retracted')
+  ), 'the follower was notified of the comment';
+  assert (select count(*) from public.inbox_items where read_at is null) = 0,
+    'a soft-deleted comment leaves no unread inbox item';
+end $$;
+
 -- Outsider + anon ------------------------------------------------------------------------------
 
 select set_config('request.jwt.claim.sub', '22222222-2222-4222-8222-222222222222', false) is not null as ok \gset

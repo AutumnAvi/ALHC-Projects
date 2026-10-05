@@ -232,6 +232,27 @@ create trigger comments_after_insert
   after insert on public.comments
   for each row execute function public.on_comment_insert();
 
+-- A retracted comment should not keep an unread badge alive; its inbox items are hidden in reads.
+create or replace function public.on_comment_soft_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.inbox_items
+  set read_at = now()
+  where comment_id = new.id and read_at is null;
+  return new;
+end;
+$$;
+
+create trigger comments_after_soft_delete
+  after update of deleted_at on public.comments
+  for each row
+  when (old.deleted_at is null and new.deleted_at is not null)
+  execute function public.on_comment_soft_delete();
+
 -- ---------------------------------------------------------------------------
 -- Task + membership activity
 -- ---------------------------------------------------------------------------
