@@ -108,8 +108,8 @@ declare
   p uuid := (select id from ids where name = 'p');
 begin
   assert (select string_agg(layout || ':' || name, ',' order by sort_order) from public.project_views
-          where project_id = p and deleted_at is null) = 'list:List,board:Board,calendar:Calendar',
-    'every new project gets List, Board, and Calendar views';
+          where project_id = p and deleted_at is null) = 'list:List,board:Board,calendar:Calendar,timeline:Timeline',
+    'every new project gets List, Board, Calendar, and Timeline views';
   assert (select config from public.project_views where project_id = p and layout = 'list') = '{}'::jsonb,
     'default views use the default config';
 end $$;
@@ -244,7 +244,7 @@ begin
   where id = v;
 
   begin
-    insert into public.project_views (project_id, name, layout) values (p, 'Gantt', 'timeline');
+    insert into public.project_views (project_id, name, layout) values (p, 'Gantt', 'gantt');
     raise exception 'unknown layouts must be rejected';
   exception when check_violation then null;
   end;
@@ -292,7 +292,7 @@ begin
   get diagnostics n = row_count;
   assert n = 0, 'views cannot be hard-deleted';
   update public.project_views set deleted_at = now() where id = v;
-  assert (select count(*) from public.project_views where project_id = p and deleted_at is null) = 3,
+  assert (select count(*) from public.project_views where project_id = p and deleted_at is null) = 4,
     'soft-deleted views drop out of the active list';
 
   insert into public.dashboard_widgets (project_id, kind, title, filters, sort_order)
