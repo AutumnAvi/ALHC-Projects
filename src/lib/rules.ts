@@ -39,6 +39,8 @@ export const ACTIONS = [
   { value: "notify", label: "Send inbox notification" },
   { value: "request_approval", label: "Request approval (approval subtask)" },
   { value: "send_email", label: "Send email" },
+  { value: "send_slack", label: "Send Slack message" },
+  { value: "call_webhook", label: "Call webhook" },
   { value: "delay", label: "Wait, then continue" },
 ] as const;
 
@@ -69,7 +71,19 @@ export const PERSON_ROLES = [
   { value: "creator", label: "Task creator" },
 ] as const;
 
-export const TEXT_TOKENS = "{assignee} {creator} {task} {section} {req} {due} {approval_note}";
+export const TEXT_TOKENS = "{assignee} {creator} {task} {section} {project} {req} {due} {approval_note}";
+
+// Integration actions (see the integrations migration). Stored shapes, as the builder reads them:
+//   send_slack   { message, use_project_webhook?, webhook_ref?, webhook_hint? }
+//   call_webhook { use_project_webhook?, url_ref?, url_hint?, secret_ref?, secret_set?, secret_header? }
+// To set or replace a value the builder sends webhook_url / url / secret (plain text) instead of the
+// ref; a database trigger stores it out of reach of clients and writes back a ref + redacted hint.
+// Sending "" for url / secret clears it. Without use_project_webhook the action's own URL wins and
+// the project default (Settings → Integrations) is the fallback.
+export const INTEGRATION_KEYS = {
+  send_slack: { plain: "webhook_url", ref: "webhook_ref", hint: "webhook_hint" },
+  call_webhook: { plain: "url", ref: "url_ref", hint: "url_hint" },
+} as const;
 
 export type RuleCondition = { type: ConditionType } & Record<string, Json>;
 export type RuleAction = { type: ActionType } & Record<string, Json>;
@@ -172,5 +186,8 @@ export function runReason(detail: Json): string | null {
     );
   }
   if (typeof d.error === "string") return d.error;
+  // Failed runs log { actions: { error } } (run_rule catches the error around all actions).
+  const actions = record(d.actions ?? null);
+  if (typeof actions.error === "string") return actions.error;
   return null;
 }

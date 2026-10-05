@@ -118,6 +118,19 @@ export function TaskActivity({
         return <>assigned request number {str(d, "label")}</>;
       case "email_queued":
         return <>emailed {str(d, "to")}</>;
+      case "integration_queued":
+        return str(d, "channel") === "slack" ? (
+          <>queued a Slack message to {str(d, "target")}</>
+        ) : (
+          <>queued a webhook call to {str(d, "target")}</>
+        );
+      case "integration_failed":
+        return (
+          <>
+            couldn’t deliver a {str(d, "channel") === "slack" ? "Slack message" : "webhook call"} to {str(d, "target")}{" "}
+            after {String(d && typeof d === "object" && !Array.isArray(d) ? (d.attempts ?? 5) : 5)} attempts
+          </>
+        );
       case "field_changed": {
         const fieldId = str(d, "field_id");
         const field = task.fields.find((f) => f.id === fieldId);

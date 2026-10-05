@@ -1,6 +1,7 @@
 "use client";
 
 import type { FieldDef } from "@/lib/fields";
+import type { ProjectIntegrations } from "@/lib/integrations-shared";
 import {
   ACTIONS,
   APPROVAL_DECISIONS,
@@ -20,6 +21,8 @@ export type RuleContext = {
   fields: FieldDef[];
   people: { id: string; name: string }[];
   forms: { id: string; title: string }[];
+  // Redacted project defaults (Settings → Integrations); null when not loaded (below Admin).
+  integrations: ProjectIntegrations | null;
 };
 
 export const inputClass =
@@ -132,6 +135,10 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
             ? `the address in ${fieldName(ctx, a.field_id)}`
             : labelOf(EMAIL_RECIPIENTS, a.to).toLowerCase()
       }`;
+    case "send_slack":
+      return `post to Slack (${a.use_project_webhook !== true && str(a.webhook_hint) ? str(a.webhook_hint) : "project webhook"})`;
+    case "call_webhook":
+      return `call webhook (${a.use_project_webhook !== true && str(a.url_hint) ? str(a.url_hint) : "project webhook"})`;
     case "delay":
       return `wait ${a.hours} h`;
     default:

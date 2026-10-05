@@ -12,6 +12,7 @@ import {
   type RuleRun,
 } from "@/lib/rules";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
+import { toProjectIntegrations, type ProjectIntegrations } from "@/lib/integrations-shared";
 import {
   PROJECT_ROLES as ROLE_ORDER,
   hasRole,
@@ -1073,6 +1074,15 @@ export const getRequestSequence = cache(async (projectId: string): Promise<Reque
     .is("deleted_at", null)
     .maybeSingle();
   return maybe(result, "request numbering");
+});
+
+// Redacted Slack / webhook defaults (hosts + last 4 characters, never the URL or secret). Admin+ only:
+// below Admin the RPC refuses, so this returns null without asking.
+export const getProjectIntegrations = cache(async (projectId: string): Promise<ProjectIntegrations | null> => {
+  if (!hasRole(await getProjectRole(projectId), "admin")) return null;
+  const supabase = await createClient();
+  const result = await supabase.rpc("get_project_integrations", { target_project: projectId });
+  return toProjectIntegrations(maybe(result, "integration settings"));
 });
 
 // ---------------------------------------------------------------------------------------------
