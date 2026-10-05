@@ -2,27 +2,60 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import {
+  CalendarDays,
+  ChartColumn,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
   FileInput,
   List,
+  MoreHorizontal,
+  Pencil,
+  Plus,
   Settings,
   SlidersHorizontal,
   SquareKanban,
   Trash2,
   Workflow,
 } from "lucide-react";
+import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
-import { deleteProject, updateProject } from "@/lib/actions";
+import {
+  createView,
+  deleteProject,
+  deleteView,
+  duplicateView,
+  moveView,
+  updateProject,
+  updateView,
+} from "@/lib/actions";
 import type { Project } from "@/lib/data";
+import { VIEW_LAYOUTS, type ProjectView, type ViewLayout } from "@/lib/views";
 
-export function ProjectHeader({ project }: { project: Project }) {
+export const LAYOUT_ICONS: Record<ViewLayout, typeof List> = {
+  list: List,
+  board: SquareKanban,
+  calendar: CalendarDays,
+};
+
+const TAB_CLASS =
+  "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent px-2.5 pb-2.5 pt-1 text-sm text-zinc-600 hover:text-zinc-900 aria-[current=page]:border-zinc-900 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
+
+export function ProjectHeader({ project, views }: { project: Project; views: ProjectView[] }) {
   const pathname = usePathname();
   const [pending, run] = useServerAction();
   const base = `/projects/${project.id}`;
 
+  // Older /list, /board, /calendar links render the default config when no saved view exists.
+  const fallbackTabs = VIEW_LAYOUTS.filter((l) => !views.some((v) => v.layout === l.value)).map((l) => ({
+    href: `${base}/${l.value}`,
+    label: l.label,
+    icon: LAYOUT_ICONS[l.value],
+  }));
   const tabs = [
-    { href: `${base}/list`, label: "List", icon: List },
-    { href: `${base}/board`, label: "Board", icon: SquareKanban },
+    { href: `${base}/dashboard`, label: "Dashboard", icon: ChartColumn },
     { href: `${base}/fields`, label: "Fields", icon: SlidersHorizontal },
     { href: `${base}/forms`, label: "Forms", icon: FileInput },
     { href: `${base}/rules`, label: "Rules", icon: Workflow },
@@ -92,16 +125,57 @@ export function ProjectHeader({ project }: { project: Project }) {
         </button>
       </div>
 
-      <nav aria-label="Project views" className="mt-3 flex gap-1 overflow-x-auto">
+      <nav aria-label="Project views" className="mt-3 flex items-end gap-1 overflow-x-auto">
+        {views.map((view, index) => (
+          <ViewTab
+            key={view.id}
+            view={view}
+            href={`${base}/views/${view.id}`}
+            active={pathname === `${base}/views/${view.id}`}
+            first={index === 0}
+            last={index === views.length - 1}
+            canDelete={views.length > 1}
+          />
+        ))}
+        {fallbackTabs.map(({ href, label, icon: Icon }) => (
+          <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined} className={TAB_CLASS}>
+            <Icon className="size-4" />
+            {label}
+          </Link>
+        ))}
+        <Popover
+          label="Add view"
+          panelClassName="w-48"
+          buttonClassName="mb-1.5 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+          button={
+            <>
+              <Plus className="size-4" aria-hidden />
+              <span className="sr-only sm:not-sr-only">View</span>
+            </>
+          }
+        >
+          {(close) =>
+            VIEW_LAYOUTS.map(({ value, label }) => {
+              const Icon = LAYOUT_ICONS[value];
+              return (
+                <MenuItem
+                  key={value}
+                  onClick={() => {
+                    close();
+                    run(() => createView(project.id, { name: label, layout: value }));
+                  }}
+                >
+                  <Icon className="size-4 text-zinc-500" /> {label}
+                </MenuItem>
+              );
+            })
+          }
+        </Popover>
+        <span aria-hidden className="mx-1 mb-2.5 h-4 w-px shrink-0 bg-zinc-200" />
         {tabs.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
-            <Link
-              key={href}
-              href={href}
-              aria-current={active ? "page" : undefined}
-              className="-mb-px inline-flex items-center gap-1.5 border-b-2 border-transparent px-2.5 pb-2.5 pt-1 text-sm text-zinc-600 hover:text-zinc-900 aria-[current=page]:border-zinc-900 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"
-            >
+            <Link key={href} href={href} aria-current={active ? "page" : undefined} className={TAB_CLASS}>
               <Icon className="size-4" />
               {label}
             </Link>
@@ -109,5 +183,111 @@ export function ProjectHeader({ project }: { project: Project }) {
         })}
       </nav>
     </header>
+  );
+}
+
+function ViewTab({
+  view,
+  href,
+  active,
+  first,
+  last,
+  canDelete,
+}: {
+  view: ProjectView;
+  href: string;
+  active: boolean;
+  first: boolean;
+  last: boolean;
+  canDelete: boolean;
+}) {
+  const [, run] = useServerAction();
+  const [renaming, setRenaming] = useState(false);
+  const Icon = LAYOUT_ICONS[view.layout];
+
+  if (renaming) {
+    return (
+      <form
+        className="mb-1 shrink-0"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
+          setRenaming(false);
+          if (name && name !== view.name) run(() => updateView(view.id, { name }));
+        }}
+      >
+        <label htmlFor={`rename-view-${view.id}`} className="sr-only">
+          View name
+        </label>
+        <input
+          id={`rename-view-${view.id}`}
+          name="name"
+          autoFocus
+          defaultValue={view.name}
+          maxLength={100}
+          onBlur={(e) => e.currentTarget.form?.requestSubmit()}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setRenaming(false);
+          }}
+          className="w-36 rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-accent-500 focus:outline-none"
+        />
+      </form>
+    );
+  }
+
+  return (
+    <span className="group inline-flex shrink-0 items-end">
+      <Link href={href} aria-current={active ? "page" : undefined} className={TAB_CLASS}>
+        <Icon className="size-4" />
+        {view.name}
+      </Link>
+      {active ? (
+        <Popover
+          label={`Options for view ${view.name}`}
+          panelClassName="w-48"
+          buttonClassName="mb-1.5 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+          button={<MoreHorizontal className="size-4" aria-hidden />}
+        >
+          {(close) => (
+            <>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  setRenaming(true);
+                }}
+              >
+                <Pencil className="size-4 text-zinc-500" /> Rename
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  run(() => duplicateView(view.id));
+                }}
+              >
+                <Copy className="size-4 text-zinc-500" /> Duplicate
+              </MenuItem>
+              <MenuItem disabled={first} onClick={() => run(() => moveView(view.id, -1))}>
+                <ChevronLeft className="size-4 text-zinc-500" /> Move left
+              </MenuItem>
+              <MenuItem disabled={last} onClick={() => run(() => moveView(view.id, 1))}>
+                <ChevronRight className="size-4 text-zinc-500" /> Move right
+              </MenuItem>
+              <MenuItem
+                danger
+                disabled={!canDelete}
+                onClick={() => {
+                  close();
+                  if (window.confirm(`Delete the view “${view.name}”? Tasks are not affected.`)) {
+                    run(() => deleteView(view.id));
+                  }
+                }}
+              >
+                <Trash2 className="size-4" /> Delete view
+              </MenuItem>
+            </>
+          )}
+        </Popover>
+      ) : null}
+    </span>
   );
 }

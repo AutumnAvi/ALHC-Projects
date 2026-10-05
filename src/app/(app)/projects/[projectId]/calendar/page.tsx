@@ -4,16 +4,16 @@ import { getProject } from "@/lib/data";
 
 export async function generateMetadata({
   params,
-}: PageProps<"/projects/[projectId]/list">): Promise<Metadata> {
+}: PageProps<"/projects/[projectId]/calendar">): Promise<Metadata> {
   const { projectId } = await params;
   const project = await getProject(projectId);
-  return { title: project ? `${project.name} · List` : "List" };
+  return { title: project ? `${project.name} · Calendar` : "Calendar" };
 }
 
-export default async function ProjectListPage({
+export default async function ProjectCalendarPage({
   params,
   searchParams,
-}: PageProps<"/projects/[projectId]/list">) {
+}: PageProps<"/projects/[projectId]/calendar">) {
   const { projectId } = await params;
-  return <LayoutRoute projectId={projectId} layout="list" searchParams={await searchParams} />;
+  return <LayoutRoute projectId={projectId} layout="calendar" searchParams={await searchParams} />;
 }
