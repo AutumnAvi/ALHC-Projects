@@ -47,6 +47,13 @@ export function TaskActivity({
     ...task.stories.map((story) => ({ type: "story" as const, at: story.createdAt, story })),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
+  function storyActor(story: TaskStory): string {
+    const ruleName = str(story.data, "rule_name");
+    if (ruleName) return `Rule “${ruleName}”`;
+    if (!story.actorId && story.kind === "form_submitted") return str(story.data, "submitter_email") ?? "Someone";
+    return nameOf(story.actorId);
+  }
+
   function storyText(story: TaskStory): ReactNode {
     const d = story.data;
     switch (story.kind) {
@@ -80,6 +87,28 @@ export function TaskActivity({
         return <>removed this from {str(d, "project_name")}</>;
       case "attachment_added":
         return <>attached {str(d, "file_name")}</>;
+      case "approval_requested":
+        return <>requested approval from {nameOf(str(d, "approver_id"))}</>;
+      case "approval_decided": {
+        const note = str(d, "note");
+        const verb =
+          str(d, "status") === "approved"
+            ? "approved this"
+            : str(d, "status") === "rejected"
+              ? "rejected this"
+              : "requested changes";
+        return note ? <>{verb}: “{note}”</> : verb;
+      }
+      case "approval_cancelled":
+        return <>cancelled the approval request for {nameOf(str(d, "approver_id"))}</>;
+      case "approval_resubmitted":
+        return <>resubmitted this to {nameOf(str(d, "approver_id"))} for approval</>;
+      case "form_submitted":
+        return <>submitted the form “{str(d, "form_title")}”</>;
+      case "request_number_assigned":
+        return <>assigned request number {str(d, "label")}</>;
+      case "email_queued":
+        return <>emailed {str(d, "to")}</>;
       case "field_changed": {
         const fieldId = str(d, "field_id");
         const field = task.fields.find((f) => f.id === fieldId);
@@ -118,7 +147,7 @@ export function TaskActivity({
             <li key={entry.story.id} className="flex items-baseline gap-2 pl-1 text-xs text-zinc-500">
               <span aria-hidden className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-zinc-300" />
               <p className="min-w-0">
-                <span className="font-medium text-zinc-700">{nameOf(entry.story.actorId)}</span>{" "}
+                <span className="font-medium text-zinc-700">{storyActor(entry.story)}</span>{" "}
                 {storyText(entry.story)} · <Timestamp iso={entry.story.createdAt} />
               </p>
             </li>
@@ -126,8 +155,8 @@ export function TaskActivity({
             <CommentItem
               key={entry.comment.id}
               comment={entry.comment}
-              authorName={nameOf(entry.comment.authorId)}
-              mine={entry.comment.authorId === memberId}
+              authorName={entry.comment.ruleName ? `Rule “${entry.comment.ruleName}”` : nameOf(entry.comment.authorId)}
+              mine={entry.comment.authorId !== null && entry.comment.authorId === memberId}
               mentionNames={entry.comment.mentionIds.map((mentionId) => nameOf(mentionId))}
             />
           ),

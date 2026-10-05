@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useOptimistic, useRef, type ReactNode } from "react";
-import { Check, Home, Plus, Trash2, X } from "lucide-react";
+import { Check, FileInput, Hash, Home, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { CompleteToggle } from "@/components/complete-toggle";
 import { useServerAction } from "@/components/toast";
 import {
   addTaskToProject,
+  assignRequestNumber,
   createSubtask,
   deleteSubtask,
   deleteTask,
@@ -21,6 +22,7 @@ import {
 } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { CommentComposer, TaskActivity } from "./task-activity";
+import { TaskApprovals } from "./task-approvals";
 import { TaskAttachments } from "./task-attachments";
 import { TaskFields } from "./task-fields";
 
@@ -172,6 +174,8 @@ export function TaskDetailPanel({
           }`}
         />
 
+        <RequestBadges task={task} />
+
         <dl className="mt-5 grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-4 gap-y-3 text-sm">
           <dt className="text-zinc-500">
             <label htmlFor="task-assignee">Assignee</label>
@@ -236,6 +240,8 @@ export function TaskDetailPanel({
         </div>
 
         <Subtasks task={task} />
+
+        <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
 
         <TaskAttachments taskId={task.id} attachments={task.attachments} />
 
@@ -351,6 +357,40 @@ function Memberships({
   );
 }
 
+function RequestBadges({ task }: { task: TaskDetail }) {
+  const [pending, run] = useServerAction();
+  if (!task.requestLabel && !task.submission && !task.canAssignRequestNumber) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+      {task.requestLabel ? (
+        <span
+          className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-700"
+          title="Request number"
+        >
+          <Hash className="size-3" aria-hidden />
+          {task.requestLabel}
+        </span>
+      ) : task.canAssignRequestNumber ? (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => run(() => assignRequestNumber(task.id))}
+          className="inline-flex items-center gap-1 rounded border border-dashed border-zinc-300 px-1.5 py-0.5 text-zinc-600 hover:border-zinc-400 hover:text-zinc-900 disabled:opacity-50"
+        >
+          <Hash className="size-3" aria-hidden />
+          Assign request number
+        </button>
+      ) : null}
+      {task.submission ? (
+        <span className="inline-flex items-center gap-1 rounded bg-accent-50 px-1.5 py-0.5 text-accent-700">
+          <FileInput className="size-3" aria-hidden />
+          From {task.submission.formTitle ? `“${task.submission.formTitle}”` : "a form"} · {task.submission.email}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 type SubtaskChange =
   | { type: "toggle"; id: string; completed: boolean }
   | { type: "remove"; id: string };
@@ -370,6 +410,9 @@ function Subtasks({ task }: { task: TaskDetail }) {
           ),
   );
   const done = subtasks.filter((s) => s.completed_at).length;
+  const approvalBySubtask = new Map(
+    task.approvals.filter((a) => a.subtaskId).map((a) => [a.subtaskId!, a] as const),
+  );
 
   return (
     <section className="mt-6" aria-labelledby="subtasks-heading">
@@ -387,19 +430,31 @@ function Subtasks({ task }: { task: TaskDetail }) {
       <ul className="mt-2 divide-y divide-zinc-100 rounded-md border border-zinc-200">
         {subtasks.map((subtask) => {
           const completed = Boolean(subtask.completed_at);
+          const approval = approvalBySubtask.get(subtask.id);
           return (
             <li key={subtask.id} className="group flex items-center gap-2.5 px-3 py-1.5">
-              <CompleteToggle
-                size="sm"
-                completed={completed}
-                label={completed ? `Mark “${subtask.title}” incomplete` : `Mark “${subtask.title}” complete`}
-                onToggle={() =>
-                  run(
-                    () => updateSubtask(subtask.id, { completed: !completed }),
-                    () => applyChange({ type: "toggle", id: subtask.id, completed: !completed }),
-                  )
-                }
-              />
+              {approval ? (
+                <span
+                  title="Approval subtask: decide it in Approvals below"
+                  className={`inline-flex size-4 items-center justify-center ${
+                    approval.status === "approved" ? "text-green-700" : "text-amber-600"
+                  }`}
+                >
+                  <ShieldCheck className="size-4" aria-label="Approval" />
+                </span>
+              ) : (
+                <CompleteToggle
+                  size="sm"
+                  completed={completed}
+                  label={completed ? `Mark “${subtask.title}” incomplete` : `Mark “${subtask.title}” complete`}
+                  onToggle={() =>
+                    run(
+                      () => updateSubtask(subtask.id, { completed: !completed }),
+                      () => applyChange({ type: "toggle", id: subtask.id, completed: !completed }),
+                    )
+                  }
+                />
+              )}
               <label className="sr-only" htmlFor={`subtask-${subtask.id}`}>
                 Subtask name
               </label>

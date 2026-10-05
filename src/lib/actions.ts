@@ -2,9 +2,20 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { getWorkspace } from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
+import { drainOutbox } from "@/lib/email";
 import { isFieldType, isOptionColor, type FieldOption } from "@/lib/fields";
+import {
+  isChoice,
+  isQuestionType,
+  parseQuestions,
+  validateSubmission,
+  type FormAnswers,
+  type FormQuestion,
+} from "@/lib/forms";
+import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
 import type { Json } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
@@ -36,6 +47,17 @@ function optionalText(value: unknown, max = 20000): string | null {
   return trimmed || null;
 }
 
+// Any write can make rules queue email, so deliver the outbox once the response is sent.
+function deliverQueuedEmail() {
+  after(async () => {
+    try {
+      await drainOutbox();
+    } catch (error) {
+      console.error("Email delivery failed", error);
+    }
+  });
+}
+
 async function run(fn: () => Promise<void>): Promise<ActionResult> {
   try {
     await fn();
@@ -44,6 +66,7 @@ async function run(fn: () => Promise<void>): Promise<ActionResult> {
     if (error instanceof DbError) return { error: error.message };
     throw error;
   }
+  deliverQueuedEmail();
   refresh();
   return {};
 }
@@ -571,5 +594,379 @@ export async function markInboxUnread(itemId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.from("inbox_items").update({ read_at: null }).eq("id", id(itemId)));
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Request numbers + project workflow settings
+// ---------------------------------------------------------------------------------------------
+
+export async function saveRequestNumbering(
+  projectId: string,
+  input: {
+    enabled: boolean;
+    prefix: string;
+    padWidth: number;
+    addToTitle: boolean;
+    assignTo: "all_tasks" | "form_submissions";
+    nextNumber?: number | null;
+  },
+): Promise<ActionResult> {
+  return run(async () => {
+    const prefix = input.prefix.trim();
+    if (prefix.length > 20) throw new InputError("Prefix is limited to 20 characters");
+    if (!Number.isInteger(input.padWidth) || input.padWidth < 0 || input.padWidth > 8) {
+      throw new InputError("Padding must be between 0 and 8 digits");
+    }
+    if (input.assignTo !== "all_tasks" && input.assignTo !== "form_submissions") {
+      throw new InputError("Unknown numbering scope");
+    }
+    const row: {
+      project_id: string;
+      enabled: boolean;
+      prefix: string;
+      pad_width: number;
+      add_to_title: boolean;
+      assign_to: string;
+      deleted_at: null;
+      last_number?: number;
+    } = {
+      project_id: id(projectId),
+      enabled: Boolean(input.enabled),
+      prefix,
+      pad_width: input.padWidth,
+      add_to_title: Boolean(input.addToTitle),
+      assign_to: input.assignTo,
+      deleted_at: null,
+    };
+    if (input.nextNumber !== undefined && input.nextNumber !== null) {
+      if (!Number.isInteger(input.nextNumber) || input.nextNumber < 1) {
+        throw new InputError("The next number must be a positive whole number");
+      }
+      row.last_number = input.nextNumber - 1;
+    }
+    const supabase = await createClient();
+    check(await supabase.from("request_sequences").upsert(row, { onConflict: "project_id" }));
+  });
+}
+
+export async function updateProjectWorkflow(
+  projectId: string,
+  patch: { approvalCompletesTask: boolean },
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase
+        .from("projects")
+        .update({ approval_completes_task: Boolean(patch.approvalCompletesTask) })
+        .eq("id", id(projectId)),
+    );
+  });
+}
+
+export async function assignRequestNumber(taskId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("assign_request_number", { target_task: id(taskId) }));
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Approvals (state changes go through RPCs; triggers write stories, inbox items, and fire rules)
+// ---------------------------------------------------------------------------------------------
+
+export async function requestApproval(
+  taskId: string,
+  input: { approverId: string; note?: string; asSubtask?: boolean; title?: string },
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("request_approval", {
+        target_task: id(taskId),
+        approver: id(input.approverId, "approver"),
+        approval_note: optionalText(input.note, 2000),
+        as_subtask: input.asSubtask ?? true,
+        subtask_title: optionalText(input.title, 500),
+      }),
+    );
+  });
+}
+
+export async function decideApproval(
+  approvalId: string,
+  decision: "approved" | "changes_requested" | "rejected",
+  note?: string,
+): Promise<ActionResult> {
+  return run(async () => {
+    if (!["approved", "changes_requested", "rejected"].includes(decision)) {
+      throw new InputError("Unknown decision");
+    }
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("decide_approval", {
+        target_approval: id(approvalId),
+        decision,
+        decision_note: optionalText(note, 2000),
+      }),
+    );
+  });
+}
+
+export async function cancelApproval(approvalId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("cancel_approval", { target_approval: id(approvalId) }));
+  });
+}
+
+export async function resubmitApproval(approvalId: string, note?: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("resubmit_approval", {
+        target_approval: id(approvalId),
+        approval_note: optionalText(note, 2000),
+      }),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Forms
+// ---------------------------------------------------------------------------------------------
+
+function cleanQuestions(value: unknown): FormQuestion[] {
+  if (!Array.isArray(value) || value.length > 100) throw new InputError("Forms are limited to 100 questions");
+  const parsed = parseQuestions(value as Json);
+  if (parsed.length !== value.length) throw new InputError("A question is missing its label or type");
+  const seen = new Set<string>();
+  return parsed.map((q) => {
+    if (!q.id || q.id.length > 64 || seen.has(q.id)) throw new InputError("Question ids must be unique");
+    const parentIsEarlier = q.show_if ? seen.has(q.show_if.question_id) : true;
+    seen.add(q.id);
+    if (!isQuestionType(q.type)) throw new InputError("Unknown question type");
+    const question: FormQuestion = { ...q, label: text(q.label, "Question", { max: 500 }) };
+    if (q.help !== undefined) question.help = optionalText(q.help, 1000) ?? undefined;
+    if (!question.help) delete question.help;
+    if (isChoice(q.type)) {
+      const options = (q.options ?? []).map((o) => ({ id: o.id, label: text(o.label, "Option", { max: 200 }) }));
+      if (options.length === 0) throw new InputError(`Add at least one option to “${question.label}”`);
+      question.options = options;
+    } else {
+      delete question.options;
+    }
+    if (!parentIsEarlier || question.show_if?.option_ids.length === 0) delete question.show_if;
+    return question;
+  });
+}
+
+export async function createForm(projectId: string, title: string): Promise<ActionResult> {
+  let formId: string | null = null;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const sections = await supabase
+      .from("sections")
+      .select("id")
+      .eq("project_id", id(projectId))
+      .is("deleted_at", null)
+      .order("sort_order")
+      .limit(1);
+    const inserted = await supabase
+      .from("forms")
+      .insert({
+        project_id: projectId,
+        title: text(title, "Form name", { max: 200 }),
+        destination_section_id: sections.data?.[0]?.id ?? null,
+        questions: [
+          {
+            id: crypto.randomUUID(),
+            type: "short_text",
+            label: "What do you need?",
+            required: true,
+            maps_to: { target: "title" },
+          },
+          {
+            id: crypto.randomUUID(),
+            type: "long_text",
+            label: "Details",
+            maps_to: { target: "notes" },
+          },
+        ],
+      })
+      .select("id")
+      .single();
+    check(inserted);
+    formId = inserted.data!.id;
+  });
+  if (formId && !result.error) redirect(`/projects/${projectId}/forms/${formId}`);
+  return result;
+}
+
+export async function updateForm(
+  formId: string,
+  patch: {
+    title?: string;
+    description?: string | null;
+    questions?: FormQuestion[];
+    destinationSectionId?: string | null;
+    acceptingResponses?: boolean;
+    sendConfirmation?: boolean;
+    confirmationMessage?: string | null;
+  },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: {
+      title?: string;
+      description?: string | null;
+      questions?: Json;
+      destination_section_id?: string | null;
+      accepting_responses?: boolean;
+      send_confirmation?: boolean;
+      confirmation_message?: string | null;
+    } = {};
+    if (patch.title !== undefined) update.title = text(patch.title, "Form name", { max: 200 });
+    if (patch.description !== undefined) update.description = optionalText(patch.description, 5000);
+    if (patch.questions !== undefined) update.questions = cleanQuestions(patch.questions) as Json;
+    if (patch.destinationSectionId !== undefined) {
+      update.destination_section_id = patch.destinationSectionId ? id(patch.destinationSectionId, "section") : null;
+    }
+    if (patch.acceptingResponses !== undefined) update.accepting_responses = Boolean(patch.acceptingResponses);
+    if (patch.sendConfirmation !== undefined) update.send_confirmation = Boolean(patch.sendConfirmation);
+    if (patch.confirmationMessage !== undefined) {
+      update.confirmation_message = optionalText(patch.confirmationMessage, 2000);
+    }
+    const supabase = await createClient();
+    check(await supabase.from("forms").update(update).eq("id", id(formId)));
+  });
+}
+
+export async function deleteForm(formId: string, projectId: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    const supabase = await createClient();
+    check(await supabase.from("forms").update({ deleted_at: now() }).eq("id", id(formId)));
+  });
+  if (!result.error) redirect(`/projects/${id(projectId)}/forms`);
+  return result;
+}
+
+export type SubmitFormResult = {
+  error?: string;
+  fieldErrors?: Record<string, string>;
+  requestLabel?: string | null;
+  message?: string | null;
+};
+
+// Public: callable by anonymous visitors. Validation runs here and again in submit_form.
+export async function submitForm(
+  formId: string,
+  input: { email: string; answers: FormAnswers; website?: string },
+): Promise<SubmitFormResult> {
+  if (!isUuid(formId)) return { error: "This form does not exist" };
+  // Honeypot: real visitors never see or fill the "website" input.
+  if (input.website) return { requestLabel: null, message: null };
+  const supabase = await createClient();
+  const form = await supabase.rpc("get_public_form", { target_form: formId });
+  const data = form.data && typeof form.data === "object" && !Array.isArray(form.data) ? form.data : null;
+  if (form.error || !data) return { error: "This form does not exist" };
+  const questions = parseQuestions(data.questions ?? []);
+  const email = input.email.trim() || (typeof data.viewer_email === "string" ? data.viewer_email : "");
+  const { errors, clean } = validateSubmission(questions, email, input.answers ?? {});
+  if (Object.keys(errors).length) return { error: "Check the highlighted answers", fieldErrors: errors };
+
+  const result = await supabase.rpc("submit_form", {
+    target_form: formId,
+    submitter_email: email,
+    answers: clean as Json,
+  });
+  if (result.error) return { error: result.error.message };
+  const out = (result.data ?? {}) as { request_label?: string | null; message?: string | null };
+  deliverQueuedEmail();
+  return { requestLabel: out.request_label ?? null, message: out.message ?? null };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Rules
+// ---------------------------------------------------------------------------------------------
+
+type RuleInput = {
+  name: string;
+  triggerType: string;
+  triggerConfig: Record<string, Json>;
+  conditions: RuleCondition[];
+  actions: RuleAction[];
+};
+
+function ruleRow(input: RuleInput) {
+  if (!isTriggerType(input.triggerType)) throw new InputError("Choose a trigger");
+  if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
+  return {
+    name: text(input.name, "Rule name", { max: 200 }),
+    trigger_type: input.triggerType,
+    trigger_config: (input.triggerConfig ?? {}) as Json,
+    conditions: (input.conditions ?? []) as Json,
+    actions: input.actions as Json,
+  };
+}
+
+export async function createRule(projectId: string, input: RuleInput): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const { data: last } = await supabase
+      .from("rules")
+      .select("sort_order")
+      .eq("project_id", id(projectId))
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    check(
+      await supabase
+        .from("rules")
+        .insert({ project_id: projectId, ...ruleRow(input), sort_order: (last?.sort_order ?? 0) + ORDER_STEP }),
+    );
+  });
+}
+
+export async function updateRule(ruleId: string, input: RuleInput): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.from("rules").update(ruleRow(input)).eq("id", id(ruleId)));
+  });
+}
+
+export async function setRuleEnabled(ruleId: string, enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.from("rules").update({ enabled: Boolean(enabled) }).eq("id", id(ruleId)));
+  });
+}
+
+export async function deleteRule(ruleId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.from("rules").update({ deleted_at: now(), enabled: false }).eq("id", id(ruleId)),
+    );
+  });
+}
+
+export async function installRulePreset(
+  projectId: string,
+  presetKey: string,
+  inputs: Record<string, Json>,
+  enable: boolean,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("install_rule_preset", {
+        target_project: id(projectId),
+        preset: text(presetKey, "Preset", { max: 100 }),
+        inputs: inputs as Json,
+        enable: Boolean(enable),
+      }),
+    );
   });
 }

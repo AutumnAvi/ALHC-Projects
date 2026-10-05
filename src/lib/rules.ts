@@ -1,0 +1,176 @@
+import type { Json } from "@/lib/supabase/database.types";
+
+// Vocabulary of the rules engine (see the workflows migration). The database validates every rule
+// (`validate_rule`) and runs it; this module only describes rules for the builder UI.
+
+export const TRIGGERS = [
+  { value: "task_created", label: "Task is added to this project" },
+  { value: "section_changed", label: "Task moves into a section" },
+  { value: "field_changed", label: "A field changes" },
+  { value: "assignee_changed", label: "Assignee changes" },
+  { value: "due_approaching", label: "Due date is approaching" },
+  { value: "approval_decided", label: "An approval is decided" },
+  { value: "form_submitted", label: "A form is submitted" },
+] as const;
+
+export type TriggerType = (typeof TRIGGERS)[number]["value"];
+
+export const CONDITIONS = [
+  { value: "section_is", label: "Section is" },
+  { value: "section_is_not", label: "Section is not" },
+  { value: "field_equals", label: "Field equals" },
+  { value: "field_is_set", label: "Field is set" },
+  { value: "field_is_empty", label: "Field is empty" },
+  { value: "assignee_is_set", label: "Has an assignee" },
+  { value: "assignee_is_empty", label: "Has no assignee" },
+  { value: "is_incomplete", label: "Task is incomplete" },
+  { value: "is_complete", label: "Task is complete" },
+  { value: "source_is", label: "Task came from" },
+] as const;
+
+export type ConditionType = (typeof CONDITIONS)[number]["value"];
+
+export const ACTIONS = [
+  { value: "move_section", label: "Move to section" },
+  { value: "set_field", label: "Set field" },
+  { value: "set_assignee", label: "Set assignee" },
+  { value: "add_comment", label: "Add comment" },
+  { value: "add_followers", label: "Add followers" },
+  { value: "notify", label: "Send inbox notification" },
+  { value: "request_approval", label: "Request approval (approval subtask)" },
+  { value: "send_email", label: "Send email" },
+  { value: "delay", label: "Wait, then continue" },
+] as const;
+
+export type ActionType = (typeof ACTIONS)[number]["value"];
+
+export const APPROVAL_DECISIONS = [
+  { value: "approved", label: "Approved" },
+  { value: "changes_requested", label: "Changes requested" },
+  { value: "rejected", label: "Rejected" },
+] as const;
+
+export const EMAIL_RECIPIENTS = [
+  { value: "submitter", label: "Form submitter" },
+  { value: "assignee", label: "Assignee" },
+  { value: "field", label: "Email in a field" },
+  { value: "address", label: "Fixed address" },
+] as const;
+
+export const EMAIL_TEMPLATES = [
+  { value: "requester_update", label: "Requester update" },
+  { value: "due_tomorrow", label: "Due tomorrow" },
+  { value: "custom", label: "Plain message" },
+] as const;
+
+// People slots accept a profile id or one of these roles.
+export const PERSON_ROLES = [
+  { value: "assignee", label: "Task assignee" },
+  { value: "creator", label: "Task creator" },
+] as const;
+
+export const TEXT_TOKENS = "{assignee} {creator} {task} {section} {req} {due} {approval_note}";
+
+export type RuleCondition = { type: ConditionType } & Record<string, Json>;
+export type RuleAction = { type: ActionType } & Record<string, Json>;
+
+export type RuleDef = {
+  id: string;
+  projectId: string;
+  name: string;
+  enabled: boolean;
+  triggerType: TriggerType;
+  triggerConfig: Record<string, Json>;
+  conditions: RuleCondition[];
+  actions: RuleAction[];
+  presetKey: string | null;
+};
+
+export type RuleRun = {
+  id: string;
+  ruleId: string;
+  taskId: string | null;
+  taskTitle: string | null;
+  status: "succeeded" | "failed" | "skipped" | "scheduled";
+  detail: Json;
+  createdAt: string;
+};
+
+export type PresetInput = {
+  key: string;
+  label: string;
+  kind: "section" | "field" | "person" | "text" | "number";
+  default?: Json;
+};
+
+export type RulePreset = {
+  key: string;
+  name: string;
+  description: string;
+  inputs: PresetInput[];
+  ruleCount: number;
+};
+
+export function isTriggerType(value: unknown): value is TriggerType {
+  return TRIGGERS.some((t) => t.value === value);
+}
+
+export function labelOf<T extends readonly { value: string; label: string }[]>(list: T, value: unknown) {
+  return list.find((item) => item.value === value)?.label ?? String(value);
+}
+
+function record(value: Json): Record<string, Json> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, Json>) : {};
+}
+
+function typedList<T extends { type: string }>(value: Json): T[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const r = record(item);
+    return typeof r.type === "string" ? [r as T] : [];
+  });
+}
+
+export function toRuleDef(row: {
+  id: string;
+  project_id: string;
+  name: string;
+  enabled: boolean;
+  trigger_type: string;
+  trigger_config: Json;
+  conditions: Json;
+  actions: Json;
+  preset_key: string | null;
+}): RuleDef {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    enabled: row.enabled,
+    triggerType: isTriggerType(row.trigger_type) ? row.trigger_type : "task_created",
+    triggerConfig: record(row.trigger_config),
+    conditions: typedList<RuleCondition>(row.conditions),
+    actions: typedList<RuleAction>(row.actions),
+    presetKey: row.preset_key,
+  };
+}
+
+export function parsePresetInputs(value: Json): PresetInput[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const r = record(item);
+    if (typeof r.key !== "string" || typeof r.label !== "string" || typeof r.kind !== "string") return [];
+    return [{ key: r.key, label: r.label, kind: r.kind as PresetInput["kind"], ...(r.default !== undefined ? { default: r.default } : {}) }];
+  });
+}
+
+export function runReason(detail: Json): string | null {
+  const d = record(detail);
+  if (typeof d.reason === "string") {
+    return (
+      { loop: "loop prevented", depth_limit: "chain too deep", throttled: "throttled" }[d.reason] ?? d.reason
+    );
+  }
+  if (typeof d.error === "string") return d.error;
+  return null;
+}
