@@ -4,6 +4,7 @@ import { useOptimistic } from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { Timestamp } from "@/components/timestamp";
+import { EmptyState } from "@/components/ui";
 import { useServerAction } from "@/components/toast";
 import { restoreTask } from "@/lib/actions";
 import type { Profile, TrashedTask } from "@/lib/data";
@@ -26,7 +27,7 @@ export function TrashView({
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-6">
+    <div className="mx-auto max-w-3xl px-gutter py-5">
       <section className="rounded-lg border border-zinc-200" aria-labelledby="trash-heading">
         <div className="border-b border-zinc-200 px-5 py-4">
           <h2 id="trash-heading" className="text-sm font-semibold text-zinc-900">
@@ -39,11 +40,9 @@ export function TrashView({
         </div>
 
         {visible.length === 0 ? (
-          <div className="flex flex-col items-center px-5 py-10 text-center">
-            <Trash2 className="size-6 text-zinc-300" aria-hidden />
-            <p className="mt-2 text-sm font-medium text-zinc-700">The Trash is empty</p>
-            <p className="mt-1 text-sm text-zinc-500">Tasks deleted from this project will show up here.</p>
-          </div>
+          <EmptyState icon={Trash2} title="The Trash is empty" size="inline">
+            Tasks deleted from this project will show up here.
+          </EmptyState>
         ) : (
           <ul className="divide-y divide-zinc-100">
             {visible.map((task) => {

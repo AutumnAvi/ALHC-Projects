@@ -60,7 +60,7 @@ export function TaskAttachments({
   return (
     <section className="mt-6" aria-labelledby="attachments-heading">
       <div className="flex items-baseline justify-between">
-        <h3 id="attachments-heading" className="text-sm font-medium text-zinc-900">
+        <h3 id="attachments-heading" className="text-sm font-semibold text-zinc-900">
           Attachments
         </h3>
         <span className="text-xs text-zinc-400">Up to 25 MB each</span>

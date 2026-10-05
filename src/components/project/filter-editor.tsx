@@ -135,7 +135,7 @@ export function FilterChips({
       {chips.map((chip) => (
         <li
           key={chip.key}
-          className="inline-flex max-w-full items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 py-0.5 pr-1 pl-2.5 text-xs text-zinc-700"
+          className="inline-flex h-6 max-w-full items-center gap-1 rounded-md border border-accent-200 bg-accent-50 pr-0.5 pl-2 text-xs text-accent-700"
         >
           <span className="truncate">{chip.label}</span>
           {onChange ? (
@@ -143,7 +143,7 @@ export function FilterChips({
               type="button"
               onClick={() => onChange(chip.remove())}
               aria-label={`Remove filter ${chip.label}`}
-              className="rounded-full p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-800"
+              className="rounded p-0.5 text-accent-600 hover:bg-accent-100 hover:text-accent-700"
             >
               <X className="size-3" />
             </button>

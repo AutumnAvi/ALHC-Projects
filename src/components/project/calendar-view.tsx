@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useState, type DragEvent } from "react";
-import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
@@ -13,12 +13,17 @@ import { isIsoDate } from "@/lib/views";
 import { useTaskHref } from "./shared";
 import { Assignee } from "./task-meta";
 import { useProjectTasks } from "./use-project-tasks";
+import { PeriodNav, Segmented, TRAY_EMPTY, TRAY_HEADING, VIEW_BODY, VIEW_HINT, ViewLoading, trayClass } from "./view-chrome";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const CAL_MODES = [
+  { value: "month", label: "Month" },
+  { value: "week", label: "Week" },
+] as const;
 const DRAG_TYPE = "application/x-alhc-task";
 const MONTH_CELL_LIMIT = 3;
 
@@ -152,7 +157,7 @@ export function CalendarView({
   const tray = optimisticTasks.filter((t) => !t.dueOn && !t.completedAt);
 
   if (!anchor) {
-    return <p className="px-6 py-6 text-sm text-zinc-400">Loading calendar…</p>;
+    return <ViewLoading label="Loading calendar…" />;
   }
 
   const days = visibleDays(anchor, mode);
@@ -161,53 +166,25 @@ export function CalendarView({
     navigate({ d: mode === "week" ? addDays(anchor, delta * 7) : shiftMonth(anchor, delta) });
 
   return (
-    <div className="flex min-h-0 flex-1 gap-4 px-6 py-4">
+    <div className={VIEW_BODY}>
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <h2 className="mr-2 text-base font-semibold text-zinc-900" aria-live="polite">
-            {periodLabel(anchor, mode)}
-          </h2>
-          <div className="flex items-center">
-            <button
-              type="button"
-              onClick={() => step(-1)}
-              aria-label={mode === "week" ? "Previous week" : "Previous month"}
-              className="rounded-md p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-            >
-              <ChevronLeft className="size-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => step(1)}
-              aria-label={mode === "week" ? "Next week" : "Next month"}
-              className="rounded-md p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-            >
-              <ChevronRight className="size-4" />
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate({ d: null })}
-            className="rounded-md border border-zinc-200 px-2 py-0.5 text-sm text-zinc-700 hover:border-zinc-300"
-          >
-            Today
-          </button>
-          <div role="group" aria-label="Calendar range" className="ml-auto inline-flex rounded-md border border-zinc-200 p-0.5">
-            {(["month", "week"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                aria-pressed={mode === m}
-                onClick={() => navigate({ cal: m })}
-                className="rounded px-2 py-0.5 text-sm text-zinc-600 aria-pressed:bg-zinc-900 aria-pressed:text-white"
-              >
-                {m === "month" ? "Month" : "Week"}
-              </button>
-            ))}
-          </div>
-        </div>
+        <PeriodNav
+          label={periodLabel(anchor, mode)}
+          prevLabel={mode === "week" ? "Previous week" : "Previous month"}
+          nextLabel={mode === "week" ? "Next week" : "Next month"}
+          onPrev={() => step(-1)}
+          onNext={() => step(1)}
+          onToday={() => navigate({ d: null })}
+        >
+          <Segmented
+            label="Calendar range"
+            options={CAL_MODES}
+            value={mode}
+            onChange={(m) => navigate({ cal: m })}
+          />
+        </PeriodNav>
 
-        <div className="grid grid-cols-7 border-b border-zinc-200 pb-1 text-xs font-medium text-zinc-500" aria-hidden>
+        <div className="grid grid-cols-7 rounded-t-lg border border-b-0 border-zinc-200 bg-zinc-50 py-1 text-xs font-medium text-zinc-500" aria-hidden>
           {WEEKDAYS.map((d) => (
             <span key={d} className="px-2">
               {d}
@@ -257,7 +234,7 @@ export function CalendarView({
             );
           })}
         </ol>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className={VIEW_HINT}>
           Tasks are placed by due date. Drag a task to another day to reschedule it, or onto “No due date” to clear it.
         </p>
       </div>
@@ -265,11 +242,9 @@ export function CalendarView({
       <aside
         {...dropProps(null)}
         aria-label="Tasks without a due date"
-        className={`hidden w-64 shrink-0 flex-col rounded-xl border p-2 md:flex ${
-          dragging && dropDate === null ? "border-accent-200 bg-accent-50" : "border-transparent bg-zinc-100/70"
-        }`}
+        className={trayClass(Boolean(dragging) && dropDate === null)}
       >
-        <h3 className="flex items-center gap-1.5 px-1 pb-2 text-sm font-semibold text-zinc-900">
+        <h3 className={TRAY_HEADING}>
           <Inbox className="size-4 text-zinc-500" aria-hidden />
           No due date
           <span className="text-xs font-normal tabular-nums text-zinc-400">{tray.length}</span>
@@ -279,7 +254,7 @@ export function CalendarView({
             <CalendarChip key={task.id} {...chipProps(task)} roomy />
           ))}
           {tray.length === 0 ? (
-            <p className="px-1 text-xs text-zinc-500">Every incomplete task in this view has a due date.</p>
+            <p className={TRAY_EMPTY}>Every incomplete task in this view has a due date.</p>
           ) : null}
         </div>
       </aside>

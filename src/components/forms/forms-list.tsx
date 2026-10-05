@@ -7,6 +7,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { createForm } from "@/lib/actions";
 import type { FormSummary } from "@/lib/data";
+import { EmptyState } from "@/components/ui";
 
 export function FormsList({
   projectId,
@@ -21,7 +22,7 @@ export function FormsList({
   const [title, setTitle] = useState("");
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-6">
+    <div className="mx-auto max-w-3xl px-gutter py-5">
       <p className="text-sm text-zinc-600">
         Forms turn requests from anyone, signed in or not, into tasks in this project. Answers can fill the task
         name, description, due date, section, and custom fields, and questions can show or hide based on earlier
@@ -29,9 +30,11 @@ export function FormsList({
       </p>
 
       {forms.length === 0 ? (
-        <div className="mt-6 rounded-md border border-dashed border-zinc-300 px-4 py-8 text-center">
-          <FileInput className="mx-auto size-6 text-zinc-300" aria-hidden />
-          <p className="mt-2 text-sm text-zinc-500">No forms yet.</p>
+        <div className="mt-6">
+          <EmptyState icon={FileInput} title="No forms yet">
+            A form turns each submission into a task in this project. New forms start closed, so you can build and
+            preview before sharing the link.
+          </EmptyState>
         </div>
       ) : (
         <ul className="mt-6 divide-y divide-zinc-100 rounded-lg border border-zinc-200" aria-label="Forms">
@@ -56,7 +59,7 @@ export function FormsList({
                 </p>
               </div>
               <span
-                className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                className={`rounded px-1.5 py-0.5 text-2xs font-medium ${
                   form.acceptingResponses ? "bg-green-100 text-green-800" : "bg-zinc-100 text-zinc-600"
                 }`}
               >

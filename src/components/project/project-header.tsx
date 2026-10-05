@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   CalendarDays,
@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Copy,
   FileInput,
+  FolderClosed,
   List,
   MoreHorizontal,
   Pencil,
@@ -19,9 +20,12 @@ import {
   SlidersHorizontal,
   SquareKanban,
   Trash2,
+  Users,
   Workflow,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
+import { ProjectStatusBadge } from "@/components/project-status-badge";
+import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import {
@@ -43,11 +47,11 @@ export const LAYOUT_ICONS: Record<ViewLayout, typeof List> = {
   timeline: ChartGantt,
 };
 
-const TAB_CLASS =
-  "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent px-2.5 pb-2.5 pt-1 text-sm text-zinc-600 hover:text-zinc-900 aria-[current=page]:border-zinc-900 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
+const TAB_CLASS = HEADER_TAB;
 
 export function ProjectHeader({ project, views }: { project: Project; views: ProjectView[] }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [pending, run] = useServerAction();
   const canEditViews = useCan("editor");
   const canEditProject = useCan("admin");
@@ -80,9 +84,10 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
   }
 
   return (
-    <header className="border-b border-zinc-200 px-6 pt-4">
-      <div className="flex items-start gap-4">
-        <div className="min-w-0 flex-1">
+    <header className="border-b border-zinc-200 px-gutter pt-2.5">
+      <div className="flex items-center gap-2">
+        <HeaderGlyph icon={FolderClosed} />
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <label htmlFor="project-name" className="sr-only">
             Project name
           </label>
@@ -102,44 +107,80 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
                 e.currentTarget.blur();
               }
             }}
-            className="-mx-1.5 w-full rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-xl font-semibold tracking-tight read-only:hover:border-transparent hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:focus:border-transparent"
+            className={`${HEADER_TITLE_INPUT} field-sizing-content min-w-24 max-w-full`}
           />
-          <label htmlFor="project-description" className="sr-only">
-            Project description
-          </label>
-          <input
-            id="project-description"
-            key={`desc-${project.description ?? ""}`}
-            defaultValue={project.description ?? ""}
-            placeholder={canEditProject ? "Add a short description" : undefined}
-            readOnly={!canEditProject}
-            onBlur={(e) => {
-              if (canEditProject) saveDescription(e.currentTarget.value);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
-            }}
-            className="-mx-1.5 mt-0.5 w-full rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-sm text-zinc-600 placeholder:text-zinc-400 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent"
-          />
-        </div>
-        {canDeleteProject ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              if (window.confirm(`Delete “${project.name}”? Its tasks stay recoverable in the database.`)) {
-                run(() => deleteProject(project.id));
-              }
-            }}
-            className="mt-1 inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+          <Link
+            href={`${base}/settings`}
+            className="hidden shrink-0 rounded-full sm:inline-flex"
+            title={project.status_note ? `Status note: ${project.status_note}` : "Project status — change it in Settings"}
           >
-            <Trash2 className="size-4" />
-            <span className="sr-only sm:not-sr-only">Delete project</span>
-          </button>
-        ) : null}
+            <ProjectStatusBadge status={project.status} />
+          </Link>
+        </div>
+        <Popover
+          label="Project options"
+          align="end"
+          panelClassName="w-52 p-1.5"
+          buttonClassName="btn-icon"
+          button={<MoreHorizontal className="size-4" aria-hidden />}
+        >
+          {(close) => (
+            <>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  router.push(`${base}/settings`);
+                }}
+              >
+                <Settings className="size-4 text-zinc-500" /> Project settings
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  router.push(`${base}/settings/members`);
+                }}
+              >
+                <Users className="size-4 text-zinc-500" /> Members
+              </MenuItem>
+              {canDeleteProject ? (
+                <MenuItem
+                  danger
+                  disabled={pending}
+                  onClick={() => {
+                    close();
+                    if (window.confirm(`Delete “${project.name}”? Its tasks stay recoverable in the database.`)) {
+                      run(() => deleteProject(project.id));
+                    }
+                  }}
+                >
+                  <Trash2 className="size-4" /> Delete project
+                </MenuItem>
+              ) : null}
+            </>
+          )}
+        </Popover>
       </div>
+      <label htmlFor="project-description" className="sr-only">
+        Project description
+      </label>
+      <input
+        id="project-description"
+        key={`desc-${project.description ?? ""}`}
+        defaultValue={project.description ?? ""}
+        placeholder={canEditProject ? "Add a short description" : undefined}
+        readOnly={!canEditProject}
+        onBlur={(e) => {
+          if (canEditProject) saveDescription(e.currentTarget.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+        className={`ml-8 w-[calc(100%-2rem)] truncate rounded border border-transparent bg-transparent px-1.5 py-px text-xs text-zinc-500 placeholder:text-zinc-400 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent ${
+          !canEditProject && !project.description ? "hidden" : ""
+        }`}
+      />
 
-      <nav aria-label="Project views" className="mt-3 flex items-end gap-1 overflow-x-auto">
+      <nav aria-label="Project views" className="mt-1 flex items-center gap-0.5 overflow-x-auto">
         {views.map((view, index) => (
           <ViewTab
             key={view.id}
@@ -154,7 +195,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
         ))}
         {fallbackTabs.map(({ href, label, icon: Icon }) => (
           <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined} className={TAB_CLASS}>
-            <Icon className="size-4" />
+            <Icon className="size-3.5" />
             {label}
           </Link>
         ))}
@@ -162,7 +203,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
           <Popover
             label="Add view"
             panelClassName="w-48"
-            buttonClassName="mb-1.5 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+            buttonClassName="btn-ghost h-6 px-1.5 text-zinc-500"
             button={
               <>
                 <Plus className="size-4" aria-hidden />
@@ -188,12 +229,12 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
             }
           </Popover>
         ) : null}
-        <span aria-hidden className="mx-1 mb-2.5 h-4 w-px shrink-0 bg-zinc-200" />
+        <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-zinc-200" />
         {tabs.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link key={href} href={href} aria-current={active ? "page" : undefined} className={TAB_CLASS}>
-              <Icon className="size-4" />
+              <Icon className="size-3.5" />
               {label}
             </Link>
           );
@@ -227,7 +268,7 @@ function ViewTab({
   if (renaming) {
     return (
       <form
-        className="mb-1 shrink-0"
+        className="shrink-0"
         onSubmit={(e) => {
           e.preventDefault();
           const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
@@ -248,23 +289,23 @@ function ViewTab({
           onKeyDown={(e) => {
             if (e.key === "Escape") setRenaming(false);
           }}
-          className="w-36 rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-accent-500 focus:outline-none"
+          className="control w-36"
         />
       </form>
     );
   }
 
   return (
-    <span className="group inline-flex shrink-0 items-end">
+    <span className="group inline-flex shrink-0 items-center">
       <Link href={href} aria-current={active ? "page" : undefined} className={TAB_CLASS}>
-        <Icon className="size-4" />
+        <Icon className="size-3.5" />
         {view.name}
       </Link>
       {active && canEdit ? (
         <Popover
           label={`Options for view ${view.name}`}
           panelClassName="w-48"
-          buttonClassName="mb-1.5 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+          buttonClassName="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800 aria-expanded:bg-zinc-100"
           button={<MoreHorizontal className="size-4" aria-hidden />}
         >
           {(close) => (

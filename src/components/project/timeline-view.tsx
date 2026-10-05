@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useId, useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
@@ -33,6 +33,7 @@ import {
 } from "./timeline-scale";
 import { useProjectTasks } from "./use-project-tasks";
 import { groupTasks } from "./view-groups";
+import { PeriodNav, Segmented, TRAY_EMPTY, TRAY_HEADING, VIEW_BODY, VIEW_HINT, ViewLoading, trayClass } from "./view-chrome";
 
 type Props = {
   projectId: string;
@@ -96,7 +97,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
   }
 
   if (!anchor || !today) {
-    return <p className="px-6 py-6 text-sm text-zinc-400">Loading timeline…</p>;
+    return <ViewLoading label="Loading timeline…" />;
   }
 
   const dayWidth = dayWidthOf(zoom);
@@ -194,51 +195,18 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
   }
 
   return (
-    <div className="flex min-h-0 flex-1 gap-4 px-6 py-4">
+    <div className={VIEW_BODY}>
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <h2 className="mr-2 text-base font-semibold text-zinc-900" aria-live="polite">
-            {label}
-          </h2>
-          <div className="flex items-center">
-            <button
-              type="button"
-              onClick={() => navigate({ d: stepAnchor(anchor, zoom, -1) })}
-              aria-label={`Earlier (${zoom})`}
-              className="rounded-md p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-            >
-              <ChevronLeft className="size-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate({ d: stepAnchor(anchor, zoom, 1) })}
-              aria-label={`Later (${zoom})`}
-              className="rounded-md p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-            >
-              <ChevronRight className="size-4" />
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate({ d: null })}
-            className="rounded-md border border-zinc-200 px-2 py-0.5 text-sm text-zinc-700 hover:border-zinc-300"
-          >
-            Today
-          </button>
-          <div role="group" aria-label="Timeline scale" className="ml-auto inline-flex rounded-md border border-zinc-200 p-0.5">
-            {ZOOMS.map((z) => (
-              <button
-                key={z.value}
-                type="button"
-                aria-pressed={zoom === z.value}
-                onClick={() => navigate({ tl: z.value })}
-                className="rounded px-2 py-0.5 text-sm text-zinc-600 aria-pressed:bg-zinc-900 aria-pressed:text-white"
-              >
-                {z.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <PeriodNav
+          label={label}
+          prevLabel={`Earlier (${zoom})`}
+          nextLabel={`Later (${zoom})`}
+          onPrev={() => navigate({ d: stepAnchor(anchor, zoom, -1) })}
+          onNext={() => navigate({ d: stepAnchor(anchor, zoom, 1) })}
+          onToday={() => navigate({ d: null })}
+        >
+          <Segmented label="Timeline scale" options={ZOOMS} value={zoom} onChange={(z) => navigate({ tl: z })} />
+        </PeriodNav>
 
         <div
           key={`${zoom}-${start}`}
@@ -295,7 +263,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
                     return (
                       <span
                         key={seg.key}
-                        className={`absolute inset-y-0 truncate border-l border-zinc-100 pt-1 text-[11px] tabular-nums ${
+                        className={`absolute inset-y-0 truncate border-l border-zinc-100 pt-1 text-2xs tabular-nums ${
                           zoom === "week" ? "text-center" : "px-1"
                         } ${isToday ? "font-semibold text-accent-700" : "text-zinc-500"}`}
                         style={{ left: seg.offset * dayWidth, width: seg.length * dayWidth }}
@@ -393,7 +361,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
             ) : null}
           </div>
         </div>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className={VIEW_HINT}>
           Bars run from start to due date. Drag a bar to move it, drag either end to change its start or due date,
           or drag an unscheduled task onto a day to give it a due date. Arrows link a task to the one waiting on it
           (red when the waiting task starts before the first one is due).
@@ -402,9 +370,9 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
 
       <aside
         aria-label="Unscheduled tasks"
-        className="hidden w-64 shrink-0 flex-col rounded-xl bg-zinc-100/70 p-2 md:flex"
+        className={trayClass()}
       >
-        <h3 className="flex items-center gap-1.5 px-1 pb-2 text-sm font-semibold text-zinc-900">
+        <h3 className={TRAY_HEADING}>
           <Inbox className="size-4 text-zinc-500" aria-hidden />
           Unscheduled
           <span className="text-xs font-normal tabular-nums text-zinc-400">{tray.length}</span>
@@ -428,7 +396,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
             </li>
           ))}
           {tray.length === 0 ? (
-            <li className="px-1 text-xs text-zinc-500">Every incomplete task in this view has a start or due date.</li>
+            <li className={TRAY_EMPTY}>Every incomplete task in this view has a start or due date.</li>
           ) : null}
         </ul>
       </aside>
@@ -647,7 +615,7 @@ function TimelineBar({
       {drag?.moved ? (
         <span
           aria-hidden
-          className="pointer-events-none absolute -top-4 z-20 rounded bg-zinc-900 px-1.5 py-0.5 text-[11px] whitespace-nowrap text-white tabular-nums"
+          className="pointer-events-none absolute -top-4 z-20 rounded bg-zinc-900 px-1.5 py-0.5 text-2xs whitespace-nowrap text-white tabular-nums"
           style={{ left }}
         >
           {spanLabel(span)}

@@ -8,9 +8,9 @@ import { moveTask, setFieldValue } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
+import { PANE_CONTROL, PANE_FIELDS, PANE_LABEL } from "./pane-styles";
 
-const INPUT =
-  "w-full max-w-64 rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none";
+const INPUT = `${PANE_CONTROL} w-full max-w-64`;
 
 export function TaskFields({ task, profiles }: { task: TaskDetail; profiles: Profile[] }) {
   if (task.fields.length === 0) return null;
@@ -20,15 +20,15 @@ export function TaskFields({ task, profiles }: { task: TaskDetail; profiles: Pro
   const showProjectNames = byProject.length > 1;
 
   return (
-    <section aria-label="Custom fields" className="mt-5 border-t border-zinc-100 pt-4">
+    <section aria-label="Custom fields" className="mt-1">
       {byProject.map(({ membership, fields }) => (
-        <div key={membership.projectId} className="mb-3">
+        <div key={membership.projectId} className="mt-1">
           {showProjectNames ? (
-            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+            <h3 className="mb-0.5 mt-3 text-2xs font-semibold uppercase tracking-wider text-zinc-400">
               {membership.projectName}
             </h3>
           ) : null}
-          <dl className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-4 gap-y-3 text-sm">
+          <dl className={PANE_FIELDS}>
             {fields.map((field) => (
               <FieldRow
                 key={field.id}
@@ -249,7 +249,7 @@ function FieldRow({
 
   return (
     <>
-      <dt className="truncate text-zinc-500">
+      <dt className={PANE_LABEL}>
         {field.fieldType === "multi_select" || field.fieldType === "people" ? (
           field.name
         ) : (

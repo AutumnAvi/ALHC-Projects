@@ -6,10 +6,8 @@ import { Briefcase, ChartColumn, LayoutGrid, Settings } from "lucide-react";
 import { usePortfolioCan } from "@/components/portfolio/portfolio-access";
 import { useServerAction } from "@/components/toast";
 import { updatePortfolio } from "@/lib/actions";
+import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
 import type { Portfolio } from "@/lib/data";
-
-const TAB_CLASS =
-  "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent px-2.5 pb-2.5 pt-1 text-sm text-zinc-600 hover:text-zinc-900 aria-[current=page]:border-zinc-900 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
 
 export function PortfolioHeader({ portfolio }: { portfolio: Portfolio }) {
   const pathname = usePathname();
@@ -28,9 +26,9 @@ export function PortfolioHeader({ portfolio }: { portfolio: Portfolio }) {
   }
 
   return (
-    <header className="border-b border-zinc-200 px-6 pt-4">
+    <header className="border-b border-zinc-200 px-gutter pt-2.5">
       <div className="flex items-center gap-2">
-        <Briefcase className="size-5 shrink-0 text-zinc-400" aria-hidden />
+        <HeaderGlyph icon={Briefcase} />
         <label htmlFor="portfolio-name" className="sr-only">
           Portfolio name
         </label>
@@ -50,15 +48,15 @@ export function PortfolioHeader({ portfolio }: { portfolio: Portfolio }) {
               e.currentTarget.blur();
             }
           }}
-          className="w-full min-w-0 rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-xl font-semibold tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent"
+          className={`${HEADER_TITLE_INPUT} w-full`}
         />
       </div>
-      <nav aria-label="Portfolio" className="mt-3 flex items-end gap-1 overflow-x-auto">
+      <nav aria-label="Portfolio" className="mt-1 flex items-center gap-0.5 overflow-x-auto">
         {tabs.map(({ href, label, icon: Icon, exact }) => {
           const active = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
           return (
-            <Link key={href} href={href} aria-current={active ? "page" : undefined} className={TAB_CLASS}>
-              <Icon className="size-4" aria-hidden />
+            <Link key={href} href={href} aria-current={active ? "page" : undefined} className={HEADER_TAB}>
+              <Icon className="size-3.5" aria-hidden />
               {label}
             </Link>
           );

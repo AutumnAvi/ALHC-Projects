@@ -72,6 +72,12 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Settings → Integrations** (Admins and above): a default Slack webhook URL and a default outbound webhook URL + shared secret per project, used when a rule doesn't name its own. Saved URLs and secrets are never shown again: you see the host and last 4 characters, with **Replace** and **Clear**.
 - **Delivery** works like email: a rule only queues the message; the app sends it right after the next change in the app, or on the scheduled cron. Failed deliveries are retried up to 5 times. The task's activity shows “queued a Slack message to hooks.slack.com …abcd” (and a failure line if it gives up), never the full URL.
 
+## What's here (redesign)
+
+- **Denser, Asana-like chrome.** A tighter sidebar (project swatches, smaller section labels, one-click "create your first project / portfolio"), a slimmer project header with the project's status badge and a **…** menu (settings, members, delete), and one toolbar style across List, Board, Calendar, and Timeline.
+- **Task pane.** Quieter field rows (controls show a border on hover), a link to the task's home project in the pane header, consistent section headings, and a skeleton that appears as soon as you click a task while it loads.
+- **Empty and loading states** on Home, My Tasks, Inbox, Search, Portfolios, and every project tab, with short copy saying what goes there and how to start. No data, settings, or permissions changed.
+
 ## Local development
 
 ```bash

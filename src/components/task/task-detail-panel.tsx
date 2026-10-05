@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useOptimistic, useRef, type ReactNode } from "react";
-import { Check, FileInput, Hash, Home, Lock, Plus, ShieldCheck, Trash2, X } from "lucide-react";
+import { Check, FileInput, FolderClosed, Hash, Home, Lock, Plus, SearchX, ShieldCheck, Trash2, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { CompleteToggle } from "@/components/complete-toggle";
 import { useServerAction } from "@/components/toast";
+import { EmptyState } from "@/components/ui";
 import {
   addTaskToProject,
   assignRequestNumber,
@@ -29,6 +30,8 @@ import { DateTimeField } from "./task-dates";
 import { TaskDependencies } from "./task-dependencies";
 import { TaskFields } from "./task-fields";
 import { TaskRecurrence } from "./task-recurrence";
+import { PANE_CONTROL, PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
+import { Skeleton } from "@/components/ui";
 
 // canAdd: the viewer is an Editor there, so the task can be added to that project.
 type ProjectOption = { id: string; name: string; canAdd: boolean };
@@ -59,7 +62,7 @@ function PaneShell({ children, label }: { children: ReactNode; label: string }) 
   return (
     <aside
       aria-label={label}
-      className="fixed inset-y-0 right-0 z-30 flex w-full max-w-xl flex-col border-l border-zinc-200 bg-white shadow-2xl shadow-zinc-900/10"
+      className="fixed inset-y-0 right-0 z-30 flex w-full max-w-xl flex-col border-l border-zinc-200 bg-white shadow-xl shadow-zinc-900/10"
     >
       {children}
     </aside>
@@ -70,12 +73,42 @@ export function TaskNotFoundPanel() {
   const { href } = useClosePane();
   return (
     <PaneShell label="Task details">
-      <div className="flex h-12 items-center justify-end border-b border-zinc-200 px-3">
+      <div className="flex h-bar shrink-0 items-center justify-end border-b border-zinc-200 px-3">
         <CloseButton href={href} />
       </div>
-      <div className="p-8 text-center">
-        <h2 className="text-sm font-medium text-zinc-900">Task not found</h2>
-        <p className="mt-1 text-sm text-zinc-600">It may have been deleted.</p>
+      <div className="p-gutter">
+        <EmptyState icon={SearchX} title="Task not found" size="inline">
+          It may have been deleted, or you no longer have access to its projects.
+        </EmptyState>
+      </div>
+    </PaneShell>
+  );
+}
+
+// Shown while the pane streams in (see TaskPaneBoundary): same chrome, placeholder rows.
+export function TaskPaneLoading() {
+  const { href } = useClosePane();
+  return (
+    <PaneShell label="Task details">
+      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
+        <Skeleton className="h-7 w-32 rounded-md" />
+        <div className="ml-auto">
+          <CloseButton href={href} />
+        </div>
+      </div>
+      <div role="status" className="px-gutter py-4">
+        <span className="sr-only">Loading task…</span>
+        <Skeleton className="h-6 w-3/4" />
+        <div className={`mt-4 ${PANE_FIELDS}`}>
+          {["w-24", "w-28", "w-28", "w-20", "w-40"].map((width, i) => (
+            <div key={i} className="contents">
+              <Skeleton className="my-2.5 h-3 w-16" />
+              <Skeleton className={`my-2.5 h-3 ${width}`} />
+            </div>
+          ))}
+        </div>
+        <Skeleton className="mt-6 h-3.5 w-24" />
+        <Skeleton className="mt-2 h-20 w-full rounded-md" />
       </div>
     </PaneShell>
   );
@@ -87,7 +120,7 @@ function CloseButton({ href }: { href: string }) {
       href={href}
       scroll={false}
       aria-label="Close task details"
-      className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+      className="btn-icon"
     >
       <X className="size-4" />
     </Link>
@@ -117,10 +150,11 @@ export function TaskDetailPanel({
   const addableProjects = canEdit ? projects.filter((p) => p.canAdd && !memberProjectIds.has(p.id)) : [];
   // Only people with access to one of the task's projects can be assigned (others couldn't see it).
   const assignable = profiles.filter((p) => p.id in task.memberRoles || p.id === task.assigneeId);
+  const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
 
   return (
     <PaneShell label={`Task: ${task.title}`}>
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
+      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
         {canEdit ? (
           <>
             <button
@@ -134,7 +168,7 @@ export function TaskDetailPanel({
                   () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
                 )
               }
-              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
                 completed
                   ? "border-accent-200 bg-accent-50 text-accent-700"
                   : "border-zinc-300 text-zinc-700 enabled:hover:border-accent-500 enabled:hover:text-accent-700"
@@ -156,7 +190,17 @@ export function TaskDetailPanel({
             {task.viewerRole === "commenter" ? "You can comment on this task" : "View only"}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex min-w-0 items-center gap-1">
+          {home ? (
+            <Link
+              href={`/projects/${home.projectId}/list?task=${task.id}`}
+              title={`Open in ${home.projectName}`}
+              className="mr-1 hidden min-w-0 items-center gap-1 truncate rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 sm:inline-flex"
+            >
+              <FolderClosed className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{home.projectName}</span>
+            </Link>
+          ) : null}
           {canEdit ? (
             <button
               type="button"
@@ -171,7 +215,7 @@ export function TaskDetailPanel({
               }}
               aria-label="Delete task"
               title="Delete task"
-              className="rounded-md p-1.5 text-zinc-500 hover:bg-red-50 hover:text-red-700"
+              className="btn-icon hover:bg-red-50 hover:text-red-700"
             >
               <Trash2 className="size-4" />
             </button>
@@ -180,7 +224,7 @@ export function TaskDetailPanel({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="flex-1 overflow-y-auto px-gutter py-4">
         {/* Below Editor every control in here is disabled; links (projects) still work. RLS enforces it. */}
         <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
           <label htmlFor="task-title" className="sr-only">
@@ -208,8 +252,8 @@ export function TaskDetailPanel({
 
           <RequestBadges task={task} />
 
-          <dl className="mt-5 grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-4 gap-y-3 text-sm">
-            <dt className="text-zinc-500">
+          <dl className={`mt-3 ${PANE_FIELDS}`}>
+            <dt className={PANE_LABEL}>
               <label htmlFor="task-assignee">Assignee</label>
             </dt>
             <dd>
@@ -220,7 +264,7 @@ export function TaskDetailPanel({
                 onChange={(e) =>
                   run(() => updateTask(task.id, { assigneeId: e.target.value || null }))
                 }
-                className="w-full max-w-64 rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
+                className={`${PANE_CONTROL} w-full max-w-64`}
               >
                 <option value="">No assignee</option>
                 {assignable.map((profile) => (
@@ -231,28 +275,28 @@ export function TaskDetailPanel({
               </select>
             </dd>
 
-            <dt className="text-zinc-500">
+            <dt className={PANE_LABEL}>
               <label htmlFor="task-start">Start date</label>
             </dt>
             <dd>
               <DateTimeField task={task} kind="start" />
             </dd>
 
-            <dt className="text-zinc-500">
+            <dt className={PANE_LABEL}>
               <label htmlFor="task-due">Due date</label>
             </dt>
             <dd>
               <DateTimeField task={task} kind="due" />
             </dd>
 
-            <dt className="self-start pt-1.5 text-zinc-500">
+            <dt className={`${PANE_LABEL} self-start`}>
               <label htmlFor="task-repeat">Repeats</label>
             </dt>
             <dd>
               <TaskRecurrence task={task} />
             </dd>
 
-            <dt className="self-start pt-1.5 text-zinc-500">Projects</dt>
+            <dt className={`${PANE_LABEL} self-start`}>Projects</dt>
             <dd>
               <Memberships task={task} addableProjects={addableProjects} />
             </dd>
@@ -261,7 +305,7 @@ export function TaskDetailPanel({
           <TaskFields task={task} profiles={profiles} />
 
           <div className="mt-6">
-            <label htmlFor="task-notes" className="text-sm font-medium text-zinc-900">
+            <label htmlFor="task-notes" className={PANE_HEADING}>
               Description
             </label>
             <textarea
@@ -274,7 +318,7 @@ export function TaskDetailPanel({
                   run(() => updateTask(task.id, { notes }));
                 }
               }}
-              className="mt-1.5 field-sizing-content min-h-24 w-full resize-y rounded-md border border-zinc-200 px-3 py-2 text-sm leading-relaxed placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
+              className="mt-2 field-sizing-content min-h-20 w-full resize-y rounded-md border border-zinc-200 px-3 py-2 text-sm leading-relaxed placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
             />
           </div>
 
@@ -307,12 +351,12 @@ function Memberships({
   const [, run] = useServerAction();
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <ul className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1 py-1">
+      <ul className="flex flex-col gap-1">
         {task.memberships.map((membership) => (
           <li
             key={membership.projectId}
-            className="flex items-center gap-2 rounded-md border border-zinc-200 px-2 py-1.5"
+            className="group/membership flex min-h-8 items-center gap-2 rounded-md border border-zinc-200 px-2 py-1"
           >
             <Link
               href={`/projects/${membership.projectId}/list?task=${task.id}`}
@@ -322,7 +366,7 @@ function Memberships({
             </Link>
             {membership.isHome ? (
               <span
-                className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600"
+                className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-medium text-zinc-600"
                 title="Home project — the task's primary project"
               >
                 <Home className="size-3" />
@@ -461,7 +505,7 @@ function Subtasks({ task }: { task: TaskDetail }) {
   return (
     <section className="mt-6" aria-labelledby="subtasks-heading">
       <div className="flex items-baseline justify-between">
-        <h3 id="subtasks-heading" className="text-sm font-medium text-zinc-900">
+        <h3 id="subtasks-heading" className={PANE_HEADING}>
           Subtasks
         </h3>
         {subtasks.length > 0 ? (

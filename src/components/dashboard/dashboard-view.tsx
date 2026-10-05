@@ -7,6 +7,7 @@ import { displayName } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
 import { FilterChips, FilterEditor, type FilterContext } from "@/components/project/filter-editor";
 import { useServerAction } from "@/components/toast";
+import { EmptyState } from "@/components/ui";
 import { createWidget, deleteWidget, installStarterWidgets, moveWidget, updateWidget } from "@/lib/actions";
 import type { MetricBucket } from "@/lib/data";
 import {
@@ -40,7 +41,7 @@ export function DashboardView({
   const [pending, run] = useServerAction();
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-5">
+    <div className="mx-auto max-w-6xl px-gutter py-5">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-zinc-900">Dashboard</h2>
@@ -77,21 +78,23 @@ export function DashboardView({
       </div>
 
       {widgets.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center">
-          <h3 className="text-sm font-medium text-zinc-900">No widgets yet</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-600">
-            Start with a few common widgets — incomplete, overdue, completed in the last 7 days, and charts by section
-            and assignee — then edit or remove them.
-          </p>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => run(() => installStarterWidgets(projectId))}
-            className="mt-4 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 hover:border-zinc-400 disabled:opacity-50"
-          >
-            Add starter widgets
-          </button>
-        </div>
+        <EmptyState
+          icon={ChartColumn}
+          title="No widgets yet"
+          action={
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => run(() => installStarterWidgets(projectId))}
+              className="btn-secondary"
+            >
+              Add starter widgets
+            </button>
+          }
+        >
+          Start with a few common widgets — incomplete, overdue, completed in the last 7 days, and charts by section and
+          assignee — then edit or remove them.
+        </EmptyState>
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {widgets.map((data, index) => (

@@ -46,7 +46,7 @@ export function TaskApprovals({
   return (
     <section className="mt-6" aria-labelledby="approvals-heading">
       <div className="flex items-baseline justify-between">
-        <h3 id="approvals-heading" className="text-sm font-medium text-zinc-900">
+        <h3 id="approvals-heading" className="text-sm font-semibold text-zinc-900">
           Approvals
         </h3>
         {canEdit ? (
@@ -183,7 +183,7 @@ function ApprovalItem({
         <ShieldCheck className="size-4 text-zinc-400" aria-hidden />
         <Avatar name={approverName} />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900">{approverName}</span>
-        <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${status.className}`}>{status.label}</span>
+        <span className={`rounded px-1.5 py-0.5 text-2xs font-medium ${status.className}`}>{status.label}</span>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
         Requested by {requesterName} · <Timestamp iso={approval.createdAt} />

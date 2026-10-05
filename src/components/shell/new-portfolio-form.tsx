@@ -36,12 +36,12 @@ export function NewPortfolioForm({
         onKeyDown={(e) => {
           if (e.key === "Escape") onDone?.();
         }}
-        className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
+        className="control h-8 min-w-0 flex-1"
       />
       <button
         type="submit"
         disabled={pending}
-        className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+        className="btn-primary h-8"
       >
         {pending ? "Creating…" : "Create portfolio"}
       </button>

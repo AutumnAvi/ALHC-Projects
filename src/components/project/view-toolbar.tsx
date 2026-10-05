@@ -28,10 +28,9 @@ import {
 } from "@/lib/views";
 import { FilterChips, FilterEditor, filterChips, type FilterContext } from "./filter-editor";
 
-const toolButton =
-  "inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm text-zinc-700 hover:border-zinc-300 hover:text-zinc-900 aria-expanded:border-zinc-400";
-const selectClass =
-  "rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-sm focus:border-accent-500 focus:outline-none";
+// Shared with every view layout (List, Board, Calendar, Timeline) so the chrome reads as one product.
+const toolButton = "btn-ghost";
+const selectClass = "control px-1.5";
 
 export function ViewToolbar({
   projectId,
@@ -100,8 +99,8 @@ export function ViewToolbar({
   ];
 
   return (
-    <div className="border-b border-zinc-200 px-6 py-2">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="shrink-0 border-b border-zinc-200 px-gutter py-1.5">
+      <div className="flex min-h-7 flex-wrap items-center gap-1">
         <SearchBox value={filters.text ?? ""} onCommit={(text) => setFilters(text ? { ...filters, text } : withoutText(filters))} />
 
         <Popover
@@ -111,7 +110,13 @@ export function ViewToolbar({
           button={
             <>
               <Filter className="size-3.5" aria-hidden />
-              Filter{activeCount ? <span className="tabular-nums text-accent-700">· {activeCount}</span> : null}
+              Filter
+              {activeCount ? (
+                <span className="rounded-full bg-accent-100 px-1.5 text-xs font-medium tabular-nums text-accent-700">
+                  {activeCount}
+                  <span className="sr-only"> active</span>
+                </span>
+              ) : null}
             </>
           }
         >
@@ -191,14 +196,14 @@ export function ViewToolbar({
               )}
             </Popover>
 
-            <label className="inline-flex items-center gap-1.5 text-sm text-zinc-600">
+            <label className="inline-flex h-7 items-center gap-1.5 rounded-md pl-2 text-sm text-zinc-600 hover:bg-zinc-100">
               <Rows3 className="size-3.5" aria-hidden />
-              <span className="sr-only sm:not-sr-only">Group</span>
+              <span className="sr-only sm:not-sr-only">Group:</span>
               <select
                 aria-label="Group by"
                 value={groupOf(current)}
                 onChange={(e) => apply({ ...current, group_by: e.currentTarget.value as GroupBy })}
-                className={selectClass}
+                className="field-sizing-content h-7 cursor-pointer rounded-md border-0 bg-transparent pr-1 text-sm font-medium text-zinc-800 focus:outline-none"
               >
                 {groupChoices.map((g) => (
                   <option key={g.value} value={g.value}>
@@ -245,7 +250,7 @@ export function ViewToolbar({
           </>
         ) : null}
 
-        <label className="inline-flex items-center gap-1.5 text-sm text-zinc-700">
+        <label className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900">
           <input
             type="checkbox"
             className="size-3.5 accent-zinc-900"
@@ -261,15 +266,11 @@ export function ViewToolbar({
           Show completed
         </label>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1.5">
           {isDraft ? (
             <>
               <span className="text-xs text-zinc-500">{view ? "Unsaved changes" : "Filtered"}</span>
-              <button
-                type="button"
-                onClick={() => apply(baseConfig)}
-                className="rounded-md px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
-              >
+              <button type="button" onClick={() => apply(baseConfig)} className="btn-ghost">
                 Reset
               </button>
               {view && canSave ? (
@@ -277,7 +278,7 @@ export function ViewToolbar({
                   type="button"
                   disabled={pending}
                   onClick={save}
-                  className="rounded-md bg-zinc-900 px-2.5 py-1 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                  className="btn-primary"
                 >
                   Save view
                 </button>
@@ -288,7 +289,7 @@ export function ViewToolbar({
             <Popover
               label="Save as new view"
               align="end"
-              buttonClassName={toolButton}
+              buttonClassName="btn-secondary"
               button={<>Save as new view</>}
             >
               {(close) => (
@@ -312,12 +313,9 @@ export function ViewToolbar({
                     required
                     maxLength={100}
                     placeholder="e.g. Incomplete by assignee"
-                    className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none"
+                    className="control w-full"
                   />
-                  <button
-                    type="submit"
-                    className="w-full rounded-md bg-zinc-900 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
-                  >
+                  <button type="submit" className="btn-primary w-full">
                     Create view
                   </button>
                 </form>
@@ -327,7 +325,7 @@ export function ViewToolbar({
         </div>
       </div>
       {activeCount > 0 ? (
-        <div className="mt-2">
+        <div className="mt-1.5 mb-0.5">
           <FilterChips filters={filters} context={context} onChange={setFilters} />
         </div>
       ) : null}
@@ -352,7 +350,7 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (value: strin
     if (draft.trim() !== value) onCommit(draft.trim());
   };
   return (
-    <label className="relative inline-flex items-center">
+    <label className="relative mr-1 inline-flex items-center">
       <Search className="pointer-events-none absolute left-2 size-3.5 text-zinc-400" aria-hidden />
       <span className="sr-only">Search tasks in this view</span>
       <input
@@ -365,7 +363,7 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (value: strin
         onKeyDown={(e) => {
           if (e.key === "Enter") commit();
         }}
-        className="w-40 rounded-md border border-zinc-200 bg-white py-1 pr-2 pl-7 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none"
+        className="control w-44 pl-7"
       />
     </label>
   );
