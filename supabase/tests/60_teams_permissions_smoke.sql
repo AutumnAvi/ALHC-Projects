@@ -509,9 +509,11 @@ begin
   select string_agg(p.proname, ',' order by p.proname) into exposed
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.prosecdef and has_function_privilege('authenticated', p.oid, 'execute');
-  assert exposed = 'add_project_member,assign_request_number,cancel_approval,custom_field_project,decide_approval,'
-    'format_request_label,get_public_form,has_project_role,has_task_role,is_allowlisted,profile_can_read_task,'
-    'project_role,remove_project_member,request_approval,resubmit_approval,rule_project,submit_form,'
+  -- Task depth added add_task_dependency, open_blocker_count, remove_task_dependency, restore_task.
+  assert exposed = 'add_project_member,add_task_dependency,assign_request_number,cancel_approval,custom_field_project,'
+    'decide_approval,format_request_label,get_public_form,has_project_role,has_task_role,is_allowlisted,'
+    'open_blocker_count,profile_can_read_task,project_role,remove_project_member,remove_task_dependency,'
+    'request_approval,restore_task,resubmit_approval,rule_project,submit_form,'
     'task_request_label,task_role,transfer_project_ownership,update_project_member_role',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);
 
