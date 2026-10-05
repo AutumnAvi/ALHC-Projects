@@ -1,10 +1,12 @@
+import { requireMember } from "@/lib/auth";
 import { getTaskDetail, listProfiles, listProjects } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
 import { TaskDetailPanel, TaskNotFoundPanel } from "./task-detail-panel";
 
 export async function TaskPane({ taskId }: { taskId: string }) {
   if (!isUuid(taskId)) return <TaskNotFoundPanel />;
-  const [task, projects, profiles] = await Promise.all([
+  const [member, task, projects, profiles] = await Promise.all([
+    requireMember(),
     getTaskDetail(taskId),
     listProjects(),
     listProfiles(),
@@ -17,6 +19,7 @@ export async function TaskPane({ taskId }: { taskId: string }) {
       task={task}
       projects={projects.map(({ id, name }) => ({ id, name }))}
       profiles={profiles}
+      memberId={member.id}
     />
   );
 }
