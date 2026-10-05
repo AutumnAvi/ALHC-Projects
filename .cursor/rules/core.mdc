@@ -1,0 +1,12 @@
+---
+description: ALHC Projects core conventions
+alwaysApply: true
+---
+
+- `AGENTS.md` is the architecture source of truth; update it when the data model, auth flow, or layout changes.
+- Keep the domain generic (Workspace → Project → Section → Task → Subtask, multi-homed tasks). Team workflows are built on top, never as schema.
+- Every new table: RLS enabled, `<table>_{select,insert,update}_allowlisted` policies, `deleted_at` for soft delete, no DELETE policy.
+- Reads go through `src/lib/data.ts` (always `deleted_at IS NULL`); writes go through Server Actions in `src/lib/actions.ts`.
+- Next.js 16: `proxy.ts` replaces middleware; `params`/`searchParams` are Promises. Check `node_modules/next/dist/docs/` before using unfamiliar APIs.
+- Before finishing: `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run db:test` for schema changes.
+- Never commit secrets, service-role keys, or real allowlist emails. Never call the Asana API.
