@@ -17,6 +17,7 @@ import {
 } from "@/lib/forms";
 import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
+import { isProjectRole } from "@/lib/roles";
 import {
   VIEW_LAYOUTS,
   isIsoDate,
@@ -84,8 +85,22 @@ async function run(fn: () => Promise<void>): Promise<ActionResult> {
   return {};
 }
 
-function check(result: { error: { message: string; code?: string } | null }) {
-  if (result.error) throw new DbError(result.error.message);
+const NOT_ALLOWED = "Your role in this project doesn’t allow that";
+
+type DbResult = { error: { message: string; code?: string; hint?: string | null } | null };
+
+// Row-level security errors name tables; members just need to know their role doesn't allow it.
+function check(result: DbResult) {
+  const error = result.error;
+  if (!error) return;
+  if (error.code === "42501" && error.message.includes("row-level security")) throw new DbError(NOT_ALLOWED);
+  throw new DbError(error.hint ? `${error.message}. ${error.hint}` : error.message);
+}
+
+// RLS turns a forbidden UPDATE into "0 rows" rather than an error; use with .select("id").
+function checkUpdated(result: DbResult & { data: unknown[] | null }) {
+  check(result);
+  if (!result.data?.length) throw new DbError(NOT_ALLOWED);
 }
 
 const now = () => new Date().toISOString();
@@ -158,6 +173,82 @@ export async function deleteProject(projectId: string): Promise<ActionResult> {
   });
   if (!result.error) redirect("/");
   return result;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Members (all checks — role, allowlist, last owner — live in the SQL RPCs)
+// ---------------------------------------------------------------------------------------------
+
+function role(value: unknown): string {
+  if (!isProjectRole(value)) throw new InputError("Choose a role");
+  return value;
+}
+
+export async function inviteProjectMember(
+  projectId: string,
+  email: string,
+  memberRole: string,
+): Promise<ActionResult> {
+  return run(async () => {
+    const address = text(email, "Email", { max: 320 }).toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("add_project_member", {
+        target_project: id(projectId),
+        member_email: address,
+        member_role: role(memberRole),
+      }),
+    );
+  });
+}
+
+export async function changeProjectMemberRole(
+  projectId: string,
+  profileId: string,
+  memberRole: string,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("update_project_member_role", {
+        target_project: id(projectId),
+        target_profile: id(profileId, "person"),
+        new_role: role(memberRole),
+      }),
+    );
+  });
+}
+
+export async function removeProjectMember(projectId: string, profileId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("remove_project_member", {
+        target_project: id(projectId),
+        target_profile: id(profileId, "person"),
+      }),
+    );
+  });
+}
+
+// Leaving loses access, so send the person home instead of re-rendering a project they can't see.
+export async function leaveProject(projectId: string, profileId: string): Promise<ActionResult> {
+  const result = await removeProjectMember(projectId, profileId);
+  if (!result.error) redirect("/");
+  return result;
+}
+
+export async function transferProjectOwnership(projectId: string, profileId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("transfer_project_ownership", {
+        target_project: id(projectId),
+        target_profile: id(profileId, "person"),
+      }),
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -261,20 +352,21 @@ export async function updateTask(
       throw new InputError(START_AFTER_DUE);
     }
     const supabase = await createClient();
-    const result = await supabase.from("tasks").update(update).eq("id", id(taskId));
+    const result = await supabase.from("tasks").update(update).eq("id", id(taskId)).select("id");
     if (result.error?.message.includes("tasks_start_on_before_due_on")) throw new InputError(START_AFTER_DUE);
-    check(result);
+    checkUpdated(result);
   });
 }
 
 export async function setTaskCompleted(taskId: string, completed: boolean): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
+    checkUpdated(
       await supabase
         .from("tasks")
         .update({ completed_at: completed ? now() : null })
-        .eq("id", id(taskId)),
+        .eq("id", id(taskId))
+        .select("id"),
     );
   });
 }

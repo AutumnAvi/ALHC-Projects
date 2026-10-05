@@ -5,6 +5,7 @@ import { useOptimistic, useState, useTransition } from "react";
 import { ArrowDownUp, Columns3, Filter, Plus, Rows3, Search, X } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
+import { useCan } from "@/components/project/project-access";
 import { createView, updateView } from "@/lib/actions";
 import {
   columnsOf,
@@ -53,6 +54,8 @@ export function ViewToolbar({
   const [, startTransition] = useTransition();
   const [current, setCurrent] = useOptimistic(config);
   const [pending, run] = useServerAction();
+  // Below Editor, filters still work as an unsaved ?f= draft; only saving is hidden.
+  const canSave = useCan("editor");
   const filters = current.filters ?? {};
   const isDraft = !sameConfig(current, baseConfig);
 
@@ -269,7 +272,7 @@ export function ViewToolbar({
               >
                 Reset
               </button>
-              {view ? (
+              {view && canSave ? (
                 <button
                   type="button"
                   disabled={pending}
@@ -281,7 +284,7 @@ export function ViewToolbar({
               ) : null}
             </>
           ) : null}
-          {isDraft || !view ? (
+          {canSave && (isDraft || !view) ? (
             <Popover
               label="Save as new view"
               align="end"

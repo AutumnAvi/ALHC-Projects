@@ -8,7 +8,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 - Email + password sign-in through Supabase Auth (interim; Google sign-in returns later, see [Setup: sign-in](#setup-sign-in-email--password-interim)), gated by an email allowlist (`public.allowed_emails`). Non-allowlisted accounts are signed out and shown a denied screen.
 - Data model: workspaces, projects, sections, tasks, subtasks, multi-project task membership (`task_projects`), and profiles. All deletes are soft (`deleted_at`).
-- Row Level Security on every table. In this phase, any allowlisted user can read, create, and update all workspace data.
+- Row Level Security on every table. Since Teams & permissions, the allowlist only decides who can sign in; project data is visible and editable according to each person's role in that project (see [What's here (teams & permissions)](#whats-here-teams--permissions)).
 - Project home, List view, Board view (drag-and-drop or a "move to" menu), and a task detail pane (title, description, assignee, due date, subtasks, project memberships, delete).
 
 ## What's here (collaboration)
@@ -41,6 +41,13 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 - **Start dates.** Tasks have an optional start date next to the due date in the task pane (the start can't be after the due date). Lists can show a Start column, Board cards a start chip, and views can sort by start date. Changes are logged in the task's activity.
 - **Timeline.** A Gantt-style view: each task is a bar from its start date to its due date. A task with only a due date is a one-day bar on that day; a task with only a start date is a one-day bar drawn with a dashed outline. Switch between Week, Month, and Quarter scales, and use Today and the arrows to move around. Bars are coloured by status (open, overdue in red, completed in grey). Drag a bar to move it, or drag either end to change its start or due date. Incomplete tasks with no dates sit in an **Unscheduled** tray; drag one onto a day to give it a due date. Filters, sorting, grouping, and "Show completed" work as on List. Calendar still places tasks by due date only.
+
+## What's here (teams & permissions)
+
+- **Project members and roles.** Every project has members with one of five roles: **Owner**, **Admin**, **Editor**, **Commenter**, **Viewer**. Viewers can read everything in the project; Commenters can also comment, follow, and decide approvals sent to them; Editors can change tasks, fields, sections, and views; Admins also manage rules, forms, settings, and members; Owners can also transfer ownership and delete the project. People who aren't members don't see the project at all (not in the sidebar, search, My Tasks, or Inbox).
+- **Members page.** Settings → **Members**: invite someone by email (they must already be on the allowlist and have signed in once), change roles, remove people, leave a project, or transfer ownership. A project always keeps at least one owner. "Guests" are simply people invited with a lower role such as Viewer or Commenter.
+- **Existing projects** were backfilled when the migration ran: the creator became the owner and everyone else on the allowlist became an Editor, so nobody lost access. Narrow access per project from the Members page.
+- **New projects** are owned by whoever creates them and start with only that person. Public forms keep working for anyone with the link.
 
 ## Local development
 
@@ -76,7 +83,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 
    To remove access later, run `delete from public.allowed_emails where email = '...';`. Their next request gets signed out. `supabase/seed.sql` only contains a placeholder (`owner@example.com`) and is applied by `supabase db reset` for local stacks.
 4. **Configure sign-in** as described in [Setup: sign-in](#setup-sign-in-email--password-interim). The allowlist also requires a confirmed email.
-5. **Storage:** the collaboration migration creates the private bucket **`task-attachments`** (25 MB per-file limit) and its `storage.objects` policies (`task_attachments_objects_select_allowlisted`, `task_attachments_objects_insert_allowlisted`). Nothing to click, but check two things:
+5. **Storage:** the collaboration migration creates the private bucket **`task-attachments`** (25 MB per-file limit) and its `storage.objects` policies (since Teams & permissions: `task_attachments_objects_select_viewer` and `task_attachments_objects_insert_editor`, which follow the task's project roles). Nothing to click, but check two things:
    - Storage → Settings → **Upload file size limit** (the project-wide cap) must be at least 25 MB, or uploads fail below the bucket limit.
    - Files are stored as `<task id>/<uuid>-<file name>` and are only reachable through short-lived signed URLs issued by the app (`/attachments/<id>`). Removing an attachment hides it but leaves the object in Storage.
 6. **Realtime (optional):** the migrations add `comments`, `task_stories`, `inbox_items`, and `approval_requests` to the `supabase_realtime` publication, so comments, activity, approvals, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.

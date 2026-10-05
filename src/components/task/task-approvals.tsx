@@ -7,6 +7,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { cancelApproval, decideApproval, requestApproval, resubmitApproval } from "@/lib/actions";
 import type { Profile, TaskApproval, TaskDetail } from "@/lib/data";
+import { hasRole } from "@/lib/roles";
 
 export const APPROVAL_STATUS: Record<TaskApproval["status"], { label: string; className: string }> = {
   pending: { label: "Pending", className: "bg-amber-100 text-amber-800" },
@@ -34,6 +35,9 @@ export function TaskApprovals({
   const [note, setNote] = useState("");
   const [asSubtask, setAsSubtask] = useState(true);
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
+  // Requesting/cancelling needs Editor; an approver needs at least Commenter to be able to decide.
+  const canEdit = hasRole(task.viewerRole, "editor");
+  const approvers = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter"));
   const nameOf = (profileId: string | null) => {
     const profile = profileId ? profilesById.get(profileId) : undefined;
     return profile ? displayName(profile) : "Someone";
@@ -45,17 +49,19 @@ export function TaskApprovals({
         <h3 id="approvals-heading" className="text-sm font-medium text-zinc-900">
           Approvals
         </h3>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="rounded px-1.5 py-0.5 text-xs font-medium text-accent-700 hover:bg-accent-50"
-        >
-          {open ? "Cancel" : "Request approval"}
-        </button>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="rounded px-1.5 py-0.5 text-xs font-medium text-accent-700 hover:bg-accent-50"
+          >
+            {open ? "Cancel" : "Request approval"}
+          </button>
+        ) : null}
       </div>
 
-      {open ? (
+      {open && canEdit ? (
         <form
           className="mt-2 space-y-2 rounded-md border border-zinc-200 p-3"
           onSubmit={(e) => {
@@ -89,7 +95,7 @@ export function TaskApprovals({
               required
             >
               <option value="">Choose a person…</option>
-              {profiles.map((p) => (
+              {approvers.map((p) => (
                 <option key={p.id} value={p.id}>
                   {displayName(p)}
                 </option>
@@ -139,6 +145,7 @@ export function TaskApprovals({
               approverName={nameOf(approval.approverId)}
               requesterName={approval.ruleName ? `Rule “${approval.ruleName}”` : nameOf(approval.requestedBy)}
               isApprover={approval.approverId === memberId}
+              canEdit={canEdit}
               run={run}
               pending={pending}
             />
@@ -154,6 +161,7 @@ function ApprovalItem({
   approverName,
   requesterName,
   isApprover,
+  canEdit,
   run,
   pending,
 }: {
@@ -161,6 +169,7 @@ function ApprovalItem({
   approverName: string;
   requesterName: string;
   isApprover: boolean;
+  canEdit: boolean;
   run: ReturnType<typeof useServerAction>[1];
   pending: boolean;
 }) {
@@ -228,7 +237,7 @@ function ApprovalItem({
         </div>
       ) : null}
 
-      {open ? (
+      {open && canEdit ? (
         <div className="mt-2 flex gap-1.5">
           {approval.status === "changes_requested" ? (
             <button

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { RoleGate } from "@/components/project/project-access";
 import { FormsList } from "@/components/forms/forms-list";
 import { getProject, listProjectForms } from "@/lib/data";
 import { requestOrigin } from "@/lib/origin";
@@ -17,7 +18,9 @@ export default async function ProjectFormsPage({ params }: PageProps<"/projects/
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
-      <FormsList projectId={projectId} forms={forms} origin={origin} />
+      <RoleGate need="admin" what="forms">
+        <FormsList projectId={projectId} forms={forms} origin={origin} />
+      </RoleGate>
     </main>
   );
 }

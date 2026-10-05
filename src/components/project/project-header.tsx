@@ -22,6 +22,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
+import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import {
   createView,
@@ -48,6 +49,9 @@ const TAB_CLASS =
 export function ProjectHeader({ project, views }: { project: Project; views: ProjectView[] }) {
   const pathname = usePathname();
   const [pending, run] = useServerAction();
+  const canEditViews = useCan("editor");
+  const canEditProject = useCan("admin");
+  const canDeleteProject = useCan("owner");
   const base = `/projects/${project.id}`;
 
   // Older /list, /board, /calendar, /timeline links render the default config when no saved view exists.
@@ -87,7 +91,10 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
             key={`name-${project.name}`}
             defaultValue={project.name}
             maxLength={200}
-            onBlur={(e) => saveName(e.currentTarget.value)}
+            readOnly={!canEditProject}
+            onBlur={(e) => {
+              if (canEditProject) saveName(e.currentTarget.value);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") e.currentTarget.blur();
               if (e.key === "Escape") {
@@ -95,7 +102,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
                 e.currentTarget.blur();
               }
             }}
-            className="-mx-1.5 w-full rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-xl font-semibold tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+            className="-mx-1.5 w-full rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-xl font-semibold tracking-tight read-only:hover:border-transparent hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:focus:border-transparent"
           />
           <label htmlFor="project-description" className="sr-only">
             Project description
@@ -104,27 +111,32 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
             id="project-description"
             key={`desc-${project.description ?? ""}`}
             defaultValue={project.description ?? ""}
-            placeholder="Add a short description"
-            onBlur={(e) => saveDescription(e.currentTarget.value)}
+            placeholder={canEditProject ? "Add a short description" : undefined}
+            readOnly={!canEditProject}
+            onBlur={(e) => {
+              if (canEditProject) saveDescription(e.currentTarget.value);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") e.currentTarget.blur();
             }}
-            className="-mx-1.5 mt-0.5 w-full rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-sm text-zinc-600 placeholder:text-zinc-400 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+            className="-mx-1.5 mt-0.5 w-full rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-sm text-zinc-600 placeholder:text-zinc-400 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent"
           />
         </div>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => {
-            if (window.confirm(`Delete “${project.name}”? Its tasks stay recoverable in the database.`)) {
-              run(() => deleteProject(project.id));
-            }
-          }}
-          className="mt-1 inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
-        >
-          <Trash2 className="size-4" />
-          <span className="sr-only sm:not-sr-only">Delete project</span>
-        </button>
+        {canDeleteProject ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (window.confirm(`Delete “${project.name}”? Its tasks stay recoverable in the database.`)) {
+                run(() => deleteProject(project.id));
+              }
+            }}
+            className="mt-1 inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+          >
+            <Trash2 className="size-4" />
+            <span className="sr-only sm:not-sr-only">Delete project</span>
+          </button>
+        ) : null}
       </div>
 
       <nav aria-label="Project views" className="mt-3 flex items-end gap-1 overflow-x-auto">
@@ -137,6 +149,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
             first={index === 0}
             last={index === views.length - 1}
             canDelete={views.length > 1}
+            canEdit={canEditViews}
           />
         ))}
         {fallbackTabs.map(({ href, label, icon: Icon }) => (
@@ -145,34 +158,36 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
             {label}
           </Link>
         ))}
-        <Popover
-          label="Add view"
-          panelClassName="w-48"
-          buttonClassName="mb-1.5 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-          button={
-            <>
-              <Plus className="size-4" aria-hidden />
-              <span className="sr-only sm:not-sr-only">View</span>
-            </>
-          }
-        >
-          {(close) =>
-            VIEW_LAYOUTS.map(({ value, label }) => {
-              const Icon = LAYOUT_ICONS[value];
-              return (
-                <MenuItem
-                  key={value}
-                  onClick={() => {
-                    close();
-                    run(() => createView(project.id, { name: label, layout: value }));
-                  }}
-                >
-                  <Icon className="size-4 text-zinc-500" /> {label}
-                </MenuItem>
-              );
-            })
-          }
-        </Popover>
+        {canEditViews ? (
+          <Popover
+            label="Add view"
+            panelClassName="w-48"
+            buttonClassName="mb-1.5 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+            button={
+              <>
+                <Plus className="size-4" aria-hidden />
+                <span className="sr-only sm:not-sr-only">View</span>
+              </>
+            }
+          >
+            {(close) =>
+              VIEW_LAYOUTS.map(({ value, label }) => {
+                const Icon = LAYOUT_ICONS[value];
+                return (
+                  <MenuItem
+                    key={value}
+                    onClick={() => {
+                      close();
+                      run(() => createView(project.id, { name: label, layout: value }));
+                    }}
+                  >
+                    <Icon className="size-4 text-zinc-500" /> {label}
+                  </MenuItem>
+                );
+              })
+            }
+          </Popover>
+        ) : null}
         <span aria-hidden className="mx-1 mb-2.5 h-4 w-px shrink-0 bg-zinc-200" />
         {tabs.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -195,6 +210,7 @@ function ViewTab({
   first,
   last,
   canDelete,
+  canEdit,
 }: {
   view: ProjectView;
   href: string;
@@ -202,6 +218,7 @@ function ViewTab({
   first: boolean;
   last: boolean;
   canDelete: boolean;
+  canEdit: boolean;
 }) {
   const [, run] = useServerAction();
   const [renaming, setRenaming] = useState(false);
@@ -243,7 +260,7 @@ function ViewTab({
         <Icon className="size-4" />
         {view.name}
       </Link>
-      {active ? (
+      {active && canEdit ? (
         <Popover
           label={`Options for view ${view.name}`}
           panelClassName="w-48"

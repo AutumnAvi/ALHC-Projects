@@ -478,6 +478,61 @@ export type Database = {
         };
         Relationships: [];
       };
+      project_members: {
+        Row: {
+          id: string;
+          project_id: string;
+          profile_id: string;
+          role: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          profile_id: string;
+          role: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          profile_id?: string;
+          role?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_members_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_members_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_members_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       project_views: {
         Row: {
           id: string;
@@ -1183,6 +1238,10 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      add_project_member: {
+        Args: { target_project: string; member_email: string; member_role?: string };
+        Returns: string;
+      };
       assign_request_number: {
         Args: { target_task: string };
         Returns: string;
@@ -1225,6 +1284,14 @@ export type Database = {
         Args: { target_form: string };
         Returns: Json;
       };
+      has_project_role: {
+        Args: { target_project: string; min_role: string };
+        Returns: boolean;
+      };
+      has_task_role: {
+        Args: { target_task: string; min_role: string };
+        Returns: boolean;
+      };
       install_rule_preset: {
         Args: { target_project: string; preset: string; inputs?: Json; enable?: boolean };
         Returns: string[];
@@ -1236,6 +1303,14 @@ export type Database = {
       project_metrics: {
         Args: { target_project: string; filters?: Json; group_by?: string; tz?: string };
         Returns: { bucket: string | null; task_count: number }[];
+      };
+      project_role: {
+        Args: { target_project: string };
+        Returns: string | null;
+      };
+      remove_project_member: {
+        Args: { target_project: string; target_profile: string };
+        Returns: undefined;
       };
       request_approval: {
         Args: {
@@ -1271,6 +1346,18 @@ export type Database = {
       task_request_label: {
         Args: { target_task: string };
         Returns: string | null;
+      };
+      task_role: {
+        Args: { target_task: string };
+        Returns: string | null;
+      };
+      transfer_project_ownership: {
+        Args: { target_project: string; target_profile: string };
+        Returns: undefined;
+      };
+      update_project_member_role: {
+        Args: { target_project: string; target_profile: string; new_role: string };
+        Returns: undefined;
       };
       workflow_tick: {
         Args: Record<PropertyKey, never>;

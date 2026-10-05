@@ -3,6 +3,7 @@
 import { usePathname, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { createSection, createTask, deleteSection, renameSection } from "@/lib/actions";
 import type { Section } from "@/lib/data";
@@ -28,6 +29,16 @@ export function SectionTitle({
   count: number;
 }) {
   const [, run] = useServerAction();
+  const canEdit = useCan("editor");
+
+  if (!canEdit) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <h3 className="min-w-0 truncate px-1 py-0.5 text-sm font-semibold text-zinc-900">{section.name}</h3>
+        <span className="text-xs tabular-nums text-zinc-400">{count}</span>
+      </div>
+    );
+  }
 
   return (
     <div className="group flex min-w-0 flex-1 items-center gap-2">
@@ -84,7 +95,9 @@ export function AddTaskInput({
   const [pending, run] = useServerAction();
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const canEdit = useCan("editor");
 
+  if (!canEdit) return null;
   if (!open) {
     return (
       <button
@@ -140,7 +153,9 @@ export function AddSection({ projectId, variant }: { projectId: string; variant:
   const [pending, run] = useServerAction();
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const canEdit = useCan("editor");
 
+  if (!canEdit) return null;
   if (!open) {
     return (
       <button

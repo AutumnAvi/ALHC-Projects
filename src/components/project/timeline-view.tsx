@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
 import { displayName } from "@/components/avatar";
+import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
@@ -53,6 +54,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
   const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
+  const canEdit = useCan("editor");
   const [trayDragging, setTrayDragging] = useState<{ taskId: string; x: number; y: number } | null>(null);
   const [dropDay, setDropDay] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -116,7 +118,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
   function trayHandlers(task: ProjectTask) {
     return {
       onPointerDown: (e: PointerEvent<HTMLAnchorElement>) => {
-        if (e.button !== 0) return;
+        if (e.button !== 0 || !canEdit) return;
         e.currentTarget.setPointerCapture(e.pointerId);
         trayDrag.current = { taskId: task.id, originX: e.clientX, originY: e.clientY, moved: false };
       },
@@ -335,6 +337,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
                             windowStart={start}
                             days={days}
                             dayWidth={dayWidth}
+                            canEdit={canEdit}
                             onCommit={(dates) => reschedule(task, dates)}
                             onReveal={(date) => navigate({ d: date })}
                           />
@@ -409,6 +412,7 @@ function TimelineBar({
   windowStart,
   days,
   dayWidth,
+  canEdit,
   onCommit,
   onReveal,
 }: {
@@ -419,6 +423,7 @@ function TimelineBar({
   windowStart: string;
   days: number;
   dayWidth: number;
+  canEdit: boolean;
   onCommit: (dates: Dates) => void;
   onReveal: (date: string) => void;
 }) {
@@ -454,7 +459,7 @@ function TimelineBar({
   const clippedEnd = to >= days;
   const left = Math.max(from, 0) * dayWidth;
   const width = Math.max((Math.min(to + 1, days) - Math.max(from, 0)) * dayWidth, 4);
-  const canResize = width >= 16;
+  const canResize = canEdit && width >= 16;
   const labelInside = width >= task.title.length * 6.5 + 20;
   const tone = completed
     ? "bg-zinc-200 text-zinc-500"
@@ -465,7 +470,7 @@ function TimelineBar({
         : "bg-accent-500 text-white";
 
   function onPointerDown(e: PointerEvent<HTMLAnchorElement>) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !canEdit) return;
     const edge = (e.target as HTMLElement).dataset.edge;
     const mode: DragMode = edge === "start" || edge === "end" ? edge : "move";
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -520,7 +525,7 @@ function TimelineBar({
         className={`group absolute top-1.5 flex h-6 touch-pan-y items-center rounded-md text-xs select-none ${tone} ${
           clippedStart ? "rounded-l-none" : ""
         } ${clippedEnd ? "rounded-r-none" : ""} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${
-          drag?.moved ? "z-10 cursor-grabbing shadow-md" : "cursor-grab"
+          drag?.moved ? "z-10 cursor-grabbing shadow-md" : canEdit ? "cursor-grab" : "cursor-pointer"
         }`}
         style={{ left, width }}
       >

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useState, type DragEvent } from "react";
 import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
+import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
 import { addDays, useToday } from "@/lib/dates";
@@ -74,6 +75,7 @@ export function CalendarView({
   const today = useToday();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
+  const canEdit = useCan("editor");
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropDate, setDropDate] = useState<string | null | undefined>(undefined);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -128,6 +130,7 @@ export function CalendarView({
     open: openTaskId === task.id,
     overdue: Boolean(today && task.dueOn && !task.completedAt && task.dueOn < today),
     dragging: dragging === task.id,
+    draggable: canEdit,
     onDragStart: (e: DragEvent) => {
       e.dataTransfer.setData(DRAG_TYPE, task.id);
       e.dataTransfer.effectAllowed = "move";
@@ -291,6 +294,7 @@ function CalendarChip({
   overdue,
   dragging,
   roomy = false,
+  draggable,
   onDragStart,
   onDragEnd,
 }: {
@@ -300,6 +304,7 @@ function CalendarChip({
   overdue: boolean;
   dragging: boolean;
   roomy?: boolean;
+  draggable: boolean;
   onDragStart: (e: DragEvent) => void;
   onDragEnd: () => void;
 }) {
@@ -309,7 +314,7 @@ function CalendarChip({
     <Link
       href={taskHref(task.id)}
       scroll={false}
-      draggable
+      draggable={draggable}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       aria-current={open ? "true" : undefined}
