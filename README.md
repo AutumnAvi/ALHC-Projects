@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, a task detail pane, recurring tasks, due/start times, task dependencies, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios with cross-project progress and reporting, a task detail pane, recurring tasks, due/start times, task dependencies, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -56,6 +56,15 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Dependencies.** In the pane, **Blocked by** and **Blocking** link tasks in the same project (finish-to-start). A task can't be marked complete while a task it's blocked by is incomplete, and loops (A waits on B waits on A) are rejected. Blocked tasks show a lock with a count on List and Board, and the Timeline draws an arrow from each task to the one waiting on it (red when the waiting task starts before the first one is due). Editors and above can add or remove dependencies.
 - **Trash.** Settings → **Trash** lists the project's deleted tasks, with who deleted them and when, and a **Restore** button. Restoring puts a task back in every project it was in, with its history. Only Editors and above can see the Trash; deleted tasks never appear in views, search, My Tasks, or the Inbox. Nothing is ever deleted permanently.
 
+## What's here (portfolios and reporting)
+
+- **Portfolios.** A portfolio groups projects so you can follow them together. Anyone can create one from the sidebar (**Portfolios → +**) and becomes its owner. The sidebar lists your portfolios with their progress.
+- **Overview.** Each portfolio shows overall progress, completed / incomplete / overdue counts, and tasks completed in the last 7 days, plus a card per project with its status, progress, and counts. Editors can add projects (only projects they're a member of), remove them, reorder them, and edit the notes.
+- **How progress is counted.** Completed ÷ (completed + incomplete) over the active tasks in the portfolio's projects, rounded down. A task that's in several of those projects counts once. A portfolio with no tasks shows “No tasks”. Overdue means incomplete and due before today in your time zone.
+- **Report.** The Report tab has a table by project (status, incomplete, overdue, completed in the last 7 days, complete, progress, and a portfolio total) and a table by assignee.
+- **Members and privacy.** Portfolios have their own members: **Owner**, **Admin**, **Editor**, **Viewer** (invite by email from Settings, same rules as projects). Being in a portfolio never gives access to its projects: you only see, and the numbers only count, the projects you're a member of. If some are hidden from you, the page says how many.
+- **Project status.** In a project's Settings, Editors and above can set the status (On track, At risk, Off track, Complete) with an optional note. It shows as a badge on portfolio cards and in the report.
+
 ## Local development
 
 ```bash
@@ -70,7 +79,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–80)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.

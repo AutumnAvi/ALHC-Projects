@@ -3,13 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { CircleCheck, FolderClosed, House, Inbox, LogOut, Plus, Search } from "lucide-react";
+import { Briefcase, CircleCheck, FolderClosed, House, Inbox, LogOut, Plus, Search } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { NewPortfolioForm } from "@/components/shell/new-portfolio-form";
 import { NewProjectForm } from "@/components/shell/new-project-form";
 import { UnreadBadge, useUnreadCount } from "@/components/shell/unread-count";
 import type { Member } from "@/lib/auth";
+import { formatProgress } from "@/lib/portfolios";
 
 type SidebarProject = { id: string; name: string };
+// percent: portfolio progress over the projects the viewer can read; null = no tasks.
+type SidebarPortfolio = { id: string; name: string; percent: number | null };
 
 const NAV_LINK =
   "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200/60 aria-[current=page]:bg-zinc-200/80 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
@@ -17,14 +21,17 @@ const NAV_LINK =
 export function Sidebar({
   member,
   projects,
+  portfolios,
   unreadCount,
 }: {
   member: Member;
   projects: SidebarProject[];
+  portfolios: SidebarPortfolio[];
   unreadCount: number;
 }) {
   const pathname = usePathname();
   const [creating, setCreating] = useState(false);
+  const [creatingPortfolio, setCreatingPortfolio] = useState(false);
   const unread = useUnreadCount(unreadCount, member.id, "sidebar");
   const links = [
     { href: "/", label: "Home", icon: House },
@@ -116,6 +123,56 @@ export function Sidebar({
             })}
             {projects.length === 0 && !creating ? (
               <li className="px-2 py-1 text-xs text-zinc-500">No projects yet.</li>
+            ) : null}
+          </ul>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between px-2 pb-1">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              <Link href="/portfolios" className="hover:text-zinc-900">
+                Portfolios
+              </Link>
+            </h2>
+            <button
+              type="button"
+              onClick={() => setCreatingPortfolio((v) => !v)}
+              aria-label="New portfolio"
+              aria-expanded={creatingPortfolio}
+              className="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
+            >
+              <Plus className="size-4" />
+            </button>
+          </div>
+          {creatingPortfolio ? (
+            <div className="px-1 pb-2">
+              <NewPortfolioForm compact onDone={() => setCreatingPortfolio(false)} />
+            </div>
+          ) : null}
+          <ul className="flex flex-col gap-px">
+            {portfolios.map((portfolio) => {
+              const active = pathname === `/portfolios/${portfolio.id}` || pathname.startsWith(`/portfolios/${portfolio.id}/`);
+              return (
+                <li key={portfolio.id}>
+                  <Link
+                    href={`/portfolios/${portfolio.id}`}
+                    aria-current={active ? "page" : undefined}
+                    className={NAV_LINK}
+                  >
+                    <Briefcase className="size-4 shrink-0 text-zinc-400" />
+                    <span className="min-w-0 flex-1 truncate">{portfolio.name}</span>
+                    {portfolio.percent !== null ? (
+                      <span className="shrink-0 text-xs tabular-nums text-zinc-500">
+                        <span className="sr-only">, progress </span>
+                        {formatProgress(portfolio.percent)}
+                      </span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })}
+            {portfolios.length === 0 && !creatingPortfolio ? (
+              <li className="px-2 py-1 text-xs text-zinc-500">No portfolios yet.</li>
             ) : null}
           </ul>
         </div>

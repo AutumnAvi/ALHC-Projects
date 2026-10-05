@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CircleCheck, Inbox, LogOut, Search } from "lucide-react";
+import { Briefcase, CircleCheck, Inbox, LogOut, Search } from "lucide-react";
 import { useUnreadCount } from "@/components/shell/unread-count";
 
 export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadCount: number }) {
@@ -25,6 +25,9 @@ export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadC
         </Link>
         <Link href="/my-tasks" aria-label="My Tasks" className={iconLink}>
           <CircleCheck className="size-4" />
+        </Link>
+        <Link href="/portfolios" aria-label="Portfolios" className={iconLink}>
+          <Briefcase className="size-4" />
         </Link>
         <Link
           href="/inbox"
