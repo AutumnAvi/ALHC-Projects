@@ -17,7 +17,7 @@ export default async function DeniedPage({ searchParams }: PageProps<"/denied">)
             allowlist.
           </>
         ) : (
-          "That Google account isn’t on the ALHC Projects allowlist."
+          "That account isn’t on the ALHC Projects allowlist."
         )}{" "}
         You’ve been signed out. Ask an admin to add your email, or try a different account.
       </p>
