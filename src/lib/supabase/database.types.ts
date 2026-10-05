@@ -451,6 +451,102 @@ export type Database = {
           },
         ];
       };
+      integration_outbox: {
+        Row: {
+          id: string;
+          channel: string;
+          project_id: string;
+          task_id: string | null;
+          rule_id: string | null;
+          rule_run_id: string | null;
+          target_url: string;
+          target_hint: string;
+          headers: Json;
+          payload: Json;
+          status: string;
+          attempts: number;
+          last_error: string | null;
+          provider_response: Json | null;
+          send_after: string;
+          sent_at: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          channel: string;
+          project_id: string;
+          task_id?: string | null;
+          rule_id?: string | null;
+          rule_run_id?: string | null;
+          target_url: string;
+          target_hint: string;
+          headers?: Json;
+          payload: Json;
+          status?: string;
+          attempts?: number;
+          last_error?: string | null;
+          provider_response?: Json | null;
+          send_after?: string;
+          sent_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          channel?: string;
+          project_id?: string;
+          task_id?: string | null;
+          rule_id?: string | null;
+          rule_run_id?: string | null;
+          target_url?: string;
+          target_hint?: string;
+          headers?: Json;
+          payload?: Json;
+          status?: string;
+          attempts?: number;
+          last_error?: string | null;
+          provider_response?: Json | null;
+          send_after?: string;
+          sent_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      integration_secrets: {
+        Row: {
+          id: string;
+          project_id: string;
+          rule_id: string;
+          kind: string;
+          value: string;
+          created_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          rule_id: string;
+          kind: string;
+          value: string;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          rule_id?: string;
+          kind?: string;
+          value?: string;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
       profiles: {
         Row: {
           id: string;
@@ -635,6 +731,42 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      project_integrations: {
+        Row: {
+          project_id: string;
+          slack_webhook_url: string | null;
+          webhook_url: string | null;
+          webhook_secret_header: string | null;
+          webhook_secret: string | null;
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          project_id: string;
+          slack_webhook_url?: string | null;
+          webhook_url?: string | null;
+          webhook_secret_header?: string | null;
+          webhook_secret?: string | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          project_id?: string;
+          slack_webhook_url?: string | null;
+          webhook_url?: string | null;
+          webhook_secret_header?: string | null;
+          webhook_secret?: string | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
       };
       project_members: {
         Row: {
@@ -1533,6 +1665,14 @@ export type Database = {
         Args: { target_email: string; outcome: string; message_id?: string | null; error_message?: string | null };
         Returns: undefined;
       };
+      claim_integration_outbox: {
+        Args: { max_items?: number; only_id?: string | null };
+        Returns: Database["public"]["Tables"]["integration_outbox"]["Row"][];
+      };
+      complete_integration_outbox: {
+        Args: { target_item: string; outcome: string; response?: Json | null; error_message?: string | null };
+        Returns: undefined;
+      };
       create_task: {
         Args: { target_project: string; target_section: string | null; task_title: string };
         Returns: string;
@@ -1554,6 +1694,10 @@ export type Database = {
       format_request_label: {
         Args: { target_project: string; number: number };
         Returns: string;
+      };
+      get_project_integrations: {
+        Args: { target_project: string };
+        Returns: Json;
       };
       get_public_form: {
         Args: { target_form: string };
@@ -1672,6 +1816,10 @@ export type Database = {
           home_project_id: string;
           home_project_name: string;
         }[];
+      };
+      set_project_integration: {
+        Args: { target_project: string; setting: string; new_value: string | null };
+        Returns: Json;
       };
       set_project_status: {
         Args: { target_project: string; new_status: string; note?: string | null };

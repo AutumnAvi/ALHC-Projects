@@ -1,9 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useId, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, X } from "lucide-react";
 import { useServerAction } from "@/components/toast";
 import { createRule, updateRule } from "@/lib/actions";
+import {
+  DEFAULT_SECRET_HEADER,
+  WEBHOOK_URL_ERROR,
+  isAllowedHeaderName,
+  isAllowedWebhookUrl,
+} from "@/lib/integrations-shared";
 import {
   ACTIONS,
   APPROVAL_DECISIONS,
@@ -51,6 +58,10 @@ function defaultsFor(type: ActionType): RuleAction {
       return { type, people: ["assignee"], ...(type === "notify" ? { message: "" } : {}) };
     case "request_approval":
       return { type, approver: "" };
+    case "send_slack":
+      return { type, message: "{task} moved to {section} in {project}" };
+    case "call_webhook":
+      return { type };
     case "delay":
       return { type, hours: 24 };
     case "set_assignee":
@@ -365,6 +376,7 @@ export function RuleEditor({
               </button>
             </Row>
             <ActionFields
+              projectId={projectId}
               prefix={`${prefix}-a${index}`}
               action={action}
               ctx={ctx}
@@ -401,11 +413,13 @@ export function RuleEditor({
 }
 
 function ActionFields({
+  projectId,
   prefix,
   action,
   ctx,
   onChange,
 }: {
+  projectId: string;
   prefix: string;
   action: RuleAction;
   ctx: RuleContext;
@@ -551,6 +565,9 @@ function ActionFields({
           </Row>
         </div>
       );
+    case "send_slack":
+    case "call_webhook":
+      return <IntegrationFields projectId={projectId} prefix={prefix} action={action} ctx={ctx} onChange={onChange} />;
     case "delay":
       return (
         <label className="flex items-center gap-1.5 text-sm text-zinc-700">
@@ -569,4 +586,259 @@ function ActionFields({
     default:
       return null;
   }
+}
+
+// Slack / webhook fields. Saved URLs and secrets are never sent to the browser: the action only carries
+// a redacted hint (host + last 4 characters, or "saved" for a secret). Typing a value sends it once in
+// plain text; the database stores it out of reach of clients and writes back a fresh hint.
+function IntegrationFields({
+  projectId,
+  prefix,
+  action,
+  ctx,
+  onChange,
+}: {
+  projectId: string;
+  prefix: string;
+  action: RuleAction;
+  ctx: RuleContext;
+  onChange: (next: RuleAction) => void;
+}) {
+  const slack = action.type === "send_slack";
+  const projectDefault = slack ? ctx.integrations?.slackWebhook : ctx.integrations?.webhook;
+  const useProject = action.use_project_webhook === true;
+  const settingsLink = (
+    <Link href={`/projects/${projectId}/settings/integrations`} className="text-accent-700 hover:underline">
+      Settings → Integrations
+    </Link>
+  );
+
+  return (
+    <div className="space-y-2">
+      {slack ? (
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`${prefix}-message`} className={labelClass}>
+            Slack message
+          </label>
+          <textarea
+            id={`${prefix}-message`}
+            rows={2}
+            maxLength={4000}
+            placeholder="{task} moved to {section} in {project}"
+            value={typeof action.message === "string" ? action.message : ""}
+            onChange={(e) => onChange({ ...action, message: e.currentTarget.value })}
+            className={`${inputClass} w-full`}
+          />
+          <p className="text-xs text-zinc-500">
+            Tokens work here too. Task details are escaped, so a title can’t ping @channel.
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-500">
+          POSTs a JSON summary of the task (event, rule, project, task id/title/Req #/section/assignee/due date, and a
+          link) to an https:// address.
+        </p>
+      )}
+
+      {projectDefault || useProject ? (
+        <label className="flex items-center gap-2 text-sm text-zinc-700">
+          <input
+            type="checkbox"
+            checked={useProject}
+            onChange={(e) => {
+              const next = { ...action };
+              if (e.currentTarget.checked) next.use_project_webhook = true;
+              else delete next.use_project_webhook;
+              onChange(next);
+            }}
+          />
+          Use the project {slack ? "Slack webhook" : "webhook"} ({projectDefault ?? <>not set — add it in {settingsLink}</>})
+        </label>
+      ) : null}
+
+      {useProject ? null : (
+        <>
+          <SecretField
+            id={`${prefix}-url`}
+            label={slack ? "Slack incoming webhook URL" : "Webhook URL (https://)"}
+            placeholder={slack ? "https://hooks.slack.com/services/…" : "https://example.com/hooks/alhc"}
+            action={action}
+            plainKey={slack ? "webhook_url" : "url"}
+            savedHint={typeof action[slack ? "webhook_hint" : "url_hint"] === "string" ? String(action[slack ? "webhook_hint" : "url_hint"]) : null}
+            validate={(v) => (isAllowedWebhookUrl(v) ? null : WEBHOOK_URL_ERROR)}
+            onChange={onChange}
+          />
+          {!projectDefault && !action[slack ? "webhook_ref" : "url_ref"] && !action[slack ? "webhook_url" : "url"] ? (
+            <p className="text-xs text-zinc-500">
+              Paste a URL here, or add a project default in {settingsLink}. Without either, runs fail with a clear error.
+            </p>
+          ) : null}
+          {projectDefault ? (
+            <p className="text-xs text-zinc-500">Leave the URL empty to use the project default.</p>
+          ) : null}
+          {slack ? null : (
+            <>
+              <SecretField
+                id={`${prefix}-secret`}
+                label="Shared secret (optional)"
+                placeholder="Sent as a header, never in the body"
+                action={action}
+                plainKey="secret"
+                savedHint={action.secret_set === true ? "Saved secret" : null}
+                validate={(v) => (v.length > 500 ? "The shared secret is limited to 500 characters" : null)}
+                onChange={onChange}
+              />
+              <div className="flex flex-col gap-1">
+                <label htmlFor={`${prefix}-header`} className={labelClass}>
+                  Secret header name
+                </label>
+                <input
+                  id={`${prefix}-header`}
+                  value={typeof action.secret_header === "string" ? action.secret_header : ""}
+                  placeholder={DEFAULT_SECRET_HEADER}
+                  maxLength={100}
+                  aria-invalid={
+                    typeof action.secret_header === "string" && action.secret_header !== "" && !isAllowedHeaderName(action.secret_header)
+                  }
+                  aria-describedby={`${prefix}-header-help`}
+                  onChange={(e) => {
+                    const next = { ...action };
+                    if (e.currentTarget.value) next.secret_header = e.currentTarget.value;
+                    else delete next.secret_header;
+                    onChange(next);
+                  }}
+                  className={`${inputClass} w-full max-w-xs`}
+                />
+                <p id={`${prefix}-header-help`} className="text-xs text-zinc-500">
+                  Defaults to {DEFAULT_SECRET_HEADER}. Use “Authorization” with a secret like “Bearer …” for token auth.
+                </p>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// A write-only value: shows the saved hint with Replace / Remove, or a password-style input.
+function SecretField({
+  id,
+  label,
+  placeholder,
+  action,
+  plainKey,
+  savedHint,
+  validate,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  placeholder: string;
+  action: RuleAction;
+  plainKey: string;
+  savedHint: string | null;
+  validate: (value: string) => string | null;
+  onChange: (next: RuleAction) => void;
+}) {
+  const helpId = useId();
+  const typed = typeof action[plainKey] === "string" ? (action[plainKey] as string) : undefined;
+  const [mode, setMode] = useState<"saved" | "editing" | "removed">(
+    savedHint ? (typed === "" ? "removed" : typed ? "editing" : "saved") : "editing",
+  );
+  const error = typed ? validate(typed.trim()) : null;
+
+  function setTyped(value: string | undefined) {
+    const next = { ...action };
+    if (value === undefined) delete next[plainKey];
+    else next[plainKey] = value;
+    onChange(next);
+  }
+
+  if (mode === "saved" && savedHint) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className={labelClass}>{label}</span>
+        <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-700">{savedHint}</span>
+        <button
+          type="button"
+          onClick={() => setMode("editing")}
+          className="rounded px-1.5 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100"
+        >
+          Replace
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMode("removed");
+            setTyped("");
+          }}
+          className="rounded px-1.5 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100"
+        >
+          Remove
+        </button>
+      </div>
+    );
+  }
+  if (mode === "removed") {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className={labelClass}>{label}</span>
+        <span className="text-xs text-zinc-500">Removed when you save.</span>
+        <button
+          type="button"
+          onClick={() => {
+            setMode("saved");
+            const next = { ...action };
+            delete next[plainKey];
+            onChange(next);
+          }}
+          className="rounded px-1.5 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100"
+        >
+          Undo
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className={labelClass}>
+        {label}
+      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          id={id}
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={placeholder}
+          value={typed ?? ""}
+          maxLength={2000}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? helpId : undefined}
+          onChange={(e) => setTyped(e.currentTarget.value || undefined)}
+          className={`${inputClass} min-w-0 flex-1`}
+        />
+        {savedHint ? (
+          <button
+            type="button"
+            onClick={() => {
+              setMode("saved");
+              const next = { ...action };
+              delete next[plainKey];
+              onChange(next);
+            }}
+            className="rounded px-1.5 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100"
+          >
+            Keep saved ({savedHint})
+          </button>
+        ) : null}
+      </div>
+      {error ? (
+        <p id={helpId} className="text-xs text-red-700">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
 }

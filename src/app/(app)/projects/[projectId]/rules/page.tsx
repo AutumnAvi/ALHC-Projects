@@ -3,6 +3,7 @@ import { RoleGate } from "@/components/project/project-access";
 import { RulesView } from "@/components/rules/rules-view";
 import {
   getProject,
+  getProjectIntegrations,
   listProfiles,
   listProjectFields,
   listProjectForms,
@@ -22,13 +23,14 @@ export async function generateMetadata({
 
 export default async function ProjectRulesPage({ params }: PageProps<"/projects/[projectId]/rules">) {
   const { projectId } = await params;
-  const [rules, presets, sections, fields, profiles, forms] = await Promise.all([
+  const [rules, presets, sections, fields, profiles, forms, integrations] = await Promise.all([
     listProjectRules(projectId),
     listRulePresets(),
     listSections(projectId),
     listProjectFields(projectId),
     listProfiles(),
     listProjectForms(projectId),
+    getProjectIntegrations(projectId),
   ]);
   const runs = await listRecentRuleRuns(rules.map((r) => r.id));
 
@@ -45,6 +47,7 @@ export default async function ProjectRulesPage({ params }: PageProps<"/projects/
             fields,
             people: profiles.map((p) => ({ id: p.id, name: p.full_name || p.email })),
             forms: forms.map((f) => ({ id: f.id, title: f.title })),
+            integrations,
           }}
         />
       </RoleGate>

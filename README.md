@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios with cross-project progress and reporting, a task detail pane, recurring tasks, due/start times, task dependencies, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios with cross-project progress and reporting, a task detail pane, recurring tasks, due/start times, task dependencies, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -65,6 +65,13 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Members and privacy.** Portfolios have their own members: **Owner**, **Admin**, **Editor**, **Viewer** (invite by email from Settings, same rules as projects). Being in a portfolio never gives access to its projects: you only see, and the numbers only count, the projects you're a member of. If some are hidden from you, the page says how many.
 - **Project status.** In a project's Settings, Editors and above can set the status (On track, At risk, Off track, Complete) with an optional note. It shows as a badge on portfolio cards and in the report.
 
+## What's here (integrations)
+
+- **Send Slack message** (rule action): posts a message to a Slack channel through an [incoming webhook](https://api.slack.com/messaging/webhooks). The message can use the same tokens as comments and emails (`{task}`, `{section}`, `{project}`, `{assignee}`, `{req}`, `{due}`, …). Task details are escaped, so a task title can't ping `@channel`.
+- **Call webhook** (rule action): POSTs a small JSON summary of the task (event, rule, project, task id/title/request number/section/assignee/due date, and a link) to an `https://` address, for Zapier, Make, or your own service. An optional shared secret is sent in a header (`X-ALHC-Webhook-Secret` by default), never in the body.
+- **Settings → Integrations** (Admins and above): a default Slack webhook URL and a default outbound webhook URL + shared secret per project, used when a rule doesn't name its own. Saved URLs and secrets are never shown again: you see the host and last 4 characters, with **Replace** and **Clear**.
+- **Delivery** works like email: a rule only queues the message; the app sends it right after the next change in the app, or on the scheduled cron. Failed deliveries are retried up to 5 times. The task's activity shows “queued a Slack message to hooks.slack.com …abcd” (and a failure line if it gives up), never the full URL.
+
 ## Local development
 
 ```bash
@@ -120,6 +127,13 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 
 Emails are also delivered right after any action in the app, so the cron mainly matters for emails queued by scheduled rules. Leave the Resend variables empty to mock email. To inspect what would have been sent, run `select to_email, template, subject, status from public.email_outbox order by created_at desc;`.
 
+## Setup: Slack and webhooks
+
+1. **Slack:** in Slack, create an app (or open one) at api.slack.com/apps → **Incoming Webhooks** → turn it on → **Add New Webhook to Workspace** → pick a channel. Copy the `https://hooks.slack.com/services/…` URL into the project's **Settings → Integrations**, or into a single rule's **Send Slack message** action. No Slack OAuth app is needed.
+2. **Outbound webhooks:** paste the receiver's `https://` URL (plain `http`, local, and private-network addresses are rejected) and, optionally, a shared secret and header name. The receiver should compare the header to the secret.
+3. Delivery needs `SUPABASE_SERVICE_ROLE_KEY` (same as email). Set `INTEGRATIONS_MOCK=true` to log deliveries as `[integration:mocked]` instead of POSTing (useful for previews). `NEXT_PUBLIC_APP_URL` (or Vercel's production URL) adds `task.url` deep links to webhook payloads.
+4. To inspect deliveries (service role / SQL editor only — clients can't read this table): `select channel, target_hint, status, attempts, last_error from public.integration_outbox order by created_at desc;`.
+
 ## Setup: sign-in (email + password, interim)
 
 Until Google OAuth is configured, the login page shows an email + password form with **Sign in** and **Sign up**. The allowlist works the same as with Google: after Supabase accepts the credentials, the app checks `is_allowlisted()`. If the email isn't allowlisted, the session is signed out and the denied screen is shown.
@@ -165,10 +179,11 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | --- | --- |
    | `NEXT_PUBLIC_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon (or publishable) key |
-   | `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Needed to deliver email and run the cron route |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Needed to deliver email, Slack messages, and webhooks, and to run the cron route |
    | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | Optional. Email via Resend; mocked when unset |
+   | `INTEGRATIONS_MOCK` | Optional. `true` logs Slack/webhook deliveries instead of sending them |
    | `CRON_SECRET` | Secret for `/api/cron/workflows` |
-   | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links |
+   | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links and webhook `task.url` links |
    | `AUTH_GOOGLE_ENABLED` | Optional. `true` shows "Continue with Google" once the Google provider is configured |
 
    The Supabase ↔ Vercel Marketplace integration sets the same names automatically if you prefer it.

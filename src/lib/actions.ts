@@ -6,6 +6,16 @@ import { after } from "next/server";
 import { getWorkspace } from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { drainOutbox } from "@/lib/email";
+import { drainIntegrationOutbox } from "@/lib/integrations";
+import {
+  MAX_SECRET_LENGTH,
+  WEBHOOK_URL_ERROR,
+  isAllowedHeaderName,
+  isAllowedWebhookUrl,
+  isIntegrationSetting,
+  toProjectIntegrations,
+  type ProjectIntegrations,
+} from "@/lib/integrations-shared";
 import { isFieldType, isOptionColor, type FieldOption } from "@/lib/fields";
 import {
   isChoice,
@@ -63,13 +73,19 @@ function optionalText(value: unknown, max = 20000): string | null {
   return trimmed || null;
 }
 
-// Any write can make rules queue email, so deliver the outbox once the response is sent.
+// Any write can make rules queue email, Slack messages, or webhooks, so deliver the outboxes once the
+// response is sent (a small integration batch keeps rule fires snappy between cron runs).
 function deliverQueuedEmail() {
   after(async () => {
     try {
       await drainOutbox();
     } catch (error) {
       console.error("Email delivery failed", error);
+    }
+    try {
+      await drainIntegrationOutbox({ max: 10 });
+    } catch (error) {
+      console.error("Integration delivery failed", error);
     }
   });
 }
@@ -1094,6 +1110,37 @@ export async function updateProjectWorkflow(
   });
 }
 
+// Admin+ (set_project_integration). An empty value clears the setting. Values are never echoed back.
+export async function setProjectIntegration(
+  projectId: string,
+  setting: string,
+  value: string,
+): Promise<ActionResult & { settings?: ProjectIntegrations }> {
+  let settings: ProjectIntegrations | undefined;
+  const result = await run(async () => {
+    if (!isIntegrationSetting(setting)) throw new InputError("Unknown integration setting");
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    if ((setting === "slack_webhook_url" || setting === "webhook_url") && trimmed && !isAllowedWebhookUrl(trimmed)) {
+      throw new InputError(WEBHOOK_URL_ERROR);
+    }
+    if (setting === "webhook_secret" && trimmed.length > MAX_SECRET_LENGTH) {
+      throw new InputError("The shared secret is limited to 500 characters");
+    }
+    if (setting === "webhook_secret_header" && trimmed && !isAllowedHeaderName(trimmed)) {
+      throw new InputError("Header names use letters, digits, and dashes (and can’t be a standard transport header)");
+    }
+    const supabase = await createClient();
+    const response = await supabase.rpc("set_project_integration", {
+      target_project: id(projectId),
+      setting,
+      new_value: trimmed || null,
+    });
+    check(response);
+    settings = toProjectIntegrations(response.data);
+  });
+  return result.error ? result : { settings };
+}
+
 export async function assignRequestNumber(taskId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
@@ -1327,9 +1374,28 @@ type RuleInput = {
   actions: RuleAction[];
 };
 
+// Same checks the database makes (integration_url_ok / integration_header_ok), for a clearer message.
+// Plain URLs and secrets are moved out of rules.actions by a trigger before the rule is stored.
+function checkIntegrationAction(action: RuleAction) {
+  if (action.type !== "send_slack" && action.type !== "call_webhook") return;
+  const urlKey = action.type === "send_slack" ? "webhook_url" : "url";
+  const url = action[urlKey];
+  if (typeof url === "string" && url.trim() && !isAllowedWebhookUrl(url.trim())) throw new InputError(WEBHOOK_URL_ERROR);
+  if (action.type === "call_webhook") {
+    if (typeof action.secret === "string" && action.secret.length > MAX_SECRET_LENGTH) {
+      throw new InputError("The shared secret is limited to 500 characters");
+    }
+    const header = action.secret_header;
+    if (typeof header === "string" && header && !isAllowedHeaderName(header)) {
+      throw new InputError("Header names use letters, digits, and dashes (and can’t be a standard transport header)");
+    }
+  }
+}
+
 function ruleRow(input: RuleInput) {
   if (!isTriggerType(input.triggerType)) throw new InputError("Choose a trigger");
   if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
+  input.actions.forEach(checkIntegrationAction);
   return {
     name: text(input.name, "Rule name", { max: 200 }),
     trigger_type: input.triggerType,
