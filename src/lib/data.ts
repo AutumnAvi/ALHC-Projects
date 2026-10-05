@@ -11,6 +11,16 @@ import {
   type RuleRun,
 } from "@/lib/rules";
 import type { Json, Tables } from "@/lib/supabase/database.types";
+import {
+  isViewLayout,
+  isWidgetKind,
+  parseFilters,
+  parseViewConfig,
+  toJson,
+  type DashboardWidget,
+  type ProjectView,
+  type ViewFilters,
+} from "@/lib/views";
 
 // Every read in the app goes through this module, and every query here filters deleted_at IS NULL.
 // RLS deliberately does not hide soft-deleted rows so that restore stays possible later.
@@ -29,6 +39,7 @@ export type ProjectTask = {
   dueOn: string | null;
   assigneeId: string | null;
   homeProjectId: string;
+  createdAt: string;
   sectionId: string | null;
   sortOrder: number;
   subtaskCount: number;
@@ -181,7 +192,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     await supabase
       .from("task_projects")
       .select(
-        "section_id, sort_order, task:tasks!inner(id, title, completed_at, due_on, assignee_id, home_project_id)",
+        "section_id, sort_order, task:tasks!inner(id, title, completed_at, due_on, assignee_id, home_project_id, created_at)",
       )
       .eq("project_id", projectId)
       .is("deleted_at", null)
@@ -241,6 +252,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     dueOn: m.task.due_on,
     assigneeId: m.task.assignee_id,
     homeProjectId: m.task.home_project_id,
+    createdAt: m.task.created_at,
     sectionId: m.section_id,
     sortOrder: m.sort_order,
     subtaskCount: subtaskStats.get(m.task.id)?.total ?? 0,
@@ -741,3 +753,97 @@ export const getRequestSequence = cache(async (projectId: string): Promise<Reque
     .maybeSingle();
   return maybe(result, "request numbering");
 });
+
+// ---------------------------------------------------------------------------------------------
+// Views & Insights: saved views, filtering, dashboard widgets + metrics
+// ---------------------------------------------------------------------------------------------
+
+function toProjectView(row: Tables<"project_views">): ProjectView {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    layout: isViewLayout(row.layout) ? row.layout : "list",
+    config: parseViewConfig(row.config),
+    sortOrder: row.sort_order,
+  };
+}
+
+export const listProjectViews = cache(async (projectId: string): Promise<ProjectView[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_views")
+    .select("*")
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "views").map(toProjectView);
+});
+
+export const getProjectView = cache(async (viewId: string): Promise<ProjectView | null> => {
+  const supabase = await createClient();
+  const row = maybe(
+    await supabase.from("project_views").select("*").eq("id", viewId).is("deleted_at", null).maybeSingle(),
+    "view",
+  );
+  return row ? toProjectView(row) : null;
+});
+
+// Ids of the project's tasks that match a view filter, evaluated by filter_project_tasks() under RLS.
+export async function filterProjectTaskIds(
+  projectId: string,
+  filters: ViewFilters,
+  timeZone: string,
+): Promise<Set<string>> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("filter_project_tasks", {
+    target_project: projectId,
+    filters: toJson(filters),
+    tz: timeZone,
+  });
+  return new Set(rows(result, "filtered tasks").map((r) => r.task_id));
+}
+
+export const listDashboardWidgets = cache(async (projectId: string): Promise<DashboardWidget[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("dashboard_widgets")
+    .select("*")
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "dashboard widgets").flatMap((row) =>
+    isWidgetKind(row.kind)
+      ? [
+          {
+            id: row.id,
+            projectId: row.project_id,
+            kind: row.kind,
+            title: row.title,
+            filters: parseFilters(row.filters),
+            sortOrder: row.sort_order,
+          },
+        ]
+      : [],
+  );
+});
+
+export type MetricBucket = { bucket: string | null; count: number };
+
+export async function projectMetrics(
+  projectId: string,
+  filters: ViewFilters,
+  groupBy: "none" | "section" | "assignee",
+  timeZone: string,
+): Promise<MetricBucket[]> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("project_metrics", {
+    target_project: projectId,
+    filters: toJson(filters),
+    group_by: groupBy,
+    tz: timeZone,
+  });
+  return rows(result, "metrics").map((r) => ({ bucket: r.bucket, count: Number(r.task_count) }));
+}

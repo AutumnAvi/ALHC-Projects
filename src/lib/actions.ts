@@ -17,6 +17,17 @@ import {
 } from "@/lib/forms";
 import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
+import {
+  VIEW_LAYOUTS,
+  isViewLayout,
+  isWidgetKind,
+  parseFilters,
+  parseViewConfig,
+  toJson,
+  type ViewConfig,
+  type ViewFilters,
+  type WidgetKind,
+} from "@/lib/views";
 import type { Json } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 
@@ -969,4 +980,214 @@ export async function installRulePreset(
       }),
     );
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Saved views
+// ---------------------------------------------------------------------------------------------
+
+async function nextOrder(table: "project_views" | "dashboard_widgets", projectId: string) {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from(table)
+    .select("sort_order")
+    .eq("project_id", id(projectId))
+    .is("deleted_at", null)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.sort_order ?? 0) + ORDER_STEP;
+}
+
+export async function createView(
+  projectId: string,
+  input: { name?: string; layout: string; config?: ViewConfig },
+): Promise<ActionResult> {
+  let viewId: string | null = null;
+  const result = await run(async () => {
+    if (!isViewLayout(input.layout)) throw new InputError("Unknown view layout");
+    const fallback = VIEW_LAYOUTS.find((l) => l.value === input.layout)!.label;
+    const supabase = await createClient();
+    const inserted = await supabase
+      .from("project_views")
+      .insert({
+        project_id: id(projectId),
+        name: text(input.name || fallback, "View name", { max: 100 }),
+        layout: input.layout,
+        config: toJson(parseViewConfig(input.config ?? {})),
+        sort_order: await nextOrder("project_views", projectId),
+      })
+      .select("id")
+      .single();
+    check(inserted);
+    viewId = inserted.data!.id;
+  });
+  if (viewId && !result.error) redirect(`/projects/${projectId}/views/${viewId}`);
+  return result;
+}
+
+export async function updateView(
+  viewId: string,
+  patch: { name?: string; config?: ViewConfig },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: { name?: string; config?: Json } = {};
+    if (patch.name !== undefined) update.name = text(patch.name, "View name", { max: 100 });
+    if (patch.config !== undefined) update.config = toJson(parseViewConfig(patch.config));
+    const supabase = await createClient();
+    check(await supabase.from("project_views").update(update).eq("id", id(viewId)));
+  });
+}
+
+export async function duplicateView(viewId: string): Promise<ActionResult> {
+  const supabase = await createClient();
+  const { data: view } = await supabase
+    .from("project_views")
+    .select("project_id, name, layout, config")
+    .eq("id", id(viewId))
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!view) return { error: "This view no longer exists" };
+  return createView(view.project_id, {
+    name: `${view.name} copy`.slice(0, 100),
+    layout: view.layout,
+    config: parseViewConfig(view.config),
+  });
+}
+
+export async function deleteView(viewId: string): Promise<ActionResult> {
+  let projectId: string | null = null;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const { data: view } = await supabase
+      .from("project_views")
+      .select("project_id")
+      .eq("id", id(viewId))
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!view) throw new InputError("This view no longer exists");
+    const { count } = await supabase
+      .from("project_views")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", view.project_id)
+      .is("deleted_at", null);
+    if ((count ?? 0) <= 1) throw new InputError("A project needs at least one view");
+    check(await supabase.from("project_views").update({ deleted_at: now() }).eq("id", viewId));
+    projectId = view.project_id;
+  });
+  if (projectId && !result.error) redirect(`/projects/${projectId}`);
+  return result;
+}
+
+// Swaps a view or widget with its neighbour (direction -1 = earlier, 1 = later).
+async function moveRow(table: "project_views" | "dashboard_widgets", rowId: string, direction: number) {
+  const supabase = await createClient();
+  const { data: row } = await supabase
+    .from(table)
+    .select("project_id")
+    .eq("id", id(rowId))
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!row) throw new InputError("This item no longer exists");
+  const { data: siblings } = await supabase
+    .from(table)
+    .select("id, sort_order")
+    .eq("project_id", row.project_id)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  const list = siblings ?? [];
+  const index = list.findIndex((s) => s.id === rowId);
+  const target = index + (direction < 0 ? -1 : 1);
+  if (index === -1 || target < 0 || target >= list.length) return;
+  [list[index], list[target]] = [list[target], list[index]];
+  for (const [i, item] of list.entries()) {
+    const order = (i + 1) * ORDER_STEP;
+    if (item.sort_order !== order) {
+      check(await supabase.from(table).update({ sort_order: order }).eq("id", item.id));
+    }
+  }
+}
+
+export async function moveView(viewId: string, direction: -1 | 1): Promise<ActionResult> {
+  return run(() => moveRow("project_views", viewId, direction));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Dashboard widgets
+// ---------------------------------------------------------------------------------------------
+
+const STARTER_WIDGETS: { kind: WidgetKind; title: string; filters: ViewFilters }[] = [
+  { kind: "count", title: "Incomplete tasks", filters: {} },
+  { kind: "count", title: "Overdue", filters: { due: { kind: "overdue" } } },
+  { kind: "count", title: "Completed in the last 7 days", filters: { completion: "completed", completed_within_days: 7 } },
+  { kind: "by_section", title: "Incomplete by section", filters: {} },
+  { kind: "by_assignee", title: "Incomplete by assignee", filters: {} },
+];
+
+export async function installStarterWidgets(projectId: string): Promise<ActionResult> {
+  return run(async () => {
+    const start = await nextOrder("dashboard_widgets", projectId);
+    const supabase = await createClient();
+    check(
+      await supabase.from("dashboard_widgets").insert(
+        STARTER_WIDGETS.map((w, i) => ({
+          project_id: projectId,
+          kind: w.kind,
+          title: w.title,
+          filters: toJson(w.filters),
+          sort_order: start + i * ORDER_STEP,
+        })),
+      ),
+    );
+  });
+}
+
+export async function createWidget(
+  projectId: string,
+  input: { kind: string; title: string; filters?: ViewFilters },
+): Promise<ActionResult> {
+  return run(async () => {
+    if (!isWidgetKind(input.kind)) throw new InputError("Unknown widget type");
+    const supabase = await createClient();
+    check(
+      await supabase.from("dashboard_widgets").insert({
+        project_id: id(projectId),
+        kind: input.kind,
+        title: text(input.title, "Widget title", { max: 100 }),
+        filters: toJson(parseFilters(input.filters ?? {})),
+        sort_order: await nextOrder("dashboard_widgets", projectId),
+      }),
+    );
+  });
+}
+
+export async function updateWidget(
+  widgetId: string,
+  patch: { kind?: string; title?: string; filters?: ViewFilters },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: { kind?: string; title?: string; filters?: Json } = {};
+    if (patch.kind !== undefined) {
+      if (!isWidgetKind(patch.kind)) throw new InputError("Unknown widget type");
+      update.kind = patch.kind;
+    }
+    if (patch.title !== undefined) update.title = text(patch.title, "Widget title", { max: 100 });
+    if (patch.filters !== undefined) update.filters = toJson(parseFilters(patch.filters));
+    const supabase = await createClient();
+    check(await supabase.from("dashboard_widgets").update(update).eq("id", id(widgetId)));
+  });
+}
+
+export async function deleteWidget(widgetId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.from("dashboard_widgets").update({ deleted_at: now() }).eq("id", id(widgetId)),
+    );
+  });
+}
+
+export async function moveWidget(widgetId: string, direction: -1 | 1): Promise<ActionResult> {
+  return run(() => moveRow("dashboard_widgets", widgetId, direction));
 }

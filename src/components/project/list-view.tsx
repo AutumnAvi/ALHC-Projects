@@ -7,11 +7,13 @@ import { CompleteToggle } from "@/components/complete-toggle";
 import { useServerAction } from "@/components/toast";
 import { setTaskCompleted } from "@/lib/actions";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
-import type { FieldDef } from "@/lib/fields";
+import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
+import { columnsOf, groupOf, hasActiveFilters, refFieldId, type ColumnKey, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
 import { Assignee, DueDate, TaskBadges } from "./task-meta";
-import { tasksBySection, useProjectTasks } from "./use-project-tasks";
+import { useProjectTasks } from "./use-project-tasks";
+import { groupTasks, type TaskGroup } from "./view-groups";
 
 type Props = {
   projectId: string;
@@ -19,17 +21,21 @@ type Props = {
   tasks: ProjectTask[];
   profiles: Profile[];
   fields: FieldDef[];
+  config: ViewConfig;
   openTaskId: string | null;
 };
 
 const GRID = "grid items-center gap-3";
+const COLUMN_WIDTH: Record<string, string> = { assignee: "9rem", due: "6rem", section: "8rem" };
 
-export function ListView({ projectId, sections, tasks, profiles, fields, openTaskId }: Props) {
+export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
-  const groups = tasksBySection(optimisticTasks);
-  const unsectioned = groups.get(null) ?? [];
+  const fieldsById = new Map(fields.map((f) => [f.id, f]));
+  const groups = groupTasks(optimisticTasks, config, { sections, profilesById, fields });
+  const bySection = groupOf(config) === "section";
+  const filtered = hasActiveFilters(config.filters);
 
   const toggle = (task: ProjectTask) => {
     const completed = !task.completedAt;
@@ -39,34 +45,34 @@ export function ListView({ projectId, sections, tasks, profiles, fields, openTas
     );
   };
 
-  const pinned = fields.filter((f) => f.showInViews);
+  const columns = columnsOf(config, fields).filter(
+    (c) => !c.startsWith("field:") || fieldsById.has(refFieldId(c) ?? ""),
+  );
   const gridStyle = {
-    gridTemplateColumns: ["minmax(0,1fr)", "9rem", "6rem", ...pinned.map(() => "8rem")].join(" "),
+    gridTemplateColumns: ["minmax(0,1fr)", ...columns.map((c) => COLUMN_WIDTH[c] ?? "8rem")].join(" "),
   };
   const fieldContext: FieldContext = {
     profilesById,
     sectionNames: new Map(sections.map((s) => [s.id, s.name])),
   };
-  const rowProps = { profilesById, openTaskId, onToggle: toggle, pinned, fieldContext, gridStyle };
+  const rowProps = { profilesById, openTaskId, onToggle: toggle, columns, fieldsById, fieldContext, gridStyle };
 
   return (
-    <div className="px-6 py-4" style={{ minWidth: `${36 + pinned.length * 8.75}rem` }}>
+    <div className="px-6 py-4" style={{ minWidth: `${28 + columns.length * 8.75}rem` }}>
       <div
         className={`${GRID} border-b border-zinc-200 px-3 pb-2 text-xs font-medium text-zinc-500`}
         style={gridStyle}
         aria-hidden
       >
         <span className="pl-7">Task</span>
-        <span>Assignee</span>
-        <span>Due</span>
-        {pinned.map((field) => (
-          <span key={field.id} className="truncate">
-            {field.name}
+        {columns.map((column) => (
+          <span key={column} className="truncate">
+            {columnLabel(column, fieldsById)}
           </span>
         ))}
       </div>
 
-      {sections.length === 0 && optimisticTasks.length === 0 ? (
+      {sections.length === 0 && tasks.length === 0 && !filtered ? (
         <div className="mx-auto max-w-md py-16 text-center">
           <h2 className="text-sm font-medium text-zinc-900">This project is empty</h2>
           <p className="mt-1 text-sm text-zinc-600">
@@ -76,37 +82,55 @@ export function ListView({ projectId, sections, tasks, profiles, fields, openTas
         </div>
       ) : null}
 
-      {unsectioned.length > 0 || sections.length === 0 ? (
-        <SectionGroup title={<span className="px-1 text-sm font-semibold text-zinc-500">No section</span>}>
-          {unsectioned.map((task) => (
-            <TaskRow key={task.id} task={task} {...rowProps} />
-          ))}
-          <AddTaskInput projectId={projectId} sectionId={null} variant="row" />
-        </SectionGroup>
+      {filtered && optimisticTasks.length === 0 ? (
+        <p className="px-3 pt-6 text-sm text-zinc-500">No tasks match this view’s filters.</p>
       ) : null}
 
-      {sections.map((section) => {
-        const sectionTasks = groups.get(section.id) ?? [];
-        return (
-          <SectionGroup
-            key={section.id}
-            title={<SectionTitle section={section} count={sectionTasks.length} />}
-          >
-            {sectionTasks.map((task) => (
-              <TaskRow key={task.id} task={task} {...rowProps} />
-            ))}
-            {sectionTasks.length === 0 ? (
-              <p className="px-3 pt-2 pl-10 text-xs text-zinc-400">No tasks in this section yet.</p>
-            ) : null}
-            <AddTaskInput projectId={projectId} sectionId={section.id} variant="row" />
-          </SectionGroup>
-        );
-      })}
+      {groups.map((group) => (
+        <SectionGroup key={group.key} title={<GroupTitle group={group} />}>
+          {group.tasks.map((task) => (
+            <TaskRow key={task.id} task={task} {...rowProps} />
+          ))}
+          {group.section && group.tasks.length === 0 ? (
+            <p className="px-3 pt-2 pl-10 text-xs text-zinc-400">
+              {filtered ? "No matching tasks in this section." : "No tasks in this section yet."}
+            </p>
+          ) : null}
+          {group.target.kind === "section" ? (
+            <AddTaskInput projectId={projectId} sectionId={group.target.sectionId} variant="row" />
+          ) : null}
+        </SectionGroup>
+      ))}
 
-      <div className="mt-6">
-        <AddSection projectId={projectId} variant="list" />
-      </div>
+      {bySection ? (
+        <div className="mt-6">
+          <AddSection projectId={projectId} variant="list" />
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function columnLabel(column: ColumnKey, fieldsById: Map<string, FieldDef>) {
+  if (column === "assignee") return "Assignee";
+  if (column === "due") return "Due";
+  if (column === "section") return "Section";
+  return fieldsById.get(refFieldId(column) ?? "")?.name ?? "";
+}
+
+export function GroupTitle({ group }: { group: TaskGroup }) {
+  if (group.section) return <SectionTitle section={group.section} count={group.tasks.length} />;
+  return (
+    <span className="flex flex-1 items-center gap-2 px-1 text-sm font-semibold text-zinc-900">
+      {group.color ? (
+        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[group.color]}`}>
+          {group.label}
+        </span>
+      ) : (
+        <span className={group.target.kind === "section" ? "text-zinc-500" : undefined}>{group.label}</span>
+      )}
+      <span className="text-xs font-normal tabular-nums text-zinc-400">{group.tasks.length}</span>
+    </span>
   );
 }
 
@@ -119,7 +143,7 @@ function SectionGroup({ title, children }: { title: React.ReactNode; children: R
           type="button"
           onClick={() => setCollapsed((c) => !c)}
           aria-expanded={!collapsed}
-          aria-label={collapsed ? "Expand section" : "Collapse section"}
+          aria-label={collapsed ? "Expand group" : "Collapse group"}
           className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
         >
           {collapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
@@ -136,7 +160,8 @@ function TaskRow({
   profilesById,
   openTaskId,
   onToggle,
-  pinned,
+  columns,
+  fieldsById,
   fieldContext,
   gridStyle,
 }: {
@@ -144,7 +169,8 @@ function TaskRow({
   profilesById: Map<string, Profile>;
   openTaskId: string | null;
   onToggle: (task: ProjectTask) => void;
-  pinned: FieldDef[];
+  columns: ColumnKey[];
+  fieldsById: Map<string, FieldDef>;
   fieldContext: FieldContext;
   gridStyle: React.CSSProperties;
 }) {
@@ -178,17 +204,35 @@ function TaskRow({
           <TaskBadges task={task} />
         </span>
       </div>
-      <div className="min-w-0">
-        <Assignee profile={assignee} showName />
-      </div>
-      <div>
-        <DueDate task={task} />
-      </div>
-      {pinned.map((field) => (
-        <div key={field.id} className="min-w-0">
-          <FieldValueChips field={field} task={task} context={fieldContext} showName />
-        </div>
-      ))}
+      {columns.map((column) => {
+        if (column === "assignee") {
+          return (
+            <div key={column} className="min-w-0">
+              <Assignee profile={assignee} showName />
+            </div>
+          );
+        }
+        if (column === "due") {
+          return (
+            <div key={column}>
+              <DueDate task={task} />
+            </div>
+          );
+        }
+        if (column === "section") {
+          return (
+            <div key={column} className="min-w-0 truncate text-xs text-zinc-600">
+              {task.sectionId ? fieldContext.sectionNames.get(task.sectionId) : ""}
+            </div>
+          );
+        }
+        const field = fieldsById.get(refFieldId(column) ?? "");
+        return (
+          <div key={column} className="min-w-0">
+            {field ? <FieldValueChips field={field} task={task} context={fieldContext} showName /> : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

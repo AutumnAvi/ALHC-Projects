@@ -35,7 +35,7 @@ export default async function HomePage() {
             {projects.map((project) => (
               <li key={project.id}>
                 <Link
-                  href={`/projects/${project.id}/list`}
+                  href={`/projects/${project.id}`}
                   className="flex h-full flex-col rounded-xl border border-zinc-200 bg-white p-4 transition hover:border-zinc-300 hover:shadow-sm"
                 >
                   <span className="flex items-center gap-2 text-sm font-medium text-zinc-900">

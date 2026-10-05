@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { connection } from "next/server";
 import { MobileBar } from "@/components/shell/mobile-bar";
 import { Sidebar } from "@/components/shell/sidebar";
+import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { SetupRequired } from "@/components/setup-required";
 import { ToastProvider } from "@/components/toast";
 import { requireMember } from "@/lib/auth";
@@ -17,6 +18,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <ToastProvider>
+      <TimeZoneCookie />
       <div className="flex h-full">
         <Sidebar
           member={member}

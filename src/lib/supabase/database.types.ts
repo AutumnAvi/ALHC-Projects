@@ -209,6 +209,45 @@ export type Database = {
           },
         ];
       };
+      dashboard_widgets: {
+        Row: {
+          id: string;
+          project_id: string;
+          kind: string;
+          title: string;
+          filters: Json;
+          sort_order: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          kind: string;
+          title: string;
+          filters?: Json;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          kind?: string;
+          title?: string;
+          filters?: Json;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
       email_outbox: {
         Row: {
           id: string;
@@ -436,6 +475,45 @@ export type Database = {
           avatar_url?: string | null;
           created_at?: string;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      project_views: {
+        Row: {
+          id: string;
+          project_id: string;
+          name: string;
+          layout: string;
+          config: Json;
+          sort_order: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          name: string;
+          layout: string;
+          config?: Json;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          name?: string;
+          layout?: string;
+          config?: Json;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
         };
         Relationships: [];
       };
@@ -1126,6 +1204,16 @@ export type Database = {
         Args: { target_approval: string; decision: string; decision_note?: string | null };
         Returns: undefined;
       };
+      filter_project_tasks: {
+        Args: { target_project: string; filters?: Json; tz?: string };
+        Returns: {
+          task_id: string;
+          section_id: string | null;
+          assignee_id: string | null;
+          due_on: string | null;
+          completed_at: string | null;
+        }[];
+      };
       format_request_label: {
         Args: { target_project: string; number: number };
         Returns: string;
@@ -1141,6 +1229,10 @@ export type Database = {
       is_allowlisted: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      project_metrics: {
+        Args: { target_project: string; filters?: Json; group_by?: string; tz?: string };
+        Returns: { bucket: string | null; task_count: number }[];
       };
       request_approval: {
         Args: {

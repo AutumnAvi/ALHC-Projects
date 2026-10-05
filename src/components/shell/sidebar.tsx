@@ -104,7 +104,7 @@ export function Sidebar({
               return (
                 <li key={project.id}>
                   <Link
-                    href={`/projects/${project.id}/list`}
+                    href={`/projects/${project.id}`}
                     aria-current={active ? "page" : undefined}
                     className={NAV_LINK}
                   >
