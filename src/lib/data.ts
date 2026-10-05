@@ -12,7 +12,15 @@ import {
   type RuleRun,
 } from "@/lib/rules";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
-import { PROJECT_ROLES as ROLE_ORDER, hasRole, isProjectRole, type ProjectRole } from "@/lib/roles";
+import {
+  PROJECT_ROLES as ROLE_ORDER,
+  hasRole,
+  isPortfolioRole,
+  isProjectRole,
+  type PortfolioRole,
+  type ProjectRole,
+} from "@/lib/roles";
+import { EMPTY_COUNTS, type PortfolioCounts } from "@/lib/portfolios";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
   isViewLayout,
@@ -31,8 +39,19 @@ import {
 
 export type Project = Pick<
   Tables<"projects">,
-  "id" | "name" | "description" | "sort_order" | "approval_completes_task"
+  | "id"
+  | "name"
+  | "description"
+  | "sort_order"
+  | "approval_completes_task"
+  | "status"
+  | "status_note"
+  | "status_updated_at"
+  | "status_updated_by"
 >;
+
+const PROJECT_COLUMNS =
+  "id, name, description, sort_order, approval_completes_task, status, status_note, status_updated_at, status_updated_by";
 export type Section = Pick<Tables<"sections">, "id" | "project_id" | "name" | "sort_order">;
 export type Profile = Pick<Tables<"profiles">, "id" | "email" | "full_name" | "avatar_url">;
 
@@ -179,7 +198,7 @@ export const listProjects = cache(async (): Promise<Project[]> => {
   const supabase = await createClient();
   const result = await supabase
     .from("projects")
-    .select("id, name, description, sort_order, approval_completes_task")
+    .select(PROJECT_COLUMNS)
     .is("deleted_at", null)
     .order("sort_order")
     .order("created_at");
@@ -190,7 +209,7 @@ export const getProject = cache(async (projectId: string): Promise<Project | nul
   const supabase = await createClient();
   const result = await supabase
     .from("projects")
-    .select("id, name, description, sort_order, approval_completes_task")
+    .select(PROJECT_COLUMNS)
     .eq("id", projectId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -1149,3 +1168,135 @@ export async function projectMetrics(
   });
   return rows(result, "metrics").map((r) => ({ bucket: r.bucket, count: Number(r.task_count) }));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Portfolios. RLS shows a portfolio only to its members, and a portfolio's projects only when the
+// viewer can also read the project; reports (portfolio_report) apply the same rule.
+// ---------------------------------------------------------------------------------------------
+
+export type Portfolio = Pick<Tables<"portfolios">, "id" | "name" | "notes" | "created_at">;
+
+export const listPortfolios = cache(async (): Promise<Portfolio[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("portfolios")
+    .select("id, name, notes, created_at")
+    .is("deleted_at", null)
+    .order("name")
+    .order("created_at");
+  return rows(result, "portfolios");
+});
+
+export const getPortfolio = cache(async (portfolioId: string): Promise<Portfolio | null> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("portfolios")
+    .select("id, name, notes, created_at")
+    .eq("id", portfolioId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  return maybe(result, "portfolio");
+});
+
+// The viewer's role in a portfolio, or null when they are not a member.
+export const getPortfolioRole = cache(async (portfolioId: string): Promise<PortfolioRole | null> => {
+  const supabase = await createClient();
+  const role = maybe(await supabase.rpc("portfolio_role", { target_portfolio: portfolioId }), "portfolio role");
+  return isPortfolioRole(role) ? role : null;
+});
+
+export type PortfolioMember = {
+  profileId: string;
+  role: PortfolioRole;
+  email: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+  addedAt: string;
+};
+
+export const listPortfolioMembers = cache(async (portfolioId: string): Promise<PortfolioMember[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("portfolio_members")
+    .select(
+      "profile_id, role, created_at, profile:profiles!portfolio_members_profile_id_fkey!inner(email, full_name, avatar_url)",
+    )
+    .eq("portfolio_id", portfolioId)
+    .is("deleted_at", null)
+    .order("created_at");
+  return rows(result, "portfolio members")
+    .filter((m) => isPortfolioRole(m.role))
+    .map((m) => ({
+      profileId: m.profile_id,
+      role: m.role as PortfolioRole,
+      email: m.profile.email,
+      fullName: m.profile.full_name,
+      avatarUrl: m.profile.avatar_url,
+      addedAt: m.created_at,
+    }));
+});
+
+export type PortfolioProject = Project & { portfolioSortOrder: number };
+
+// Active projects of a portfolio that the viewer can read, in portfolio order.
+export const listPortfolioProjects = cache(async (portfolioId: string): Promise<PortfolioProject[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("portfolio_projects")
+    .select(`sort_order, created_at, project:projects!portfolio_projects_project_id_fkey!inner(${PROJECT_COLUMNS})`)
+    .eq("portfolio_id", portfolioId)
+    .is("deleted_at", null)
+    .is("project.deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "portfolio projects").map((row) => ({ ...row.project, portfolioSortOrder: row.sort_order }));
+});
+
+// How many of the portfolio's projects the viewer isn't a member of (left out of every number).
+export const countHiddenPortfolioProjects = cache(async (portfolioId: string): Promise<number> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("portfolio_hidden_project_count", { target_portfolio: portfolioId });
+  return Number(maybe(result, "hidden projects") ?? 0);
+});
+
+export type PortfolioReportRow = PortfolioCounts & { bucket: string | null };
+
+export async function portfolioReport(
+  portfolioId: string,
+  groupBy: "none" | "project" | "assignee",
+  timeZone: string,
+): Promise<PortfolioReportRow[]> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("portfolio_report", {
+    target_portfolio: portfolioId,
+    group_by: groupBy,
+    tz: timeZone,
+  });
+  return rows(result, "portfolio report").map((r) => ({
+    bucket: r.bucket,
+    total: Number(r.task_count),
+    completed: Number(r.completed_count),
+    incomplete: Number(r.incomplete_count),
+    overdue: Number(r.overdue_count),
+    completedRecent: Number(r.completed_recent_count),
+  }));
+}
+
+export async function portfolioTotals(portfolioId: string, timeZone: string): Promise<PortfolioCounts> {
+  const [row] = await portfolioReport(portfolioId, "none", timeZone);
+  return row ?? EMPTY_COUNTS;
+}
+
+// Progress for every portfolio the viewer can read (sidebar), keyed by portfolio id.
+export const listPortfolioProgress = cache(
+  async (): Promise<Map<string, { total: number; completed: number }>> => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("list_portfolio_progress");
+    return new Map(
+      rows(result, "portfolio progress").map((r) => [
+        r.portfolio_id,
+        { total: Number(r.task_count), completed: Number(r.completed_count) },
+      ]),
+    );
+  },
+);

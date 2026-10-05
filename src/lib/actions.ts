@@ -18,7 +18,8 @@ import {
 import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
-import { isProjectRole } from "@/lib/roles";
+import { isPortfolioRole, isProjectRole } from "@/lib/roles";
+import { isProjectStatus } from "@/lib/portfolios";
 import {
   VIEW_LAYOUTS,
   isIsoDate,
@@ -246,6 +247,209 @@ export async function transferProjectOwnership(projectId: string, profileId: str
     check(
       await supabase.rpc("transfer_project_ownership", {
         target_project: id(projectId),
+        target_profile: id(profileId, "person"),
+      }),
+    );
+  });
+}
+
+// Project status (Editor+, through set_project_status so who/when are stamped by the database).
+export async function setProjectStatus(
+  projectId: string,
+  status: string,
+  note: string | null,
+): Promise<ActionResult> {
+  return run(async () => {
+    if (!isProjectStatus(status)) throw new InputError("Choose a status");
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("set_project_status", {
+        target_project: id(projectId),
+        new_status: status,
+        note: optionalText(note, 2000),
+      }),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Portfolios (membership and project rules live in the SQL RPCs; see 20261005070000_portfolios.sql)
+// ---------------------------------------------------------------------------------------------
+
+export async function createPortfolio(formData: FormData): Promise<ActionResult> {
+  let portfolioId: string | null = null;
+  const result = await run(async () => {
+    const name = text(formData.get("name"), "Portfolio name", { max: 100 });
+    const supabase = await createClient();
+    const workspace = await getWorkspace();
+    if (!workspace) throw new DbError("No workspace is available");
+    const inserted = await supabase
+      .from("portfolios")
+      .insert({ workspace_id: workspace.id, name })
+      .select("id")
+      .single();
+    check(inserted);
+    portfolioId = inserted.data!.id;
+  });
+  if (portfolioId && !result.error) redirect(`/portfolios/${portfolioId}`);
+  return result;
+}
+
+export async function updatePortfolio(
+  portfolioId: string,
+  patch: { name?: string; notes?: string | null },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: { name?: string; notes?: string | null } = {};
+    if (patch.name !== undefined) update.name = text(patch.name, "Portfolio name", { max: 100 });
+    if (patch.notes !== undefined) update.notes = optionalText(patch.notes);
+    const supabase = await createClient();
+    checkUpdated(await supabase.from("portfolios").update(update).eq("id", id(portfolioId)).select("id"));
+  });
+}
+
+export async function deletePortfolio(portfolioId: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("portfolios").update({ deleted_at: now() }).eq("id", id(portfolioId)).select("id"),
+    );
+  });
+  if (!result.error) redirect("/portfolios");
+  return result;
+}
+
+export async function addPortfolioProject(portfolioId: string, projectId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("add_portfolio_project", {
+        target_portfolio: id(portfolioId),
+        target_project: id(projectId, "project"),
+      }),
+    );
+  });
+}
+
+export async function removePortfolioProject(portfolioId: string, projectId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("remove_portfolio_project", {
+        target_portfolio: id(portfolioId),
+        target_project: id(projectId, "project"),
+      }),
+    );
+  });
+}
+
+// Moves a project one place among the projects the viewer can see. Uses a midpoint position so
+// projects hidden from the viewer keep theirs.
+export async function movePortfolioProject(
+  portfolioId: string,
+  projectId: string,
+  direction: -1 | 1,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("portfolio_projects")
+      .select("project_id, sort_order")
+      .eq("portfolio_id", id(portfolioId))
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    const list = data ?? [];
+    const index = list.findIndex((row) => row.project_id === projectId);
+    if (index === -1) throw new InputError("That project is not in this portfolio");
+    let position: number;
+    if (direction < 0) {
+      if (index === 0) return;
+      const after = list[index - 1].sort_order;
+      const before = index >= 2 ? list[index - 2].sort_order : after - ORDER_STEP;
+      position = (before + after) / 2;
+    } else {
+      if (index === list.length - 1) return;
+      const before = list[index + 1].sort_order;
+      const after = index + 2 < list.length ? list[index + 2].sort_order : before + ORDER_STEP;
+      position = (before + after) / 2;
+    }
+    check(
+      await supabase.rpc("move_portfolio_project", {
+        target_portfolio: portfolioId,
+        target_project: id(projectId, "project"),
+        new_sort_order: position,
+      }),
+    );
+  });
+}
+
+function portfolioRole(value: unknown): string {
+  if (!isPortfolioRole(value)) throw new InputError("Choose a role");
+  return value;
+}
+
+export async function invitePortfolioMember(
+  portfolioId: string,
+  email: string,
+  memberRole: string,
+): Promise<ActionResult> {
+  return run(async () => {
+    const address = text(email, "Email", { max: 320 }).toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("add_portfolio_member", {
+        target_portfolio: id(portfolioId),
+        member_email: address,
+        member_role: portfolioRole(memberRole),
+      }),
+    );
+  });
+}
+
+export async function changePortfolioMemberRole(
+  portfolioId: string,
+  profileId: string,
+  memberRole: string,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("update_portfolio_member_role", {
+        target_portfolio: id(portfolioId),
+        target_profile: id(profileId, "person"),
+        new_role: portfolioRole(memberRole),
+      }),
+    );
+  });
+}
+
+export async function removePortfolioMember(portfolioId: string, profileId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("remove_portfolio_member", {
+        target_portfolio: id(portfolioId),
+        target_profile: id(profileId, "person"),
+      }),
+    );
+  });
+}
+
+// Leaving loses access, so send the person to the portfolio list instead.
+export async function leavePortfolio(portfolioId: string, profileId: string): Promise<ActionResult> {
+  const result = await removePortfolioMember(portfolioId, profileId);
+  if (!result.error) redirect("/portfolios");
+  return result;
+}
+
+export async function transferPortfolioOwnership(portfolioId: string, profileId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("transfer_portfolio_ownership", {
+        target_portfolio: id(portfolioId),
         target_profile: id(profileId, "person"),
       }),
     );
