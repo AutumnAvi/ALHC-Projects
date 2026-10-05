@@ -205,7 +205,7 @@ function TaskCard({
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className={`group rounded-lg border bg-white p-3 shadow-xs transition ${
+      className={`group relative rounded-lg border bg-white p-3 shadow-xs transition ${
         open ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200 hover:border-zinc-300"
       } ${dragging ? "opacity-40" : ""} cursor-grab active:cursor-grabbing`}
     >
@@ -230,28 +230,31 @@ function TaskCard({
         </Link>
       </div>
 
-      <div className="mt-2.5 flex items-center gap-2.5 pl-6">
-        <DueDate task={task} />
-        <TaskBadges task={task} />
-        <span className="ml-auto flex items-center gap-1.5">
-          <label className="sr-only" htmlFor={`move-${task.id}`}>
-            Move “{task.title}” to section
-          </label>
-          <select
-            id={`move-${task.id}`}
-            value={sectionId ?? ""}
-            onChange={(e) => onMove(e.target.value || null)}
-            className="max-w-24 rounded border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 opacity-0 hover:border-zinc-200 focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100"
-          >
-            {sectionOptions.map((option) => (
-              <option key={option.id ?? "none"} value={option.id ?? ""}>
-                {option.name}
-              </option>
-            ))}
-          </select>
-          <Assignee profile={assignee} />
-        </span>
-      </div>
+      {task.dueOn || task.subtaskCount > 0 || task.projectCount > 1 || assignee ? (
+        <div className="mt-2.5 flex items-center gap-2.5 pl-6">
+          <DueDate task={task} />
+          <TaskBadges task={task} />
+          <span className="ml-auto">
+            <Assignee profile={assignee} />
+          </span>
+        </div>
+      ) : null}
+
+      <label className="sr-only" htmlFor={`move-${task.id}`}>
+        Move “{task.title}” to section
+      </label>
+      <select
+        id={`move-${task.id}`}
+        value={sectionId ?? ""}
+        onChange={(e) => onMove(e.target.value || null)}
+        className="absolute right-2 top-2 max-w-28 rounded border border-zinc-200 bg-white py-0.5 pl-1 text-xs text-zinc-600 opacity-0 shadow-xs focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+      >
+        {sectionOptions.map((option) => (
+          <option key={option.id ?? "none"} value={option.id ?? ""}>
+            {option.name}
+          </option>
+        ))}
+      </select>
     </article>
   );
 }

@@ -11,7 +11,7 @@ export function DueDate({ task }: { task: ProjectTask }) {
   const overdue = isOverdue(task.dueOn, today, Boolean(task.completedAt));
   const year = today ? Number(today.slice(0, 4)) : undefined;
   return (
-    <span className={`text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
+    <span className={`whitespace-nowrap text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
       {formatDueDate(task.dueOn, year)}
     </span>
   );
