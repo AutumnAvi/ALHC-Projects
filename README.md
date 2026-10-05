@@ -6,7 +6,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 ## What's here (core spine)
 
-- Google sign-in through Supabase Auth, gated by an email allowlist (`public.allowed_emails`). Non-allowlisted accounts are signed out and shown a denied screen.
+- Email + password sign-in through Supabase Auth (interim; Google sign-in returns later, see [Setup: sign-in](#setup-sign-in-email--password-interim)), gated by an email allowlist (`public.allowed_emails`). Non-allowlisted accounts are signed out and shown a denied screen.
 - Data model: workspaces, projects, sections, tasks, subtasks, multi-project task membership (`task_projects`), and profiles. All deletes are soft (`deleted_at`).
 - Row Level Security on every table. In this phase, any allowlisted user can read, create, and update all workspace data.
 - Project home, List view, Board view (drag-and-drop or a "move to" menu), and a task detail pane (title, description, assignee, due date, subtasks, project memberships, delete).
@@ -62,7 +62,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 2. **Apply the migrations.** Either:
    - CLI: `npx supabase login`, then `npx supabase link --project-ref <ref>`, then `npx supabase db push`
    - or open the SQL editor and run each file in `supabase/migrations/` in filename order.
-3. **Add people to the allowlist** in the SQL editor (use real Google account emails; they're normalised to lowercase):
+3. **Add people to the allowlist** in the SQL editor (the emails they sign in with; they're normalised to lowercase):
 
    ```sql
    insert into public.allowed_emails (email, note)
@@ -70,7 +70,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
    ```
 
    To remove access later, run `delete from public.allowed_emails where email = '...';`. Their next request gets signed out. `supabase/seed.sql` only contains a placeholder (`owner@example.com`) and is applied by `supabase db reset` for local stacks.
-4. **Turn off email sign-ups** (Authentication → Sign In / Providers → Email → disable). Google is the only supported sign-in method. The allowlist also requires a confirmed email.
+4. **Configure sign-in** as described in [Setup: sign-in](#setup-sign-in-email--password-interim). The allowlist also requires a confirmed email.
 5. **Storage:** the collaboration migration creates the private bucket **`task-attachments`** (25 MB per-file limit) and its `storage.objects` policies (`task_attachments_objects_select_allowlisted`, `task_attachments_objects_insert_allowlisted`). Nothing to click, but check two things:
    - Storage → Settings → **Upload file size limit** (the project-wide cap) must be at least 25 MB, or uploads fail below the bucket limit.
    - Files are stored as `<task id>/<uuid>-<file name>` and are only reachable through short-lived signed URLs issued by the app (`/attachments/<id>`). Removing an attachment hides it but leaves the object in Storage.
@@ -92,7 +92,25 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 
 Emails are also delivered right after any action in the app, so the cron mainly matters for emails queued by scheduled rules. Leave the Resend variables empty to mock email. To inspect what would have been sent, run `select to_email, template, subject, status from public.email_outbox order by created_at desc;`.
 
-## Setup: Google OAuth
+## Setup: sign-in (email + password, interim)
+
+Until Google OAuth is configured, the login page shows an email + password form with **Sign in** and **Sign up**. The allowlist works the same as with Google: after Supabase accepts the credentials, the app checks `is_allowlisted()`. If the email isn't allowlisted, the session is signed out and the denied screen is shown.
+
+1. In Supabase, open Authentication → Sign In / Providers → **Email**. Make sure it's **enabled**, and keep **Confirm email** turned on. Confirmation is what proves the person owns the inbox. Without it, anyone who knows an allowlisted address could sign up as that person first. `is_allowlisted()` also ignores unconfirmed users.
+2. Under Authentication → **URL Configuration**, set **Site URL** to the production URL (`https://alhc-projects.vercel.app`) and add `https://alhc-projects.vercel.app/**` and `http://localhost:3000/**` to **Redirect URLs**. Confirmation links go to `/auth/callback`, which applies the allowlist gate.
+3. Create accounts in one of two ways:
+   - **Sign up in the app.** Enter an allowlisted email and a password, then click **Sign up**. Supabase emails a confirmation link. Open it in the same browser, then sign in. If the link opens in another browser, you'll land on the login page with an error. The email is still confirmed, so just sign in. A non-allowlisted email can still confirm its address, but it's signed out at the callback and sent to the denied screen. It never holds a session in the app.
+   - **Create the user in the dashboard** (most reliable). Supabase's built-in email sender only delivers to your organization's team members and is heavily rate-limited unless custom SMTP is set up. Open Authentication → Users → **Add user** → *Create new user*, enter the allowlisted email and a password, and tick **Auto Confirm User**. Then sign in on `/login`. You can also turn off **Allow new users to sign up** (Authentication → Sign In / Providers) so accounts can only be created here.
+
+To sign Avi in, his addresses must be in `public.allowed_emails` (see the Supabase setup above). Then create a password user for one of them with either method.
+
+## Setup: Google OAuth (later)
+
+Google is the long-term sign-in method. The Google button code is still in the app (`src/app/login/google-sign-in-button.tsx`), but it's hidden until `AUTH_GOOGLE_ENABLED=true` is set (on Vercel, then redeploy). To turn it back on:
+
+1. Complete the steps below in Google Cloud and Supabase.
+2. Set `AUTH_GOOGLE_ENABLED=true`. The login page then shows **Continue with Google** below the password form.
+3. Once everyone has signed in with Google, you can turn the Email provider off in Supabase. Existing users keep the same `auth.users` row when the email matches, so their profile, tasks, and history stay the same.
 
 These steps have to be done by hand in the Google Cloud and Supabase consoles:
 
@@ -123,6 +141,7 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | Optional. Email via Resend; mocked when unset |
    | `CRON_SECRET` | Secret for `/api/cron/workflows` |
    | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links |
+   | `AUTH_GOOGLE_ENABLED` | Optional. `true` shows "Continue with Google" once the Google provider is configured |
 
    The Supabase ↔ Vercel Marketplace integration sets the same names automatically if you prefer it.
 3. Deploy. If you add or change env vars later, redeploy so they take effect. Without them, every page shows a "Supabase isn't configured" screen instead of crashing.

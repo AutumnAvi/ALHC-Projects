@@ -15,7 +15,7 @@ ALHC's own Asana-style work platform. The product is generic: **Workspace → Pr
 ## Stack
 
 - Next.js 16 App Router, React 19, TypeScript strict, Tailwind CSS 4 (`src/` layout, app at repo root)
-- Supabase Auth (Google OAuth) + Postgres + RLS via `@supabase/ssr` / `@supabase/supabase-js`
+- Supabase Auth (email + password for now; Google OAuth is the long-term method) + Postgres + RLS via `@supabase/ssr` / `@supabase/supabase-js`
 - Deployed on Vercel; `vercel.json` only declares the daily workflows cron
 - Email through Resend's HTTP API (no SDK), mocked when not configured
 - npm (`package-lock.json` is the lockfile)
@@ -35,8 +35,8 @@ ALHC's own Asana-style work platform. The product is generic: **Workspace → Pr
 src/
   proxy.ts                     Next 16 proxy (formerly middleware): refreshes the Supabase session, redirects signed-out users to /login
   app/
-    login/, denied/            Public auth screens
-    auth/callback/route.ts     OAuth code exchange + allowlist gate (signs out non-allowlisted users)
+    login/, denied/            Public auth screens; login/actions.ts = password sign-in/sign-up + allowlist gate
+    auth/callback/route.ts     OAuth / email-confirmation code exchange + allowlist gate (signs out non-allowlisted users)
     auth/denied/route.ts       Signs out a session that is no longer allowlisted, then shows /denied
     auth/signout/route.ts      POST sign-out
     attachments/[id]/route.ts  Signed-URL redirect for a task attachment (RLS-checked, 60 s URL)
@@ -54,7 +54,7 @@ src/
       projects/[projectId]/rules              Rules, templates, run log
       projects/[projectId]/settings           Req # numbering, approval-completes-task
   lib/
-    env.ts                     Public Supabase env (optional at build, required at request time)
+    env.ts                     Public Supabase env (optional at build, required at request time); AUTH_GOOGLE_ENABLED flag
     supabase/{client,server,proxy}.ts  Browser / server / proxy clients
     supabase/database.types.ts Typed schema — keep in sync with migrations
     auth.ts                    getViewer(), requireMember(), safeNextPath()
@@ -79,10 +79,11 @@ supabase/
 
 ## Auth model
 
-1. `/login` → Supabase `signInWithOAuth({ provider: "google" })` → Google → `/auth/callback`.
-2. The callback exchanges the code, then calls `rpc("is_allowlisted")`. Not allowlisted ⇒ `signOut()` and redirect to `/denied` — a rejected user never keeps a session.
-3. `(app)/layout.tsx` calls `requireMember()` on every render: no user ⇒ `/login`; user removed from the allowlist ⇒ `/auth/denied` (signs out).
-4. RLS is the real boundary. `public.is_allowlisted()` (SECURITY DEFINER) is true only when `auth.uid()` maps to an `auth.users` row with a confirmed email present in `public.allowed_emails`.
+1. **Interim: email + password.** `/login` posts to the `passwordAuth` Server Action (`src/app/login/actions.ts`). Sign in runs `signInWithPassword`. Sign up runs `signUp` with `emailRedirectTo` set to `/auth/callback`, so the confirmation link lands there. Supabase's Email provider must be on with **Confirm email** enabled: confirmation proves inbox ownership, and `is_allowlisted()` ignores unconfirmed users. Accounts can also be created in the dashboard (Auth → Users → Add user, auto-confirm).
+2. **Later: Google.** `signInWithOAuth({ provider: "google" })` → Google → `/auth/callback`. The button (`login/google-sign-in-button.tsx`) is hidden unless `AUTH_GOOGLE_ENABLED=true`. Turn it on once the Supabase Google provider is configured (README "Setup: Google OAuth"). Google remains the intended long-term method.
+3. Every path ends at the same gate. The callback exchanges the code, and `passwordAuth` uses the session it just created. Both then call `rpc("is_allowlisted")`. Not allowlisted ⇒ `signOut()` and redirect to `/denied` — a rejected user never keeps a session.
+4. `(app)/layout.tsx` calls `requireMember()` on every render: no user ⇒ `/login`; user removed from the allowlist ⇒ `/auth/denied` (signs out).
+5. RLS is the real boundary. `public.is_allowlisted()` (SECURITY DEFINER) is true only when `auth.uid()` maps to an `auth.users` row with a confirmed email present in `public.allowed_emails`.
 
 Allowlist entries are managed in SQL (dashboard SQL editor or service role) — members cannot edit the allowlist through the API.
 
@@ -90,7 +91,7 @@ Allowlist entries are managed in SQL (dashboard SQL editor or service role) — 
 
 - **Tables:** `allowed_emails`, `profiles`, `workspaces`, `projects`, `sections`, `tasks`, `task_projects`, `subtasks` (core spine); `comments`, `comment_mentions`, `task_followers`, `task_stories`, `inbox_items`, `custom_fields`, `task_field_values`, `task_attachments` (collaboration); `request_sequences`, `approval_requests`, `forms`, `form_submissions`, `rules`, `rule_runs`, `scheduled_rule_actions`, `rule_presets`, `email_outbox` (workflows); `project_views`, `dashboard_widgets` (views & insights).
 - **Single workspace this phase:** migration seeds workspace `00000000-0000-4000-8000-000000000001` ("ALHC"); the app uses the oldest active workspace.
-- **Profiles** mirror allowlisted auth users (name/avatar from Google) via triggers on `auth.users` and on `allowed_emails` inserts. Assignees reference `profiles.id`.
+- **Profiles** mirror allowlisted auth users (name/avatar from Google; password users fall back to their email) via triggers on `auth.users` and on `allowed_emails` inserts. Assignees reference `profiles.id`.
 - **Multi-homing:** `task_projects (task_id, project_id)` is the membership join. Section and `sort_order` live on the membership, so one task can sit in different sections/positions per project.
 - **Home project rule:** `tasks.home_project_id` is the project the task was created in (its primary project). A trigger guarantees an active membership in the home project; removing the home membership is rejected — make another membership the home first. `tasks.workspace_id` always follows the home project.
 - **Ordering:** fractional `double precision sort_order` (step 1024, midpoint inserts). No reindexing yet.

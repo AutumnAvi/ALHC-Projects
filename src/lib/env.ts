@@ -14,6 +14,12 @@ export function isSupabaseConfigured(): boolean {
   return readSupabaseEnv() !== null;
 }
 
+// Google sign-in stays hidden until the Supabase Google provider is configured; email + password is
+// the interim sign-in method.
+export function isGoogleAuthEnabled(): boolean {
+  return process.env.AUTH_GOOGLE_ENABLED === "true";
+}
+
 // Env is optional at build time (every Supabase-backed route is dynamic) but required at request time.
 export function requireSupabaseEnv(): SupabasePublicEnv {
   const env = readSupabaseEnv();
