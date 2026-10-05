@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useRef, useState, type DragEvent, type PointerEvent } from "react";
+import { useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
-import { addDays, isOverdue, useToday } from "@/lib/dates";
+import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { groupOf, isIsoDate, type ViewConfig } from "@/lib/views";
@@ -43,7 +43,6 @@ type Props = {
   openTaskId: string | null;
 };
 
-const DRAG_TYPE = "application/x-alhc-task";
 const LABEL_WIDTH = 256;
 const labelCell = { width: LABEL_WIDTH, minWidth: LABEL_WIDTH };
 
@@ -54,9 +53,12 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
   const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
-  const [trayDragging, setTrayDragging] = useState<string | null>(null);
+  const [trayDragging, setTrayDragging] = useState<{ taskId: string; x: number; y: number } | null>(null);
   const [dropDay, setDropDay] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const trayDrag = useRef<{ taskId: string; originX: number; originY: number; moved: boolean } | null>(null);
+  const suppressTrayClick = useRef(false);
 
   const requested = searchParams.get("d");
   const zoomParam = searchParams.get("tl");
@@ -102,31 +104,54 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
   const groups = groupTasks(scheduled, config, { sections, profilesById, fields }).filter((g) => g.tasks.length > 0);
   const showGroups = groupOf(config) !== "none";
 
-  function dayAt(clientX: number) {
+  function dayAt(clientX: number, clientY: number) {
+    const box = scrollRef.current?.getBoundingClientRect();
     const rect = gridRef.current?.getBoundingClientRect();
-    if (!rect) return null;
+    if (!box || !rect) return null;
+    if (clientY < box.top || clientY > box.bottom || clientX < box.left + LABEL_WIDTH || clientX > box.right) return null;
     const index = Math.floor((clientX - rect.left) / dayWidth);
     return index >= 0 && index < days ? index : null;
   }
 
-  const dropProps = {
-    onDragOver: (e: DragEvent) => {
-      if (!trayDragging) return;
-      const index = dayAt(e.clientX);
-      if (index === null) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      if (index !== dropDay) setDropDay(index);
-    },
-    onDrop: (e: DragEvent) => {
-      e.preventDefault();
-      const task = optimisticTasks.find((t) => t.id === e.dataTransfer.getData(DRAG_TYPE));
-      const index = dayAt(e.clientX);
-      if (task && index !== null) reschedule(task, { startOn: null, dueOn: addDays(start, index) });
-      setTrayDragging(null);
-      setDropDay(null);
-    },
-  };
+  function trayHandlers(task: ProjectTask) {
+    return {
+      onPointerDown: (e: PointerEvent<HTMLAnchorElement>) => {
+        if (e.button !== 0) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        trayDrag.current = { taskId: task.id, originX: e.clientX, originY: e.clientY, moved: false };
+      },
+      onPointerMove: (e: PointerEvent<HTMLAnchorElement>) => {
+        const drag = trayDrag.current;
+        if (!drag) return;
+        if (!drag.moved && Math.hypot(e.clientX - drag.originX, e.clientY - drag.originY) <= 4) return;
+        drag.moved = true;
+        setTrayDragging({ taskId: task.id, x: e.clientX, y: e.clientY });
+        setDropDay(dayAt(e.clientX, e.clientY));
+      },
+      onPointerUp: (e: PointerEvent<HTMLAnchorElement>) => {
+        const drag = trayDrag.current;
+        trayDrag.current = null;
+        if (drag?.moved) {
+          suppressTrayClick.current = true;
+          const index = dayAt(e.clientX, e.clientY);
+          if (index !== null) reschedule(task, { startOn: null, dueOn: addDays(start, index) });
+        }
+        setTrayDragging(null);
+        setDropDay(null);
+      },
+      onPointerCancel: () => {
+        trayDrag.current = null;
+        setTrayDragging(null);
+        setDropDay(null);
+      },
+      onClick: (e: MouseEvent) => {
+        if (suppressTrayClick.current) {
+          e.preventDefault();
+          suppressTrayClick.current = false;
+        }
+      },
+    };
+  }
 
   return (
     <div className="flex min-h-0 flex-1 gap-4 px-6 py-4">
@@ -175,8 +200,12 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
           </div>
         </div>
 
-        <div key={`${zoom}-${start}`} className="relative min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 bg-white">
-          <div className="relative min-h-full" style={{ width: LABEL_WIDTH + width }} {...dropProps}>
+        <div
+          key={`${zoom}-${start}`}
+          ref={scrollRef}
+          className="relative min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 bg-white"
+        >
+          <div className="relative min-h-full" style={{ width: LABEL_WIDTH + width }}>
             <div
               ref={gridRef}
               aria-hidden
@@ -339,20 +368,12 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
               <Link
                 href={taskHref(task.id)}
                 scroll={false}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(DRAG_TYPE, task.id);
-                  e.dataTransfer.effectAllowed = "move";
-                  setTrayDragging(task.id);
-                }}
-                onDragEnd={() => {
-                  setTrayDragging(null);
-                  setDropDay(null);
-                }}
+                draggable={false}
+                {...trayHandlers(task)}
                 aria-current={openTaskId === task.id ? "true" : undefined}
-                className={`flex min-w-0 items-center gap-1.5 rounded-md border bg-white px-1.5 py-1.5 text-xs shadow-xs hover:border-zinc-300 ${
+                className={`flex min-w-0 cursor-grab touch-pan-y items-center gap-1.5 rounded-md border bg-white px-1.5 py-1.5 text-xs shadow-xs select-none hover:border-zinc-300 ${
                   openTaskId === task.id ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200"
-                } ${trayDragging === task.id ? "opacity-40" : ""}`}
+                } ${trayDragging?.taskId === task.id ? "opacity-40" : ""}`}
               >
                 <span className="min-w-0 flex-1 truncate text-zinc-800">{task.title}</span>
                 <Assignee profile={task.assigneeId ? profilesById.get(task.assigneeId) : undefined} />
@@ -364,11 +385,21 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
           ) : null}
         </ul>
       </aside>
+      {trayDragging ? (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed z-50 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs whitespace-nowrap text-zinc-800 shadow-md"
+          style={{ left: trayDragging.x + 12, top: trayDragging.y + 8 }}
+        >
+          {optimisticTasks.find((t) => t.id === trayDragging.taskId)?.title}
+          {dropDay !== null ? <span className="ml-1.5 text-zinc-500">→ due {formatDueDate(addDays(start, dropDay))}</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-type Drag = { mode: DragMode; originX: number; delta: number; moved: boolean };
+type Drag = { mode: DragMode; delta: number; moved: boolean };
 
 function TimelineBar({
   task,
@@ -392,6 +423,8 @@ function TimelineBar({
   onReveal: (date: string) => void;
 }) {
   const [drag, setDrag] = useState<Drag | null>(null);
+  // Pointer-up can arrive before React renders the last move, so the gesture is tracked outside state.
+  const gesture = useRef<{ mode: DragMode; originX: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const shown = drag && drag.delta !== 0 ? draggedDates(task, drag.mode, drag.delta) : task;
   const span = spanOf(shown)!;
@@ -434,22 +467,31 @@ function TimelineBar({
   function onPointerDown(e: PointerEvent<HTMLAnchorElement>) {
     if (e.button !== 0) return;
     const edge = (e.target as HTMLElement).dataset.edge;
+    const mode: DragMode = edge === "start" || edge === "end" ? edge : "move";
     e.currentTarget.setPointerCapture(e.pointerId);
-    setDrag({ mode: edge === "start" || edge === "end" ? edge : "move", originX: e.clientX, delta: 0, moved: false });
+    gesture.current = { mode, originX: e.clientX, moved: false };
+    setDrag({ mode, delta: 0, moved: false });
+  }
+
+  function track(clientX: number) {
+    const g = gesture.current!;
+    const dx = clientX - g.originX;
+    g.moved = g.moved || Math.abs(dx) > 3;
+    return { mode: g.mode, delta: Math.round(dx / dayWidth), moved: g.moved };
   }
 
   function onPointerMove(e: PointerEvent<HTMLAnchorElement>) {
-    if (!drag) return;
-    const dx = e.clientX - drag.originX;
-    const delta = Math.round(dx / dayWidth);
-    const moved = drag.moved || Math.abs(dx) > 3;
-    if (delta !== drag.delta || moved !== drag.moved) setDrag({ ...drag, delta, moved });
+    if (!gesture.current) return;
+    const next = track(e.clientX);
+    setDrag((prev) => (prev && prev.delta === next.delta && prev.moved === next.moved ? prev : next));
   }
 
-  function onPointerUp() {
-    if (!drag) return;
-    if (drag.moved) suppressClick.current = true;
-    if (drag.delta !== 0) onCommit(draggedDates(task, drag.mode, drag.delta));
+  function onPointerUp(e: PointerEvent<HTMLAnchorElement>) {
+    if (!gesture.current) return;
+    const { mode, delta, moved } = track(e.clientX);
+    gesture.current = null;
+    if (moved) suppressClick.current = true;
+    if (delta !== 0) onCommit(draggedDates(task, mode, delta));
     setDrag(null);
   }
 
@@ -471,7 +513,10 @@ function TimelineBar({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => setDrag(null)}
+        onPointerCancel={() => {
+          gesture.current = null;
+          setDrag(null);
+        }}
         className={`group absolute top-1.5 flex h-6 touch-pan-y items-center rounded-md text-xs select-none ${tone} ${
           clippedStart ? "rounded-l-none" : ""
         } ${clippedEnd ? "rounded-r-none" : ""} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${
