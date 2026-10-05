@@ -7,7 +7,9 @@ alwaysApply: true
 - Keep the domain generic (Workspace → Project → Section → Task → Subtask, multi-homed tasks). Team workflows are built on top, never as schema.
 - Every new table: RLS enabled, `<table>_{select,insert,update}_allowlisted` policies (or `_own` for author/recipient-owned rows), `deleted_at` for soft delete, no DELETE policy. Activity stories and inbox items are written only by triggers; never grant clients insert on them.
 - Reads go through `src/lib/data.ts` (always `deleted_at IS NULL`); writes go through Server Actions in `src/lib/actions.ts`.
-- Task filtering (views, dashboard widgets) uses one config schema, evaluated by `filter_project_tasks` and mirrored in `src/lib/views.ts`; extend it rather than adding another filter format.
+- Task dates are `start_on` + `due_on` (start ≤ due). Only Timeline reads `start_on`; Calendar, filters, rules, and forms stay on `due_on`.
+- Revoke EXECUTE from `public`, `anon`, and `authenticated` on every new SECURITY DEFINER function unless it is an intentional RPC (trigger functions included).
+- Task filtering (views, dashboard widgets, Timeline) uses one config schema, evaluated by `filter_project_tasks` and mirrored in `src/lib/views.ts`; extend it rather than adding another filter format.
 - Next.js 16: `proxy.ts` replaces middleware; `params`/`searchParams` are Promises. Check `node_modules/next/dist/docs/` before using unfamiliar APIs.
 - Before finishing: `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run db:test` for schema changes.
 - Never commit secrets, service-role keys, or real allowlist emails. Never call the Asana API.

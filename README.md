@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, and Calendar views, project dashboards, a task detail pane, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, a task detail pane, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -31,11 +31,16 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 ## What's here (views & insights)
 
-- **Saved views.** Each project has tabs for its views. Every project starts with List, Board, and Calendar views. Add more with **+ View**, and use a tab's **…** menu to rename, duplicate, reorder, or delete it (the last view can't be deleted). Views are shared by everyone in the project.
+- **Saved views.** Each project has tabs for its views. Every project starts with List, Board, Calendar, and Timeline views. Add more with **+ View**, and use a tab's **…** menu to rename, duplicate, reorder, or delete it (the last view can't be deleted). Views are shared by everyone in the project.
 - **Filters, sort, group, columns.** The toolbar above every view can filter by completion (including "completed in the last N days"), due date (overdue, today, next N days, no date, or a date range), section, assignee (including "Me" and Unassigned), any custom field, and text. You can sort by up to three keys, group by section, assignee, or a single-select field, and choose which columns or card fields to show. Active filters show as removable chips. Changes stay in the URL as "Unsaved changes" until you **Save view** or **Save as new view**, so you can also share a filtered link. On Board, dragging a card between columns moves its section, assignee, or field value, depending on how the board is grouped.
 - **Calendar.** Month and week views place tasks on their due date. Incomplete tasks without a due date sit in a **No due date** tray. Drag a task to another day to reschedule it, or onto the tray to clear its date. Click a task to open it.
 - **Dashboard** (Dashboard tab): number cards and bar charts by section or by assignee, each with its own filters. Click **Add starter widgets** for a ready-made set (incomplete, overdue, completed this week, by section, by assignee). Widgets can be edited, reordered, and removed. "View tasks" opens the List view with the widget's filters.
 - "Today", "overdue", and "last N days" use your browser's time zone. No new environment variables are needed.
+
+## What's here (timeline)
+
+- **Start dates.** Tasks have an optional start date next to the due date in the task pane (the start can't be after the due date). Lists can show a Start column, Board cards a start chip, and views can sort by start date. Changes are logged in the task's activity.
+- **Timeline.** A Gantt-style view: each task is a bar from its start date to its due date. A task with only a due date is a one-day bar on that day; a task with only a start date is a one-day bar drawn with a dashed outline. Switch between Week, Month, and Quarter scales, and use Today and the arrows to move around. Bars are coloured by status (open, overdue in red, completed in grey). Drag a bar to move it, or drag either end to change its start or due date. Incomplete tasks with no dates sit in an **Unscheduled** tray; drag one onto a day to give it a due date. Filters, sorting, grouping, and "Show completed" work as on List. Calendar still places tasks by due date only.
 
 ## Local development
 

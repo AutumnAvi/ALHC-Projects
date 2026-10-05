@@ -46,8 +46,8 @@ src/
       page.tsx                 Project home
       my-tasks/, inbox/, search/  Cross-project views; `?task=<id>` opens the pane on each
       projects/[projectId]/    Redirects to the project's first saved view
-      projects/[projectId]/views/[viewId]     A saved view (list / board / calendar); `?f=` = unsaved filter draft, `?task=<id>` opens the pane
-      projects/[projectId]/list|board|calendar  Redirect to the first view with that layout (old links keep working)
+      projects/[projectId]/views/[viewId]     A saved view (list / board / calendar / timeline); `?f=` = unsaved filter draft, `?task=<id>` opens the pane
+      projects/[projectId]/list|board|calendar|timeline  Redirect to the first view with that layout (old links keep working)
       projects/[projectId]/dashboard          Project dashboard widgets (counts + bar charts)
       projects/[projectId]/fields             Field management
       projects/[projectId]/forms[/[formId]]  Form list + builder
@@ -70,7 +70,7 @@ src/
     origin.ts                  Absolute origin for share links (NEXT_PUBLIC_APP_URL or request host)
     views.ts                   View config types, parser/sanitizer (mirrors the SQL validators), `?f=` encoding
     timezone.ts                getViewerTimeZone() from the `tz` cookie (server-only); timezone-shared.ts holds the cookie name
-  components/                  UI; project/ (view page + toolbar, filter editor, list, board, calendar, fields, settings), dashboard/, task/ (pane, activity, fields, files, approvals), forms/, rules/, my-tasks/, inbox/, search/, shell/, popover.tsx
+  components/                  UI; project/ (view page + toolbar, filter editor, list, board, calendar, timeline + timeline-scale, fields, settings), dashboard/, task/ (pane, activity, fields, files, approvals), forms/, rules/, my-tasks/, inbox/, search/, shell/, popover.tsx
 supabase/
   migrations/                  Schema, triggers, RLS (source of truth for the data model)
   seed.sql                     Placeholder allowlist entry (local `supabase db reset` only)
@@ -89,7 +89,7 @@ Allowlist entries are managed in SQL (dashboard SQL editor or service role) — 
 
 ## Data model rules
 
-- **Tables:** `allowed_emails`, `profiles`, `workspaces`, `projects`, `sections`, `tasks`, `task_projects`, `subtasks` (core spine); `comments`, `comment_mentions`, `task_followers`, `task_stories`, `inbox_items`, `custom_fields`, `task_field_values`, `task_attachments` (collaboration); `request_sequences`, `approval_requests`, `forms`, `form_submissions`, `rules`, `rule_runs`, `scheduled_rule_actions`, `rule_presets`, `email_outbox` (workflows); `project_views`, `dashboard_widgets` (views & insights).
+- **Tables:** `allowed_emails`, `profiles`, `workspaces`, `projects`, `sections`, `tasks`, `task_projects`, `subtasks` (core spine); `comments`, `comment_mentions`, `task_followers`, `task_stories`, `inbox_items`, `custom_fields`, `task_field_values`, `task_attachments` (collaboration); `request_sequences`, `approval_requests`, `forms`, `form_submissions`, `rules`, `rule_runs`, `scheduled_rule_actions`, `rule_presets`, `email_outbox` (workflows); `project_views`, `dashboard_widgets` (views & insights). Timeline added a column (`tasks.start_on`), not a table.
 - **Single workspace this phase:** migration seeds workspace `00000000-0000-4000-8000-000000000001` ("ALHC"); the app uses the oldest active workspace.
 - **Profiles** mirror allowlisted auth users (name/avatar from Google; password users fall back to their email) via triggers on `auth.users` and on `allowed_emails` inserts. Assignees reference `profiles.id`.
 - **Multi-homing:** `task_projects (task_id, project_id)` is the membership join. Section and `sort_order` live on the membership, so one task can sit in different sections/positions per project.
@@ -97,11 +97,12 @@ Allowlist entries are managed in SQL (dashboard SQL editor or service role) — 
 - **Ordering:** fractional `double precision sort_order` (step 1024, midpoint inserts). No reindexing yet.
 - **Soft delete only:** every content table has `deleted_at`. There are **no DELETE policies**, so hard deletes through the API affect zero rows. Reads in `src/lib/data.ts` always filter `deleted_at IS NULL`; RLS intentionally does not, so restore can be added later. Soft-deleting a section moves its tasks to "No section" (trigger). Soft-deleting a task hides it from every project.
 - **RLS policy pattern:** `<table>_select_allowlisted`, `<table>_insert_allowlisted`, `<table>_update_allowlisted` using `(select public.is_allowlisted())`; `profiles_update_own`; `allowed_emails_select_allowlisted` (read-only). Author-owned rows use `_own` variants (`comments_insert_own`/`_update_own`, `task_attachments_insert_own`, `inbox_items_select_own`/`_update_own`).
+- **Dates:** `tasks.due_on` and `tasks.start_on` are plain `date`s (no times). Both are optional; when both are set, `start_on <= due_on` (constraint `tasks_start_on_before_due_on`; `updateTask` turns a violation into “The start date must be on or before the due date”). Only Timeline reads `start_on`; Calendar, My Tasks, every filter (`due` kinds, including “No due date”), rules (`due_approaching`), and forms (`maps_to: due_on`) stay on `due_on`.
 - **Task creation** goes through `rpc("create_task", { target_project, target_section, task_title })` so the task row and its home membership land in one transaction (and `workspace_id` is filled by trigger).
 
 ## Collaboration model
 
-- **Activity is trigger-written.** `task_stories` rows (`created`, `completed`, `reopened`, `renamed`, `deleted`, `assigned`, `unassigned`, `due_changed`, `section_changed`, `project_added`, `project_removed`, `attachment_added`, `field_changed`) are inserted by SECURITY DEFINER triggers; clients can only read them. Membership changes made in the same transaction that created the task (`tasks.created_at = now()`) are not logged, so new tasks get one `created` story. `data` holds name snapshots (section/project/field names) so history survives renames.
+- **Activity is trigger-written.** `task_stories` rows (`created`, `completed`, `reopened`, `renamed`, `deleted`, `assigned`, `unassigned`, `due_changed`, `start_changed`, `section_changed`, `project_added`, `project_removed`, `attachment_added`, `field_changed`) are inserted by SECURITY DEFINER triggers; clients can only read them. Membership changes made in the same transaction that created the task (`tasks.created_at = now()`) are not logged, so new tasks get one `created` story. `data` holds name snapshots (section/project/field names) so history survives renames.
 - **Comments** (`comments`) are plain text, author = `auth.uid()` (enforced by policy), soft-deleted by their author only. Soft-deleting a comment marks its inbox items read (`comments_after_soft_delete`) and `listInbox()` hides them. Edit is not exposed yet.
 - **@mentions are parsed in the database** by the `comments_after_insert` trigger: `@Full Name` or `@emaillocalpart` (case-insensitive, word-bounded) of an allowlisted profile. Matches become `comment_mentions` rows; the author is never mentioned.
 - **Followers** (`task_followers`, soft delete) — auto-follow on: creating a task, being assigned, commenting, being @mentioned. Anyone can follow/unfollow anyone from the pane (generic team tool; tighten with per-project permissions later).
@@ -183,8 +184,8 @@ Migration `20261005030000_views_insights.sql`, tests in `supabase/tests/40_views
 
 ### Saved views (`project_views`)
 
-- `project_views (project_id, name 1–100, layout list|board|calendar, config jsonb, sort_order, created_by)`, soft delete, full `_{select,insert,update}_allowlisted` RLS. Views are shared by everyone in the project (no private views yet). `project_id` is immutable and `config` is validated on write by `validate_view_config` (trigger `project_views_validate`): unknown keys/values, sections or fields from another project, a non-single-select or section-bound `group_by` field, or more than 3 sorts raise `check_violation`.
-- **Defaults:** `projects_create_default_views` (SECURITY DEFINER) gives every new project **List**, **Board**, and **Calendar** views with an empty config; the migration backfilled existing projects. The last remaining view of a project can't be deleted (`deleteView`), so a project always has a tab. `/projects/<id>` redirects to the first view by `sort_order`; `/list`, `/board`, `/calendar` redirect to the first view with that layout (or render the default config if there is none).
+- `project_views (project_id, name 1–100, layout list|board|calendar|timeline, config jsonb, sort_order, created_by)`, soft delete, full `_{select,insert,update}_allowlisted` RLS. Views are shared by everyone in the project (no private views yet). `project_id` is immutable and `config` is validated on write by `validate_view_config` (trigger `project_views_validate`): unknown keys/values, sections or fields from another project, a non-single-select or section-bound `group_by` field, or more than 3 sorts raise `check_violation`.
+- **Defaults:** `projects_create_default_views` (SECURITY DEFINER) gives every new project **List**, **Board**, **Calendar**, and **Timeline** views with an empty config. The views migration backfilled the first three; the timeline migration backfilled one **Timeline** view per project (after its current last tab) wherever none was active. The last remaining view of a project can't be deleted (`deleteView`), so a project always has a tab. `/projects/<id>` redirects to the first view by `sort_order`; `/list`, `/board`, `/calendar`, `/timeline` redirect to the first view with that layout (or render the default config if there is none).
 - **Config schema** (documented in full at the top of the migration, mirrored by `src/lib/views.ts`):
 
   ```
@@ -194,9 +195,9 @@ Migration `20261005030000_views_insights.sql`, tests in `supabase/tests/40_views
             due { kind: overdue | today | upcoming (days, default 7) | no_date | range (from, to) }
             fields [{ field_id, op: in | equals | empty | not_empty, values? | value? }]   (all must match)
             text   (title or notes contains, case-insensitive)
-  sort:     up to 3 × { key: manual | due | title | created | assignee | field:<uuid>, dir }   default manual
+  sort:     up to 3 × { key: manual | due | start | title | created | assignee | field:<uuid>, dir }   default manual
   group_by: section (default) | assignee | none | field:<uuid> (single-select, not section-bound)
-  columns:  [assignee | due | section | field:<uuid>]   List columns / Board card fields;
+  columns:  [assignee | due | start | section | field:<uuid>]   List columns / Board card fields;
             absent = assignee, due, and every field pinned with show_in_views
   ```
 
@@ -206,13 +207,25 @@ Migration `20261005030000_views_insights.sql`, tests in `supabase/tests/40_views
 - **Unsaved changes live in the URL.** Editing filters, sort, group, columns, or search in the toolbar writes the canonical config to `?f=` (max 8000 chars) without saving. The toolbar then shows "Unsaved changes" with **Reset**, **Save view** (`updateView`), and **Save as new view** (`createView`). Filter chips under the toolbar show every active filter and remove it on click. Shared `?f=` links reproduce the same view.
 - **Tabs:** the project header lists views by `sort_order`, then fixed tabs (Dashboard, Fields, Forms, Rules, Settings). "+ View" creates a list/board/calendar view; each tab's menu has Rename, Duplicate ("<name> copy"), Move left/right, and Delete (soft).
 - **List / Board with views:** groups come from `group_by`. Section groups show "No section" plus every section (only the filtered ones when a section filter is set), assignee groups end with "Unassigned", field groups end with "No <field>". Drag-and-drop on Board changes what the column represents: section → `moveTask`, assignee → `updateTask({ assigneeId })`, field option → `setFieldValue`. A precise drop position (fractional `sort_order`) is only used with manual sort and section grouping; otherwise the card is appended. Adding tasks inline is offered only in section groups.
-- **Subtasks are never shown on views** (List, Board, or Calendar): subtasks have no due date, assignee filter, or project membership in this schema, so views list tasks only and the pane shows subtasks.
+- **Subtasks are never shown on views** (List, Board, Calendar, or Timeline): subtasks have no due date, assignee filter, or project membership in this schema, so views list tasks only and the pane shows subtasks.
 
 ### Calendar
 
-- Month view (weeks start Sunday) and week view; the period is in the URL (`?d=YYYY-MM-DD`, `?cal=week`), with Today and previous/next controls. Tasks are placed by **`tasks.due_on`** — the only due field (there is no due time or start date). Completed tasks that pass the view's filters are shown struck through; overdue incomplete tasks get a red dot.
+- Month view (weeks start Sunday) and week view; the period is in the URL (`?d=YYYY-MM-DD`, `?cal=week`), with Today and previous/next controls. Tasks are placed by **`tasks.due_on`** only (there is no due time; `start_on` is ignored here — Timeline is the view that uses it). Dragging a task to a day before its start date is rejected with the start-after-due error. Completed tasks that pass the view's filters are shown struck through; overdue incomplete tasks get a red dot.
 - The view's filters apply to the grid. The right-hand **No due date** tray lists the filtered tasks that have no due date and are incomplete.
 - Clicking a task opens the normal task pane (`?task=`). Dragging a task to a day sets its due date (`updateTask({ dueOn })`, optimistic, logged as `due_changed`); dropping it on the tray clears the due date. Month cells show three tasks, then "+N more" expands the day.
+
+### Timeline
+
+Migration `20261005040000_timeline.sql`, tests in `supabase/tests/50_timeline_smoke.sql`. A Gantt-style layout built with plain CSS-positioned bars (no chart library).
+
+- **Bars:** `start_on` → `due_on` (inclusive) when both are set. **Due only** = a one-day bar on the due day (not a milestone glyph, so it can be dragged and resized like any bar). **Start only** = a one-day bar on the start day drawn open-ended (dashed outline, “Starts <date>”). Neither = the **Unscheduled** tray. These rules live in `components/project/timeline-scale.ts` (`spanOf`).
+- **Colour = status:** accent fill for open tasks, red for overdue (due before the viewer's local today, incomplete), zinc + struck-through title for completed tasks (shown only when the view shows completed tasks), dashed accent outline for start-only tasks. No per-section colours.
+- **Scale:** Week (36 px/day, 6 weeks from the Sunday before the anchor's week, weekends shaded), Month (12 px/day, 4 months from the anchor's month), Quarter (4 px/day, 4 quarters). The zoom and anchor are URL state like Calendar (`?tl=month|quarter`, default week; `?d=YYYY-MM-DD`) with Today and earlier/later controls; they are not saved in the view config. A vertical accent line marks today. A task outside the window shows a “‹ Sep 12” / “Dec 3 ›” button on its row that jumps the window to it.
+- **Rows:** one per scheduled task (start or due set) passing the view's filters, grouped and ordered by the view's `group_by` and `sort` exactly like List (`groupTasks`); empty groups are hidden. The toolbar offers Filter, Sort, Group, and Show completed (no Columns). The sticky left column lists task names as links — the keyboard and screen-reader path to the pane — with the dates, overdue/completed state, and assignee spelled out for screen readers; the bars themselves are pointer-only (`aria-hidden`).
+- **Interactions:** clicking a bar or a name opens the task pane (`?task=`). Dragging a bar **moves** it (whichever dates are set shift by the same number of days); dragging either **end** resizes it (that edge is set and the other kept, so a single-date task gains both dates; edges never cross). Both commit `updateTask({ startOn, dueOn })` optimistically and log `start_changed` / `due_changed`. Dragging a task from the Unscheduled tray onto a day sets its **due date** only. Clearing dates happens in the pane.
+- **Unscheduled tray:** incomplete filtered tasks with neither date (due-only and start-only tasks are bars, not tray items).
+- **Start dates elsewhere:** the pane has a Start date input next to Due date (each limits the other with `min`/`max`, and a rejected change resets the input). List can show a **Start** column and Board cards a start chip via the `start` column key; views can sort by `start`.
 
 ### Dashboard (`dashboard_widgets`)
 
@@ -225,9 +238,9 @@ Migration `20261005030000_views_insights.sql`, tests in `supabase/tests/40_views
 
 - Server Components fetch via `src/lib/data.ts`; Client Components mutate via `src/lib/actions.ts` wrapped in `useServerAction()` (toasts errors, supports optimistic updates).
 - Route params/searchParams are Promises (`await params`). Use `PageProps<"/route">` / `LayoutProps<"/route">` global types.
-- Schema changes: add a new timestamped file in `supabase/migrations/`, update `database.types.ts` (or run `npm run db:types`), extend or add a `supabase/tests/NN_<area>_smoke.sql` suite (`10_core_smoke.sql`, `20_collaboration_smoke.sql`, `30_workflows_smoke.sql`, `40_views_insights_smoke.sql`), run `npm run db:test`.
+- Schema changes: add a new timestamped file in `supabase/migrations/`, update `database.types.ts` (or run `npm run db:types`), extend or add a `supabase/tests/NN_<area>_smoke.sql` suite (`10_core_smoke.sql`, `20_collaboration_smoke.sql`, `30_workflows_smoke.sql`, `40_views_insights_smoke.sql`, `50_timeline_smoke.sql`), run `npm run db:test`.
 - Task filters (views, dashboard widgets, and anything new that needs "tasks matching X") go through `filter_project_tasks` and the one config schema in the views migration + `src/lib/views.ts`. Extend that schema (validators, parser, and smoke tests together) instead of adding a second filter format.
-- Trigger functions that write on the user's behalf are `SECURITY DEFINER` with `set search_path = ''`, and their helpers are revoked from `public`, `anon`, and `authenticated`.
+- Trigger functions that write on the user's behalf are `SECURITY DEFINER` with `set search_path = ''`, and their helpers are revoked from `public`, `anon`, and `authenticated`. Revoke EXECUTE on every new SECURITY DEFINER **trigger** function too (Supabase's default privileges grant it to `anon`/`authenticated`; triggers fire regardless). The timeline migration revoked it from all existing ones, and `50_timeline_smoke.sql` asserts that `anon` can execute no SECURITY DEFINER function except `get_public_form` and `submit_form`.
 - Keep the UI restrained: zinc neutrals, one accent (`accent-*` in `globals.css`), no gradients, accessible labels on every control.
 
 ## Phases
@@ -236,8 +249,9 @@ Migration `20261005030000_views_insights.sql`, tests in `supabase/tests/40_views
 - **Collaboration** (done): comments + @mentions, followers, activity stories, custom fields (incl. section-bound status), attachments, My Tasks, Inbox, search, Realtime.
 - **Workflows** (done): approvals, public/branching forms (intake → task), rules engine with installable templates, native Req # sequences, email outbox + Resend. A request type is a project + fields + form + rules, not a schema of its own.
 - **Views & Insights** (done): saved per-project views (list / board / calendar) with filters, sorts, grouping, and columns; removable filter chips and `?f=` drafts; month/week Calendar with a no-date tray and drag-to-reschedule; project Dashboard with count cards and section/assignee bar charts.
-- **Next phase candidates:** Asana importer (read-only export files, never the Asana API; imported rules land disabled), Slack/webhook rule actions, per-project membership, iCal feed, Timeline.
+- **Timeline** (done): `tasks.start_on` with `start_changed` stories and a start ≤ due constraint; Timeline saved-view layout (week / month / quarter scale, status-coloured bars, drag to move or resize, Unscheduled tray, view filters/sort/grouping, `?f=` drafts); a Timeline view for every project; EXECUTE revoked from client roles on SECURITY DEFINER trigger functions.
+- **Next phase candidates:** Asana importer (read-only export files, never the Asana API; imported rules land disabled), Slack/webhook rule actions, per-project membership, iCal feed, task dependencies on Timeline.
 
 ## Follow-ups (not yet built)
 
-Asana importer (read-only export files, never the Asana API), iCal feed for Calendar views, Timeline/Gantt, Slack incoming-webhook and outbound webhook rule actions (needs an outbox drain like email plus new rule actions), a Slack OAuth app, recurring tasks, universal cross-project reporting and portfolios, a richer dashboard builder (more chart types, grouping by custom field, date-series charts, widget sizes), My Tasks filter builder (My Tasks keeps its fixed due-date buckets; saved views are per project), private/personal views, creating a task on a Calendar day and keyboard rescheduling, start dates / due times, form file-upload questions and per-form submitter accounts, rule editing history and dry-run, email open/bounce tracking and unsubscribe, @mention autocomplete, comment editing and reactions, workspace-level field library and field reordering, manual My Tasks sections, attachment previews/thumbnails and Storage cleanup of removed files, push notifications and an inbox email digest, inbox archive, per-project membership/permissions (replace the "any allowlisted user" policies), restore/trash UI, reordering sections and list drag-and-drop, and Autumn Lake workflow migration (e.g. Creative Requests as a project template on the generic model). Never call the Asana API.
+Asana importer (read-only export files, never the Asana API), iCal feed for Calendar views, Timeline task dependencies (`task_dependencies` + finish-to-start arrows), critical path, baselines, auto-scheduling, keyboard moving/resizing of Timeline bars, a saved Timeline zoom, Timeline on mobile (the tray is hidden below `md`), start-date filters and a `start_on` form mapping / rule trigger, Slack incoming-webhook and outbound webhook rule actions (needs an outbox drain like email plus new rule actions), a Slack OAuth app, recurring tasks, universal cross-project reporting and portfolios, a richer dashboard builder (more chart types, grouping by custom field, date-series charts, widget sizes), My Tasks filter builder (My Tasks keeps its fixed due-date buckets; saved views are per project), private/personal views, creating a task on a Calendar or Timeline day and keyboard rescheduling, due/start times (`due_at` / `start_at`), form file-upload questions and per-form submitter accounts, rule editing history and dry-run, email open/bounce tracking and unsubscribe, @mention autocomplete, comment editing and reactions, workspace-level field library and field reordering, manual My Tasks sections, attachment previews/thumbnails and Storage cleanup of removed files, push notifications and an inbox email digest, inbox archive, per-project membership/permissions (replace the "any allowlisted user" policies), restore/trash UI, reordering sections and list drag-and-drop, and Autumn Lake workflow migration (e.g. Creative Requests as a project template on the generic model). Never call the Asana API.
