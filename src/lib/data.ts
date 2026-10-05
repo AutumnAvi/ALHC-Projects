@@ -1,7 +1,8 @@
 import "server-only";
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
-import type { Tables } from "@/lib/supabase/database.types";
+import { parseOptions, type FieldDef, type FieldType } from "@/lib/fields";
+import type { Json, Tables } from "@/lib/supabase/database.types";
 
 // Every read in the app goes through this module, and every query here filters deleted_at IS NULL.
 // RLS deliberately does not hide soft-deleted rows so that restore stays possible later.
@@ -22,6 +23,7 @@ export type ProjectTask = {
   subtaskCount: number;
   subtaskDoneCount: number;
   projectCount: number;
+  fieldValues: Record<string, Json>;
 };
 
 export type TaskMembership = {
@@ -44,6 +46,37 @@ export type TaskDetail = {
   updatedAt: string;
   subtasks: Pick<Tables<"subtasks">, "id" | "title" | "completed_at" | "sort_order">[];
   memberships: TaskMembership[];
+  fields: FieldDef[];
+  fieldValues: Record<string, Json>;
+  followerIds: string[];
+  attachments: TaskAttachment[];
+  comments: TaskComment[];
+  stories: TaskStory[];
+};
+
+export type TaskAttachment = {
+  id: string;
+  fileName: string;
+  contentType: string | null;
+  sizeBytes: number;
+  uploadedBy: string;
+  createdAt: string;
+};
+
+export type TaskComment = {
+  id: string;
+  authorId: string;
+  body: string;
+  createdAt: string;
+  mentionIds: string[];
+};
+
+export type TaskStory = {
+  id: string;
+  actorId: string | null;
+  kind: string;
+  data: Json;
+  createdAt: string;
 };
 
 type QueryResult<T> = { data: T; error: { message: string } | null };
@@ -130,7 +163,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
   const taskIds = memberships.map((m) => m.task.id);
   if (taskIds.length === 0) return [];
 
-  const [subtasks, otherMemberships] = await Promise.all([
+  const [subtasks, otherMemberships, values] = await Promise.all([
     supabase
       .from("subtasks")
       .select("task_id, completed_at")
@@ -142,7 +175,21 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
       .in("task_id", taskIds)
       .is("deleted_at", null)
       .is("project.deleted_at", null),
+    supabase
+      .from("task_field_values")
+      .select("task_id, field_id, value, field:custom_fields!inner(project_id)")
+      .in("task_id", taskIds)
+      .eq("field.project_id", projectId)
+      .is("field.deleted_at", null)
+      .not("value", "is", null),
   ]);
+
+  const fieldValues = new Map<string, Record<string, Json>>();
+  for (const v of rows(values, "field values")) {
+    const record = fieldValues.get(v.task_id) ?? {};
+    record[v.field_id] = v.value;
+    fieldValues.set(v.task_id, record);
+  }
 
   const subtaskStats = new Map<string, { total: number; done: number }>();
   for (const s of rows(subtasks, "subtasks")) {
@@ -169,6 +216,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     subtaskCount: subtaskStats.get(m.task.id)?.total ?? 0,
     subtaskDoneCount: subtaskStats.get(m.task.id)?.done ?? 0,
     projectCount: projectCounts.get(m.task.id) ?? 1,
+    fieldValues: fieldValues.get(m.task.id) ?? {},
   }));
 });
 
@@ -218,7 +266,62 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       )
     : [];
 
+  const [fields, values, followers, attachments, comments, stories] = await Promise.all([
+    projectIds.length ? listFieldsForProjects(projectIds) : Promise.resolve([]),
+    supabase.from("task_field_values").select("field_id, value").eq("task_id", taskId),
+    supabase
+      .from("task_followers")
+      .select("profile_id")
+      .eq("task_id", taskId)
+      .is("deleted_at", null)
+      .order("created_at"),
+    supabase
+      .from("task_attachments")
+      .select("id, file_name, content_type, size_bytes, uploaded_by, created_at")
+      .eq("task_id", taskId)
+      .is("deleted_at", null)
+      .order("created_at"),
+    supabase
+      .from("comments")
+      .select("id, author_id, body, created_at, comment_mentions(profile_id)")
+      .eq("task_id", taskId)
+      .is("deleted_at", null)
+      .order("created_at"),
+    supabase
+      .from("task_stories")
+      .select("id, actor_id, kind, data, created_at")
+      .eq("task_id", taskId)
+      .order("created_at"),
+  ]);
+
   return {
+    fields,
+    fieldValues: Object.fromEntries(
+      rows(values, "field values").map((v) => [v.field_id, v.value] as const),
+    ),
+    followerIds: rows(followers, "followers").map((f) => f.profile_id),
+    attachments: rows(attachments, "attachments").map((a) => ({
+      id: a.id,
+      fileName: a.file_name,
+      contentType: a.content_type,
+      sizeBytes: a.size_bytes,
+      uploadedBy: a.uploaded_by,
+      createdAt: a.created_at,
+    })),
+    comments: rows(comments, "comments").map((c) => ({
+      id: c.id,
+      authorId: c.author_id,
+      body: c.body,
+      createdAt: c.created_at,
+      mentionIds: c.comment_mentions.map((m) => m.profile_id),
+    })),
+    stories: rows(stories, "activity").map((st) => ({
+      id: st.id,
+      actorId: st.actor_id,
+      kind: st.kind,
+      data: st.data,
+      createdAt: st.created_at,
+    })),
     id: task.id,
     title: task.title,
     notes: task.notes,
@@ -241,4 +344,134 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       }))
       .sort((a, b) => Number(b.isHome) - Number(a.isHome)),
   };
+});
+
+function toFieldDef(row: Tables<"custom_fields">): FieldDef {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    fieldType: row.field_type as FieldType,
+    options: parseOptions(row.options),
+    boundToSections: row.bound_to_sections,
+    showInViews: row.show_in_views,
+    sortOrder: row.sort_order,
+  };
+}
+
+async function listFieldsForProjects(projectIds: string[]): Promise<FieldDef[]> {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("custom_fields")
+    .select("*")
+    .in("project_id", projectIds)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "fields").map(toFieldDef);
+}
+
+export const listProjectFields = cache(async (projectId: string) =>
+  listFieldsForProjects([projectId]),
+);
+
+export type MyTask = {
+  id: string;
+  title: string;
+  completedAt: string | null;
+  dueOn: string | null;
+  projectId: string;
+  projectName: string;
+};
+
+export const listMyTasks = cache(async (profileId: string) => {
+  const supabase = await createClient();
+  const select = "id, title, completed_at, due_on, project:projects!inner(id, name)";
+  const [open, done] = await Promise.all([
+    supabase
+      .from("tasks")
+      .select(select)
+      .eq("assignee_id", profileId)
+      .is("deleted_at", null)
+      .is("completed_at", null)
+      .is("project.deleted_at", null)
+      .order("due_on", { nullsFirst: false })
+      .order("created_at"),
+    supabase
+      .from("tasks")
+      .select(select)
+      .eq("assignee_id", profileId)
+      .is("deleted_at", null)
+      .not("completed_at", "is", null)
+      .is("project.deleted_at", null)
+      .order("completed_at", { ascending: false })
+      .limit(30),
+  ]);
+  const toMyTask = (t: {
+    id: string;
+    title: string;
+    completed_at: string | null;
+    due_on: string | null;
+    project: { id: string; name: string };
+  }): MyTask => ({
+    id: t.id,
+    title: t.title,
+    completedAt: t.completed_at,
+    dueOn: t.due_on,
+    projectId: t.project.id,
+    projectName: t.project.name,
+  });
+  return {
+    open: rows(open, "my tasks").map(toMyTask),
+    completed: rows(done, "completed tasks").map(toMyTask),
+  };
+});
+
+export type InboxItem = {
+  id: string;
+  kind: "assigned" | "comment" | "mention" | "completed";
+  actorId: string | null;
+  readAt: string | null;
+  createdAt: string;
+  taskId: string;
+  taskTitle: string;
+  commentBody: string | null;
+};
+
+export const listInbox = cache(async (): Promise<InboxItem[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("inbox_items")
+    .select(
+      "id, kind, actor_id, read_at, created_at, task:tasks!inner(id, title), comment:comments(body, deleted_at)",
+    )
+    .is("task.deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  return rows(result, "inbox").map((item) => ({
+    id: item.id,
+    kind: item.kind as InboxItem["kind"],
+    actorId: item.actor_id,
+    readAt: item.read_at,
+    createdAt: item.created_at,
+    taskId: item.task.id,
+    taskTitle: item.task.title,
+    commentBody: item.comment && !item.comment.deleted_at ? item.comment.body : null,
+  }));
+});
+
+export const countUnreadInbox = cache(async () => {
+  const supabase = await createClient();
+  const { count, error } = await supabase
+    .from("inbox_items")
+    .select("id", { count: "exact", head: true })
+    .is("read_at", null);
+  if (error) throw new Error(`Failed to load inbox count: ${error.message}`);
+  return count ?? 0;
+});
+
+export const searchTasks = cache(async (query: string) => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("search_tasks", { query, max_results: 50 });
+  return rows(result, "search results");
 });
