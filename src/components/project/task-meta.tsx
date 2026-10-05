@@ -17,6 +17,18 @@ export function DueDate({ task }: { task: ProjectTask }) {
   );
 }
 
+export function StartDate({ task, prefix = "" }: { task: ProjectTask; prefix?: string }) {
+  const today = useToday();
+  if (!task.startOn) return null;
+  const year = today ? Number(today.slice(0, 4)) : undefined;
+  return (
+    <span className="whitespace-nowrap text-xs tabular-nums text-zinc-500">
+      {prefix}
+      {formatDueDate(task.startOn, year)}
+    </span>
+  );
+}
+
 export function Assignee({
   profile,
   showName = false,

@@ -2,14 +2,16 @@ import { isUuid } from "@/lib/ids";
 import type { FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 
-// Shared view config schema for List, Board, Calendar, and dashboard widgets. The database
-// validates the same shape (validate_view_config) and evaluates filters in filter_project_tasks().
-// See the schema comment at the top of supabase/migrations/20261005030000_views_insights.sql.
+// Shared view config schema for List, Board, Calendar, Timeline, and dashboard widgets. The
+// database validates the same shape (validate_view_config) and evaluates filters in
+// filter_project_tasks(). See the schema comment at the top of
+// supabase/migrations/20261005030000_views_insights.sql (plus the `start` key from 20261005040000_timeline.sql).
 
 export const VIEW_LAYOUTS = [
   { value: "list", label: "List" },
   { value: "board", label: "Board" },
   { value: "calendar", label: "Calendar" },
+  { value: "timeline", label: "Timeline" },
 ] as const;
 
 export type ViewLayout = (typeof VIEW_LAYOUTS)[number]["value"];
@@ -42,10 +44,10 @@ export type ViewFilters = {
 };
 
 export type FieldRef = `field:${string}`;
-export type SortKey = "manual" | "due" | "title" | "created" | "assignee" | FieldRef;
+export type SortKey = "manual" | "due" | "start" | "title" | "created" | "assignee" | FieldRef;
 export type ViewSort = { key: SortKey; dir: "asc" | "desc" };
 export type GroupBy = "section" | "assignee" | "none" | FieldRef;
-export type ColumnKey = "assignee" | "due" | "section" | FieldRef;
+export type ColumnKey = "assignee" | "due" | "start" | "section" | FieldRef;
 
 export type ViewConfig = {
   filters?: ViewFilters;
@@ -95,6 +97,7 @@ export const DUE_KINDS: { value: DueKind; label: string }[] = [
 const SORT_BASE: { value: SortKey; label: string }[] = [
   { value: "manual", label: "Manual order" },
   { value: "due", label: "Due date" },
+  { value: "start", label: "Start date" },
   { value: "title", label: "Name" },
   { value: "created", label: "Created" },
   { value: "assignee", label: "Assignee" },
@@ -235,7 +238,8 @@ export function parseViewConfig(value: unknown): ViewConfig {
     const columns = [
       ...new Set(
         value.columns.filter(
-          (c): c is ColumnKey => c === "assignee" || c === "due" || c === "section" || isFieldRef(c),
+          (c): c is ColumnKey =>
+            c === "assignee" || c === "due" || c === "start" || c === "section" || isFieldRef(c),
         ),
       ),
     ].slice(0, 30);

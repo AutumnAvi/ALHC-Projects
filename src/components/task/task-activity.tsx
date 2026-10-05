@@ -75,6 +75,10 @@ export function TaskActivity({
         const to = str(d, "to");
         return to ? <>changed the due date to {formatDueDate(to)}</> : "removed the due date";
       }
+      case "start_changed": {
+        const to = str(d, "to");
+        return to ? <>changed the start date to {formatDueDate(to)}</> : "removed the start date";
+      }
       case "section_changed":
         return (
           <>

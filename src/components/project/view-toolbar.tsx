@@ -91,6 +91,7 @@ export function ViewToolbar({
   const columnChoices: { value: ColumnKey; label: string }[] = [
     { value: "assignee", label: "Assignee" },
     { value: "due", label: "Due date" },
+    { value: "start", label: "Start date" },
     { value: "section", label: "Section" },
     ...context.fields.map((f) => ({ value: fieldRef(f.id), label: f.name })),
   ];
@@ -204,38 +205,40 @@ export function ViewToolbar({
               </select>
             </label>
 
-            <Popover
-              label={layout === "board" ? "Card fields" : "Columns"}
-              buttonClassName={toolButton}
-              panelClassName="w-60"
-              button={
-                <>
-                  <Columns3 className="size-3.5" aria-hidden />
-                  {layout === "board" ? "Card fields" : "Columns"}
-                </>
-              }
-            >
-              {() => (
-                <div>
-                  {columnChoices.map((choice) => (
-                    <label key={choice.value} className="flex items-center gap-2 rounded px-1 py-0.5 text-sm text-zinc-800 hover:bg-zinc-50">
-                      <input
-                        type="checkbox"
-                        className="size-3.5 accent-zinc-900"
-                        checked={columns.includes(choice.value)}
-                        onChange={() => {
-                          const next = columns.includes(choice.value)
-                            ? columns.filter((c) => c !== choice.value)
-                            : columnChoices.map((c) => c.value).filter((c) => c === choice.value || columns.includes(c));
-                          apply({ ...current, columns: next });
-                        }}
-                      />
-                      {choice.label}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </Popover>
+            {layout !== "timeline" ? (
+              <Popover
+                label={layout === "board" ? "Card fields" : "Columns"}
+                buttonClassName={toolButton}
+                panelClassName="w-60"
+                button={
+                  <>
+                    <Columns3 className="size-3.5" aria-hidden />
+                    {layout === "board" ? "Card fields" : "Columns"}
+                  </>
+                }
+              >
+                {() => (
+                  <div>
+                    {columnChoices.map((choice) => (
+                      <label key={choice.value} className="flex items-center gap-2 rounded px-1 py-0.5 text-sm text-zinc-800 hover:bg-zinc-50">
+                        <input
+                          type="checkbox"
+                          className="size-3.5 accent-zinc-900"
+                          checked={columns.includes(choice.value)}
+                          onChange={() => {
+                            const next = columns.includes(choice.value)
+                              ? columns.filter((c) => c !== choice.value)
+                              : columnChoices.map((c) => c.value).filter((c) => c === choice.value || columns.includes(c));
+                            apply({ ...current, columns: next });
+                          }}
+                        />
+                        {choice.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </Popover>
+            ) : null}
           </>
         ) : null}
 
