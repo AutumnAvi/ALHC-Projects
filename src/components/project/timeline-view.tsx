@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useRef, useState, type MouseEvent, type PointerEvent } from "react";
+import { useId, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
-import type { Profile, ProjectTask, Section } from "@/lib/data";
+import type { Profile, ProjectDependency, ProjectTask, Section } from "@/lib/data";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { groupOf, isIsoDate, type ViewConfig } from "@/lib/views";
 import { useTaskHref } from "./shared";
@@ -42,12 +42,17 @@ type Props = {
   fields: FieldDef[];
   config: ViewConfig;
   openTaskId: string | null;
+  dependencies?: ProjectDependency[];
 };
 
 const LABEL_WIDTH = 256;
+// Row geometry (Tailwind h-* with border-box borders), used to place dependency arrows.
+const HEADER_HEIGHT = 49;
+const GROUP_HEIGHT = 32;
+const ROW_HEIGHT = 36;
 const labelCell = { width: LABEL_WIDTH, minWidth: LABEL_WIDTH };
 
-export function TimelineView({ sections, tasks, profiles, fields, config, openTaskId }: Props) {
+export function TimelineView({ sections, tasks, profiles, fields, config, openTaskId, dependencies = [] }: Props) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const today = useToday();
@@ -105,6 +110,39 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
   const tray = optimisticTasks.filter((t) => !t.startOn && !t.dueOn && !t.completedAt);
   const groups = groupTasks(scheduled, config, { sections, profilesById, fields }).filter((g) => g.tasks.length > 0);
   const showGroups = groupOf(config) !== "none";
+
+  // Vertical centre of each visible row, in content coordinates (below the sticky header).
+  const rowCenter = new Map<string, number>();
+  let contentHeight = HEADER_HEIGHT;
+  for (const group of groups) {
+    if (showGroups) contentHeight += GROUP_HEIGHT;
+    for (const task of group.tasks) {
+      rowCenter.set(task.id, contentHeight + ROW_HEIGHT / 2);
+      contentHeight += ROW_HEIGHT;
+    }
+  }
+  const tasksById = new Map(optimisticTasks.map((t) => [t.id, t] as const));
+  const arrows = dependencies.flatMap((dep) => {
+    const pred = tasksById.get(dep.predecessorId);
+    const succ = tasksById.get(dep.successorId);
+    const y1 = rowCenter.get(dep.predecessorId);
+    const y2 = rowCenter.get(dep.successorId);
+    if (!pred || !succ || y1 === undefined || y2 === undefined) return [];
+    const a = spanOf(pred)!;
+    const b = spanOf(succ)!;
+    const predEnd = daysBetween(start, a.end) + 1;
+    const succStart = daysBetween(start, b.start);
+    // Only when both bars are at least partly inside the window.
+    if (predEnd <= 0 || daysBetween(start, a.start) >= days || succStart >= days || daysBetween(start, b.end) < 0) return [];
+    const x1 = Math.min(predEnd, days) * dayWidth;
+    const x2 = Math.max(succStart, 0) * dayWidth;
+    const pad = 8;
+    const path =
+      x2 - x1 >= 2 * pad
+        ? `M${x1},${y1} H${x1 + pad} V${y2} H${x2}`
+        : `M${x1},${y1} H${x1 + pad} V${y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 2)} H${x2 - pad} V${y2} H${x2}`;
+    return [{ id: dep.id, path, conflict: b.start < a.end }];
+  });
 
   function dayAt(clientX: number, clientY: number) {
     const box = scrollRef.current?.getBoundingClientRect();
@@ -321,6 +359,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
                               , {spanLabel(span)}
                               {overdue ? ", overdue" : ""}
                               {completed ? ", completed" : ""}
+                              {task.blockedBy > 0 && !completed ? `, blocked by ${task.blockedBy}` : ""}
                               {assignee ? `, assigned to ${displayName(assignee)}` : ""}
                             </span>
                           </Link>
@@ -348,11 +387,16 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
                 </ul>
               </section>
             ))}
+
+            {arrows.length > 0 ? (
+              <DependencyArrows arrows={arrows} width={width} height={contentHeight} />
+            ) : null}
           </div>
         </div>
         <p className="mt-2 text-xs text-zinc-500">
           Bars run from start to due date. Drag a bar to move it, drag either end to change its start or due date,
-          or drag an unscheduled task onto a day to give it a due date.
+          or drag an unscheduled task onto a day to give it a due date. Arrows link a task to the one waiting on it
+          (red when the waiting task starts before the first one is due).
         </p>
       </div>
 
@@ -399,6 +443,56 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
         </div>
       ) : null}
     </div>
+  );
+}
+
+// Finish-to-start arrows drawn over the bars (pointer-transparent; the pane lists dependencies for
+// keyboard and screen-reader users). The sticky header and label column paint above them.
+function DependencyArrows({
+  arrows,
+  width,
+  height,
+}: {
+  arrows: { id: string; path: string; conflict: boolean }[];
+  width: number;
+  height: number;
+}) {
+  const id = useId();
+  return (
+    <svg
+      aria-hidden
+      className="pointer-events-none absolute top-0"
+      style={{ left: LABEL_WIDTH }}
+      width={width}
+      height={height}
+    >
+      <defs>
+        {(["ok", "conflict"] as const).map((tone) => (
+          <marker
+            key={tone}
+            id={`${id}-${tone}`}
+            viewBox="0 0 6 6"
+            refX="6"
+            refY="3"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto"
+          >
+            <path d="M0,0 L6,3 L0,6 z" className={tone === "ok" ? "fill-zinc-400" : "fill-red-400"} />
+          </marker>
+        ))}
+      </defs>
+      {arrows.map((arrow) => (
+        <path
+          key={arrow.id}
+          d={arrow.path}
+          fill="none"
+          strokeWidth={1.25}
+          className={arrow.conflict ? "stroke-red-400" : "stroke-zinc-400"}
+          markerEnd={`url(#${id}-${arrow.conflict ? "conflict" : "ok"})`}
+        />
+      ))}
+    </svg>
   );
 }
 

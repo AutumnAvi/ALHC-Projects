@@ -11,7 +11,8 @@ import {
   type RulePreset,
   type RuleRun,
 } from "@/lib/rules";
-import { PROJECT_ROLES as ROLE_ORDER, isProjectRole, type ProjectRole } from "@/lib/roles";
+import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
+import { PROJECT_ROLES as ROLE_ORDER, hasRole, isProjectRole, type ProjectRole } from "@/lib/roles";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
   isViewLayout,
@@ -24,8 +25,9 @@ import {
   type ViewFilters,
 } from "@/lib/views";
 
-// Every read in the app goes through this module, and every query here filters deleted_at IS NULL.
-// RLS deliberately does not hide soft-deleted rows so that restore stays possible later.
+// Every read in the app goes through this module, and every query here filters deleted_at IS NULL —
+// except listTrashedTasks(), which reads soft-deleted tasks for the Trash page on purpose. RLS keeps
+// soft-deleted rows readable (trashed tasks: Editors and above only) so restore stays possible.
 
 export type Project = Pick<
   Tables<"projects">,
@@ -49,6 +51,9 @@ export type ProjectTask = {
   subtaskDoneCount: number;
   projectCount: number;
   fieldValues: Record<string, Json>;
+  recurring: boolean;
+  // Incomplete predecessors (finish-to-start dependencies) the task is waiting on.
+  blockedBy: number;
 };
 
 export type TaskMembership = {
@@ -66,6 +71,16 @@ export type TaskDetail = {
   completedAt: string | null;
   startOn: string | null;
   dueOn: string | null;
+  startAt: string | null;
+  dueAt: string | null;
+  timeZone: string | null;
+  recurrence: Recurrence | null;
+  recurrenceSeq: number;
+  // The occurrence spawned when this one was completed (if it still exists).
+  nextOccurrenceId: string | null;
+  dependencies: TaskDependency[];
+  // Tasks that can be linked: active tasks of the task's projects where the viewer is an Editor.
+  dependencyCandidates: { projectId: string; projectName: string; tasks: { id: string; title: string }[] }[];
   assigneeId: string | null;
   homeProjectId: string;
   createdAt: string;
@@ -87,6 +102,15 @@ export type TaskDetail = {
   viewerRole: ProjectRole | null;
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
   memberRoles: Record<string, ProjectRole>;
+};
+
+export type TaskDependency = {
+  id: string;
+  // blocked_by: the other task must finish first; blocking: the other task waits on this one.
+  relation: "blocked_by" | "blocking";
+  taskId: string;
+  title: string;
+  completedAt: string | null;
 };
 
 export type TaskAttachment = {
@@ -255,7 +279,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     await supabase
       .from("task_projects")
       .select(
-        "section_id, sort_order, task:tasks!inner(id, title, completed_at, start_on, due_on, assignee_id, home_project_id, created_at)",
+        "section_id, sort_order, task:tasks!inner(id, title, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, recurrence)",
       )
       .eq("project_id", projectId)
       .is("deleted_at", null)
@@ -267,7 +291,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
   const taskIds = memberships.map((m) => m.task.id);
   if (taskIds.length === 0) return [];
 
-  const [subtasks, otherMemberships, values] = await Promise.all([
+  const [subtasks, otherMemberships, values, blockers] = await Promise.all([
     supabase
       .from("subtasks")
       .select("task_id, completed_at")
@@ -286,7 +310,19 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
       .eq("field.project_id", projectId)
       .is("field.deleted_at", null)
       .not("value", "is", null),
+    supabase
+      .from("task_dependencies")
+      .select("successor_id, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id)")
+      .in("successor_id", taskIds)
+      .is("deleted_at", null)
+      .is("predecessor.deleted_at", null)
+      .is("predecessor.completed_at", null),
   ]);
+
+  const blockedBy = new Map<string, number>();
+  for (const d of rows(blockers, "dependencies")) {
+    blockedBy.set(d.successor_id, (blockedBy.get(d.successor_id) ?? 0) + 1);
+  }
 
   const fieldValues = new Map<string, Record<string, Json>>();
   for (const v of rows(values, "field values")) {
@@ -323,6 +359,29 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     subtaskDoneCount: subtaskStats.get(m.task.id)?.done ?? 0,
     projectCount: projectCounts.get(m.task.id) ?? 1,
     fieldValues: fieldValues.get(m.task.id) ?? {},
+    recurring: m.task.recurrence !== null,
+    blockedBy: blockedBy.get(m.task.id) ?? 0,
+  }));
+});
+
+export type ProjectDependency = { id: string; predecessorId: string; successorId: string };
+
+// Active dependencies of a project (for Timeline arrows). Both tasks must still be active.
+export const listProjectDependencies = cache(async (projectId: string): Promise<ProjectDependency[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("task_dependencies")
+    .select(
+      "id, predecessor_id, successor_id, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id), successor:tasks!task_dependencies_successor_id_fkey!inner(id)",
+    )
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .is("predecessor.deleted_at", null)
+    .is("successor.deleted_at", null);
+  return rows(result, "dependencies").map((d) => ({
+    id: d.id,
+    predecessorId: d.predecessor_id,
+    successorId: d.successor_id,
   }));
 });
 
@@ -332,7 +391,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     await supabase
       .from("tasks")
       .select(
-        "id, title, notes, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number",
+        "id, title, notes, completed_at, start_on, due_on, start_at, due_at, time_zone, recurrence, recurrence_seq, recurrence_next_id, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number",
       )
       .eq("id", taskId)
       .is("deleted_at", null)
@@ -385,6 +444,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     numbering,
     viewerRole,
     projectMembers,
+    dependencies,
+    nextOccurrence,
   ] = await Promise.all([
     projectIds.length ? listFieldsForProjects(projectIds) : Promise.resolve([]),
     supabase.from("task_field_values").select("field_id, value").eq("task_id", taskId),
@@ -445,6 +506,19 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
           .in("project_id", projectIds)
           .is("deleted_at", null)
       : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("task_dependencies")
+      .select(
+        "id, predecessor_id, successor_id, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id, title, completed_at), successor:tasks!task_dependencies_successor_id_fkey!inner(id, title, completed_at)",
+      )
+      .or(`predecessor_id.eq.${taskId},successor_id.eq.${taskId}`)
+      .is("deleted_at", null)
+      .is("predecessor.deleted_at", null)
+      .is("successor.deleted_at", null)
+      .order("created_at"),
+    task.recurrence_next_id
+      ? supabase.from("tasks").select("id").eq("id", task.recurrence_next_id).is("deleted_at", null).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
 
   const memberRoles: Record<string, ProjectRole> = {};
@@ -454,6 +528,10 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     if (!current || ROLE_ORDER.indexOf(m.role) < ROLE_ORDER.indexOf(current)) memberRoles[m.profile_id] = m.role;
   }
   const role = maybe(viewerRole, "task role");
+  const viewerProjectRole = isProjectRole(role) ? role : null;
+  const dependencyCandidates = hasRole(viewerProjectRole, "editor")
+    ? await listDependencyCandidates(taskId, membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })))
+    : [];
 
   const commentRows = rows(comments, "comments");
   const approvalRows = rows(approvals, "approvals");
@@ -510,6 +588,24 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     completedAt: task.completed_at,
     startOn: task.start_on,
     dueOn: task.due_on,
+    startAt: task.start_at,
+    dueAt: task.due_at,
+    timeZone: task.time_zone,
+    recurrence: parseRecurrence(task.recurrence),
+    recurrenceSeq: task.recurrence_seq,
+    nextOccurrenceId: maybe(nextOccurrence, "next occurrence")?.id ?? null,
+    dependencies: rows(dependencies, "dependencies").map((d) => {
+      const blockedBy = d.successor_id === taskId;
+      const other = blockedBy ? d.predecessor : d.successor;
+      return {
+        id: d.id,
+        relation: blockedBy ? ("blocked_by" as const) : ("blocking" as const),
+        taskId: other.id,
+        title: other.title,
+        completedAt: other.completed_at,
+      };
+    }),
+    dependencyCandidates,
     assigneeId: task.assignee_id,
     homeProjectId: task.home_project_id,
     createdAt: task.created_at,
@@ -537,7 +633,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       decisionNote: a.decision_note,
       createdAt: a.created_at,
     })),
-    viewerRole: isProjectRole(role) ? role : null,
+    viewerRole: viewerProjectRole,
     memberRoles,
     subtasks: rows(subtasks, "subtasks"),
     memberships: membershipRows
@@ -553,6 +649,39 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .sort((a, b) => Number(b.isHome) - Number(a.isHome)),
   };
 });
+
+const MAX_DEPENDENCY_CANDIDATES = 300;
+
+// Active tasks that share a project with the task, in projects where the viewer can edit.
+async function listDependencyCandidates(taskId: string, projects: { id: string; name: string }[]) {
+  if (projects.length === 0) return [];
+  const supabase = await createClient();
+  const roles = await listMyProjectRoles();
+  const editable = projects.filter((p) => hasRole(roles.get(p.id), "editor"));
+  if (editable.length === 0) return [];
+  const result = await supabase
+    .from("task_projects")
+    .select("project_id, task:tasks!inner(id, title, completed_at)")
+    .in(
+      "project_id",
+      editable.map((p) => p.id),
+    )
+    .is("deleted_at", null)
+    .is("task.deleted_at", null)
+    .neq("task_id", taskId)
+    .order("sort_order")
+    .limit(MAX_DEPENDENCY_CANDIDATES * editable.length);
+  const memberships = rows(result, "dependency candidates");
+  return editable.map((p) => ({
+    projectId: p.id,
+    projectName: p.name,
+    tasks: memberships
+      .filter((m) => m.project_id === p.id)
+      .sort((a, b) => Number(Boolean(a.task.completed_at)) - Number(Boolean(b.task.completed_at)))
+      .slice(0, MAX_DEPENDENCY_CANDIDATES)
+      .map((m) => ({ id: m.task.id, title: m.task.title })),
+  }));
+}
 
 function toFieldDef(row: Tables<"custom_fields">): FieldDef {
   return {
@@ -711,6 +840,67 @@ export const searchTasks = cache(async (query: string) => {
   const supabase = await createClient();
   const result = await supabase.rpc("search_tasks", { query, max_results: 50 });
   return rows(result, "search results");
+});
+
+// ---------------------------------------------------------------------------------------------
+// Trash: soft-deleted tasks of a project (RLS shows them to Editors and above only)
+// ---------------------------------------------------------------------------------------------
+
+export type TrashedTask = {
+  id: string;
+  title: string;
+  deletedAt: string;
+  deletedBy: string | null;
+  homeProjectId: string;
+  homeProjectName: string | null;
+  completedAt: string | null;
+};
+
+const TRASH_LIMIT = 200;
+
+// The one read in this module that asks for deleted rows on purpose: tasks with an active membership in
+// the project whose task row is soft-deleted, newest first.
+export const listTrashedTasks = cache(async (projectId: string): Promise<TrashedTask[]> => {
+  const supabase = await createClient();
+  const trashed = rows(
+    await supabase
+      .from("tasks")
+      .select("id, title, deleted_at, completed_at, home_project_id, task_projects!inner(project_id)")
+      .eq("task_projects.project_id", projectId)
+      .is("task_projects.deleted_at", null)
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false })
+      .limit(TRASH_LIMIT),
+    "trash",
+  );
+  if (trashed.length === 0) return [];
+
+  const [stories, projects] = await Promise.all([
+    supabase
+      .from("task_stories")
+      .select("task_id, actor_id, created_at")
+      .in(
+        "task_id",
+        trashed.map((t) => t.id),
+      )
+      .eq("kind", "deleted")
+      .order("created_at", { ascending: false }),
+    listProjects(),
+  ]);
+  const deletedBy = new Map<string, string | null>();
+  for (const story of rows(stories, "deletions")) {
+    if (!deletedBy.has(story.task_id)) deletedBy.set(story.task_id, story.actor_id);
+  }
+  const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
+  return trashed.map((t) => ({
+    id: t.id,
+    title: t.title,
+    deletedAt: t.deleted_at!,
+    deletedBy: deletedBy.get(t.id) ?? null,
+    homeProjectId: t.home_project_id,
+    homeProjectName: projectName.get(t.home_project_id) ?? null,
+    completedAt: t.completed_at,
+  }));
 });
 
 // ---------------------------------------------------------------------------------------------

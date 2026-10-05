@@ -903,6 +903,71 @@ export type Database = {
           },
         ];
       };
+      task_dependencies: {
+        Row: {
+          id: string;
+          project_id: string;
+          predecessor_id: string;
+          successor_id: string;
+          kind: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          predecessor_id: string;
+          successor_id: string;
+          kind?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          predecessor_id?: string;
+          successor_id?: string;
+          kind?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "task_dependencies_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_dependencies_predecessor_id_fkey";
+            columns: ["predecessor_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_dependencies_successor_id_fkey";
+            columns: ["successor_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_dependencies_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       task_attachments: {
         Row: {
           id: string;
@@ -1141,6 +1206,13 @@ export type Database = {
           source: string;
           req_project_id: string | null;
           req_number: number | null;
+          due_at: string | null;
+          start_at: string | null;
+          time_zone: string | null;
+          recurrence: Json | null;
+          recurrence_series_id: string | null;
+          recurrence_seq: number;
+          recurrence_next_id: string | null;
         };
         Insert: {
           id?: string;
@@ -1159,6 +1231,13 @@ export type Database = {
           source?: string;
           req_project_id?: string | null;
           req_number?: number | null;
+          due_at?: string | null;
+          start_at?: string | null;
+          time_zone?: string | null;
+          recurrence?: Json | null;
+          recurrence_series_id?: string | null;
+          recurrence_seq?: number;
+          recurrence_next_id?: string | null;
         };
         Update: {
           id?: string;
@@ -1177,6 +1256,13 @@ export type Database = {
           source?: string;
           req_project_id?: string | null;
           req_number?: number | null;
+          due_at?: string | null;
+          start_at?: string | null;
+          time_zone?: string | null;
+          recurrence?: Json | null;
+          recurrence_series_id?: string | null;
+          recurrence_seq?: number;
+          recurrence_next_id?: string | null;
         };
         Relationships: [
           {
@@ -1242,6 +1328,10 @@ export type Database = {
         Args: { target_project: string; member_email: string; member_role?: string };
         Returns: string;
       };
+      add_task_dependency: {
+        Args: { predecessor: string; successor: string };
+        Returns: string;
+      };
       assign_request_number: {
         Args: { target_task: string };
         Returns: string;
@@ -1300,6 +1390,14 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
       };
+      normalize_recurrence: {
+        Args: { rule: Json };
+        Returns: Json | null;
+      };
+      open_blocker_count: {
+        Args: { target_task: string };
+        Returns: number;
+      };
       project_metrics: {
         Args: { target_project: string; filters?: Json; group_by?: string; tz?: string };
         Returns: { bucket: string | null; task_count: number }[];
@@ -1312,6 +1410,14 @@ export type Database = {
         Args: { target_project: string; target_profile: string };
         Returns: undefined;
       };
+      recurrence_next_date: {
+        Args: { rule: Json; anchor: string };
+        Returns: string;
+      };
+      remove_task_dependency: {
+        Args: { target_dependency: string };
+        Returns: undefined;
+      };
       request_approval: {
         Args: {
           target_task: string;
@@ -1321,6 +1427,10 @@ export type Database = {
           subtask_title?: string | null;
         };
         Returns: string;
+      };
+      restore_task: {
+        Args: { target_task: string };
+        Returns: undefined;
       };
       resubmit_approval: {
         Args: { target_approval: string; approval_note?: string | null };

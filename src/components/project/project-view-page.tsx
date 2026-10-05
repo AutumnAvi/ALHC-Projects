@@ -8,6 +8,7 @@ import { TaskPane } from "@/components/task/task-pane";
 import {
   filterProjectTaskIds,
   listProfiles,
+  listProjectDependencies,
   listProjectFields,
   listProjectTasks,
   listProjectViews,
@@ -58,12 +59,13 @@ export async function ProjectViewPage({
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
 
-  const [sections, tasks, profiles, fields, timeZone] = await Promise.all([
+  const [sections, tasks, profiles, fields, timeZone, dependencies] = await Promise.all([
     listSections(projectId),
     listProjectTasks(projectId),
     listProfiles(),
     listProjectFields(projectId),
     getViewerTimeZone(),
+    layout === "timeline" ? listProjectDependencies(projectId) : Promise.resolve([]),
   ]);
 
   const context = {
@@ -93,7 +95,9 @@ export async function ProjectViewPage({
       {layout === "calendar" ? (
         <CalendarView tasks={visible} profiles={profiles} openTaskId={openTaskId} />
       ) : null}
-      {layout === "timeline" ? <TimelineView key={`timeline-${view?.id ?? "default"}`} {...props} /> : null}
+      {layout === "timeline" ? (
+        <TimelineView key={`timeline-${view?.id ?? "default"}`} {...props} dependencies={dependencies} />
+      ) : null}
       {openTaskId ? <TaskPane taskId={openTaskId} /> : null}
     </main>
   );

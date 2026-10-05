@@ -17,6 +17,7 @@ import {
 } from "@/lib/forms";
 import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
+import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isProjectRole } from "@/lib/roles";
 import {
   VIEW_LAYOUTS,
@@ -323,6 +324,27 @@ function optionalDate(value: string | null, label: string): string | null {
   return value || null;
 }
 
+// An instant (ISO 8601 with offset or Z) for due/start times.
+function optionalInstant(value: string | null, label: string): string | null {
+  if (!value) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(value) || Number.isNaN(Date.parse(value))) {
+    throw new InputError(`Invalid ${label}`);
+  }
+  return new Date(value).toISOString();
+}
+
+function timeZone(value: unknown): string {
+  if (typeof value !== "string" || value.length > 64) throw new InputError("Invalid time zone");
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+  } catch {
+    throw new InputError("Invalid time zone");
+  }
+  return value;
+}
+
+// Dates are plain days; times are optional instants. Setting a time also sets its date (the database
+// keeps due_on/start_on equal to the local date in timeZone), and moving only the date keeps the time.
 export async function updateTask(
   taskId: string,
   patch: {
@@ -331,6 +353,9 @@ export async function updateTask(
     assigneeId?: string | null;
     startOn?: string | null;
     dueOn?: string | null;
+    startAt?: string | null;
+    dueAt?: string | null;
+    timeZone?: string;
   },
 ): Promise<ActionResult> {
   return run(async () => {
@@ -340,6 +365,9 @@ export async function updateTask(
       assignee_id?: string | null;
       start_on?: string | null;
       due_on?: string | null;
+      start_at?: string | null;
+      due_at?: string | null;
+      time_zone?: string;
     } = {};
     if (patch.title !== undefined) update.title = text(patch.title, "Task name");
     if (patch.notes !== undefined) update.notes = optionalText(patch.notes);
@@ -348,13 +376,65 @@ export async function updateTask(
     }
     if (patch.startOn !== undefined) update.start_on = optionalDate(patch.startOn, "start date");
     if (patch.dueOn !== undefined) update.due_on = optionalDate(patch.dueOn, "due date");
+    if (patch.startAt !== undefined) update.start_at = optionalInstant(patch.startAt, "start time");
+    if (patch.dueAt !== undefined) update.due_at = optionalInstant(patch.dueAt, "due time");
+    if (patch.timeZone !== undefined) update.time_zone = timeZone(patch.timeZone);
     if (update.start_on && update.due_on && update.start_on > update.due_on) {
+      throw new InputError(START_AFTER_DUE);
+    }
+    if (update.start_at && update.due_at && update.start_at > update.due_at) {
       throw new InputError(START_AFTER_DUE);
     }
     const supabase = await createClient();
     const result = await supabase.from("tasks").update(update).eq("id", id(taskId)).select("id");
-    if (result.error?.message.includes("tasks_start_on_before_due_on")) throw new InputError(START_AFTER_DUE);
+    if (/tasks_start_(on_before_due_on|at_before_due_at)/.test(result.error?.message ?? "")) {
+      throw new InputError(START_AFTER_DUE);
+    }
     checkUpdated(result);
+  });
+}
+
+function recurrence(value: Recurrence | null): Json | null {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || !isFrequency(value.freq)) throw new InputError("Invalid repeat");
+  const interval = Number(value.interval);
+  if (!Number.isInteger(interval) || interval < 1 || interval > 365) {
+    throw new InputError("Repeat every 1 to 365 days, weeks, months, or years");
+  }
+  const weekdays = Array.isArray(value.weekdays)
+    ? value.weekdays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+    : [];
+  const input = value.ends;
+  let ends: Recurrence["ends"];
+  if (!input || input.type === "never") {
+    ends = { type: "never" };
+  } else if (input.type === "after") {
+    if (!(Number.isInteger(input.count) && input.count >= 1 && input.count <= 1000)) {
+      throw new InputError("A repeat can end after 1 to 1000 occurrences");
+    }
+    ends = { type: "after", count: input.count };
+  } else if (input.type === "until") {
+    if (!isIsoDate(input.until)) throw new InputError("Choose the date the repeat ends");
+    ends = { type: "until", until: input.until };
+  } else {
+    throw new InputError("Invalid repeat end");
+  }
+  return recurrenceJson({
+    freq: value.freq,
+    interval,
+    weekdays,
+    ends,
+    timezone: value.timezone ? timeZone(value.timezone) : undefined,
+  });
+}
+
+// Sets or clears a task's repeat rule; completing the task then creates the next occurrence.
+export async function setTaskRecurrence(taskId: string, rule: Recurrence | null): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("tasks").update({ recurrence: recurrence(rule) }).eq("id", id(taskId)).select("id"),
+    );
   });
 }
 
@@ -375,6 +455,33 @@ export async function deleteTask(taskId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.from("tasks").update({ deleted_at: now() }).eq("id", id(taskId)));
+  });
+}
+
+export async function restoreTask(taskId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("restore_task", { target_task: id(taskId) }));
+  });
+}
+
+// Finish-to-start: `successorId` can't be completed until `predecessorId` is.
+export async function addTaskDependency(predecessorId: string, successorId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("add_task_dependency", {
+        predecessor: id(predecessorId, "task"),
+        successor: id(successorId, "task"),
+      }),
+    );
+  });
+}
+
+export async function removeTaskDependency(dependencyId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("remove_task_dependency", { target_dependency: id(dependencyId, "dependency") }));
   });
 }
 

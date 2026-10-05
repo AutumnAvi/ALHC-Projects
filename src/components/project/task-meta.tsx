@@ -1,6 +1,6 @@
 "use client";
 
-import { Layers, ListChecks } from "lucide-react";
+import { Layers, ListChecks, Lock, Repeat } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
@@ -50,6 +50,22 @@ export function Assignee({
 export function TaskBadges({ task }: { task: ProjectTask }) {
   return (
     <>
+      {task.recurring ? (
+        <span className="inline-flex items-center text-zinc-400" title="Repeats">
+          <Repeat className="size-3.5" aria-hidden />
+          <span className="sr-only">Repeats</span>
+        </span>
+      ) : null}
+      {task.blockedBy > 0 && !task.completedAt ? (
+        <span
+          className="inline-flex items-center gap-1 text-xs tabular-nums text-amber-700"
+          title={`Blocked by ${task.blockedBy} incomplete task${task.blockedBy === 1 ? "" : "s"}`}
+        >
+          <Lock className="size-3.5" aria-hidden />
+          <span className="sr-only">Blocked by</span>
+          {task.blockedBy}
+        </span>
+      ) : null}
       {task.subtaskCount > 0 ? (
         <span
           className="inline-flex items-center gap-1 text-xs tabular-nums text-zinc-500"

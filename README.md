@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, a task detail pane, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, a task detail pane, recurring tasks, due/start times, task dependencies, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -48,6 +48,13 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Members page.** Settings → **Members**: invite someone by email (they must already be on the allowlist and have signed in once), change roles, remove people, leave a project, or transfer ownership. A project always keeps at least one owner. "Guests" are simply people invited with a lower role such as Viewer or Commenter.
 - **Existing projects** were backfilled when the migration ran: the creator became the owner and everyone else on the allowlist became an Editor, so nobody lost access. Narrow access per project from the Members page.
 - **New projects** are owned by whoever creates them and start with only that person. Public forms keep working for anyone with the link.
+
+## What's here (task depth)
+
+- **Recurring tasks.** In the task pane, **Repeats** sets a task to repeat daily, weekly (optionally on chosen weekdays), monthly, or yearly, every N days/weeks/months/years, ending never, after a number of occurrences, or on a date. Completing a repeating task creates the next one (Asana style) with its dates moved forward, in the same projects and sections, with the same assignee, field values, followers, and open subtasks. A task repeating monthly on the 31st lands on the last day of shorter months and comes back to the 31st. List rows and Board cards show a small repeat icon.
+- **Due and start times.** Next to each date in the pane there is an optional time, entered in your own time zone. Calendar, Timeline, filters, rules, and forms keep working by day; dragging a timed task to another day keeps its time. The start can't be after the due date, to the minute.
+- **Dependencies.** In the pane, **Blocked by** and **Blocking** link tasks in the same project (finish-to-start). A task can't be marked complete while a task it's blocked by is incomplete, and loops (A waits on B waits on A) are rejected. Blocked tasks show a lock with a count on List and Board, and the Timeline draws an arrow from each task to the one waiting on it (red when the waiting task starts before the first one is due). Editors and above can add or remove dependencies.
+- **Trash.** Settings → **Trash** lists the project's deleted tasks, with who deleted them and when, and a **Restore** button. Restoring puts a task back in every project it was in, with its history. Only Editors and above can see the Trash; deleted tasks never appear in views, search, My Tasks, or the Inbox. Nothing is ever deleted permanently.
 
 ## Local development
 

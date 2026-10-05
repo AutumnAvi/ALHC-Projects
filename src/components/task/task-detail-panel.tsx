@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useOptimistic, useRef, type ReactNode } from "react";
-import { Check, FileInput, Hash, Home, Plus, ShieldCheck, Trash2, X } from "lucide-react";
+import { Check, FileInput, Hash, Home, Lock, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { CompleteToggle } from "@/components/complete-toggle";
 import { useServerAction } from "@/components/toast";
@@ -25,7 +25,10 @@ import { hasRole } from "@/lib/roles";
 import { CommentComposer, TaskActivity } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
 import { TaskAttachments } from "./task-attachments";
+import { DateTimeField } from "./task-dates";
+import { TaskDependencies } from "./task-dependencies";
 import { TaskFields } from "./task-fields";
+import { TaskRecurrence } from "./task-recurrence";
 
 // canAdd: the viewer is an Editor there, so the task can be added to that project.
 type ProjectOption = { id: string; name: string; canAdd: boolean };
@@ -106,6 +109,8 @@ export function TaskDetailPanel({
   const [, run] = useServerAction();
   const [completedAt, setOptimisticCompleted] = useOptimistic(task.completedAt);
   const completed = Boolean(completedAt);
+  const openBlockers = task.dependencies.filter((d) => d.relation === "blocked_by" && !d.completedAt);
+  const blocked = !completed && openBlockers.length > 0;
 
   const memberProjectIds = new Set(task.memberships.map((m) => m.projectId));
   const canEdit = hasRole(task.viewerRole, "editor");
@@ -117,23 +122,34 @@ export function TaskDetailPanel({
     <PaneShell label={`Task: ${task.title}`}>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
         {canEdit ? (
-          <button
-            type="button"
-            onClick={() =>
-              run(
-                () => setTaskCompleted(task.id, !completed),
-                () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
-              )
-            }
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm font-medium transition ${
-              completed
-                ? "border-accent-200 bg-accent-50 text-accent-700"
-                : "border-zinc-300 text-zinc-700 hover:border-accent-500 hover:text-accent-700"
-            }`}
-          >
-            <Check className="size-4" />
-            {completed ? "Completed" : "Mark complete"}
-          </button>
+          <>
+            <button
+              type="button"
+              disabled={blocked}
+              title={blocked ? "Complete the tasks this one is blocked by first" : undefined}
+              aria-describedby={blocked ? "task-blocked-note" : undefined}
+              onClick={() =>
+                run(
+                  () => setTaskCompleted(task.id, !completed),
+                  () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
+                )
+              }
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                completed
+                  ? "border-accent-200 bg-accent-50 text-accent-700"
+                  : "border-zinc-300 text-zinc-700 enabled:hover:border-accent-500 enabled:hover:text-accent-700"
+              }`}
+            >
+              <Check className="size-4" />
+              {completed ? "Completed" : "Mark complete"}
+            </button>
+            {blocked ? (
+              <span id="task-blocked-note" className="inline-flex items-center gap-1 text-xs text-amber-700">
+                <Lock className="size-3.5" aria-hidden />
+                Blocked by {openBlockers.length} task{openBlockers.length === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </>
         ) : (
           <span className="text-xs text-zinc-500">
             {completed ? "Completed · " : ""}
@@ -145,7 +161,7 @@ export function TaskDetailPanel({
             <button
               type="button"
               onClick={() => {
-                if (window.confirm(`Delete “${task.title}”? It will be removed from every project.`)) {
+                if (window.confirm(`Delete “${task.title}”? It moves to the Trash of each of its projects, where Editors can restore it.`)) {
                   run(async () => {
                     const result = await deleteTask(task.id);
                     if (!result.error) close();
@@ -218,45 +234,22 @@ export function TaskDetailPanel({
             <dt className="text-zinc-500">
               <label htmlFor="task-start">Start date</label>
             </dt>
-            <dd className="flex items-center gap-2">
-              <input
-                id="task-start"
-                type="date"
-                key={task.startOn ?? "none"}
-                defaultValue={task.startOn ?? ""}
-                max={task.dueOn ?? undefined}
-                onChange={(e) => {
-                  const input = e.currentTarget;
-                  run(async () => {
-                    const result = await updateTask(task.id, { startOn: input.value || null });
-                    if (result.error) input.value = task.startOn ?? "";
-                    return result;
-                  });
-                }}
-                className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
-              />
+            <dd>
+              <DateTimeField task={task} kind="start" />
             </dd>
 
             <dt className="text-zinc-500">
               <label htmlFor="task-due">Due date</label>
             </dt>
-            <dd className="flex items-center gap-2">
-              <input
-                id="task-due"
-                type="date"
-                key={task.dueOn ?? "none"}
-                defaultValue={task.dueOn ?? ""}
-                min={task.startOn ?? undefined}
-                onChange={(e) => {
-                  const input = e.currentTarget;
-                  run(async () => {
-                    const result = await updateTask(task.id, { dueOn: input.value || null });
-                    if (result.error) input.value = task.dueOn ?? "";
-                    return result;
-                  });
-                }}
-                className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
-              />
+            <dd>
+              <DateTimeField task={task} kind="due" />
+            </dd>
+
+            <dt className="self-start pt-1.5 text-zinc-500">
+              <label htmlFor="task-repeat">Repeats</label>
+            </dt>
+            <dd>
+              <TaskRecurrence task={task} />
             </dd>
 
             <dt className="self-start pt-1.5 text-zinc-500">Projects</dt>
@@ -287,6 +280,8 @@ export function TaskDetailPanel({
 
           <Subtasks task={task} />
         </fieldset>
+
+        <TaskDependencies task={task} />
 
         <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
 
