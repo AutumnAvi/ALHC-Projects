@@ -37,6 +37,8 @@ function sortValue(task: ProjectTask, sort: ViewSort, context: Context): string 
       return task.sortOrder;
     case "due":
       return task.dueOn;
+    case "start":
+      return task.startOn;
     case "title":
       return task.title;
     case "created":

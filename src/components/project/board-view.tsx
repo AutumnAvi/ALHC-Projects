@@ -11,7 +11,7 @@ import { columnsOf, groupOf, refFieldId, sortOf, type ViewConfig } from "@/lib/v
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { GroupTitle } from "./list-view";
 import { AddSection, AddTaskInput, useTaskHref } from "./shared";
-import { Assignee, DueDate, TaskBadges } from "./task-meta";
+import { Assignee, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, type TaskGroup } from "./view-groups";
 
@@ -50,6 +50,7 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
     .filter((f) => !(bySection && f.boundToSections) && `field:${f.id}` !== groupBy);
   const showAssignee = columns.includes("assignee");
   const showDue = columns.includes("due");
+  const showStart = columns.includes("start");
   const fieldContext: FieldContext = {
     profilesById,
     sectionNames: new Map(sections.map((s) => [s.id, s.name])),
@@ -154,6 +155,7 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
                     task={task}
                     assignee={showAssignee && task.assigneeId ? profilesById.get(task.assigneeId) : undefined}
                     showDue={showDue}
+                    showStart={showStart}
                     open={openTaskId === task.id}
                     dragging={dragging === task.id}
                     groupKey={group.key}
@@ -208,6 +210,7 @@ function TaskCard({
   task,
   assignee,
   showDue,
+  showStart,
   open,
   dragging,
   groupKey,
@@ -222,6 +225,7 @@ function TaskCard({
   task: ProjectTask;
   assignee: Profile | undefined;
   showDue: boolean;
+  showStart: boolean;
   open: boolean;
   dragging: boolean;
   groupKey: string;
@@ -236,6 +240,7 @@ function TaskCard({
   const taskHref = useTaskHref();
   const completed = Boolean(task.completedAt);
   const due = showDue && task.dueOn;
+  const start = showStart && task.startOn;
 
   return (
     <article
@@ -275,8 +280,10 @@ function TaskCard({
         </div>
       ) : null}
 
-      {due || task.subtaskCount > 0 || task.projectCount > 1 || assignee ? (
+      {due || start || task.subtaskCount > 0 || task.projectCount > 1 || assignee ? (
         <div className="mt-2.5 flex items-center gap-2.5 pl-6">
+          {start ? <StartDate task={task} prefix={due ? "" : "Starts "} /> : null}
+          {start && due ? <span className="-mx-1.5 text-xs text-zinc-400">–</span> : null}
           {showDue ? <DueDate task={task} /> : null}
           <TaskBadges task={task} />
           <span className="ml-auto">

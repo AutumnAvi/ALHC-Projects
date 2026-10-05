@@ -200,6 +200,28 @@ export function TaskDetailPanel({
           </dd>
 
           <dt className="text-zinc-500">
+            <label htmlFor="task-start">Start date</label>
+          </dt>
+          <dd className="flex items-center gap-2">
+            <input
+              id="task-start"
+              type="date"
+              key={task.startOn ?? "none"}
+              defaultValue={task.startOn ?? ""}
+              max={task.dueOn ?? undefined}
+              onChange={(e) => {
+                const input = e.currentTarget;
+                run(async () => {
+                  const result = await updateTask(task.id, { startOn: input.value || null });
+                  if (result.error) input.value = task.startOn ?? "";
+                  return result;
+                });
+              }}
+              className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
+            />
+          </dd>
+
+          <dt className="text-zinc-500">
             <label htmlFor="task-due">Due date</label>
           </dt>
           <dd className="flex items-center gap-2">
@@ -208,7 +230,15 @@ export function TaskDetailPanel({
               type="date"
               key={task.dueOn ?? "none"}
               defaultValue={task.dueOn ?? ""}
-              onChange={(e) => run(() => updateTask(task.id, { dueOn: e.target.value || null }))}
+              min={task.startOn ?? undefined}
+              onChange={(e) => {
+                const input = e.currentTarget;
+                run(async () => {
+                  const result = await updateTask(task.id, { dueOn: input.value || null });
+                  if (result.error) input.value = task.dueOn ?? "";
+                  return result;
+                });
+              }}
               className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
             />
           </dd>

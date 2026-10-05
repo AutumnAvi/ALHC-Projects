@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   CalendarDays,
   ChartColumn,
+  ChartGantt,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -38,6 +39,7 @@ export const LAYOUT_ICONS: Record<ViewLayout, typeof List> = {
   list: List,
   board: SquareKanban,
   calendar: CalendarDays,
+  timeline: ChartGantt,
 };
 
 const TAB_CLASS =
@@ -48,7 +50,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
   const [pending, run] = useServerAction();
   const base = `/projects/${project.id}`;
 
-  // Older /list, /board, /calendar links render the default config when no saved view exists.
+  // Older /list, /board, /calendar, /timeline links render the default config when no saved view exists.
   const fallbackTabs = VIEW_LAYOUTS.filter((l) => !views.some((v) => v.layout === l.value)).map((l) => ({
     href: `${base}/${l.value}`,
     label: l.label,

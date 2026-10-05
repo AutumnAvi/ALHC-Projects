@@ -1078,6 +1078,7 @@ export type Database = {
           completed_at: string | null;
           assignee_id: string | null;
           due_on: string | null;
+          start_on: string | null;
           created_by: string | null;
           created_at: string;
           updated_at: string;
@@ -1095,6 +1096,7 @@ export type Database = {
           completed_at?: string | null;
           assignee_id?: string | null;
           due_on?: string | null;
+          start_on?: string | null;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -1112,6 +1114,7 @@ export type Database = {
           completed_at?: string | null;
           assignee_id?: string | null;
           due_on?: string | null;
+          start_on?: string | null;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;

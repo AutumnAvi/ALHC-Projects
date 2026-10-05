@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { BoardView } from "@/components/project/board-view";
 import { CalendarView } from "@/components/project/calendar-view";
 import { ListView } from "@/components/project/list-view";
+import { TimelineView } from "@/components/project/timeline-view";
 import { ViewToolbar } from "@/components/project/view-toolbar";
 import { TaskPane } from "@/components/task/task-pane";
 import {
@@ -26,7 +27,7 @@ export function queryString(searchParams: SearchParams) {
   return query ? `?${query}` : "";
 }
 
-// /projects/<id>/list|board|calendar open the project's first view with that layout (keeping
+// /projects/<id>/list|board|calendar|timeline open the project's first view with that layout (keeping
 // ?task= and ?f=), so older links keep working. Without one, the layout renders its default config.
 export async function LayoutRoute({
   projectId,
@@ -92,6 +93,7 @@ export async function ProjectViewPage({
       {layout === "calendar" ? (
         <CalendarView tasks={visible} profiles={profiles} openTaskId={openTaskId} />
       ) : null}
+      {layout === "timeline" ? <TimelineView key={`timeline-${view?.id ?? "default"}`} {...props} /> : null}
       {openTaskId ? <TaskPane taskId={openTaskId} /> : null}
     </main>
   );

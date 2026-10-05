@@ -19,6 +19,7 @@ import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules"
 import { isUuid } from "@/lib/ids";
 import {
   VIEW_LAYOUTS,
+  isIsoDate,
   isViewLayout,
   isWidgetKind,
   parseFilters,
@@ -35,6 +36,7 @@ export type ActionResult = { error?: string };
 
 const ORDER_STEP = 1024;
 const DEFAULT_SECTIONS = ["To do", "In progress", "Done"];
+const START_AFTER_DUE = "The start date must be on or before the due date";
 
 class InputError extends Error {}
 class DbError extends Error {}
@@ -225,15 +227,27 @@ export async function createTask(
   });
 }
 
+function optionalDate(value: string | null, label: string): string | null {
+  if (value && !isIsoDate(value)) throw new InputError(`Invalid ${label}`);
+  return value || null;
+}
+
 export async function updateTask(
   taskId: string,
-  patch: { title?: string; notes?: string | null; assigneeId?: string | null; dueOn?: string | null },
+  patch: {
+    title?: string;
+    notes?: string | null;
+    assigneeId?: string | null;
+    startOn?: string | null;
+    dueOn?: string | null;
+  },
 ): Promise<ActionResult> {
   return run(async () => {
     const update: {
       title?: string;
       notes?: string | null;
       assignee_id?: string | null;
+      start_on?: string | null;
       due_on?: string | null;
     } = {};
     if (patch.title !== undefined) update.title = text(patch.title, "Task name");
@@ -241,14 +255,15 @@ export async function updateTask(
     if (patch.assigneeId !== undefined) {
       update.assignee_id = patch.assigneeId ? id(patch.assigneeId, "assignee") : null;
     }
-    if (patch.dueOn !== undefined) {
-      if (patch.dueOn && !/^\d{4}-\d{2}-\d{2}$/.test(patch.dueOn)) {
-        throw new InputError("Invalid due date");
-      }
-      update.due_on = patch.dueOn || null;
+    if (patch.startOn !== undefined) update.start_on = optionalDate(patch.startOn, "start date");
+    if (patch.dueOn !== undefined) update.due_on = optionalDate(patch.dueOn, "due date");
+    if (update.start_on && update.due_on && update.start_on > update.due_on) {
+      throw new InputError(START_AFTER_DUE);
     }
     const supabase = await createClient();
-    check(await supabase.from("tasks").update(update).eq("id", id(taskId)));
+    const result = await supabase.from("tasks").update(update).eq("id", id(taskId));
+    if (result.error?.message.includes("tasks_start_on_before_due_on")) throw new InputError(START_AFTER_DUE);
+    check(result);
   });
 }
 

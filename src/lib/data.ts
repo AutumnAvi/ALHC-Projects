@@ -36,6 +36,7 @@ export type ProjectTask = {
   id: string;
   title: string;
   completedAt: string | null;
+  startOn: string | null;
   dueOn: string | null;
   assigneeId: string | null;
   homeProjectId: string;
@@ -61,6 +62,7 @@ export type TaskDetail = {
   title: string;
   notes: string | null;
   completedAt: string | null;
+  startOn: string | null;
   dueOn: string | null;
   assigneeId: string | null;
   homeProjectId: string;
@@ -192,7 +194,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     await supabase
       .from("task_projects")
       .select(
-        "section_id, sort_order, task:tasks!inner(id, title, completed_at, due_on, assignee_id, home_project_id, created_at)",
+        "section_id, sort_order, task:tasks!inner(id, title, completed_at, start_on, due_on, assignee_id, home_project_id, created_at)",
       )
       .eq("project_id", projectId)
       .is("deleted_at", null)
@@ -249,6 +251,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     id: m.task.id,
     title: m.task.title,
     completedAt: m.task.completed_at,
+    startOn: m.task.start_on,
     dueOn: m.task.due_on,
     assigneeId: m.task.assignee_id,
     homeProjectId: m.task.home_project_id,
@@ -268,7 +271,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     await supabase
       .from("tasks")
       .select(
-        "id, title, notes, completed_at, due_on, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number",
+        "id, title, notes, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number",
       )
       .eq("id", taskId)
       .is("deleted_at", null)
@@ -416,6 +419,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     title: task.title,
     notes: task.notes,
     completedAt: task.completed_at,
+    startOn: task.start_on,
     dueOn: task.due_on,
     assigneeId: task.assignee_id,
     homeProjectId: task.home_project_id,

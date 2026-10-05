@@ -11,7 +11,7 @@ import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, hasActiveFilters, refFieldId, type ColumnKey, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
-import { Assignee, DueDate, TaskBadges } from "./task-meta";
+import { Assignee, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { useProjectTasks } from "./use-project-tasks";
 import { groupTasks, type TaskGroup } from "./view-groups";
 
@@ -26,7 +26,7 @@ type Props = {
 };
 
 const GRID = "grid items-center gap-3";
-const COLUMN_WIDTH: Record<string, string> = { assignee: "9rem", due: "6rem", section: "8rem" };
+const COLUMN_WIDTH: Record<string, string> = { assignee: "9rem", due: "6rem", start: "6rem", section: "8rem" };
 
 export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
@@ -114,6 +114,7 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
 function columnLabel(column: ColumnKey, fieldsById: Map<string, FieldDef>) {
   if (column === "assignee") return "Assignee";
   if (column === "due") return "Due";
+  if (column === "start") return "Start";
   if (column === "section") return "Section";
   return fieldsById.get(refFieldId(column) ?? "")?.name ?? "";
 }
@@ -216,6 +217,13 @@ function TaskRow({
           return (
             <div key={column}>
               <DueDate task={task} />
+            </div>
+          );
+        }
+        if (column === "start") {
+          return (
+            <div key={column}>
+              <StartDate task={task} />
             </div>
           );
         }
