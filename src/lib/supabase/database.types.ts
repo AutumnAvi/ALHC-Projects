@@ -27,6 +27,57 @@ export type Database = {
         };
         Relationships: [];
       };
+      approval_requests: {
+        Row: {
+          id: string;
+          task_id: string;
+          subtask_id: string | null;
+          approver_id: string;
+          requested_by: string | null;
+          rule_id: string | null;
+          note: string | null;
+          status: string;
+          decided_by: string | null;
+          decided_at: string | null;
+          decision_note: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          subtask_id?: string | null;
+          approver_id: string;
+          requested_by?: string | null;
+          rule_id?: string | null;
+          note?: string | null;
+          status?: string;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          decision_note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          subtask_id?: string | null;
+          approver_id?: string;
+          requested_by?: string | null;
+          rule_id?: string | null;
+          note?: string | null;
+          status?: string;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          decision_note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
       comment_mentions: {
         Row: {
           comment_id: string;
@@ -64,29 +115,32 @@ export type Database = {
         Row: {
           id: string;
           task_id: string;
-          author_id: string;
+          author_id: string | null;
           body: string;
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          rule_id: string | null;
         };
         Insert: {
           id?: string;
           task_id: string;
-          author_id?: string;
+          author_id?: string | null;
           body: string;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          rule_id?: string | null;
         };
         Update: {
           id?: string;
           task_id?: string;
-          author_id?: string;
+          author_id?: string | null;
           body?: string;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          rule_id?: string | null;
         };
         Relationships: [
           {
@@ -155,6 +209,144 @@ export type Database = {
           },
         ];
       };
+      email_outbox: {
+        Row: {
+          id: string;
+          task_id: string | null;
+          rule_id: string | null;
+          to_email: string;
+          template: string;
+          subject: string | null;
+          payload: Json;
+          status: string;
+          attempts: number;
+          last_error: string | null;
+          provider_message_id: string | null;
+          send_after: string;
+          sent_at: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id?: string | null;
+          rule_id?: string | null;
+          to_email: string;
+          template: string;
+          subject?: string | null;
+          payload?: Json;
+          status?: string;
+          attempts?: number;
+          last_error?: string | null;
+          provider_message_id?: string | null;
+          send_after?: string;
+          sent_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string | null;
+          rule_id?: string | null;
+          to_email?: string;
+          template?: string;
+          subject?: string | null;
+          payload?: Json;
+          status?: string;
+          attempts?: number;
+          last_error?: string | null;
+          provider_message_id?: string | null;
+          send_after?: string;
+          sent_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      form_submissions: {
+        Row: {
+          id: string;
+          form_id: string;
+          task_id: string;
+          submitter_email: string;
+          submitter_id: string | null;
+          answers: Json;
+          created_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          form_id: string;
+          task_id: string;
+          submitter_email: string;
+          submitter_id?: string | null;
+          answers?: Json;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          form_id?: string;
+          task_id?: string;
+          submitter_email?: string;
+          submitter_id?: string | null;
+          answers?: Json;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      forms: {
+        Row: {
+          id: string;
+          project_id: string;
+          title: string;
+          description: string | null;
+          questions: Json;
+          destination_section_id: string | null;
+          accepting_responses: boolean;
+          send_confirmation: boolean;
+          confirmation_message: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          title: string;
+          description?: string | null;
+          questions?: Json;
+          destination_section_id?: string | null;
+          accepting_responses?: boolean;
+          send_confirmation?: boolean;
+          confirmation_message?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          title?: string;
+          description?: string | null;
+          questions?: Json;
+          destination_section_id?: string | null;
+          accepting_responses?: boolean;
+          send_confirmation?: boolean;
+          confirmation_message?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
       inbox_items: {
         Row: {
           id: string;
@@ -165,6 +357,7 @@ export type Database = {
           kind: string;
           read_at: string | null;
           created_at: string;
+          data: Json;
         };
         Insert: {
           id?: string;
@@ -175,6 +368,7 @@ export type Database = {
           kind: string;
           read_at?: string | null;
           created_at?: string;
+          data?: Json;
         };
         Update: {
           id?: string;
@@ -185,6 +379,7 @@ export type Database = {
           kind?: string;
           read_at?: string | null;
           created_at?: string;
+          data?: Json;
         };
         Relationships: [
           {
@@ -255,6 +450,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          approval_completes_task: boolean;
         };
         Insert: {
           id?: string;
@@ -266,6 +462,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          approval_completes_task?: boolean;
         };
         Update: {
           id?: string;
@@ -277,6 +474,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          approval_completes_task?: boolean;
         };
         Relationships: [
           {
@@ -294,6 +492,204 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      request_sequences: {
+        Row: {
+          project_id: string;
+          enabled: boolean;
+          prefix: string;
+          pad_width: number;
+          add_to_title: boolean;
+          assign_to: string;
+          last_number: number;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          project_id: string;
+          enabled?: boolean;
+          prefix?: string;
+          pad_width?: number;
+          add_to_title?: boolean;
+          assign_to?: string;
+          last_number?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          project_id?: string;
+          enabled?: boolean;
+          prefix?: string;
+          pad_width?: number;
+          add_to_title?: boolean;
+          assign_to?: string;
+          last_number?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      rule_presets: {
+        Row: {
+          key: string;
+          name: string;
+          description: string;
+          inputs: Json;
+          rules: Json;
+          sort_order: number;
+          created_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          key: string;
+          name: string;
+          description: string;
+          inputs?: Json;
+          rules: Json;
+          sort_order?: number;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          key?: string;
+          name?: string;
+          description?: string;
+          inputs?: Json;
+          rules?: Json;
+          sort_order?: number;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      rule_runs: {
+        Row: {
+          id: string;
+          rule_id: string;
+          task_id: string | null;
+          trigger_type: string;
+          status: string;
+          detail: Json;
+          dedupe_key: string | null;
+          created_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          rule_id: string;
+          task_id?: string | null;
+          trigger_type: string;
+          status: string;
+          detail?: Json;
+          dedupe_key?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          rule_id?: string;
+          task_id?: string | null;
+          trigger_type?: string;
+          status?: string;
+          detail?: Json;
+          dedupe_key?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      rules: {
+        Row: {
+          id: string;
+          project_id: string;
+          name: string;
+          enabled: boolean;
+          trigger_type: string;
+          trigger_config: Json;
+          conditions: Json;
+          actions: Json;
+          preset_key: string | null;
+          created_by: string | null;
+          sort_order: number;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          name: string;
+          enabled?: boolean;
+          trigger_type: string;
+          trigger_config?: Json;
+          conditions?: Json;
+          actions?: Json;
+          preset_key?: string | null;
+          created_by?: string | null;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          name?: string;
+          enabled?: boolean;
+          trigger_type?: string;
+          trigger_config?: Json;
+          conditions?: Json;
+          actions?: Json;
+          preset_key?: string | null;
+          created_by?: string | null;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      scheduled_rule_actions: {
+        Row: {
+          id: string;
+          rule_id: string;
+          task_id: string;
+          actions: Json;
+          event: Json;
+          run_at: string;
+          status: string;
+          completed_at: string | null;
+          created_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          rule_id: string;
+          task_id: string;
+          actions: Json;
+          event?: Json;
+          run_at: string;
+          status?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          rule_id?: string;
+          task_id?: string;
+          actions?: Json;
+          event?: Json;
+          run_at?: string;
+          status?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
       };
       sections: {
         Row: {
@@ -608,6 +1004,9 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          source: string;
+          req_project_id: string | null;
+          req_number: number | null;
         };
         Insert: {
           id?: string;
@@ -622,6 +1021,9 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          source?: string;
+          req_project_id?: string | null;
+          req_number?: number | null;
         };
         Update: {
           id?: string;
@@ -636,6 +1038,9 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          source?: string;
+          req_project_id?: string | null;
+          req_number?: number | null;
         };
         Relationships: [
           {
@@ -697,13 +1102,59 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      assign_request_number: {
+        Args: { target_task: string };
+        Returns: string;
+      };
+      cancel_approval: {
+        Args: { target_approval: string };
+        Returns: undefined;
+      };
+      claim_email_outbox: {
+        Args: { max_items?: number; only_id?: string | null };
+        Returns: Database["public"]["Tables"]["email_outbox"]["Row"][];
+      };
+      complete_email_outbox: {
+        Args: { target_email: string; outcome: string; message_id?: string | null; error_message?: string | null };
+        Returns: undefined;
+      };
       create_task: {
         Args: { target_project: string; target_section: string | null; task_title: string };
         Returns: string;
       };
+      decide_approval: {
+        Args: { target_approval: string; decision: string; decision_note?: string | null };
+        Returns: undefined;
+      };
+      format_request_label: {
+        Args: { target_project: string; number: number };
+        Returns: string;
+      };
+      get_public_form: {
+        Args: { target_form: string };
+        Returns: Json;
+      };
+      install_rule_preset: {
+        Args: { target_project: string; preset: string; inputs?: Json; enable?: boolean };
+        Returns: string[];
+      };
       is_allowlisted: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      request_approval: {
+        Args: {
+          target_task: string;
+          approver: string;
+          approval_note?: string | null;
+          as_subtask?: boolean;
+          subtask_title?: string | null;
+        };
+        Returns: string;
+      };
+      resubmit_approval: {
+        Args: { target_approval: string; approval_note?: string | null };
+        Returns: undefined;
       };
       search_tasks: {
         Args: { query: string; max_results?: number };
@@ -717,6 +1168,18 @@ export type Database = {
           home_project_id: string;
           home_project_name: string;
         }[];
+      };
+      submit_form: {
+        Args: { target_form: string; submitter_email: string; answers: Json };
+        Returns: Json;
+      };
+      task_request_label: {
+        Args: { target_task: string };
+        Returns: string | null;
+      };
+      workflow_tick: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
       };
     };
     Enums: {
