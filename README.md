@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with List and Board views, a task detail pane, comments, custom fields, attachments, My Tasks, an Inbox, and search. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks, with List and Board views, a task detail pane, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -20,6 +20,14 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Attachments** on tasks: upload, open, and remove (soft delete), up to 25 MB per file.
 - **My Tasks** (`/my-tasks`): everything assigned to you across projects, grouped by Overdue, Today, Next 7 days, Later, and No due date.
 - **Search** (sidebar box or `/search`) over task titles and descriptions.
+
+## What's here (workflows)
+
+- **Approvals** in the task pane: ask someone to approve a task (optionally as an approval subtask). The approver can approve, request changes, or reject, with a note. Changes can be resubmitted, and open requests can be cancelled. Every step is logged in the activity history and reaches the requester, assignee, and followers through the Inbox. Settings tab: optionally complete the task when it's approved.
+- **Forms** (Forms tab): build intake forms with short/long text, number, date, single/multiple choice, and checkbox questions. Questions can show or hide based on earlier answers. Answers can fill the task name, description, due date, section (or Status), and custom fields. Each form has a public link (`/forms/<id>`, no sign-in) and an iframe-friendly embed (`/forms/<id>/embed`). Submitting creates the task, assigns a request number, logs the submission, emails the submitter a confirmation, and runs rules.
+- **Request numbers** (Settings tab): a per-project counter with a prefix and zero padding (e.g. `Req #042`), optionally added to the task name, for every task or only form submissions. Set the next number to continue an existing sequence.
+- **Rules** (Rules tab): when a task is added, moves into a section, has a field or assignee change, is due soon, gets an approval decision, or comes from a form, check conditions and then move it, set a field or assignee, comment, add followers, send an inbox notification, request approval, send an email, or wait N hours before continuing. Rules are off until enabled. They can't trigger themselves in a loop, and each run is logged. Templates cover common patterns: due-tomorrow reminder, requester update when a section is entered, 24-hour nudge, tracking/shipping email, approval routing, and intake triage. You fill in the sections, fields, and people when installing a template.
+- **Email** through [Resend](https://resend.com): form confirmations, requester updates, and due-tomorrow reminders. With no key configured, emails are mocked (logged and marked `mocked`) so everything else still works.
 
 ## Local development
 
@@ -58,7 +66,23 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 5. **Storage:** the collaboration migration creates the private bucket **`task-attachments`** (25 MB per-file limit) and its `storage.objects` policies (`task_attachments_objects_select_allowlisted`, `task_attachments_objects_insert_allowlisted`). Nothing to click, but check two things:
    - Storage → Settings → **Upload file size limit** (the project-wide cap) must be at least 25 MB, or uploads fail below the bucket limit.
    - Files are stored as `<task id>/<uuid>-<file name>` and are only reachable through short-lived signed URLs issued by the app (`/attachments/<id>`). Removing an attachment hides it but leaves the object in Storage.
-6. **Realtime (optional):** the migration adds `comments`, `task_stories`, and `inbox_items` to the `supabase_realtime` publication, so comments, activity, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
+6. **Realtime (optional):** the migrations add `comments`, `task_stories`, `inbox_items`, and `approval_requests` to the `supabase_realtime` publication, so comments, activity, approvals, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
+7. **Scheduled rules (recommended):** enable the **`pg_cron`** extension (Database → Extensions) *before* applying the workflows migration, and it schedules `alhc-workflow-tick` every 5 minutes. That runs "wait N hours" steps and "due date is approaching" rules. If you enable `pg_cron` later, schedule it yourself in the SQL editor:
+
+   ```sql
+   select cron.schedule('alhc-workflow-tick', '*/5 * * * *', 'select public.workflow_tick()');
+   ```
+
+   Without `pg_cron`, the Vercel cron below runs `workflow_tick()` once a day instead.
+
+## Setup: email (Resend) and the workflows cron
+
+1. In [Resend](https://resend.com), verify a sending domain and create an API key.
+2. Set `RESEND_API_KEY`, `EMAIL_FROM` (e.g. `ALHC Projects <requests@yourdomain.com>`), and optionally `EMAIL_REPLY_TO`.
+3. Set `SUPABASE_SERVICE_ROLE_KEY` (server-only). The app uses it only to claim and deliver queued emails and for the cron route.
+4. Set `CRON_SECRET` to a long random string. `vercel.json` calls `/api/cron/workflows` daily, and Vercel sends the secret automatically. On a Pro plan you can make it more frequent (e.g. `*/15 * * * *`), or call it from any scheduler with `Authorization: Bearer <CRON_SECRET>`.
+
+Emails are also delivered right after any action in the app, so the cron mainly matters for emails queued by scheduled rules. Leave the Resend variables empty to mock email. To inspect what would have been sent, run `select to_email, template, subject, status from public.email_outbox order by created_at desc;`.
 
 ## Setup: Google OAuth
 
@@ -80,14 +104,17 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
 
 ## Setup: Vercel
 
-1. Import `AutumnAvi/ALHC-Projects` in Vercel. The framework preset (Next.js) and build command (`npm run build`) are detected automatically, so `vercel.json` isn't needed.
+1. Import `AutumnAvi/ALHC-Projects` in Vercel. The framework preset (Next.js) and build command (`npm run build`) are detected automatically; `vercel.json` only declares the workflows cron.
 2. Under Settings → Environment Variables, set these for **Production** and **Preview**:
 
    | Name | Value |
    | --- | --- |
    | `NEXT_PUBLIC_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon (or publishable) key |
-   | `SUPABASE_SERVICE_ROLE_KEY` | Optional. Not used yet; server-only if added |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Needed to deliver email and run the cron route |
+   | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | Optional. Email via Resend; mocked when unset |
+   | `CRON_SECRET` | Secret for `/api/cron/workflows` |
+   | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links |
 
    The Supabase ↔ Vercel Marketplace integration sets the same names automatically if you prefer it.
 3. Deploy. If you add or change env vars later, redeploy so they take effect. Without them, every page shows a "Supabase isn't configured" screen instead of crashing.
