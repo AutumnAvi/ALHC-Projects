@@ -10,6 +10,16 @@
   --color-accent-500: #2b8178;
   --color-accent-600: #1f6a63;
   --color-accent-700: #195550;
+
+  /* Small meta text (badges, avatar initials, tray labels): `text-2xs`. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  /* Shared chrome sizes so the shell, headers, toolbars, and rows line up across views. */
+  --spacing-bar: 3rem; /* h-bar: top bars (sidebar brand, page headers, task pane header) */
+  --spacing-toolbar: 2.75rem; /* min-h-toolbar: view toolbars */
+  --spacing-row: 2.25rem; /* h-row / min-h-row: list rows (List, My Tasks, search) */
+  --spacing-gutter: 1.5rem; /* px-gutter: horizontal page padding */
 }
 
 @layer base {
@@ -24,4 +34,33 @@
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-accent-500;
   }
+}
+
+/* Buttons and controls shared by chrome, toolbars, and page headers. Zinc neutrals, one accent. */
+@utility btn-primary {
+  @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility btn-secondary {
+  @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 aria-expanded:border-zinc-400 aria-expanded:bg-zinc-50;
+}
+
+@utility btn-ghost {
+  @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 aria-expanded:bg-zinc-100;
+}
+
+@utility btn-icon {
+  @apply inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 aria-expanded:bg-zinc-100;
+}
+
+@utility control {
+  @apply h-7 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500 focus:outline-none;
+}
+
+@utility chip {
+  @apply inline-flex max-w-full items-center gap-1 rounded bg-zinc-100 px-1.5 py-px text-xs text-zinc-600;
+}
+
+@utility skeleton {
+  @apply animate-pulse rounded bg-zinc-100;
 }

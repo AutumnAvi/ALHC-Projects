@@ -164,7 +164,7 @@ export function FormBuilder({
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-6">
+    <div className="mx-auto max-w-3xl px-gutter py-5">
       <div className="flex flex-wrap items-center gap-3">
         <Link
           href={`/projects/${form.projectId}/forms`}

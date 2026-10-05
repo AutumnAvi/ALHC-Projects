@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, ListTodo, SearchX } from "lucide-react";
 import { CompleteToggle } from "@/components/complete-toggle";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
+import { EmptyState } from "@/components/ui";
 import { setTaskCompleted } from "@/lib/actions";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
@@ -27,6 +28,8 @@ type Props = {
 };
 
 const GRID = "grid items-center gap-3";
+// The List header sticks under the toolbar while rows scroll (the page's <main> is the scroller).
+const HEADER = "sticky top-0 z-10 border-b border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-500";
 const COLUMN_WIDTH: Record<string, string> = { assignee: "9rem", due: "6rem", start: "6rem", section: "8rem" };
 
 export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId }: Props) {
@@ -69,12 +72,8 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
   };
 
   return (
-    <div className="px-6 py-4" style={{ minWidth: `${28 + columns.length * 8.75}rem` }}>
-      <div
-        className={`${GRID} border-b border-zinc-200 px-3 pb-2 text-xs font-medium text-zinc-500`}
-        style={gridStyle}
-        aria-hidden
-      >
+    <div className="px-gutter pb-6" style={{ minWidth: `${28 + columns.length * 8.75}rem` }}>
+      <div className={`${GRID} ${HEADER}`} style={gridStyle} aria-hidden>
         <span className="pl-7">Task</span>
         {columns.map((column) => (
           <span key={column} className="truncate">
@@ -84,17 +83,21 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
       </div>
 
       {sections.length === 0 && tasks.length === 0 && !filtered ? (
-        <div className="mx-auto max-w-md py-16 text-center">
-          <h2 className="text-sm font-medium text-zinc-900">This project is empty</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Add a section to group work (for example “Backlog” or “This week”), then add tasks to
-            it. You can also add tasks without a section.
-          </p>
+        <div className="mt-6">
+          <EmptyState icon={ListTodo} title="This project is empty">
+            {canEdit
+              ? "Add a section to group work (for example “Backlog” or “This week”), then add tasks to it. You can also add tasks without a section."
+              : "No tasks have been added yet. Editors of this project can add sections and tasks."}
+          </EmptyState>
         </div>
       ) : null}
 
       {filtered && optimisticTasks.length === 0 ? (
-        <p className="px-3 pt-6 text-sm text-zinc-500">No tasks match this view’s filters.</p>
+        <div className="mt-6">
+          <EmptyState icon={SearchX} title="No tasks match this view’s filters" size="inline">
+            Remove a filter chip above, or use Reset to go back to the saved view.
+          </EmptyState>
+        </div>
       ) : null}
 
       {groups.map((group) => (
@@ -103,7 +106,7 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
             <TaskRow key={task.id} task={task} {...rowProps} />
           ))}
           {group.section && group.tasks.length === 0 ? (
-            <p className="px-3 pt-2 pl-10 text-xs text-zinc-400">
+            <p className="flex min-h-row items-center border-b border-zinc-100 pl-10 text-xs text-zinc-400">
               {filtered ? "No matching tasks in this section." : "No tasks in this section yet."}
             </p>
           ) : null}
@@ -114,7 +117,7 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
       ))}
 
       {bySection ? (
-        <div className="mt-6">
+        <div className="mt-4">
           <AddSection projectId={projectId} variant="list" />
         </div>
       ) : null}
@@ -133,7 +136,7 @@ function columnLabel(column: ColumnKey, fieldsById: Map<string, FieldDef>) {
 export function GroupTitle({ group }: { group: TaskGroup }) {
   if (group.section) return <SectionTitle section={group.section} count={group.tasks.length} />;
   return (
-    <span className="flex flex-1 items-center gap-2 px-1 text-sm font-semibold text-zinc-900">
+    <span className="flex min-w-0 flex-1 items-center gap-2 px-1 text-sm font-semibold text-zinc-900">
       {group.color ? (
         <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[group.color]}`}>
           {group.label}
@@ -149,8 +152,8 @@ export function GroupTitle({ group }: { group: TaskGroup }) {
 function SectionGroup({ title, children }: { title: React.ReactNode; children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   return (
-    <section className="mt-5">
-      <div className="flex items-center gap-1 px-1">
+    <section className="mt-4">
+      <div className="flex h-8 items-center gap-1 px-1">
         <button
           type="button"
           onClick={() => setCollapsed((c) => !c)}
@@ -162,7 +165,7 @@ function SectionGroup({ title, children }: { title: React.ReactNode; children: R
         </button>
         {title}
       </div>
-      {collapsed ? null : <div className="mt-1 border-t border-zinc-100">{children}</div>}
+      {collapsed ? null : <div className="border-t border-zinc-200">{children}</div>}
     </section>
   );
 }
@@ -195,7 +198,7 @@ function TaskRow({
 
   return (
     <div
-      className={`${GRID} border-b border-zinc-100 px-3 py-2 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
+      className={`${GRID} min-h-row border-b border-zinc-100 px-3 py-1 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
       style={gridStyle}
     >
       <div className="flex min-w-0 items-center gap-2.5">

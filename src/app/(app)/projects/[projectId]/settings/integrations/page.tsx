@@ -24,7 +24,7 @@ export default async function ProjectIntegrationsPage({
 
   if (!hasRole(role, "admin")) {
     return (
-      <div className="mx-auto max-w-3xl px-6 py-6">
+      <div className="mx-auto max-w-3xl px-gutter py-5">
         <ReadOnlyNotice need="admin" what="integrations (Slack and webhook settings)" />
       </div>
     );

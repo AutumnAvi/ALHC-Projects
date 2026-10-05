@@ -32,7 +32,7 @@ export function ProjectSettings({
   const next = Number.parseInt(nextNumber, 10);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-6 py-6">
+    <div className="mx-auto max-w-3xl space-y-6 px-gutter py-5">
       <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="req-heading">
         <h2 id="req-heading" className="text-sm font-semibold text-zinc-900">
           Request numbers

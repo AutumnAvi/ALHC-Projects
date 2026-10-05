@@ -4,7 +4,7 @@ import { CalendarView } from "@/components/project/calendar-view";
 import { ListView } from "@/components/project/list-view";
 import { TimelineView } from "@/components/project/timeline-view";
 import { ViewToolbar } from "@/components/project/view-toolbar";
-import { TaskPane } from "@/components/task/task-pane";
+import { TaskPaneBoundary } from "@/components/task/task-pane";
 import {
   filterProjectTaskIds,
   listProfiles,
@@ -80,7 +80,7 @@ export async function ProjectViewPage({
   const props = { projectId, sections, tasks: visible, profiles, fields, config, openTaskId };
 
   return (
-    <main className={`flex min-h-0 flex-1 flex-col ${layout === "list" ? "overflow-auto" : ""}`}>
+    <main className="flex min-h-0 flex-1 flex-col">
       <ViewToolbar
         key={`toolbar-${view?.id ?? layout}`}
         projectId={projectId}
@@ -90,7 +90,12 @@ export async function ProjectViewPage({
         config={config}
         context={{ sections, profiles, fields }}
       />
-      {layout === "list" ? <ListView key={`list-${view?.id ?? "default"}`} {...props} /> : null}
+      {layout === "list" ? (
+        // The toolbar stays put; the list scrolls under it with a sticky column header.
+        <div className="min-h-0 flex-1 overflow-auto">
+          <ListView key={`list-${view?.id ?? "default"}`} {...props} />
+        </div>
+      ) : null}
       {layout === "board" ? <BoardView key={`board-${view?.id ?? "default"}`} {...props} /> : null}
       {layout === "calendar" ? (
         <CalendarView tasks={visible} profiles={profiles} openTaskId={openTaskId} />
@@ -98,7 +103,7 @@ export async function ProjectViewPage({
       {layout === "timeline" ? (
         <TimelineView key={`timeline-${view?.id ?? "default"}`} {...props} dependencies={dependencies} />
       ) : null}
-      {openTaskId ? <TaskPane taskId={openTaskId} /> : null}
+      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
     </main>
   );
 }

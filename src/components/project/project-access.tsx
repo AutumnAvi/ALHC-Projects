@@ -41,7 +41,7 @@ export function RoleGate({ need, what, children }: { need: ProjectRole; what: st
   return (
     <>
       {allowed ? null : (
-        <div className="px-6 pt-4">
+        <div className="px-gutter pt-3">
           <ReadOnlyNotice need={need} what={what} />
         </div>
       )}

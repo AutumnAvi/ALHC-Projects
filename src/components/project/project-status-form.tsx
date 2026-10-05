@@ -20,7 +20,7 @@ export function ProjectStatusForm({ project }: { project: Project }) {
   const [note, setNote] = useState(project.status_note ?? "");
 
   return (
-    <div className="mx-auto max-w-3xl px-6 pt-6">
+    <div className="mx-auto max-w-3xl px-gutter pt-5">
       <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="status-heading">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="status-heading" className="text-sm font-semibold text-zinc-900">

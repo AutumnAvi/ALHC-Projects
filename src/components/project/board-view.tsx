@@ -107,7 +107,7 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
   }
 
   return (
-    <div className="flex min-h-0 flex-1 items-start gap-3 overflow-x-auto px-6 py-4">
+    <div className="flex min-h-0 flex-1 items-start gap-2.5 overflow-x-auto px-gutter py-3">
       {groups.map((group) => {
         const droppable = group.target.kind !== "none";
         const isTarget = dragging && dropTarget?.groupKey === group.key;
@@ -125,15 +125,15 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
               );
             }}
             onDrop={handleDrop}
-            className={`flex max-h-full w-72 shrink-0 flex-col rounded-xl border p-2 transition-colors ${
-              isTarget ? "border-accent-200 bg-accent-50" : "border-transparent bg-zinc-100/70"
+            className={`flex max-h-full w-72 shrink-0 flex-col rounded-lg border p-1.5 transition-colors ${
+              isTarget ? "border-accent-200 bg-accent-50" : "border-transparent bg-zinc-100/60"
             }`}
           >
-            <header className="flex items-center gap-1 px-1 pb-2">
+            <header className="flex h-8 shrink-0 items-center gap-1 px-1">
               <GroupTitle group={group} />
             </header>
 
-            <ol className="flex min-h-8 flex-col gap-2 overflow-y-auto">
+            <ol className="flex min-h-8 flex-col gap-1.5 overflow-y-auto pt-0.5">
               {group.tasks.map((task, index) => (
                 <li
                   key={task.id}
@@ -187,13 +187,13 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
             </ol>
 
             {group.tasks.length === 0 && !isTarget ? (
-              <p className="px-2 pb-1 text-xs text-zinc-400">
+              <p className="rounded-md border border-dashed border-zinc-300/80 px-2 py-3 text-center text-xs text-zinc-400">
                 {dragging ? "Drop here" : group.target.kind === "section" ? "No tasks yet. Add one below or drag a card here." : "No tasks"}
               </p>
             ) : null}
 
             {group.target.kind === "section" ? (
-              <div className="pt-2">
+              <div className="pt-1.5">
                 <AddTaskInput projectId={projectId} sectionId={group.target.sectionId} variant="card" />
               </div>
             ) : null}
@@ -207,7 +207,7 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
 }
 
 function DropIndicator() {
-  return <div aria-hidden className="mb-2 h-0.5 rounded-full bg-accent-500" />;
+  return <div aria-hidden className="mb-1.5 h-0.5 rounded-full bg-accent-500" />;
 }
 
 function TaskCard({
@@ -253,7 +253,7 @@ function TaskCard({
       draggable={moveOptions.length > 0}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className={`group relative rounded-lg border bg-white p-3 shadow-xs transition ${
+      className={`group relative rounded-lg border bg-white px-2.5 py-2 shadow-xs transition ${
         open ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200 hover:border-zinc-300"
       } ${dragging ? "opacity-40" : ""} ${moveOptions.length > 0 ? "cursor-grab active:cursor-grabbing" : ""}`}
     >
@@ -280,7 +280,7 @@ function TaskCard({
       </div>
 
       {cardFields.some((f) => task.fieldValues[f.id] != null || f.boundToSections) ? (
-        <div className="mt-2 flex flex-wrap gap-1 pl-6">
+        <div className="mt-1.5 flex flex-wrap gap-1 pl-6">
           {cardFields.map((field) => (
             <FieldValueChips key={field.id} field={field} task={task} context={fieldContext} showName />
           ))}
@@ -288,7 +288,7 @@ function TaskCard({
       ) : null}
 
       {due || start || task.subtaskCount > 0 || task.projectCount > 1 || assignee ? (
-        <div className="mt-2.5 flex items-center gap-2.5 pl-6">
+        <div className="mt-2 flex min-h-5 items-center gap-2 pl-6">
           {start ? <StartDate task={task} prefix={due ? "" : "Starts "} /> : null}
           {start && due ? <span className="-mx-1.5 text-xs text-zinc-400">–</span> : null}
           {showDue ? <DueDate task={task} /> : null}

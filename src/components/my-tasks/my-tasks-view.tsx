@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useOptimistic, useState } from "react";
-import { ChevronDown, ChevronRight, FolderClosed } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleCheck, FolderClosed, CheckCheck } from "lucide-react";
 import { CompleteToggle } from "@/components/complete-toggle";
 import { useTaskHref } from "@/components/project/shared";
 import { useServerAction } from "@/components/toast";
+import { EmptyState, SkeletonRows } from "@/components/ui";
 import { setTaskCompleted } from "@/lib/actions";
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
 import type { MyTask } from "@/lib/data";
@@ -62,19 +63,22 @@ export function MyTasksView({
 
   if (open.length === 0 && completed.length === 0) {
     return (
-      <div className="mt-10 rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center">
-        <h2 className="text-sm font-medium text-zinc-900">Nothing assigned to you</h2>
-        <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-600">
-          Tasks you’re assigned to in any project show up here.
-        </p>
+      <div className="mt-6">
+        <EmptyState icon={CircleCheck} title="Nothing assigned to you">
+          Tasks you’re assigned to in any project show up here, grouped into Overdue, Today, Next 7 days, Later,
+          and No due date.
+        </EmptyState>
       </div>
     );
   }
 
   return (
-    <div className="mt-4">
+    <div>
       {today === null ? (
-        <p className="py-6 text-sm text-zinc-400">Loading…</p>
+        <div role="status" className="mt-4">
+          <span className="sr-only">Loading your tasks…</span>
+          <SkeletonRows rows={Math.min(open.length || 3, 8)} />
+        </div>
       ) : (
         groupTasks(open, today).map((group) => (
           <TaskGroup key={group.key} id={group.key} title={group.title} count={group.tasks.length}>
@@ -85,7 +89,11 @@ export function MyTasksView({
         ))
       )}
       {open.length === 0 ? (
-        <p className="mt-6 text-sm text-zinc-500">You’re all caught up.</p>
+        <div className="mt-4">
+          <EmptyState icon={CheckCheck} title="You’re all caught up" size="inline">
+            No open tasks are assigned to you. Completed ones are listed below.
+          </EmptyState>
+        </div>
       ) : null}
       {completed.length > 0 ? (
         <TaskGroup
@@ -119,12 +127,12 @@ function TaskGroup({
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const headingId = `group-${id}`;
   return (
-    <section className="mt-5" aria-labelledby={headingId}>
+    <section className="mt-4" aria-labelledby={headingId}>
       <button
         type="button"
         onClick={() => setCollapsed((c) => !c)}
         aria-expanded={!collapsed}
-        className="flex items-center gap-1 rounded px-1 text-sm font-semibold text-zinc-900 hover:bg-zinc-100"
+        className="flex h-8 items-center gap-1 rounded px-1 text-sm font-semibold text-zinc-900 hover:bg-zinc-100"
       >
         {collapsed ? (
           <ChevronRight className="size-4 text-zinc-400" />
@@ -134,7 +142,7 @@ function TaskGroup({
         <span id={headingId}>{title}</span>
         <span className="text-xs font-normal tabular-nums text-zinc-400">{count}</span>
       </button>
-      {collapsed ? null : <ul className="mt-1 border-t border-zinc-100">{children}</ul>}
+      {collapsed ? null : <ul className="border-t border-zinc-200">{children}</ul>}
     </section>
   );
 }
@@ -159,7 +167,7 @@ function MyTaskRow({
 
   return (
     <li
-      className={`flex items-center gap-3 border-b border-zinc-100 px-3 py-2 ${
+      className={`flex min-h-row items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
         open ? "bg-accent-50" : "hover:bg-zinc-50"
       }`}
     >
@@ -180,7 +188,7 @@ function MyTaskRow({
       </Link>
       <Link
         href={`/projects/${task.projectId}/list`}
-        className="hidden max-w-40 shrink-0 items-center gap-1 truncate rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 hover:bg-zinc-200 sm:inline-flex"
+        className="chip hidden max-w-40 shrink-0 truncate hover:bg-zinc-200 hover:text-zinc-900 sm:inline-flex"
       >
         <FolderClosed className="size-3 shrink-0" aria-hidden />
         <span className="truncate">{task.projectName}</span>

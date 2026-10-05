@@ -1,7 +1,7 @@
 "use client";
 
 import { useOptimistic, useState } from "react";
-import { Columns3, Plus, Trash2, X } from "lucide-react";
+import { Columns3, Plus, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useServerAction } from "@/components/toast";
 import { createField, deleteField, updateField } from "@/lib/actions";
 import {
@@ -13,6 +13,7 @@ import {
   type FieldOption,
   type OptionColor,
 } from "@/lib/fields";
+import { EmptyState } from "@/components/ui";
 
 const inputClass =
   "rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm focus:border-zinc-400 focus:outline-none";
@@ -32,16 +33,18 @@ export function FieldsManager({
   const hasBound = fields.some((f) => f.boundToSections);
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-6">
+    <div className="mx-auto max-w-3xl px-gutter py-5">
       <p className="text-sm text-zinc-600">
         Fields add structured data to every task in this project. Pinned fields show as list columns
         and as chips on board cards.
       </p>
 
       {fields.length === 0 ? (
-        <p className="mt-6 rounded-md border border-dashed border-zinc-300 px-4 py-6 text-center text-sm text-zinc-500">
-          No fields yet.
-        </p>
+        <div className="mt-6">
+          <EmptyState icon={SlidersHorizontal} title="No fields yet" size="inline">
+            Custom fields add structured details to every task here, like a priority, a channel, or a reviewer.
+          </EmptyState>
+        </div>
       ) : (
         <ul className="mt-6 space-y-3" aria-label="Fields">
           {fields.map((field) => (

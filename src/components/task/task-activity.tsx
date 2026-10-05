@@ -196,8 +196,8 @@ export function TaskActivity({
   }
 
   return (
-    <section className="mt-8 border-t border-zinc-100 pt-5" aria-labelledby="activity-heading">
-      <h3 id="activity-heading" className="text-sm font-medium text-zinc-900">
+    <section className="mt-8 border-t border-zinc-200 pt-4" aria-labelledby="activity-heading">
+      <h3 id="activity-heading" className="text-sm font-semibold text-zinc-900">
         Activity
       </h3>
       <ol className="mt-3 flex flex-col gap-3">
@@ -312,7 +312,7 @@ export function CommentComposer({
   }
 
   return (
-    <div className="shrink-0 border-t border-zinc-200 bg-zinc-50/80 px-6 py-3">
+    <div className="shrink-0 border-t border-zinc-200 bg-zinc-50 px-gutter py-2.5">
       {canComment ? (
         <>
           <label htmlFor="new-comment" className="sr-only">

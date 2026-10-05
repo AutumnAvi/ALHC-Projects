@@ -47,7 +47,7 @@ export function UnreadBadge({ count }: { count: number }) {
   return (
     <span
       data-testid="inbox-badge"
-      className="ml-auto min-w-5 rounded-full bg-accent-600 px-1.5 text-center text-[11px] font-semibold leading-5 tabular-nums text-white"
+      className="ml-auto min-w-5 rounded-full bg-accent-600 px-1.5 text-center text-2xs font-semibold leading-5 tabular-nums text-white"
     >
       {count > 99 ? "99+" : count}
       <span className="sr-only"> unread</span>

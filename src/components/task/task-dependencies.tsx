@@ -23,7 +23,7 @@ export function TaskDependencies({ task }: { task: TaskDetail }) {
 
   return (
     <section className="mt-6" aria-labelledby="dependencies-heading">
-      <h3 id="dependencies-heading" className="text-sm font-medium text-zinc-900">
+      <h3 id="dependencies-heading" className="text-sm font-semibold text-zinc-900">
         Dependencies
       </h3>
       <div className="mt-2 grid gap-3 sm:grid-cols-2">

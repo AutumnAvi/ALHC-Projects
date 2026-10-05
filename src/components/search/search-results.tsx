@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, Circle, FolderClosed } from "lucide-react";
+import { CheckCircle2, Circle, FolderClosed, SearchX } from "lucide-react";
 import { useTaskHref } from "@/components/project/shared";
+import { EmptyState } from "@/components/ui";
 import { formatDueDate } from "@/lib/dates";
 
 export type SearchResult = {
@@ -27,16 +28,18 @@ export function SearchResults({
   const taskHref = useTaskHref();
 
   return (
-    <section className="mt-5" aria-label="Search results">
-      <p className="text-sm text-zinc-500">
-        {results.length === 0
-          ? `No tasks match “${query}”.`
-          : `${results.length}${results.length === 50 ? "+" : ""} ${
-              results.length === 1 ? "task" : "tasks"
-            } matching “${query}”`}
-      </p>
+    <section className="mt-4" aria-label="Search results">
+      {results.length === 0 ? (
+        <EmptyState icon={SearchX} title={`No tasks match “${query}”`}>
+          Try a shorter word or another spelling. Search only covers projects you’re a member of.
+        </EmptyState>
+      ) : (
+        <p className="text-xs text-zinc-500">
+          {`${results.length}${results.length === 50 ? "+" : ""} ${results.length === 1 ? "task" : "tasks"} matching “${query}”`}
+        </p>
+      )}
       {results.length > 0 ? (
-        <ul className="mt-2 divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+        <ul className="mt-2 divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200">
           {results.map((result) => {
             const open = openTaskId === result.id;
             const Icon = result.completed ? CheckCircle2 : Circle;
@@ -46,7 +49,7 @@ export function SearchResults({
                   href={taskHref(result.id)}
                   scroll={false}
                   aria-current={open ? "true" : undefined}
-                  className="flex items-start gap-3 px-4 py-2.5"
+                  className="flex min-h-row items-start gap-3 px-3 py-2"
                 >
                   <Icon
                     className={`mt-0.5 size-4 shrink-0 ${result.completed ? "text-accent-600" : "text-zinc-300"}`}
@@ -68,7 +71,7 @@ export function SearchResults({
                   </span>
                   <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-500">
                     {result.dueOn ? <span className="tabular-nums">{formatDueDate(result.dueOn)}</span> : null}
-                    <span className="inline-flex max-w-36 items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5">
+                    <span className="chip max-w-36">
                       <FolderClosed className="size-3 shrink-0" aria-hidden />
                       <span className="truncate">{result.projectName}</span>
                     </span>

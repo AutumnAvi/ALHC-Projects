@@ -27,7 +27,7 @@ export function PortfolioReport({
 }) {
   const recent = `Completed (last ${RECENT_DAYS} days)`;
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-6 py-6">
+    <div className="mx-auto max-w-5xl space-y-8 px-gutter py-5">
       <p className="text-sm text-zinc-600">
         Incomplete, overdue, and recently completed tasks across this portfolio. “Recently” means completed on one of
         the last {RECENT_DAYS} days in your time zone, today included. Overdue means incomplete and due before today.

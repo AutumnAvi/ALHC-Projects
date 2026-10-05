@@ -22,7 +22,7 @@ export default async function ProjectTrashPage({ params }: PageProps<"/projects/
 
   if (!hasRole(role, "editor")) {
     return (
-      <div className="mx-auto max-w-3xl px-6 py-6">
+      <div className="mx-auto max-w-3xl px-gutter py-5">
         <ReadOnlyNotice need="editor" what="the Trash (see and restore deleted tasks)" />
       </div>
     );

@@ -6,14 +6,14 @@ import { useUnreadCount } from "@/components/shell/unread-count";
 
 export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadCount: number }) {
   const unread = useUnreadCount(unreadCount, memberId, "mobile");
-  const iconLink = "relative rounded p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900";
+  const iconLink = "btn-icon relative";
 
   return (
-    <header className="flex h-12 items-center justify-between border-b border-zinc-200 px-4 md:hidden">
+    <header className="flex h-bar shrink-0 items-center justify-between border-b border-zinc-200 bg-zinc-50 px-4 md:hidden">
       <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight">
         <span
           aria-hidden
-          className="flex size-6 items-center justify-center rounded bg-zinc-900 text-[11px] text-white"
+          className="flex size-6 items-center justify-center rounded-md bg-zinc-900 text-2xs text-white"
         >
           A
         </span>

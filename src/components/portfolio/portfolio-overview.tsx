@@ -11,6 +11,7 @@ import { addPortfolioProject, movePortfolioProject, removePortfolioProject, upda
 import type { Portfolio, PortfolioProject } from "@/lib/data";
 import { RECENT_DAYS, formatProgress, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
 import { ROLE_LABELS, type ProjectRole } from "@/lib/roles";
+import { EmptyState } from "@/components/ui";
 
 type Card = { project: PortfolioProject; role: ProjectRole | null; counts: PortfolioCounts };
 
@@ -37,7 +38,7 @@ export function PortfolioOverview({
   const choice = candidates.some((c) => c.id === selected) ? selected : (candidates[0]?.id ?? "");
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-6 py-6">
+    <div className="mx-auto max-w-5xl space-y-6 px-gutter py-5">
       <section aria-labelledby="progress-heading" className="rounded-lg border border-zinc-200 p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 id="progress-heading" className="text-sm font-semibold text-zinc-900">
@@ -146,13 +147,12 @@ export function PortfolioOverview({
         </div>
 
         {cards.length === 0 ? (
-          <div className="mt-4 rounded-xl border border-dashed border-zinc-300 px-6 py-10 text-center">
-            <FolderClosed className="mx-auto size-7 text-zinc-300" aria-hidden />
-            <p className="mx-auto mt-2 max-w-sm text-sm text-zinc-600">
+          <div className="mt-4">
+            <EmptyState icon={FolderClosed} title={canEdit ? "No projects yet" : "No projects you can see"}>
               {canEdit
-                ? "No projects yet. Add projects above to see their progress side by side."
+                ? "Add projects above to see their progress side by side."
                 : "There are no projects here that you’re a member of."}
-            </p>
+            </EmptyState>
           </div>
         ) : (
           <ol className="mt-4 grid gap-3 md:grid-cols-2">

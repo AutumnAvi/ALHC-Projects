@@ -28,7 +28,7 @@ export function IntegrationsSettings({
   const [settings, setSettings] = useState(initial);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-6 py-6">
+    <div className="mx-auto max-w-3xl space-y-6 px-gutter py-5">
       <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="slack-heading">
         <h2 id="slack-heading" className="text-sm font-semibold text-zinc-900">
           Slack

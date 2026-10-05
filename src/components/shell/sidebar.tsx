@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Briefcase, CircleCheck, FolderClosed, House, Inbox, LogOut, Plus, Search } from "lucide-react";
+import { Briefcase, CircleCheck, House, Inbox, LogOut, Plus, Search } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { NewPortfolioForm } from "@/components/shell/new-portfolio-form";
 import { NewProjectForm } from "@/components/shell/new-project-form";
@@ -16,7 +16,10 @@ type SidebarProject = { id: string; name: string };
 type SidebarPortfolio = { id: string; name: string; percent: number | null };
 
 const NAV_LINK =
-  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200/60 aria-[current=page]:bg-zinc-200/80 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
+  "group/nav flex h-8 items-center gap-2 rounded-md px-2 text-sm text-zinc-700 hover:bg-zinc-200/60 aria-[current=page]:bg-zinc-200/80 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
+const SECTION_HEADING = "text-2xs font-semibold uppercase tracking-wider text-zinc-500";
+const ADD_BUTTON = "rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-900 aria-expanded:bg-zinc-200 aria-expanded:text-zinc-900";
+const EMPTY_LINK = "flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs text-zinc-500 hover:bg-zinc-200/60 hover:text-zinc-900";
 
 export function Sidebar({
   member,
@@ -41,17 +44,17 @@ export function Sidebar({
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex">
-      <div className="flex h-14 items-center gap-2.5 px-4">
+      <Link href="/" className="flex h-bar shrink-0 items-center gap-2 px-4">
         <span
           aria-hidden
-          className="flex size-7 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white"
+          className="flex size-6 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white"
         >
           A
         </span>
         <span className="text-sm font-semibold tracking-tight">ALHC Projects</span>
-      </div>
+      </Link>
 
-      <form action="/search" role="search" className="px-3 pb-3">
+      <form action="/search" role="search" className="px-3 pb-2">
         <div className="relative">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400"
@@ -65,12 +68,12 @@ export function Sidebar({
             name="q"
             type="search"
             placeholder="Search"
-            className="w-full rounded-md border border-zinc-200 bg-white py-1.5 pl-8 pr-2 text-sm placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none"
+            className="control w-full pl-8"
           />
         </div>
       </form>
 
-      <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-2 pb-4">
+      <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 pb-4">
         <ul className="flex flex-col gap-px">
           {links.map(({ href, label, icon: Icon }) => (
             <li key={href}>
@@ -79,7 +82,7 @@ export function Sidebar({
                 aria-current={pathname === href ? "page" : undefined}
                 className={NAV_LINK}
               >
-                <Icon className="size-4 text-zinc-500" />
+                <Icon className="size-4 text-zinc-500 group-aria-[current=page]/nav:text-zinc-900" />
                 {label}
                 {href === "/inbox" ? <UnreadBadge count={unread} /> : null}
               </Link>
@@ -88,14 +91,14 @@ export function Sidebar({
         </ul>
 
         <div>
-          <div className="flex items-center justify-between px-2 pb-1">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">Projects</h2>
+          <div className="flex h-7 items-center justify-between px-2">
+            <h2 className={SECTION_HEADING}>Projects</h2>
             <button
               type="button"
               onClick={() => setCreating((v) => !v)}
               aria-label="New project"
               aria-expanded={creating}
-              className="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
+              className={ADD_BUTTON}
             >
               <Plus className="size-4" />
             </button>
@@ -115,21 +118,26 @@ export function Sidebar({
                     aria-current={active ? "page" : undefined}
                     className={NAV_LINK}
                   >
-                    <FolderClosed className="size-4 shrink-0 text-zinc-400" />
+                    <ProjectGlyph active={active} />
                     <span className="truncate">{project.name}</span>
                   </Link>
                 </li>
               );
             })}
             {projects.length === 0 && !creating ? (
-              <li className="px-2 py-1 text-xs text-zinc-500">No projects yet.</li>
+              <li>
+                <button type="button" onClick={() => setCreating(true)} className={EMPTY_LINK}>
+                  <Plus className="size-3.5" aria-hidden />
+                  Create your first project
+                </button>
+              </li>
             ) : null}
           </ul>
         </div>
 
         <div>
-          <div className="flex items-center justify-between px-2 pb-1">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+          <div className="flex h-7 items-center justify-between px-2">
+            <h2 className={SECTION_HEADING}>
               <Link href="/portfolios" className="hover:text-zinc-900">
                 Portfolios
               </Link>
@@ -139,7 +147,7 @@ export function Sidebar({
               onClick={() => setCreatingPortfolio((v) => !v)}
               aria-label="New portfolio"
               aria-expanded={creatingPortfolio}
-              className="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
+              className={ADD_BUTTON}
             >
               <Plus className="size-4" />
             </button>
@@ -159,7 +167,7 @@ export function Sidebar({
                     aria-current={active ? "page" : undefined}
                     className={NAV_LINK}
                   >
-                    <Briefcase className="size-4 shrink-0 text-zinc-400" />
+                    <Briefcase className="size-3.5 shrink-0 text-zinc-400" />
                     <span className="min-w-0 flex-1 truncate">{portfolio.name}</span>
                     {portfolio.percent !== null ? (
                       <span className="shrink-0 text-xs tabular-nums text-zinc-500">
@@ -172,15 +180,20 @@ export function Sidebar({
               );
             })}
             {portfolios.length === 0 && !creatingPortfolio ? (
-              <li className="px-2 py-1 text-xs text-zinc-500">No portfolios yet.</li>
+              <li>
+                <button type="button" onClick={() => setCreatingPortfolio(true)} className={EMPTY_LINK}>
+                  <Plus className="size-3.5" aria-hidden />
+                  Group projects in a portfolio
+                </button>
+              </li>
             ) : null}
           </ul>
         </div>
       </nav>
 
-      <div className="flex items-center gap-2 border-t border-zinc-200 px-3 py-3">
+      <div className="flex items-center gap-2 border-t border-zinc-200 px-3 py-2">
         <Avatar name={member.name} size="md" />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 leading-tight">
           <p className="truncate text-sm font-medium text-zinc-900">{member.name}</p>
           <p className="truncate text-xs text-zinc-500">{member.email}</p>
         </div>
@@ -189,12 +202,22 @@ export function Sidebar({
             type="submit"
             aria-label="Sign out"
             title="Sign out"
-            className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
+            className="btn-icon hover:bg-zinc-200"
           >
             <LogOut className="size-4" />
           </button>
         </form>
       </div>
     </aside>
+  );
+}
+
+// A small square in place of a folder icon, like Asana's project swatch; accent when the project is open.
+function ProjectGlyph({ active }: { active: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`ml-0.5 mr-0.5 size-2.5 shrink-0 rounded-sm ${active ? "bg-accent-500" : "bg-zinc-300 group-hover/nav:bg-zinc-400"}`}
+    />
   );
 }

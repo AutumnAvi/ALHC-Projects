@@ -15,12 +15,12 @@ import {
   type Recurrence,
   type RecurrenceEnds,
 } from "@/lib/recurrence";
+import { PANE_CONTROL } from "./pane-styles";
 
 const FREQUENCY_LABELS = { daily: "Daily", weekly: "Weekly", monthly: "Monthly", yearly: "Yearly" } as const;
 const UNITS = { daily: "day(s)", weekly: "week(s)", monthly: "month(s)", yearly: "year(s)" } as const;
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const controlClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none";
+const controlClass = "control";
 
 // The pane's "Repeats" row. Completing a repeating task creates the next occurrence with shifted dates.
 export function TaskRecurrence({ task }: { task: TaskDetail }) {
@@ -61,7 +61,7 @@ function RecurrenceEditor({ task }: { task: TaskDetail }) {
                 : null,
             );
           }}
-          className={controlClass}
+          className={PANE_CONTROL}
         >
           <option value="">Does not repeat</option>
           {FREQUENCIES.map((f) => (

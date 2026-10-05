@@ -62,7 +62,7 @@ export function SectionTitle({
             e.currentTarget.blur();
           }
         }}
-        className="min-w-0 flex-1 truncate rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+        className="field-sizing-content min-w-12 max-w-full truncate rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
       />
       <span className="text-xs tabular-nums text-zinc-400">{count}</span>
       <button

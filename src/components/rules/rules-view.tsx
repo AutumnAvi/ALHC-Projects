@@ -21,6 +21,7 @@ import {
   ruleFields,
   type RuleContext,
 } from "./rule-shared";
+import { EmptyState } from "@/components/ui";
 
 const RUN_STATUS: Record<RuleRun["status"], string> = {
   succeeded: "bg-green-100 text-green-800",
@@ -50,7 +51,7 @@ export function RulesView({
   const ruleNames = new Map(rules.map((r) => [r.id, r.name] as const));
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-6">
+    <div className="mx-auto max-w-3xl px-gutter py-5">
       <p className="text-sm text-zinc-600">
         Rules react to changes in this project: when something happens, check conditions, then run actions in order.
         Rules never trigger themselves, chains stop after five rules, and Status fields always follow the section.
@@ -75,9 +76,10 @@ export function RulesView({
       ) : null}
 
       {optimisticRules.length === 0 && editing !== "new" ? (
-        <div className="mt-3 rounded-md border border-dashed border-zinc-300 px-4 py-8 text-center">
-          <Workflow className="mx-auto size-6 text-zinc-300" aria-hidden />
-          <p className="mt-2 text-sm text-zinc-500">No rules yet. Start from a template below or build one.</p>
+        <div className="mt-3">
+          <EmptyState icon={Workflow} title="No rules yet" size="inline">
+            Start from a template below or build one. New rules start turned off until you enable them.
+          </EmptyState>
         </div>
       ) : (
         <ul className="mt-3 space-y-3" aria-label="Rules">
@@ -111,7 +113,7 @@ export function RulesView({
                     <p className="text-sm font-medium text-zinc-900">
                       {rule.name}
                       {rule.presetKey ? (
-                        <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-normal text-zinc-600">
+                        <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-normal text-zinc-600">
                           template
                         </span>
                       ) : null}
@@ -180,7 +182,7 @@ export function RulesView({
               const reason = runReason(r.detail);
               return (
                 <li key={r.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
-                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${RUN_STATUS[r.status]}`}>{r.status}</span>
+                  <span className={`rounded px-1.5 py-0.5 text-2xs font-medium ${RUN_STATUS[r.status]}`}>{r.status}</span>
                   <span className="font-medium text-zinc-800">{ruleNames.get(r.ruleId) ?? "Deleted rule"}</span>
                   {r.taskId ? (
                     <Link href={`/projects/${projectId}/list?task=${r.taskId}`} className="min-w-0 truncate text-zinc-600 hover:underline">

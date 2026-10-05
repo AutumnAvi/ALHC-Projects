@@ -4,10 +4,10 @@ import { useSyncExternalStore } from "react";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
+import { PANE_CONTROL } from "./pane-styles";
 
 const subscribe = () => () => {};
-const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm hover:border-zinc-300 focus:border-accent-500 focus:outline-none disabled:bg-zinc-50 disabled:text-zinc-400";
+const inputClass = PANE_CONTROL;
 
 // "HH:MM" of an instant in the browser's zone; null while server rendering (avoids hydration drift).
 function useLocalTime(iso: string | null): string | null {
