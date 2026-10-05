@@ -401,17 +401,19 @@ function TimelineBar({
 
   if (!drag && (to < 0 || from >= days)) {
     const before = to < 0;
+    // Sticky inside the full-width row so the button stays visible at the scrolled edge.
     return (
-      <button
-        type="button"
-        onClick={() => onReveal(span.start)}
-        aria-label={`Show “${task.title}” (${spanLabel(span)}) on the timeline`}
-        className={`absolute top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-xs whitespace-nowrap text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 ${
-          before ? "left-1" : "right-1"
-        }`}
-      >
-        {before ? `‹ ${spanLabel(span)}` : `${spanLabel(span)} ›`}
-      </button>
+      <div className={`absolute inset-0 flex items-center ${before ? "justify-start" : "justify-end"}`}>
+        <button
+          type="button"
+          onClick={() => onReveal(span.start)}
+          aria-label={`Show “${task.title}” (${spanLabel(span)}) on the timeline`}
+          className="sticky mx-1 rounded bg-white/90 px-1.5 py-0.5 text-xs whitespace-nowrap text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+          style={before ? { left: LABEL_WIDTH } : { right: 0 }}
+        >
+          {before ? `‹ ${spanLabel(span)}` : `${spanLabel(span)} ›`}
+        </button>
+      </div>
     );
   }
 
@@ -420,7 +422,7 @@ function TimelineBar({
   const left = Math.max(from, 0) * dayWidth;
   const width = Math.max((Math.min(to + 1, days) - Math.max(from, 0)) * dayWidth, 4);
   const canResize = width >= 16;
-  const labelInside = width >= 72;
+  const labelInside = width >= task.title.length * 6.5 + 20;
   const tone = completed
     ? "bg-zinc-200 text-zinc-500"
     : span.openEnded
