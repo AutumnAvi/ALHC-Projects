@@ -4,8 +4,9 @@ import { connection } from "next/server";
 import { AuthCard } from "@/components/auth-card";
 import { SetupRequired } from "@/components/setup-required";
 import { getViewer, safeNextPath } from "@/lib/auth";
-import { isSupabaseConfigured } from "@/lib/env";
+import { isGoogleAuthEnabled, isSupabaseConfigured } from "@/lib/env";
 import { GoogleSignInButton } from "./google-sign-in-button";
+import { PasswordSignInForm } from "./password-sign-in-form";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -23,7 +24,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   return (
     <AuthCard title="Sign in">
       <p className="text-sm text-zinc-600">
-        Use your Google account. Access is limited to approved team members.
+        Sign in with your email and password. Access is limited to approved team members.
       </p>
       {error ? (
         <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -31,8 +32,13 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         </p>
       ) : null}
       <div className="mt-6">
-        <GoogleSignInButton next={next} />
+        <PasswordSignInForm next={next} />
       </div>
+      {isGoogleAuthEnabled() ? (
+        <div className="mt-6 border-t border-zinc-200 pt-6">
+          <GoogleSignInButton next={next} />
+        </div>
+      ) : null}
     </AuthCard>
   );
 }
