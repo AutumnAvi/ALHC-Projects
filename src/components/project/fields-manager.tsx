@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useOptimistic, useState } from "react";
 import { Columns3, Plus, Trash2, X } from "lucide-react";
 import { useServerAction } from "@/components/toast";
 import { createField, deleteField, updateField } from "@/lib/actions";
@@ -68,19 +68,25 @@ export function FieldsManager({
           });
         }}
       >
-        <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs font-medium text-zinc-600">
-          New field name
+        <div className="flex min-w-48 flex-1 flex-col gap-1">
+          <label htmlFor="new-field-name" className="text-xs font-medium text-zinc-600">
+            New field name
+          </label>
           <input
+            id="new-field-name"
             value={name}
             onChange={(e) => setName(e.currentTarget.value)}
             maxLength={100}
             placeholder="e.g. Priority"
             className={inputClass}
           />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
-          Type
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="new-field-type" className="text-xs font-medium text-zinc-600">
+            Type
+          </label>
           <select
+            id="new-field-type"
             value={fieldType}
             onChange={(e) => setFieldType(e.currentTarget.value)}
             className={inputClass}
@@ -91,7 +97,7 @@ export function FieldsManager({
               </option>
             ))}
           </select>
-        </label>
+        </div>
         <button
           type="submit"
           disabled={pending || !name.trim()}
@@ -141,9 +147,15 @@ function FieldRow({
 }) {
   const hasOptions =
     !field.boundToSections && (field.fieldType === "single_select" || field.fieldType === "multi_select");
+  // Edits build on the optimistic list so quick successive changes don't drop each other.
+  const [options, setOptions] = useOptimistic(field.options);
+  const [pinned, setPinned] = useOptimistic(field.showInViews);
 
-  function saveOptions(options: FieldOption[]) {
-    run(() => updateField(field.id, { options }));
+  function saveOptions(next: FieldOption[]) {
+    run(
+      () => updateField(field.id, { options: next }),
+      () => setOptions(next),
+    );
   }
 
   return (
@@ -172,10 +184,13 @@ function FieldRow({
         <label className="inline-flex items-center gap-1.5 text-xs text-zinc-600">
           <input
             type="checkbox"
-            checked={field.showInViews}
+            checked={pinned}
             onChange={(e) => {
               const showInViews = e.currentTarget.checked;
-              run(() => updateField(field.id, { showInViews }));
+              run(
+                () => updateField(field.id, { showInViews }),
+                () => setPinned(showInViews),
+              );
             }}
             className="size-3.5 accent-zinc-900"
           />
@@ -204,7 +219,7 @@ function FieldRow({
       ) : null}
 
       {hasOptions ? (
-        <OptionsEditor options={field.options} onChange={saveOptions} fieldName={field.name} />
+        <OptionsEditor options={options} onChange={saveOptions} fieldName={field.name} />
       ) : null}
     </li>
   );

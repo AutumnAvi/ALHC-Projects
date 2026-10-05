@@ -1,5 +1,6 @@
 "use client";
 
+import { useOptimistic } from "react";
 import { X } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useServerAction } from "@/components/toast";
@@ -50,7 +51,7 @@ function FieldRow({
   field,
   task,
   profiles,
-  value,
+  value: savedValue,
   sectionId,
   sections,
 }: {
@@ -62,8 +63,14 @@ function FieldRow({
   sections: { id: string; name: string }[];
 }) {
   const [, run] = useServerAction();
+  // Toggle-style editors build on this value, so quick successive clicks don't overwrite each other.
+  const [value, setValue] = useOptimistic(savedValue);
   const inputId = `field-${field.id}`;
-  const save = (next: Json) => run(() => setFieldValue(task.id, field.id, next));
+  const save = (next: Json) =>
+    run(
+      () => setFieldValue(task.id, field.id, next),
+      () => setValue(next),
+    );
 
   let control: React.ReactNode;
   if (field.boundToSections) {
