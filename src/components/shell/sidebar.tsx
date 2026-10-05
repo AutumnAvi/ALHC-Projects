@@ -3,16 +3,34 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { FolderClosed, House, LogOut, Plus } from "lucide-react";
+import { CircleCheck, FolderClosed, House, Inbox, LogOut, Plus, Search } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { NewProjectForm } from "@/components/shell/new-project-form";
+import { UnreadBadge, useUnreadCount } from "@/components/shell/unread-count";
 import type { Member } from "@/lib/auth";
 
 type SidebarProject = { id: string; name: string };
 
-export function Sidebar({ member, projects }: { member: Member; projects: SidebarProject[] }) {
+const NAV_LINK =
+  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200/60 aria-[current=page]:bg-zinc-200/80 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
+
+export function Sidebar({
+  member,
+  projects,
+  unreadCount,
+}: {
+  member: Member;
+  projects: SidebarProject[];
+  unreadCount: number;
+}) {
   const pathname = usePathname();
   const [creating, setCreating] = useState(false);
+  const unread = useUnreadCount(unreadCount, member.id, "sidebar");
+  const links = [
+    { href: "/", label: "Home", icon: House },
+    { href: "/my-tasks", label: "My Tasks", icon: CircleCheck },
+    { href: "/inbox", label: "Inbox", icon: Inbox },
+  ];
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex">
@@ -26,15 +44,41 @@ export function Sidebar({ member, projects }: { member: Member; projects: Sideba
         <span className="text-sm font-semibold tracking-tight">ALHC Projects</span>
       </div>
 
+      <form action="/search" role="search" className="px-3 pb-3">
+        <div className="relative">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400"
+            aria-hidden
+          />
+          <label htmlFor="sidebar-search" className="sr-only">
+            Search tasks
+          </label>
+          <input
+            id="sidebar-search"
+            name="q"
+            type="search"
+            placeholder="Search"
+            className="w-full rounded-md border border-zinc-200 bg-white py-1.5 pl-8 pr-2 text-sm placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none"
+          />
+        </div>
+      </form>
+
       <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-2 pb-4">
-        <Link
-          href="/"
-          aria-current={pathname === "/" ? "page" : undefined}
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200/60 aria-[current=page]:bg-zinc-200/80 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"
-        >
-          <House className="size-4 text-zinc-500" />
-          Home
-        </Link>
+        <ul className="flex flex-col gap-px">
+          {links.map(({ href, label, icon: Icon }) => (
+            <li key={href}>
+              <Link
+                href={href}
+                aria-current={pathname === href ? "page" : undefined}
+                className={NAV_LINK}
+              >
+                <Icon className="size-4 text-zinc-500" />
+                {label}
+                {href === "/inbox" ? <UnreadBadge count={unread} /> : null}
+              </Link>
+            </li>
+          ))}
+        </ul>
 
         <div>
           <div className="flex items-center justify-between px-2 pb-1">
@@ -62,7 +106,7 @@ export function Sidebar({ member, projects }: { member: Member; projects: Sideba
                   <Link
                     href={`/projects/${project.id}/list`}
                     aria-current={active ? "page" : undefined}
-                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200/60 aria-[current=page]:bg-zinc-200/80 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"
+                    className={NAV_LINK}
                   >
                     <FolderClosed className="size-4 shrink-0 text-zinc-400" />
                     <span className="truncate">{project.name}</span>

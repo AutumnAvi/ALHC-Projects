@@ -25,6 +25,11 @@ export function useToday(): string | null {
   return useSyncExternalStore(subscribe, localToday, () => null);
 }
 
+export function addDays(value: string, days: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 export function isOverdue(dueOn: string | null, today: string | null, completed: boolean) {
   return Boolean(dueOn && today && !completed && dueOn < today);
 }
