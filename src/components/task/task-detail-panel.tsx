@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useOptimistic, useRef, type ReactNode } from "react";
 import { Check, Home, Plus, Trash2, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
@@ -20,13 +20,20 @@ import {
   updateTask,
 } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
+import { CommentComposer, TaskActivity } from "./task-activity";
+import { TaskAttachments } from "./task-attachments";
+import { TaskFields } from "./task-fields";
 
 type ProjectOption = { id: string; name: string };
 
 function useClosePane() {
   const router = useRouter();
   const pathname = usePathname();
-  return { href: pathname, close: () => router.push(pathname, { scroll: false }) };
+  const searchParams = useSearchParams();
+  const params = new URLSearchParams(searchParams.toString());
+  params.delete("task");
+  const href = params.size ? `${pathname}?${params}` : pathname;
+  return { href, close: () => router.push(href, { scroll: false }) };
 }
 
 function PaneShell({ children, label }: { children: ReactNode; label: string }) {
@@ -84,10 +91,12 @@ export function TaskDetailPanel({
   task,
   projects,
   profiles,
+  memberId,
 }: {
   task: TaskDetail;
   projects: ProjectOption[];
   profiles: Profile[];
+  memberId: string;
 }) {
   const { href, close } = useClosePane();
   const [, run] = useServerAction();
@@ -206,6 +215,8 @@ export function TaskDetailPanel({
           </dd>
         </dl>
 
+        <TaskFields task={task} profiles={profiles} />
+
         <div className="mt-6">
           <label htmlFor="task-notes" className="text-sm font-medium text-zinc-900">
             Description
@@ -226,11 +237,12 @@ export function TaskDetailPanel({
 
         <Subtasks task={task} />
 
-        <p className="mt-8 text-xs text-zinc-400" suppressHydrationWarning>
-          Created {new Date(task.createdAt).toLocaleDateString()} · Updated{" "}
-          {new Date(task.updatedAt).toLocaleString()}
-        </p>
+        <TaskAttachments taskId={task.id} attachments={task.attachments} />
+
+        <TaskActivity task={task} profiles={profiles} memberId={memberId} />
       </div>
+
+      <CommentComposer task={task} profiles={profiles} memberId={memberId} />
     </PaneShell>
   );
 }

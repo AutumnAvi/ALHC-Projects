@@ -7,6 +7,8 @@ import { CompleteToggle } from "@/components/complete-toggle";
 import { useServerAction } from "@/components/toast";
 import { setTaskCompleted } from "@/lib/actions";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
+import type { FieldDef } from "@/lib/fields";
+import { FieldValueChips, type FieldContext } from "./field-chips";
 import { AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
 import { Assignee, DueDate, TaskBadges } from "./task-meta";
 import { tasksBySection, useProjectTasks } from "./use-project-tasks";
@@ -16,12 +18,13 @@ type Props = {
   sections: Section[];
   tasks: ProjectTask[];
   profiles: Profile[];
+  fields: FieldDef[];
   openTaskId: string | null;
 };
 
-const GRID = "grid grid-cols-[minmax(0,1fr)_9rem_6rem] items-center gap-3";
+const GRID = "grid items-center gap-3";
 
-export function ListView({ projectId, sections, tasks, profiles, openTaskId }: Props) {
+export function ListView({ projectId, sections, tasks, profiles, fields, openTaskId }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
@@ -36,17 +39,31 @@ export function ListView({ projectId, sections, tasks, profiles, openTaskId }: P
     );
   };
 
-  const rowProps = { profilesById, openTaskId, onToggle: toggle };
+  const pinned = fields.filter((f) => f.showInViews);
+  const gridStyle = {
+    gridTemplateColumns: ["minmax(0,1fr)", "9rem", "6rem", ...pinned.map(() => "8rem")].join(" "),
+  };
+  const fieldContext: FieldContext = {
+    profilesById,
+    sectionNames: new Map(sections.map((s) => [s.id, s.name])),
+  };
+  const rowProps = { profilesById, openTaskId, onToggle: toggle, pinned, fieldContext, gridStyle };
 
   return (
-    <div className="min-w-[36rem] px-6 py-4">
+    <div className="px-6 py-4" style={{ minWidth: `${36 + pinned.length * 8.75}rem` }}>
       <div
         className={`${GRID} border-b border-zinc-200 px-3 pb-2 text-xs font-medium text-zinc-500`}
+        style={gridStyle}
         aria-hidden
       >
         <span className="pl-7">Task</span>
         <span>Assignee</span>
         <span>Due</span>
+        {pinned.map((field) => (
+          <span key={field.id} className="truncate">
+            {field.name}
+          </span>
+        ))}
       </div>
 
       {sections.length === 0 && optimisticTasks.length === 0 ? (
@@ -119,11 +136,17 @@ function TaskRow({
   profilesById,
   openTaskId,
   onToggle,
+  pinned,
+  fieldContext,
+  gridStyle,
 }: {
   task: ProjectTask;
   profilesById: Map<string, Profile>;
   openTaskId: string | null;
   onToggle: (task: ProjectTask) => void;
+  pinned: FieldDef[];
+  fieldContext: FieldContext;
+  gridStyle: React.CSSProperties;
 }) {
   const taskHref = useTaskHref();
   const completed = Boolean(task.completedAt);
@@ -133,6 +156,7 @@ function TaskRow({
   return (
     <div
       className={`${GRID} border-b border-zinc-100 px-3 py-2 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
+      style={gridStyle}
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <CompleteToggle
@@ -160,6 +184,11 @@ function TaskRow({
       <div>
         <DueDate task={task} />
       </div>
+      {pinned.map((field) => (
+        <div key={field.id} className="min-w-0">
+          <FieldValueChips field={field} task={task} context={fieldContext} showName />
+        </div>
+      ))}
     </div>
   );
 }

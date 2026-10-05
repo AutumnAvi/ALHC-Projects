@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import { BoardView } from "@/components/project/board-view";
 import { TaskPane } from "@/components/task/task-pane";
-import { getProject, listProfiles, listProjectTasks, listSections } from "@/lib/data";
+import {
+  getProject,
+  listProfiles,
+  listProjectFields,
+  listProjectTasks,
+  listSections,
+} from "@/lib/data";
 
 export async function generateMetadata({
   params,
@@ -19,10 +25,11 @@ export default async function ProjectBoardPage({
   const { task } = await searchParams;
   const openTaskId = typeof task === "string" ? task : null;
 
-  const [sections, tasks, profiles] = await Promise.all([
+  const [sections, tasks, profiles, fields] = await Promise.all([
     listSections(projectId),
     listProjectTasks(projectId),
     listProfiles(),
+    listProjectFields(projectId),
   ]);
 
   return (
@@ -32,6 +39,7 @@ export default async function ProjectBoardPage({
         sections={sections}
         tasks={tasks}
         profiles={profiles}
+        fields={fields}
         openTaskId={openTaskId}
       />
       {openTaskId ? <TaskPane taskId={openTaskId} /> : null}

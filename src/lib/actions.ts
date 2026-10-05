@@ -3,7 +3,10 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { getWorkspace } from "@/lib/data";
+import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
+import { isFieldType, isOptionColor, type FieldOption } from "@/lib/fields";
 import { isUuid } from "@/lib/ids";
+import type { Json } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 
 export type ActionResult = { error?: string };
@@ -45,7 +48,7 @@ async function run(fn: () => Promise<void>): Promise<ActionResult> {
   return {};
 }
 
-function check(result: { error: { message: string } | null }) {
+function check(result: { error: { message: string; code?: string } | null }) {
   if (result.error) throw new DbError(result.error.message);
 }
 
@@ -178,22 +181,13 @@ export async function createTask(
 ): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    const inserted = await supabase
-      .from("tasks")
-      .insert({ home_project_id: id(projectId), title: text(title, "Task name") })
-      .select("id")
-      .single();
-    check(inserted);
-    // The home membership is created by a database trigger, already ordered last in the project.
-    if (sectionId) {
-      check(
-        await supabase
-          .from("task_projects")
-          .update({ section_id: id(sectionId) })
-          .eq("task_id", inserted.data!.id)
-          .eq("project_id", projectId),
-      );
-    }
+    check(
+      await supabase.rpc("create_task", {
+        target_project: id(projectId),
+        target_section: sectionId ? id(sectionId, "section") : null,
+        task_title: text(title, "Task name"),
+      }),
+    );
   });
 }
 
@@ -370,5 +364,212 @@ export async function deleteSubtask(subtaskId: string): Promise<ActionResult> {
     check(
       await supabase.from("subtasks").update({ deleted_at: now() }).eq("id", id(subtaskId)),
     );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Comments + followers
+// ---------------------------------------------------------------------------------------------
+
+export async function addComment(taskId: string, body: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase
+        .from("comments")
+        .insert({ task_id: id(taskId), body: text(body, "Comment", { max: 10000 }) }),
+    );
+  });
+}
+
+export async function deleteComment(commentId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("comments")
+      .update({ deleted_at: now() })
+      .eq("id", id(commentId))
+      .select("id");
+    check(result);
+    if (!result.data?.length) throw new InputError("You can only delete your own comments");
+  });
+}
+
+export async function setFollowing(
+  taskId: string,
+  profileId: string,
+  following: boolean,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.from("task_followers").upsert(
+        {
+          task_id: id(taskId),
+          profile_id: id(profileId, "person"),
+          deleted_at: following ? null : now(),
+        },
+        { onConflict: "task_id,profile_id" },
+      ),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Custom fields
+// ---------------------------------------------------------------------------------------------
+
+function fieldOptions(value: unknown): FieldOption[] {
+  if (!Array.isArray(value) || value.length > 100) throw new InputError("Invalid options");
+  const seen = new Set<string>();
+  return value.map((option) => {
+    const o = option as Partial<FieldOption>;
+    if (typeof o.id !== "string" || !o.id || o.id.length > 64 || seen.has(o.id)) {
+      throw new InputError("Invalid option id");
+    }
+    seen.add(o.id);
+    return {
+      id: o.id,
+      name: text(o.name, "Option name", { max: 100 }),
+      color: isOptionColor(o.color) ? o.color : "zinc",
+    };
+  });
+}
+
+export async function createField(
+  projectId: string,
+  input: { name: string; fieldType: string; boundToSections?: boolean },
+): Promise<ActionResult> {
+  return run(async () => {
+    if (!isFieldType(input.fieldType)) throw new InputError("Unknown field type");
+    const bound = Boolean(input.boundToSections);
+    if (bound && input.fieldType !== "single_select") {
+      throw new InputError("Only single-select fields can mirror sections");
+    }
+    const supabase = await createClient();
+    const { data: last } = await supabase
+      .from("custom_fields")
+      .select("sort_order")
+      .eq("project_id", id(projectId))
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const result = await supabase.from("custom_fields").insert({
+      project_id: projectId,
+      name: text(input.name, "Field name", { max: 100 }),
+      field_type: input.fieldType,
+      bound_to_sections: bound,
+      show_in_views: bound,
+      sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
+    });
+    if (result.error?.code === "23505") {
+      throw new InputError("This project already has a section-bound field");
+    }
+    check(result);
+  });
+}
+
+export async function updateField(
+  fieldId: string,
+  patch: { name?: string; options?: FieldOption[]; showInViews?: boolean },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: { name?: string; options?: Json; show_in_views?: boolean } = {};
+    if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
+    if (patch.options !== undefined) update.options = fieldOptions(patch.options);
+    if (patch.showInViews !== undefined) update.show_in_views = Boolean(patch.showInViews);
+    const supabase = await createClient();
+    check(await supabase.from("custom_fields").update(update).eq("id", id(fieldId)));
+  });
+}
+
+export async function deleteField(fieldId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.from("custom_fields").update({ deleted_at: now() }).eq("id", id(fieldId)),
+    );
+  });
+}
+
+export async function setFieldValue(
+  taskId: string,
+  fieldId: string,
+  value: Json,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.from("task_field_values").upsert(
+        { task_id: id(taskId), field_id: id(fieldId, "field"), value },
+        { onConflict: "task_id,field_id" },
+      ),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Attachments (bytes are uploaded from the browser straight to Storage; this records metadata)
+// ---------------------------------------------------------------------------------------------
+
+export async function registerAttachment(input: {
+  taskId: string;
+  storagePath: string;
+  fileName: string;
+  contentType: string | null;
+  sizeBytes: number;
+}): Promise<ActionResult> {
+  return run(async () => {
+    const taskId = id(input.taskId);
+    if (!input.storagePath.startsWith(`${taskId}/`) || input.storagePath.includes("..")) {
+      throw new InputError("Invalid attachment path");
+    }
+    if (!Number.isInteger(input.sizeBytes) || input.sizeBytes < 0) {
+      throw new InputError("Invalid file size");
+    }
+    if (input.sizeBytes > MAX_ATTACHMENT_BYTES) throw new InputError("Files are limited to 25 MB");
+    const supabase = await createClient();
+    check(
+      await supabase.from("task_attachments").insert({
+        task_id: taskId,
+        storage_path: input.storagePath,
+        file_name: text(input.fileName, "File name", { max: 255 }),
+        content_type: input.contentType?.slice(0, 255) || null,
+        size_bytes: input.sizeBytes,
+      }),
+    );
+  });
+}
+
+export async function deleteAttachment(attachmentId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase
+        .from("task_attachments")
+        .update({ deleted_at: now() })
+        .eq("id", id(attachmentId)),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Inbox
+// ---------------------------------------------------------------------------------------------
+
+export async function markInboxRead(itemIds: string[] | "all"): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    let query = supabase.from("inbox_items").update({ read_at: now() }).is("read_at", null);
+    if (itemIds !== "all") query = query.in("id", itemIds.map((itemId) => id(itemId)));
+    check(await query);
+  });
+}
+
+export async function markInboxUnread(itemId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.from("inbox_items").update({ read_at: null }).eq("id", id(itemId)));
   });
 }

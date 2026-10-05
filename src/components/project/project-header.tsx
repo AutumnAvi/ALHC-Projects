@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { List, SquareKanban, Trash2 } from "lucide-react";
+import { List, SlidersHorizontal, SquareKanban, Trash2 } from "lucide-react";
 import { useServerAction } from "@/components/toast";
 import { deleteProject, updateProject } from "@/lib/actions";
 import type { Project } from "@/lib/data";
@@ -15,6 +15,7 @@ export function ProjectHeader({ project }: { project: Project }) {
   const tabs = [
     { href: `${base}/list`, label: "List", icon: List },
     { href: `${base}/board`, label: "Board", icon: SquareKanban },
+    { href: `${base}/fields`, label: "Fields", icon: SlidersHorizontal },
   ];
 
   function saveName(value: string) {

@@ -5,7 +5,7 @@ alwaysApply: true
 
 - `AGENTS.md` is the architecture source of truth; update it when the data model, auth flow, or layout changes.
 - Keep the domain generic (Workspace → Project → Section → Task → Subtask, multi-homed tasks). Team workflows are built on top, never as schema.
-- Every new table: RLS enabled, `<table>_{select,insert,update}_allowlisted` policies, `deleted_at` for soft delete, no DELETE policy.
+- Every new table: RLS enabled, `<table>_{select,insert,update}_allowlisted` policies (or `_own` for author/recipient-owned rows), `deleted_at` for soft delete, no DELETE policy. Activity stories and inbox items are written only by triggers; never grant clients insert on them.
 - Reads go through `src/lib/data.ts` (always `deleted_at IS NULL`); writes go through Server Actions in `src/lib/actions.ts`.
 - Next.js 16: `proxy.ts` replaces middleware; `params`/`searchParams` are Promises. Check `node_modules/next/dist/docs/` before using unfamiliar APIs.
 - Before finishing: `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run db:test` for schema changes.

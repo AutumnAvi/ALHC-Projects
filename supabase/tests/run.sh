@@ -25,4 +25,7 @@ for migration in "$ROOT"/supabase/migrations/*.sql; do
   "${PSQL[@]}" -f "$migration"
 done
 "${PSQL[@]}" -f "$ROOT/supabase/seed.sql"
-"${PSQL[@]}" -f "$ROOT/supabase/tests/rls_smoke.sql"
+for test in "$ROOT"/supabase/tests/*_smoke.sql; do
+  echo "running $(basename "$test")"
+  "${PSQL[@]}" -f "$test"
+done

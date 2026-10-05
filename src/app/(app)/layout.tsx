@@ -5,7 +5,7 @@ import { Sidebar } from "@/components/shell/sidebar";
 import { SetupRequired } from "@/components/setup-required";
 import { ToastProvider } from "@/components/toast";
 import { requireMember } from "@/lib/auth";
-import { listProjects } from "@/lib/data";
+import { countUnreadInbox, listProjects } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/env";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -13,14 +13,18 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!isSupabaseConfigured()) return <SetupRequired />;
 
   const member = await requireMember();
-  const projects = await listProjects();
+  const [projects, unreadCount] = await Promise.all([listProjects(), countUnreadInbox()]);
 
   return (
     <ToastProvider>
       <div className="flex h-full">
-        <Sidebar member={member} projects={projects.map(({ id, name }) => ({ id, name }))} />
+        <Sidebar
+          member={member}
+          projects={projects.map(({ id, name }) => ({ id, name }))}
+          unreadCount={unreadCount}
+        />
         <div className="flex min-w-0 flex-1 flex-col">
-          <MobileBar />
+          <MobileBar memberId={member.id} unreadCount={unreadCount} />
           {children}
         </div>
       </div>

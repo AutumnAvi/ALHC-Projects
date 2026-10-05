@@ -6,6 +6,8 @@ import { CompleteToggle } from "@/components/complete-toggle";
 import { useServerAction } from "@/components/toast";
 import { moveTask, setTaskCompleted } from "@/lib/actions";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
+import type { FieldDef } from "@/lib/fields";
+import { FieldValueChips, type FieldContext } from "./field-chips";
 import { AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
 import { Assignee, DueDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, tasksBySection, useProjectTasks } from "./use-project-tasks";
@@ -15,6 +17,7 @@ type Props = {
   sections: Section[];
   tasks: ProjectTask[];
   profiles: Profile[];
+  fields: FieldDef[];
   openTaskId: string | null;
 };
 
@@ -22,13 +25,16 @@ type DropTarget = { sectionId: string | null; beforeId: string | null };
 
 const DRAG_TYPE = "application/x-alhc-task";
 
-export function BoardView({ projectId, sections, tasks, profiles, openTaskId }: Props) {
+export function BoardView({ projectId, sections, tasks, profiles, fields, openTaskId }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
+  // The column already shows the section, so a section-bound field would only repeat it.
+  const cardFields = fields.filter((f) => f.showInViews && !f.boundToSections);
+  const fieldContext: FieldContext = { profilesById, sectionNames: new Map() };
   const groups = tasksBySection(optimisticTasks);
   const unsectioned = groups.get(null) ?? [];
 
@@ -135,6 +141,8 @@ export function BoardView({ projectId, sections, tasks, profiles, openTaskId }: 
                     dragging={dragging === task.id}
                     sectionId={column.id}
                     sectionOptions={sectionOptions}
+                    cardFields={cardFields}
+                    fieldContext={fieldContext}
                     onToggle={() => toggle(task)}
                     onMove={(sectionId) => move(task, { sectionId, beforeId: null })}
                     onDragStart={(e) => {
@@ -181,6 +189,8 @@ function TaskCard({
   dragging,
   sectionId,
   sectionOptions,
+  cardFields,
+  fieldContext,
   onToggle,
   onMove,
   onDragStart,
@@ -192,6 +202,8 @@ function TaskCard({
   dragging: boolean;
   sectionId: string | null;
   sectionOptions: { id: string | null; name: string }[];
+  cardFields: FieldDef[];
+  fieldContext: FieldContext;
   onToggle: () => void;
   onMove: (sectionId: string | null) => void;
   onDragStart: (e: DragEvent) => void;
@@ -229,6 +241,14 @@ function TaskCard({
           {task.title}
         </Link>
       </div>
+
+      {cardFields.some((f) => task.fieldValues[f.id] != null) ? (
+        <div className="mt-2 flex flex-wrap gap-1 pl-6">
+          {cardFields.map((field) => (
+            <FieldValueChips key={field.id} field={field} task={task} context={fieldContext} showName />
+          ))}
+        </div>
+      ) : null}
 
       {task.dueOn || task.subtaskCount > 0 || task.projectCount > 1 || assignee ? (
         <div className="mt-2.5 flex items-center gap-2.5 pl-6">

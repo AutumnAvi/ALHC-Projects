@@ -1,15 +1,23 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useServerAction } from "@/components/toast";
 import { createSection, createTask, deleteSection, renameSection } from "@/lib/actions";
 import type { Section } from "@/lib/data";
 
+// Opens/closes the task pane via ?task=, preserving other query params (e.g. search terms).
 export function useTaskHref() {
   const pathname = usePathname();
-  return (taskId: string | null) => (taskId ? `${pathname}?task=${taskId}` : pathname);
+  const searchParams = useSearchParams();
+  return (taskId: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (taskId) params.set("task", taskId);
+    else params.delete("task");
+    const query = params.toString();
+    return query ? `${pathname}?${query}` : pathname;
+  };
 }
 
 export function SectionTitle({
