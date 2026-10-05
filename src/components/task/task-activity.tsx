@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, type ReactNode } from "react";
 import { Bell, BellOff, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
@@ -12,6 +13,8 @@ import { hasRole } from "@/lib/roles";
 import { fieldChips } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { useRealtimeRefresh } from "@/lib/realtime";
+import { describeRecurrence, parseRecurrence } from "@/lib/recurrence";
+import { useTaskHref } from "@/components/project/shared";
 
 type Entry =
   | { type: "comment"; at: string; comment: TaskComment }
@@ -37,6 +40,7 @@ export function TaskActivity({
     { table: "task_stories", filter: `task_id=eq.${task.id}` },
   ]);
 
+  const taskHref = useTaskHref();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const nameOf = (profileId: string | null) => {
     const profile = profileId ? profilesById.get(profileId) : undefined;
@@ -136,6 +140,43 @@ export function TaskActivity({
           <>cleared {str(d, "field_name")}</>
         );
       }
+      case "recurrence_changed": {
+        const rule = d && typeof d === "object" && !Array.isArray(d) ? parseRecurrence(d.recurrence) : null;
+        return rule ? <>set this to repeat ({describeRecurrence(rule)})</> : "stopped this task repeating";
+      }
+      case "recurrence_spawned": {
+        const nextId = str(d, "next_task_id");
+        const due = str(d, "due_on");
+        return (
+          <>
+            created the{" "}
+            {nextId ? (
+              <Link href={taskHref(nextId)} scroll={false} className="text-accent-700 hover:underline">
+                next occurrence
+              </Link>
+            ) : (
+              "next occurrence"
+            )}
+            {due ? <>, due {formatDueDate(due)}</> : null}
+          </>
+        );
+      }
+      case "dependency_added":
+      case "dependency_removed": {
+        const verb = story.kind === "dependency_added" ? "marked" : "unmarked";
+        const other = <>“{str(d, "task_title")}”</>;
+        return str(d, "relation") === "blocked_by" ? (
+          <>
+            {verb} this as blocked by {other}
+          </>
+        ) : (
+          <>
+            {verb} this as blocking {other}
+          </>
+        );
+      }
+      case "restored":
+        return "restored this task from the Trash";
       default:
         return "updated this task";
     }

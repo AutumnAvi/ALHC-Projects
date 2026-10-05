@@ -9,6 +9,7 @@ export function SettingsNav({ projectId }: { projectId: string }) {
   const items = [
     { href: base, label: "General" },
     { href: `${base}/members`, label: "Members" },
+    { href: `${base}/trash`, label: "Trash" },
   ];
   return (
     <nav aria-label="Project settings" className="mx-auto flex max-w-3xl gap-1 px-6 pt-5">
