@@ -386,6 +386,89 @@ export type Database = {
         };
         Relationships: [];
       };
+      import_external_ids: {
+        Row: {
+          id: string;
+          project_id: string;
+          source: string;
+          kind: string;
+          external_id: string;
+          local_id: string;
+          run_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          source: string;
+          kind: string;
+          external_id: string;
+          local_id: string;
+          run_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          source?: string;
+          kind?: string;
+          external_id?: string;
+          local_id?: string;
+          run_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      import_runs: {
+        Row: {
+          id: string;
+          project_id: string;
+          source: string;
+          status: string;
+          file_names: string[];
+          summary: Json;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          finished_at: string | null;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          source: string;
+          status?: string;
+          file_names?: string[];
+          summary?: Json;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          finished_at?: string | null;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          source?: string;
+          status?: string;
+          file_names?: string[];
+          summary?: Json;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          finished_at?: string | null;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "import_runs_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       inbox_items: {
         Row: {
           id: string;
@@ -1277,6 +1360,36 @@ export type Database = {
           },
         ];
       };
+      task_attachment_links: {
+        Row: {
+          id: string;
+          task_id: string;
+          source: string;
+          name: string;
+          url: string | null;
+          created_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          source: string;
+          name: string;
+          url?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          source?: string;
+          name?: string;
+          url?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
       task_attachments: {
         Row: {
           id: string;
@@ -1695,6 +1808,10 @@ export type Database = {
         Args: { target_project: string; number: number };
         Returns: string;
       };
+      finish_import_run: {
+        Args: { target_run: string; run_status: string; run_summary?: Json };
+        Returns: undefined;
+      };
       get_project_integrations: {
         Args: { target_project: string };
         Returns: Json;
@@ -1722,6 +1839,14 @@ export type Database = {
       is_allowlisted: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      import_batch: {
+        Args: { target_run: string; batch: Json };
+        Returns: Json;
+      };
+      import_lookup: {
+        Args: { import_source: string; external_ids: string[] };
+        Returns: { project_id: string; kind: string; external_id: string }[];
       };
       list_portfolio_progress: {
         Args: Record<PropertyKey, never>;
@@ -1824,6 +1949,10 @@ export type Database = {
       set_project_status: {
         Args: { target_project: string; new_status: string; note?: string | null };
         Returns: undefined;
+      };
+      start_import_run: {
+        Args: { target_project: string; import_source: string; file_names?: string[] };
+        Returns: string;
       };
       submit_form: {
         Args: { target_form: string; submitter_email: string; answers: Json };

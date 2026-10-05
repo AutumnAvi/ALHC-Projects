@@ -330,7 +330,7 @@ export function TaskDetailPanel({
         <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
 
         <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
-          <TaskAttachments taskId={task.id} attachments={task.attachments} />
+          <TaskAttachments taskId={task.id} attachments={task.attachments} links={task.attachmentLinks} />
         </fieldset>
 
         <TaskActivity task={task} profiles={profiles} memberId={memberId} />

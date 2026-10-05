@@ -7,6 +7,19 @@ import { getWorkspace } from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { drainOutbox } from "@/lib/email";
 import { drainIntegrationOutbox } from "@/lib/integrations";
+import { ImportParseError, buildImportPlan, importSteps, planExternalIds, type ImportPlan } from "@/lib/asana-import";
+import {
+  IMPORTS_BUCKET,
+  MAX_IMPORT_FILES,
+  MAX_IMPORT_FILE_BYTES,
+  addTotals,
+  importFileKind,
+  importFileName,
+  type ImportPerson,
+  type ImportPreview,
+  type ImportProgress,
+  type ImportTotals,
+} from "@/lib/imports-shared";
 import {
   MAX_SECRET_LENGTH,
   WEBHOOK_URL_ERROR,
@@ -1674,4 +1687,247 @@ export async function deleteWidget(widgetId: string): Promise<ActionResult> {
 
 export async function moveWidget(widgetId: string, direction: -1 | 1): Promise<ActionResult> {
   return run(() => moveRow("dashboard_widgets", widgetId, direction));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Asana import (Admin+). Export files are uploaded by the browser to the private `imports` bucket;
+// these actions download and parse them server-side and send rpc("import_batch") batches. Never
+// calls the Asana API.
+// ---------------------------------------------------------------------------------------------
+
+const IMPORT_TIME_BUDGET_MS = 20_000;
+
+async function loadImportPlan(projectId: string, paths: unknown) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new InputError("Sign in again to import");
+  if (!Array.isArray(paths) || paths.length === 0) throw new InputError("Choose at least one export file");
+  if (paths.length > MAX_IMPORT_FILES) throw new InputError(`Import up to ${MAX_IMPORT_FILES} files at a time`);
+  await requireImportAdmin(supabase, projectId);
+  const prefix = `${projectId}/${user.id}/`;
+  const files: { name: string; text: string }[] = [];
+  for (const path of paths) {
+    if (typeof path !== "string" || !path.startsWith(prefix) || path.includes("..") || path.split("/").length !== 3) {
+      throw new InputError("Invalid upload");
+    }
+    const name = importFileName(path);
+    if (!importFileKind(name)) throw new InputError(`${name}: only .json and .csv Asana exports can be imported`);
+    const download = await supabase.storage.from(IMPORTS_BUCKET).download(path);
+    if (download.error || !download.data) {
+      throw new DbError(`Couldn’t read ${name}. Upload it again and retry.`);
+    }
+    if (download.data.size > MAX_IMPORT_FILE_BYTES) throw new InputError(`${name} is larger than 50 MB`);
+    files.push({ name, text: await download.data.text() });
+  }
+  try {
+    return { supabase, plan: buildImportPlan(files), files: files.map((f) => f.name) };
+  } catch (error) {
+    if (error instanceof ImportParseError) throw new InputError(error.message);
+    throw error;
+  }
+}
+
+async function requireImportAdmin(supabase: Awaited<ReturnType<typeof createClient>>, projectId: string) {
+  const roleResult = await supabase.rpc("project_role", { target_project: projectId });
+  check(roleResult);
+  if (roleResult.data !== "owner" && roleResult.data !== "admin") {
+    throw new DbError("You need Admin access to import into this project");
+  }
+}
+
+type PeopleBuckets = ImportPreview["people"];
+
+async function classifyPeople(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+  plan: ImportPlan,
+): Promise<PeopleBuckets> {
+  const [members, profiles] = await Promise.all([
+    supabase
+      .from("project_members")
+      .select("profile:profiles!project_members_profile_id_fkey!inner(email)")
+      .eq("project_id", projectId)
+      .is("deleted_at", null),
+    supabase.from("profiles").select("email"),
+  ]);
+  check(members);
+  check(profiles);
+  const memberEmails = new Set((members.data ?? []).map((m) => m.profile.email.toLowerCase()));
+  const accountEmails = new Set((profiles.data ?? []).map((p) => p.email.toLowerCase()));
+  const buckets: PeopleBuckets = { matched: [], notMember: [], noAccount: [], noEmail: [] };
+  for (const person of plan.people) {
+    const entry: ImportPerson = { name: person.name, email: person.email, references: person.references };
+    if (!person.email) buckets.noEmail.push(entry);
+    else if (memberEmails.has(person.email)) buckets.matched.push(entry);
+    else if (accountEmails.has(person.email)) buckets.notMember.push(entry);
+    else buckets.noAccount.push(entry);
+  }
+  return buckets;
+}
+
+// Dry run: parses the uploaded files and reports what an import would add. Writes nothing.
+export async function previewAsanaImport(
+  projectId: string,
+  paths: string[],
+): Promise<ActionResult & { preview?: ImportPreview }> {
+  try {
+    const project = id(projectId, "project");
+    const { supabase, plan, files } = await loadImportPlan(project, paths);
+
+    const ids = planExternalIds(plan);
+    const all = [...new Set(Object.values(ids).flat())];
+    const found: { project_id: string; kind: string; external_id: string }[] = [];
+    for (let i = 0; i < all.length; i += 5000) {
+      const lookup = await supabase.rpc("import_lookup", { import_source: "asana", external_ids: all.slice(i, i + 5000) });
+      check(lookup);
+      found.push(...(lookup.data ?? []));
+    }
+    const existing = (kind: keyof typeof ids) => {
+      const here = new Set(found.filter((f) => f.project_id === project && f.kind === kind).map((f) => f.external_id));
+      return ids[kind].filter((x) => here.has(x)).length;
+    };
+    const elsewhereIds = [
+      ...new Set(found.filter((f) => f.kind === "project" && f.project_id !== project).map((f) => f.project_id)),
+    ];
+    const elsewhere = elsewhereIds.length
+      ? ((await supabase.from("projects").select("id, name").in("id", elsewhereIds).is("deleted_at", null)).data ?? [])
+      : [];
+
+    // Sections and fields that already exist by name are reused, not duplicated.
+    const [sectionRows, fieldRows] = await Promise.all([
+      supabase.from("sections").select("name").eq("project_id", project).is("deleted_at", null),
+      supabase.from("custom_fields").select("name, field_type").eq("project_id", project).is("deleted_at", null),
+    ]);
+    const sectionNames = new Set((sectionRows.data ?? []).map((r) => r.name.toLowerCase()));
+    const fieldNames = new Set((fieldRows.data ?? []).map((r) => `${r.field_type}:${r.name.toLowerCase()}`));
+    const mappedSections = new Set(found.filter((f) => f.project_id === project && f.kind === "section").map((f) => f.external_id));
+    const mappedFields = new Set(found.filter((f) => f.project_id === project && f.kind === "field").map((f) => f.external_id));
+
+    const people = await classifyPeople(supabase, project, plan);
+    const preview: ImportPreview = {
+      files,
+      sourceProject: plan.project?.name ?? null,
+      importedElsewhere: elsewhere.map((p) => ({ id: p.id, name: p.name })),
+      counts: {
+        tasks: { total: plan.tasks.length, existing: existing("task") },
+        subtasks: { total: ids.subtask.length, existing: existing("subtask") },
+        comments: { total: ids.comment.length, existing: existing("comment") },
+        attachments: { total: ids.attachment.length, existing: existing("attachment") },
+        sections: {
+          total: plan.sections.length,
+          existing: plan.sections.filter((s) => mappedSections.has(s.key) || sectionNames.has(s.name.toLowerCase())).length,
+        },
+        fields: {
+          total: plan.fields.length,
+          existing: plan.fields.filter((f) => mappedFields.has(f.key) || fieldNames.has(`${f.type}:${f.name.toLowerCase()}`)).length,
+        },
+        tags: plan.tagCount,
+        dependencies: plan.dependencies.length,
+        rules: plan.rules.length,
+      },
+      people,
+      warnings: plan.warnings,
+      steps: importSteps(plan).length,
+    };
+    return { preview };
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+}
+
+// Runs (or resumes) an import: one call works through as many batches as fit in ~20 s and returns
+// where it stopped; the page calls again until done. Batches are idempotent, so retrying a step that
+// failed halfway never duplicates rows.
+export async function runAsanaImport(input: {
+  projectId: string;
+  paths: string[];
+  runId?: string | null;
+  step?: number;
+  totals?: ImportTotals;
+  inviteRole?: "editor" | null;
+}): Promise<ActionResult & { progress?: ImportProgress }> {
+  const started = Date.now();
+  try {
+    const project = id(input.projectId, "project");
+    const { supabase, plan, files } = await loadImportPlan(project, input.paths);
+    const steps = importSteps(plan);
+    let totals = addTotals({}, input.totals);
+    let step = Number.isInteger(input.step) && input.step! >= 0 ? input.step! : 0;
+    let runId = input.runId ?? null;
+
+    if (!runId) {
+      // Optionally invite people who already have an account, so their assignments survive.
+      if (input.inviteRole === "editor") {
+        const people = await classifyPeople(supabase, project, plan);
+        for (const person of people.notMember) {
+          if (!person.email) continue;
+          check(
+            await supabase.rpc("add_project_member", {
+              target_project: project,
+              member_email: person.email,
+              member_role: "editor",
+            }),
+          );
+        }
+      }
+      const newRun = await supabase.rpc("start_import_run", {
+        target_project: project,
+        import_source: "asana",
+        file_names: files,
+      });
+      check(newRun);
+      runId = newRun.data!;
+      step = 0;
+    } else {
+      id(runId, "import");
+    }
+
+    while (step < steps.length && (step === 0 || Date.now() - started < IMPORT_TIME_BUDGET_MS)) {
+      const result = await supabase.rpc("import_batch", { target_run: runId, batch: steps[step] });
+      check(result);
+      totals = addTotals(totals, result.data);
+      step++;
+    }
+
+    const done = step >= steps.length;
+    if (done) {
+      check(
+        await supabase.rpc("finish_import_run", {
+          target_run: runId,
+          run_status: "completed",
+          run_summary: { totals, warnings: plan.warnings, source_project: plan.project?.name ?? null } as unknown as Json,
+        }),
+      );
+      // The uploaded exports are no longer needed once everything landed.
+      await supabase.storage.from(IMPORTS_BUCKET).remove(input.paths);
+      refresh();
+    }
+    return { progress: { runId, step, steps: steps.length, done, totals } };
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+}
+
+// Removes uploaded export files that won't be imported (e.g. after "Start over").
+export async function discardImportUploads(projectId: string, paths: string[]): Promise<ActionResult> {
+  try {
+    const project = id(projectId, "project");
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return {};
+    const own = (Array.isArray(paths) ? paths : []).filter(
+      (p) => typeof p === "string" && p.startsWith(`${project}/${user.id}/`) && !p.includes(".."),
+    );
+    if (own.length) await supabase.storage.from(IMPORTS_BUCKET).remove(own);
+    return {};
+  } catch (error) {
+    if (error instanceof InputError) return { error: error.message };
+    throw error;
+  }
 }

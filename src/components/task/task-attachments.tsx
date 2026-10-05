@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { FileText, Paperclip, Trash2 } from "lucide-react";
+import { ExternalLink, FileText, Paperclip, Trash2 } from "lucide-react";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { deleteAttachment, registerAttachment } from "@/lib/actions";
@@ -11,15 +11,18 @@ import {
   attachmentPath,
   formatBytes,
 } from "@/lib/attachments";
-import type { TaskAttachment } from "@/lib/data";
+import type { TaskAttachment, TaskAttachmentLink } from "@/lib/data";
 import { createClient } from "@/lib/supabase/client";
 
 export function TaskAttachments({
   taskId,
   attachments,
+  links = [],
 }: {
   taskId: string;
   attachments: TaskAttachment[];
+  // Imported attachments that stayed in Asana: name + link only (files aren't copied).
+  links?: TaskAttachmentLink[];
 }) {
   const [, run] = useServerAction();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -94,6 +97,29 @@ export function TaskAttachments({
               >
                 <Trash2 className="size-3.5" />
               </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {links.length > 0 ? (
+        <ul className="mt-2 divide-y divide-zinc-100 rounded-md border border-zinc-200" aria-label="Attachments still in Asana">
+          {links.map((link) => (
+            <li key={link.id} className="flex items-center gap-2.5 px-3 py-2">
+              <ExternalLink className="size-4 shrink-0 text-zinc-400" aria-hidden />
+              {link.url ? (
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="min-w-0 flex-1 truncate text-sm text-zinc-800 hover:underline"
+                >
+                  {link.name}
+                </a>
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-sm text-zinc-800">{link.name}</span>
+              )}
+              <span className="shrink-0 text-xs text-zinc-400">In Asana · not copied</span>
             </li>
           ))}
         </ul>

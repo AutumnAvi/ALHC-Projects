@@ -10,6 +10,7 @@ export function SettingsNav({ projectId }: { projectId: string }) {
     { href: base, label: "General" },
     { href: `${base}/members`, label: "Members" },
     { href: `${base}/integrations`, label: "Integrations" },
+    { href: `${base}/import`, label: "Import" },
     { href: `${base}/trash`, label: "Trash" },
   ];
   return (

@@ -62,8 +62,12 @@ export function TaskActivity({
   function storyText(story: TaskStory): ReactNode {
     const d = story.data;
     switch (story.kind) {
-      case "created":
-        return "created this task";
+      case "created": {
+        const source = d && typeof d === "object" && !Array.isArray(d) ? d.import : null;
+        return source && typeof source === "object" && !Array.isArray(source) && source.source === "asana"
+          ? "imported this task from Asana"
+          : "created this task";
+      }
       case "completed":
         return "marked this task complete";
       case "reopened":
