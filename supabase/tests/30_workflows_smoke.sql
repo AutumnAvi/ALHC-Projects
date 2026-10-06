@@ -269,7 +269,7 @@ begin
   a := public.request_approval(t, '44444444-4444-4444-8444-444444444444', 'Please check the copy', true, 'Approve brochure');
   insert into ids values ('approval', a);
   select subtask_id into sub from public.approval_requests where id = a;
-  assert (select title from public.subtasks where id = sub) = 'Approve brochure', 'approval creates a linked subtask';
+  assert (select title from public.tasks where id = sub and parent_task_id = t) = 'Approve brochure', 'approval creates a linked subtask';
   assert (select status from public.approval_requests where id = a) = 'pending', 'starts pending';
   assert exists (select 1 from public.task_stories where task_id = t and kind = 'approval_requested'), 'request story';
   assert exists (select 1 from public.task_followers where task_id = t and profile_id = '44444444-4444-4444-8444-444444444444'),
@@ -281,7 +281,7 @@ begin
   exception when insufficient_privilege then null;
   end;
   begin
-    update public.subtasks set completed_at = now() where id = sub;
+    update public.tasks set completed_at = now() where id = sub;
     raise exception 'approval subtasks complete by deciding';
   exception when check_violation then null;
   end;
@@ -329,7 +329,7 @@ declare
   t uuid := (select id from ids where name = 'approval_task');
 begin
   perform public.decide_approval(a, 'approved');
-  assert (select completed_at from public.subtasks where id = (select subtask_id from public.approval_requests where id = a)) is not null,
+  assert (select completed_at from public.tasks where id = (select subtask_id from public.approval_requests where id = a)) is not null,
     'approving completes the approval subtask';
   assert (select completed_at from public.tasks where id = t) is not null,
     'approval_completes_task completes the parent task';

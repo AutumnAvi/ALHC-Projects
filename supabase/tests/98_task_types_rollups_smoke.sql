@@ -111,7 +111,7 @@ begin
   assert a.status = 'pending' and a.approver_id = '66666666-6666-4666-8666-666666666666'
     and a.requested_by = '77777777-7777-4777-8777-777777777777' and a.subtask_id is null,
     'the assignee approves; whoever assigned requested it; no approval subtask';
-  assert not exists (select 1 from public.subtasks where task_id = t), 'no approval subtask is created';
+  assert not exists (select 1 from public.tasks where parent_task_id = t), 'no approval subtask is created';
 
   -- Only the assignee decides, and nobody ticks it complete while it's open.
   begin

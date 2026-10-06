@@ -43,7 +43,7 @@ begin
     recurrence = '{"freq": "weekly", "timezone": "America/New_York"}'
   where id = t;
   insert into public.task_field_values (task_id, field_id, value) values (t, f, '3');
-  insert into public.subtasks (task_id, title, sort_order) values (t, 'Collect numbers', 1024);
+  perform public.create_subtask(t, 'Collect numbers');
   insert into public.task_projects (task_id, project_id, sort_order) values (t, q, 1024);
   insert into td_ids values ('weekly', t);
 end $$;
@@ -154,7 +154,7 @@ begin
          (select id from td_ids where name = 's'), 'same section in the home project';
   assert (select value from public.task_field_values where task_id = next_task.id
           and field_id = (select id from td_ids where name = 'f')) = '3'::jsonb, 'field values are copied';
-  assert exists (select 1 from public.subtasks where task_id = next_task.id and title = 'Collect numbers' and completed_at is null),
+  assert exists (select 1 from public.tasks where parent_task_id = next_task.id and title = 'Collect numbers' and completed_at is null),
     'subtasks are copied as open';
   assert exists (select 1 from public.task_followers where task_id = next_task.id
                  and profile_id = '11111111-1111-4111-8111-111111111111' and deleted_at is null),

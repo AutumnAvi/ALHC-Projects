@@ -251,8 +251,8 @@ begin
   assert not exists (select 1 from public.rules where project_id = p and name = 'Broken'), 'invalid rule skipped';
 
   -- Subtasks, comments, attachments, followers, dependencies
-  assert (select count(*) from public.subtasks where task_id = t1 and deleted_at is null) = 2, 'subtasks';
-  assert (select completed_at from public.subtasks where task_id = t1 and title = 'Pick photo') is not null, 'subtask completion';
+  assert (select count(*) from public.tasks where parent_task_id = t1 and deleted_at is null) = 2, 'subtasks';
+  assert (select completed_at from public.tasks where parent_task_id = t1 and title = 'Pick photo') is not null, 'subtask completion';
   assert (select author_id from public.comments where task_id = t1 and body = 'Looks good')
     = '77777777-7777-4777-8777-777777777777', 'comment by a matched member keeps its author';
   assert (select created_at from public.comments where task_id = t1 and body = 'Looks good') = '2026-09-30T09:00:00Z',
@@ -298,7 +298,7 @@ begin
     (select count(*) from public.tasks where home_project_id = (select id from ai_ids where name = 'p')),
     (select count(*) from public.sections where project_id = (select id from ai_ids where name = 'p')),
     (select count(*) from public.custom_fields where project_id = (select id from ai_ids where name = 'p')),
-    (select count(*) from public.subtasks where task_id = (select id from ai_ids where name = 't1')),
+    (select count(*) from public.tasks where parent_task_id = (select id from ai_ids where name = 't1')),
     (select count(*) from public.task_dependencies where project_id = (select id from ai_ids where name = 'p'))
   ] into before_counts;
 
@@ -329,7 +329,7 @@ begin
     (select count(*) from public.tasks where home_project_id = (select id from ai_ids where name = 'p')),
     (select count(*) from public.sections where project_id = (select id from ai_ids where name = 'p')),
     (select count(*) from public.custom_fields where project_id = (select id from ai_ids where name = 'p')),
-    (select count(*) from public.subtasks where task_id = (select id from ai_ids where name = 't1')),
+    (select count(*) from public.tasks where parent_task_id = (select id from ai_ids where name = 't1')),
     (select count(*) from public.task_dependencies where project_id = (select id from ai_ids where name = 'p'))
   ], 'row counts unchanged';
   assert (select title from public.tasks where id = (select id from ai_ids where name = 't1')) = 'Spring flyer',
