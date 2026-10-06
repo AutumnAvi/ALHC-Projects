@@ -1,13 +1,13 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios (nestable, with custom fields, a timeline, and cross-project progress and reporting), goals with sub-goals and progress, a teams directory with group invites, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies with a critical path, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks (real tasks, nested up to 4 levels), with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios (nestable, with custom fields, a timeline, and cross-project progress and reporting), goals with sub-goals and progress, a teams directory with group invites, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies with a critical path, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
 ## What's here (core spine)
 
 - Email + password sign-in through Supabase Auth (interim; Google sign-in returns later, see [Setup: sign-in](#setup-sign-in-email--password-interim)), gated by an email allowlist (`public.allowed_emails`). Non-allowlisted accounts are signed out and shown a denied screen.
-- Data model: workspaces, projects, sections, tasks, subtasks, multi-project task membership (`task_projects`), and profiles. All deletes are soft (`deleted_at`).
+- Data model: workspaces, projects, sections, tasks (a subtask is a task with a parent, since Real subtasks), multi-project task membership (`task_projects`), and profiles. All deletes are soft (`deleted_at`).
 - Row Level Security on every table. Since Teams & permissions, the allowlist only decides who can sign in; project data is visible and editable according to each person's role in that project (see [What's here (teams & permissions)](#whats-here-teams--permissions)).
 - Project home, List view, Board view (drag-and-drop or a "move to" menu), and a task detail pane (title, description, assignee, due date, subtasks, project memberships, delete).
 
@@ -51,7 +51,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 ## What's here (task depth)
 
-- **Recurring tasks.** In the task pane, **Repeats** sets a task to repeat daily, weekly (optionally on chosen weekdays), monthly, or yearly, every N days/weeks/months/years, ending never, after a number of occurrences, or on a date. Completing a repeating task creates the next one (Asana style) with its dates moved forward, in the same projects and sections, with the same assignee, field values, followers, and open subtasks. A task repeating monthly on the 31st lands on the last day of shorter months and comes back to the 31st. List rows and Board cards show a small repeat icon.
+- **Recurring tasks.** In the task pane, **Repeats** sets a task to repeat daily, weekly (optionally on chosen weekdays), monthly, or yearly, every N days/weeks/months/years, ending never, after a number of occurrences, or on a date. Completing a repeating task creates the next one (Asana style) with its dates moved forward, in the same projects and sections, with the same assignee, field values, followers, and subtasks (reopened, with their dates moved forward too). A task repeating monthly on the 31st lands on the last day of shorter months and comes back to the 31st. List rows and Board cards show a small repeat icon.
 - **Due and start times.** Next to each date in the pane there is an optional time, entered in your own time zone. Calendar, Timeline, filters, rules, and forms keep working by day; dragging a timed task to another day keeps its time. The start can't be after the due date, to the minute.
 - **Dependencies.** In the pane, **Blocked by** and **Blocking** link tasks in the same project (finish-to-start). A task can't be marked complete while a task it's blocked by is incomplete, and loops (A waits on B waits on A) are rejected. Blocked tasks show a lock with a count on List and Board, and the Timeline draws an arrow from each task to the one waiting on it (red when the waiting task starts before the first one is due). Editors and above can add or remove dependencies.
 - **Trash.** Settings → **Trash** lists the project's deleted tasks, with who deleted them and when, and a **Restore** button. Restoring puts a task back in every project it was in, with its history. Only Editors and above can see the Trash; deleted tasks never appear in views, search, My Tasks, or the Inbox. Nothing is ever deleted permanently.
@@ -82,7 +82,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 - **Settings → Import** (Admins and above): upload the **JSON** and/or **CSV** export of an Asana project (in Asana: the arrow next to the project name → **Export/Print**). The files are read on the server; the app never connects to Asana and never asks for an Asana token.
 - **Dry run first.** The preview counts tasks, subtasks, comments, attachment links, sections, custom fields, tags, and dependencies, says how many are already here, and lists the people it found: matched to members (by email), with an account but not in this project (optionally invite them as Editors first), with no account, and with no email in the export. Upload the CSV next to the JSON to match assignees by email; Asana's JSON export often leaves emails out.
-- **What comes across:** sections (matched by name), tasks with notes, due/start dates, completion, and assignee; subtasks (title + completion; nested ones are flattened); custom fields and their values (Asana dropdowns become single/multi-select, formula and ID fields become text); tags as a **Tags** multi-select field; comments (by the matching member, or by you with “<name> wrote in Asana:”); followers; dependencies; memberships in other Asana projects you imported here before. Attachments come across as **name + link only** (shown in the pane as “In Asana · not copied”); files are not copied.
+- **What comes across:** sections (matched by name), tasks with notes, due/start dates, completion, and assignee; subtasks with their assignee, dates, notes, and completion, nested as in Asana up to 4 levels (deeper ones land on the 4th); custom fields and their values (Asana dropdowns become single/multi-select, formula and ID fields become text); tags as a **Tags** multi-select field; comments (by the matching member, or by you with “<name> wrote in Asana:”); followers; dependencies; memberships in other Asana projects you imported here before. Attachments come across as **name + link only** (shown in the pane as “In Asana · not copied”); files are not copied.
 - **Unmatched people** stay unassigned, with “Assignee in Asana: Name <email>” noted at the end of the task's description.
 - **Safe to repeat.** Every row remembers its Asana id, so re-uploading the same export adds only what's new and never overwrites anything edited here. Large exports are imported in batches with a progress bar; if one stops, **Try again** resumes it.
 - **Quiet.** An import doesn't run the project's rules, doesn't notify anyone, and writes one “imported this task from Asana” activity line per task. Rules supplied with an import (Asana's exports contain none) always land turned off.
@@ -132,6 +132,17 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Milestones** have only a due date and show as a diamond in List, Board, Calendar, and Timeline (drag to move it). The portfolio Timeline shows each project's open milestones as diamonds.
 - **Approval tasks:** the assignee is the approver. Assigning one (or switching a task to Approval) asks them in their Inbox; they **Approve**, **Request changes**, or **Reject** at the top of the task. Approving or rejecting completes the task; reassigning asks the new person instead. Imported or copied approval tasks don't ask anyone until an editor clicks **Ask … to approve**.
 - **Nested portfolios** now also count in a portfolio's **Workload** and in goal progress from linked portfolios — still only projects you can open.
+
+## What's here (real subtasks)
+
+- **Subtasks are tasks.** Each one has its own assignee, start and due dates, description, type, custom fields (the parent project's), comments, followers, attachments, and its own subtasks — up to 4 levels below a task.
+- **In the task pane:** add subtasks inline, rename and tick them, pick an assignee and dates right in the list, reorder them (drag, or the up/down buttons), and open one in its own pane, which shows a breadcrumb back to its parent. A task shows how many of its subtasks are done (e.g. 2/5), in the pane and on List rows and Board cards.
+- **Who sees them:** exactly the people who can see the top-level task — subtasks live in its projects and are never added to a project of their own.
+- **Where they show up:** the assignee's **My Tasks** (with “in <parent task>”), **Inbox**, **Workload**, and search. In List, turn on **Show subtasks** in the toolbar to see each task's subtasks under it (off by default).
+- **Deleting** a task moves its subtasks to the Trash with it; restoring it brings them back.
+- **Rules and request numbers** apply to top-level tasks only; subtasks never trigger rules or get a Req #.
+- **Copies keep them:** project templates, Duplicate project, repeating tasks, and Asana imports bring whole subtask trees; task templates keep subtask titles.
+- **Existing checklists** became real subtasks automatically, keeping their completion, order, and approvals.
 
 ## Local development
 
@@ -265,5 +276,5 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
 | `dev` / `build` / `start` | Next.js |
 | `lint` | ESLint (`eslint-config-next`) |
 | `typecheck` | `tsc --noEmit` |
-| `db:test` | Local migration + RLS smoke tests (`supabase/tests/*_smoke.sql`) |
+| `db:test` | Local migration + RLS smoke tests (`supabase/tests/*_smoke.sql`, in filename order; after `99_` new suites are named `zz01_`, `zz02_`, …, never `100_` or `991_`). Optional `supabase/tests/fixtures/before_<migration>.sql` files load old-model rows just before that migration |
 | `db:types` | Regenerate `src/lib/supabase/database.types.ts` from the linked project (`npx supabase link` first) |
