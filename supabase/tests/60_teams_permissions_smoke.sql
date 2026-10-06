@@ -515,14 +515,17 @@ begin
   -- remove_portfolio_project, set_project_status, transfer_portfolio_ownership, update_portfolio_member_role.
   -- Integrations added get_project_integrations and set_project_integration (Admin+ settings, redacted).
   -- Asana importer added start_import_run, import_batch, finish_import_run (Admin+ on the target project).
+  -- Templates added can_manage_project_template, create_project_from_template, delete_project_template,
+  -- duplicate_project, save_project_as_template, update_project_template.
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,'
-    'assign_request_number,cancel_approval,custom_field_project,decide_approval,finish_import_run,format_request_label,'
+    'assign_request_number,can_manage_project_template,cancel_approval,create_project_from_template,custom_field_project,'
+    'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'
     'get_project_integrations,get_public_form,has_portfolio_role,has_project_role,has_task_role,import_batch,is_allowlisted,move_portfolio_project,'
     'open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_role,'
     'remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,'
-    'request_approval,restore_task,resubmit_approval,rule_project,set_project_integration,set_project_status,start_import_run,submit_form,'
+    'request_approval,restore_task,resubmit_approval,rule_project,save_project_as_template,set_project_integration,set_project_status,start_import_run,submit_form,'
     'task_request_label,task_role,transfer_portfolio_ownership,transfer_project_ownership,'
-    'update_portfolio_member_role,update_project_member_role',
+    'update_portfolio_member_role,update_project_member_role,update_project_template',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);
 
   assert not has_function_privilege('authenticated', 'public.workflow_tick()', 'execute'), 'tick is service-role only';

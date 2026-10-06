@@ -44,6 +44,7 @@ import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } 
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isPortfolioRole, isProjectRole } from "@/lib/roles";
 import { isProjectStatus } from "@/lib/portfolios";
+import { MAX_TEMPLATE_SUBTASKS, parseCopyResult, type DuplicateOptions } from "@/lib/templates";
 import {
   VIEW_LAYOUTS,
   isIsoDate,
@@ -205,6 +206,210 @@ export async function deleteProject(projectId: string): Promise<ActionResult> {
   });
   if (!result.error) redirect("/");
   return result;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Templates and Duplicate project (one copy engine in SQL: see 20261006020000_templates.sql).
+// Copies fire no rules or notifications, and every copied rule lands disabled.
+// ---------------------------------------------------------------------------------------------
+
+function optionalIsoDate(value: unknown, label: string): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (!isIsoDate(value)) throw new InputError(`Choose a valid ${label}`);
+  return value;
+}
+
+export async function saveProjectAsTemplate(
+  projectId: string,
+  input: { name: string; description: string | null; startOn: string | null; replaceTemplateId: string | null },
+): Promise<ActionResult & { templateId?: string }> {
+  let templateId: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const saved = await supabase.rpc("save_project_as_template", {
+      source_project: id(projectId),
+      template_name: text(input.name, "Template name", { max: 100 }),
+      template_description: optionalText(input.description, 2000),
+      anchor_on: optionalIsoDate(input.startOn, "start date"),
+      replace_template: input.replaceTemplateId ? id(input.replaceTemplateId, "template") : null,
+    });
+    check(saved);
+    templateId = saved.data ?? undefined;
+  });
+  return { ...result, templateId };
+}
+
+export async function createProjectFromTemplate(
+  templateId: string,
+  input: { name: string; startOn: string | null },
+): Promise<ActionResult> {
+  let projectId: string | null = null;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const created = await supabase.rpc("create_project_from_template", {
+      target_template: id(templateId, "template"),
+      project_name: text(input.name, "Project name", { max: 200 }),
+      start_on: optionalIsoDate(input.startOn, "start date"),
+    });
+    check(created);
+    projectId = parseCopyResult(created.data)?.projectId ?? null;
+    if (!projectId) throw new DbError("The project could not be created");
+  });
+  if (projectId && !result.error) redirect(`/projects/${projectId}`);
+  return result;
+}
+
+export async function duplicateProject(
+  projectId: string,
+  input: { name: string; options: DuplicateOptions },
+): Promise<ActionResult> {
+  let newProjectId: string | null = null;
+  const result = await run(async () => {
+    const o = input.options;
+    const supabase = await createClient();
+    const created = await supabase.rpc("duplicate_project", {
+      source_project: id(projectId),
+      project_name: text(input.name, "Project name", { max: 200 }),
+      options: {
+        tasks: Boolean(o.tasks),
+        assignees: Boolean(o.tasks && o.assignees),
+        dates: Boolean(o.tasks && o.dates),
+        start_on: o.tasks && o.dates ? optionalIsoDate(o.startOn, "start date") : null,
+        rules: Boolean(o.rules),
+        forms: Boolean(o.forms),
+        members: Boolean(o.members),
+      },
+    });
+    check(created);
+    newProjectId = parseCopyResult(created.data)?.projectId ?? null;
+    if (!newProjectId) throw new DbError("The project could not be duplicated");
+  });
+  if (newProjectId && !result.error) redirect(`/projects/${newProjectId}`);
+  return result;
+}
+
+export async function updateProjectTemplate(
+  templateId: string,
+  input: { name: string; description: string | null },
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("update_project_template", {
+        target_template: id(templateId, "template"),
+        template_name: text(input.name, "Template name", { max: 100 }),
+        template_description: optionalText(input.description, 2000),
+      }),
+    );
+  });
+}
+
+export async function deleteProjectTemplate(templateId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("delete_project_template", { target_template: id(templateId, "template") }));
+  });
+}
+
+export async function saveTaskAsTemplate(
+  taskId: string,
+  projectId: string,
+  input: { name: string; includeAssignee: boolean },
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("save_task_as_template", {
+        target_task: id(taskId, "task"),
+        target_project: id(projectId),
+        template_name: text(input.name, "Template name", { max: 100 }),
+        include_assignee: Boolean(input.includeAssignee),
+      }),
+    );
+  });
+}
+
+// From quick-add: a normal task creation (stories, notifications, and task_created rules as usual).
+export async function createTaskFromTemplate(
+  templateId: string,
+  sectionId: string | null,
+  title: string | null,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("create_task_from_template", {
+        target_template: id(templateId, "template"),
+        target_section: sectionId ? id(sectionId, "section") : null,
+        task_title: optionalText(title, 1000),
+      }),
+    );
+  });
+}
+
+export async function createTaskTemplate(
+  projectId: string,
+  input: { name: string; title: string },
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const { data: last } = await supabase
+      .from("task_templates")
+      .select("sort_order")
+      .eq("project_id", id(projectId))
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    check(
+      await supabase.from("task_templates").insert({
+        project_id: projectId,
+        name: text(input.name, "Template name", { max: 100 }),
+        title: text(input.title, "Task name", { max: 1000 }),
+        sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
+      }),
+    );
+  });
+}
+
+export async function updateTaskTemplate(
+  templateId: string,
+  patch: { name?: string; title?: string; notes?: string | null; subtasks?: string[]; clearAssignee?: boolean },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: {
+      name?: string;
+      title?: string;
+      notes?: string | null;
+      subtasks?: string[];
+      assignee_id?: null;
+    } = {};
+    if (patch.name !== undefined) update.name = text(patch.name, "Template name", { max: 100 });
+    if (patch.title !== undefined) update.title = text(patch.title, "Task name", { max: 1000 });
+    if (patch.notes !== undefined) update.notes = optionalText(patch.notes, 50000);
+    if (patch.subtasks !== undefined) {
+      const titles = patch.subtasks.map((t) => (typeof t === "string" ? t.trim() : "")).filter(Boolean);
+      if (titles.length > MAX_TEMPLATE_SUBTASKS) throw new InputError(`Up to ${MAX_TEMPLATE_SUBTASKS} subtasks`);
+      if (titles.some((t) => t.length > 1000)) throw new InputError("A subtask title is too long");
+      update.subtasks = titles;
+    }
+    if (patch.clearAssignee) update.assignee_id = null;
+    const supabase = await createClient();
+    checkUpdated(await supabase.from("task_templates").update(update).eq("id", id(templateId, "template")).select("id"));
+  });
+}
+
+export async function deleteTaskTemplate(templateId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase
+        .from("task_templates")
+        .update({ deleted_at: now() })
+        .eq("id", id(templateId, "template"))
+        .select("id"),
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------------------------

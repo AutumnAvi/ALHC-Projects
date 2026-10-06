@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Briefcase, CircleCheck, House, Inbox, LogOut, Plus, Search } from "lucide-react";
+import { Briefcase, CircleCheck, House, Inbox, LayoutTemplate, LogOut, Plus, Search } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { NewPortfolioForm } from "@/components/shell/new-portfolio-form";
 import { NewProjectForm } from "@/components/shell/new-project-form";
@@ -40,6 +40,7 @@ export function Sidebar({
     { href: "/", label: "Home", icon: House },
     { href: "/my-tasks", label: "My Tasks", icon: CircleCheck },
     { href: "/inbox", label: "Inbox", icon: Inbox },
+    { href: "/templates", label: "Templates", icon: LayoutTemplate },
   ];
 
   return (

@@ -22,6 +22,7 @@ import {
   type ProjectRole,
 } from "@/lib/roles";
 import { EMPTY_COUNTS, type PortfolioCounts } from "@/lib/portfolios";
+import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
   isViewLayout,
@@ -1364,4 +1365,149 @@ export const listImportRuns = cache(async (projectId: string): Promise<ImportRun
     createdAt: r.created_at,
     finishedAt: r.finished_at,
   }));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Templates (see 20261006020000_templates.sql)
+// ---------------------------------------------------------------------------------------------
+
+export type ProjectTemplate = {
+  id: string;
+  name: string;
+  description: string | null;
+  summary: TemplateSummary;
+  isExample: boolean;
+  // Only set when the viewer can still read the source project.
+  sourceProject: { id: string; name: string } | null;
+  createdByName: string | null;
+  updatedAt: string;
+  // Admin+ of the source project (or, without a live source, of any project): rename, replace, delete.
+  canManage: boolean;
+};
+
+// Workspace templates: everyone allowlisted can see and use them.
+export const listProjectTemplates = cache(async (): Promise<ProjectTemplate[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_templates")
+    .select("id, name, description, summary, is_example, source_project_id, updated_at, creator:profiles(email, full_name)")
+    .is("deleted_at", null)
+    .order("is_example", { ascending: false })
+    .order("name");
+  const templates = rows(result, "templates");
+  const sourceIds = [...new Set(templates.map((t) => t.source_project_id).filter((id): id is string => Boolean(id)))];
+  const [sources, manage] = await Promise.all([
+    sourceIds.length
+      ? supabase.from("projects").select("id, name").in("id", sourceIds).is("deleted_at", null)
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
+    Promise.all(
+      templates.map(async (t) =>
+        maybe(await supabase.rpc("can_manage_project_template", { target_template: t.id }), "template access"),
+      ),
+    ),
+  ]);
+  const sourceNames = new Map(rows(sources, "template sources").map((p) => [p.id, p.name]));
+  return templates.map((t, index) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    summary: parseTemplateSummary(t.summary),
+    isExample: t.is_example,
+    sourceProject:
+      t.source_project_id && sourceNames.has(t.source_project_id)
+        ? { id: t.source_project_id, name: sourceNames.get(t.source_project_id)! }
+        : null,
+    createdByName: t.creator ? (t.creator.full_name ?? t.creator.email) : null,
+    updatedAt: t.updated_at,
+    canManage: manage[index] === true,
+  }));
+});
+
+export type TaskTemplate = {
+  id: string;
+  projectId: string;
+  name: string;
+  title: string;
+  notes: string | null;
+  subtasks: string[];
+  fieldValueCount: number;
+  assigneeId: string | null;
+  updatedAt: string;
+};
+
+type TaskTemplateRow = Pick<
+  Tables<"task_templates">,
+  "id" | "project_id" | "name" | "title" | "notes" | "subtasks" | "field_values" | "assignee_id" | "updated_at"
+>;
+
+function toTaskTemplate(t: TaskTemplateRow): TaskTemplate {
+  return {
+    id: t.id,
+    projectId: t.project_id,
+    name: t.name,
+    title: t.title,
+    notes: t.notes,
+    subtasks: parseSubtaskTitles(t.subtasks),
+    fieldValueCount: Array.isArray(t.field_values) ? t.field_values.length : 0,
+    assigneeId: t.assignee_id,
+    updatedAt: t.updated_at,
+  };
+}
+
+const TASK_TEMPLATE_COLUMNS = "id, project_id, name, title, notes, subtasks, field_values, assignee_id, updated_at";
+
+export const listTaskTemplates = cache(async (projectId: string): Promise<TaskTemplate[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("task_templates")
+    .select(TASK_TEMPLATE_COLUMNS)
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "task templates").map(toTaskTemplate);
+});
+
+// Every task template the viewer can see (RLS: Viewer+ of its project), for the gallery.
+export const listAllTaskTemplates = cache(async (): Promise<(TaskTemplate & { projectName: string })[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("task_templates")
+    .select(`${TASK_TEMPLATE_COLUMNS}, project:projects!inner(name, deleted_at)`)
+    .is("deleted_at", null)
+    .is("project.deleted_at", null)
+    .order("name");
+  return rows(result, "task templates").map((t) => ({ ...toTaskTemplate(t), projectName: t.project.name }));
+});
+
+export type ProjectOrigin = {
+  kind: "created_from_template" | "duplicated";
+  // Template or source project name, as it was at copy time.
+  fromName: string | null;
+  fromProjectId: string | null;
+  actorName: string | null;
+  createdAt: string;
+};
+
+// How the project was made, when the copy engine made it (one project story per created project).
+export const getProjectOrigin = cache(async (projectId: string): Promise<ProjectOrigin | null> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_stories")
+    .select("kind, data, created_at, actor:profiles(email, full_name)")
+    .eq("project_id", projectId)
+    .order("created_at")
+    .limit(1)
+    .maybeSingle();
+  const story = maybe(result, "project history");
+  if (!story || (story.kind !== "created_from_template" && story.kind !== "duplicated")) return null;
+  const data = story.data && typeof story.data === "object" && !Array.isArray(story.data) ? story.data : {};
+  const name = story.kind === "duplicated" ? data.source_project_name : data.template_name;
+  return {
+    kind: story.kind,
+    fromName: typeof name === "string" ? name : null,
+    fromProjectId: story.kind === "duplicated" && typeof data.source_project_id === "string" ? data.source_project_id : null,
+    actorName: story.actor ? (story.actor.full_name ?? story.actor.email) : null,
+    createdAt: story.created_at,
+  };
 });
