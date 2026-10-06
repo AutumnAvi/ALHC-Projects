@@ -83,17 +83,20 @@ export function SectionTitle({
   );
 }
 
+// `defaultOpen` starts with the input showing (Tab then Q remounts it with a new key to open it).
 export function AddTaskInput({
   projectId,
   sectionId,
   variant,
+  defaultOpen = false,
 }: {
   projectId: string;
   sectionId: string | null;
   variant: "row" | "card";
+  defaultOpen?: boolean;
 }) {
   const [pending, run] = useServerAction();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const inputRef = useRef<HTMLInputElement>(null);
   const canEdit = useCan("editor");
 

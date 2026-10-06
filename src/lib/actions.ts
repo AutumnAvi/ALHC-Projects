@@ -40,6 +40,7 @@ import {
 } from "@/lib/forms";
 import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
+import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isPortfolioRole, isProjectRole } from "@/lib/roles";
 import { isProjectStatus } from "@/lib/portfolios";
@@ -752,6 +753,86 @@ export async function moveTask(
         .eq("project_id", id(projectId)),
     );
   });
+}
+
+// Places a task in a section of one of its projects, before `beforeId` (null = end of the section).
+// The database picks the midpoint and reindexes the section when the gap gets too small.
+export async function placeTask(
+  taskId: string,
+  projectId: string,
+  sectionId: string | null,
+  beforeId: string | null,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("place_task", {
+        target_task: id(taskId, "task"),
+        target_project: id(projectId, "project"),
+        target_section: sectionId ? id(sectionId, "section") : null,
+        before_task: beforeId ? id(beforeId, "task") : null,
+      }),
+    );
+  });
+}
+
+export async function placeSection(sectionId: string, beforeId: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("place_section", {
+        target_section: id(sectionId, "section"),
+        before_section: beforeId ? id(beforeId, "section") : null,
+      }),
+    );
+  });
+}
+
+function bulkOperation(input: BulkOperation): Json {
+  switch (input?.action) {
+    case "complete":
+    case "reopen":
+    case "delete":
+      return { action: input.action };
+    case "assign":
+      return { action: "assign", assignee_id: input.assignee_id ? id(input.assignee_id, "assignee") : null };
+    case "set_due":
+      return { action: "set_due", due_on: optionalDate(input.due_on, "due date") };
+    case "move_section":
+    case "add_to_project":
+      return {
+        action: input.action,
+        project_id: id(input.project_id, "project"),
+        section_id: input.section_id ? id(input.section_id, "section") : null,
+      };
+    case "set_field":
+      if (input.value !== null && JSON.stringify(input.value).length > 20000) throw new InputError("Value is too long");
+      return { action: "set_field", field_id: id(input.field_id, "field"), value: input.value ?? null };
+    default:
+      throw new InputError("Unknown bulk action");
+  }
+}
+
+// One operation on up to 200 tasks. Tasks that can't be changed are skipped with a reason (the rest
+// still go through); stories, inbox items, and rules fire per task as for single edits.
+export async function bulkEditTasks(
+  taskIds: string[],
+  operation: BulkOperation,
+): Promise<ActionResult & { result?: BulkResult }> {
+  let result: BulkResult | undefined;
+  const outcome = await run(async () => {
+    if (!Array.isArray(taskIds) || taskIds.length === 0) throw new InputError("Select at least one task");
+    const ids = [...new Set(taskIds.map((t) => id(t, "task")))];
+    if (ids.length > MAX_BULK_TASKS) throw new InputError(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
+    const supabase = await createClient();
+    const response = await supabase.rpc("bulk_update_tasks", {
+      target_tasks: ids,
+      operation: bulkOperation(operation),
+    });
+    check(response);
+    result = parseBulkResult(response.data);
+  });
+  return outcome.error ? outcome : { result };
 }
 
 export async function addTaskToProject(taskId: string, projectId: string): Promise<ActionResult> {

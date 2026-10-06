@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios with cross-project progress and reporting, a task detail pane, recurring tasks, due/start times, task dependencies, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios with cross-project progress and reporting, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -86,6 +86,13 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Unmatched people** stay unassigned, with “Assignee in Asana: Name <email>” noted at the end of the task's description.
 - **Safe to repeat.** Every row remembers its Asana id, so re-uploading the same export adds only what's new and never overwrites anything edited here. Large exports are imported in batches with a progress bar; if one stops, **Try again** resumes it.
 - **Quiet.** An import doesn't run the project's rules, doesn't notify anyone, and writes one “imported this task from Asana” activity line per task. Rules supplied with an import (Asana's exports contain none) always land turned off.
+
+## What's here (bulk edit and shortcuts)
+
+- **Select many tasks** in List and My Tasks: tick the checkbox by a task, **Shift**-click for a range, **⌘/Ctrl**-click to add or remove one. A bar at the bottom completes or reopens them, assigns or unassigns, sets or clears the due date, moves them to a section, adds them to another project, sets a custom field (List), or moves them to the Trash — up to 200 at a time.
+- **Partial apply, like Asana.** Every task that can change does; the rest are skipped and listed by name with the reason (blocked by a dependency, your role in its project, the assignee can't see it, …). Each task gets its usual activity line, notifications, and rules.
+- **Drag to reorder** tasks within and between sections in List (manual sort, grouped by section), and drag sections (or use their ↑/↓ buttons) to reorder them.
+- **Keyboard shortcuts** (press **?** for the list): **/** search, **↑/↓** select (**Shift** extends), **Enter** open, **Esc** close or clear, **⌘/Ctrl+Enter** complete, **Tab** then **Q** quick-add a task, **Tab** then **M** assign to me. They never fire while you're typing in a field.
 
 ## Local development
 
