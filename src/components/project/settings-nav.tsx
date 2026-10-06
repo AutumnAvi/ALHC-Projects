@@ -9,6 +9,7 @@ export function SettingsNav({ projectId }: { projectId: string }) {
   const items = [
     { href: base, label: "General" },
     { href: `${base}/members`, label: "Members" },
+    { href: `${base}/templates`, label: "Templates" },
     { href: `${base}/integrations`, label: "Integrations" },
     { href: `${base}/import`, label: "Import" },
     { href: `${base}/trash`, label: "Trash" },

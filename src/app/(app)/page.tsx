@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { FolderClosed, House } from "lucide-react";
+import { FolderClosed, House, LayoutTemplate } from "lucide-react";
 import { NewProjectForm } from "@/components/shell/new-project-form";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { listProjects } from "@/lib/data";
@@ -25,6 +25,13 @@ export default async function HomePage() {
             <div className="mt-2">
               <NewProjectForm />
             </div>
+            <Link
+              href="/templates"
+              className="mt-2 inline-flex items-center gap-1.5 text-xs text-accent-700 hover:underline"
+            >
+              <LayoutTemplate className="size-3.5" aria-hidden />
+              Or start from a template
+            </Link>
           </section>
 
           <section aria-labelledby="projects-heading" className="mt-8">

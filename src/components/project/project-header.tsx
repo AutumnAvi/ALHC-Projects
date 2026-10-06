@@ -10,8 +10,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  CopyPlus,
   FileInput,
   FolderClosed,
+  LayoutTemplate,
   List,
   MoreHorizontal,
   Pencil,
@@ -26,6 +28,7 @@ import {
 import { MenuItem, Popover } from "@/components/popover";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
+import { DuplicateProjectDialog } from "@/components/project/duplicate-project-dialog";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import {
@@ -56,6 +59,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
   const canEditViews = useCan("editor");
   const canEditProject = useCan("admin");
   const canDeleteProject = useCan("owner");
+  const [duplicating, setDuplicating] = useState(false);
   const base = `/projects/${project.id}`;
 
   // Older /list, /board, /calendar, /timeline links render the default config when no saved view exists.
@@ -142,6 +146,26 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
               >
                 <Users className="size-4 text-zinc-500" /> Members
               </MenuItem>
+              {canEditViews ? (
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    setDuplicating(true);
+                  }}
+                >
+                  <CopyPlus className="size-4 text-zinc-500" /> Duplicate project…
+                </MenuItem>
+              ) : null}
+              {canEditProject ? (
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    router.push(`${base}/settings/templates`);
+                  }}
+                >
+                  <LayoutTemplate className="size-4 text-zinc-500" /> Save as template…
+                </MenuItem>
+              ) : null}
               {canDeleteProject ? (
                 <MenuItem
                   danger
@@ -159,6 +183,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
             </>
           )}
         </Popover>
+        {duplicating ? <DuplicateProjectDialog project={project} onClose={() => setDuplicating(false)} /> : null}
       </div>
       <label htmlFor="project-description" className="sr-only">
         Project description

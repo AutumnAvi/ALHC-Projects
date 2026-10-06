@@ -94,6 +94,14 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Drag to reorder** tasks within and between sections in List (manual sort, grouped by section), and drag sections (or use their ↑/↓ buttons) to reorder them.
 - **Keyboard shortcuts** (press **?** for the list): **/** search, **↑/↓** select (**Shift** extends), **Enter** open, **Esc** close or clear, **⌘/Ctrl+Enter** complete, **Tab** then **Q** quick-add a task, **Tab** then **M** assign to me. They never fire while you're typing in a field.
 
+## What's here (templates)
+
+- **Templates** (sidebar) lists the workspace's project templates and the task templates of projects you're in. A seeded **Creative Requests** template (sections Intake, In Progress, Review, Approved, Delivered; fields Request type and Due date priority) is marked **Example**: edit it by using it, changing the new project, then **Save as template → Replace “Creative Requests”**.
+- **Save as template** (project … menu → Settings → Templates, Admins and above) copies sections, tasks with subtasks and field values, custom fields, rules, forms, saved views, and request numbering. Task dates are stored as days from a project start date; **Use template** asks for a start date and works every date out from it. Assignees, members, comments, files, and completion stay behind. Everyone in the workspace can see templates.
+- **Duplicate project** (project … menu, Editors and above) uses the same copy engine, with switches for tasks, assignees, dates (optionally shifted to a new start date), rules, forms, and members.
+- **Quiet and safe.** A copy never runs rules or notifies anyone, and every copied rule arrives **turned off** until you turn it on (Slack/webhook URLs are not copied). The new project's Settings page says where it came from.
+- **Task templates** (title, notes, subtasks, field values, optional assignee) are saved from a task's header or in Settings → Templates, and used from **Add task → Template** in List and Board. Tasks made this way are normal tasks: rules and notifications run as usual.
+
 ## Local development
 
 ```bash
@@ -108,7 +116,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–91)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–93)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.

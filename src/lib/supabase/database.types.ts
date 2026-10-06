@@ -906,6 +906,115 @@ export type Database = {
           },
         ];
       };
+      project_stories: {
+        Row: {
+          id: string;
+          project_id: string;
+          actor_id: string | null;
+          kind: string;
+          data: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          actor_id?: string | null;
+          kind: string;
+          data?: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          actor_id?: string | null;
+          kind?: string;
+          data?: Json;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_stories_actor_id_fkey";
+            columns: ["actor_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_stories_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      project_templates: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          name: string;
+          description: string | null;
+          content: Json;
+          summary: Json;
+          source_project_id: string | null;
+          is_example: boolean;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          name: string;
+          description?: string | null;
+          content: Json;
+          summary?: Json;
+          source_project_id?: string | null;
+          is_example?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          name?: string;
+          description?: string | null;
+          content?: Json;
+          summary?: Json;
+          source_project_id?: string | null;
+          is_example?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_templates_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_templates_source_project_id_fkey";
+            columns: ["source_project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_templates_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       project_views: {
         Row: {
           id: string;
@@ -1610,6 +1719,76 @@ export type Database = {
           },
         ];
       };
+      task_templates: {
+        Row: {
+          id: string;
+          project_id: string;
+          name: string;
+          title: string;
+          notes: string | null;
+          subtasks: Json;
+          field_values: Json;
+          assignee_id: string | null;
+          sort_order: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          name: string;
+          title: string;
+          notes?: string | null;
+          subtasks?: Json;
+          field_values?: Json;
+          assignee_id?: string | null;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          name?: string;
+          title?: string;
+          notes?: string | null;
+          subtasks?: Json;
+          field_values?: Json;
+          assignee_id?: string | null;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "task_templates_assignee_id_fkey";
+            columns: ["assignee_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_templates_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_templates_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       tasks: {
         Row: {
           id: string;
@@ -2005,6 +2184,44 @@ export type Database = {
       workflow_tick: {
         Args: Record<PropertyKey, never>;
         Returns: Json;
+      };
+      can_manage_project_template: {
+        Args: { target_template: string };
+        Returns: boolean;
+      };
+      create_project_from_template: {
+        Args: { target_template: string; project_name: string; start_on?: string | null };
+        Returns: Json;
+      };
+      create_task_from_template: {
+        Args: { target_template: string; target_section?: string | null; task_title?: string | null };
+        Returns: string;
+      };
+      delete_project_template: {
+        Args: { target_template: string };
+        Returns: undefined;
+      };
+      duplicate_project: {
+        Args: { source_project: string; project_name: string; options?: Json };
+        Returns: Json;
+      };
+      save_project_as_template: {
+        Args: {
+          source_project: string;
+          template_name: string;
+          template_description?: string | null;
+          anchor_on?: string | null;
+          replace_template?: string | null;
+        };
+        Returns: string;
+      };
+      save_task_as_template: {
+        Args: { target_task: string; target_project: string; template_name: string; include_assignee?: boolean };
+        Returns: string;
+      };
+      update_project_template: {
+        Args: { target_template: string; template_name: string; template_description?: string | null };
+        Returns: undefined;
       };
     };
     Enums: {

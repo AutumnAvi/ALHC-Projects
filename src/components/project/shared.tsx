@@ -2,10 +2,12 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { ListPlus, Plus, Trash2 } from "lucide-react";
+import { MenuItem, Popover } from "@/components/popover";
 import { useCan } from "@/components/project/project-access";
+import { useTaskTemplates } from "@/components/project/task-templates-context";
 import { useServerAction } from "@/components/toast";
-import { createSection, createTask, deleteSection, renameSection } from "@/lib/actions";
+import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
 import type { Section } from "@/lib/data";
 
 // Opens/closes the task pane via ?task=, preserving other query params (e.g. search terms).
@@ -99,6 +101,7 @@ export function AddTaskInput({
   const [open, setOpen] = useState(defaultOpen);
   const inputRef = useRef<HTMLInputElement>(null);
   const canEdit = useCan("editor");
+  const templates = useTaskTemplates();
 
   if (!canEdit) return null;
   if (!open) {
@@ -128,7 +131,7 @@ export function AddTaskInput({
         input.value = "";
         run(() => createTask(projectId, sectionId, title));
       }}
-      className={variant === "row" ? "px-3 py-1.5" : ""}
+      className={`flex items-center gap-1 ${variant === "row" ? "px-3 py-1.5" : ""}`}
     >
       <label className="sr-only" htmlFor={`add-task-${sectionId ?? "none"}-${variant}`}>
         New task name
@@ -139,15 +142,58 @@ export function AddTaskInput({
         autoFocus
         placeholder={pending ? "Adding…" : "Task name, then Enter"}
         onBlur={(e) => {
-          if (!e.currentTarget.value.trim()) setOpen(false);
+          // Moving to the template picker (inside this form) keeps the input open.
+          if (!e.currentTarget.value.trim() && !e.currentTarget.form?.contains(e.relatedTarget as Node | null)) {
+            setOpen(false);
+          }
         }}
         onKeyDown={(e) => {
           if (e.key === "Escape") setOpen(false);
         }}
-        className={`w-full rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100 ${
+        className={`min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100 ${
           variant === "card" ? "shadow-xs" : ""
         }`}
       />
+      {templates.length > 0 ? (
+        <Popover
+          label="Add from a task template"
+          align="end"
+          panelClassName="w-64 p-1.5"
+          buttonClassName="btn-ghost h-8 shrink-0 px-1.5 text-zinc-500"
+          button={
+            <>
+              <ListPlus className="size-4" aria-hidden />
+              {variant === "row" ? <span className="hidden sm:inline">Template</span> : null}
+            </>
+          }
+        >
+          {(close) => (
+            <>
+              <p className="px-2 pb-1 pt-0.5 text-2xs text-zinc-500">
+                A name typed above replaces the template’s task name.
+              </p>
+              {templates.map((template) => (
+                <MenuItem
+                  key={template.id}
+                  onClick={() => {
+                    close();
+                    const input = inputRef.current;
+                    const title = input?.value.trim() || null;
+                    if (input) input.value = "";
+                    run(() => createTaskFromTemplate(template.id, sectionId, title));
+                  }}
+                >
+                  <ListPlus className="size-4 shrink-0 text-zinc-500" />
+                  <span className="min-w-0">
+                    <span className="block truncate">{template.name}</span>
+                    <span className="block truncate text-2xs text-zinc-500">{template.title}</span>
+                  </span>
+                </MenuItem>
+              ))}
+            </>
+          )}
+        </Popover>
+      ) : null}
     </form>
   );
 }

@@ -30,6 +30,7 @@ import { DateTimeField } from "./task-dates";
 import { TaskDependencies } from "./task-dependencies";
 import { TaskFields } from "./task-fields";
 import { TaskRecurrence } from "./task-recurrence";
+import { SaveTaskTemplateButton } from "./save-task-template";
 import { PANE_CONTROL, PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
 import { Skeleton } from "@/components/ui";
 
@@ -200,6 +201,19 @@ export function TaskDetailPanel({
               <FolderClosed className="size-3 shrink-0" aria-hidden />
               <span className="truncate">{home.projectName}</span>
             </Link>
+          ) : null}
+          {canEdit && home ? (
+            <SaveTaskTemplateButton
+              taskId={task.id}
+              title={
+                task.requestLabel && task.title.startsWith(`[${task.requestLabel}] `)
+                  ? task.title.slice(task.requestLabel.length + 3)
+                  : task.title
+              }
+              hasAssignee={Boolean(task.assigneeId)}
+              projects={task.memberships.map((m) => ({ id: m.projectId, name: m.projectName }))}
+              defaultProjectId={home.projectId}
+            />
           ) : null}
           {canEdit ? (
             <button
