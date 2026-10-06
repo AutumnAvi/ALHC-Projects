@@ -44,6 +44,8 @@ import { isReactionKey } from "@/lib/reactions";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isPortfolioRole, isProjectRole } from "@/lib/roles";
+import { isGoalStatus, isProgressMode } from "@/lib/goals";
+import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
 import { isProjectStatus } from "@/lib/portfolios";
 import { MAX_TEMPLATE_SUBTASKS, parseCopyResult, type DuplicateOptions } from "@/lib/templates";
 import {
@@ -58,7 +60,7 @@ import {
   type ViewFilters,
   type WidgetKind,
 } from "@/lib/views";
-import type { Json } from "@/lib/supabase/database.types";
+import type { Json, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 
 export type ActionResult = { error?: string };
@@ -124,17 +126,17 @@ const NOT_ALLOWED = "Your role in this project doesn’t allow that";
 type DbResult = { error: { message: string; code?: string; hint?: string | null } | null };
 
 // Row-level security errors name tables; members just need to know their role doesn't allow it.
-function check(result: DbResult) {
+function check(result: DbResult, notAllowed = NOT_ALLOWED) {
   const error = result.error;
   if (!error) return;
-  if (error.code === "42501" && error.message.includes("row-level security")) throw new DbError(NOT_ALLOWED);
+  if (error.code === "42501" && error.message.includes("row-level security")) throw new DbError(notAllowed);
   throw new DbError(error.hint ? `${error.message}. ${error.hint}` : error.message);
 }
 
 // RLS turns a forbidden UPDATE into "0 rows" rather than an error; use with .select("id").
-function checkUpdated(result: DbResult & { data: unknown[] | null }) {
-  check(result);
-  if (!result.data?.length) throw new DbError(NOT_ALLOWED);
+function checkUpdated(result: DbResult & { data: unknown[] | null }, notAllowed = NOT_ALLOWED) {
+  check(result, notAllowed);
+  if (!result.data?.length) throw new DbError(notAllowed);
 }
 
 const now = () => new Date().toISOString();
@@ -1532,6 +1534,291 @@ export async function removeWorkspaceAdmin(profileId: string): Promise<ActionRes
     const supabase = await createClient();
     check(
       await supabase.rpc("remove_workspace_admin", { target_workspace: workspace.id, target_profile: id(profileId) }),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Teams directory (see 20261006050000_goals_teams.sql). Leads and workspace admins manage a team; a
+// team never grants project access — the group invite adds ordinary project members (Project Admin+).
+// ---------------------------------------------------------------------------------------------
+
+const TEAM_NOT_ALLOWED = "Only the team’s leads and workspace admins can change it";
+
+function email(value: unknown): string {
+  const address = text(value, "Email", { max: 320 }).toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
+  return address;
+}
+
+function teamRole(value: unknown): string {
+  if (!isTeamRole(value)) throw new InputError("Choose lead or member");
+  return value;
+}
+
+export async function createTeam(formData: FormData): Promise<ActionResult> {
+  let teamId: string | null = null;
+  const result = await run(async () => {
+    const name = text(formData.get("name"), "Team name", { max: 100 });
+    const workspace = await getWorkspace();
+    if (!workspace) throw new DbError("No workspace is available");
+    const supabase = await createClient();
+    const inserted = await supabase
+      .from("teams")
+      .insert({ workspace_id: workspace.id, name, description: optionalText(formData.get("description"), 2000) })
+      .select("id")
+      .single();
+    check(inserted, TEAM_NOT_ALLOWED);
+    teamId = inserted.data!.id;
+  });
+  if (teamId && !result.error) redirect(`/teams/${teamId}`);
+  return result;
+}
+
+export async function updateTeam(
+  teamId: string,
+  patch: { name?: string; description?: string | null },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: { name?: string; description?: string | null } = {};
+    if (patch.name !== undefined) update.name = text(patch.name, "Team name", { max: 100 });
+    if (patch.description !== undefined) update.description = optionalText(patch.description, 2000);
+    const supabase = await createClient();
+    checkUpdated(await supabase.from("teams").update(update).eq("id", id(teamId)).select("id"), TEAM_NOT_ALLOWED);
+  });
+}
+
+export async function deleteTeam(teamId: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("teams").update({ deleted_at: now() }).eq("id", id(teamId)).select("id"),
+      TEAM_NOT_ALLOWED,
+    );
+  });
+  if (!result.error) redirect("/teams");
+  return result;
+}
+
+export async function addTeamMember(teamId: string, address: string, memberRole: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("add_team_member", {
+        target_team: id(teamId),
+        member_email: email(address),
+        member_role: teamRole(memberRole),
+      }),
+      TEAM_NOT_ALLOWED,
+    );
+  });
+}
+
+export async function changeTeamMemberRole(teamId: string, profileId: string, memberRole: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("update_team_member_role", {
+        target_team: id(teamId),
+        target_profile: id(profileId, "person"),
+        new_role: teamRole(memberRole),
+      }),
+      TEAM_NOT_ALLOWED,
+    );
+  });
+}
+
+// Removes someone (leads and workspace admins), or the caller themselves (leave).
+export async function removeTeamMember(teamId: string, profileId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("remove_team_member", { target_team: id(teamId), target_profile: id(profileId, "person") }),
+      TEAM_NOT_ALLOWED,
+    );
+  });
+}
+
+// Group invite: every team member who isn't in the project yet joins it with one role, as ordinary
+// project members. People already in the project keep their role; anyone who can't be added is
+// skipped with a reason.
+export async function addTeamToProject(
+  projectId: string,
+  teamId: string,
+  memberRole: string,
+): Promise<ActionResult & { result?: TeamInviteResult }> {
+  let result: TeamInviteResult | undefined;
+  const outcome = await run(async () => {
+    if (!isTeamProjectRole(memberRole)) throw new InputError("Choose admin, editor, commenter, or viewer");
+    const supabase = await createClient();
+    const response = await supabase.rpc("add_team_to_project", {
+      target_project: id(projectId),
+      target_team: id(teamId, "team"),
+      member_role: memberRole,
+    });
+    check(response);
+    result = parseTeamInviteResult(response.data);
+  });
+  return outcome.error ? outcome : { result };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Goals. Anyone allowlisted reads them; the owner, a lead of the goal's team, or a workspace admin
+// edits (goal_editable() in RLS). Linking needs Viewer+ on the project or portfolio.
+// ---------------------------------------------------------------------------------------------
+
+const GOAL_NOT_ALLOWED = "Only the goal’s owner, a lead of its team, or a workspace admin can change it";
+
+function optionalId(value: unknown, label: string): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  return id(value, label);
+}
+
+function goalPeriod(start: unknown, end: unknown) {
+  const periodStart = optionalIsoDate(start, "Start date");
+  const periodEnd = optionalIsoDate(end, "End date");
+  if (periodStart && periodEnd && periodStart > periodEnd) throw new InputError("The period must start before it ends");
+  return { period_start: periodStart, period_end: periodEnd };
+}
+
+export type GoalInput = {
+  title: string;
+  parentId?: string | null;
+  teamId?: string | null;
+  ownerId?: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  progressMode?: string;
+};
+
+export async function createGoal(
+  input: GoalInput,
+  { open = false }: { open?: boolean } = {},
+): Promise<ActionResult> {
+  let goalId: string | null = null;
+  const result = await run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new DbError("No workspace is available");
+    const mode = input.progressMode ?? "manual";
+    if (!isProgressMode(mode)) throw new InputError("Choose how progress is measured");
+    const supabase = await createClient();
+    const owner = optionalId(input.ownerId, "owner");
+    const inserted = await supabase
+      .from("goals")
+      .insert({
+        workspace_id: workspace.id,
+        title: text(input.title, "Goal title", { max: 200 }),
+        parent_id: optionalId(input.parentId, "parent goal"),
+        team_id: optionalId(input.teamId, "team"),
+        ...(owner ? { owner_id: owner } : {}),
+        ...goalPeriod(input.periodStart, input.periodEnd),
+        progress_mode: mode,
+      })
+      .select("id")
+      .single();
+    check(inserted, "You can only create goals you own, goals for a team you lead, or any goal as a workspace admin");
+    goalId = inserted.data!.id;
+  });
+  if (open && goalId && !result.error) redirect(`/goals/${goalId}`);
+  return result;
+}
+
+export async function updateGoal(
+  goalId: string,
+  patch: {
+    title?: string;
+    notes?: string | null;
+    parentId?: string | null;
+    teamId?: string | null;
+    ownerId?: string | null;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    progressMode?: string;
+    manualProgress?: number;
+  },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: TablesUpdate<"goals"> = {};
+    if (patch.title !== undefined) update.title = text(patch.title, "Goal title", { max: 200 });
+    if (patch.notes !== undefined) update.notes = optionalText(patch.notes, 10000);
+    if (patch.parentId !== undefined) update.parent_id = optionalId(patch.parentId, "parent goal");
+    if (patch.teamId !== undefined) update.team_id = optionalId(patch.teamId, "team");
+    if (patch.ownerId !== undefined) update.owner_id = optionalId(patch.ownerId, "owner");
+    if (patch.periodStart !== undefined || patch.periodEnd !== undefined) {
+      const period = goalPeriod(patch.periodStart, patch.periodEnd);
+      if (patch.periodStart !== undefined) update.period_start = period.period_start;
+      if (patch.periodEnd !== undefined) update.period_end = period.period_end;
+    }
+    if (patch.progressMode !== undefined) {
+      if (!isProgressMode(patch.progressMode)) throw new InputError("Choose how progress is measured");
+      update.progress_mode = patch.progressMode;
+    }
+    if (patch.manualProgress !== undefined) {
+      const value = Math.round(Number(patch.manualProgress));
+      if (!Number.isFinite(value) || value < 0 || value > 100) throw new InputError("Progress is a number from 0 to 100");
+      update.manual_progress = value;
+    }
+    const supabase = await createClient();
+    checkUpdated(await supabase.from("goals").update(update).eq("id", id(goalId)).select("id"), GOAL_NOT_ALLOWED);
+  });
+}
+
+export async function deleteGoal(goalId: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("goals").update({ deleted_at: now() }).eq("id", id(goalId)).select("id"),
+      GOAL_NOT_ALLOWED,
+    );
+  });
+  if (!result.error) redirect("/goals");
+  return result;
+}
+
+export async function linkGoal(
+  goalId: string,
+  target: { projectId: string } | { portfolioId: string },
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const row: TablesInsert<"goal_links"> =
+      "projectId" in target
+        ? { goal_id: id(goalId), project_id: id(target.projectId, "project") }
+        : { goal_id: id(goalId), portfolio_id: id(target.portfolioId, "portfolio") };
+    const result = await supabase.from("goal_links").insert(row);
+    if (result.error?.code === "23505") throw new InputError("That’s already linked to this goal");
+    check(result, "You can link only goals you can edit, and only projects or portfolios you can open");
+  });
+}
+
+export async function unlinkGoal(linkId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("goal_links").update({ deleted_at: now() }).eq("id", id(linkId)).select("id"),
+      GOAL_NOT_ALLOWED,
+    );
+  });
+}
+
+// Posting an update also sets the goal's status (trigger).
+export async function postGoalStatusUpdate(goalId: string, status: string, body: string | null): Promise<ActionResult> {
+  return run(async () => {
+    if (!isGoalStatus(status)) throw new InputError("Choose a status");
+    const supabase = await createClient();
+    check(
+      await supabase.from("goal_status_updates").insert({ goal_id: id(goalId), status, body: optionalText(body, 5000) }),
+      GOAL_NOT_ALLOWED,
+    );
+  });
+}
+
+export async function deleteGoalStatusUpdate(updateId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("goal_status_updates").update({ deleted_at: now() }).eq("id", id(updateId)).select("id"),
+      "Only the author can delete a status update",
     );
   });
 }

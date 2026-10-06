@@ -26,6 +26,15 @@ import { EMPTY_COUNTS, type PortfolioCounts } from "@/lib/portfolios";
 import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
 import { isMyTaskSectionKind, type MyTaskPlacement, type MyTaskSection } from "@/lib/my-tasks";
 import type { WorkloadTask } from "@/lib/workload";
+import {
+  isGoalStatus,
+  isProgressMode,
+  type Goal,
+  type GoalProgress,
+  type GoalStatus,
+  type GoalViewer,
+} from "@/lib/goals";
+import { isTeamRole, type TeamRole } from "@/lib/teams";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
   isViewLayout,
@@ -1703,3 +1712,237 @@ export async function listNumberFields(projectIds: string[]): Promise<FieldDef[]
   if (projectIds.length === 0) return [];
   return (await listFieldsForProjects(projectIds)).filter((f) => f.fieldType === "number");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Teams directory (see 20261006050000_goals_teams.sql). Teams are workspace-level: everyone
+// allowlisted reads them. A team never grants project access; team_projects rows are only visible to
+// people who can already read the project.
+// ---------------------------------------------------------------------------------------------
+
+export type TeamPerson = { profileId: string; role: TeamRole; name: string; email: string; addedAt: string };
+
+export type Team = {
+  id: string;
+  name: string;
+  description: string | null;
+  createdAt: string;
+  members: TeamPerson[];
+};
+
+type TeamRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  team_members: {
+    profile_id: string;
+    role: string;
+    created_at: string;
+    deleted_at: string | null;
+    profile: { email: string; full_name: string | null } | null;
+  }[];
+};
+
+const TEAM_COLUMNS =
+  "id, name, description, created_at, team_members!team_members_team_id_fkey(profile_id, role, created_at, deleted_at, profile:profiles!team_members_profile_id_fkey(email, full_name))";
+
+function toTeam(row: TeamRow): Team {
+  const roleOrder = (role: TeamRole) => (role === "lead" ? 0 : 1);
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    createdAt: row.created_at,
+    members: row.team_members
+      .filter((m) => m.deleted_at === null && isTeamRole(m.role))
+      .map((m) => ({
+        profileId: m.profile_id,
+        role: m.role as TeamRole,
+        name: m.profile?.full_name?.trim() || m.profile?.email || "Unknown",
+        email: m.profile?.email ?? "",
+        addedAt: m.created_at,
+      }))
+      .sort((a, b) => roleOrder(a.role) - roleOrder(b.role) || a.name.localeCompare(b.name)),
+  };
+}
+
+export const listTeams = cache(async (): Promise<Team[]> => {
+  const supabase = await createClient();
+  const result = await supabase.from("teams").select(TEAM_COLUMNS).is("deleted_at", null).order("name");
+  return rows(result, "teams").map((row) => toTeam(row as TeamRow));
+});
+
+export const getTeam = cache(async (teamId: string): Promise<Team | null> => {
+  const supabase = await createClient();
+  const result = await supabase.from("teams").select(TEAM_COLUMNS).eq("id", teamId).is("deleted_at", null).maybeSingle();
+  const row = maybe(result, "team");
+  return row ? toTeam(row as TeamRow) : null;
+});
+
+export const canManageTeam = cache(async (teamId: string): Promise<boolean> => {
+  const supabase = await createClient();
+  return maybe(await supabase.rpc("can_manage_team", { target_team: teamId }), "team role") === true;
+});
+
+export type TeamProject = { projectId: string; name: string; status: string; role: string; addedAt: string };
+
+// Projects the team was added to, limited by RLS to the ones the viewer can already read.
+export const listTeamProjects = cache(async (teamId: string): Promise<TeamProject[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("team_projects")
+    .select("role, created_at, project:projects!team_projects_project_id_fkey!inner(id, name, status)")
+    .eq("team_id", teamId)
+    .is("deleted_at", null)
+    .is("project.deleted_at", null)
+    .order("created_at");
+  return rows(result, "team projects").map((r) => ({
+    projectId: r.project.id,
+    name: r.project.name,
+    status: r.project.status,
+    role: r.role,
+    addedAt: r.created_at,
+  }));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Goals (workspace-level; progress is computed per viewer and never counts unreadable projects)
+// ---------------------------------------------------------------------------------------------
+
+const GOAL_COLUMNS =
+  "id, title, notes, team_id, parent_id, owner_id, period_start, period_end, status, progress_mode, manual_progress, created_at";
+
+function toGoal(row: Pick<
+  Tables<"goals">,
+  | "id"
+  | "title"
+  | "notes"
+  | "team_id"
+  | "parent_id"
+  | "owner_id"
+  | "period_start"
+  | "period_end"
+  | "status"
+  | "progress_mode"
+  | "manual_progress"
+  | "created_at"
+>): Goal {
+  return {
+    id: row.id,
+    title: row.title,
+    notes: row.notes,
+    teamId: row.team_id,
+    parentId: row.parent_id,
+    ownerId: row.owner_id,
+    periodStart: row.period_start,
+    periodEnd: row.period_end,
+    status: isGoalStatus(row.status) ? row.status : "on_track",
+    progressMode: isProgressMode(row.progress_mode) ? row.progress_mode : "manual",
+    manualProgress: row.manual_progress,
+    createdAt: row.created_at,
+  };
+}
+
+export const listGoals = cache(async (): Promise<Goal[]> => {
+  const supabase = await createClient();
+  const result = await supabase.from("goals").select(GOAL_COLUMNS).is("deleted_at", null).order("created_at");
+  return rows(result, "goals").map(toGoal);
+});
+
+export const getGoal = cache(async (goalId: string): Promise<Goal | null> => {
+  const supabase = await createClient();
+  const result = await supabase.from("goals").select(GOAL_COLUMNS).eq("id", goalId).is("deleted_at", null).maybeSingle();
+  const row = maybe(result, "goal");
+  return row ? toGoal(row) : null;
+});
+
+export const listGoalProgress = cache(async (): Promise<Map<string, GoalProgress>> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("goal_progress", {});
+  return new Map(
+    rows(result, "goal progress").map((r) => [
+      r.goal_id,
+      {
+        progress: r.progress === null ? null : Number(r.progress),
+        taskCount: r.task_count === null ? null : Number(r.task_count),
+        completedCount: r.completed_count === null ? null : Number(r.completed_count),
+        hiddenProjects: Number(r.hidden_project_count ?? 0),
+        subGoalCount: Number(r.sub_goal_count ?? 0),
+      },
+    ]),
+  );
+});
+
+// What the viewer needs to know to show edit controls (the database decides for real).
+export const getGoalViewer = cache(async (): Promise<GoalViewer> => {
+  const { user } = await getViewer();
+  if (!user) return { id: "", isWorkspaceAdmin: false, leadTeamIds: [] };
+  const supabase = await createClient();
+  const [admin, leads] = await Promise.all([
+    isWorkspaceAdmin(),
+    supabase.from("team_members").select("team_id").eq("profile_id", user.id).eq("role", "lead").is("deleted_at", null),
+  ]);
+  return {
+    id: user.id,
+    isWorkspaceAdmin: admin,
+    leadTeamIds: rows(leads, "team leads").map((r) => r.team_id),
+  };
+});
+
+export type GoalLink = {
+  id: string;
+  kind: "project" | "portfolio";
+  targetId: string;
+  name: string;
+  status: string | null;
+};
+
+// Links the viewer can see (RLS hides links to projects and portfolios they can't open).
+export const listGoalLinks = cache(async (goalId: string): Promise<GoalLink[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("goal_links")
+    .select(
+      "id, project_id, portfolio_id, project:projects!goal_links_project_id_fkey(id, name, status, deleted_at), portfolio:portfolios!goal_links_portfolio_id_fkey(id, name, deleted_at)",
+    )
+    .eq("goal_id", goalId)
+    .is("deleted_at", null)
+    .order("created_at");
+  return rows(result, "goal links").flatMap((r): GoalLink[] => {
+    if (r.project && r.project.deleted_at === null) {
+      return [{ id: r.id, kind: "project", targetId: r.project.id, name: r.project.name, status: r.project.status }];
+    }
+    if (r.portfolio && r.portfolio.deleted_at === null) {
+      return [{ id: r.id, kind: "portfolio", targetId: r.portfolio.id, name: r.portfolio.name, status: null }];
+    }
+    return [];
+  });
+});
+
+export type GoalStatusUpdate = {
+  id: string;
+  status: GoalStatus;
+  body: string | null;
+  authorId: string | null;
+  authorName: string;
+  createdAt: string;
+};
+
+export const listGoalStatusUpdates = cache(async (goalId: string): Promise<GoalStatusUpdate[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("goal_status_updates")
+    .select("id, status, body, author_id, created_at, author:profiles!goal_status_updates_author_id_fkey(email, full_name)")
+    .eq("goal_id", goalId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  return rows(result, "status updates").map((r) => ({
+    id: r.id,
+    status: isGoalStatus(r.status) ? r.status : "on_track",
+    body: r.body,
+    authorId: r.author_id,
+    authorName: r.author?.full_name?.trim() || r.author?.email || "Someone",
+    createdAt: r.created_at,
+  }));
+});

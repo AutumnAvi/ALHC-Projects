@@ -1,10 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Crown, LogOut, UserMinus, UserPlus } from "lucide-react";
+import Link from "next/link";
+import { Crown, LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
-import { useServerAction } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
 import {
+  addTeamToProject,
   changeProjectMemberRole,
   inviteProjectMember,
   leaveProject,
@@ -20,6 +22,9 @@ import {
   hasRole,
   type ProjectRole,
 } from "@/lib/roles";
+import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
+
+export type TeamChoice = { id: string; name: string; memberCount: number };
 
 const inputClass =
   "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none disabled:opacity-50";
@@ -33,13 +38,18 @@ export function MembersManager({
   members,
   viewerId,
   viewerRole,
+  teams,
 }: {
   projectId: string;
   members: ProjectMember[];
   viewerId: string;
   viewerRole: ProjectRole;
+  teams: TeamChoice[];
 }) {
   const [pending, run] = useServerAction();
+  const notify = useNotify();
+  const [teamId, setTeamId] = useState("");
+  const [teamRole, setTeamRole] = useState<ProjectRole>("editor");
   const emailRef = useRef<HTMLInputElement>(null);
   const [inviteRole, setInviteRole] = useState<ProjectRole>("editor");
   const canManage = hasRole(viewerRole, "admin");
@@ -116,6 +126,90 @@ export function MembersManager({
               Invite
             </button>
           </form>
+        </section>
+      ) : null}
+
+      {canManage ? (
+        <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="add-team-heading">
+          <h2 id="add-team-heading" className="text-sm font-semibold text-zinc-900">
+            Add a team
+          </h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Adds everyone on a team who isn’t in this project yet, with one role. They become ordinary members you can
+            change or remove one by one; people already here keep their role, and people who join the team later
+            aren’t added automatically.
+          </p>
+          {teams.length === 0 ? (
+            <p className="mt-3 text-sm text-zinc-500">
+              There are no teams yet.{" "}
+              <Link href="/teams" className="text-accent-700 hover:underline">
+                Create one on the Teams page
+              </Link>
+              .
+            </p>
+          ) : (
+            <form
+              className="mt-4 flex flex-wrap items-end gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const team = teams.find((t) => t.id === teamId);
+                if (!team || !isTeamProjectRole(teamRole)) return;
+                run(async () => {
+                  const outcome = await addTeamToProject(projectId, team.id, teamRole);
+                  if (outcome.result) {
+                    notify(describeTeamInvite(team.name, outcome.result));
+                    setTeamId("");
+                  }
+                  return outcome;
+                });
+              }}
+            >
+              <div className="flex min-w-56 flex-1 flex-col gap-1">
+                <label htmlFor="add-team" className="text-xs font-medium text-zinc-600">
+                  Team
+                </label>
+                <select
+                  id="add-team"
+                  required
+                  value={teamId}
+                  onChange={(e) => setTeamId(e.currentTarget.value)}
+                  className={inputClass}
+                >
+                  <option value="">Choose a team…</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.memberCount} {t.memberCount === 1 ? "person" : "people"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="add-team-role" className="text-xs font-medium text-zinc-600">
+                  Role
+                </label>
+                <select
+                  id="add-team-role"
+                  value={teamRole}
+                  onChange={(e) => setTeamRole(e.currentTarget.value as ProjectRole)}
+                  className={inputClass}
+                >
+                  {grantable.filter(isTeamProjectRole).map((role) => (
+                    <option key={role} value={role}>
+                      {ROLE_LABELS[role]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="submit"
+                disabled={pending || !teamId}
+                className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+              >
+                <Users className="size-4" aria-hidden />
+                Add team
+              </button>
+            </form>
+          )}
         </section>
       ) : null}
 
