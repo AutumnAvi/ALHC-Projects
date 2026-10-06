@@ -152,6 +152,16 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Export CSV** from List (the view's current filters, order, and columns, custom fields included), search results, the project Dashboard, Reports, and the portfolio Report. Exports only contain what you can read, up to 10,000 rows, and open cleanly in Excel (UTF-8; cells that look like formulas are kept as text).
 - **Print / Save as PDF:** reports, dashboards, and the portfolio Report have a Print button and print without the sidebar or buttons (use the browser's Save as PDF).
 
+## What's here (tags and collaboration extras)
+
+- **Tags** work across every project. Add them from a task's **Tags** row in the pane (type to find one, or to create a new one), or to many tasks at once from the bulk bar (**Tag** → Add / Remove) in List and My Tasks. Tags show as coloured chips on List rows, Board cards, and search results.
+- **Find tasks by tag:** filter a List / Board / Calendar / Timeline view by tag (or “No tag”), group List and Board by tag (a task with two tags shows under both; dragging a Board card between tag columns swaps the tag), search by tag name, and filter Reports and dashboard widgets by tag.
+- **Managing tags:** Settings → Workspace → **Tags**. Anyone can create one; its creator or a workspace admin can rename, recolour, or archive it (archived tags stay on tasks but can't be added again). A tag never opens a project: you only see tagged tasks in projects you're a member of.
+- **Copies keep tags:** project templates, Duplicate project, task templates, and repeating tasks carry them. Asana imports bring tags in as workspace tags (matched by name). Projects imported before this phase had a “Tags” field; its values were copied into real tags once, and the field itself was left in place (you can delete it from the Fields tab when you no longer need it).
+- **Messages tab** on every project: start a thread with a title, reply, @mention people in the project, and react — like task comments, for things that aren't about one task. Everyone in the project can read them; Commenters and above can post. Mentions and replies to your threads land in your Inbox.
+- **Attachment previews:** PNG, JPEG, GIF, and WebP images show as thumbnails in the task pane and open in a viewer (arrow keys move between images); PDFs open in the browser's PDF viewer. Other files (SVG included) always download. Files stay in the private bucket behind short-lived links.
+- **CSV exports** now say so when a file was cut at 10,000 rows, and cells starting with a tab or line break are kept as text too.
+
 ## Local development
 
 ```bash
@@ -166,7 +176,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01…)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01, zz02…)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.
@@ -196,8 +206,9 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 6. **Storage:** the collaboration migration creates the private bucket **`task-attachments`** (25 MB per-file limit) and its `storage.objects` policies (since Teams & permissions: `task_attachments_objects_select_viewer` and `task_attachments_objects_insert_editor`, which follow the task's project roles). Nothing to click, but check two things:
    - Storage → Settings → **Upload file size limit** (the project-wide cap) must be at least 25 MB, or uploads fail below the bucket limit.
    - Files are stored as `<task id>/<uuid>-<file name>` and are only reachable through short-lived signed URLs issued by the app (`/attachments/<id>`). Removing an attachment hides it but leaves the object in Storage.
+   - Previews (Tags and collaboration extras) are served inline only when the file name, the recorded type, and the type Storage reports for the object all say PNG / JPEG / GIF / WebP / PDF; the app reads that with Storage's object info endpoint (`storage-js` `info()`). If that endpoint isn't available on your Storage version, every file simply downloads instead of previewing.
    - The Asana importer migration adds a second private bucket, **`imports`** (50 MB per file), for uploaded export files at `<project id>/<uploader id>/<uuid>-<file name>`. Only the uploader can read or remove them, and only while they're an Admin of the project; the app removes them when an import finishes. Raise the project-wide upload limit to 50 MB if you import large exports.
-7. **Realtime (optional):** the migrations add `comments`, `comment_reactions`, `task_stories`, `inbox_items`, and `approval_requests` to the `supabase_realtime` publication, so comments, activity, approvals, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
+7. **Realtime (optional):** the migrations add `comments`, `comment_reactions`, `task_stories`, `inbox_items`, `approval_requests`, `project_messages`, and `project_message_reactions` to the `supabase_realtime` publication, so comments, activity, approvals, messages, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
 8. **Scheduled rules (recommended):** enable the **`pg_cron`** extension (Database → Extensions) *before* applying the workflows migration, and it schedules `alhc-workflow-tick` every 5 minutes. That runs "wait N hours" steps and "due date is approaching" rules. If you enable `pg_cron` later, schedule it yourself in the SQL editor:
 
    ```sql
