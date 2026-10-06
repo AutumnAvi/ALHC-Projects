@@ -78,6 +78,15 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Task pane.** Quieter field rows (controls show a border on hover), a link to the task's home project in the pane header, consistent section headings, and a skeleton that appears as soon as you click a task while it loads.
 - **Empty and loading states** on Home, My Tasks, Inbox, Search, Portfolios, and every project tab, with short copy saying what goes there and how to start. No data, settings, or permissions changed.
 
+## What's here (Asana importer)
+
+- **Settings → Import** (Admins and above): upload the **JSON** and/or **CSV** export of an Asana project (in Asana: the arrow next to the project name → **Export/Print**). The files are read on the server; the app never connects to Asana and never asks for an Asana token.
+- **Dry run first.** The preview counts tasks, subtasks, comments, attachment links, sections, custom fields, tags, and dependencies, says how many are already here, and lists the people it found: matched to members (by email), with an account but not in this project (optionally invite them as Editors first), with no account, and with no email in the export. Upload the CSV next to the JSON to match assignees by email; Asana's JSON export often leaves emails out.
+- **What comes across:** sections (matched by name), tasks with notes, due/start dates, completion, and assignee; subtasks (title + completion; nested ones are flattened); custom fields and their values (Asana dropdowns become single/multi-select, formula and ID fields become text); tags as a **Tags** multi-select field; comments (by the matching member, or by you with “<name> wrote in Asana:”); followers; dependencies; memberships in other Asana projects you imported here before. Attachments come across as **name + link only** (shown in the pane as “In Asana · not copied”); files are not copied.
+- **Unmatched people** stay unassigned, with “Assignee in Asana: Name <email>” noted at the end of the task's description.
+- **Safe to repeat.** Every row remembers its Asana id, so re-uploading the same export adds only what's new and never overwrites anything edited here. Large exports are imported in batches with a progress bar; if one stops, **Try again** resumes it.
+- **Quiet.** An import doesn't run the project's rules, doesn't notify anyone, and writes one “imported this task from Asana” activity line per task. Rules supplied with an import (Asana's exports contain none) always land turned off.
+
 ## Local development
 
 ```bash
@@ -92,7 +101,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–80)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–91)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.
@@ -115,6 +124,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 5. **Storage:** the collaboration migration creates the private bucket **`task-attachments`** (25 MB per-file limit) and its `storage.objects` policies (since Teams & permissions: `task_attachments_objects_select_viewer` and `task_attachments_objects_insert_editor`, which follow the task's project roles). Nothing to click, but check two things:
    - Storage → Settings → **Upload file size limit** (the project-wide cap) must be at least 25 MB, or uploads fail below the bucket limit.
    - Files are stored as `<task id>/<uuid>-<file name>` and are only reachable through short-lived signed URLs issued by the app (`/attachments/<id>`). Removing an attachment hides it but leaves the object in Storage.
+   - The Asana importer migration adds a second private bucket, **`imports`** (50 MB per file), for uploaded export files at `<project id>/<uploader id>/<uuid>-<file name>`. Only the uploader can read or remove them, and only while they're an Admin of the project; the app removes them when an import finishes. Raise the project-wide upload limit to 50 MB if you import large exports.
 6. **Realtime (optional):** the migrations add `comments`, `task_stories`, `inbox_items`, and `approval_requests` to the `supabase_realtime` publication, so comments, activity, approvals, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
 7. **Scheduled rules (recommended):** enable the **`pg_cron`** extension (Database → Extensions) *before* applying the workflows migration, and it schedules `alhc-workflow-tick` every 5 minutes. That runs "wait N hours" steps and "due date is approaching" rules. If you enable `pg_cron` later, schedule it yourself in the SQL editor:
 

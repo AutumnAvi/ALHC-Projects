@@ -116,6 +116,8 @@ export type TaskDetail = {
   fieldValues: Record<string, Json>;
   followerIds: string[];
   attachments: TaskAttachment[];
+  // Attachments that stayed in Asana (imported as name + link, no file copy).
+  attachmentLinks: TaskAttachmentLink[];
   comments: TaskComment[];
   stories: TaskStory[];
   // The viewer's highest role across the task's projects (null: read access through nothing).
@@ -132,6 +134,8 @@ export type TaskDependency = {
   title: string;
   completedAt: string | null;
 };
+
+export type TaskAttachmentLink = { id: string; source: string; name: string; url: string | null };
 
 export type TaskAttachment = {
   id: string;
@@ -466,6 +470,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     projectMembers,
     dependencies,
     nextOccurrence,
+    attachmentLinks,
   ] = await Promise.all([
     projectIds.length ? listFieldsForProjects(projectIds) : Promise.resolve([]),
     supabase.from("task_field_values").select("field_id, value").eq("task_id", taskId),
@@ -539,6 +544,12 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     task.recurrence_next_id
       ? supabase.from("tasks").select("id").eq("id", task.recurrence_next_id).is("deleted_at", null).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    supabase
+      .from("task_attachment_links")
+      .select("id, source, name, url")
+      .eq("task_id", taskId)
+      .is("deleted_at", null)
+      .order("created_at"),
   ]);
 
   const memberRoles: Record<string, ProjectRole> = {};
@@ -586,6 +597,12 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       sizeBytes: a.size_bytes,
       uploadedBy: a.uploaded_by,
       createdAt: a.created_at,
+    })),
+    attachmentLinks: rows(attachmentLinks, "attachment links").map((a) => ({
+      id: a.id,
+      source: a.source,
+      name: a.name,
+      url: a.url,
     })),
     comments: commentRows.map((c) => ({
       id: c.id,
@@ -1310,3 +1327,41 @@ export const listPortfolioProgress = cache(
     );
   },
 );
+
+// ---------------------------------------------------------------------------------------------
+// Imports (Admin+ read; RLS returns nothing below Admin)
+// ---------------------------------------------------------------------------------------------
+
+export type ImportRun = {
+  id: string;
+  source: string;
+  status: "running" | "completed" | "failed";
+  fileNames: string[];
+  summary: Record<string, unknown>;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+};
+
+export const listImportRuns = cache(async (projectId: string): Promise<ImportRun[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("import_runs")
+    .select("id, source, status, file_names, summary, created_by, created_at, finished_at, creator:profiles(email, full_name)")
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  return rows(result, "imports").map((r) => ({
+    id: r.id,
+    source: r.source,
+    status: r.status === "completed" || r.status === "failed" ? r.status : "running",
+    fileNames: r.file_names ?? [],
+    summary: r.summary && typeof r.summary === "object" && !Array.isArray(r.summary) ? (r.summary as Record<string, unknown>) : {},
+    createdBy: r.created_by,
+    createdByName: r.creator ? (r.creator.full_name ?? r.creator.email) : null,
+    createdAt: r.created_at,
+    finishedAt: r.finished_at,
+  }));
+});
