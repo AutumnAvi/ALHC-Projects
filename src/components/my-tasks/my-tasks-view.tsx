@@ -1,10 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useOptimistic, useState } from "react";
 import { ChevronDown, ChevronRight, CircleCheck, FolderClosed, CheckCheck } from "lucide-react";
+import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
+import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { CompleteToggle } from "@/components/complete-toggle";
 import { useTaskHref } from "@/components/project/shared";
+import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import { setTaskCompleted } from "@/lib/actions";
@@ -38,13 +42,19 @@ export function MyTasksView({
   open,
   completed,
   openTaskId,
+  bulk,
 }: {
   open: MyTask[];
   completed: MyTask[];
   openTaskId: string | null;
+  bulk: Omit<BulkContext, "project">;
 }) {
+  const router = useRouter();
+  const taskHref = useTaskHref();
   const today = useToday();
   const [, run] = useServerAction();
+  const bulkEdit = useBulkEdit();
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(["completed"]));
   const [toggled, setToggled] = useOptimistic(
     new Map<string, boolean>(),
     (current, change: { id: string; completed: boolean }) =>
@@ -59,7 +69,64 @@ export function MyTasksView({
       () => setToggled({ id: task.id, completed: next }),
     );
   };
-  const rowProps = { openTaskId, today, isDone, onToggle: toggle };
+
+  const groups: Group[] = [
+    ...(today === null ? [] : groupTasks(open, today)),
+    ...(completed.length > 0 ? [{ key: "completed", title: "Recently completed", tasks: completed }] : []),
+  ];
+  const tasksById = new Map([...open, ...completed].map((t) => [t.id, t]));
+  const selection = useTaskSelection(
+    groups.flatMap((g) => g.tasks.map((t) => t.id)),
+    groups.filter((g) => !collapsed.has(g.key)).flatMap((g) => g.tasks.map((t) => t.id)),
+  );
+  const targets = () => {
+    if (selection.selected.length) return selection.selected;
+    const one = openTaskId && tasksById.has(openTaskId) ? openTaskId : selection.active;
+    return one ? [one] : [];
+  };
+
+  useListKeys({
+    move(delta, extend) {
+      const next = selection.move(delta, extend);
+      if (next) requestAnimationFrame(() => scrollRowIntoView(next));
+    },
+    open() {
+      const id = selection.active ?? (selection.selected.length === 1 ? selection.selected[0] : null);
+      if (id) router.push(taskHref(id), { scroll: false });
+    },
+    escape() {
+      if (openTaskId || selection.selected.length === 0) return false;
+      selection.clear();
+      return true;
+    },
+    complete() {
+      const ids = targets();
+      if (ids.length === 0) return;
+      const next = !ids.every((id) => {
+        const task = tasksById.get(id);
+        return task ? isDone(task) : true;
+      });
+      bulkEdit.apply(ids, { action: next ? "complete" : "reopen" }, () => {
+        for (const id of ids) setToggled({ id, completed: next });
+      });
+    },
+    assignToMe() {
+      const ids = targets();
+      if (ids.length) bulkEdit.apply(ids, { action: "assign", assignee_id: bulk.viewerId });
+    },
+  });
+
+  const rowProps = { openTaskId, today, isDone, onToggle: toggle, selection, selecting: selection.selected.length > 0 };
+  const collapseProps = (key: string) => ({
+    collapsed: collapsed.has(key),
+    onToggleCollapsed: () =>
+      setCollapsed((c) => {
+        const next = new Set(c);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+  });
 
   if (open.length === 0 && completed.length === 0) {
     return (
@@ -73,7 +140,7 @@ export function MyTasksView({
   }
 
   return (
-    <div>
+    <div className="pb-20">
       {today === null ? (
         <div role="status" className="mt-4">
           <span className="sr-only">Loading your tasks…</span>
@@ -81,7 +148,13 @@ export function MyTasksView({
         </div>
       ) : (
         groupTasks(open, today).map((group) => (
-          <TaskGroup key={group.key} id={group.key} title={group.title} count={group.tasks.length}>
+          <TaskGroup
+            key={group.key}
+            id={group.key}
+            title={group.title}
+            count={group.tasks.length}
+            {...collapseProps(group.key)}
+          >
             {group.tasks.map((task) => (
               <MyTaskRow key={task.id} task={task} {...rowProps} />
             ))}
@@ -96,17 +169,22 @@ export function MyTasksView({
         </div>
       ) : null}
       {completed.length > 0 ? (
-        <TaskGroup
-          id="completed"
-          title="Recently completed"
-          count={completed.length}
-          defaultCollapsed
-        >
+        <TaskGroup id="completed" title="Recently completed" count={completed.length} {...collapseProps("completed")}>
           {completed.map((task) => (
             <MyTaskRow key={task.id} task={task} {...rowProps} />
           ))}
         </TaskGroup>
       ) : null}
+      <BulkBar
+        selected={selection.selected}
+        completedCount={selection.selected.filter((id) => {
+          const task = tasksById.get(id);
+          return task ? isDone(task) : false;
+        }).length}
+        context={bulk}
+        bulk={bulkEdit}
+        onClear={selection.clear}
+      />
     </div>
   );
 }
@@ -115,22 +193,23 @@ function TaskGroup({
   id,
   title,
   count,
-  defaultCollapsed = false,
+  collapsed,
+  onToggleCollapsed,
   children,
 }: {
   id: string;
   title: string;
   count: number;
-  defaultCollapsed?: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const headingId = `group-${id}`;
   return (
     <section className="mt-4" aria-labelledby={headingId}>
       <button
         type="button"
-        onClick={() => setCollapsed((c) => !c)}
+        onClick={onToggleCollapsed}
         aria-expanded={!collapsed}
         className="flex h-8 items-center gap-1 rounded px-1 text-sm font-semibold text-zinc-900 hover:bg-zinc-100"
       >
@@ -153,24 +232,56 @@ function MyTaskRow({
   today,
   isDone,
   onToggle,
+  selection,
+  selecting,
 }: {
   task: MyTask;
   openTaskId: string | null;
   today: string | null;
   isDone: (task: MyTask) => boolean;
   onToggle: (task: MyTask) => void;
+  selection: TaskSelection;
+  selecting: boolean;
 }) {
   const taskHref = useTaskHref();
   const done = isDone(task);
   const open = openTaskId === task.id;
   const overdue = Boolean(task.dueOn && today && !done && task.dueOn < today);
+  const selected = selection.isSelected(task.id);
 
   return (
     <li
-      className={`flex min-h-row items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
-        open ? "bg-accent-50" : "hover:bg-zinc-50"
-      }`}
+      data-task-row={task.id}
+      onMouseDown={(e) => {
+        if (e.shiftKey) e.preventDefault(); // no text selection on Shift-click ranges
+      }}
+      onClick={(e) => {
+        const control = (e.target as HTMLElement).closest("a, button, input, select, textarea, label");
+        const modified = e.shiftKey || e.metaKey || e.ctrlKey;
+        if (control && !(control.tagName === "A" && modified && control.getAttribute("data-task-link") !== null)) {
+          if (control.getAttribute("data-task-link") !== null) selection.setActive(task.id);
+          return;
+        }
+        e.preventDefault();
+        selection.click(task.id, e);
+      }}
+      className={`group flex min-h-row items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
+        selected ? "bg-accent-50" : open ? "bg-accent-50/60" : "hover:bg-zinc-50"
+      } ${selection.active === task.id ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""}`}
     >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={() => undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          selection.toggle(task.id, e.shiftKey);
+        }}
+        aria-label={`Select “${task.title}”`}
+        className={`-mr-1 size-3.5 shrink-0 rounded border-zinc-300 accent-accent-600 ${
+          selected || selecting ? "" : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+        }`}
+      />
       <CompleteToggle
         completed={done}
         onToggle={() => onToggle(task)}
@@ -179,6 +290,7 @@ function MyTaskRow({
       <Link
         href={taskHref(task.id)}
         scroll={false}
+        data-task-link=""
         aria-current={open ? "true" : undefined}
         className={`min-w-0 flex-1 truncate text-sm hover:underline ${
           done ? "text-zinc-400 line-through" : "text-zinc-900"

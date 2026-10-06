@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { connection } from "next/server";
 import { MobileBar } from "@/components/shell/mobile-bar";
+import { KeyboardShortcuts } from "@/components/shortcuts/keyboard-shortcuts";
 import { Sidebar } from "@/components/shell/sidebar";
 import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { SetupRequired } from "@/components/setup-required";
@@ -25,6 +26,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   return (
     <ToastProvider>
       <TimeZoneCookie />
+      <KeyboardShortcuts />
       <div className="flex h-full">
         <Sidebar
           member={member}

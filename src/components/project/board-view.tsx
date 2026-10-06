@@ -5,7 +5,7 @@ import { useState, type DragEvent } from "react";
 import { CompleteToggle } from "@/components/complete-toggle";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
-import { moveTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
+import { moveTask, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, refFieldId, sortOf, type ViewConfig } from "@/lib/views";
@@ -69,8 +69,12 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
       const sortOrder = manualOrder
         ? sortOrderFor(group.tasks, beforeId, task.id)
         : (group.tasks.filter((t) => t.id !== task.id).at(-1)?.sortOrder ?? 0) + 1024;
+      // Manual order: the database places it before `beforeId` (reindexing tiny gaps); otherwise append.
       run(
-        () => moveTask(task.id, projectId, target.sectionId, sortOrder),
+        () =>
+          manualOrder
+            ? placeTask(task.id, projectId, target.sectionId, beforeId)
+            : moveTask(task.id, projectId, target.sectionId),
         () => applyChange({ type: "move", taskId: task.id, sectionId: target.sectionId, sortOrder }),
       );
     } else if (target.kind === "assignee") {

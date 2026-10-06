@@ -5,6 +5,7 @@ import { ListView } from "@/components/project/list-view";
 import { TimelineView } from "@/components/project/timeline-view";
 import { ViewToolbar } from "@/components/project/view-toolbar";
 import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { listBulkContext } from "@/components/bulk/bulk-context";
 import {
   filterProjectTaskIds,
   listProfiles,
@@ -59,13 +60,14 @@ export async function ProjectViewPage({
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
 
-  const [sections, tasks, profiles, fields, timeZone, dependencies] = await Promise.all([
+  const [sections, tasks, profiles, fields, timeZone, dependencies, bulk] = await Promise.all([
     listSections(projectId),
     listProjectTasks(projectId),
     listProfiles(),
     listProjectFields(projectId),
     getViewerTimeZone(),
     layout === "timeline" ? listProjectDependencies(projectId) : Promise.resolve([]),
+    layout === "list" ? listBulkContext(projectId) : Promise.resolve(undefined),
   ]);
 
   const context = {
@@ -93,7 +95,7 @@ export async function ProjectViewPage({
       {layout === "list" ? (
         // The toolbar stays put; the list scrolls under it with a sticky column header.
         <div className="min-h-0 flex-1 overflow-auto">
-          <ListView key={`list-${view?.id ?? "default"}`} {...props} />
+          <ListView key={`list-${view?.id ?? "default"}`} {...props} bulk={bulk} />
         </div>
       ) : null}
       {layout === "board" ? <BoardView key={`board-${view?.id ?? "default"}`} {...props} /> : null}

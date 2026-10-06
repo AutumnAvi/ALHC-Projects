@@ -73,3 +73,8 @@ export function useServerAction() {
 
   return [pending, run] as const;
 }
+
+// Shows a toast directly (for results that aren't errors, e.g. a bulk edit summary).
+export function useNotify() {
+  return useContext(ToastContext);
+}

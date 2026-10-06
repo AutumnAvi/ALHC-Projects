@@ -1766,6 +1766,10 @@ export type Database = {
         Args: { target_task: string };
         Returns: string;
       };
+      bulk_update_tasks: {
+        Args: { target_tasks: string[]; operation: Json };
+        Returns: Json;
+      };
       cancel_approval: {
         Args: { target_approval: string };
         Returns: undefined;
@@ -1864,6 +1868,14 @@ export type Database = {
         Args: { target_task: string };
         Returns: number;
       };
+      place_section: {
+        Args: { target_section: string; before_section: string | null };
+        Returns: number;
+      };
+      place_task: {
+        Args: { target_task: string; target_project: string; target_section: string | null; before_task: string | null };
+        Returns: number;
+      };
       portfolio_hidden_project_count: {
         Args: { target_portfolio: string };
         Returns: number;
@@ -1890,6 +1902,14 @@ export type Database = {
       project_role: {
         Args: { target_project: string };
         Returns: string | null;
+      };
+      reindex_section_order: {
+        Args: { target_project: string };
+        Returns: number;
+      };
+      reindex_task_order: {
+        Args: { target_project: string; target_section: string | null };
+        Returns: number;
       };
       remove_portfolio_member: {
         Args: { target_portfolio: string; target_profile: string };

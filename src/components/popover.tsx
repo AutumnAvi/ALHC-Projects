@@ -9,6 +9,7 @@ export function Popover({
   button,
   buttonClassName,
   align = "start",
+  side = "bottom",
   panelClassName = "w-72",
   children,
 }: {
@@ -16,10 +17,14 @@ export function Popover({
   button: ReactNode;
   buttonClassName?: string;
   align?: "start" | "end";
+  // "top" opens above the button (for bars docked at the bottom of the screen).
+  side?: "bottom" | "top";
   panelClassName?: string;
   children: (close: () => void) => ReactNode;
 }) {
-  const [position, setPosition] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  const [position, setPosition] = useState<{ top?: number; bottom?: number; left?: number; right?: number } | null>(
+    null,
+  );
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const open = position !== null;
@@ -57,10 +62,11 @@ export function Popover({
     if (open) return close();
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const vertical = side === "top" ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 };
     setPosition(
       align === "end"
-        ? { top: rect.bottom + 4, right: Math.max(window.innerWidth - rect.right, 8) }
-        : { top: rect.bottom + 4, left: Math.min(rect.left, window.innerWidth - 300) },
+        ? { ...vertical, right: Math.max(window.innerWidth - rect.right, 8) }
+        : { ...vertical, left: Math.max(Math.min(rect.left, window.innerWidth - 300), 8) },
     );
   }
 
@@ -82,7 +88,7 @@ export function Popover({
           ref={panelRef}
           role="dialog"
           aria-label={label}
-          style={{ top: position.top, left: position.left, right: position.right }}
+          style={{ top: position.top, bottom: position.bottom, left: position.left, right: position.right }}
           className={`fixed z-40 max-h-[70vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-3 text-sm shadow-lg ${panelClassName}`}
         >
           {children(close)}
