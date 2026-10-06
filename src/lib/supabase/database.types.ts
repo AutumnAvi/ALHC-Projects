@@ -2115,6 +2115,367 @@ export type Database = {
           },
         ];
       };
+      goal_links: {
+        Row: {
+          id: string;
+          goal_id: string;
+          project_id: string | null;
+          portfolio_id: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          goal_id: string;
+          project_id?: string | null;
+          portfolio_id?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          goal_id?: string;
+          project_id?: string | null;
+          portfolio_id?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "goal_links_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "goal_links_goal_id_fkey";
+            columns: ["goal_id"];
+            isOneToOne: false;
+            referencedRelation: "goals";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "goal_links_portfolio_id_fkey";
+            columns: ["portfolio_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "goal_links_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      goal_status_updates: {
+        Row: {
+          id: string;
+          goal_id: string;
+          status: string;
+          body: string | null;
+          author_id: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          goal_id: string;
+          status: string;
+          body?: string | null;
+          author_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          goal_id?: string;
+          status?: string;
+          body?: string | null;
+          author_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "goal_status_updates_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "goal_status_updates_goal_id_fkey";
+            columns: ["goal_id"];
+            isOneToOne: false;
+            referencedRelation: "goals";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      goals: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          team_id: string | null;
+          parent_id: string | null;
+          owner_id: string | null;
+          title: string;
+          notes: string | null;
+          period_start: string | null;
+          period_end: string | null;
+          status: string;
+          progress_mode: string;
+          manual_progress: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id?: string;
+          team_id?: string | null;
+          parent_id?: string | null;
+          owner_id?: string | null;
+          title: string;
+          notes?: string | null;
+          period_start?: string | null;
+          period_end?: string | null;
+          status?: string;
+          progress_mode?: string;
+          manual_progress?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          team_id?: string | null;
+          parent_id?: string | null;
+          owner_id?: string | null;
+          title?: string;
+          notes?: string | null;
+          period_start?: string | null;
+          period_end?: string | null;
+          status?: string;
+          progress_mode?: string;
+          manual_progress?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "goals_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "goals_owner_id_fkey";
+            columns: ["owner_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "goals_parent_id_fkey";
+            columns: ["parent_id"];
+            isOneToOne: false;
+            referencedRelation: "goals";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "goals_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "goals_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      team_members: {
+        Row: {
+          id: string;
+          team_id: string;
+          profile_id: string;
+          role: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          team_id: string;
+          profile_id: string;
+          role?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          team_id?: string;
+          profile_id?: string;
+          role?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "team_members_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_members_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_members_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      team_projects: {
+        Row: {
+          id: string;
+          team_id: string;
+          project_id: string;
+          role: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          team_id: string;
+          project_id: string;
+          role: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          team_id?: string;
+          project_id?: string;
+          role?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "team_projects_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_projects_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_projects_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      teams: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          name: string;
+          description: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id?: string;
+          name: string;
+          description?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          name?: string;
+          description?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "teams_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "teams_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       workload_capacities: {
         Row: {
           id: string;
@@ -2389,6 +2750,65 @@ export type Database = {
           project_id: string;
           can_edit: boolean;
         }[];
+      };
+      add_team_member: {
+        Args: { target_team: string; member_email: string; member_role?: string };
+        Returns: string;
+      };
+      update_team_member_role: {
+        Args: { target_team: string; target_profile: string; new_role: string };
+        Returns: undefined;
+      };
+      remove_team_member: {
+        Args: { target_team: string; target_profile: string };
+        Returns: undefined;
+      };
+      add_team_to_project: {
+        Args: { target_project: string; target_team: string; member_role?: string };
+        Returns: Json;
+      };
+      is_team_lead: {
+        Args: { target_team: string };
+        Returns: boolean;
+      };
+      can_manage_team: {
+        Args: { target_team: string };
+        Returns: boolean;
+      };
+      can_edit_goal: {
+        Args: { target_goal: string };
+        Returns: boolean;
+      };
+      goal_editable: {
+        Args: { goal_owner: string | null; goal_team: string | null; goal_workspace: string };
+        Returns: boolean;
+      };
+      goal_hidden_project_count: {
+        Args: { target_goal: string };
+        Returns: number;
+      };
+      goal_task_counts: {
+        Args: { target_goal: string };
+        Returns: { task_count: number; completed_count: number }[];
+      };
+      goal_progress: {
+        Args: { target_workspace?: string | null };
+        Returns: {
+          goal_id: string;
+          progress: number | null;
+          task_count: number | null;
+          completed_count: number | null;
+          hidden_project_count: number;
+          sub_goal_count: number;
+        }[];
+      };
+      oldest_workspace_id: {
+        Args: Record<PropertyKey, never>;
+        Returns: string | null;
+      };
+      profile_in_workspace: {
+        Args: { target_profile: string };
+        Returns: boolean;
       };
       set_workload_capacity: {
         Args: {

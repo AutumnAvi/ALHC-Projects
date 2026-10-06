@@ -3,7 +3,19 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Briefcase, CircleCheck, House, Inbox, LayoutTemplate, LogOut, Plus, Search, Settings } from "lucide-react";
+import {
+  Briefcase,
+  CircleCheck,
+  House,
+  Inbox,
+  LayoutTemplate,
+  LogOut,
+  Plus,
+  Search,
+  Settings,
+  Target,
+  Users,
+} from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { NewPortfolioForm } from "@/components/shell/new-portfolio-form";
 import { NewProjectForm } from "@/components/shell/new-project-form";
@@ -40,6 +52,8 @@ export function Sidebar({
     { href: "/", label: "Home", icon: House },
     { href: "/my-tasks", label: "My Tasks", icon: CircleCheck },
     { href: "/inbox", label: "Inbox", icon: Inbox },
+    { href: "/goals", label: "Goals", icon: Target },
+    { href: "/teams", label: "Teams", icon: Users },
     { href: "/templates", label: "Templates", icon: LayoutTemplate },
   ];
 
@@ -80,7 +94,9 @@ export function Sidebar({
             <li key={href}>
               <Link
                 href={href}
-                aria-current={pathname === href ? "page" : undefined}
+                aria-current={
+                  pathname === href || (href !== "/" && pathname.startsWith(`${href}/`)) ? "page" : undefined
+                }
                 className={NAV_LINK}
               >
                 <Icon className="size-4 text-zinc-500 group-aria-[current=page]/nav:text-zinc-900" />

@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { MembersManager } from "@/components/project/members-manager";
 import { requireMember } from "@/lib/auth";
-import { getProject, getProjectRole, listProjectMembers } from "@/lib/data";
+import { getProject, getProjectRole, listProjectMembers, listTeams } from "@/lib/data";
+import { hasRole } from "@/lib/roles";
 
 export async function generateMetadata({
   params,
@@ -23,6 +24,16 @@ export default async function ProjectMembersPage({
     listProjectMembers(projectId),
   ]);
   if (!project || !role) notFound();
+  // Group invite (Admin+): the team directory is workspace-wide, so any team can be added.
+  const teams = hasRole(role, "admin") ? await listTeams() : [];
 
-  return <MembersManager projectId={projectId} members={members} viewerId={viewer.id} viewerRole={role} />;
+  return (
+    <MembersManager
+      projectId={projectId}
+      members={members}
+      viewerId={viewer.id}
+      viewerRole={role}
+      teams={teams.map((t) => ({ id: t.id, name: t.name, memberCount: t.members.length }))}
+    />
+  );
 }
