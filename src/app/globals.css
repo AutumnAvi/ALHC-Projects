@@ -64,3 +64,47 @@
 @utility skeleton {
   @apply animate-pulse rounded bg-zinc-100;
 }
+
+/* Print (Reporting and export): reports, dashboards, and the portfolio Report print through the
+   browser's Print → Save as PDF. The app shell is a full-height flex layout with scrolling panes, so on
+   paper it becomes plain flowing blocks; chrome (sidebar, mobile bar, tabs, buttons) carries
+   print:hidden. No PDF library. */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html,
+  body,
+  .app-shell {
+    height: auto !important;
+  }
+
+  .app-shell {
+    display: block !important;
+  }
+
+  .app-main,
+  .app-main * {
+    overflow: visible !important;
+  }
+
+  .app-main .min-h-0 {
+    min-height: auto !important;
+  }
+
+  .report-card,
+  .report-card tr {
+    break-inside: avoid;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

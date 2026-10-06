@@ -27,7 +27,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     <ToastProvider>
       <TimeZoneCookie />
       <KeyboardShortcuts />
-      <div className="flex h-full">
+      {/* app-shell / app-main: the print stylesheet (globals.css) lets these flow onto paper. */}
+      <div className="app-shell flex h-full">
         <Sidebar
           member={member}
           projects={projects.map(({ id, name }) => ({ id, name }))}
@@ -37,7 +38,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           })}
           unreadCount={unreadCount}
         />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="app-main flex min-w-0 flex-1 flex-col">
           <MobileBar memberId={member.id} unreadCount={unreadCount} />
           {children}
         </div>

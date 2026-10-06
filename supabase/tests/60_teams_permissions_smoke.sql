@@ -522,6 +522,8 @@ begin
   -- Goals and Teams directory added goal_hidden_project_count (a count only; everything else is invoker).
   -- Critical path and portfolio depth added none (its definer trigger guard_portfolio_child is revoked).
   -- Task types and nested rollups added none (its definer trigger sync_task_approval is revoked).
+  -- Real subtasks added none.
+  -- Reporting and export added workspace_hidden_project_count (a count only; everything else is invoker).
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
     'assign_request_number,can_manage_project_template,cancel_approval,create_project_from_template,custom_field_project,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'
@@ -530,7 +532,7 @@ begin
     'remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,'
     'request_approval,restore_task,resubmit_approval,rule_project,save_project_as_template,set_project_integration,set_project_status,start_import_run,submit_form,'
     'task_request_label,task_role,transfer_portfolio_ownership,transfer_project_ownership,'
-    'update_portfolio_member_role,update_project_member_role,update_project_template',
+    'update_portfolio_member_role,update_project_member_role,update_project_template,workspace_hidden_project_count',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);
 
   assert not has_function_privilege('authenticated', 'public.workflow_tick()', 'execute'), 'tick is service-role only';

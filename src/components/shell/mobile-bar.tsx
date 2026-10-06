@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Briefcase, CircleCheck, Inbox, LayoutTemplate, LogOut, Search, Settings, Target, Users } from "lucide-react";
+import { Briefcase, ChartColumn, CircleCheck, Inbox, LayoutTemplate, LogOut, Search, Settings, Target, Users } from "lucide-react";
 import { useUnreadCount } from "@/components/shell/unread-count";
 
 export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadCount: number }) {
@@ -9,7 +9,7 @@ export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadC
   const iconLink = "btn-icon relative";
 
   return (
-    <header className="flex h-bar shrink-0 items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-4 md:hidden">
+    <header className="flex h-bar shrink-0 items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-4 md:hidden print:hidden">
       <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight">
         <span
           aria-hidden
@@ -17,7 +17,7 @@ export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadC
         >
           A
         </span>
-        {/* Nine shortcuts don't fit next to the name on a narrow phone; the logo still links home. */}
+        {/* Ten shortcuts don't fit next to the name on a narrow phone; the logo still links home. */}
         <span className="max-[459px]:sr-only">ALHC Projects</span>
       </Link>
       <nav aria-label="Shortcuts" className="flex items-center gap-0.5">
@@ -26,6 +26,9 @@ export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadC
         </Link>
         <Link href="/my-tasks" aria-label="My Tasks" className={iconLink}>
           <CircleCheck className="size-4" />
+        </Link>
+        <Link href="/reports" aria-label="Reports" className={iconLink}>
+          <ChartColumn className="size-4" />
         </Link>
         <Link href="/goals" aria-label="Goals" className={iconLink}>
           <Target className="size-4" />

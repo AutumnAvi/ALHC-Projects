@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   Briefcase,
+  ChartColumn,
   CircleCheck,
   House,
   Inbox,
@@ -52,13 +53,14 @@ export function Sidebar({
     { href: "/", label: "Home", icon: House },
     { href: "/my-tasks", label: "My Tasks", icon: CircleCheck },
     { href: "/inbox", label: "Inbox", icon: Inbox },
+    { href: "/reports", label: "Reports", icon: ChartColumn },
     { href: "/goals", label: "Goals", icon: Target },
     { href: "/teams", label: "Teams", icon: Users },
     { href: "/templates", label: "Templates", icon: LayoutTemplate },
   ];
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex">
+    <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex print:hidden">
       <Link href="/" className="flex h-bar shrink-0 items-center gap-2 px-4">
         <span
           aria-hidden

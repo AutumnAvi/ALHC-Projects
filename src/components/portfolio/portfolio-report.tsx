@@ -2,6 +2,7 @@ import Link from "next/link";
 import { EyeOff } from "lucide-react";
 import { PortfolioFieldDisplay } from "@/components/portfolio/portfolio-field-value";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
+import { ExportLink, PrintButton } from "@/components/reports/report-chrome";
 import { Timestamp } from "@/components/timestamp";
 import type { PortfolioField, ProjectStatusUpdate } from "@/lib/data";
 import { RECENT_DAYS, formatProgress, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
@@ -31,6 +32,7 @@ const TD_NUM = "px-3 py-2 text-right text-sm tabular-nums text-zinc-800";
 // Per-project rows count a multi-homed task in each project; the portfolio total and the per-assignee
 // rows count it once.
 export function PortfolioReport({
+  portfolioId,
   totals,
   hiddenCount,
   projects,
@@ -38,6 +40,7 @@ export function PortfolioReport({
   fields,
   values,
 }: {
+  portfolioId: string;
   totals: PortfolioCounts;
   hiddenCount: number;
   projects: ProjectRow[];
@@ -50,6 +53,10 @@ export function PortfolioReport({
   const columns = 8 + fields.length + (showVia ? 1 : 0);
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-gutter py-5">
+      <div className="flex flex-wrap justify-end gap-2">
+        <ExportLink href={`/export/portfolio?portfolio=${portfolioId}`} />
+        <PrintButton />
+      </div>
       <p className="text-sm text-zinc-600">
         Incomplete, overdue, and recently completed tasks across this portfolio. “Recently” means completed on one of
         the last {RECENT_DAYS} days in your time zone, today included. Overdue means incomplete and due before today.
@@ -66,7 +73,7 @@ export function PortfolioReport({
         <h2 id="by-project-heading" className="text-sm font-semibold text-zinc-900">
           By project
         </h2>
-        <div className="mt-2 overflow-x-auto rounded-lg border border-zinc-200">
+        <div className="report-card mt-2 overflow-x-auto rounded-lg border border-zinc-200">
           <table className="w-full min-w-[48rem] border-collapse">
             <caption className="sr-only">Task counts, fields, and latest status update by project</caption>
             <thead className="border-b border-zinc-200 bg-zinc-50">
@@ -172,7 +179,7 @@ export function PortfolioReport({
         <h2 id="by-assignee-heading" className="text-sm font-semibold text-zinc-900">
           By assignee
         </h2>
-        <div className="mt-2 overflow-x-auto rounded-lg border border-zinc-200">
+        <div className="report-card mt-2 overflow-x-auto rounded-lg border border-zinc-200">
           <table className="w-full min-w-[32rem] border-collapse">
             <caption className="sr-only">Task counts by assignee across the portfolio</caption>
             <thead className="border-b border-zinc-200 bg-zinc-50">
