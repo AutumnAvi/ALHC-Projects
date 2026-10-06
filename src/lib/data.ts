@@ -12,6 +12,7 @@ import {
   type RuleRun,
 } from "@/lib/rules";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
+import { REACTIONS, type ReactionKey } from "@/lib/reactions";
 import { toProjectIntegrations, type ProjectIntegrations } from "@/lib/integrations-shared";
 import {
   PROJECT_ROLES as ROLE_ORDER,
@@ -164,9 +165,14 @@ export type TaskComment = {
   id: string;
   authorId: string | null;
   ruleName: string | null;
+  // Empty for a deleted comment (shown as a "Comment deleted" placeholder).
   body: string;
   createdAt: string;
+  editedAt: string | null;
+  deleted: boolean;
   mentionIds: string[];
+  // Active reactions, in the fixed REACTIONS order; only emoji someone used.
+  reactions: { emoji: ReactionKey; profileIds: string[] }[];
 };
 
 export type TaskStory = {
@@ -489,9 +495,10 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .order("created_at"),
     supabase
       .from("comments")
-      .select("id, author_id, rule_id, body, created_at, comment_mentions(profile_id)")
+      .select(
+        "id, author_id, rule_id, body, created_at, edited_at, deleted_at, comment_mentions(profile_id), comment_reactions(emoji, profile_id, deleted_at, created_at)",
+      )
       .eq("task_id", taskId)
-      .is("deleted_at", null)
       .order("created_at"),
     supabase
       .from("task_stories")
@@ -605,14 +612,28 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       name: a.name,
       url: a.url,
     })),
-    comments: commentRows.map((c) => ({
-      id: c.id,
-      authorId: c.author_id,
-      ruleName: c.rule_id ? (ruleName.get(c.rule_id) ?? "Rule") : null,
-      body: c.body,
-      createdAt: c.created_at,
-      mentionIds: c.comment_mentions.map((m) => m.profile_id),
-    })),
+    comments: commentRows.map((c) => {
+      const deleted = c.deleted_at !== null;
+      const active = deleted
+        ? []
+        : c.comment_reactions
+            .filter((r) => r.deleted_at === null)
+            .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      return {
+        id: c.id,
+        authorId: c.author_id,
+        ruleName: c.rule_id ? (ruleName.get(c.rule_id) ?? "Rule") : null,
+        body: deleted ? "" : c.body,
+        createdAt: c.created_at,
+        editedAt: deleted ? null : c.edited_at,
+        deleted,
+        mentionIds: deleted ? [] : c.comment_mentions.map((m) => m.profile_id),
+        reactions: REACTIONS.map(({ key }) => ({
+          emoji: key,
+          profileIds: active.filter((r) => r.emoji === key).map((r) => r.profile_id),
+        })).filter((r) => r.profileIds.length > 0),
+      };
+    }),
     stories: rows(stories, "activity").map((st) => ({
       id: st.id,
       actorId: st.actor_id,
@@ -833,22 +854,26 @@ export type InboxItem = {
   data: Json;
   actorId: string | null;
   readAt: string | null;
+  archivedAt: string | null;
   createdAt: string;
   taskId: string;
   taskTitle: string;
   commentBody: string | null;
 };
 
-export const listInbox = cache(async (): Promise<InboxItem[]> => {
+export type InboxTab = "active" | "archived";
+
+// The Inbox tab (not archived) or the Archived tab; newest first, 100 at most.
+export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxItem[]> => {
   const supabase = await createClient();
-  const result = await supabase
+  let query = supabase
     .from("inbox_items")
     .select(
-      "id, kind, data, actor_id, read_at, created_at, task:tasks!inner(id, title), comment:comments(body, deleted_at)",
+      "id, kind, data, actor_id, read_at, archived_at, created_at, task:tasks!inner(id, title), comment:comments(body, deleted_at)",
     )
-    .is("task.deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(100);
+    .is("task.deleted_at", null);
+  query = tab === "archived" ? query.not("archived_at", "is", null) : query.is("archived_at", null);
+  const result = await query.order("created_at", { ascending: false }).limit(100);
   return rows(result, "inbox")
     .filter((item) => !item.comment?.deleted_at)
     .map((item) => ({
@@ -857,6 +882,7 @@ export const listInbox = cache(async (): Promise<InboxItem[]> => {
       data: item.data,
       actorId: item.actor_id,
       readAt: item.read_at,
+      archivedAt: item.archived_at,
       createdAt: item.created_at,
       taskId: item.task.id,
       taskTitle: item.task.title,
@@ -869,7 +895,8 @@ export const countUnreadInbox = cache(async () => {
   const { count, error } = await supabase
     .from("inbox_items")
     .select("id", { count: "exact", head: true })
-    .is("read_at", null);
+    .is("read_at", null)
+    .is("archived_at", null);
   if (error) throw new Error(`Failed to load inbox count: ${error.message}`);
   return count ?? 0;
 });
@@ -1381,7 +1408,7 @@ export type ProjectTemplate = {
   sourceProject: { id: string; name: string } | null;
   createdByName: string | null;
   updatedAt: string;
-  // Admin+ of the source project (or, without a live source, of any project): rename, replace, delete.
+  // Admin+ of the live source project, or a workspace admin: rename, replace, delete.
   canManage: boolean;
 };
 
@@ -1510,4 +1537,67 @@ export const getProjectOrigin = cache(async (projectId: string): Promise<Project
     actorName: story.actor ? (story.actor.full_name ?? story.actor.email) : null,
     createdAt: story.created_at,
   };
+});
+
+// ---------------------------------------------------------------------------------------------
+// Workspace admin (see 20261006030000_workspace_admin_comments.sql). Being a workspace admin never
+// grants project access: every read below still goes through project RLS.
+// ---------------------------------------------------------------------------------------------
+
+export type WorkspaceAdmin = {
+  profileId: string;
+  name: string;
+  email: string;
+  addedAt: string;
+};
+
+export const isWorkspaceAdmin = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  return maybe(await supabase.rpc("is_workspace_admin", {}), "workspace admin check") === true;
+});
+
+export const listWorkspaceAdmins = cache(async (workspaceId: string): Promise<WorkspaceAdmin[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("workspace_admins")
+    .select("profile_id, created_at, profile:profiles!workspace_admins_profile_id_fkey(email, full_name)")
+    .eq("workspace_id", workspaceId)
+    .is("deleted_at", null)
+    .order("created_at");
+  return rows(result, "workspace admins").map((a) => ({
+    profileId: a.profile_id,
+    name: a.profile?.full_name?.trim() || a.profile?.email || "Unknown",
+    email: a.profile?.email ?? "",
+    addedAt: a.created_at,
+  }));
+});
+
+export type WorkspaceImportRun = ImportRun & { projectId: string; projectName: string };
+
+// Past imports across the workspace. RLS shows a workspace admin the runs of projects they can read
+// (any role), and project admins their own projects' runs; nothing else.
+export const listWorkspaceImportRuns = cache(async (): Promise<WorkspaceImportRun[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("import_runs")
+    .select(
+      "id, project_id, source, status, file_names, summary, created_by, created_at, finished_at, creator:profiles(email, full_name), project:projects!inner(name, deleted_at)",
+    )
+    .is("deleted_at", null)
+    .is("project.deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  return rows(result, "imports").map((r) => ({
+    id: r.id,
+    projectId: r.project_id,
+    projectName: r.project.name,
+    source: r.source,
+    status: r.status === "completed" || r.status === "failed" ? r.status : "running",
+    fileNames: r.file_names ?? [],
+    summary: r.summary && typeof r.summary === "object" && !Array.isArray(r.summary) ? (r.summary as Record<string, unknown>) : {},
+    createdBy: r.created_by,
+    createdByName: r.creator ? (r.creator.full_name ?? r.creator.email) : null,
+    createdAt: r.created_at,
+    finishedAt: r.finished_at,
+  }));
 });

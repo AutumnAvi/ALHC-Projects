@@ -40,6 +40,7 @@ import {
 } from "@/lib/forms";
 import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
+import { isReactionKey } from "@/lib/reactions";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isPortfolioRole, isProjectRole } from "@/lib/roles";
@@ -1149,6 +1150,55 @@ export async function addComment(taskId: string, body: string): Promise<ActionRe
   });
 }
 
+// Authors edit only the text; the database stamps edited_at and notifies people the edit newly mentions.
+export async function editComment(commentId: string, body: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("comments")
+      .update({ body: text(body, "Comment", { max: 10000 }) })
+      .eq("id", id(commentId))
+      .is("deleted_at", null)
+      .select("id");
+    check(result);
+    if (!result.data?.length) throw new InputError("You can only edit your own comments");
+  });
+}
+
+// Adds the viewer's reaction, or removes it (soft delete) when they already reacted with that emoji.
+export async function toggleReaction(commentId: string, emoji: string): Promise<ActionResult> {
+  return run(async () => {
+    if (!isReactionKey(emoji)) throw new InputError("Unknown reaction");
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to react");
+    const existing = await supabase
+      .from("comment_reactions")
+      .select("id")
+      .eq("comment_id", id(commentId))
+      .eq("profile_id", user.id)
+      .eq("emoji", emoji)
+      .is("deleted_at", null);
+    check(existing);
+    if (existing.data?.length) {
+      checkUpdated(
+        await supabase
+          .from("comment_reactions")
+          .update({ deleted_at: now() })
+          .in("id", existing.data.map((r) => r.id))
+          .select("id"),
+      );
+      return;
+    }
+    const inserted = await supabase.from("comment_reactions").insert({ comment_id: commentId, emoji });
+    // A double click can race the unique index; the reaction is there either way.
+    if (inserted.error?.code === "23505") return;
+    check(inserted);
+  });
+}
+
 export async function deleteComment(commentId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
@@ -1338,6 +1388,43 @@ export async function markInboxUnread(itemId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.from("inbox_items").update({ read_at: null }).eq("id", id(itemId)));
+  });
+}
+
+// Archive (or unarchive) items, or every unarchived item. RLS limits all of it to the viewer's own rows.
+export async function archiveInboxItems(itemIds: string[] | "all", archived = true): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    let query = supabase.from("inbox_items").update({ archived_at: archived ? now() : null });
+    query = archived ? query.is("archived_at", null) : query.not("archived_at", "is", null);
+    if (itemIds !== "all") query = query.in("id", itemIds.map((itemId) => id(itemId)));
+    check(await query);
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Workspace admins (Settings → Workspace). Admins add and remove admins; the last one stays.
+// ---------------------------------------------------------------------------------------------
+
+export async function addWorkspaceAdmin(email: string): Promise<ActionResult> {
+  return run(async () => {
+    const address = text(email, "Email", { max: 320 }).toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    check(await supabase.rpc("add_workspace_admin", { target_workspace: workspace.id, member_email: address }));
+  });
+}
+
+export async function removeWorkspaceAdmin(profileId: string): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("remove_workspace_admin", { target_workspace: workspace.id, target_profile: id(profileId) }),
+    );
   });
 }
 

@@ -449,8 +449,10 @@ begin
     = 'Request type,Due date priority', 'example fields';
   assert (select count(*) from public.tasks where home_project_id = np) = 0, 'nothing more specific than that';
   assert (select count(*) from public.project_views where project_id = np and deleted_at is null) = 4, 'default view tabs';
-  -- The member owns a project, so (with no live source project) they can manage the example.
-  assert public.can_manage_project_template('00000000-0000-4000-8000-0000000000c1'), 'project admins manage the example';
+  -- Since Workspace admin and comments: without a live source project, only a workspace admin manages
+  -- a template. Owning some other project (as the member does) no longer counts; 94 covers the admin.
+  assert not public.can_manage_project_template('00000000-0000-4000-8000-0000000000c1'),
+    'owning another project does not manage the example';
 end $$;
 
 -- Task templates ----------------------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Briefcase, CircleCheck, House, Inbox, LayoutTemplate, LogOut, Plus, Search } from "lucide-react";
+import { Briefcase, CircleCheck, House, Inbox, LayoutTemplate, LogOut, Plus, Search, Settings } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { NewPortfolioForm } from "@/components/shell/new-portfolio-form";
 import { NewProjectForm } from "@/components/shell/new-project-form";
@@ -198,6 +198,15 @@ export function Sidebar({
           <p className="truncate text-sm font-medium text-zinc-900">{member.name}</p>
           <p className="truncate text-xs text-zinc-500">{member.email}</p>
         </div>
+        <Link
+          href="/settings/workspace"
+          aria-label="Workspace settings"
+          title="Workspace settings"
+          aria-current={pathname === "/settings/workspace" ? "page" : undefined}
+          className="btn-icon hover:bg-zinc-200 aria-[current=page]:bg-zinc-200 aria-[current=page]:text-zinc-900"
+        >
+          <Settings className="size-4" />
+        </Link>
         <form action="/auth/signout" method="post">
           <button
             type="submit"
