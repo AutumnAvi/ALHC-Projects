@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useId, useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { Inbox } from "lucide-react";
+import { Inbox, Route } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
+import { EMPTY_CRITICAL_PATH, slackLabel, type CriticalPath, type TaskSchedule } from "@/lib/critical-path";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectDependency, ProjectTask, Section } from "@/lib/data";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
@@ -44,6 +45,8 @@ type Props = {
   config: ViewConfig;
   openTaskId: string | null;
   dependencies?: ProjectDependency[];
+  // Slack per dated task of the whole project (not just this view), from project_critical_path().
+  criticalPath?: CriticalPath;
 };
 
 const LABEL_WIDTH = 256;
@@ -53,7 +56,16 @@ const GROUP_HEIGHT = 32;
 const ROW_HEIGHT = 36;
 const labelCell = { width: LABEL_WIDTH, minWidth: LABEL_WIDTH };
 
-export function TimelineView({ sections, tasks, profiles, fields, config, openTaskId, dependencies = [] }: Props) {
+export function TimelineView({
+  sections,
+  tasks,
+  profiles,
+  fields,
+  config,
+  openTaskId,
+  dependencies = [],
+  criticalPath = EMPTY_CRITICAL_PATH,
+}: Props) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const today = useToday();
@@ -72,9 +84,10 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
   const zoomParam = searchParams.get("tl");
   const zoom: Zoom = isZoom(zoomParam) ? zoomParam : "week";
   const anchor = isIsoDate(requested) ? requested : today;
+  const showCritical = searchParams.get("cp") === "1";
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
 
-  function navigate(next: { d?: string | null; tl?: Zoom }) {
+  function navigate(next: { d?: string | null; tl?: Zoom; cp?: boolean }) {
     const params = new URLSearchParams(searchParams.toString());
     if (next.d !== undefined) {
       if (next.d) params.set("d", next.d);
@@ -83,6 +96,10 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
     if (next.tl) {
       if (next.tl === "week") params.delete("tl");
       else params.set("tl", next.tl);
+    }
+    if (next.cp !== undefined) {
+      if (next.cp) params.set("cp", "1");
+      else params.delete("cp");
     }
     const query = params.toString();
     window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
@@ -142,7 +159,10 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
       x2 - x1 >= 2 * pad
         ? `M${x1},${y1} H${x1 + pad} V${y2} H${x2}`
         : `M${x1},${y1} H${x1 + pad} V${y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 2)} H${x2 - pad} V${y2} H${x2}`;
-    return [{ id: dep.id, path, conflict: b.start < a.end }];
+    const onPath = Boolean(
+      criticalPath.tasks[dep.predecessorId]?.critical && criticalPath.tasks[dep.successorId]?.critical,
+    );
+    return [{ id: dep.id, path, conflict: b.start < a.end, tone: showCritical ? (onPath ? "path" : "dim") : "normal" } as const];
   });
 
   function dayAt(clientX: number, clientY: number) {
@@ -205,8 +225,32 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
           onNext={() => navigate({ d: stepAnchor(anchor, zoom, 1) })}
           onToday={() => navigate({ d: null })}
         >
-          <Segmented label="Timeline scale" options={ZOOMS} value={zoom} onChange={(z) => navigate({ tl: z })} />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-pressed={showCritical}
+              onClick={() => navigate({ cp: !showCritical })}
+              title="Highlight the longest chain of dependencies ending at the project’s last due date"
+              className={`btn-secondary ${showCritical ? "border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800" : ""}`}
+            >
+              <Route className="size-4" aria-hidden />
+              Critical path
+            </button>
+            <Segmented label="Timeline scale" options={ZOOMS} value={zoom} onChange={(z) => navigate({ tl: z })} />
+          </div>
         </PeriodNav>
+        {showCritical ? (
+          <p className="mb-2 text-xs text-zinc-500" role="status">
+            Outlined bars are on the critical path: the chain of dependencies that ends at the project’s last due date
+            with no slack. Other bars are faded; hover a bar for its slack. Counts every task in this project you can
+            see, not only this view’s.
+            {criticalPath.skipped > 0
+              ? ` ${criticalPath.skipped === 1 ? "1 task has" : `${criticalPath.skipped} tasks have`} no due date and ${
+                  criticalPath.skipped === 1 ? "isn’t" : "aren’t"
+                } part of it.`
+              : ""}
+          </p>
+        ) : null}
 
         <div
           key={`${zoom}-${start}`}
@@ -306,6 +350,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
                     const overdue = isOverdue(task.dueOn, today, completed);
                     const span = spanOf(task)!;
                     const assignee = task.assigneeId ? profilesById.get(task.assigneeId) : undefined;
+                    const schedule = criticalPath.tasks[task.id];
                     return (
                       <li key={task.id} className="relative flex h-9 border-b border-zinc-100">
                         <div
@@ -329,6 +374,7 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
                               {completed ? ", completed" : ""}
                               {task.blockedBy > 0 && !completed ? `, blocked by ${task.blockedBy}` : ""}
                               {assignee ? `, assigned to ${displayName(assignee)}` : ""}
+                              {schedule ? `, ${slackLabel(schedule)}` : ""}
                             </span>
                           </Link>
                           <span aria-hidden>
@@ -345,6 +391,8 @@ export function TimelineView({ sections, tasks, profiles, fields, config, openTa
                             days={days}
                             dayWidth={dayWidth}
                             canEdit={canEdit}
+                            schedule={schedule}
+                            highlight={showCritical ? (schedule?.critical ? "critical" : "dim") : null}
                             onCommit={(dates) => reschedule(task, dates)}
                             onReveal={(date) => navigate({ d: date })}
                           />
@@ -421,7 +469,7 @@ function DependencyArrows({
   width,
   height,
 }: {
-  arrows: { id: string; path: string; conflict: boolean }[];
+  arrows: { id: string; path: string; conflict: boolean; tone: "normal" | "path" | "dim" }[];
   width: number;
   height: number;
 }) {
@@ -455,8 +503,9 @@ function DependencyArrows({
           key={arrow.id}
           d={arrow.path}
           fill="none"
-          strokeWidth={1.25}
-          className={arrow.conflict ? "stroke-red-400" : "stroke-zinc-400"}
+          strokeWidth={arrow.tone === "path" ? 2 : 1.25}
+          opacity={arrow.tone === "dim" ? 0.35 : 1}
+          className={arrow.conflict ? "stroke-red-400" : arrow.tone === "path" ? "stroke-zinc-800" : "stroke-zinc-400"}
           markerEnd={`url(#${id}-${arrow.conflict ? "conflict" : "ok"})`}
         />
       ))}
@@ -475,6 +524,8 @@ function TimelineBar({
   days,
   dayWidth,
   canEdit,
+  schedule,
+  highlight,
   onCommit,
   onReveal,
 }: {
@@ -486,6 +537,8 @@ function TimelineBar({
   days: number;
   dayWidth: number;
   canEdit: boolean;
+  schedule: TaskSchedule | undefined;
+  highlight: "critical" | "dim" | null;
   onCommit: (dates: Dates) => void;
   onReveal: (date: string) => void;
 }) {
@@ -570,7 +623,7 @@ function TimelineBar({
         draggable={false}
         tabIndex={-1}
         aria-hidden
-        title={`${task.title} · ${spanLabel(span)}`}
+        title={`${task.title} · ${spanLabel(span)}${schedule ? ` · ${slackLabel(schedule)}` : ""}`}
         onClick={(e) => {
           if (suppressClick.current) {
             e.preventDefault();
@@ -587,6 +640,8 @@ function TimelineBar({
         className={`group absolute top-1.5 flex h-6 touch-pan-y items-center rounded-md text-xs select-none ${tone} ${
           clippedStart ? "rounded-l-none" : ""
         } ${clippedEnd ? "rounded-r-none" : ""} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${
+          highlight === "critical" ? "outline-2 outline-offset-1 outline-zinc-900" : highlight === "dim" ? "opacity-35" : ""
+        } ${
           drag?.moved ? "z-10 cursor-grabbing shadow-md" : canEdit ? "cursor-grab" : "cursor-pointer"
         }`}
         style={{ left, width }}

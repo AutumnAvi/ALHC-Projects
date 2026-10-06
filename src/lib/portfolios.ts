@@ -40,3 +40,23 @@ export function progressPercent(completed: number, total: number): number | null
 export function formatProgress(percent: number | null): string {
   return percent === null ? "No tasks" : `${percent}%`;
 }
+
+// Portfolio custom fields (portfolio_fields): one value per project, set by portfolio Editors+. Mirrors
+// the CHECK and guard_portfolio_field() in 20261006060000_critical_path_portfolios.sql.
+export const PORTFOLIO_FIELD_TYPES = [
+  { value: "text", label: "Text" },
+  { value: "number", label: "Number" },
+  { value: "single_select", label: "Single-select" },
+  { value: "date", label: "Date" },
+] as const;
+
+export type PortfolioFieldType = (typeof PORTFOLIO_FIELD_TYPES)[number]["value"];
+
+export function isPortfolioFieldType(value: unknown): value is PortfolioFieldType {
+  return PORTFOLIO_FIELD_TYPES.some((t) => t.value === value);
+}
+
+export const MAX_PORTFOLIO_FIELD_TEXT = 2000;
+
+// The Timeline tab groups a portfolio's own projects under this label, then each nested portfolio.
+export const OWN_PROJECTS_LABEL = "This portfolio";

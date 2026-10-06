@@ -11,10 +11,12 @@ import {
   listProfiles,
   listProjectDependencies,
   listProjectFields,
+  projectCriticalPath,
   listProjectTasks,
   listProjectViews,
   listSections,
 } from "@/lib/data";
+import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { decodeConfig, pruneConfig, type ProjectView, type ViewLayout } from "@/lib/views";
 
@@ -60,13 +62,14 @@ export async function ProjectViewPage({
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
 
-  const [sections, tasks, profiles, fields, timeZone, dependencies, bulk] = await Promise.all([
+  const [sections, tasks, profiles, fields, timeZone, dependencies, criticalPath, bulk] = await Promise.all([
     listSections(projectId),
     listProjectTasks(projectId),
     listProfiles(),
     listProjectFields(projectId),
     getViewerTimeZone(),
     layout === "timeline" ? listProjectDependencies(projectId) : Promise.resolve([]),
+    layout === "timeline" ? projectCriticalPath(projectId) : Promise.resolve(EMPTY_CRITICAL_PATH),
     layout === "list" ? listBulkContext(projectId) : Promise.resolve(undefined),
   ]);
 
@@ -103,7 +106,12 @@ export async function ProjectViewPage({
         <CalendarView tasks={visible} profiles={profiles} openTaskId={openTaskId} />
       ) : null}
       {layout === "timeline" ? (
-        <TimelineView key={`timeline-${view?.id ?? "default"}`} {...props} dependencies={dependencies} />
+        <TimelineView
+          key={`timeline-${view?.id ?? "default"}`}
+          {...props}
+          dependencies={dependencies}
+          criticalPath={criticalPath}
+        />
       ) : null}
       {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
     </main>

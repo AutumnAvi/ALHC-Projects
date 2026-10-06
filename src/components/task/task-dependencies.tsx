@@ -5,6 +5,7 @@ import { CheckCircle2, Circle, Plus, X } from "lucide-react";
 import { useTaskHref } from "@/components/project/shared";
 import { useServerAction } from "@/components/toast";
 import { addTaskDependency, removeTaskDependency } from "@/lib/actions";
+import { slackLabel } from "@/lib/critical-path";
 import type { TaskDependency, TaskDetail } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 
@@ -14,7 +15,8 @@ export function TaskDependencies({ task }: { task: TaskDetail }) {
   const canEdit = hasRole(task.viewerRole, "editor");
   const blockedBy = task.dependencies.filter((d) => d.relation === "blocked_by");
   const blocking = task.dependencies.filter((d) => d.relation === "blocking");
-  if (!canEdit && task.dependencies.length === 0) return null;
+  if (!canEdit && task.dependencies.length === 0 && task.schedule.length === 0) return null;
+  const multiProject = task.schedule.length > 1;
 
   const linked = new Set(task.dependencies.map((d) => d.taskId));
   const candidates = task.dependencyCandidates
@@ -26,6 +28,16 @@ export function TaskDependencies({ task }: { task: TaskDetail }) {
       <h3 id="dependencies-heading" className="text-sm font-semibold text-zinc-900">
         Dependencies
       </h3>
+      {task.schedule.length > 0 ? (
+        <ul className="mt-1 space-y-0.5 text-xs text-zinc-600" aria-label="Schedule">
+          {task.schedule.map((s) => (
+            <li key={s.projectId}>
+              <span className={s.critical ? "font-medium text-zinc-900" : undefined}>{slackLabel(s)}</span>
+              {multiProject ? <span className="text-zinc-400"> · {s.projectName}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="mt-2 grid gap-3 sm:grid-cols-2">
         <DependencyList
           id="blocked-by"

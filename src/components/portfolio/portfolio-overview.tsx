@@ -2,18 +2,34 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowDown, ArrowUp, EyeOff, FolderClosed, Plus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Briefcase, EyeOff, FolderClosed, Plus, X } from "lucide-react";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { usePortfolioCan } from "@/components/portfolio/portfolio-access";
+import { PortfolioFieldDisplay, PortfolioFieldInput } from "@/components/portfolio/portfolio-field-value";
 import { ProgressBar } from "@/components/portfolio/progress-bar";
+import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { addPortfolioProject, movePortfolioProject, removePortfolioProject, updatePortfolio } from "@/lib/actions";
-import type { Portfolio, PortfolioProject } from "@/lib/data";
+import {
+  addPortfolioChild,
+  addPortfolioProject,
+  movePortfolioProject,
+  removePortfolioChild,
+  removePortfolioProject,
+  updatePortfolio,
+} from "@/lib/actions";
+import type { Portfolio, PortfolioChild, PortfolioField, PortfolioProject, ProjectStatusUpdate } from "@/lib/data";
+import type { Json } from "@/lib/supabase/database.types";
 import { RECENT_DAYS, formatProgress, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
 import { ROLE_LABELS, type ProjectRole } from "@/lib/roles";
 import { EmptyState } from "@/components/ui";
 
-type Card = { project: PortfolioProject; role: ProjectRole | null; counts: PortfolioCounts };
+type Card = {
+  project: PortfolioProject;
+  role: ProjectRole | null;
+  counts: PortfolioCounts;
+  latest: ProjectStatusUpdate | null;
+};
+type Nested = PortfolioChild & { total: number; completed: number };
 
 const inputClass =
   "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none disabled:opacity-50";
@@ -24,18 +40,28 @@ export function PortfolioOverview({
   hiddenCount,
   cards,
   candidates,
+  nested,
+  nestCandidates,
+  fields,
+  values,
 }: {
   portfolio: Portfolio;
   totals: PortfolioCounts;
   hiddenCount: number;
   cards: Card[];
   candidates: { id: string; name: string }[];
+  nested: Nested[];
+  nestCandidates: { id: string; name: string }[];
+  fields: PortfolioField[];
+  values: Record<string, Record<string, Json>>;
 }) {
   const [pending, run] = useServerAction();
   const canEdit = usePortfolioCan("editor");
   const [selected, setSelected] = useState("");
   const percent = progressPercent(totals.completed, totals.total);
   const choice = candidates.some((c) => c.id === selected) ? selected : (candidates[0]?.id ?? "");
+  const [selectedChild, setSelectedChild] = useState("");
+  const childChoice = nestCandidates.some((c) => c.id === selectedChild) ? selectedChild : (nestCandidates[0]?.id ?? "");
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-gutter py-5">
@@ -60,14 +86,16 @@ export function PortfolioOverview({
         <p className="mt-3 text-xs text-zinc-500">
           Progress is completed ÷ (completed + incomplete) over the active tasks in this portfolio’s projects, rounded
           down. A task in several of these projects counts once. Overdue means incomplete and due before today in your
-          time zone. Only projects you’re a member of are counted.
+          time zone. Projects of nested portfolios count too when you’re a member of the nested portfolio. Only
+          projects you’re a member of are counted.
         </p>
         {hiddenCount > 0 ? (
           <p className="mt-3 flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
             <EyeOff className="size-4 shrink-0 text-zinc-500" aria-hidden />
             {hiddenCount === 1 ? "1 project" : `${hiddenCount} projects`} in this portfolio{" "}
-            {hiddenCount === 1 ? "isn’t" : "aren’t"} shown because you’re not a member. Those tasks are left out of
-            every number here.
+            {hiddenCount === 1 ? "isn’t" : "aren’t"} shown because you’re not a member of {hiddenCount === 1 ? "it" : "them"}{" "}
+            (or of the nested portfolio {hiddenCount === 1 ? "it’s" : "they’re"} in). Those tasks are left out of every
+            number here.
           </p>
         ) : null}
       </section>
@@ -156,7 +184,7 @@ export function PortfolioOverview({
           </div>
         ) : (
           <ol className="mt-4 grid gap-3 md:grid-cols-2">
-            {cards.map(({ project, role, counts }, index) => {
+            {cards.map(({ project, role, counts, latest }, index) => {
               const projectPercent = progressPercent(counts.completed, counts.total);
               return (
                 <li key={project.id} className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4">
@@ -178,6 +206,11 @@ export function PortfolioOverview({
                   {project.status_note ? (
                     <p className="line-clamp-2 text-xs text-zinc-600">{project.status_note}</p>
                   ) : null}
+                  {latest ? (
+                    <p className="-mt-2 text-2xs text-zinc-400">
+                      Updated by {latest.authorName ?? "someone"} <Timestamp iso={latest.createdAt} />
+                    </p>
+                  ) : null}
                   <div className="flex items-center gap-2">
                     <ProgressBar percent={projectPercent} label={`${project.name} progress`} size="sm" />
                     <span className="shrink-0 text-xs tabular-nums text-zinc-600">{formatProgress(projectPercent)}</span>
@@ -187,6 +220,27 @@ export function PortfolioOverview({
                     <MiniStat label="Complete" value={counts.completed} />
                     <MiniStat label="Overdue" value={counts.overdue} danger={counts.overdue > 0} />
                   </dl>
+                  {fields.length > 0 ? (
+                    <dl className="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] items-center gap-x-2 gap-y-1 border-t border-zinc-100 pt-2 text-xs">
+                      {fields.map((field) => (
+                        <div key={field.id} className="contents">
+                          <dt className="truncate text-zinc-500">{field.name}</dt>
+                          <dd className="min-w-0 text-zinc-800">
+                            {canEdit ? (
+                              <PortfolioFieldInput
+                                field={field}
+                                projectId={project.id}
+                                projectName={project.name}
+                                value={values[project.id]?.[field.id]}
+                              />
+                            ) : (
+                              <PortfolioFieldDisplay field={field} value={values[project.id]?.[field.id]} />
+                            )}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
                   {canEdit ? (
                     <div className="flex items-center justify-end gap-1 border-t border-zinc-100 pt-2">
                       <button
@@ -229,6 +283,101 @@ export function PortfolioOverview({
               );
             })}
           </ol>
+        )}
+      </section>
+
+      <section aria-labelledby="nested-heading">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h2 id="nested-heading" className="text-sm font-semibold text-zinc-900">
+            Portfolios <span className="font-normal text-zinc-500">· {nested.length}</span>
+          </h2>
+          {canEdit ? (
+            nestCandidates.length > 0 ? (
+              <form
+                className="flex items-end gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (childChoice) run(() => addPortfolioChild(portfolio.id, childChoice));
+                }}
+              >
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="add-portfolio" className="text-xs font-medium text-zinc-600">
+                    Add a portfolio you’re a member of
+                  </label>
+                  <select
+                    id="add-portfolio"
+                    value={childChoice}
+                    onChange={(e) => setSelectedChild(e.currentTarget.value)}
+                    className={`${inputClass} max-w-64`}
+                  >
+                    {nestCandidates.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="submit"
+                  disabled={pending || !childChoice}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  <Plus className="size-4" aria-hidden />
+                  Add
+                </button>
+              </form>
+            ) : (
+              <p className="text-xs text-zinc-500">There are no other portfolios you’re a member of to add.</p>
+            )
+          ) : null}
+        </div>
+        {nested.length === 0 ? (
+          <div className="mt-4">
+            <EmptyState icon={Briefcase} title="No nested portfolios" size="inline">
+              {canEdit
+                ? "Add a portfolio above to roll its projects into this one’s progress, report, and timeline."
+                : "Portfolios inside this one show here when you’re a member of them."}
+            </EmptyState>
+          </div>
+        ) : (
+          <ul className="mt-4 grid gap-3 md:grid-cols-2">
+            {nested.map((child) => {
+              const childPercent = progressPercent(child.completed, child.total);
+              return (
+                <li key={child.id} className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4">
+                  <div className="flex items-start gap-2">
+                    <Link
+                      href={`/portfolios/${child.id}`}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-zinc-900 hover:underline"
+                    >
+                      <Briefcase className="size-4 shrink-0 text-zinc-400" aria-hidden />
+                      <span className="truncate">{child.name}</span>
+                    </Link>
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => {
+                          if (window.confirm(`Remove “${child.name}” from this portfolio? The portfolio itself is not changed.`)) {
+                            run(() => removePortfolioChild(portfolio.id, child.id));
+                          }
+                        }}
+                        aria-label={`Remove ${child.name} from this portfolio`}
+                        title="Remove from portfolio"
+                        className="rounded p-1.5 text-zinc-400 hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <ProgressBar percent={childPercent} label={`${child.name} progress`} size="sm" />
+                    <span className="shrink-0 text-xs tabular-nums text-zinc-600">{formatProgress(childPercent)}</span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
     </div>

@@ -4,8 +4,14 @@ import { PortfolioOverview } from "@/components/portfolio/portfolio-overview";
 import {
   countHiddenPortfolioProjects,
   getPortfolio,
+  listLatestStatusUpdates,
   listMyProjectRoles,
+  listPortfolioChildren,
+  listPortfolioFieldValues,
+  listPortfolioFields,
+  listPortfolioProgress,
   listPortfolioProjects,
+  listPortfolios,
   listProjects,
   portfolioReport,
 } from "@/lib/data";
@@ -21,7 +27,20 @@ export async function generateMetadata({ params }: PageProps<"/portfolios/[portf
 export default async function PortfolioPage({ params }: PageProps<"/portfolios/[portfolioId]">) {
   const { portfolioId } = await params;
   const timeZone = await getViewerTimeZone();
-  const [portfolio, projects, byProject, totals, hidden, myRoles, allProjects] = await Promise.all([
+  const [
+    portfolio,
+    projects,
+    byProject,
+    totals,
+    hidden,
+    myRoles,
+    allProjects,
+    children,
+    allPortfolios,
+    progress,
+    fields,
+    values,
+  ] = await Promise.all([
     getPortfolio(portfolioId),
     listPortfolioProjects(portfolioId),
     portfolioReport(portfolioId, "project", timeZone),
@@ -29,11 +48,18 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
     countHiddenPortfolioProjects(portfolioId),
     listMyProjectRoles(),
     listProjects(),
+    listPortfolioChildren(portfolioId),
+    listPortfolios(),
+    listPortfolioProgress(),
+    listPortfolioFields(portfolioId),
+    listPortfolioFieldValues(portfolioId),
   ]);
   if (!portfolio) notFound();
+  const latest = await listLatestStatusUpdates(projects.map((p) => p.id));
 
   const counts = new Map(byProject.map((row) => [row.bucket, row]));
   const inPortfolio = new Set(projects.map((p) => p.id));
+  const nested = new Set(children.map((c) => c.id));
 
   return (
     <PortfolioOverview
@@ -44,8 +70,19 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
         project,
         role: myRoles.get(project.id) ?? null,
         counts: counts.get(project.id) ?? EMPTY_COUNTS,
+        latest: latest.get(project.id) ?? null,
       }))}
       candidates={allProjects.filter((p) => !inPortfolio.has(p.id)).map(({ id, name }) => ({ id, name }))}
+      nested={children.map((child) => ({
+        ...child,
+        total: progress.get(child.id)?.total ?? 0,
+        completed: progress.get(child.id)?.completed ?? 0,
+      }))}
+      nestCandidates={allPortfolios
+        .filter((p) => p.id !== portfolioId && !nested.has(p.id))
+        .map(({ id, name }) => ({ id, name }))}
+      fields={fields}
+      values={values}
     />
   );
 }
