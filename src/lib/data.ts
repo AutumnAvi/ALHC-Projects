@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { parseOptions, type FieldDef, type FieldType } from "@/lib/fields";
+import { parseOptions, type FieldDef, type FieldOption, type FieldType } from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
 import {
   parsePresetInputs,
@@ -22,7 +22,8 @@ import {
   type PortfolioRole,
   type ProjectRole,
 } from "@/lib/roles";
-import { EMPTY_COUNTS, type PortfolioCounts } from "@/lib/portfolios";
+import { EMPTY_COUNTS, isPortfolioFieldType, type PortfolioCounts, type PortfolioFieldType } from "@/lib/portfolios";
+import type { CriticalPath, TaskSchedule } from "@/lib/critical-path";
 import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
 import { isMyTaskSectionKind, type MyTaskPlacement, type MyTaskSection } from "@/lib/my-tasks";
 import type { WorkloadTask } from "@/lib/workload";
@@ -114,6 +115,8 @@ export type TaskDetail = {
   dependencies: TaskDependency[];
   // Tasks that can be linked: active tasks of the task's projects where the viewer is an Editor.
   dependencyCandidates: { projectId: string; projectName: string; tasks: { id: string; title: string }[] }[];
+  // Slack / critical path in each of the task's projects (project_critical_path); empty without a due date.
+  schedule: (TaskSchedule & { projectId: string; projectName: string })[];
   assigneeId: string | null;
   homeProjectId: string;
   createdAt: string;
@@ -406,6 +409,19 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
   }));
 });
 
+// Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).
+export const projectCriticalPath = cache(async (projectId: string): Promise<CriticalPath> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("project_critical_path", { target_project: projectId });
+  const tasks: CriticalPath["tasks"] = {};
+  let skipped = 0;
+  for (const r of rows(result, "critical path")) {
+    if (r.skipped || r.slack_days === null) skipped += 1;
+    else tasks[r.task_id] = { slackDays: r.slack_days, critical: r.critical };
+  }
+  return { tasks, skipped };
+});
+
 export type ProjectDependency = { id: string; predecessorId: string; successorId: string };
 
 // Active dependencies of a project (for Timeline arrows). Both tasks must still be active.
@@ -579,9 +595,19 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   }
   const role = maybe(viewerRole, "task role");
   const viewerProjectRole = isProjectRole(role) ? role : null;
-  const dependencyCandidates = hasRole(viewerProjectRole, "editor")
-    ? await listDependencyCandidates(taskId, membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })))
-    : [];
+  const [dependencyCandidates, schedule] = await Promise.all([
+    hasRole(viewerProjectRole, "editor")
+      ? listDependencyCandidates(taskId, membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })))
+      : Promise.resolve([]),
+    task.due_on
+      ? Promise.all(
+          membershipRows.map(async (m) => {
+            const entry = (await projectCriticalPath(m.project_id)).tasks[taskId];
+            return entry ? [{ ...entry, projectId: m.project_id, projectName: m.project.name }] : [];
+          }),
+        ).then((lists) => lists.flat())
+      : Promise.resolve([]),
+  ]);
 
   const commentRows = rows(comments, "comments");
   const approvalRows = rows(approvals, "approvals");
@@ -676,6 +702,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       };
     }),
     dependencyCandidates,
+    schedule,
     assigneeId: task.assignee_id,
     homeProjectId: task.home_project_id,
     createdAt: task.created_at,
@@ -1387,6 +1414,178 @@ export const listPortfolioProgress = cache(
     );
   },
 );
+
+// ---------------------------------------------------------------------------------------------
+// Portfolio depth: nested portfolios, portfolio fields, rollups, timeline, project status history.
+// Links to a nested portfolio show only to Viewers+ of both; rollups and values only cover projects the
+// viewer can read (20261006060000_critical_path_portfolios.sql).
+// ---------------------------------------------------------------------------------------------
+
+export type PortfolioChild = { id: string; name: string; sortOrder: number };
+
+// Nested portfolios the viewer can see, in order.
+export const listPortfolioChildren = cache(async (portfolioId: string): Promise<PortfolioChild[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("portfolio_children")
+    .select("sort_order, created_at, child:portfolios!portfolio_children_child_id_fkey!inner(id, name)")
+    .eq("parent_id", portfolioId)
+    .is("deleted_at", null)
+    .is("child.deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "nested portfolios").map((r) => ({ id: r.child.id, name: r.child.name, sortOrder: r.sort_order }));
+});
+
+export type RollupProject = {
+  id: string;
+  name: string;
+  status: string;
+  statusNote: string | null;
+  // The portfolio the project sits in directly, and the nested portfolio it came through (null = own).
+  portfolioId: string;
+  groupId: string | null;
+  sortOrder: number;
+};
+
+// Every readable project of the portfolio and its visible nested portfolios, once each.
+export const listPortfolioRollupProjects = cache(async (portfolioId: string): Promise<RollupProject[]> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("portfolio_rollup_projects", { target_portfolio: portfolioId });
+  return rows(result, "portfolio rollup").map((r) => ({
+    id: r.project_id,
+    name: r.name,
+    status: r.status,
+    statusNote: r.status_note,
+    portfolioId: r.portfolio_id,
+    groupId: r.group_id,
+    sortOrder: r.sort_order,
+  }));
+});
+
+export type PortfolioTimelineRow = RollupProject & {
+  startOn: string | null;
+  dueOn: string | null;
+  openTasks: number;
+};
+
+export async function portfolioTimeline(portfolioId: string): Promise<PortfolioTimelineRow[]> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("portfolio_timeline", { target_portfolio: portfolioId });
+  return rows(result, "portfolio timeline").map((r) => ({
+    id: r.project_id,
+    name: r.name,
+    status: r.status,
+    statusNote: r.status_note,
+    portfolioId: r.portfolio_id,
+    groupId: r.group_id,
+    sortOrder: r.sort_order,
+    startOn: r.start_on,
+    dueOn: r.due_on,
+    openTasks: Number(r.open_task_count),
+  }));
+}
+
+export type PortfolioField = {
+  id: string;
+  name: string;
+  fieldType: PortfolioFieldType;
+  options: FieldOption[];
+  sortOrder: number;
+};
+
+export const listPortfolioFields = cache(async (portfolioId: string): Promise<PortfolioField[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("portfolio_fields")
+    .select("id, name, field_type, options, sort_order")
+    .eq("portfolio_id", portfolioId)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "portfolio fields").flatMap((f) =>
+    isPortfolioFieldType(f.field_type)
+      ? [{ id: f.id, name: f.name, fieldType: f.field_type, options: parseOptions(f.options), sortOrder: f.sort_order }]
+      : [],
+  );
+});
+
+// Values by project id, then field id. RLS leaves out projects the viewer can't read.
+export const listPortfolioFieldValues = cache(
+  async (portfolioId: string): Promise<Record<string, Record<string, Json>>> => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("portfolio_field_values")
+      .select("project_id, field_id, value")
+      .eq("portfolio_id", portfolioId)
+      .not("value", "is", null);
+    const out: Record<string, Record<string, Json>> = {};
+    for (const r of rows(result, "portfolio field values")) {
+      if (r.value === null) continue;
+      (out[r.project_id] ??= {})[r.field_id] = r.value;
+    }
+    return out;
+  },
+);
+
+export type ProjectStatusUpdate = {
+  id: string;
+  projectId: string;
+  status: string;
+  note: string | null;
+  authorName: string | null;
+  createdAt: string;
+};
+
+const STATUS_UPDATE_COLUMNS =
+  "id, project_id, status, note, created_at, author:profiles!project_status_updates_author_id_fkey(full_name, email)";
+
+function toStatusUpdate(r: {
+  id: string;
+  project_id: string;
+  status: string;
+  note: string | null;
+  created_at: string;
+  author: { full_name: string | null; email: string } | null;
+}): ProjectStatusUpdate {
+  return {
+    id: r.id,
+    projectId: r.project_id,
+    status: r.status,
+    note: r.note,
+    authorName: r.author ? r.author.full_name?.trim() || r.author.email : null,
+    createdAt: r.created_at,
+  };
+}
+
+// A project's status history, newest first (project Viewers+).
+export const listProjectStatusUpdates = cache(async (projectId: string): Promise<ProjectStatusUpdate[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_status_updates")
+    .select(STATUS_UPDATE_COLUMNS)
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  return rows(result, "status history").map(toStatusUpdate);
+});
+
+// The latest status update of each project (for portfolio columns), keyed by project id.
+export async function listLatestStatusUpdates(projectIds: string[]): Promise<Map<string, ProjectStatusUpdate>> {
+  const latest = new Map<string, ProjectStatusUpdate>();
+  if (projectIds.length === 0) return latest;
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_status_updates")
+    .select(STATUS_UPDATE_COLUMNS)
+    .in("project_id", projectIds)
+    .order("created_at", { ascending: false })
+    .limit(2000);
+  for (const r of rows(result, "status updates")) {
+    if (!latest.has(r.project_id)) latest.set(r.project_id, toStatusUpdate(r));
+  }
+  return latest;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Imports (Admin+ read; RLS returns nothing below Admin)

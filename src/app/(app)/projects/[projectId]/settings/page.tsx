@@ -5,7 +5,14 @@ import { History } from "lucide-react";
 import { RoleGate } from "@/components/project/project-access";
 import { ProjectSettings } from "@/components/project/project-settings";
 import { ProjectStatusForm } from "@/components/project/project-status-form";
-import { getProject, getProjectOrigin, getRequestSequence, type ProjectOrigin } from "@/lib/data";
+import { ProjectStatusHistory } from "@/components/project/project-status-history";
+import {
+  getProject,
+  getProjectOrigin,
+  getRequestSequence,
+  listProjectStatusUpdates,
+  type ProjectOrigin,
+} from "@/lib/data";
 import { getViewerTimeZone } from "@/lib/timezone";
 
 export async function generateMetadata({
@@ -20,11 +27,12 @@ export default async function ProjectSettingsPage({
   params,
 }: PageProps<"/projects/[projectId]/settings">) {
   const { projectId } = await params;
-  const [project, sequence, origin, timeZone] = await Promise.all([
+  const [project, sequence, origin, timeZone, statusUpdates] = await Promise.all([
     getProject(projectId),
     getRequestSequence(projectId),
     getProjectOrigin(projectId),
     getViewerTimeZone(),
+    listProjectStatusUpdates(projectId),
   ]);
   if (!project) notFound();
 
@@ -33,6 +41,7 @@ export default async function ProjectSettingsPage({
     <>
       {origin ? <OriginNote origin={origin} timeZone={timeZone} /> : null}
       <ProjectStatusForm project={project} />
+      <ProjectStatusHistory updates={statusUpdates} />
       <RoleGate need="admin" what="project settings">
         <ProjectSettings project={project} sequence={sequence} />
       </RoleGate>

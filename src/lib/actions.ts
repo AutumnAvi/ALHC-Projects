@@ -46,7 +46,7 @@ import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isPortfolioRole, isProjectRole } from "@/lib/roles";
 import { isGoalStatus, isProgressMode } from "@/lib/goals";
 import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
-import { isProjectStatus } from "@/lib/portfolios";
+import { MAX_PORTFOLIO_FIELD_TEXT, isPortfolioFieldType, isProjectStatus } from "@/lib/portfolios";
 import { MAX_TEMPLATE_SUBTASKS, parseCopyResult, type DuplicateOptions } from "@/lib/templates";
 import {
   VIEW_LAYOUTS,
@@ -689,6 +689,129 @@ export async function transferPortfolioOwnership(portfolioId: string, profileId:
       await supabase.rpc("transfer_portfolio_ownership", {
         target_portfolio: id(portfolioId),
         target_profile: id(profileId, "person"),
+      }),
+    );
+  });
+}
+
+// Nested portfolios (Editor+ on the parent, Viewer+ on the child; cycles rejected in SQL).
+export async function addPortfolioChild(portfolioId: string, childId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("add_portfolio_child", {
+        target_portfolio: id(portfolioId),
+        child_portfolio: id(childId, "portfolio"),
+      }),
+    );
+  });
+}
+
+export async function removePortfolioChild(portfolioId: string, childId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("remove_portfolio_child", {
+        target_portfolio: id(portfolioId),
+        child_portfolio: id(childId, "portfolio"),
+      }),
+    );
+  });
+}
+
+// Portfolio custom fields (Editor+). Options are only for single-select fields.
+function portfolioFieldOptions(value: unknown): FieldOption[] {
+  if (!Array.isArray(value)) throw new InputError("Invalid options");
+  if (value.length > 100) throw new InputError("Too many options");
+  const seen = new Set<string>();
+  return value.map((option) => {
+    const o = option as Partial<FieldOption> | null;
+    const optionId = typeof o?.id === "string" ? o.id.trim() : "";
+    if (!optionId || optionId.length > 64 || seen.has(optionId)) throw new InputError("Invalid option");
+    seen.add(optionId);
+    return { id: optionId, name: text(o?.name, "Option name", { max: 100 }), color: isOptionColor(o?.color) ? o.color : "zinc" };
+  });
+}
+
+export async function createPortfolioField(
+  portfolioId: string,
+  input: { name: string; fieldType: string; options?: FieldOption[] },
+): Promise<ActionResult> {
+  return run(async () => {
+    if (!isPortfolioFieldType(input.fieldType)) throw new InputError("Choose a field type");
+    const options = input.fieldType === "single_select" ? portfolioFieldOptions(input.options ?? []) : [];
+    const supabase = await createClient();
+    const { data: last } = await supabase
+      .from("portfolio_fields")
+      .select("sort_order")
+      .eq("portfolio_id", id(portfolioId))
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1);
+    check(
+      await supabase.from("portfolio_fields").insert({
+        portfolio_id: portfolioId,
+        name: text(input.name, "Field name", { max: 100 }),
+        field_type: input.fieldType,
+        options,
+        sort_order: (last?.[0]?.sort_order ?? 0) + ORDER_STEP,
+      }),
+      "Only portfolio editors and above can add fields",
+    );
+  });
+}
+
+export async function updatePortfolioField(
+  fieldId: string,
+  patch: { name?: string; options?: FieldOption[] },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: TablesUpdate<"portfolio_fields"> = {};
+    if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
+    if (patch.options !== undefined) update.options = portfolioFieldOptions(patch.options);
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("portfolio_fields").update(update).eq("id", id(fieldId, "field")).select("id"),
+      "Only portfolio editors and above can change fields",
+    );
+  });
+}
+
+export async function deletePortfolioField(fieldId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase
+        .from("portfolio_fields")
+        .update({ deleted_at: now() })
+        .eq("id", id(fieldId, "field"))
+        .select("id"),
+      "Only portfolio editors and above can delete fields",
+    );
+  });
+}
+
+// Sets one project's value (null clears). The database checks the type, options, and roles.
+export async function setPortfolioFieldValue(
+  fieldId: string,
+  projectId: string,
+  value: string | number | null,
+): Promise<ActionResult> {
+  return run(async () => {
+    let json: Json = null;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) throw new InputError("Enter a number");
+      json = value;
+    } else if (typeof value === "string" && value.trim()) {
+      if (value.length > MAX_PORTFOLIO_FIELD_TEXT) throw new InputError("Text is too long");
+      json = value.trim();
+    }
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("set_portfolio_field_value", {
+        target_field: id(fieldId, "field"),
+        target_project: id(projectId, "project"),
+        new_value: json,
       }),
     );
   });

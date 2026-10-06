@@ -2541,6 +2541,219 @@ export type Database = {
           },
         ];
       };
+      project_status_updates: {
+        Row: {
+          id: string;
+          project_id: string;
+          status: string;
+          note: string | null;
+          author_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          status: string;
+          note?: string | null;
+          author_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          status?: string;
+          note?: string | null;
+          author_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_status_updates_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_status_updates_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      portfolio_children: {
+        Row: {
+          id: string;
+          parent_id: string;
+          child_id: string;
+          sort_order: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          parent_id: string;
+          child_id: string;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          parent_id?: string;
+          child_id?: string;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "portfolio_children_child_id_fkey";
+            columns: ["child_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "portfolio_children_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "portfolio_children_parent_id_fkey";
+            columns: ["parent_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolios";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      portfolio_fields: {
+        Row: {
+          id: string;
+          portfolio_id: string;
+          name: string;
+          field_type: string;
+          options: Json;
+          sort_order: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          portfolio_id: string;
+          name: string;
+          field_type: string;
+          options?: Json;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          portfolio_id?: string;
+          name?: string;
+          field_type?: string;
+          options?: Json;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "portfolio_fields_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "portfolio_fields_portfolio_id_fkey";
+            columns: ["portfolio_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolios";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      portfolio_field_values: {
+        Row: {
+          id: string;
+          portfolio_id: string;
+          field_id: string;
+          project_id: string;
+          value: Json | null;
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          portfolio_id: string;
+          field_id: string;
+          project_id: string;
+          value?: Json | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          portfolio_id?: string;
+          field_id?: string;
+          project_id?: string;
+          value?: Json | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "portfolio_field_values_field_id_fkey";
+            columns: ["field_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolio_fields";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "portfolio_field_values_portfolio_id_fkey";
+            columns: ["portfolio_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "portfolio_field_values_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "portfolio_field_values_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       workspaces: {
         Row: {
           id: string;
@@ -2997,6 +3210,62 @@ export type Database = {
       };
       update_project_template: {
         Args: { target_template: string; template_name: string; template_description?: string | null };
+        Returns: undefined;
+      };
+      project_critical_path: {
+        Args: { target_project: string };
+        Returns: {
+          task_id: string;
+          start_on: string | null;
+          due_on: string | null;
+          slack_days: number | null;
+          critical: boolean;
+          skipped: boolean;
+        }[];
+      };
+      add_portfolio_child: {
+        Args: { target_portfolio: string; child_portfolio: string };
+        Returns: string;
+      };
+      remove_portfolio_child: {
+        Args: { target_portfolio: string; child_portfolio: string };
+        Returns: undefined;
+      };
+      portfolio_tree: {
+        Args: { target_portfolio: string };
+        Returns: { portfolio_id: string; group_id: string | null; depth: number }[];
+      };
+      portfolio_rollup_projects: {
+        Args: { target_portfolio: string };
+        Returns: {
+          project_id: string;
+          name: string;
+          status: string;
+          status_note: string | null;
+          status_updated_at: string | null;
+          portfolio_id: string;
+          group_id: string | null;
+          depth: number;
+          sort_order: number;
+        }[];
+      };
+      portfolio_timeline: {
+        Args: { target_portfolio: string };
+        Returns: {
+          project_id: string;
+          name: string;
+          status: string;
+          status_note: string | null;
+          portfolio_id: string;
+          group_id: string | null;
+          sort_order: number;
+          start_on: string | null;
+          due_on: string | null;
+          open_task_count: number;
+        }[];
+      };
+      set_portfolio_field_value: {
+        Args: { target_field: string; target_project: string; new_value: Json };
         Returns: undefined;
       };
     };

@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios with cross-project progress and reporting, goals with sub-goals and progress, a teams directory with group invites, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks, with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios (nestable, with custom fields, a timeline, and cross-project progress and reporting), goals with sub-goals and progress, a teams directory with group invites, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies with a critical path, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -118,6 +118,14 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Teams** (sidebar → Teams): a workspace-wide directory everyone can read. Anyone can start a team and becomes its lead; leads and workspace admins add people by email, change roles (lead / member), remove people, and delete the team. **A team never opens a project by itself.** To give a team access, a project Owner or Admin uses **Settings → Members → Add a team**: everyone on the team who isn't in the project yet becomes an ordinary member with the role you pick (people already in the project keep theirs; later team changes don't touch the project). A team's page lists only the projects you can already open.
 - **Goals** (sidebar → Goals): department and team goals in a tree with sub-goals, filtered by team and time period. Each goal has an owner, an optional team, a time period, a status (on track, at risk, off track, achieved, missed, dropped), and progress that is set manually, averaged from its sub-goals, or computed from the tasks of linked projects and portfolios. Everyone reads every goal; the owner, a lead of its team, or a workspace admin edits it and posts status updates. Progress from projects only counts the projects *you* can open — anything else is shown as "N linked projects aren't counted", never by name — so two people can see different numbers.
 
+## What's here (critical path and portfolio depth)
+
+- **Critical path** on every Timeline view: the **Critical path** button outlines the chain of dependencies that ends at the project's last due date with no slack and fades everything else. Hover a bar (or open the task) to see its **slack** — how many days its due date can slip before it pushes a waiting task or the project's end. It's read-only (nothing moves for you), and tasks without a due date are left out with a short note.
+- **Project status history:** every saved project status is kept with its note, who, and when; the feed sits under the status form in project Settings, and portfolios show the latest update as a column.
+- **Portfolios inside portfolios:** add a portfolio you're a member of to another one (Editors and above). Its projects roll into the parent's progress, report, and timeline — but only for people who are members of the nested portfolio *and* of each project; everyone else sees "N projects aren't shown". A portfolio can't end up inside itself.
+- **Portfolio fields** (portfolio Settings → Fields): text, number, single-select, or date, with one value per project. Editors set them on the Overview cards; they show as Report columns, only for projects you can open.
+- **Portfolio Timeline** tab: one bar per project from the earliest start to the latest due date of its open tasks, coloured by status, grouped by nested portfolio.
+
 ## Local development
 
 ```bash
@@ -132,7 +140,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–94)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–97)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.
