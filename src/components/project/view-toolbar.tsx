@@ -266,6 +266,24 @@ export function ViewToolbar({
           Show completed
         </label>
 
+        {layout === "list" ? (
+          <label className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900">
+            <input
+              type="checkbox"
+              className="size-3.5 accent-zinc-900"
+              checked={searchParams.get("sub") === "1"}
+              onChange={(e) => {
+                const params = new URLSearchParams(searchParams.toString());
+                if (e.currentTarget.checked) params.set("sub", "1");
+                else params.delete("sub");
+                const query = params.toString();
+                startTransition(() => router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false }));
+              }}
+            />
+            Show subtasks
+          </label>
+        ) : null}
+
         <div className="ml-auto flex items-center gap-1.5">
           {isDraft ? (
             <>

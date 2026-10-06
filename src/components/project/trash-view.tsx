@@ -58,6 +58,7 @@ export function TrashView({
                     <p className="mt-0.5 text-xs text-zinc-500">
                       Deleted <Timestamp iso={task.deletedAt} />
                       {by ? ` by ${displayName(by)}` : ""}
+                      {task.parentTitle ? ` · subtask of ${task.parentTitle}` : ""}
                       {task.homeProjectId !== projectId && task.homeProjectName
                         ? ` · home project: ${task.homeProjectName}`
                         : ""}

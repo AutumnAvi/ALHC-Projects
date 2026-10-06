@@ -6,7 +6,7 @@ import { formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
 import { APPROVAL_STATUS_LABELS, type ApprovalTaskStatus } from "@/lib/task-kinds";
 
-export function DueDate({ task }: { task: ProjectTask }) {
+export function DueDate({ task }: { task: Pick<ProjectTask, "dueOn" | "completedAt"> }) {
   const today = useToday();
   if (!task.dueOn) return null;
   const overdue = isOverdue(task.dueOn, today, Boolean(task.completedAt));
@@ -18,7 +18,7 @@ export function DueDate({ task }: { task: ProjectTask }) {
   );
 }
 
-export function StartDate({ task, prefix = "" }: { task: ProjectTask; prefix?: string }) {
+export function StartDate({ task, prefix = "" }: { task: Pick<ProjectTask, "startOn">; prefix?: string }) {
   const today = useToday();
   if (!task.startOn) return null;
   const year = today ? Number(today.slice(0, 4)) : undefined;

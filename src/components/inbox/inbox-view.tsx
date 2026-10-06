@@ -226,6 +226,7 @@ export function InboxView({
                         <span className={read ? "font-medium" : "font-semibold text-zinc-900"}>
                           {item.taskTitle}
                         </span>
+                        {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
                         {read ? null : <span className="sr-only"> (unread)</span>}
                       </Link>
                       {detail ? <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{detail}</p> : null}

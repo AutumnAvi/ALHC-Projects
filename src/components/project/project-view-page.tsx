@@ -15,6 +15,7 @@ import {
   listProjectTasks,
   listProjectViews,
   listSections,
+  listSubtaskTrees,
 } from "@/lib/data";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -83,6 +84,9 @@ export async function ProjectViewPage({
   const matching = await filterProjectTaskIds(projectId, config.filters ?? {}, timeZone);
   const visible = tasks.filter((t) => matching.has(t.id));
   const props = { projectId, sections, tasks: visible, profiles, fields, config, openTaskId };
+  // List's “Show subtasks” (?sub=1, off by default): each task's subtask tree under its row.
+  const showSubtasks = layout === "list" && searchParams.sub === "1";
+  const subtasks = showSubtasks ? await listSubtaskTrees(visible.map((t) => t.id)) : [];
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
@@ -98,7 +102,7 @@ export async function ProjectViewPage({
       {layout === "list" ? (
         // The toolbar stays put; the list scrolls under it with a sticky column header.
         <div className="min-h-0 flex-1 overflow-auto">
-          <ListView key={`list-${view?.id ?? "default"}`} {...props} bulk={bulk} />
+          <ListView key={`list-${view?.id ?? "default"}`} {...props} bulk={bulk} subtasks={showSubtasks ? subtasks : null} />
         </div>
       ) : null}
       {layout === "board" ? <BoardView key={`board-${view?.id ?? "default"}`} {...props} /> : null}

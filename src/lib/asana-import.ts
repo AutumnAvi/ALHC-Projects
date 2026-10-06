@@ -1,5 +1,6 @@
 import "server-only";
 import type { Json } from "@/lib/supabase/database.types";
+import { MAX_SUBTASK_DEPTH } from "@/lib/subtasks";
 
 // Parses Asana project exports (the JSON export and/or the CSV export of a project) into the batch
 // format of rpc("import_batch") (documented above that function in
@@ -10,7 +11,25 @@ export type ImportFieldType = "text" | "number" | "date" | "single_select" | "mu
 
 export type PlanSection = { key: string; name: string };
 export type PlanField = { key: string; name: string; type: ImportFieldType; options: string[] };
-export type PlanSubtask = { gid: string; title: string; completed_at: string | null };
+// Real subtasks: the same details as a task (minus sections, fields, comments, and attachments), nested
+// up to MAX_SUBTASK_DEPTH levels; deeper levels are flattened into the deepest one.
+export type PlanSubtask = {
+  gid: string;
+  title: string;
+  kind: "task" | "milestone" | "approval";
+  notes: string | null;
+  completed_at: string | null;
+  due_on: string | null;
+  start_on: string | null;
+  assignee_email: string | null;
+  assignee_name: string | null;
+  subtasks: PlanSubtask[];
+};
+
+// Every subtask in a tree, depth first.
+export function flattenSubtasks(list: PlanSubtask[]): PlanSubtask[] {
+  return list.flatMap((s) => [s, ...flattenSubtasks(s.subtasks)]);
+}
 export type PlanComment = {
   gid: string;
   body: string;
@@ -473,7 +492,6 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
   };
 
   let nestedFlattened = 0;
-  let subtaskDetailsDropped = 0;
   let unresolvedPeopleValues = 0;
   let commentsWithoutAuthorEmail = 0;
 
@@ -571,23 +589,39 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
 
     const subtasks: PlanSubtask[] = [];
     const seenSub = new Set<string>();
-    const walk = (list: unknown[], depth: number) => {
+    // depth = the level the items land on (1 = direct subtasks); past the limit they stay on the last one.
+    const walk = (list: unknown[], depth: number, out: PlanSubtask[]) => {
       for (const s of list) {
         if (!isObj(s)) continue;
         const sg = str(s.gid);
         if (!sg || seenSub.has(sg)) continue;
         seenSub.add(sg);
-        if (depth > 0) nestedFlattened++;
-        if (s.assignee || str(s.due_on) || str(s.notes)) subtaskDetailsDropped++;
-        subtasks.push({
+        const subAssignee = user(s.assignee);
+        const subEmail = resolveEmail(subAssignee);
+        if (subAssignee) reference(subAssignee.name, subEmail);
+        const subtype = str(s.resource_subtype);
+        const item: PlanSubtask = {
           gid: sg,
           title: str(s.name) ?? "Untitled subtask",
+          kind: subtype === "milestone" || subtype === "approval" ? subtype : "task",
+          notes: typeof s.notes === "string" && s.notes.trim() ? s.notes : null,
           completed_at: s.completed === true ? (timestamp(s.completed_at) ?? new Date().toISOString()) : null,
-        });
-        walk(arr(s.subtasks), depth + 1);
+          due_on: isoDate(s.due_on) ?? isoDate(s.due_at),
+          start_on: isoDate(s.start_on),
+          assignee_email: subEmail,
+          assignee_name: subAssignee?.name ?? null,
+          subtasks: [],
+        };
+        out.push(item);
+        const children = [...arr(s.subtasks), ...(childrenOf.get(sg) ?? [])];
+        if (depth < MAX_SUBTASK_DEPTH) walk(children, depth + 1, item.subtasks);
+        else {
+          nestedFlattened += children.filter(isObj).length;
+          walk(children, depth, out);
+        }
       }
     };
-    walk([...arr(t.subtasks), ...(childrenOf.get(gid) ?? [])], 0);
+    walk([...arr(t.subtasks), ...(childrenOf.get(gid) ?? [])], 1, subtasks);
 
     const comments: PlanComment[] = [];
     for (const s of [...arr(t.stories), ...arr(t.comments)]) {
@@ -677,15 +711,30 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
       }
     }
 
-    const subtasksFromCsv = (parentGid: string, seen: Set<string>, depth: number): PlanSubtask[] => {
-      const out: PlanSubtask[] = [];
+    // Nested like the JSON (depth = the level the rows land on), deeper levels flattened into the last.
+    const subtasksFromCsv = (parentGid: string, seen: Set<string>, depth: number, out: PlanSubtask[] = []): PlanSubtask[] => {
       for (const s of parents.get(parentGid) ?? []) {
         if (seen.has(s.gid)) continue;
         seen.add(s.gid);
-        if (depth > 0) nestedFlattened++;
-        if (s.assigneeName || s.dueOn || s.notes) subtaskDetailsDropped++;
-        out.push({ gid: s.gid, title: s.title || "Untitled subtask", completed_at: s.completedAt ? timestamp(s.completedAt) ?? new Date().toISOString() : null });
-        out.push(...subtasksFromCsv(s.gid, seen, depth + 1));
+        reference(s.assigneeName, s.assigneeEmail);
+        const item: PlanSubtask = {
+          gid: s.gid,
+          title: s.title || "Untitled subtask",
+          kind: "task",
+          notes: s.notes,
+          completed_at: s.completedAt ? (timestamp(s.completedAt) ?? new Date().toISOString()) : null,
+          due_on: s.dueOn,
+          start_on: s.startOn,
+          assignee_email: s.assigneeEmail ?? (s.assigneeName ? (emailByName.get(s.assigneeName.toLowerCase()) ?? null) : null),
+          assignee_name: s.assigneeName,
+          subtasks: [],
+        };
+        out.push(item);
+        if (depth < MAX_SUBTASK_DEPTH) subtasksFromCsv(s.gid, seen, depth + 1, item.subtasks);
+        else {
+          nestedFlattened += (parents.get(s.gid) ?? []).length;
+          subtasksFromCsv(s.gid, seen, depth, out);
+        }
       }
       return out;
     };
@@ -701,8 +750,8 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
         // Already in the JSON export: JSON is richer; the CSV only contributed emails and dependencies.
         // Subtasks the CSV knows about but the JSON lacked are still added.
         const existing = jsonTaskByGid.get(t.gid)!;
-        const seen = new Set(existing.subtasks.map((s) => s.gid));
-        existing.subtasks.push(...subtasksFromCsv(t.gid, seen, 0));
+        const seen = new Set(flattenSubtasks(existing.subtasks).map((s) => s.gid));
+        existing.subtasks.push(...subtasksFromCsv(t.gid, seen, 1));
         continue;
       }
       taskGids.add(t.gid);
@@ -759,7 +808,7 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
         projects: [],
         fields: values,
         followers: [],
-        subtasks: subtasksFromCsv(t.gid, new Set(), 0),
+        subtasks: subtasksFromCsv(t.gid, new Set(), 1),
         comments: [],
         attachments: [],
       });
@@ -799,11 +848,8 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
     warnings.push(`${dependencies.size - linkable.length} dependencies point at tasks outside this export and are skipped.`);
   }
   if (nestedFlattened > 0) {
-    warnings.push(`${nestedFlattened} nested subtasks are flattened into their top-level task’s subtask list.`);
-  }
-  if (subtaskDetailsDropped > 0) {
     warnings.push(
-      `${subtaskDetailsDropped} subtasks have an assignee, due date, or description in Asana. Subtasks here keep a title and completion only.`,
+      `${nestedFlattened} subtasks are nested more than ${MAX_SUBTASK_DEPTH} levels deep in Asana; they’re imported on the ${MAX_SUBTASK_DEPTH}th level.`,
     );
   }
   if (unresolvedPeopleValues > 0) {
@@ -884,7 +930,7 @@ export function planExternalIds(plan: ImportPlan) {
     section: plan.sections.map((s) => s.key),
     field: plan.fields.map((f) => f.key),
     task: plan.tasks.map((t) => t.gid),
-    subtask: plan.tasks.flatMap((t) => t.subtasks.map((s) => s.gid)),
+    subtask: plan.tasks.flatMap((t) => flattenSubtasks(t.subtasks).map((s) => s.gid)),
     comment: plan.tasks.flatMap((t) => t.comments.map((c) => c.gid)),
     attachment: plan.tasks.flatMap((t) => t.attachments.map((a) => a.gid)),
   };

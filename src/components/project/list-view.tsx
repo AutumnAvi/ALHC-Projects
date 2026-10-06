@@ -13,7 +13,8 @@ import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard"
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { placeSection, placeTask, setTaskCompleted } from "@/lib/actions";
-import type { Profile, ProjectTask, Section } from "@/lib/data";
+import type { Profile, ProjectTask, Section, SubtaskItem } from "@/lib/data";
+import { subtasksByParent } from "@/lib/subtasks";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, hasActiveFilters, refFieldId, sortOf, type ColumnKey, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
@@ -31,6 +32,8 @@ type Props = {
   config: ViewConfig;
   openTaskId: string | null;
   bulk?: Omit<BulkContext, "project">;
+  // “Show subtasks” on: every listed task's subtask tree (null = off).
+  subtasks?: SubtaskItem[] | null;
 };
 
 type TaskDrop = { groupKey: string; beforeId: string | null };
@@ -49,7 +52,7 @@ function sortSections(list: Section[], change: { id: string; sortOrder: number }
     .sort((a, b) => a.sort_order - b.sort_order);
 }
 
-export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId, bulk }: Props) {
+export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId, bulk, subtasks = null }: Props) {
   const router = useRouter();
   const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
@@ -206,6 +209,8 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
     selecting: selection.selected.length > 0,
   };
   const sectionGroups = groups.filter((g) => g.section);
+  const childrenOf = subtasks ? subtasksByParent(subtasks) : null;
+  const toggleSubtask = (subtask: SubtaskItem) => run(() => setTaskCompleted(subtask.id, !subtask.completedAt));
 
   return (
     <div className="px-gutter pb-24" style={{ minWidth: `${28 + columns.length * 8.75}rem` }}>
@@ -327,6 +332,19 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
                     setTaskDrop(null);
                   }}
                 />
+                {childrenOf ? (
+                  <SubtaskRows
+                    parentId={task.id}
+                    depth={1}
+                    childrenOf={childrenOf}
+                    profilesById={profilesById}
+                    openTaskId={openTaskId}
+                    canEdit={canEdit}
+                    columns={columns}
+                    gridStyle={gridStyle}
+                    onToggle={toggleSubtask}
+                  />
+                ) : null}
               </div>
             ))}
             {isTaskTarget && taskDrop?.beforeId === null && group.tasks.length > 0 ? <DropLine /> : null}
@@ -641,5 +659,104 @@ function TaskRow({
         );
       })}
     </div>
+  );
+}
+
+// “Show subtasks”: a task's subtasks (all levels) under its row, indented, read-only apart from
+// completing them; open one to edit it in the pane. Subtasks aren't selected, dragged, or filtered —
+// they follow their task.
+function SubtaskRows({
+  parentId,
+  depth,
+  childrenOf,
+  profilesById,
+  openTaskId,
+  canEdit,
+  columns,
+  gridStyle,
+  onToggle,
+}: {
+  parentId: string;
+  depth: number;
+  childrenOf: Map<string, SubtaskItem[]>;
+  profilesById: Map<string, Profile>;
+  openTaskId: string | null;
+  canEdit: boolean;
+  columns: ColumnKey[];
+  gridStyle: React.CSSProperties;
+  onToggle: (subtask: SubtaskItem) => void;
+}) {
+  const taskHref = useTaskHref();
+  const children = childrenOf.get(parentId) ?? [];
+  if (children.length === 0) return null;
+  return (
+    <ul aria-label="Subtasks">
+      {children.map((subtask) => {
+        const completed = Boolean(subtask.completedAt);
+        const open = openTaskId === subtask.id;
+        return (
+          <li key={subtask.id}>
+            <div
+              data-subtask-row={subtask.id}
+              className={`${GRID} min-h-row border-b border-zinc-100 px-3 py-1 ${open ? "bg-accent-50/60" : "hover:bg-zinc-50"}`}
+              style={gridStyle}
+            >
+              <div
+                className="flex min-w-0 items-center gap-2.5"
+                style={{ paddingLeft: `${(canEdit ? 1.5 : 0) + depth * 1.25}rem` }}
+              >
+                <CompleteToggle
+                  size="sm"
+                  kind={subtask.kind}
+                  completed={completed}
+                  disabled={!canEdit || subtask.kind === "approval"}
+                  onToggle={() => onToggle(subtask)}
+                  label={kindToggleLabel(subtask.kind, subtask.title, completed)}
+                />
+                <Link
+                  href={taskHref(subtask.id)}
+                  scroll={false}
+                  aria-current={open ? "true" : undefined}
+                  className={`min-w-0 truncate text-sm hover:underline ${completed ? "text-zinc-400 line-through" : "text-zinc-700"}`}
+                >
+                  <span className="sr-only">Subtask: </span>
+                  {subtask.title}
+                </Link>
+                {subtask.subtaskCount > 0 ? (
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500"
+                    title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
+                  >
+                    {subtask.subtaskDoneCount}/{subtask.subtaskCount}
+                  </span>
+                ) : null}
+              </div>
+              {columns.map((column) => (
+                <div key={column} className="min-w-0">
+                  {column === "assignee" ? (
+                    <Assignee profile={subtask.assigneeId ? profilesById.get(subtask.assigneeId) : undefined} showName />
+                  ) : column === "due" ? (
+                    <DueDate task={subtask} />
+                  ) : column === "start" ? (
+                    <StartDate task={subtask} />
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <SubtaskRows
+              parentId={subtask.id}
+              depth={depth + 1}
+              childrenOf={childrenOf}
+              profilesById={profilesById}
+              openTaskId={openTaskId}
+              canEdit={canEdit}
+              columns={columns}
+              gridStyle={gridStyle}
+              onToggle={onToggle}
+            />
+          </li>
+        );
+      })}
+    </ul>
   );
 }

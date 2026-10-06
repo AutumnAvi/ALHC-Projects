@@ -137,7 +137,13 @@ export type TaskDetail = {
   canAssignRequestNumber: boolean;
   submission: { email: string; formId: string; formTitle: string | null; createdAt: string } | null;
   approvals: TaskApproval[];
-  subtasks: Pick<Tables<"subtasks">, "id" | "title" | "completed_at" | "sort_order">[];
+  // Direct subtasks, in order.
+  subtasks: SubtaskItem[];
+  // Set for a subtask: its parent, and the way up from the top-level task (root first) for the breadcrumb.
+  parentTaskId: string | null;
+  ancestors: { id: string; title: string; completedAt: string | null }[];
+  // A subtask's memberships are its root task's (read-only in its pane: subtasks never have their own).
+  isSubtask: boolean;
   memberships: TaskMembership[];
   fields: FieldDef[];
   fieldValues: Record<string, Json>;
@@ -350,9 +356,9 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
   const approvalTaskIds = memberships.filter((m) => m.task.kind === "approval").map((m) => m.task.id);
   const [subtasks, otherMemberships, values, blockers, approvalRequests] = await Promise.all([
     supabase
-      .from("subtasks")
-      .select("task_id, completed_at")
-      .in("task_id", taskIds)
+      .from("tasks")
+      .select("parent_task_id, completed_at")
+      .in("parent_task_id", taskIds)
       .is("deleted_at", null),
     supabase
       .from("task_projects")
@@ -406,10 +412,11 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
 
   const subtaskStats = new Map<string, { total: number; done: number }>();
   for (const s of rows(subtasks, "subtasks")) {
-    const stat = subtaskStats.get(s.task_id) ?? { total: 0, done: 0 };
+    if (!s.parent_task_id) continue;
+    const stat = subtaskStats.get(s.parent_task_id) ?? { total: 0, done: 0 };
     stat.total += 1;
     if (s.completed_at) stat.done += 1;
-    subtaskStats.set(s.task_id, stat);
+    subtaskStats.set(s.parent_task_id, stat);
   }
 
   const projectCounts = new Map<string, number>();
@@ -439,6 +446,75 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
       approvalTaskRequest(parseTaskKind(m.task.kind), m.task.assignee_id, approvalsByTask.get(m.task.id) ?? [])?.status,
     ),
   }));
+});
+
+// A subtask as listed under its parent (the pane, List with “Show subtasks”).
+export type SubtaskItem = {
+  id: string;
+  parentId: string;
+  title: string;
+  completedAt: string | null;
+  assigneeId: string | null;
+  startOn: string | null;
+  dueOn: string | null;
+  kind: TaskKind;
+  sortOrder: number;
+  subtaskCount: number;
+  subtaskDoneCount: number;
+};
+
+const SUBTASK_COLUMNS = "id, parent_task_id, title, completed_at, assignee_id, start_on, due_on, kind, subtask_order";
+
+type SubtaskRow = {
+  id: string;
+  parent_task_id: string | null;
+  title: string;
+  completed_at: string | null;
+  assignee_id: string | null;
+  start_on: string | null;
+  due_on: string | null;
+  kind: string;
+  subtask_order: number;
+};
+
+// Rows → items in sibling order, each with its own direct-subtask counts (from the same rows when
+// the whole tree was loaded, else from `children`).
+function toSubtaskItems(list: SubtaskRow[], children: { parent_task_id: string | null; completed_at: string | null }[]) {
+  const stats = new Map<string, { total: number; done: number }>();
+  for (const c of children) {
+    if (!c.parent_task_id) continue;
+    const stat = stats.get(c.parent_task_id) ?? { total: 0, done: 0 };
+    stat.total += 1;
+    if (c.completed_at) stat.done += 1;
+    stats.set(c.parent_task_id, stat);
+  }
+  return list
+    .filter((r) => r.parent_task_id)
+    .map((r) => ({
+      id: r.id,
+      parentId: r.parent_task_id!,
+      title: r.title,
+      completedAt: r.completed_at,
+      assigneeId: r.assignee_id,
+      startOn: r.start_on,
+      dueOn: r.due_on,
+      kind: parseTaskKind(r.kind),
+      sortOrder: r.subtask_order,
+      subtaskCount: stats.get(r.id)?.total ?? 0,
+      subtaskDoneCount: stats.get(r.id)?.done ?? 0,
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+// Every active subtask (all levels) under the given top-level tasks, for List's “Show subtasks”.
+export const listSubtaskTrees = cache(async (rootIds: string[]): Promise<SubtaskItem[]> => {
+  if (rootIds.length === 0) return [];
+  const supabase = await createClient();
+  const list = rows(
+    await supabase.from("tasks").select(SUBTASK_COLUMNS).in("root_task_id", rootIds).is("deleted_at", null),
+    "subtasks",
+  );
+  return toSubtaskItems(list, list);
 });
 
 // Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).
@@ -481,7 +557,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     await supabase
       .from("tasks")
       .select(
-        "id, title, kind, notes, completed_at, start_on, due_on, start_at, due_at, time_zone, recurrence, recurrence_seq, recurrence_next_id, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number",
+        "id, title, kind, notes, completed_at, start_on, due_on, start_at, due_at, time_zone, recurrence, recurrence_seq, recurrence_next_id, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number, parent_task_id, root_task_id",
       )
       .eq("id", taskId)
       .is("deleted_at", null)
@@ -490,22 +566,51 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   );
   if (!task) return null;
 
-  const [subtasks, memberships] = await Promise.all([
+  // A subtask lives in its root task's projects.
+  const scopeTaskId = task.root_task_id ?? taskId;
+  const [subtasks, memberships, tree] = await Promise.all([
     supabase
-      .from("subtasks")
-      .select("id, title, completed_at, sort_order")
-      .eq("task_id", taskId)
+      .from("tasks")
+      .select(SUBTASK_COLUMNS)
+      .eq("parent_task_id", taskId)
       .is("deleted_at", null)
-      .order("sort_order")
+      .order("subtask_order")
       .order("created_at"),
     supabase
       .from("task_projects")
       .select("project_id, section_id, project:projects!inner(id, name)")
-      .eq("task_id", taskId)
+      .eq("task_id", scopeTaskId)
       .is("deleted_at", null)
       .is("project.deleted_at", null)
       .order("created_at"),
+    task.root_task_id
+      ? supabase
+          .from("tasks")
+          .select("id, title, completed_at, parent_task_id")
+          .or(`id.eq.${task.root_task_id},root_task_id.eq.${task.root_task_id}`)
+      : Promise.resolve({ data: [], error: null }),
   ]);
+  const subtaskRows = rows(subtasks, "subtasks");
+  const grandchildren = subtaskRows.length
+    ? rows(
+        await supabase
+          .from("tasks")
+          .select("parent_task_id, completed_at")
+          .in(
+            "parent_task_id",
+            subtaskRows.map((r) => r.id),
+          )
+          .is("deleted_at", null),
+        "subtasks",
+      )
+    : [];
+  const treeById = new Map(rows(tree, "parent tasks").map((r) => [r.id, r] as const));
+  const ancestors: TaskDetail["ancestors"] = [];
+  for (let up = task.parent_task_id ? treeById.get(task.parent_task_id) : undefined; up && ancestors.length < 10; ) {
+    ancestors.unshift({ id: up.id, title: up.title, completedAt: up.completed_at });
+    up = up.parent_task_id ? treeById.get(up.parent_task_id) : undefined;
+  }
+  const isSubtask = task.parent_task_id !== null;
 
   const membershipRows = rows(memberships, "task projects");
   const projectIds = membershipRows.map((m) => m.project_id);
@@ -628,10 +733,10 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   const role = maybe(viewerRole, "task role");
   const viewerProjectRole = isProjectRole(role) ? role : null;
   const [dependencyCandidates, schedule] = await Promise.all([
-    hasRole(viewerProjectRole, "editor")
+    hasRole(viewerProjectRole, "editor") && !isSubtask
       ? listDependencyCandidates(taskId, membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })))
       : Promise.resolve([]),
-    task.due_on
+    task.due_on && !isSubtask
       ? Promise.all(
           membershipRows.map(async (m) => {
             const entry = (await projectCriticalPath(m.project_id)).tasks[taskId];
@@ -742,7 +847,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     updatedAt: task.updated_at,
     source: task.source,
     requestLabel: maybe(label, "request number"),
-    canAssignRequestNumber: !task.req_number && Boolean(maybe(numbering, "request numbering")),
+    canAssignRequestNumber: !task.req_number && !isSubtask && Boolean(maybe(numbering, "request numbering")),
     submission: submission
       ? {
           email: submission.submitter_email,
@@ -765,7 +870,10 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     })),
     viewerRole: viewerProjectRole,
     memberRoles,
-    subtasks: rows(subtasks, "subtasks"),
+    subtasks: toSubtaskItems(subtaskRows, grandchildren),
+    parentTaskId: task.parent_task_id,
+    ancestors,
+    isSubtask,
     memberships: membershipRows
       .map((m) => ({
         projectId: m.project_id,
@@ -842,6 +950,15 @@ export const listProjectFields = cache(async (projectId: string) =>
   listFieldsForProjects([projectId]),
 );
 
+// Titles of the given tasks the viewer can read (parent labels for subtasks).
+async function taskTitles(ids: (string | null)[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter((v): v is string => Boolean(v)))];
+  if (unique.length === 0) return new Map();
+  const supabase = await createClient();
+  const result = await supabase.from("tasks").select("id, title").in("id", unique);
+  return new Map(rows(result, "parent tasks").map((t) => [t.id, t.title] as const));
+}
+
 export type MyTask = {
   id: string;
   title: string;
@@ -850,13 +967,16 @@ export type MyTask = {
   projectId: string;
   projectName: string;
   kind: TaskKind;
+  // Subtasks: the parent task's title ("in <parent>").
+  parentTitle: string | null;
 };
 
 // Tasks come back only when RLS lets the viewer read them (membership in one of their projects).
 // Each is labelled with its home project when the viewer can see it, else another visible project.
 export const listMyTasks = cache(async (profileId: string) => {
   const supabase = await createClient();
-  const select = "id, title, completed_at, due_on, home_project_id, kind";
+  const select =
+    "id, title, completed_at, due_on, home_project_id, kind, root_task_id, parent_task_id";
   const [open, done, projects] = await Promise.all([
     supabase
       .from("tasks")
@@ -879,23 +999,26 @@ export const listMyTasks = cache(async (profileId: string) => {
   const openRows = rows(open, "my tasks");
   const doneRows = rows(done, "completed tasks");
   const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
-  const taskIds = [...openRows, ...doneRows].map((t) => t.id);
-  const memberships = taskIds.length
-    ? rows(
-        await supabase
+  // A subtask is labelled with a project of its root task (it has no memberships of its own).
+  const scopeId = (t: { id: string; root_task_id: string | null }) => t.root_task_id ?? t.id;
+  const taskIds = [...new Set([...openRows, ...doneRows].map(scopeId))];
+  const [memberships, parentTitle] = await Promise.all([
+    taskIds.length
+      ? supabase
           .from("task_projects")
           .select("task_id, project_id")
           .in("task_id", taskIds)
           .is("deleted_at", null)
-          .order("created_at"),
-        "task projects",
-      )
-    : [];
+          .order("created_at")
+          .then((result) => rows(result, "task projects"))
+      : [],
+    taskTitles([...openRows, ...doneRows].map((t) => t.parent_task_id)),
+  ]);
 
   const toMyTask = (t: (typeof openRows)[number]): MyTask | null => {
     const projectId = projectName.has(t.home_project_id)
       ? t.home_project_id
-      : memberships.find((m) => m.task_id === t.id && projectName.has(m.project_id))?.project_id;
+      : memberships.find((m) => m.task_id === scopeId(t) && projectName.has(m.project_id))?.project_id;
     if (!projectId) return null;
     return {
       id: t.id,
@@ -905,6 +1028,7 @@ export const listMyTasks = cache(async (profileId: string) => {
       projectId,
       projectName: projectName.get(projectId)!,
       kind: parseTaskKind(t.kind),
+      parentTitle: t.parent_task_id ? (parentTitle.get(t.parent_task_id) ?? null) : null,
     };
   };
   const present = (t: MyTask | null): t is MyTask => t !== null;
@@ -952,6 +1076,8 @@ export type InboxItem = {
   createdAt: string;
   taskId: string;
   taskTitle: string;
+  // Subtasks: the parent task's title.
+  parentTitle: string | null;
   commentBody: string | null;
 };
 
@@ -963,12 +1089,14 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
   let query = supabase
     .from("inbox_items")
     .select(
-      "id, kind, data, actor_id, read_at, archived_at, created_at, task:tasks!inner(id, title), comment:comments(body, deleted_at)",
+      "id, kind, data, actor_id, read_at, archived_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(body, deleted_at)",
     )
     .is("task.deleted_at", null);
   query = tab === "archived" ? query.not("archived_at", "is", null) : query.is("archived_at", null);
   const result = await query.order("created_at", { ascending: false }).limit(100);
-  return rows(result, "inbox")
+  const items = rows(result, "inbox");
+  const parentTitle = await taskTitles(items.map((item) => item.task.parent_task_id));
+  return items
     .filter((item) => !item.comment?.deleted_at)
     .map((item) => ({
       id: item.id,
@@ -980,6 +1108,7 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
       createdAt: item.created_at,
       taskId: item.task.id,
       taskTitle: item.task.title,
+      parentTitle: item.task.parent_task_id ? (parentTitle.get(item.task.parent_task_id) ?? null) : null,
       commentBody: item.comment?.body ?? null,
     }));
 });
@@ -1013,6 +1142,8 @@ export type TrashedTask = {
   homeProjectId: string;
   homeProjectName: string | null;
   completedAt: string | null;
+  // Subtasks trashed on their own (with their parent still active): the parent's title.
+  parentTitle: string | null;
 };
 
 const TRASH_LIMIT = 200;
@@ -1032,7 +1163,51 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
       .limit(TRASH_LIMIT),
     "trash",
   );
-  if (trashed.length === 0) return [];
+  // Subtasks have no memberships: list the ones trashed on their own (their parent is active, so
+  // restoring works) whose root task is in this project. Ones trashed with their parent come back
+  // with it.
+  const trashedSubtasks = rows(
+    await supabase
+      .from("tasks")
+      .select(
+        "id, title, deleted_at, completed_at, home_project_id, root_task_id, parent_task_id",
+      )
+      .not("root_task_id", "is", null)
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false })
+      .limit(TRASH_LIMIT),
+    "trashed subtasks",
+  );
+  const rootIds = [...new Set(trashedSubtasks.map((t) => t.root_task_id!))];
+  const parentIds = [...new Set(trashedSubtasks.map((t) => t.parent_task_id!))];
+  const [rootsHere, activeParents] = await Promise.all([
+    rootIds.length
+      ? supabase
+          .from("task_projects")
+          .select("task_id")
+          .eq("project_id", projectId)
+          .in("task_id", rootIds)
+          .is("deleted_at", null)
+          .then((result) => new Set(rows(result, "task projects").map((m) => m.task_id)))
+      : new Set<string>(),
+    parentIds.length
+      ? supabase
+          .from("tasks")
+          .select("id, title")
+          .in("id", parentIds)
+          .is("deleted_at", null)
+          .then((result) => new Map(rows(result, "parent tasks").map((t) => [t.id, t.title] as const)))
+      : new Map<string, string>(),
+  ]);
+  const all = [
+    ...trashed.map((t) => ({ ...t, parentTitle: null as string | null })),
+    ...trashedSubtasks
+      .filter((t) => rootsHere.has(t.root_task_id!) && activeParents.has(t.parent_task_id!))
+      .map((t) => ({ ...t, parentTitle: activeParents.get(t.parent_task_id!) ?? null })),
+  ]
+    .sort((a, b) => b.deleted_at!.localeCompare(a.deleted_at!))
+    .slice(0, TRASH_LIMIT);
+  if (all.length === 0) return [];
 
   const [stories, projects] = await Promise.all([
     supabase
@@ -1040,7 +1215,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
       .select("task_id, actor_id, created_at")
       .in(
         "task_id",
-        trashed.map((t) => t.id),
+        all.map((t) => t.id),
       )
       .eq("kind", "deleted")
       .order("created_at", { ascending: false }),
@@ -1051,7 +1226,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
     if (!deletedBy.has(story.task_id)) deletedBy.set(story.task_id, story.actor_id);
   }
   const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
-  return trashed.map((t) => ({
+  return all.map((t) => ({
     id: t.id,
     title: t.title,
     deletedAt: t.deleted_at!,
@@ -1059,6 +1234,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
     homeProjectId: t.home_project_id,
     homeProjectName: projectName.get(t.home_project_id) ?? null,
     completedAt: t.completed_at,
+    parentTitle: t.parentTitle,
   }));
 });
 
