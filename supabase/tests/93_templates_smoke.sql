@@ -97,8 +97,9 @@ begin
     (t1, (select id from tp_ids where name = 'f_pri'), '"hi"'),
     (t1, (select id from tp_ids where name = 'f_launch'), '"2026-11-20"'),
     (t1, (select id from tp_ids where name = 'f_people'), '["77777777-7777-4777-8777-777777777777"]');
-  insert into public.subtasks (task_id, title, sort_order) values (t1, 'Agenda', 1024), (t1, 'Invite', 2048);
-  update public.subtasks set completed_at = now() where task_id = t1 and title = 'Agenda';
+  perform public.create_subtask(t1, 'Agenda');
+  perform public.create_subtask(t1, 'Invite');
+  update public.tasks set completed_at = now() where parent_task_id = t1 and title = 'Agenda';
   perform public.add_task_dependency(t1, t2);
   update public.tasks set completed_at = now() where id = t1;
 
@@ -210,7 +211,7 @@ begin
     'incomplete, unassigned, notes copied';
   assert (select section_id from public.task_projects where task_id = kickoff.id and project_id = np) = new_a,
     'the task lands in the copied section';
-  assert (select count(*) from public.subtasks where task_id = kickoff.id and completed_at is null) = 2, 'subtasks copied open';
+  assert (select count(*) from public.tasks where parent_task_id = kickoff.id and completed_at is null) = 2, 'subtasks copied open';
   assert (select due_on from public.tasks t join public.task_projects tp on tp.task_id = t.id and tp.project_id = np
           where t.title like '%Undated') is null, 'undated tasks stay undated';
   assert exists (select 1 from public.tasks t join public.task_projects tp on tp.task_id = t.id and tp.project_id = np
@@ -474,7 +475,7 @@ begin
   insert into tp_ids values ('tt_task', t);
   assert (select title from public.tasks where id = t) like '[Req #%] From quick-add', 'typed title wins (and gets a Req #)';
   assert (select assignee_id from public.tasks where id = t) = '77777777-7777-4777-8777-777777777777', 'assignee set';
-  assert (select count(*) from public.subtasks where task_id = t and completed_at is null) = 2, 'subtasks created open';
+  assert (select count(*) from public.tasks where parent_task_id = t and completed_at is null) = 2, 'subtasks created open';
   assert (select count(*) from public.task_field_values where task_id = t) = 3, 'field values set';
   assert (select section_id from public.task_projects where task_id = t and project_id = p)
     = (select id from tp_ids where name = 's_b'), 'lands in the chosen section';

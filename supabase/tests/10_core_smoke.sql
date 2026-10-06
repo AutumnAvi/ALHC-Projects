@@ -127,10 +127,11 @@ begin
   update public.tasks set completed_at = now() where id = t1;
   update public.tasks set completed_at = null where id = t1;
 
-  insert into public.subtasks (task_id, title, sort_order) values (t1, 'Collect assets', 1024) returning id into st1;
-  update public.subtasks set completed_at = now() where id = st1;
-  update public.subtasks set deleted_at = now() where id = st1;
-  assert (select deleted_at is not null from public.subtasks where id = st1), 'subtask soft-deleted';
+  -- Subtasks are child tasks since Real subtasks (public.subtasks is retired).
+  st1 := public.create_subtask(t1, 'Collect assets');
+  update public.tasks set completed_at = now() where id = st1;
+  update public.tasks set deleted_at = now() where id = st1;
+  assert (select deleted_at is not null from public.tasks where id = st1), 'subtask soft-deleted';
 
   update public.sections set deleted_at = now() where id = s_doing;
   assert (select section_id from public.task_projects where task_id = t1 and project_id = p1) is null,

@@ -741,6 +741,13 @@ function MyTaskRow({
       >
         {task.title}
       </Link>
+      {task.parentTitle ? (
+        <span className="hidden max-w-40 shrink-0 truncate text-xs text-zinc-500 md:inline" title={`Subtask of ${task.parentTitle}`}>
+          <span className="sr-only">Subtask of </span>
+          <span aria-hidden>in </span>
+          {task.parentTitle}
+        </span>
+      ) : null}
       <Link
         href={`/projects/${task.projectId}/list`}
         draggable={false}

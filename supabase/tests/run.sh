@@ -21,6 +21,12 @@ PSQL=("$PG_BIN/psql" -h "$DATA_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERR
 
 "${PSQL[@]}" -f "$ROOT/supabase/tests/auth_shim.sql"
 for migration in "$ROOT"/supabase/migrations/*.sql; do
+  # Optional pre-migration fixture: old-model rows a later suite checks the data migration against.
+  fixture="$ROOT/supabase/tests/fixtures/before_$(basename "$migration")"
+  if [ -f "$fixture" ]; then
+    echo "loading fixtures/$(basename "$fixture")"
+    "${PSQL[@]}" -f "$fixture"
+  fi
   echo "applying $(basename "$migration")"
   "${PSQL[@]}" -f "$migration"
 done

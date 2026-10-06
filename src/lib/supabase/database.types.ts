@@ -1983,6 +1983,9 @@ export type Database = {
           recurrence_next_id: string | null;
           assigned_at: string | null;
           kind: string;
+          parent_task_id: string | null;
+          root_task_id: string | null;
+          subtask_order: number;
         };
         Insert: {
           id?: string;
@@ -2010,6 +2013,9 @@ export type Database = {
           recurrence_next_id?: string | null;
           assigned_at?: string | null;
           kind?: string;
+          parent_task_id?: string | null;
+          root_task_id?: string | null;
+          subtask_order?: number;
         };
         Update: {
           id?: string;
@@ -2037,6 +2043,9 @@ export type Database = {
           recurrence_next_id?: string | null;
           assigned_at?: string | null;
           kind?: string;
+          parent_task_id?: string | null;
+          root_task_id?: string | null;
+          subtask_order?: number;
         };
         Relationships: [
           {
@@ -2058,6 +2067,20 @@ export type Database = {
             columns: ["home_project_id"];
             isOneToOne: false;
             referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "tasks_parent_task_id_fkey";
+            columns: ["parent_task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "tasks_root_task_id_fkey";
+            columns: ["root_task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
             referencedColumns: ["id"];
           },
           {
@@ -3187,6 +3210,14 @@ export type Database = {
       create_project_from_template: {
         Args: { target_template: string; project_name: string; start_on?: string | null };
         Returns: Json;
+      };
+      create_subtask: {
+        Args: { parent_task: string; task_title: string; before_task?: string | null };
+        Returns: string;
+      };
+      place_subtask: {
+        Args: { target_task: string; before_task?: string | null; new_parent?: string | null };
+        Returns: undefined;
       };
       create_task_from_template: {
         Args: { target_template: string; target_section?: string | null; task_title?: string | null };

@@ -2,24 +2,20 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useOptimistic, useRef, type ReactNode } from "react";
-import { Check, FileInput, FolderClosed, Hash, Home, Lock, Plus, SearchX, ShieldCheck, Trash2, X } from "lucide-react";
+import { useEffect, useOptimistic, type ReactNode } from "react";
+import { Check, ChevronRight, FileInput, FolderClosed, Hash, Home, Lock, Plus, SearchX, Trash2, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
-import { CompleteToggle } from "@/components/complete-toggle";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import {
   addTaskToProject,
   assignRequestNumber,
-  createSubtask,
-  deleteSubtask,
   deleteTask,
   moveTask,
   removeTaskFromProject,
   setHomeProject,
   setTaskCompleted,
   setTaskKind,
-  updateSubtask,
   updateTask,
 } from "@/lib/actions";
 import { TASK_KINDS, TASK_KIND_LABELS, approvalOpen, approvalTaskRequest, parseApprovalTaskStatus, parseTaskKind } from "@/lib/task-kinds";
@@ -33,6 +29,8 @@ import { DateTimeField } from "./task-dates";
 import { TaskDependencies } from "./task-dependencies";
 import { TaskFields } from "./task-fields";
 import { TaskRecurrence } from "./task-recurrence";
+import { TaskSubtasks } from "./task-subtasks";
+import { useTaskHref } from "@/components/project/shared";
 import { SaveTaskTemplateButton } from "./save-task-template";
 import { PANE_CONTROL, PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
 import { Skeleton } from "@/components/ui";
@@ -154,7 +152,8 @@ export function TaskDetailPanel({
 
   const memberProjectIds = new Set(task.memberships.map((m) => m.projectId));
   const canEdit = hasRole(task.viewerRole, "editor");
-  const addableProjects = canEdit ? projects.filter((p) => p.canAdd && !memberProjectIds.has(p.id)) : [];
+  // Subtasks live in their root task's projects; they're never added to one themselves.
+  const addableProjects = canEdit && !task.isSubtask ? projects.filter((p) => p.canAdd && !memberProjectIds.has(p.id)) : [];
   // Only people with access to one of the task's projects can be assigned (others couldn't see it).
   // An approval task's assignee approves it, so they need Commenter+ (the database refuses Viewers).
   const assignable = profiles.filter(
@@ -236,7 +235,10 @@ export function TaskDetailPanel({
             <button
               type="button"
               onClick={() => {
-                if (window.confirm(`Delete “${task.title}”? It moves to the Trash of each of its projects, where Editors can restore it.`)) {
+                const message = task.isSubtask
+                  ? `Delete subtask “${task.title}”? It moves to the Trash with its own subtasks, where Editors can restore it.`
+                  : `Delete “${task.title}”? It moves to the Trash of each of its projects (with its subtasks), where Editors can restore it.`;
+                if (window.confirm(message)) {
                   run(async () => {
                     const result = await deleteTask(task.id);
                     if (!result.error) close();
@@ -256,6 +258,7 @@ export function TaskDetailPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto px-gutter py-4">
+        {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
         {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
         {/* Below Editor every control in here is disabled; links (projects) still work. RLS enforces it. */}
         <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
@@ -366,7 +369,11 @@ export function TaskDetailPanel({
 
             <dt className={`${PANE_LABEL} self-start`}>Projects</dt>
             <dd>
-              <Memberships task={task} addableProjects={addableProjects} />
+              {task.isSubtask ? (
+                <InheritedProjects task={task} />
+              ) : (
+                <Memberships task={task} addableProjects={addableProjects} />
+              )}
             </dd>
           </dl>
 
@@ -390,7 +397,7 @@ export function TaskDetailPanel({
             />
           </div>
 
-          <Subtasks task={task} />
+          <TaskSubtasks task={task} profiles={profiles} />
         </fieldset>
 
         <TaskDependencies task={task} />
@@ -547,129 +554,61 @@ function RequestBadges({ task }: { task: TaskDetail }) {
   );
 }
 
-type SubtaskChange =
-  | { type: "toggle"; id: string; completed: boolean }
-  | { type: "remove"; id: string };
-
-function Subtasks({ task }: { task: TaskDetail }) {
-  const [, run] = useServerAction();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [subtasks, applyChange] = useOptimistic(
-    task.subtasks,
-    (current, change: SubtaskChange) =>
-      change.type === "remove"
-        ? current.filter((s) => s.id !== change.id)
-        : current.map((s) =>
-            s.id === change.id
-              ? { ...s, completed_at: change.completed ? new Date().toISOString() : null }
-              : s,
-          ),
-  );
-  const done = subtasks.filter((s) => s.completed_at).length;
-  const approvalBySubtask = new Map(
-    task.approvals.filter((a) => a.subtaskId).map((a) => [a.subtaskId!, a] as const),
-  );
-
+// “Root › Parent” above a subtask's title; each link opens that task in the pane.
+function ParentBreadcrumb({ task }: { task: TaskDetail }) {
+  const taskHref = useTaskHref();
   return (
-    <section className="mt-6" aria-labelledby="subtasks-heading">
-      <div className="flex items-baseline justify-between">
-        <h3 id="subtasks-heading" className={PANE_HEADING}>
-          Subtasks
-        </h3>
-        {subtasks.length > 0 ? (
-          <span className="text-xs tabular-nums text-zinc-500">
-            {done} of {subtasks.length} done
-          </span>
-        ) : null}
-      </div>
-
-      <ul className="mt-2 divide-y divide-zinc-100 rounded-md border border-zinc-200">
-        {subtasks.map((subtask) => {
-          const completed = Boolean(subtask.completed_at);
-          const approval = approvalBySubtask.get(subtask.id);
-          return (
-            <li key={subtask.id} className="group flex items-center gap-2.5 px-3 py-1.5">
-              {approval ? (
-                <span
-                  title="Approval subtask: decide it in Approvals below"
-                  className={`inline-flex size-4 items-center justify-center ${
-                    approval.status === "approved" ? "text-green-700" : "text-amber-600"
-                  }`}
-                >
-                  <ShieldCheck className="size-4" aria-label="Approval" />
-                </span>
-              ) : (
-                <CompleteToggle
-                  size="sm"
-                  completed={completed}
-                  label={completed ? `Mark “${subtask.title}” incomplete` : `Mark “${subtask.title}” complete`}
-                  onToggle={() =>
-                    run(
-                      () => updateSubtask(subtask.id, { completed: !completed }),
-                      () => applyChange({ type: "toggle", id: subtask.id, completed: !completed }),
-                    )
-                  }
-                />
-              )}
-              <label className="sr-only" htmlFor={`subtask-${subtask.id}`}>
-                Subtask name
-              </label>
-              <input
-                id={`subtask-${subtask.id}`}
-                defaultValue={subtask.title}
-                onBlur={(e) => {
-                  const title = e.currentTarget.value.trim();
-                  if (!title) e.currentTarget.value = subtask.title;
-                  else if (title !== subtask.title) run(() => updateSubtask(subtask.id, { title }));
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
-                }}
-                className={`min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
-                  completed ? "text-zinc-400 line-through" : "text-zinc-800"
-                }`}
-              />
-              <button
-                type="button"
-                aria-label={`Delete subtask ${subtask.title}`}
-                onClick={() =>
-                  run(
-                    () => deleteSubtask(subtask.id),
-                    () => applyChange({ type: "remove", id: subtask.id }),
-                  )
-                }
-                className="rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
-              >
-                <Trash2 className="size-3.5" />
-              </button>
-            </li>
-          );
-        })}
-        <li className="px-3 py-1.5">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const input = inputRef.current;
-              const title = input?.value.trim();
-              if (!input || !title) return;
-              input.value = "";
-              run(() => createSubtask(task.id, title));
-            }}
-            className="flex items-center gap-2.5"
+    <nav aria-label="Parent tasks" className="mb-1 flex min-w-0 flex-wrap items-center gap-1 text-xs text-zinc-500">
+      <span className="sr-only">Subtask of</span>
+      {task.ancestors.map((a, i) => (
+        <span key={a.id} className="inline-flex min-w-0 items-center gap-1">
+          {i > 0 ? <ChevronRight className="size-3 shrink-0 text-zinc-300" aria-hidden /> : null}
+          <Link
+            href={taskHref(a.id)}
+            scroll={false}
+            className={`max-w-56 truncate rounded px-1 py-0.5 hover:bg-zinc-100 hover:text-zinc-900 ${
+              a.completedAt ? "line-through" : ""
+            }`}
           >
-            <Plus className="size-4 text-zinc-400" aria-hidden />
-            <label className="sr-only" htmlFor="new-subtask">
-              New subtask
-            </label>
-            <input
-              ref={inputRef}
-              id="new-subtask"
-              placeholder={subtasks.length ? "Add another subtask" : "Break this task into steps"}
-              className="min-w-0 flex-1 bg-transparent py-0.5 text-sm placeholder:text-zinc-400 focus:outline-none"
-            />
-          </form>
-        </li>
-      </ul>
-    </section>
+            {a.title}
+          </Link>
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+// A subtask's projects are its top-level task's (read-only here; change them on that task).
+function InheritedProjects({ task }: { task: TaskDetail }) {
+  const taskHref = useTaskHref();
+  const root = task.ancestors[0];
+  return (
+    <div className="flex flex-col gap-1 py-1.5 text-sm">
+      {task.memberships.length ? (
+        <ul className="flex flex-wrap gap-1">
+          {task.memberships.map((m) => (
+            <li key={m.projectId}>
+              <Link
+                href={`/projects/${m.projectId}/list?task=${task.id}`}
+                className="chip hover:bg-zinc-200"
+              >
+                {m.projectName}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <span className="text-zinc-500">None you can open</span>
+      )}
+      {root ? (
+        <p className="text-xs text-zinc-500">
+          Same as its top-level task,{" "}
+          <Link href={taskHref(root.id)} scroll={false} className="underline hover:text-zinc-800">
+            {root.title}
+          </Link>
+          .
+        </p>
+      ) : null}
+    </div>
   );
 }

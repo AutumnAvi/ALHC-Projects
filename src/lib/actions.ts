@@ -1346,22 +1346,17 @@ export async function setHomeProject(taskId: string, projectId: string): Promise
 // Subtasks
 // ---------------------------------------------------------------------------------------------
 
-export async function createSubtask(taskId: string, title: string): Promise<ActionResult> {
+// Subtasks are tasks (parent_task_id). Assignee, dates, notes, and fields go through updateTask and
+// friends like any task; these cover creating, renaming, completing, ordering, and deleting from a list.
+
+export async function createSubtask(parentId: string, title: string, beforeId?: string | null): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    const { data: last } = await supabase
-      .from("subtasks")
-      .select("sort_order")
-      .eq("task_id", id(taskId))
-      .is("deleted_at", null)
-      .order("sort_order", { ascending: false })
-      .limit(1)
-      .maybeSingle();
     check(
-      await supabase.from("subtasks").insert({
-        task_id: taskId,
-        title: text(title, "Subtask name"),
-        sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
+      await supabase.rpc("create_subtask", {
+        parent_task: id(parentId, "task"),
+        task_title: text(title, "Subtask name"),
+        before_task: beforeId ? id(beforeId, "subtask") : null,
       }),
     );
   });
@@ -1376,16 +1371,27 @@ export async function updateSubtask(
     if (patch.title !== undefined) update.title = text(patch.title, "Subtask name");
     if (patch.completed !== undefined) update.completed_at = patch.completed ? now() : null;
     const supabase = await createClient();
-    check(await supabase.from("subtasks").update(update).eq("id", id(subtaskId)));
+    checkUpdated(await supabase.from("tasks").update(update).eq("id", id(subtaskId)).select("id"));
+  });
+}
+
+// Moves a subtask before another one under the same parent (null = to the end).
+export async function placeSubtask(subtaskId: string, beforeId: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("place_subtask", {
+        target_task: id(subtaskId, "subtask"),
+        before_task: beforeId ? id(beforeId, "subtask") : null,
+      }),
+    );
   });
 }
 
 export async function deleteSubtask(subtaskId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.from("subtasks").update({ deleted_at: now() }).eq("id", id(subtaskId)),
-    );
+    check(await supabase.from("tasks").update({ deleted_at: now() }).eq("id", id(subtaskId)));
   });
 }
 
