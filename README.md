@@ -18,7 +18,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Inbox** (`/inbox`) with an unread badge in the sidebar. You get an item when you're assigned a task or @mentioned, and when someone comments on or completes a task you follow. Items can be marked read or unread, or all marked read at once. There's no email.
 - **Custom fields** per project (Fields tab). Types are text, number, date, checkbox, single-select, multi-select, and people, plus an optional **Status** field that mirrors the project's sections. Values are edited in the task pane. Pinned fields show as List columns and Board card chips.
 - **Attachments** on tasks: upload, open, and remove (soft delete), up to 25 MB per file.
-- **My Tasks** (`/my-tasks`): everything assigned to you across projects, grouped by Overdue, Today, Next 7 days, Later, and No due date.
+- **My Tasks** (`/my-tasks`): everything assigned to you across projects, in your own sections (Recently assigned, Do today, Do next week, Do later, plus any you add) or — with the **Due dates** toggle — grouped by Overdue, Today, Next 7 days, Later, and No due date.
 - **Search** (sidebar box or `/search`) over task titles and descriptions.
 
 ## What's here (workflows)
@@ -107,6 +107,11 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Settings → Workspace** (gear next to your name) lists the **workspace admins**. Admins add other admins by allowlisted email and can remove them (the last admin can't leave). Workspace admins can rename, replace, or delete any project template, including the Creative Requests example, and see past Asana imports for the projects they can open. **It gives no access to private projects**: you still only see projects you're a member of. Imports still run from each project's Settings → Import.
 - **Comments:** edit or delete your own (edited comments say “(edited)”; deleted ones leave a “Comment deleted” placeholder). Type `@` to pick a project member; the mention notifies them in their Inbox. Editing a comment notifies only people it newly mentions. React with 👍 ❤️ 🎉 😄 👀 ✅ (Commenters and above).
 - **Inbox:** archive one notification or **Archive all**; the **Archived** tab keeps them and can move them back. Mark read / unread as before.
+
+## What's here (My Tasks sections and workload)
+
+- **My Tasks sections.** New assignments land in **Recently assigned**; drag tasks into **Do today**, **Do next week**, **Do later**, or sections you add (rename or delete them from the section's … menu — a deleted section's tasks go back to Recently assigned). Drag or use the arrows to reorder sections. Select tasks and use **Move** in the bar to file many at once. Sections are personal: nobody else sees or changes yours. **Due dates** (top right) switches back to the due-date buckets; your choice is remembered.
+- **Workload** tab on every project and portfolio: one row per person, one column per day or week, counting their open tasks with a due date (from the start date to the due date when both are set). **Measure** switches between task counts and a number field (e.g. Effort, spread evenly over the task's days). Editors set each person's **weekly capacity**; cells over it turn red. Click a cell to list its tasks, then drag one onto another person or day to reassign or reschedule it — that's a normal task edit, so history, notifications, and rules run as usual. A portfolio's workload only counts projects you're a member of.
 
 ## Local development
 

@@ -698,6 +698,102 @@ export type Database = {
         };
         Relationships: [];
       };
+      my_task_placements: {
+        Row: {
+          id: string;
+          profile_id: string;
+          task_id: string;
+          section_id: string;
+          sort_order: number;
+          assigned_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          task_id: string;
+          section_id: string;
+          sort_order?: number;
+          assigned_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          task_id?: string;
+          section_id?: string;
+          sort_order?: number;
+          assigned_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "my_task_placements_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "my_task_placements_section_id_fkey";
+            columns: ["section_id"];
+            isOneToOne: false;
+            referencedRelation: "my_task_sections";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "my_task_placements_task_id_fkey";
+            columns: ["task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      my_task_sections: {
+        Row: {
+          id: string;
+          profile_id: string;
+          kind: string;
+          name: string;
+          sort_order: number;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          kind?: string;
+          name: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          kind?: string;
+          name?: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "my_task_sections_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       profiles: {
         Row: {
           id: string;
@@ -1882,6 +1978,7 @@ export type Database = {
           recurrence_series_id: string | null;
           recurrence_seq: number;
           recurrence_next_id: string | null;
+          assigned_at: string | null;
         };
         Insert: {
           id?: string;
@@ -1907,6 +2004,7 @@ export type Database = {
           recurrence_series_id?: string | null;
           recurrence_seq?: number;
           recurrence_next_id?: string | null;
+          assigned_at?: string | null;
         };
         Update: {
           id?: string;
@@ -1932,6 +2030,7 @@ export type Database = {
           recurrence_series_id?: string | null;
           recurrence_seq?: number;
           recurrence_next_id?: string | null;
+          assigned_at?: string | null;
         };
         Relationships: [
           {
@@ -2012,6 +2111,71 @@ export type Database = {
             columns: ["workspace_id"];
             isOneToOne: false;
             referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      workload_capacities: {
+        Row: {
+          id: string;
+          project_id: string | null;
+          portfolio_id: string | null;
+          profile_id: string;
+          weekly_capacity: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id?: string | null;
+          portfolio_id?: string | null;
+          profile_id: string;
+          weekly_capacity: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string | null;
+          portfolio_id?: string | null;
+          profile_id?: string;
+          weekly_capacity?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "workload_capacities_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "workload_capacities_portfolio_id_fkey";
+            columns: ["portfolio_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "workload_capacities_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "workload_capacities_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
             referencedColumns: ["id"];
           },
         ];
@@ -2174,6 +2338,66 @@ export type Database = {
       open_blocker_count: {
         Args: { target_task: string };
         Returns: number;
+      };
+      ensure_my_task_sections: {
+        Args: Record<PropertyKey, never>;
+        Returns: string;
+      };
+      my_tasks_layout: {
+        Args: Record<PropertyKey, never>;
+        Returns: { task_id: string; section_id: string; sort_order: number }[];
+      };
+      place_my_task: {
+        Args: { target_task: string; target_section: string; before_task: string | null };
+        Returns: number;
+      };
+      place_my_task_section: {
+        Args: { target_section: string; before_section: string | null };
+        Returns: number;
+      };
+      move_my_tasks: {
+        Args: { target_tasks: string[]; target_section: string };
+        Returns: Json;
+      };
+      project_workload: {
+        Args: { target_project: string; range_start?: string | null; range_end?: string | null; value_field?: string | null };
+        Returns: {
+          task_id: string;
+          title: string;
+          assignee_id: string;
+          start_on: string | null;
+          due_on: string;
+          value: number | null;
+          project_id: string;
+          can_edit: boolean;
+        }[];
+      };
+      portfolio_workload: {
+        Args: {
+          target_portfolio: string;
+          range_start?: string | null;
+          range_end?: string | null;
+          value_field_name?: string | null;
+        };
+        Returns: {
+          task_id: string;
+          title: string;
+          assignee_id: string;
+          start_on: string | null;
+          due_on: string;
+          value: number | null;
+          project_id: string;
+          can_edit: boolean;
+        }[];
+      };
+      set_workload_capacity: {
+        Args: {
+          target_project: string | null;
+          target_portfolio: string | null;
+          target_profile: string;
+          new_capacity: number | null;
+        };
+        Returns: undefined;
       };
       place_section: {
         Args: { target_section: string; before_section: string | null };

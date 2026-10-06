@@ -518,6 +518,7 @@ begin
   -- Templates added can_manage_project_template, create_project_from_template, delete_project_template,
   -- duplicate_project, save_project_as_template, update_project_template.
   -- Workspace admin and comments added add_workspace_admin, is_workspace_admin, remove_workspace_admin.
+  -- My Tasks sections and workload added none: every new function is SECURITY INVOKER.
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
     'assign_request_number,can_manage_project_template,cancel_approval,create_project_from_template,custom_field_project,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'

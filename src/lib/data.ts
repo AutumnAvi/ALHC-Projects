@@ -24,6 +24,8 @@ import {
 } from "@/lib/roles";
 import { EMPTY_COUNTS, type PortfolioCounts } from "@/lib/portfolios";
 import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
+import { isMyTaskSectionKind, type MyTaskPlacement, type MyTaskSection } from "@/lib/my-tasks";
+import type { WorkloadTask } from "@/lib/workload";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
   isViewLayout,
@@ -841,6 +843,27 @@ export const listMyTasks = cache(async (profileId: string) => {
   };
 });
 
+// The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()
+// seeds the sections on first use and puts newly assigned tasks at the top of Recently assigned.
+export const listMyTaskLayout = cache(
+  async (): Promise<{ sections: MyTaskSection[]; placements: Record<string, MyTaskPlacement> }> => {
+    const supabase = await createClient();
+    const layout = rows(await supabase.rpc("my_tasks_layout"), "my tasks layout");
+    const result = await supabase
+      .from("my_task_sections")
+      .select("id, kind, name, sort_order")
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    const sections = rows(result, "my tasks sections").flatMap((s) =>
+      isMyTaskSectionKind(s.kind) ? [{ id: s.id, kind: s.kind, name: s.name, sortOrder: s.sort_order }] : [],
+    );
+    const placements: Record<string, MyTaskPlacement> = {};
+    for (const row of layout) placements[row.task_id] = { sectionId: row.section_id, sortOrder: row.sort_order };
+    return { sections, placements };
+  },
+);
+
 export type InboxItem = {
   id: string;
   kind:
@@ -1601,3 +1624,82 @@ export const listWorkspaceImportRuns = cache(async (): Promise<WorkspaceImportRu
     finishedAt: r.finished_at,
   }));
 });
+
+// ---------------------------------------------------------------------------------------------
+// Workload (SECURITY INVOKER RPCs: only tasks the viewer can read are ever counted)
+// ---------------------------------------------------------------------------------------------
+
+type WorkloadRow = {
+  task_id: string;
+  title: string;
+  assignee_id: string;
+  start_on: string | null;
+  due_on: string;
+  value: number | null;
+  project_id: string;
+  can_edit: boolean;
+};
+
+const toWorkloadTask = (r: WorkloadRow): WorkloadTask => ({
+  id: r.task_id,
+  title: r.title,
+  assigneeId: r.assignee_id,
+  startOn: r.start_on,
+  dueOn: r.due_on,
+  value: r.value === null ? null : Number(r.value),
+  projectId: r.project_id,
+  canEdit: r.can_edit,
+});
+
+export async function projectWorkload(
+  projectId: string,
+  rangeStart: string,
+  rangeEnd: string,
+  valueFieldId: string | null,
+): Promise<WorkloadTask[]> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("project_workload", {
+    target_project: projectId,
+    range_start: rangeStart,
+    range_end: rangeEnd,
+    value_field: valueFieldId,
+  });
+  return rows(result, "workload").map(toWorkloadTask);
+}
+
+export async function portfolioWorkload(
+  portfolioId: string,
+  rangeStart: string,
+  rangeEnd: string,
+  valueFieldName: string | null,
+): Promise<WorkloadTask[]> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("portfolio_workload", {
+    target_portfolio: portfolioId,
+    range_start: rangeStart,
+    range_end: rangeEnd,
+    value_field_name: valueFieldName,
+  });
+  return rows(result, "workload").map(toWorkloadTask);
+}
+
+// Weekly capacity per person in a project's or a portfolio's workload.
+export const listWorkloadCapacities = cache(
+  async (scope: "project" | "portfolio", scopeId: string): Promise<Record<string, number>> => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("workload_capacities")
+      .select("profile_id, weekly_capacity")
+      .eq(scope === "project" ? "project_id" : "portfolio_id", scopeId)
+      .is("deleted_at", null);
+    const out: Record<string, number> = {};
+    for (const row of rows(result, "capacities")) out[row.profile_id] = Number(row.weekly_capacity);
+    return out;
+  },
+);
+
+// Number fields of a set of projects (workload "measure by" choices).
+export async function listNumberFields(projectIds: string[]): Promise<FieldDef[]> {
+  if (projectIds.length === 0) return [];
+  return (await listFieldsForProjects(projectIds)).filter((f) => f.fieldType === "number");
+}

@@ -29,6 +29,8 @@ export type BulkContext = {
   projects: { id: string; name: string }[];
   // List only: sections and fields of the project the list belongs to.
   project?: { id: string; sections: Section[]; fields: FieldDef[] };
+  // My Tasks only (sections layout): the viewer's own My Tasks sections, for "Move".
+  mySections?: { id: string; name: string }[];
 };
 
 type Summary = { operation: BulkOperation; total: number; result: BulkResult };
@@ -158,6 +160,38 @@ export function BulkBar({
               />
             )}
           </Popover>
+
+          {context.mySections?.length ? (
+            <Popover
+              label="Move selected tasks to one of your My Tasks sections"
+              side="top"
+              buttonClassName={BAR_BUTTON}
+              panelClassName="w-60"
+              button={
+                <>
+                  <MoveRight className="size-4" aria-hidden />
+                  Move
+                </>
+              }
+            >
+              {(close) => (
+                <div className="flex flex-col">
+                  <p className="px-2 pb-1 text-xs font-medium text-zinc-500">Move to section (only in your My Tasks)</p>
+                  {context.mySections?.map((section) => (
+                    <MenuItem
+                      key={section.id}
+                      onClick={() => {
+                        close();
+                        run({ action: "my_section", section_id: section.id });
+                      }}
+                    >
+                      <span className="truncate">{section.name}</span>
+                    </MenuItem>
+                  ))}
+                </div>
+              )}
+            </Popover>
+          ) : null}
 
           {project ? (
             <Popover
