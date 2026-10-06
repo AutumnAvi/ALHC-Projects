@@ -90,3 +90,12 @@ export type ImportProgress = {
   done: boolean;
   totals: ImportTotals;
 };
+
+// What a finished run added (import_runs.summary.created), for the past-imports lists.
+export function describeImportCreated(created: unknown) {
+  if (!created || typeof created !== "object") return "nothing added yet";
+  const c = created as Record<string, unknown>;
+  const n = (k: string) => (typeof c[k] === "number" ? (c[k] as number) : 0);
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  return `${plural(n("task"), "task")}, ${plural(n("subtask"), "subtask")}, ${plural(n("comment"), "comment")} added`;
+}

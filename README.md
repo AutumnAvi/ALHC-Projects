@@ -102,6 +102,12 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Quiet and safe.** A copy never runs rules or notifies anyone, and every copied rule arrives **turned off** until you turn it on (Slack/webhook URLs are not copied). The new project's Settings page says where it came from.
 - **Task templates** (title, notes, subtasks, field values, optional assignee) are saved from a task's header or in Settings → Templates, and used from **Add task → Template** in List and Board. Tasks made this way are normal tasks: rules and notifications run as usual.
 
+## What's here (workspace admin and comments)
+
+- **Settings → Workspace** (gear next to your name) lists the **workspace admins**. Admins add other admins by allowlisted email and can remove them (the last admin can't leave). Workspace admins can rename, replace, or delete any project template, including the Creative Requests example, and see past Asana imports for the projects they can open. **It gives no access to private projects**: you still only see projects you're a member of. Imports still run from each project's Settings → Import.
+- **Comments:** edit or delete your own (edited comments say “(edited)”; deleted ones leave a “Comment deleted” placeholder). Type `@` to pick a project member; the mention notifies them in their Inbox. Editing a comment notifies only people it newly mentions. React with 👍 ❤️ 🎉 😄 👀 ✅ (Commenters and above).
+- **Inbox:** archive one notification or **Archive all**; the **Archived** tab keeps them and can move them back. Mark read / unread as before.
+
 ## Local development
 
 ```bash
@@ -116,7 +122,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–93)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–94)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.
@@ -135,13 +141,20 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
    ```
 
    To remove access later, run `delete from public.allowed_emails where email = '...';`. Their next request gets signed out. `supabase/seed.sql` only contains a placeholder (`owner@example.com`) and is applied by `supabase db reset` for local stacks.
-4. **Configure sign-in** as described in [Setup: sign-in](#setup-sign-in-email--password-interim). The allowlist also requires a confirmed email.
-5. **Storage:** the collaboration migration creates the private bucket **`task-attachments`** (25 MB per-file limit) and its `storage.objects` policies (since Teams & permissions: `task_attachments_objects_select_viewer` and `task_attachments_objects_insert_editor`, which follow the task's project roles). Nothing to click, but check two things:
+4. **Workspace admin:** the Workspace admin and comments migration makes `avweinreb@autumnlakemarketing.com` the first workspace admin if that account already exists (signed in once, allowlisted); otherwise it does nothing. To set the first admin later, run in the SQL editor:
+
+   ```sql
+   select public.seed_workspace_admin('name@yourdomain.com');
+   ```
+
+   After that, admins add each other in Settings → Workspace.
+5. **Configure sign-in** as described in [Setup: sign-in](#setup-sign-in-email--password-interim). The allowlist also requires a confirmed email.
+6. **Storage:** the collaboration migration creates the private bucket **`task-attachments`** (25 MB per-file limit) and its `storage.objects` policies (since Teams & permissions: `task_attachments_objects_select_viewer` and `task_attachments_objects_insert_editor`, which follow the task's project roles). Nothing to click, but check two things:
    - Storage → Settings → **Upload file size limit** (the project-wide cap) must be at least 25 MB, or uploads fail below the bucket limit.
    - Files are stored as `<task id>/<uuid>-<file name>` and are only reachable through short-lived signed URLs issued by the app (`/attachments/<id>`). Removing an attachment hides it but leaves the object in Storage.
    - The Asana importer migration adds a second private bucket, **`imports`** (50 MB per file), for uploaded export files at `<project id>/<uploader id>/<uuid>-<file name>`. Only the uploader can read or remove them, and only while they're an Admin of the project; the app removes them when an import finishes. Raise the project-wide upload limit to 50 MB if you import large exports.
-6. **Realtime (optional):** the migrations add `comments`, `task_stories`, `inbox_items`, and `approval_requests` to the `supabase_realtime` publication, so comments, activity, approvals, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
-7. **Scheduled rules (recommended):** enable the **`pg_cron`** extension (Database → Extensions) *before* applying the workflows migration, and it schedules `alhc-workflow-tick` every 5 minutes. That runs "wait N hours" steps and "due date is approaching" rules. If you enable `pg_cron` later, schedule it yourself in the SQL editor:
+7. **Realtime (optional):** the migrations add `comments`, `comment_reactions`, `task_stories`, `inbox_items`, and `approval_requests` to the `supabase_realtime` publication, so comments, activity, approvals, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
+8. **Scheduled rules (recommended):** enable the **`pg_cron`** extension (Database → Extensions) *before* applying the workflows migration, and it schedules `alhc-workflow-tick` every 5 minutes. That runs "wait N hours" steps and "due date is approaching" rules. If you enable `pg_cron` later, schedule it yourself in the SQL editor:
 
    ```sql
    select cron.schedule('alhc-workflow-tick', '*/5 * * * *', 'select public.workflow_tick()');

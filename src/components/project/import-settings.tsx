@@ -9,6 +9,7 @@ import { discardImportUploads, previewAsanaImport, runAsanaImport } from "@/lib/
 import type { ImportRun } from "@/lib/data";
 import {
   IMPORTS_BUCKET,
+  describeImportCreated,
   MAX_IMPORT_FILES,
   MAX_IMPORT_FILE_BYTES,
   importFileKind,
@@ -210,7 +211,7 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
                   <Timestamp iso={run.createdAt} />
                   {run.createdByName ? ` by ${run.createdByName}` : ""}
                   {" · "}
-                  {describeCreated(run.summary.created)}
+                  {describeImportCreated(run.summary.created)}
                 </p>
               </li>
             ))}
@@ -443,9 +444,3 @@ function describeTotals(totals: ImportProgress["totals"]) {
   return text;
 }
 
-function describeCreated(created: unknown) {
-  if (!created || typeof created !== "object") return "nothing added yet";
-  const c = created as Record<string, unknown>;
-  const n = (k: string) => (typeof c[k] === "number" ? (c[k] as number) : 0);
-  return `${plural(n("task"), "task")}, ${plural(n("subtask"), "subtask")}, ${plural(n("comment"), "comment")} added`;
-}

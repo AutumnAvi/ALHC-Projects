@@ -40,8 +40,9 @@ export function TemplateGallery({
           {templates.length > 0 ? <span className="text-xs tabular-nums text-zinc-400">{templates.length}</span> : null}
         </div>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Shared with everyone in the workspace. Save one from a project’s … menu (project admins). Rules in a template
-          always arrive turned off.
+          Shared with everyone in the workspace. Save one from a project’s … menu (project admins). The source
+          project’s admins and workspace admins can rename, replace, or delete a template. Rules in a template always
+          arrive turned off.
         </p>
         {templates.length === 0 ? (
           <div className="mt-3">

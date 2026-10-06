@@ -2,14 +2,25 @@
 
 import Link from "next/link";
 import { useOptimistic } from "react";
-import { AtSign, CheckCheck, CheckCircle2, Inbox, MessageSquare, ShieldCheck, UserPlus, Workflow } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  AtSign,
+  CheckCheck,
+  CheckCircle2,
+  Inbox,
+  MessageSquare,
+  ShieldCheck,
+  UserPlus,
+  Workflow,
+} from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { useTaskHref } from "@/components/project/shared";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { useServerAction } from "@/components/toast";
-import { markInboxRead, markInboxUnread } from "@/lib/actions";
-import type { InboxItem, Profile } from "@/lib/data";
+import { archiveInboxItems, markInboxRead, markInboxUnread } from "@/lib/actions";
+import type { InboxItem, InboxTab, Profile } from "@/lib/data";
 import { useRealtimeRefresh } from "@/lib/realtime";
 
 const KIND = {
@@ -46,12 +57,17 @@ function describe(item: InboxItem) {
   return { ruleName, verb, detail };
 }
 
+const ITEM_ACTION =
+  "relative z-10 rounded px-1.5 py-0.5 text-xs text-zinc-500 opacity-0 hover:bg-zinc-200 hover:text-zinc-900 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100";
+
 export function InboxView({
+  tab,
   items,
   profiles,
   memberId,
   openTaskId,
 }: {
+  tab: InboxTab;
   items: InboxItem[];
   profiles: Profile[];
   memberId: string;
@@ -70,9 +86,20 @@ export function InboxView({
       return next;
     },
   );
+  // Items archived (Inbox tab) or unarchived (Archived tab) here leave the list until the refresh lands.
+  const [moved, move] = useOptimistic(new Set<string>(), (current, ids: string[]) => new Set([...current, ...ids]));
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
+  const archivedTab = tab === "archived";
+  const shown = items.filter((item) => !moved.has(item.id));
   const isRead = (item: InboxItem) => readOverrides.get(item.id) ?? Boolean(item.readAt);
-  const unread = items.filter((item) => !isRead(item));
+  const unread = shown.filter((item) => !isRead(item));
+
+  function setArchived(ids: string[] | "all", archived: boolean) {
+    run(
+      () => archiveInboxItems(ids, archived),
+      () => move(ids === "all" ? shown.map((item) => item.id) : ids),
+    );
+  }
 
   function setItemRead(item: InboxItem, read: boolean) {
     run(
@@ -86,35 +113,84 @@ export function InboxView({
       <PageHeader
         icon={Inbox}
         title="Inbox"
-        description={unread.length > 0 ? `${unread.length} unread` : "You’re all caught up"}
+        description={
+          archivedTab
+            ? "Archived notifications"
+            : unread.length > 0
+              ? `${unread.length} unread`
+              : "You’re all caught up"
+        }
         actions={
-          <button
-            type="button"
-            disabled={unread.length === 0}
-            onClick={() =>
-              run(
-                () => markInboxRead("all"),
-                () => setRead({ ids: unread.map((i) => i.id), read: true }),
-              )
-            }
-            className="btn-secondary"
-          >
-            <CheckCheck className="size-3.5" aria-hidden />
-            Mark all read
-          </button>
+          archivedTab ? null : (
+            <>
+              <button
+                type="button"
+                disabled={unread.length === 0}
+                onClick={() =>
+                  run(
+                    () => markInboxRead("all"),
+                    () => setRead({ ids: unread.map((i) => i.id), read: true }),
+                  )
+                }
+                className="btn-secondary"
+              >
+                <CheckCheck className="size-3.5" aria-hidden />
+                Mark all read
+              </button>
+              <button
+                type="button"
+                disabled={shown.length === 0}
+                onClick={() => {
+                  if (window.confirm(`Archive ${shown.length === 1 ? "this notification" : `all ${shown.length} notifications`}?`)) {
+                    setArchived("all", true);
+                  }
+                }}
+                className="btn-secondary"
+              >
+                <Archive className="size-3.5" aria-hidden />
+                Archive all
+              </button>
+            </>
+          )
         }
       />
+      <nav aria-label="Inbox tabs" className="flex shrink-0 gap-4 border-b border-zinc-200 px-gutter">
+        {(
+          [
+            { key: "active", label: "Inbox", href: "/inbox" },
+            { key: "archived", label: "Archived", href: "/inbox?tab=archived" },
+          ] as const
+        ).map(({ key, label, href }) => (
+          <Link
+            key={key}
+            href={href}
+            aria-current={tab === key ? "page" : undefined}
+            className="-mb-px border-b-2 border-transparent py-2 text-sm text-zinc-600 hover:text-zinc-900 aria-[current=page]:border-zinc-900 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"
+          >
+            {label}
+          </Link>
+        ))}
+      </nav>
 
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-3xl px-gutter py-4">
-          {items.length === 0 ? (
-            <EmptyState icon={Inbox} title="No notifications yet">
-              You’ll hear about assignments, @mentions, approvals, rule notifications, and comments or completions on
-              tasks you follow.
-            </EmptyState>
+          {shown.length === 0 ? (
+            archivedTab ? (
+              <EmptyState icon={Archive} title="Nothing archived">
+                Archive notifications you’re done with to clear your Inbox. They stay here, and you can move them back.
+              </EmptyState>
+            ) : (
+              <EmptyState icon={Inbox} title="No notifications">
+                You’ll hear about assignments, @mentions, approvals, rule notifications, and comments or completions on
+                tasks you follow. Archived notifications are in the Archived tab.
+              </EmptyState>
+            )
           ) : (
-            <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200" aria-label="Notifications">
-              {items.map((item) => {
+            <ul
+              className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200"
+              aria-label={archivedTab ? "Archived notifications" : "Notifications"}
+            >
+              {shown.map((item) => {
                 const read = isRead(item);
                 const actor = item.actorId ? profilesById.get(item.actorId) : undefined;
                 const { ruleName, verb, detail } = describe(item);
@@ -158,13 +234,21 @@ export function InboxView({
                         <Timestamp iso={item.createdAt} />
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setItemRead(item, !read)}
-                      className="relative z-10 self-start rounded px-1.5 py-0.5 text-xs text-zinc-500 opacity-0 hover:bg-zinc-200 hover:text-zinc-900 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                    >
-                      {read ? "Mark unread" : "Mark read"}
-                    </button>
+                    <div className="flex shrink-0 items-start gap-0.5 self-start">
+                      <button type="button" onClick={() => setItemRead(item, !read)} className={ITEM_ACTION}>
+                        {read ? "Mark unread" : "Mark read"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setArchived([item.id], !archivedTab)}
+                        aria-label={archivedTab ? `Move “${item.taskTitle}” back to Inbox` : `Archive “${item.taskTitle}”`}
+                        title={archivedTab ? "Move to Inbox" : "Archive"}
+                        className={`${ITEM_ACTION} inline-flex items-center gap-1`}
+                      >
+                        {archivedTab ? <ArchiveRestore className="size-3.5" aria-hidden /> : <Archive className="size-3.5" aria-hidden />}
+                        {archivedTab ? "Unarchive" : "Archive"}
+                      </button>
+                    </div>
                   </li>
                 );
               })}

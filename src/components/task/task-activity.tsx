@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, type ReactNode } from "react";
-import { Bell, BellOff, Trash2 } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Bell, BellOff, Pencil, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
+import { Popover } from "@/components/popover";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { addComment, deleteComment, setFollowing } from "@/lib/actions";
+import { MentionTextarea } from "@/components/task/mention-textarea";
+import { addComment, deleteComment, editComment, setFollowing, toggleReaction } from "@/lib/actions";
+import { REACTIONS, reactionOf, type ReactionKey } from "@/lib/reactions";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile, TaskComment, TaskDetail, TaskStory } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
@@ -37,11 +40,14 @@ export function TaskActivity({
 }) {
   useRealtimeRefresh(`task-${task.id}`, [
     { table: "comments", filter: `task_id=eq.${task.id}` },
+    { table: "comment_reactions", filter: `task_id=eq.${task.id}` },
     { table: "task_stories", filter: `task_id=eq.${task.id}` },
   ]);
 
   const taskHref = useTaskHref();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
+  const canComment = hasRole(task.viewerRole, "commenter");
+  const candidates = mentionCandidates(task, profiles, memberId);
   const nameOf = (profileId: string | null) => {
     const profile = profileId ? profilesById.get(profileId) : undefined;
     return profile ? displayName(profile) : "Someone";
@@ -220,6 +226,10 @@ export function TaskActivity({
               comment={entry.comment}
               authorName={entry.comment.ruleName ? `Rule “${entry.comment.ruleName}”` : nameOf(entry.comment.authorId)}
               mine={entry.comment.authorId !== null && entry.comment.authorId === memberId}
+              canComment={canComment}
+              memberId={memberId}
+              nameOf={nameOf}
+              candidates={candidates}
               mentionNames={entry.comment.mentionIds.map((mentionId) => nameOf(mentionId))}
             />
           ),
@@ -229,18 +239,66 @@ export function TaskActivity({
   );
 }
 
+// People who can read the task (members of its projects), for @mention autocomplete; not the viewer.
+function mentionCandidates(task: TaskDetail, profiles: Profile[], memberId: string): Profile[] {
+  return profiles
+    .filter((p) => p.id !== memberId && task.memberRoles[p.id] !== undefined)
+    .sort((a, b) => displayName(a).localeCompare(displayName(b)));
+}
+
+const COMMENT_INPUT =
+  "field-sizing-content min-h-16 w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100";
+
 function CommentItem({
   comment,
   authorName,
   mine,
+  canComment,
+  memberId,
+  nameOf,
+  candidates,
   mentionNames,
 }: {
   comment: TaskComment;
   authorName: string;
   mine: boolean;
+  canComment: boolean;
+  memberId: string;
+  nameOf: (profileId: string | null) => string;
+  candidates: Profile[];
   mentionNames: string[];
 }) {
-  const [, run] = useServerAction();
+  const [pending, run] = useServerAction();
+  const [draft, setDraft] = useState<string | null>(null);
+  const editing = draft !== null;
+  const editable = mine && canComment && !comment.deleted;
+
+  function save() {
+    const body = draft?.trim();
+    if (!body) return;
+    if (body === comment.body) return setDraft(null);
+    run(async () => {
+      const result = await editComment(comment.id, body);
+      if (!result.error) setDraft(null);
+      return result;
+    });
+  }
+
+  if (comment.deleted) {
+    return (
+      <li className="flex gap-2.5">
+        <Avatar name={authorName} size="md" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-medium text-zinc-500">{authorName}</span>
+            <Timestamp iso={comment.createdAt} className="text-xs text-zinc-400" />
+          </div>
+          <p className="mt-0.5 text-sm italic text-zinc-400">Comment deleted</p>
+        </div>
+      </li>
+    );
+  }
+
   return (
     <li className="group flex gap-2.5">
       <Avatar name={authorName} size="md" />
@@ -248,24 +306,145 @@ function CommentItem({
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-medium text-zinc-900">{authorName}</span>
           <Timestamp iso={comment.createdAt} className="text-xs text-zinc-400" />
-          {mine ? (
-            <button
-              type="button"
-              aria-label="Delete comment"
-              onClick={() => {
-                if (window.confirm("Delete this comment?")) run(() => deleteComment(comment.id));
-              }}
-              className="ml-auto rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
-            >
-              <Trash2 className="size-3.5" />
-            </button>
+          {comment.editedAt ? (
+            <span className="text-xs text-zinc-400">
+              (edited<span className="sr-only">
+                {" "}
+                <Timestamp iso={comment.editedAt} />
+              </span>
+              )
+            </span>
+          ) : null}
+          {editable && !editing ? (
+            <span className="ml-auto flex items-center opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+              <button
+                type="button"
+                aria-label="Edit comment"
+                title="Edit"
+                onClick={() => setDraft(comment.body)}
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                aria-label="Delete comment"
+                title="Delete"
+                onClick={() => {
+                  if (window.confirm("Delete this comment?")) run(() => deleteComment(comment.id));
+                }}
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-red-600"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </span>
           ) : null}
         </div>
-        <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
-          <MentionText body={comment.body} names={mentionNames} />
-        </p>
+        {editing ? (
+          <div className="mt-1">
+            <label htmlFor={`edit-comment-${comment.id}`} className="sr-only">
+              Edit comment
+            </label>
+            <MentionTextarea
+              id={`edit-comment-${comment.id}`}
+              value={draft}
+              onValueChange={setDraft}
+              candidates={candidates}
+              onSubmit={save}
+              onCancel={() => setDraft(null)}
+              autoFocus
+              rows={2}
+              className={COMMENT_INPUT}
+            />
+            <div className="mt-1.5 flex items-center justify-end gap-2">
+              <span className="mr-auto text-xs text-zinc-500">People you newly @mention are notified.</span>
+              <button type="button" onClick={() => setDraft(null)} className="btn-ghost">
+                Cancel
+              </button>
+              <button type="button" onClick={save} disabled={pending || !draft.trim()} className="btn-primary">
+                Save
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
+            <MentionText body={comment.body} names={mentionNames} />
+          </p>
+        )}
+        <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />
       </div>
     </li>
+  );
+}
+
+function Reactions({
+  comment,
+  canReact,
+  memberId,
+  nameOf,
+}: {
+  comment: TaskComment;
+  canReact: boolean;
+  memberId: string;
+  nameOf: (profileId: string | null) => string;
+}) {
+  const [, run] = useServerAction();
+  if (comment.reactions.length === 0 && !canReact) return null;
+  const react = (emoji: ReactionKey) => run(() => toggleReaction(comment.id, emoji));
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">
+      {comment.reactions.map(({ emoji, profileIds }) => {
+        const { emoji: glyph, label } = reactionOf(emoji);
+        const mine = profileIds.includes(memberId);
+        const who = profileIds.map((profileId) => (profileId === memberId ? "You" : nameOf(profileId))).join(", ");
+        return (
+          <button
+            key={emoji}
+            type="button"
+            disabled={!canReact}
+            aria-pressed={mine}
+            aria-label={`${label}: ${who}${canReact ? (mine ? ". Remove your reaction" : ". Add your reaction") : ""}`}
+            title={who}
+            onClick={() => react(emoji)}
+            className="inline-flex h-6 items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 text-xs tabular-nums text-zinc-700 hover:border-zinc-300 disabled:hover:border-zinc-200 aria-pressed:border-accent-300 aria-pressed:bg-accent-50 aria-pressed:text-accent-800"
+          >
+            <span aria-hidden>{glyph}</span>
+            {profileIds.length}
+          </button>
+        );
+      })}
+      {canReact ? (
+        <Popover
+          label="Add reaction"
+          button={<SmilePlus className="size-3.5" />}
+          buttonClassName={`inline-flex h-6 items-center rounded-full px-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 aria-expanded:bg-zinc-100 ${
+            comment.reactions.length ? "" : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100"
+          }`}
+          panelClassName="w-auto"
+        >
+          {(close) => (
+            <div className="flex gap-0.5 p-1">
+              {REACTIONS.map(({ key, emoji, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-label={label}
+                  title={label}
+                  onClick={() => {
+                    close();
+                    react(key);
+                  }}
+                  className="flex size-8 items-center justify-center rounded text-base hover:bg-zinc-100"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+        </Popover>
+      ) : null}
+    </div>
   );
 }
 
@@ -300,7 +479,7 @@ export function CommentComposer({
   memberId: string;
 }) {
   const [pending, run] = useServerAction();
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const [draft, setDraft] = useState("");
   const following = task.followerIds.includes(memberId);
   const followers = task.followerIds
     .map((followerId) => profiles.find((p) => p.id === followerId))
@@ -309,10 +488,14 @@ export function CommentComposer({
   const canComment = hasRole(task.viewerRole, "commenter");
 
   function submit() {
-    const body = ref.current?.value.trim();
-    if (!ref.current || !body) return;
-    ref.current.value = "";
-    run(() => addComment(task.id, body));
+    const body = draft.trim();
+    if (!body) return;
+    setDraft("");
+    run(async () => {
+      const result = await addComment(task.id, body);
+      if (result.error) setDraft(body);
+      return result;
+    });
   }
 
   return (
@@ -322,18 +505,15 @@ export function CommentComposer({
           <label htmlFor="new-comment" className="sr-only">
             Add a comment
           </label>
-          <textarea
-            ref={ref}
+          <MentionTextarea
             id="new-comment"
             rows={2}
-            placeholder="Add a comment. Mention teammates with @Name"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            className="field-sizing-content min-h-16 w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
+            value={draft}
+            onValueChange={setDraft}
+            candidates={mentionCandidates(task, profiles, memberId)}
+            onSubmit={submit}
+            placeholder="Add a comment. Type @ to mention someone"
+            className={COMMENT_INPUT}
           />
           <div className="mt-2 flex items-center gap-3">
             <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-zinc-500">

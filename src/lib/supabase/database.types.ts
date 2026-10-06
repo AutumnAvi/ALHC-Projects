@@ -111,6 +111,61 @@ export type Database = {
           },
         ];
       };
+      comment_reactions: {
+        Row: {
+          id: string;
+          comment_id: string;
+          task_id: string;
+          profile_id: string;
+          emoji: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          comment_id: string;
+          task_id?: string;
+          profile_id?: string;
+          emoji: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          comment_id?: string;
+          task_id?: string;
+          profile_id?: string;
+          emoji?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "comment_reactions_comment_id_fkey";
+            columns: ["comment_id"];
+            isOneToOne: false;
+            referencedRelation: "comments";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "comment_reactions_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "comment_reactions_task_id_fkey";
+            columns: ["task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       comments: {
         Row: {
           id: string;
@@ -120,6 +175,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          edited_at: string | null;
           rule_id: string | null;
         };
         Insert: {
@@ -130,6 +186,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          edited_at?: string | null;
           rule_id?: string | null;
         };
         Update: {
@@ -140,6 +197,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          edited_at?: string | null;
           rule_id?: string | null;
         };
         Relationships: [
@@ -467,6 +525,13 @@ export type Database = {
             referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "import_runs_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
         ];
       };
       inbox_items: {
@@ -478,6 +543,7 @@ export type Database = {
           comment_id: string | null;
           kind: string;
           read_at: string | null;
+          archived_at: string | null;
           created_at: string;
           data: Json;
         };
@@ -489,6 +555,7 @@ export type Database = {
           comment_id?: string | null;
           kind: string;
           read_at?: string | null;
+          archived_at?: string | null;
           created_at?: string;
           data?: Json;
         };
@@ -500,6 +567,7 @@ export type Database = {
           comment_id?: string | null;
           kind?: string;
           read_at?: string | null;
+          archived_at?: string | null;
           created_at?: string;
           data?: Json;
         };
@@ -1896,6 +1964,58 @@ export type Database = {
           },
         ];
       };
+      workspace_admins: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          profile_id: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          profile_id: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          profile_id?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "workspace_admins_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "workspace_admins_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "workspace_admins_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       workspaces: {
         Row: {
           id: string;
@@ -1935,6 +2055,10 @@ export type Database = {
       };
       add_project_member: {
         Args: { target_project: string; member_email: string; member_role?: string };
+        Returns: string;
+      };
+      add_workspace_admin: {
+        Args: { target_workspace: string | null; member_email: string };
         Returns: string;
       };
       add_task_dependency: {
@@ -2023,6 +2147,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
       };
+      is_workspace_admin: {
+        Args: { target_workspace?: string | null };
+        Returns: boolean;
+      };
       import_batch: {
         Args: { target_run: string; batch: Json };
         Returns: Json;
@@ -2096,6 +2224,10 @@ export type Database = {
       };
       remove_portfolio_project: {
         Args: { target_portfolio: string; target_project: string };
+        Returns: undefined;
+      };
+      remove_workspace_admin: {
+        Args: { target_workspace: string | null; target_profile: string };
         Returns: undefined;
       };
       remove_project_member: {

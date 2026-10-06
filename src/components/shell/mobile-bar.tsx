@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Briefcase, CircleCheck, Inbox, LayoutTemplate, LogOut, Search } from "lucide-react";
+import { Briefcase, CircleCheck, Inbox, LayoutTemplate, LogOut, Search, Settings } from "lucide-react";
 import { useUnreadCount } from "@/components/shell/unread-count";
 
 export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadCount: number }) {
@@ -44,6 +44,9 @@ export function MobileBar({ memberId, unreadCount }: { memberId: string; unreadC
               className="absolute right-0.5 top-0.5 size-2 rounded-full bg-accent-600"
             />
           ) : null}
+        </Link>
+        <Link href="/settings/workspace" aria-label="Workspace settings" className={iconLink}>
+          <Settings className="size-4" />
         </Link>
         <form action="/auth/signout" method="post">
           <button type="submit" aria-label="Sign out" className={iconLink}>

@@ -7,17 +7,18 @@ import { listInbox, listProfiles } from "@/lib/data";
 export const metadata: Metadata = { title: "Inbox" };
 
 export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
-  const { task } = await searchParams;
+  const { task, tab: tabParam } = await searchParams;
   const openTaskId = typeof task === "string" ? task : null;
+  const tab = tabParam === "archived" ? "archived" : "active";
   const [member, items, profiles] = await Promise.all([
     requireMember(),
-    listInbox(),
+    listInbox(tab),
     listProfiles(),
   ]);
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
-      <InboxView items={items} profiles={profiles} memberId={member.id} openTaskId={openTaskId} />
+      <InboxView key={tab} tab={tab} items={items} profiles={profiles} memberId={member.id} openTaskId={openTaskId} />
       {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
     </main>
   );
