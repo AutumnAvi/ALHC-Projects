@@ -302,10 +302,13 @@ function CalendarChip({
     >
       <span
         aria-hidden
-        className={`size-2 shrink-0 rounded-full ${completed ? "bg-green-500" : overdue ? "bg-red-500" : "bg-zinc-300"}`}
+        className={`size-2 shrink-0 ${task.kind === "milestone" ? "rotate-45 rounded-[1px]" : "rounded-full"} ${
+          completed ? "bg-green-500" : overdue ? "bg-red-500" : task.kind === "milestone" ? "bg-accent-600" : "bg-zinc-300"
+        }`}
       />
       <span className={`min-w-0 flex-1 truncate ${completed ? "text-zinc-400 line-through" : "text-zinc-800"}`}>
         {task.title}
+        {task.kind === "milestone" ? <span className="sr-only"> (milestone)</span> : null}
         {completed ? <span className="sr-only"> (completed)</span> : null}
         {overdue ? <span className="sr-only"> (overdue)</span> : null}
       </span>

@@ -126,6 +126,13 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Portfolio fields** (portfolio Settings → Fields): text, number, single-select, or date, with one value per project. Editors set them on the Overview cards; they show as Report columns, only for projects you can open.
 - **Portfolio Timeline** tab: one bar per project from the earliest start to the latest due date of its open tasks, coloured by status, grouped by nested portfolio.
 
+## What's here (task types and nested rollups)
+
+- **Task types:** pick **Task**, **Milestone**, or **Approval** in the task pane's Type row or next to the quick-add box. Templates, Duplicate project, repeating tasks, and Asana imports keep the type.
+- **Milestones** have only a due date and show as a diamond in List, Board, Calendar, and Timeline (drag to move it). The portfolio Timeline shows each project's open milestones as diamonds.
+- **Approval tasks:** the assignee is the approver. Assigning one (or switching a task to Approval) asks them in their Inbox; they **Approve**, **Request changes**, or **Reject** at the top of the task. Approving or rejecting completes the task; reassigning asks the new person instead. Imported or copied approval tasks don't ask anyone until an editor clicks **Ask … to approve**.
+- **Nested portfolios** now also count in a portfolio's **Workload** and in goal progress from linked portfolios — still only projects you can open.
+
 ## Local development
 
 ```bash

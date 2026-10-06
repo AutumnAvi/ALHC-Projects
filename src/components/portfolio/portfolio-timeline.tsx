@@ -19,8 +19,8 @@ import {
   type Zoom,
 } from "@/components/project/timeline-scale";
 import { PeriodNav, Segmented, TRAY_EMPTY, TRAY_HEADING, VIEW_BODY, VIEW_HINT, ViewLoading, trayClass } from "@/components/project/view-chrome";
-import { addDays, useToday } from "@/lib/dates";
-import type { PortfolioTimelineRow } from "@/lib/data";
+import { addDays, formatDueDate, useToday } from "@/lib/dates";
+import type { PortfolioMilestone, PortfolioTimelineRow } from "@/lib/data";
 import { OWN_PROJECTS_LABEL, PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
 
 const LABEL_WIDTH = 256;
@@ -43,10 +43,12 @@ export function PortfolioTimeline({
   rows,
   nested,
   hiddenCount,
+  milestones = [],
 }: {
   rows: PortfolioTimelineRow[];
   nested: { id: string; name: string }[];
   hiddenCount: number;
+  milestones?: PortfolioMilestone[];
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -78,6 +80,8 @@ export function PortfolioTimeline({
   const tiers = headerTiers(start, days, zoom);
   const todayOffset = daysBetween(start, today);
 
+  const milestonesByProject = new Map<string, PortfolioMilestone[]>();
+  for (const m of milestones) milestonesByProject.set(m.projectId, [...(milestonesByProject.get(m.projectId) ?? []), m]);
   const scheduled = rows.filter((r) => r.startOn && r.dueOn);
   const unscheduled = rows.filter((r) => !r.startOn || !r.dueOn);
   const byOrder = (a: PortfolioTimelineRow, b: PortfolioTimelineRow) =>
@@ -194,6 +198,7 @@ export function PortfolioTimeline({
                       windowStart={start}
                       days={days}
                       dayWidth={dayWidth}
+                      milestones={milestonesByProject.get(row.id) ?? []}
                       onReveal={(date) => navigate({ d: date })}
                     />
                   ))}
@@ -204,7 +209,8 @@ export function PortfolioTimeline({
         </div>
         <p className={VIEW_HINT}>
           Each bar runs from the earliest start to the latest due date of the project’s open tasks, coloured by the
-          project’s status. Projects of nested portfolios are grouped under them.
+          project’s status; diamonds are the project’s open milestones. Projects of nested portfolios are grouped
+          under them.
         </p>
       </div>
 
@@ -241,12 +247,14 @@ function ProjectRow({
   windowStart,
   days,
   dayWidth,
+  milestones,
   onReveal,
 }: {
   row: PortfolioTimelineRow;
   windowStart: string;
   days: number;
   dayWidth: number;
+  milestones: PortfolioMilestone[];
   onReveal: (date: string) => void;
 }) {
   const span = spanOf(row)!;
@@ -266,6 +274,9 @@ function ProjectRow({
           {row.name}
           <span className="sr-only">
             , {spanLabel(span)}, {PROJECT_STATUS_LABELS[status]}, {row.openTasks} open tasks
+            {milestones.length > 0
+              ? `, milestones: ${milestones.map((m) => `${m.title} (${formatDueDate(m.dueOn)})`).join(", ")}`
+              : ""}
           </span>
         </Link>
         <span aria-hidden>
@@ -310,6 +321,23 @@ function ProjectRow({
             ) : null}
           </>
         )}
+        {milestones.map((m) => {
+          const day = daysBetween(windowStart, m.dueOn);
+          if (day < 0 || day >= days) return null;
+          return (
+            <Link
+              key={m.taskId}
+              href={`/projects/${row.id}?task=${m.taskId}`}
+              tabIndex={-1}
+              aria-hidden
+              title={`Milestone: ${m.title} · ${formatDueDate(m.dueOn)}`}
+              className="absolute top-1/2 z-[1] flex size-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
+              style={{ left: (day + 0.5) * dayWidth }}
+            >
+              <span className="block size-2.5 rotate-45 rounded-[1px] border border-white bg-zinc-900 shadow-xs" />
+            </Link>
+          );
+        })}
       </div>
     </li>
   );

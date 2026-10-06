@@ -8,7 +8,7 @@ import {
   getPortfolioRole,
   listNumberFields,
   listPortfolioMembers,
-  listPortfolioProjects,
+  listPortfolioRollupProjects,
   listProfiles,
   listWorkloadCapacities,
   portfolioWorkload,
@@ -21,14 +21,14 @@ export async function generateMetadata({ params }: PageProps<"/portfolios/[portf
   return { title: portfolio ? `${portfolio.name} · Workload` : "Workload" };
 }
 
-// Workload across the portfolio's projects the viewer can read (portfolio_workload() checks each
-// project; portfolio membership never grants project access). A number field is chosen by name, so
-// same-named fields in several projects add up.
+// Workload across the portfolio's projects the viewer can read, including projects of nested portfolios
+// they're a member of (portfolio_workload() checks each project; portfolio membership never grants
+// project access). A number field is chosen by name, so same-named fields in several projects add up.
 export default async function PortfolioWorkloadPage({ params, searchParams }: PageProps<"/portfolios/[portfolioId]/workload">) {
   const { portfolioId } = await params;
   const state = await workloadParams(await searchParams);
   const [projects, members, profiles, capacities, role, hidden] = await Promise.all([
-    listPortfolioProjects(portfolioId),
+    listPortfolioRollupProjects(portfolioId),
     listPortfolioMembers(portfolioId),
     listProfiles(),
     listWorkloadCapacities("portfolio", portfolioId),

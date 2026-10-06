@@ -1898,6 +1898,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          kind: string;
         };
         Insert: {
           id?: string;
@@ -1913,6 +1914,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          kind?: string;
         };
         Update: {
           id?: string;
@@ -1928,6 +1930,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          kind?: string;
         };
         Relationships: [
           {
@@ -1979,6 +1982,7 @@ export type Database = {
           recurrence_seq: number;
           recurrence_next_id: string | null;
           assigned_at: string | null;
+          kind: string;
         };
         Insert: {
           id?: string;
@@ -2005,6 +2009,7 @@ export type Database = {
           recurrence_seq?: number;
           recurrence_next_id?: string | null;
           assigned_at?: string | null;
+          kind?: string;
         };
         Update: {
           id?: string;
@@ -2031,6 +2036,7 @@ export type Database = {
           recurrence_seq?: number;
           recurrence_next_id?: string | null;
           assigned_at?: string | null;
+          kind?: string;
         };
         Relationships: [
           {
@@ -3262,6 +3268,15 @@ export type Database = {
           start_on: string | null;
           due_on: string | null;
           open_task_count: number;
+        }[];
+      };
+      portfolio_milestones: {
+        Args: { target_portfolio: string };
+        Returns: {
+          project_id: string;
+          task_id: string;
+          title: string;
+          due_on: string;
         }[];
       };
       set_portfolio_field_value: {

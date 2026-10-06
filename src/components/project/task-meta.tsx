@@ -4,6 +4,7 @@ import { Layers, ListChecks, Lock, Repeat } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
+import { APPROVAL_STATUS_LABELS, type ApprovalTaskStatus } from "@/lib/task-kinds";
 
 export function DueDate({ task }: { task: ProjectTask }) {
   const today = useToday();
@@ -47,9 +48,28 @@ export function Assignee({
   );
 }
 
+const APPROVAL_STATUS_CLASSES: Record<ApprovalTaskStatus, string> = {
+  pending: "bg-amber-50 text-amber-800 ring-amber-200",
+  changes_requested: "bg-orange-50 text-orange-800 ring-orange-200",
+  approved: "bg-green-50 text-green-800 ring-green-200",
+  rejected: "bg-red-50 text-red-700 ring-red-200",
+};
+
+// Status of an approval task's request (List rows, Board cards, the pane).
+export function ApprovalStatusBadge({ status }: { status: ApprovalTaskStatus }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center rounded px-1.5 py-px text-2xs font-medium whitespace-nowrap ring-1 ring-inset ${APPROVAL_STATUS_CLASSES[status]}`}
+    >
+      {APPROVAL_STATUS_LABELS[status]}
+    </span>
+  );
+}
+
 export function TaskBadges({ task }: { task: ProjectTask }) {
   return (
     <>
+      {task.kind === "approval" && task.approvalStatus ? <ApprovalStatusBadge status={task.approvalStatus} /> : null}
       {task.recurring ? (
         <span className="inline-flex items-center text-zinc-400" title="Repeats">
           <Repeat className="size-3.5" aria-hidden />

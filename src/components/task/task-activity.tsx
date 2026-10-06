@@ -17,6 +17,7 @@ import { fieldChips } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { useRealtimeRefresh } from "@/lib/realtime";
 import { describeRecurrence, parseRecurrence } from "@/lib/recurrence";
+import { TASK_KIND_LABELS, parseTaskKind } from "@/lib/task-kinds";
 import { useTaskHref } from "@/components/project/shared";
 
 type Entry =
@@ -200,6 +201,8 @@ export function TaskActivity({
       }
       case "restored":
         return "restored this task from the Trash";
+      case "kind_changed":
+        return <>changed the type to {TASK_KIND_LABELS[parseTaskKind(str(d, "to"))].toLowerCase()}</>;
       default:
         return "updated this task";
     }

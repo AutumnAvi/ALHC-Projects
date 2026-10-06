@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
-import { CompleteToggle } from "@/components/complete-toggle";
+import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
 import { useTaskHref } from "@/components/project/shared";
 import { Segmented } from "@/components/project/view-chrome";
@@ -726,9 +726,10 @@ function MyTaskRow({
         }`}
       />
       <CompleteToggle
+        kind={task.kind}
         completed={done}
         onToggle={() => onToggle(task)}
-        label={done ? `Mark “${task.title}” incomplete` : `Mark “${task.title}” complete`}
+        label={kindToggleLabel(task.kind, task.title, done)}
       />
       <Link
         href={taskHref(task.id)}

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useState, type DragEvent } from "react";
-import { CompleteToggle } from "@/components/complete-toggle";
+import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
+import { approvalOpen } from "@/lib/task-kinds";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { moveTask, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
@@ -265,10 +266,11 @@ function TaskCard({
         <span className="pt-0.5">
           <CompleteToggle
             size="sm"
+            kind={task.kind}
             completed={completed}
-            disabled={!canEdit}
+            disabled={!canEdit || (task.kind === "approval" && approvalOpen(task.approvalStatus))}
             onToggle={onToggle}
-            label={completed ? `Mark “${task.title}” incomplete` : `Mark “${task.title}” complete`}
+            label={kindToggleLabel(task.kind, task.title, completed)}
           />
         </span>
         <Link
@@ -291,7 +293,7 @@ function TaskCard({
         </div>
       ) : null}
 
-      {due || start || task.subtaskCount > 0 || task.projectCount > 1 || assignee ? (
+      {due || start || task.approvalStatus || task.subtaskCount > 0 || task.projectCount > 1 || assignee ? (
         <div className="mt-2 flex min-h-5 items-center gap-2 pl-6">
           {start ? <StartDate task={task} prefix={due ? "" : "Starts "} /> : null}
           {start && due ? <span className="-mx-1.5 text-xs text-zinc-400">–</span> : null}

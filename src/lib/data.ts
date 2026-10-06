@@ -38,6 +38,13 @@ import {
 import { isTeamRole, type TeamRole } from "@/lib/teams";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
+  approvalTaskRequest,
+  parseApprovalTaskStatus,
+  parseTaskKind,
+  type ApprovalTaskStatus,
+  type TaskKind,
+} from "@/lib/task-kinds";
+import {
   isViewLayout,
   isWidgetKind,
   parseFilters,
@@ -88,6 +95,9 @@ export type ProjectTask = {
   recurring: boolean;
   // Incomplete predecessors (finish-to-start dependencies) the task is waiting on.
   blockedBy: number;
+  kind: TaskKind;
+  // Approval tasks: the status of the assignee's request (null: none yet, or not an approval task).
+  approvalStatus: ApprovalTaskStatus | null;
 };
 
 export type TaskMembership = {
@@ -101,6 +111,7 @@ export type TaskMembership = {
 export type TaskDetail = {
   id: string;
   title: string;
+  kind: TaskKind;
   notes: string | null;
   completedAt: string | null;
   startOn: string | null;
@@ -324,7 +335,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     await supabase
       .from("task_projects")
       .select(
-        "section_id, sort_order, task:tasks!inner(id, title, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, recurrence)",
+        "section_id, sort_order, task:tasks!inner(id, title, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, recurrence, kind)",
       )
       .eq("project_id", projectId)
       .is("deleted_at", null)
@@ -336,7 +347,8 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
   const taskIds = memberships.map((m) => m.task.id);
   if (taskIds.length === 0) return [];
 
-  const [subtasks, otherMemberships, values, blockers] = await Promise.all([
+  const approvalTaskIds = memberships.filter((m) => m.task.kind === "approval").map((m) => m.task.id);
+  const [subtasks, otherMemberships, values, blockers, approvalRequests] = await Promise.all([
     supabase
       .from("subtasks")
       .select("task_id, completed_at")
@@ -362,7 +374,23 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
       .is("deleted_at", null)
       .is("predecessor.deleted_at", null)
       .is("predecessor.completed_at", null),
+    approvalTaskIds.length
+      ? supabase
+          .from("approval_requests")
+          .select("task_id, subtask_id, approver_id, status, created_at")
+          .in("task_id", approvalTaskIds)
+          .is("subtask_id", null)
+          .is("deleted_at", null)
+          .neq("status", "cancelled")
+      : Promise.resolve({ data: [], error: null }),
   ]);
+
+  const approvalsByTask = new Map<string, { subtaskId: string | null; approverId: string; status: string; createdAt: string }[]>();
+  for (const a of rows(approvalRequests, "approvals")) {
+    const list = approvalsByTask.get(a.task_id) ?? [];
+    list.push({ subtaskId: a.subtask_id, approverId: a.approver_id, status: a.status, createdAt: a.created_at });
+    approvalsByTask.set(a.task_id, list);
+  }
 
   const blockedBy = new Map<string, number>();
   for (const d of rows(blockers, "dependencies")) {
@@ -406,6 +434,10 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     fieldValues: fieldValues.get(m.task.id) ?? {},
     recurring: m.task.recurrence !== null,
     blockedBy: blockedBy.get(m.task.id) ?? 0,
+    kind: parseTaskKind(m.task.kind),
+    approvalStatus: parseApprovalTaskStatus(
+      approvalTaskRequest(parseTaskKind(m.task.kind), m.task.assignee_id, approvalsByTask.get(m.task.id) ?? [])?.status,
+    ),
   }));
 });
 
@@ -449,7 +481,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     await supabase
       .from("tasks")
       .select(
-        "id, title, notes, completed_at, start_on, due_on, start_at, due_at, time_zone, recurrence, recurrence_seq, recurrence_next_id, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number",
+        "id, title, kind, notes, completed_at, start_on, due_on, start_at, due_at, time_zone, recurrence, recurrence_seq, recurrence_next_id, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number",
       )
       .eq("id", taskId)
       .is("deleted_at", null)
@@ -680,6 +712,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     })),
     id: task.id,
     title: task.title,
+    kind: parseTaskKind(task.kind),
     notes: task.notes,
     completedAt: task.completed_at,
     startOn: task.start_on,
@@ -816,13 +849,14 @@ export type MyTask = {
   dueOn: string | null;
   projectId: string;
   projectName: string;
+  kind: TaskKind;
 };
 
 // Tasks come back only when RLS lets the viewer read them (membership in one of their projects).
 // Each is labelled with its home project when the viewer can see it, else another visible project.
 export const listMyTasks = cache(async (profileId: string) => {
   const supabase = await createClient();
-  const select = "id, title, completed_at, due_on, home_project_id";
+  const select = "id, title, completed_at, due_on, home_project_id, kind";
   const [open, done, projects] = await Promise.all([
     supabase
       .from("tasks")
@@ -870,6 +904,7 @@ export const listMyTasks = cache(async (profileId: string) => {
       dueOn: t.due_on,
       projectId,
       projectName: projectName.get(projectId)!,
+      kind: parseTaskKind(t.kind),
     };
   };
   const present = (t: MyTask | null): t is MyTask => t !== null;
@@ -1483,6 +1518,20 @@ export async function portfolioTimeline(portfolioId: string): Promise<PortfolioT
     startOn: r.start_on,
     dueOn: r.due_on,
     openTasks: Number(r.open_task_count),
+  }));
+}
+
+export type PortfolioMilestone = { projectId: string; taskId: string; title: string; dueOn: string };
+
+// Open milestones of every readable project in the rollup (direct or nested), for the portfolio Timeline.
+export async function listPortfolioMilestones(portfolioId: string): Promise<PortfolioMilestone[]> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("portfolio_milestones", { target_portfolio: portfolioId });
+  return rows(result, "portfolio milestones").map((r) => ({
+    projectId: r.project_id,
+    taskId: r.task_id,
+    title: r.title,
+    dueOn: r.due_on,
   }));
 }
 

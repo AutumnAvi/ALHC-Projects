@@ -62,6 +62,7 @@ import {
 } from "@/lib/views";
 import type { Json, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
+import { TASK_KINDS, type TaskKind } from "@/lib/task-kinds";
 
 export type ActionResult = { error?: string };
 
@@ -975,15 +976,35 @@ export async function createTask(
   projectId: string,
   sectionId: string | null,
   title: string,
+  kind: TaskKind = "task",
 ): Promise<ActionResult> {
   return run(async () => {
+    const taskKind = taskKindInput(kind);
     const supabase = await createClient();
-    check(
-      await supabase.rpc("create_task", {
-        target_project: id(projectId),
-        target_section: sectionId ? id(sectionId, "section") : null,
-        task_title: text(title, "Task name"),
-      }),
+    const created = await supabase.rpc("create_task", {
+      target_project: id(projectId),
+      target_section: sectionId ? id(sectionId, "section") : null,
+      task_title: text(title, "Task name"),
+    });
+    check(created);
+    if (taskKind !== "task" && created.data) {
+      checkUpdated(await supabase.from("tasks").update({ kind: taskKind }).eq("id", created.data).select("id"));
+    }
+  });
+}
+
+function taskKindInput(value: unknown): TaskKind {
+  if (!TASK_KINDS.includes(value as TaskKind)) throw new InputError("Choose a task type");
+  return value as TaskKind;
+}
+
+// Task, milestone, or approval. The database clears a milestone's start date and opens (or cancels)
+// the assignee's approval request; an assignee below Commenter is refused for approval tasks.
+export async function setTaskKind(taskId: string, kind: TaskKind): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("tasks").update({ kind: taskKindInput(kind) }).eq("id", id(taskId)).select("id"),
     );
   });
 }
