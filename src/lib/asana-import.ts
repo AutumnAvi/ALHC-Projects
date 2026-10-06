@@ -22,6 +22,8 @@ export type PlanAttachment = { gid: string; name: string; url: string | null };
 export type PlanTask = {
   gid: string;
   title: string;
+  // Asana's resource_subtype: milestone and approval keep their type; anything else is a task.
+  kind: "task" | "milestone" | "approval";
   notes: string | null;
   completed_at: string | null;
   due_on: string | null;
@@ -621,9 +623,11 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
     for (const d of arr(t.dependents)) if (isObj(d)) addDependency(gid, str(d.gid));
 
     taskGids.add(gid);
+    const subtype = str(t.resource_subtype);
     tasks.push({
       gid,
       title: str(t.name) ?? "Untitled task",
+      kind: subtype === "milestone" || subtype === "approval" ? subtype : "task",
       notes: typeof t.notes === "string" && t.notes.trim() ? t.notes : null,
       completed_at: t.completed === true ? (timestamp(t.completed_at) ?? new Date().toISOString()) : null,
       due_on: isoDate(t.due_on) ?? isoDate(t.due_at),
@@ -744,6 +748,7 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
       tasks.push({
         gid: t.gid,
         title: t.title || "Untitled task",
+        kind: "task",
         notes: t.notes,
         completed_at: t.completedAt ? (timestamp(t.completedAt) ?? new Date().toISOString()) : null,
         due_on: t.dueOn,
@@ -807,6 +812,12 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
   if (commentsWithoutAuthorEmail > 0) {
     warnings.push(
       `${commentsWithoutAuthorEmail} comments have no author email; they’ll be posted by you with the author’s name.`,
+    );
+  }
+  const approvalTasks = tasks.filter((t) => t.kind === "approval").length;
+  if (approvalTasks > 0) {
+    warnings.push(
+      `${approvalTasks} approval task${approvalTasks === 1 ? "" : "s"} keep their type, but importing asks nobody to approve. Open one and use “Ask … to approve” to send the request.`,
     );
   }
   const otherProjects = new Set(tasks.flatMap((t) => t.projects.map((p) => p.gid)));

@@ -369,7 +369,7 @@ export function TimelineView({
                           >
                             {task.title}
                             <span className="sr-only">
-                              , {spanLabel(span)}
+                              {task.kind === "milestone" ? ", milestone" : ""}, {spanLabel(span)}
                               {overdue ? ", overdue" : ""}
                               {completed ? ", completed" : ""}
                               {task.blockedBy > 0 && !completed ? `, blocked by ${task.blockedBy}` : ""}
@@ -410,8 +410,9 @@ export function TimelineView({
           </div>
         </div>
         <p className={VIEW_HINT}>
-          Bars run from start to due date. Drag a bar to move it, drag either end to change its start or due date,
-          or drag an unscheduled task onto a day to give it a due date. Arrows link a task to the one waiting on it
+          Bars run from start to due date; diamonds are milestones on their due day. Drag a bar or diamond to move
+          it, drag either end of a bar to change its start or due date, or drag an unscheduled task onto a day to
+          give it a due date. Arrows link a task to the one waiting on it
           (red when the waiting task starts before the first one is due).
         </p>
       </div>
@@ -587,7 +588,7 @@ function TimelineBar({
   function onPointerDown(e: PointerEvent<HTMLAnchorElement>) {
     if (e.button !== 0 || !canEdit) return;
     const edge = (e.target as HTMLElement).dataset.edge;
-    const mode: DragMode = edge === "start" || edge === "end" ? edge : "move";
+    const mode: DragMode = task.kind !== "milestone" && (edge === "start" || edge === "end") ? edge : "move";
     e.currentTarget.setPointerCapture(e.pointerId);
     gesture.current = { mode, originX: e.clientX, moved: false };
     setDrag({ mode, delta: 0, moved: false });
@@ -613,6 +614,70 @@ function TimelineBar({
     if (moved) suppressClick.current = true;
     if (delta !== 0) onCommit(draggedDates(task, mode, delta));
     setDrag(null);
+  }
+
+  const cancel = () => {
+    gesture.current = null;
+    setDrag(null);
+  };
+  const suppress = (e: MouseEvent) => {
+    if (suppressClick.current) {
+      e.preventDefault();
+      suppressClick.current = false;
+    }
+  };
+
+  // A milestone is a diamond on its due day: drag moves it, there are no ends to resize.
+  if (task.kind === "milestone") {
+    const size = 14;
+    const center = (Math.min(Math.max(to, 0), days - 1) + 0.5) * dayWidth;
+    const fill = completed ? "bg-zinc-300" : overdue ? "bg-red-500" : "bg-accent-600";
+    return (
+      <>
+        <Link
+          href={href}
+          scroll={false}
+          draggable={false}
+          tabIndex={-1}
+          aria-hidden
+          title={`Milestone: ${task.title} · ${formatDueDate(span.end)}${schedule ? ` · ${slackLabel(schedule)}` : ""}`}
+          onClick={suppress}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={cancel}
+          className={`absolute top-1/2 flex touch-pan-y items-center justify-center select-none ${
+            highlight === "dim" ? "opacity-35" : ""
+          } ${drag?.moved ? "z-10 cursor-grabbing" : canEdit ? "cursor-grab" : "cursor-pointer"}`}
+          style={{ left: center - size, width: size * 2, height: size * 2, marginTop: -size }}
+        >
+          <span
+            className={`block rotate-45 rounded-[2px] ${fill} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${
+              highlight === "critical" ? "outline-2 outline-offset-1 outline-zinc-900" : ""
+            } ${drag?.moved ? "shadow-md" : ""}`}
+            style={{ width: size - 2, height: size - 2 }}
+          />
+        </Link>
+        <span
+          aria-hidden
+          className={`pointer-events-none absolute top-1/2 -translate-y-1/2 truncate pl-1 text-xs whitespace-nowrap ${
+            completed ? "text-zinc-400 line-through" : "text-zinc-600"
+          }`}
+          style={{ left: center + size, maxWidth: 240 }}
+        >
+          {task.title}
+        </span>
+        {drag?.moved ? (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -top-4 z-20 rounded bg-zinc-900 px-1.5 py-0.5 text-2xs whitespace-nowrap text-white tabular-nums"
+            style={{ left: center - size }}
+          >
+            {formatDueDate(span.end)}
+          </span>
+        ) : null}
+      </>
+    );
   }
 
   return (

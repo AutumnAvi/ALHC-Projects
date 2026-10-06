@@ -8,6 +8,7 @@ import { useCan } from "@/components/project/project-access";
 import { useTaskTemplates } from "@/components/project/task-templates-context";
 import { useServerAction } from "@/components/toast";
 import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
+import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, type TaskKind } from "@/lib/task-kinds";
 import type { Section } from "@/lib/data";
 
 // Opens/closes the task pane via ?task=, preserving other query params (e.g. search terms).
@@ -99,6 +100,7 @@ export function AddTaskInput({
 }) {
   const [pending, run] = useServerAction();
   const [open, setOpen] = useState(defaultOpen);
+  const [kind, setKind] = useState<TaskKind>("task");
   const inputRef = useRef<HTMLInputElement>(null);
   const canEdit = useCan("editor");
   const templates = useTaskTemplates();
@@ -129,7 +131,7 @@ export function AddTaskInput({
         const title = input?.value.trim();
         if (!input || !title) return;
         input.value = "";
-        run(() => createTask(projectId, sectionId, title));
+        run(() => createTask(projectId, sectionId, title, kind));
       }}
       className={`flex items-center gap-1 ${variant === "row" ? "px-3 py-1.5" : ""}`}
     >
@@ -140,7 +142,7 @@ export function AddTaskInput({
         ref={inputRef}
         id={`add-task-${sectionId ?? "none"}-${variant}`}
         autoFocus
-        placeholder={pending ? "Adding…" : "Task name, then Enter"}
+        placeholder={pending ? "Adding…" : `${kind === "task" ? "Task" : TASK_KIND_LABELS[kind]} name, then Enter`}
         onBlur={(e) => {
           // Moving to the template picker (inside this form) keeps the input open.
           if (!e.currentTarget.value.trim() && !e.currentTarget.form?.contains(e.relatedTarget as Node | null)) {
@@ -154,6 +156,24 @@ export function AddTaskInput({
           variant === "card" ? "shadow-xs" : ""
         }`}
       />
+      <label className="sr-only" htmlFor={`add-task-kind-${sectionId ?? "none"}-${variant}`}>
+        Type of the new task
+      </label>
+      <select
+        id={`add-task-kind-${sectionId ?? "none"}-${variant}`}
+        value={kind}
+        onChange={(e) => setKind(parseTaskKind(e.currentTarget.value))}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+        }}
+        className="control h-8 w-auto shrink-0 text-xs"
+      >
+        {TASK_KINDS.map((k) => (
+          <option key={k} value={k}>
+            {TASK_KIND_LABELS[k]}
+          </option>
+        ))}
+      </select>
       {templates.length > 0 ? (
         <Popover
           label="Add from a task template"

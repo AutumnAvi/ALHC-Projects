@@ -1,6 +1,7 @@
 // Critical path vocabulary shared by the Timeline and the task pane. The numbers come from
 // project_critical_path() (20261006060000_critical_path_portfolios.sql): slack = how many days a task's
 // due date can slip before it pushes a successor (or the project's last due date); critical = slack ≤ 0.
+// Milestones are zero length (they start on their due day; 20261006070000_task_types_rollups.sql).
 
 export type TaskSchedule = { slackDays: number; critical: boolean };
 

@@ -18,9 +18,12 @@ import {
   removeTaskFromProject,
   setHomeProject,
   setTaskCompleted,
+  setTaskKind,
   updateSubtask,
   updateTask,
 } from "@/lib/actions";
+import { TASK_KINDS, TASK_KIND_LABELS, approvalOpen, approvalTaskRequest, parseApprovalTaskStatus, parseTaskKind } from "@/lib/task-kinds";
+import { ApprovalTaskBanner } from "./task-approval-banner";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 import { CommentComposer, TaskActivity } from "./task-activity";
@@ -145,12 +148,20 @@ export function TaskDetailPanel({
   const completed = Boolean(completedAt);
   const openBlockers = task.dependencies.filter((d) => d.relation === "blocked_by" && !d.completedAt);
   const blocked = !completed && openBlockers.length > 0;
+  // An approval task is completed by its assignee's decision while the request is open.
+  const approvalRequest = approvalTaskRequest(task.kind, task.assigneeId, task.approvals);
+  const awaitingApproval = !completed && approvalOpen(parseApprovalTaskStatus(approvalRequest?.status));
 
   const memberProjectIds = new Set(task.memberships.map((m) => m.projectId));
   const canEdit = hasRole(task.viewerRole, "editor");
   const addableProjects = canEdit ? projects.filter((p) => p.canAdd && !memberProjectIds.has(p.id)) : [];
   // Only people with access to one of the task's projects can be assigned (others couldn't see it).
-  const assignable = profiles.filter((p) => p.id in task.memberRoles || p.id === task.assigneeId);
+  // An approval task's assignee approves it, so they need Commenter+ (the database refuses Viewers).
+  const assignable = profiles.filter(
+    (p) =>
+      p.id === task.assigneeId ||
+      (task.kind === "approval" ? hasRole(task.memberRoles[p.id], "commenter") : p.id in task.memberRoles),
+  );
   const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
 
   return (
@@ -160,8 +171,14 @@ export function TaskDetailPanel({
           <>
             <button
               type="button"
-              disabled={blocked}
-              title={blocked ? "Complete the tasks this one is blocked by first" : undefined}
+              disabled={blocked || awaitingApproval}
+              title={
+                awaitingApproval
+                  ? "The assignee completes this by approving or rejecting it"
+                  : blocked
+                    ? "Complete the tasks this one is blocked by first"
+                    : undefined
+              }
               aria-describedby={blocked ? "task-blocked-note" : undefined}
               onClick={() =>
                 run(
@@ -176,7 +193,7 @@ export function TaskDetailPanel({
               }`}
             >
               <Check className="size-4" />
-              {completed ? "Completed" : "Mark complete"}
+              {completed ? "Completed" : task.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
             </button>
             {blocked ? (
               <span id="task-blocked-note" className="inline-flex items-center gap-1 text-xs text-amber-700">
@@ -239,6 +256,7 @@ export function TaskDetailPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto px-gutter py-4">
+        {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
         {/* Below Editor every control in here is disabled; links (projects) still work. RLS enforces it. */}
         <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
           <label htmlFor="task-title" className="sr-only">
@@ -268,7 +286,39 @@ export function TaskDetailPanel({
 
           <dl className={`mt-3 ${PANE_FIELDS}`}>
             <dt className={PANE_LABEL}>
-              <label htmlFor="task-assignee">Assignee</label>
+              <label htmlFor="task-kind">Type</label>
+            </dt>
+            <dd>
+              <select
+                id="task-kind"
+                key={task.kind}
+                defaultValue={task.kind}
+                aria-describedby="task-kind-hint"
+                onChange={(e) => {
+                  const kind = parseTaskKind(e.currentTarget.value);
+                  if (kind === "milestone" && task.startOn) {
+                    if (!window.confirm("A milestone has only a due date. Clear the start date?")) {
+                      e.currentTarget.value = task.kind;
+                      return;
+                    }
+                  }
+                  run(() => setTaskKind(task.id, kind));
+                }}
+                className={`${PANE_CONTROL} w-full max-w-64`}
+              >
+                {TASK_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {TASK_KIND_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+              <p id="task-kind-hint" className="sr-only">
+                Milestones have only a due date. An approval task’s assignee approves it.
+              </p>
+            </dd>
+
+            <dt className={PANE_LABEL}>
+              <label htmlFor="task-assignee">{task.kind === "approval" ? "Approver" : "Assignee"}</label>
             </dt>
             <dd>
               <select
@@ -289,12 +339,16 @@ export function TaskDetailPanel({
               </select>
             </dd>
 
-            <dt className={PANE_LABEL}>
-              <label htmlFor="task-start">Start date</label>
-            </dt>
-            <dd>
-              <DateTimeField task={task} kind="start" />
-            </dd>
+            {task.kind === "milestone" ? null : (
+              <>
+                <dt className={PANE_LABEL}>
+                  <label htmlFor="task-start">Start date</label>
+                </dt>
+                <dd>
+                  <DateTimeField task={task} kind="start" />
+                </dd>
+              </>
+            )}
 
             <dt className={PANE_LABEL}>
               <label htmlFor="task-due">Due date</label>
@@ -341,7 +395,7 @@ export function TaskDetailPanel({
 
         <TaskDependencies task={task} />
 
-        <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
+        <TaskApprovals task={task} profiles={profiles} memberId={memberId} excludeId={approvalRequest?.id ?? null} />
 
         <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
           <TaskAttachments taskId={task.id} attachments={task.attachments} links={task.attachmentLinks} />

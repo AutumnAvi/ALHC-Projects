@@ -24,10 +24,13 @@ export function TaskApprovals({
   task,
   profiles,
   memberId,
+  excludeId = null,
 }: {
   task: TaskDetail;
   profiles: Profile[];
   memberId: string;
+  // An approval task's own request, shown in the banner at the top of the pane instead.
+  excludeId?: string | null;
 }) {
   const [pending, run] = useServerAction();
   const [open, setOpen] = useState(false);
@@ -35,6 +38,7 @@ export function TaskApprovals({
   const [note, setNote] = useState("");
   const [asSubtask, setAsSubtask] = useState(true);
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
+  const approvals = task.approvals.filter((a) => a.id !== excludeId);
   // Requesting/cancelling needs Editor; an approver needs at least Commenter to be able to decide.
   const canEdit = hasRole(task.viewerRole, "editor");
   const approvers = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter"));
@@ -134,11 +138,13 @@ export function TaskApprovals({
         </form>
       ) : null}
 
-      {task.approvals.length === 0 && !open ? (
-        <p className="mt-2 text-xs text-zinc-500">No approvals requested.</p>
+      {approvals.length === 0 && !open ? (
+        <p className="mt-2 text-xs text-zinc-500">
+          {excludeId ? "No other approvals requested." : "No approvals requested."}
+        </p>
       ) : (
         <ul className="mt-2 space-y-2" aria-label="Approval requests">
-          {task.approvals.map((approval) => (
+          {approvals.map((approval) => (
             <ApprovalItem
               key={approval.id}
               approval={approval}

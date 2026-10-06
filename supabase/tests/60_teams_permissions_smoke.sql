@@ -520,6 +520,8 @@ begin
   -- Workspace admin and comments added add_workspace_admin, is_workspace_admin, remove_workspace_admin.
   -- My Tasks sections and workload added none: every new function is SECURITY INVOKER.
   -- Goals and Teams directory added goal_hidden_project_count (a count only; everything else is invoker).
+  -- Critical path and portfolio depth added none (its definer trigger guard_portfolio_child is revoked).
+  -- Task types and nested rollups added none (its definer trigger sync_task_approval is revoked).
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
     'assign_request_number,can_manage_project_template,cancel_approval,create_project_from_template,custom_field_project,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'

@@ -6,7 +6,8 @@ import { useOptimistic, useState, useTransition, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, ListTodo, SearchX } from "lucide-react";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
-import { CompleteToggle } from "@/components/complete-toggle";
+import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
+import { approvalOpen } from "@/lib/task-kinds";
 import { useCan } from "@/components/project/project-access";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -582,10 +583,11 @@ function TaskRow({
           />
         ) : null}
         <CompleteToggle
+          kind={task.kind}
           completed={completed}
-          disabled={!canEdit}
+          disabled={!canEdit || (task.kind === "approval" && approvalOpen(task.approvalStatus))}
           onToggle={() => onToggle(task)}
-          label={completed ? `Mark “${task.title}” incomplete` : `Mark “${task.title}” complete`}
+          label={kindToggleLabel(task.kind, task.title, completed)}
         />
         <Link
           href={taskHref(task.id)}
