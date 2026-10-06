@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   CalendarDays,
   ChartColumn,
+  Gauge,
   ChartGantt,
   ChevronLeft,
   ChevronRight,
@@ -70,6 +71,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
   }));
   const tabs = [
     { href: `${base}/dashboard`, label: "Dashboard", icon: ChartColumn },
+    { href: `${base}/workload`, label: "Workload", icon: Gauge },
     { href: `${base}/fields`, label: "Fields", icon: SlidersHorizontal },
     { href: `${base}/forms`, label: "Forms", icon: FileInput },
     { href: `${base}/rules`, label: "Rules", icon: Workflow },

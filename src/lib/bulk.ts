@@ -9,7 +9,9 @@ export type BulkOperation =
   | { action: "set_due"; due_on: string | null }
   | { action: "move_section"; project_id: string; section_id: string | null }
   | { action: "add_to_project"; project_id: string; section_id?: string | null }
-  | { action: "set_field"; field_id: string; value: Json };
+  | { action: "set_field"; field_id: string; value: Json }
+  // My Tasks only: one of the viewer's own My Tasks sections (move_my_tasks()).
+  | { action: "my_section"; section_id: string };
 
 export type BulkSkip = { taskId: string; title: string | null; reason: string };
 
@@ -57,6 +59,7 @@ export function bulkVerb(action: BulkOperation["action"]): string {
     case "set_due":
       return "Updated the due date of";
     case "move_section":
+    case "my_section":
       return "Moved";
     case "add_to_project":
       return "Added";

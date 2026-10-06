@@ -2,23 +2,58 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useOptimistic, useState } from "react";
-import { ChevronDown, ChevronRight, CircleCheck, FolderClosed, CheckCheck } from "lucide-react";
+import { useOptimistic, useState, type DragEvent, type ReactNode } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  CircleCheck,
+  Ellipsis,
+  FolderClosed,
+  GripVertical,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { CompleteToggle } from "@/components/complete-toggle";
+import { MenuItem, Popover } from "@/components/popover";
 import { useTaskHref } from "@/components/project/shared";
+import { Segmented } from "@/components/project/view-chrome";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
-import { setTaskCompleted } from "@/lib/actions";
+import {
+  createMyTaskSection,
+  deleteMyTaskSection,
+  placeMyTask,
+  placeMyTaskSection,
+  renameMyTaskSection,
+  setTaskCompleted,
+} from "@/lib/actions";
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
 import type { MyTask } from "@/lib/data";
+import {
+  MY_TASKS_LAYOUT_COOKIE,
+  type MyTaskPlacement,
+  type MyTaskSection,
+  type MyTasksLayout,
+} from "@/lib/my-tasks";
 
-type Group = { key: string; title: string; tasks: MyTask[] };
+type Group = { key: string; title: string; tasks: MyTask[]; section?: MyTaskSection };
+
+const TASK_DRAG = "application/x-alhc-my-task";
+const SECTION_DRAG = "application/x-alhc-my-section";
+const LAYOUTS = [
+  { value: "sections", label: "Sections" },
+  { value: "due", label: "Due dates" },
+] as const;
 
 // Asana-style buckets, evaluated against the viewer's local date. See AGENTS.md › My Tasks.
-function groupTasks(tasks: MyTask[], today: string): Group[] {
+function groupByDue(tasks: MyTask[], today: string): Group[] {
   const weekEnd = addDays(today, 7);
   const groups: Group[] = [
     { key: "overdue", title: "Overdue", tasks: [] },
@@ -38,29 +73,84 @@ function groupTasks(tasks: MyTask[], today: string): Group[] {
   return groups.filter((g) => g.tasks.length > 0);
 }
 
+// The viewer's own sections in order; a task without a placement (just assigned) sits at the top of
+// Recently assigned, which is where the database puts it on the next load.
+function groupBySection(tasks: MyTask[], sections: MyTaskSection[], placements: Record<string, MyTaskPlacement>) {
+  const recent = sections.find((s) => s.kind === "recently_assigned") ?? sections[0];
+  const bySection = new Map<string, MyTask[]>(sections.map((s) => [s.id, []]));
+  const order = (task: MyTask) => placements[task.id]?.sortOrder ?? Number.NEGATIVE_INFINITY;
+  for (const task of tasks) {
+    const sectionId = placements[task.id]?.sectionId;
+    const list = (sectionId && bySection.get(sectionId)) || (recent ? bySection.get(recent.id) : undefined);
+    list?.push(task);
+  }
+  return sections.map<Group>((section) => ({
+    key: section.id,
+    title: section.name,
+    section,
+    tasks: (bySection.get(section.id) ?? []).sort((a, b) => {
+      const x = order(a);
+      const y = order(b);
+      return x === y ? 0 : x < y ? -1 : 1;
+    }),
+  }));
+}
+
+function sortOrderFor(tasks: MyTask[], placements: Record<string, MyTaskPlacement>, beforeId: string | null, movingId: string) {
+  const orders = tasks.filter((t) => t.id !== movingId).map((t) => ({ id: t.id, order: placements[t.id]?.sortOrder ?? 0 }));
+  const index = beforeId ? orders.findIndex((o) => o.id === beforeId) : -1;
+  if (index === -1) return (orders.at(-1)?.order ?? 0) + 1024;
+  const next = orders[index].order;
+  const prev = index > 0 ? orders[index - 1].order : next - 2048;
+  return (prev + next) / 2;
+}
+
 export function MyTasksView({
   open,
   completed,
   openTaskId,
   bulk,
+  layout: initialLayout,
+  sections,
+  placements: savedPlacements,
 }: {
   open: MyTask[];
   completed: MyTask[];
   openTaskId: string | null;
   bulk: Omit<BulkContext, "project">;
+  layout: MyTasksLayout;
+  sections: MyTaskSection[];
+  placements: Record<string, MyTaskPlacement>;
 }) {
   const router = useRouter();
   const taskHref = useTaskHref();
   const today = useToday();
   const [, run] = useServerAction();
   const bulkEdit = useBulkEdit();
+  const [layout, setLayout] = useState<MyTasksLayout>(initialLayout);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set(["completed"]));
+  const [draggingTask, setDraggingTask] = useState<string | null>(null);
+  const [taskDrop, setTaskDrop] = useState<{ sectionId: string; beforeId: string | null } | null>(null);
+  const [draggingSection, setDraggingSection] = useState<string | null>(null);
+  const [sectionDrop, setSectionDrop] = useState<{ beforeId: string | null } | null>(null);
   const [toggled, setToggled] = useOptimistic(
     new Map<string, boolean>(),
-    (current, change: { id: string; completed: boolean }) =>
-      new Map(current).set(change.id, change.completed),
+    (current, change: { id: string; completed: boolean }) => new Map(current).set(change.id, change.completed),
+  );
+  const [placements, movePlacement] = useOptimistic(
+    savedPlacements,
+    (current, move: { taskId: string } & MyTaskPlacement) => ({
+      ...current,
+      [move.taskId]: { sectionId: move.sectionId, sortOrder: move.sortOrder },
+    }),
+  );
+  const [orderedSections, moveSectionLocally] = useOptimistic(sections, (current, move: { id: string; sortOrder: number }) =>
+    current
+      .map((s) => (s.id === move.id ? { ...s, sortOrder: move.sortOrder } : s))
+      .sort((a, b) => a.sortOrder - b.sortOrder),
   );
 
+  const bySections = layout === "sections" && orderedSections.length > 0;
   const isDone = (task: MyTask) => toggled.get(task.id) ?? Boolean(task.completedAt);
   const toggle = (task: MyTask) => {
     const next = !isDone(task);
@@ -70,8 +160,18 @@ export function MyTasksView({
     );
   };
 
+  function chooseLayout(next: MyTasksLayout) {
+    setLayout(next);
+    document.cookie = `${MY_TASKS_LAYOUT_COOKIE}=${next}; path=/; max-age=31536000; samesite=lax`;
+  }
+
+  const openGroups: Group[] = bySections
+    ? groupBySection(open, orderedSections, placements)
+    : today === null
+      ? []
+      : groupByDue(open, today);
   const groups: Group[] = [
-    ...(today === null ? [] : groupTasks(open, today)),
+    ...openGroups,
     ...(completed.length > 0 ? [{ key: "completed", title: "Recently completed", tasks: completed }] : []),
   ];
   const tasksById = new Map([...open, ...completed].map((t) => [t.id, t]));
@@ -116,6 +216,43 @@ export function MyTasksView({
     },
   });
 
+  function dropTask(event: DragEvent) {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData(TASK_DRAG);
+    const target = taskDrop;
+    setDraggingTask(null);
+    setTaskDrop(null);
+    const group = openGroups.find((g) => g.key === target?.sectionId);
+    if (!target || !group || !tasksById.has(taskId) || target.beforeId === taskId) return;
+    const sortOrder = sortOrderFor(group.tasks, placements, target.beforeId, taskId);
+    run(
+      () => placeMyTask(taskId, target.sectionId, target.beforeId),
+      () => movePlacement({ taskId, sectionId: target.sectionId, sortOrder }),
+    );
+  }
+
+  function moveSection(sectionId: string, beforeId: string | null) {
+    if (beforeId === sectionId) return;
+    const others = orderedSections.filter((s) => s.id !== sectionId);
+    const index = beforeId ? others.findIndex((s) => s.id === beforeId) : -1;
+    const next = index === -1 ? null : others[index].sortOrder;
+    const prev = index === -1 ? (others.at(-1)?.sortOrder ?? 0) : index > 0 ? others[index - 1].sortOrder : null;
+    const sortOrder = next === null ? (prev ?? 0) + 1024 : prev === null ? next - 1024 : (prev + next) / 2;
+    run(
+      () => placeMyTaskSection(sectionId, beforeId),
+      () => moveSectionLocally({ id: sectionId, sortOrder }),
+    );
+  }
+
+  function dropSection(event: DragEvent) {
+    event.preventDefault();
+    const sectionId = event.dataTransfer.getData(SECTION_DRAG);
+    const target = sectionDrop;
+    setDraggingSection(null);
+    setSectionDrop(null);
+    if (sectionId && target) moveSection(sectionId, target.beforeId);
+  }
+
   const rowProps = { openTaskId, today, isDone, onToggle: toggle, selection, selecting: selection.selected.length > 0 };
   const collapseProps = (key: string) => ({
     collapsed: collapsed.has(key),
@@ -128,33 +265,143 @@ export function MyTasksView({
       }),
   });
 
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-2 pt-2">
+      <p className="mr-auto text-xs text-zinc-500">
+        {bySections
+          ? "Drag tasks between your sections; only you see them. Newly assigned tasks land in Recently assigned."
+          : "Grouped by due date, in your local time."}
+      </p>
+      <Segmented label="Group My Tasks by" options={LAYOUTS} value={layout} onChange={chooseLayout} />
+    </div>
+  );
+
   if (open.length === 0 && completed.length === 0) {
     return (
-      <div className="mt-6">
-        <EmptyState icon={CircleCheck} title="Nothing assigned to you">
-          Tasks you’re assigned to in any project show up here, grouped into Overdue, Today, Next 7 days, Later,
-          and No due date.
-        </EmptyState>
-      </div>
+      <>
+        {toolbar}
+        <div className="mt-6">
+          <EmptyState icon={CircleCheck} title="Nothing assigned to you">
+            Tasks you’re assigned to in any project show up here: new ones in Recently assigned, ready to sort into
+            your own sections — or grouped by due date.
+          </EmptyState>
+        </div>
+      </>
     );
   }
 
   return (
     <div className="pb-20">
-      {today === null ? (
+      {toolbar}
+      {!bySections && today === null ? (
         <div role="status" className="mt-4">
           <span className="sr-only">Loading your tasks…</span>
           <SkeletonRows rows={Math.min(open.length || 3, 8)} />
         </div>
+      ) : bySections ? (
+        <>
+          {openGroups.map((group, index) => {
+            const section = group.section!;
+            const isTarget = draggingTask !== null && taskDrop?.sectionId === section.id;
+            return (
+              <TaskGroup
+                key={group.key}
+                id={group.key}
+                title={group.title}
+                count={group.tasks.length}
+                {...collapseProps(group.key)}
+                dropBefore={draggingSection !== null && sectionDrop?.beforeId === section.id}
+                highlight={isTarget && taskDrop?.beforeId === null}
+                controls={
+                  <SectionControls
+                    section={section}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(SECTION_DRAG, section.id);
+                      e.dataTransfer.effectAllowed = "move";
+                      setDraggingSection(section.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingSection(null);
+                      setSectionDrop(null);
+                    }}
+                    onUp={index > 0 ? () => moveSection(section.id, openGroups[index - 1].key) : undefined}
+                    onDown={
+                      index < openGroups.length - 1
+                        ? () => moveSection(section.id, openGroups[index + 2]?.key ?? null)
+                        : undefined
+                    }
+                  />
+                }
+                onHeaderDragOver={(e) => {
+                  if (!draggingSection || draggingSection === section.id) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  const box = e.currentTarget.getBoundingClientRect();
+                  const after = e.clientY > box.top + box.height / 2;
+                  setSectionDrop({ beforeId: after ? (openGroups[index + 1]?.key ?? null) : section.id });
+                }}
+                onHeaderDrop={draggingSection ? dropSection : undefined}
+                onBodyDragOver={(e) => {
+                  if (!draggingTask) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setTaskDrop((current) => (current?.sectionId === section.id ? current : { sectionId: section.id, beforeId: null }));
+                }}
+                onBodyDrop={draggingTask ? dropTask : undefined}
+                empty={draggingTask ? "Drop here" : "No tasks here. Drag tasks in, or use Move in the bar below."}
+              >
+                {group.tasks.map((task, i) => (
+                  <MyTaskRow
+                    key={task.id}
+                    task={task}
+                    {...rowProps}
+                    dropBefore={isTarget && taskDrop?.beforeId === task.id}
+                    dragging={draggingTask === task.id}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(TASK_DRAG, task.id);
+                      e.dataTransfer.effectAllowed = "move";
+                      setDraggingTask(task.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingTask(null);
+                      setTaskDrop(null);
+                    }}
+                    onDragOver={(e) => {
+                      if (!draggingTask || draggingTask === task.id) return;
+                      e.preventDefault();
+                      const box = e.currentTarget.getBoundingClientRect();
+                      const after = e.clientY > box.top + box.height / 2;
+                      setTaskDrop({ sectionId: section.id, beforeId: after ? (group.tasks[i + 1]?.id ?? null) : task.id });
+                    }}
+                  />
+                ))}
+                {isTarget && taskDrop?.beforeId === null && group.tasks.length > 0 ? (
+                  <li aria-hidden>
+                    <DropLine />
+                  </li>
+                ) : null}
+              </TaskGroup>
+            );
+          })}
+          {draggingSection ? (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setSectionDrop({ beforeId: null });
+              }}
+              onDrop={dropSection}
+              className={`mt-3 rounded-md border border-dashed px-3 py-2 text-center text-xs ${
+                sectionDrop?.beforeId === null ? "border-accent-500 bg-accent-50 text-accent-700" : "border-zinc-300 text-zinc-400"
+              }`}
+            >
+              Drop here to move the section to the end
+            </div>
+          ) : null}
+          <AddSection />
+        </>
       ) : (
-        groupTasks(open, today).map((group) => (
-          <TaskGroup
-            key={group.key}
-            id={group.key}
-            title={group.title}
-            count={group.tasks.length}
-            {...collapseProps(group.key)}
-          >
+        openGroups.map((group) => (
+          <TaskGroup key={group.key} id={group.key} title={group.title} count={group.tasks.length} {...collapseProps(group.key)}>
             {group.tasks.map((task) => (
               <MyTaskRow key={task.id} task={task} {...rowProps} />
             ))}
@@ -181,11 +428,168 @@ export function MyTasksView({
           const task = tasksById.get(id);
           return task ? isDone(task) : false;
         }).length}
-        context={bulk}
+        context={bySections ? { ...bulk, mySections: orderedSections.map(({ id, name }) => ({ id, name })) } : bulk}
         bulk={bulkEdit}
         onClear={selection.clear}
       />
     </div>
+  );
+}
+
+function DropLine() {
+  return <div aria-hidden className="h-0.5 rounded-full bg-accent-500" />;
+}
+
+function AddSection() {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [, run] = useServerAction();
+
+  function save() {
+    const value = name.trim();
+    setAdding(false);
+    setName("");
+    if (value) run(() => createMyTaskSection(value));
+  }
+
+  if (!adding) {
+    return (
+      <button type="button" onClick={() => setAdding(true)} className="btn-ghost mt-3 text-zinc-500">
+        <Plus className="size-4" aria-hidden />
+        Add section
+      </button>
+    );
+  }
+  return (
+    <form
+      className="mt-3 flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save();
+      }}
+    >
+      <label htmlFor="my-task-section-name" className="sr-only">
+        New section name
+      </label>
+      <input
+        id="my-task-section-name"
+        autoFocus
+        value={name}
+        maxLength={100}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setName("");
+            setAdding(false);
+          }
+        }}
+        placeholder="Section name"
+        className="control w-64"
+      />
+    </form>
+  );
+}
+
+// Drag handle, Move up / Move down (keyboard path), and Rename / Delete for custom sections.
+function SectionControls({
+  section,
+  onDragStart,
+  onDragEnd,
+  onUp,
+  onDown,
+}: {
+  section: MyTaskSection;
+  onDragStart: (e: DragEvent) => void;
+  onDragEnd: () => void;
+  onUp?: () => void;
+  onDown?: () => void;
+}) {
+  const [, run] = useServerAction();
+  const [renaming, setRenaming] = useState(false);
+  const reveal = "opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100 [@media(hover:none)]:opacity-100";
+  const iconButton = `rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 ${reveal}`;
+
+  if (renaming) {
+    return (
+      <input
+        autoFocus
+        aria-label={`Rename section ${section.name}`}
+        defaultValue={section.name}
+        maxLength={100}
+        onBlur={(e) => {
+          const value = e.currentTarget.value.trim();
+          setRenaming(false);
+          if (value && value !== section.name) run(() => renameMyTaskSection(section.id, value));
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            e.currentTarget.value = section.name;
+            e.currentTarget.blur();
+          }
+        }}
+        className="control h-7 w-56"
+      />
+    );
+  }
+  return (
+    <span className="flex shrink-0 items-center">
+      <span
+        draggable
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        title="Drag to reorder"
+        aria-hidden
+        className={`cursor-grab rounded p-0.5 text-zinc-400 hover:bg-zinc-100 active:cursor-grabbing ${reveal}`}
+      >
+        <GripVertical className="size-4" />
+      </span>
+      {onUp ? (
+        <button type="button" onClick={onUp} aria-label={`Move section ${section.name} up`} title="Move up" className={iconButton}>
+          <ArrowUp className="size-3.5" />
+        </button>
+      ) : null}
+      {onDown ? (
+        <button type="button" onClick={onDown} aria-label={`Move section ${section.name} down`} title="Move down" className={iconButton}>
+          <ArrowDown className="size-3.5" />
+        </button>
+      ) : null}
+      {section.kind === "custom" ? (
+        <Popover
+          label={`Section ${section.name} options`}
+          buttonClassName={iconButton}
+          panelClassName="w-48"
+          button={<Ellipsis className="size-4" />}
+        >
+          {(close) => (
+            <div className="flex flex-col">
+              <MenuItem
+                onClick={() => {
+                  close();
+                  setRenaming(true);
+                }}
+              >
+                <Pencil className="size-4 text-zinc-400" aria-hidden />
+                Rename
+              </MenuItem>
+              <MenuItem
+                danger
+                onClick={() => {
+                  close();
+                  if (window.confirm(`Delete “${section.name}”? Its tasks move to Recently assigned.`)) {
+                    run(() => deleteMyTaskSection(section.id));
+                  }
+                }}
+              >
+                <Trash2 className="size-4" aria-hidden />
+                Delete section
+              </MenuItem>
+            </div>
+          )}
+        </Popover>
+      ) : null}
+    </span>
   );
 }
 
@@ -195,6 +599,14 @@ function TaskGroup({
   count,
   collapsed,
   onToggleCollapsed,
+  controls,
+  dropBefore = false,
+  highlight = false,
+  onHeaderDragOver,
+  onHeaderDrop,
+  onBodyDragOver,
+  onBodyDrop,
+  empty,
   children,
 }: {
   id: string;
@@ -202,26 +614,39 @@ function TaskGroup({
   count: number;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  children: React.ReactNode;
+  controls?: ReactNode;
+  dropBefore?: boolean;
+  highlight?: boolean;
+  onHeaderDragOver?: (e: DragEvent<HTMLDivElement>) => void;
+  onHeaderDrop?: (e: DragEvent) => void;
+  onBodyDragOver?: (e: DragEvent<HTMLElement>) => void;
+  onBodyDrop?: (e: DragEvent) => void;
+  empty?: string;
+  children: ReactNode;
 }) {
   const headingId = `group-${id}`;
   return (
-    <section className="mt-4" aria-labelledby={headingId}>
-      <button
-        type="button"
-        onClick={onToggleCollapsed}
-        aria-expanded={!collapsed}
-        className="flex h-8 items-center gap-1 rounded px-1 text-sm font-semibold text-zinc-900 hover:bg-zinc-100"
-      >
-        {collapsed ? (
-          <ChevronRight className="size-4 text-zinc-400" />
-        ) : (
-          <ChevronDown className="size-4 text-zinc-400" />
-        )}
-        <span id={headingId}>{title}</span>
-        <span className="text-xs font-normal tabular-nums text-zinc-400">{count}</span>
-      </button>
-      {collapsed ? null : <ul className="border-t border-zinc-200">{children}</ul>}
+    <section className="group/section mt-4" aria-labelledby={headingId} onDragOver={onBodyDragOver} onDrop={onBodyDrop}>
+      {dropBefore ? <DropLine /> : null}
+      <div className="flex items-center gap-1" onDragOver={onHeaderDragOver} onDrop={onHeaderDrop}>
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          aria-expanded={!collapsed}
+          className="flex h-8 items-center gap-1 rounded px-1 text-sm font-semibold text-zinc-900 hover:bg-zinc-100"
+        >
+          {collapsed ? <ChevronRight className="size-4 text-zinc-400" /> : <ChevronDown className="size-4 text-zinc-400" />}
+          <span id={headingId}>{title}</span>
+          <span className="text-xs font-normal tabular-nums text-zinc-400">{count}</span>
+        </button>
+        {controls}
+      </div>
+      {collapsed ? null : (
+        <ul className={`border-t border-zinc-200 ${highlight ? "bg-accent-50/60" : ""}`}>
+          {children}
+          {count === 0 && empty ? <li className="px-3 py-2 text-xs text-zinc-400">{empty}</li> : null}
+        </ul>
+      )}
     </section>
   );
 }
@@ -234,6 +659,11 @@ function MyTaskRow({
   onToggle,
   selection,
   selecting,
+  dragging = false,
+  dropBefore = false,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
 }: {
   task: MyTask;
   openTaskId: string | null;
@@ -242,6 +672,11 @@ function MyTaskRow({
   onToggle: (task: MyTask) => void;
   selection: TaskSelection;
   selecting: boolean;
+  dragging?: boolean;
+  dropBefore?: boolean;
+  onDragStart?: (e: DragEvent) => void;
+  onDragEnd?: () => void;
+  onDragOver?: (e: DragEvent<HTMLLIElement>) => void;
 }) {
   const taskHref = useTaskHref();
   const done = isDone(task);
@@ -252,6 +687,10 @@ function MyTaskRow({
   return (
     <li
       data-task-row={task.id}
+      draggable={Boolean(onDragStart)}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
       onMouseDown={(e) => {
         if (e.shiftKey) e.preventDefault(); // no text selection on Shift-click ranges
       }}
@@ -266,8 +705,12 @@ function MyTaskRow({
         selection.click(task.id, e);
       }}
       className={`group flex min-h-row items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
+        dropBefore ? "shadow-[inset_0_2px_0_var(--color-accent-500)]" : ""
+      } ${
         selected ? "bg-accent-50" : open ? "bg-accent-50/60" : "hover:bg-zinc-50"
-      } ${selection.active === task.id ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""}`}
+      } ${selection.active === task.id ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""} ${
+        dragging ? "opacity-40" : ""
+      } ${onDragStart ? "cursor-grab active:cursor-grabbing" : ""}`}
     >
       <input
         type="checkbox"
@@ -290,26 +733,22 @@ function MyTaskRow({
       <Link
         href={taskHref(task.id)}
         scroll={false}
+        draggable={false}
         data-task-link=""
         aria-current={open ? "true" : undefined}
-        className={`min-w-0 flex-1 truncate text-sm hover:underline ${
-          done ? "text-zinc-400 line-through" : "text-zinc-900"
-        }`}
+        className={`min-w-0 flex-1 truncate text-sm hover:underline ${done ? "text-zinc-400 line-through" : "text-zinc-900"}`}
       >
         {task.title}
       </Link>
       <Link
         href={`/projects/${task.projectId}/list`}
+        draggable={false}
         className="chip hidden max-w-40 shrink-0 truncate hover:bg-zinc-200 hover:text-zinc-900 sm:inline-flex"
       >
         <FolderClosed className="size-3 shrink-0" aria-hidden />
         <span className="truncate">{task.projectName}</span>
       </Link>
-      <span
-        className={`w-16 shrink-0 text-right text-xs tabular-nums ${
-          overdue ? "font-medium text-red-600" : "text-zinc-500"
-        }`}
-      >
+      <span className={`w-16 shrink-0 text-right text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
         {task.dueOn ? formatDueDate(task.dueOn, today ? Number(today.slice(0, 4)) : undefined) : ""}
       </span>
     </li>

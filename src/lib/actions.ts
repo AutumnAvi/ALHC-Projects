@@ -739,6 +739,110 @@ export async function deleteSection(sectionId: string): Promise<ActionResult> {
 }
 
 // ---------------------------------------------------------------------------------------------
+// My Tasks sections (personal; RLS limits every write to the viewer's own rows)
+// ---------------------------------------------------------------------------------------------
+
+export async function createMyTaskSection(name: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("ensure_my_task_sections"));
+    const { data: last } = await supabase
+      .from("my_task_sections")
+      .select("sort_order")
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    check(
+      await supabase.from("my_task_sections").insert({
+        name: text(name, "Section name", { max: 100 }),
+        sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
+      }),
+    );
+  });
+}
+
+// Only custom sections can be renamed or deleted (the database refuses the system ones).
+export async function renameMyTaskSection(sectionId: string, name: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase
+        .from("my_task_sections")
+        .update({ name: text(name, "Section name", { max: 100 }) })
+        .eq("id", id(sectionId, "section"))
+        .select("id"),
+    );
+  });
+}
+
+// Its tasks move to the end of Recently assigned (database trigger).
+export async function deleteMyTaskSection(sectionId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase
+        .from("my_task_sections")
+        .update({ deleted_at: now() })
+        .eq("id", id(sectionId, "section"))
+        .select("id"),
+    );
+  });
+}
+
+export async function placeMyTaskSection(sectionId: string, beforeId: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("place_my_task_section", {
+        target_section: id(sectionId, "section"),
+        before_section: beforeId ? id(beforeId, "section") : null,
+      }),
+    );
+  });
+}
+
+// Places one of the viewer's tasks in one of their sections, before `beforeId` (null = end).
+export async function placeMyTask(taskId: string, sectionId: string, beforeId: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("place_my_task", {
+        target_task: id(taskId, "task"),
+        target_section: id(sectionId, "section"),
+        before_task: beforeId ? id(beforeId, "task") : null,
+      }),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Workload
+// ---------------------------------------------------------------------------------------------
+
+// Weekly capacity of one person in a project's or a portfolio's workload; null clears it.
+export async function setWorkloadCapacity(
+  scope: { projectId: string } | { portfolioId: string },
+  profileId: string,
+  capacity: number | null,
+): Promise<ActionResult> {
+  return run(async () => {
+    if (capacity !== null && (!Number.isFinite(capacity) || capacity <= 0 || capacity > 100000)) {
+      throw new InputError("Capacity must be a number greater than 0");
+    }
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("set_workload_capacity", {
+        target_project: "projectId" in scope ? id(scope.projectId, "project") : null,
+        target_portfolio: "portfolioId" in scope ? id(scope.portfolioId, "portfolio") : null,
+        target_profile: id(profileId, "person"),
+        new_capacity: capacity,
+      }),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Tasks
 // ---------------------------------------------------------------------------------------------
 
@@ -1011,6 +1115,8 @@ function bulkOperation(input: BulkOperation): Json {
         project_id: id(input.project_id, "project"),
         section_id: input.section_id ? id(input.section_id, "section") : null,
       };
+    case "my_section":
+      return { action: "my_section", section_id: id(input.section_id, "section") };
     case "set_field":
       if (input.value !== null && JSON.stringify(input.value).length > 20000) throw new InputError("Value is too long");
       return { action: "set_field", field_id: id(input.field_id, "field"), value: input.value ?? null };
@@ -1031,10 +1137,12 @@ export async function bulkEditTasks(
     const ids = [...new Set(taskIds.map((t) => id(t, "task")))];
     if (ids.length > MAX_BULK_TASKS) throw new InputError(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
     const supabase = await createClient();
-    const response = await supabase.rpc("bulk_update_tasks", {
-      target_tasks: ids,
-      operation: bulkOperation(operation),
-    });
+    const op = bulkOperation(operation);
+    // My Tasks sections are personal, so they have their own RPC (same result shape).
+    const response =
+      operation.action === "my_section"
+        ? await supabase.rpc("move_my_tasks", { target_tasks: ids, target_section: id(operation.section_id, "section") })
+        : await supabase.rpc("bulk_update_tasks", { target_tasks: ids, operation: op });
     check(response);
     result = parseBulkResult(response.data);
   });
