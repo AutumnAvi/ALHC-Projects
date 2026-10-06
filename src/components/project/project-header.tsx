@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   CalendarDays,
   ChartColumn,
+  MessagesSquare,
   Gauge,
   ChartGantt,
   ChevronLeft,
@@ -70,6 +71,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
     icon: LAYOUT_ICONS[l.value],
   }));
   const tabs = [
+    { href: `${base}/messages`, label: "Messages", icon: MessagesSquare },
     { href: `${base}/dashboard`, label: "Dashboard", icon: ChartColumn },
     { href: `${base}/workload`, label: "Workload", icon: Gauge },
     { href: `${base}/fields`, label: "Fields", icon: SlidersHorizontal },

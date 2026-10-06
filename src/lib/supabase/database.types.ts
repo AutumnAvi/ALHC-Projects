@@ -576,6 +576,13 @@ export type Database = {
         };
         Relationships: [
           {
+            foreignKeyName: "inbox_items_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "project_messages";
+            referencedColumns: ["id"];
+          },
+          {
             foreignKeyName: "inbox_items_actor_id_fkey";
             columns: ["actor_id"];
             isOneToOne: false;

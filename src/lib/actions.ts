@@ -1602,6 +1602,117 @@ export async function removeTaskTag(taskId: string, tagId: string): Promise<Acti
   });
 }
 
+// ---------------------------------------------------------------------------------------------
+// Project Messages (threads + replies; Commenters+ post, authors edit and delete their own; the
+// database parses @mentions and writes inbox items)
+// ---------------------------------------------------------------------------------------------
+
+const MAX_MESSAGE = 20000;
+
+export async function createMessageThread(projectId: string, title: string, body: string): Promise<ActionResult> {
+  let threadId: string | undefined;
+  const outcome = await run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("project_messages")
+      .insert({
+        project_id: id(projectId, "project"),
+        title: text(title, "Title", { max: 200 }),
+        body: text(body, "Message", { max: MAX_MESSAGE }),
+      })
+      .select("id")
+      .single();
+    check(result, "Commenters and above can post messages in this project");
+    threadId = result.data?.id;
+  });
+  if (outcome.error || !threadId) return outcome;
+  redirect(`/projects/${projectId}/messages/${threadId}`);
+}
+
+export async function replyToThread(threadId: string, body: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const thread = await supabase
+      .from("project_messages")
+      .select("project_id")
+      .eq("id", id(threadId, "thread"))
+      .is("deleted_at", null)
+      .maybeSingle();
+    check(thread);
+    if (!thread.data) throw new InputError("This thread was deleted");
+    check(
+      await supabase
+        .from("project_messages")
+        .insert({ project_id: thread.data.project_id, thread_id: threadId, body: text(body, "Reply", { max: MAX_MESSAGE }) }),
+      "Commenters and above can reply in this project",
+    );
+  });
+}
+
+export async function editMessage(messageId: string, patch: { title?: string; body: string }): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const update: TablesUpdate<"project_messages"> = { body: text(patch.body, "Message", { max: MAX_MESSAGE }) };
+    if (patch.title !== undefined) update.title = text(patch.title, "Title", { max: 200 });
+    const result = await supabase
+      .from("project_messages")
+      .update(update)
+      .eq("id", id(messageId, "message"))
+      .is("deleted_at", null)
+      .select("id");
+    check(result);
+    if (!result.data?.length) throw new InputError("You can only edit your own messages");
+  });
+}
+
+export async function deleteMessage(messageId: string, projectId?: string): Promise<ActionResult> {
+  const outcome = await run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("project_messages")
+      .update({ deleted_at: now() })
+      .eq("id", id(messageId, "message"))
+      .select("id");
+    check(result);
+    if (!result.data?.length) throw new InputError("You can only delete your own messages");
+  });
+  // Deleting a thread leaves its page; go back to the list.
+  if (!outcome.error && projectId) redirect(`/projects/${id(projectId, "project")}/messages`);
+  return outcome;
+}
+
+export async function toggleMessageReaction(messageId: string, emoji: string): Promise<ActionResult> {
+  return run(async () => {
+    if (!isReactionKey(emoji)) throw new InputError("Unknown reaction");
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to react");
+    const existing = await supabase
+      .from("project_message_reactions")
+      .select("id")
+      .eq("message_id", id(messageId, "message"))
+      .eq("profile_id", user.id)
+      .eq("emoji", emoji)
+      .is("deleted_at", null);
+    check(existing);
+    if (existing.data?.length) {
+      checkUpdated(
+        await supabase
+          .from("project_message_reactions")
+          .update({ deleted_at: now() })
+          .in("id", existing.data.map((r) => r.id))
+          .select("id"),
+      );
+      return;
+    }
+    const inserted = await supabase.from("project_message_reactions").insert({ message_id: messageId, emoji });
+    if (inserted.error?.code === "23505") return;
+    check(inserted, "Commenters and above can react to messages");
+  });
+}
+
 export async function setFollowing(
   taskId: string,
   profileId: string,

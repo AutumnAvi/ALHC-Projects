@@ -1122,17 +1122,21 @@ export type InboxItem = {
     | "completed"
     | "approval_requested"
     | "approval_decided"
-    | "rule";
+    | "rule"
+    | "message";
   data: Json;
   actorId: string | null;
   readAt: string | null;
   archivedAt: string | null;
   createdAt: string;
-  taskId: string;
+  // Task items: the task. Message items (Messages tab): null, and `message` is set; taskTitle then
+  // holds the thread's title.
+  taskId: string | null;
   taskTitle: string;
   // Subtasks: the parent task's title.
   parentTitle: string | null;
   commentBody: string | null;
+  message: { id: string; threadId: string; projectId: string; projectName: string } | null;
 };
 
 export type InboxTab = "active" | "archived";
@@ -1149,8 +1153,31 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
   query = tab === "archived" ? query.not("archived_at", "is", null) : query.is("archived_at", null);
   const result = await query.order("created_at", { ascending: false }).limit(100);
   const items = rows(result, "inbox");
-  const parentTitle = await taskTitles(items.map((item) => item.task.parent_task_id));
-  return items
+  let messageQuery = supabase
+    .from("inbox_items")
+    .select(
+      "id, kind, data, actor_id, read_at, archived_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))",
+    )
+    .is("task_id", null)
+    .is("message.deleted_at", null)
+    .is("message.project.deleted_at", null);
+  messageQuery = tab === "archived" ? messageQuery.not("archived_at", "is", null) : messageQuery.is("archived_at", null);
+  const [parentTitle, messageItems] = await Promise.all([
+    taskTitles(items.map((item) => item.task.parent_task_id)),
+    messageQuery.order("created_at", { ascending: false }).limit(100).then((r) => rows(r, "inbox messages")),
+  ]);
+  // A reply's thread may be deleted (its replies are hidden then) and needs its title.
+  const threadIds = [...new Set(messageItems.map((m) => m.message.thread_id).filter((t): t is string => t !== null))];
+  const threads = threadIds.length
+    ? new Map(
+        rows(
+          await supabase.from("project_messages").select("id, title, deleted_at").in("id", threadIds),
+          "message threads",
+        ).map((t) => [t.id, t] as const),
+      )
+    : new Map<string, { id: string; title: string | null; deleted_at: string | null }>();
+
+  const taskItems: InboxItem[] = items
     .filter((item) => !item.comment?.deleted_at)
     .map((item) => ({
       id: item.id,
@@ -1164,7 +1191,165 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
       taskTitle: item.task.title,
       parentTitle: item.task.parent_task_id ? (parentTitle.get(item.task.parent_task_id) ?? null) : null,
       commentBody: item.comment?.body ?? null,
+      message: null,
     }));
+  const messages: InboxItem[] = messageItems.flatMap((item) => {
+    const m = item.message;
+    const thread = m.thread_id ? threads.get(m.thread_id) : null;
+    if (m.thread_id && (!thread || thread.deleted_at)) return [];
+    return [
+      {
+        id: item.id,
+        kind: item.kind as InboxItem["kind"],
+        data: item.data,
+        actorId: item.actor_id,
+        readAt: item.read_at,
+        archivedAt: item.archived_at,
+        createdAt: item.created_at,
+        taskId: null,
+        taskTitle: (thread ? thread.title : m.title) ?? "Message",
+        parentTitle: null,
+        commentBody: m.body,
+        message: { id: m.id, threadId: m.thread_id ?? m.id, projectId: m.project_id, projectName: m.project.name },
+      },
+    ];
+  });
+  return [...taskItems, ...messages].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Project Messages (threads + replies; RLS: project Viewer+ reads)
+// ---------------------------------------------------------------------------------------------
+
+export type MessageReaction = { emoji: ReactionKey; profileIds: string[] };
+
+export type ProjectMessage = {
+  id: string;
+  authorId: string;
+  body: string;
+  createdAt: string;
+  editedAt: string | null;
+  mentionIds: string[];
+  reactions: MessageReaction[];
+};
+
+export type MessageThreadSummary = {
+  id: string;
+  title: string;
+  body: string;
+  authorId: string;
+  createdAt: string;
+  lastActivityAt: string;
+  replyCount: number;
+};
+
+export type MessageThread = ProjectMessage & {
+  projectId: string;
+  title: string;
+  lastActivityAt: string;
+  replies: ProjectMessage[];
+};
+
+const MESSAGE_COLUMNS =
+  "id, project_id, thread_id, title, body, author_id, created_at, edited_at, last_activity_at, project_message_mentions(profile_id), project_message_reactions(emoji, profile_id, deleted_at, created_at)";
+
+type MessageRow = {
+  id: string;
+  body: string;
+  author_id: string;
+  created_at: string;
+  edited_at: string | null;
+  project_message_mentions: { profile_id: string }[];
+  project_message_reactions: { emoji: string; profile_id: string; deleted_at: string | null; created_at: string }[];
+};
+
+function toProjectMessage(row: MessageRow): ProjectMessage {
+  const active = row.project_message_reactions
+    .filter((r) => !r.deleted_at)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return {
+    id: row.id,
+    authorId: row.author_id,
+    body: row.body,
+    createdAt: row.created_at,
+    editedAt: row.edited_at,
+    mentionIds: row.project_message_mentions.map((m) => m.profile_id),
+    reactions: REACTIONS.flatMap(({ key }) => {
+      const profileIds = active.filter((r) => r.emoji === key).map((r) => r.profile_id);
+      return profileIds.length ? [{ emoji: key, profileIds }] : [];
+    }),
+  };
+}
+
+// Threads of a project, most recently active first.
+export const listMessageThreads = cache(async (projectId: string): Promise<MessageThreadSummary[]> => {
+  const supabase = await createClient();
+  const threads = rows(
+    await supabase
+      .from("project_messages")
+      .select("id, title, body, author_id, created_at, last_activity_at")
+      .eq("project_id", projectId)
+      .is("thread_id", null)
+      .is("deleted_at", null)
+      .order("last_activity_at", { ascending: false })
+      .limit(200),
+    "messages",
+  );
+  if (threads.length === 0) return [];
+  const replies = rows(
+    await supabase
+      .from("project_messages")
+      .select("thread_id")
+      .in(
+        "thread_id",
+        threads.map((t) => t.id),
+      )
+      .is("deleted_at", null),
+    "replies",
+  );
+  const counts = new Map<string, number>();
+  for (const r of replies) if (r.thread_id) counts.set(r.thread_id, (counts.get(r.thread_id) ?? 0) + 1);
+  return threads.map((t) => ({
+    id: t.id,
+    title: t.title ?? "Untitled",
+    body: t.body,
+    authorId: t.author_id,
+    createdAt: t.created_at,
+    lastActivityAt: t.last_activity_at,
+    replyCount: counts.get(t.id) ?? 0,
+  }));
+});
+
+// One thread with its replies (oldest first); null when missing, deleted, or unreadable.
+export const getMessageThread = cache(async (threadId: string): Promise<MessageThread | null> => {
+  const supabase = await createClient();
+  const thread = maybe(
+    await supabase
+      .from("project_messages")
+      .select(MESSAGE_COLUMNS)
+      .eq("id", threadId)
+      .is("thread_id", null)
+      .is("deleted_at", null)
+      .maybeSingle(),
+    "message",
+  );
+  if (!thread) return null;
+  const replies = rows(
+    await supabase
+      .from("project_messages")
+      .select(MESSAGE_COLUMNS)
+      .eq("thread_id", threadId)
+      .is("deleted_at", null)
+      .order("created_at"),
+    "replies",
+  );
+  return {
+    ...toProjectMessage(thread),
+    projectId: thread.project_id,
+    title: thread.title ?? "Untitled",
+    lastActivityAt: thread.last_activity_at,
+    replies: replies.map(toProjectMessage),
+  };
 });
 
 export const countUnreadInbox = cache(async () => {
