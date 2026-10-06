@@ -144,6 +144,14 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Copies keep them:** project templates, Duplicate project, repeating tasks, and Asana imports bring whole subtask trees; task templates keep subtask titles.
 - **Existing checklists** became real subtasks automatically, keeping their completion, order, and approvals.
 
+## What's here (reporting and export)
+
+- **Reports** (sidebar): charts across every project you can open — tasks by status (open, overdue, completed), by project, by assignee, and by section, tasks completed per day or week, and an overdue list. Filter by projects, assignees, a date range (tasks due or completed in it), and **Include subtasks** (off by default; subtasks count in their top-level task's projects). Projects you can't open are never named, only counted (“N projects you're not a member of are left out”). Workspace admins see nothing extra.
+- **All projects** (Reports tab): one row per project you can open with its status, latest update, incomplete / overdue / recently completed / complete counts, and progress.
+- **My dashboards** (Reports tab): your own dashboards of widgets — numbers, bar charts by section / assignee / project, completed over time, and overdue lists — each with its own filters. Only you can see them. A widget limited to a project you can no longer open stays empty.
+- **Export CSV** from List (the view's current filters, order, and columns, custom fields included), search results, the project Dashboard, Reports, and the portfolio Report. Exports only contain what you can read, up to 10,000 rows, and open cleanly in Excel (UTF-8; cells that look like formulas are kept as text).
+- **Print / Save as PDF:** reports, dashboards, and the portfolio Report have a Print button and print without the sidebar or buttons (use the browser's Save as PDF).
+
 ## Local development
 
 ```bash
@@ -158,7 +166,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–97)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01…)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.

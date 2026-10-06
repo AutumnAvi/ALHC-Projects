@@ -53,7 +53,7 @@ export function PortfolioHeader({ portfolio }: { portfolio: Portfolio }) {
           className={`${HEADER_TITLE_INPUT} w-full`}
         />
       </div>
-      <nav aria-label="Portfolio" className="mt-1 flex items-center gap-0.5 overflow-x-auto">
+      <nav aria-label="Portfolio" className="mt-1 flex items-center gap-0.5 overflow-x-auto print:hidden">
         {tabs.map(({ href, label, icon: Icon, exact }) => {
           const active = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
           return (

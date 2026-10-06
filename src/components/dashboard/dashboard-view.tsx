@@ -8,6 +8,7 @@ import { MenuItem, Popover } from "@/components/popover";
 import { FilterChips, FilterEditor, type FilterContext } from "@/components/project/filter-editor";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
+import { ExportLink, PrintButton } from "@/components/reports/report-chrome";
 import { createWidget, deleteWidget, installStarterWidgets, moveWidget, updateWidget } from "@/lib/actions";
 import type { MetricBucket } from "@/lib/data";
 import {
@@ -49,32 +50,40 @@ export function DashboardView({
             Live task counts for this project. Each widget has its own filters, using the same options as views.
           </p>
         </div>
-        <Popover
-          label="Add widget"
-          align="end"
-          panelClassName="w-56"
-          buttonClassName="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
-          button={
-            <>
-              <Plus className="size-4" aria-hidden /> Add widget
-            </>
-          }
-        >
-          {(close) =>
-            WIDGET_KINDS.map((kind) => (
-              <MenuItem
-                key={kind.value}
-                onClick={() => {
-                  close();
-                  run(() => createWidget(projectId, { kind: kind.value, ...NEW_WIDGET[kind.value] }));
-                }}
-              >
-                {kind.value === "count" ? <Hash className="size-4 text-zinc-500" /> : <ChartColumn className="size-4 text-zinc-500" />}
-                {kind.label}
-              </MenuItem>
-            ))
-          }
-        </Popover>
+        {widgets.length ? (
+          <>
+            <ExportLink href={`/export/dashboard?project=${projectId}`} variant="ghost" />
+            <PrintButton />
+          </>
+        ) : null}
+        <div className="print:hidden">
+          <Popover
+            label="Add widget"
+            align="end"
+            panelClassName="w-56"
+            buttonClassName="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
+            button={
+              <>
+                <Plus className="size-4" aria-hidden /> Add widget
+              </>
+            }
+          >
+            {(close) =>
+              WIDGET_KINDS.map((kind) => (
+                <MenuItem
+                  key={kind.value}
+                  onClick={() => {
+                    close();
+                    run(() => createWidget(projectId, { kind: kind.value, ...NEW_WIDGET[kind.value] }));
+                  }}
+                >
+                  {kind.value === "count" ? <Hash className="size-4 text-zinc-500" /> : <ChartColumn className="size-4 text-zinc-500" />}
+                  {kind.label}
+                </MenuItem>
+              ))
+            }
+          </Popover>
+        </div>
       </div>
 
       {widgets.length === 0 ? (
@@ -161,60 +170,62 @@ function WidgetCard({
 
   return (
     <li
-      className={`flex flex-col rounded-xl border border-zinc-200 bg-white p-4 ${chart || editing ? "sm:col-span-2" : ""}`}
+      className={`report-card flex flex-col rounded-xl border border-zinc-200 bg-white p-4 ${chart || editing ? "sm:col-span-2" : ""}`}
       aria-labelledby={`widget-${widget.id}`}
     >
       <div className="flex items-start gap-2">
         <h3 id={`widget-${widget.id}`} className="min-w-0 flex-1 text-sm font-medium text-zinc-700">
           {widget.title}
         </h3>
-        <Popover
-          label={`Options for ${widget.title}`}
-          align="end"
-          panelClassName="w-44"
-          buttonClassName="-mt-1 -mr-1 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
-          button={<MoreHorizontal className="size-4" aria-hidden />}
-        >
-          {(close) => (
-            <>
-              <MenuItem
-                onClick={() => {
-                  close();
-                  setEditing(true);
-                }}
-              >
-                <Pencil className="size-4 text-zinc-500" /> Edit
-              </MenuItem>
-              <MenuItem
-                disabled={first}
-                onClick={() => {
-                  close();
-                  run(() => moveWidget(widget.id, -1));
-                }}
-              >
-                <ChevronUp className="size-4 text-zinc-500" /> Move earlier
-              </MenuItem>
-              <MenuItem
-                disabled={last}
-                onClick={() => {
-                  close();
-                  run(() => moveWidget(widget.id, 1));
-                }}
-              >
-                <ChevronDown className="size-4 text-zinc-500" /> Move later
-              </MenuItem>
-              <MenuItem
-                danger
-                onClick={() => {
-                  close();
-                  if (window.confirm(`Remove the widget “${widget.title}”?`)) run(() => deleteWidget(widget.id));
-                }}
-              >
-                <Trash2 className="size-4" /> Remove
-              </MenuItem>
-            </>
-          )}
-        </Popover>
+        <div className="print:hidden">
+          <Popover
+            label={`Options for ${widget.title}`}
+            align="end"
+            panelClassName="w-44"
+            buttonClassName="-mt-1 -mr-1 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+            button={<MoreHorizontal className="size-4" aria-hidden />}
+          >
+            {(close) => (
+              <>
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    setEditing(true);
+                  }}
+                >
+                  <Pencil className="size-4 text-zinc-500" /> Edit
+                </MenuItem>
+                <MenuItem
+                  disabled={first}
+                  onClick={() => {
+                    close();
+                    run(() => moveWidget(widget.id, -1));
+                  }}
+                >
+                  <ChevronUp className="size-4 text-zinc-500" /> Move earlier
+                </MenuItem>
+                <MenuItem
+                  disabled={last}
+                  onClick={() => {
+                    close();
+                    run(() => moveWidget(widget.id, 1));
+                  }}
+                >
+                  <ChevronDown className="size-4 text-zinc-500" /> Move later
+                </MenuItem>
+                <MenuItem
+                  danger
+                  onClick={() => {
+                    close();
+                    if (window.confirm(`Remove the widget “${widget.title}”?`)) run(() => deleteWidget(widget.id));
+                  }}
+                >
+                  <Trash2 className="size-4" /> Remove
+                </MenuItem>
+              </>
+            )}
+          </Popover>
+        </div>
       </div>
 
       {editing ? (
@@ -242,7 +253,7 @@ function WidgetCard({
             <FilterChips filters={widget.filters} context={context} />
             <Link
               href={tasksHref}
-              className="inline-flex items-center gap-1 self-start text-xs font-medium text-accent-700 hover:underline"
+              className="inline-flex items-center gap-1 self-start text-xs font-medium text-accent-700 hover:underline print:hidden"
             >
               View tasks <ArrowRight className="size-3" aria-hidden />
             </Link>

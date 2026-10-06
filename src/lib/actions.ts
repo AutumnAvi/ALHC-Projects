@@ -63,6 +63,13 @@ import {
 import type { Json, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import { TASK_KINDS, type TaskKind } from "@/lib/task-kinds";
+import {
+  DEFAULT_WIDGET_TITLES,
+  isPersonalWidgetKind,
+  isSeriesInterval,
+  reportFiltersJson,
+  type ReportFilters,
+} from "@/lib/reports";
 
 export type ActionResult = { error?: string };
 
@@ -2848,4 +2855,172 @@ export async function discardImportUploads(projectId: string, paths: string[]): 
     if (error instanceof InputError) return { error: error.message };
     throw error;
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Personal dashboards (Reporting and export). Owner-only RLS: nobody else can read or change them, and
+// the widget guard validates the report filter (validate_report_filters()).
+// ---------------------------------------------------------------------------------------------
+
+export async function createPersonalDashboard(formData: FormData): Promise<ActionResult> {
+  let dashboardId: string | null = null;
+  const result = await run(async () => {
+    const name = text(formData.get("name"), "Dashboard name", { max: 100 });
+    const supabase = await createClient();
+    const { data: last } = await supabase
+      .from("personal_dashboards")
+      .select("sort_order")
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const inserted = await supabase
+      .from("personal_dashboards")
+      .insert({ name, sort_order: (last?.sort_order ?? 0) + ORDER_STEP })
+      .select("id")
+      .single();
+    check(inserted);
+    dashboardId = inserted.data!.id;
+    check(
+      await supabase.from("personal_dashboard_widgets").insert([
+        { dashboard_id: dashboardId, kind: "count", title: "Open tasks", filters: { status: "open" }, sort_order: ORDER_STEP },
+        { dashboard_id: dashboardId, kind: "count", title: "Overdue", filters: { status: "overdue" }, sort_order: 2 * ORDER_STEP },
+        {
+          dashboard_id: dashboardId,
+          kind: "completed_series",
+          title: "Completed per week",
+          series_interval: "week",
+          sort_order: 3 * ORDER_STEP,
+        },
+        { dashboard_id: dashboardId, kind: "by_project", title: "Open tasks by project", filters: { status: "open" }, sort_order: 4 * ORDER_STEP },
+      ]),
+    );
+  });
+  if (dashboardId && !result.error) redirect(`/reports/dashboards/${dashboardId}`);
+  return result;
+}
+
+export async function renamePersonalDashboard(dashboardId: string, name: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase
+        .from("personal_dashboards")
+        .update({ name: text(name, "Dashboard name", { max: 100 }) })
+        .eq("id", id(dashboardId))
+        .select("id"),
+      "This dashboard no longer exists",
+    );
+  });
+}
+
+export async function deletePersonalDashboard(dashboardId: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("personal_dashboards").update({ deleted_at: now() }).eq("id", id(dashboardId)).select("id"),
+      "This dashboard no longer exists",
+    );
+  });
+  if (!result.error) redirect("/reports/dashboards");
+  return result;
+}
+
+type PersonalWidgetInput = { kind: string; title?: string; filters?: ReportFilters; interval?: string };
+
+function personalWidgetFields(input: Partial<PersonalWidgetInput>) {
+  const fields: { kind?: string; title?: string; filters?: Json; series_interval?: string } = {};
+  if (input.kind !== undefined) {
+    if (!isPersonalWidgetKind(input.kind)) throw new InputError("Unknown widget type");
+    fields.kind = input.kind;
+  }
+  if (input.title !== undefined) fields.title = text(input.title, "Widget title", { max: 100 });
+  if (input.filters !== undefined) fields.filters = reportFiltersJson(input.filters);
+  if (input.interval !== undefined) {
+    if (!isSeriesInterval(input.interval)) throw new InputError("Choose days or weeks");
+    fields.series_interval = input.interval;
+  }
+  return fields;
+}
+
+export async function createPersonalWidget(dashboardId: string, input: PersonalWidgetInput): Promise<ActionResult> {
+  return run(async () => {
+    if (!isPersonalWidgetKind(input.kind)) throw new InputError("Unknown widget type");
+    const fields = personalWidgetFields({ title: DEFAULT_WIDGET_TITLES[input.kind], ...input });
+    const supabase = await createClient();
+    const { data: last } = await supabase
+      .from("personal_dashboard_widgets")
+      .select("sort_order")
+      .eq("dashboard_id", id(dashboardId))
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    check(
+      await supabase.from("personal_dashboard_widgets").insert({
+        dashboard_id: dashboardId,
+        kind: input.kind,
+        title: fields.title!,
+        filters: fields.filters ?? {},
+        series_interval: fields.series_interval ?? "week",
+        sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
+      }),
+      "This dashboard no longer exists",
+    );
+  });
+}
+
+export async function updatePersonalWidget(widgetId: string, patch: Partial<PersonalWidgetInput>): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase
+        .from("personal_dashboard_widgets")
+        .update(personalWidgetFields(patch))
+        .eq("id", id(widgetId))
+        .select("id"),
+      "This widget no longer exists",
+    );
+  });
+}
+
+export async function deletePersonalWidget(widgetId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("personal_dashboard_widgets").update({ deleted_at: now() }).eq("id", id(widgetId)).select("id"),
+      "This widget no longer exists",
+    );
+  });
+}
+
+export async function movePersonalWidget(widgetId: string, direction: -1 | 1): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const { data: row } = await supabase
+      .from("personal_dashboard_widgets")
+      .select("dashboard_id")
+      .eq("id", id(widgetId))
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!row) throw new InputError("This widget no longer exists");
+    const { data: siblings } = await supabase
+      .from("personal_dashboard_widgets")
+      .select("id, sort_order")
+      .eq("dashboard_id", row.dashboard_id)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    const list = siblings ?? [];
+    const index = list.findIndex((w) => w.id === widgetId);
+    const target = index + (direction < 0 ? -1 : 1);
+    if (index === -1 || target < 0 || target >= list.length) return;
+    [list[index], list[target]] = [list[target], list[index]];
+    for (const [i, item] of list.entries()) {
+      const order = (i + 1) * ORDER_STEP;
+      if (item.sort_order !== order) {
+        check(await supabase.from("personal_dashboard_widgets").update({ sort_order: order }).eq("id", item.id));
+      }
+    }
+  });
 }

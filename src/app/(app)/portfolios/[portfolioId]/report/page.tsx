@@ -50,6 +50,7 @@ export default async function PortfolioReportPage({ params }: PageProps<"/portfo
 
   return (
     <PortfolioReport
+      portfolioId={portfolioId}
       totals={totals[0] ?? EMPTY_COUNTS}
       hiddenCount={hidden}
       projects={ordered.map((project) => ({

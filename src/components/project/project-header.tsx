@@ -207,7 +207,7 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
         }`}
       />
 
-      <nav aria-label="Project views" className="mt-1 flex items-center gap-0.5 overflow-x-auto">
+      <nav aria-label="Project views" className="mt-1 flex items-center gap-0.5 overflow-x-auto print:hidden">
         {views.map((view, index) => (
           <ViewTab
             key={view.id}

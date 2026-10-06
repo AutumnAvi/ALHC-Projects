@@ -753,6 +753,101 @@ export type Database = {
           },
         ];
       };
+      personal_dashboards: {
+        Row: {
+          id: string;
+          profile_id: string;
+          name: string;
+          sort_order: number;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          name: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          name?: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "personal_dashboards_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      personal_dashboard_widgets: {
+        Row: {
+          id: string;
+          dashboard_id: string;
+          profile_id: string;
+          kind: string;
+          title: string;
+          filters: Json;
+          series_interval: string;
+          sort_order: number;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          dashboard_id: string;
+          profile_id?: string;
+          kind: string;
+          title: string;
+          filters?: Json;
+          series_interval?: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          dashboard_id?: string;
+          profile_id?: string;
+          kind?: string;
+          title?: string;
+          filters?: Json;
+          series_interval?: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "personal_dashboard_widgets_dashboard_id_fkey";
+            columns: ["dashboard_id"];
+            isOneToOne: false;
+            referencedRelation: "personal_dashboards";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "personal_dashboard_widgets_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       my_task_sections: {
         Row: {
           id: string;
@@ -2941,6 +3036,65 @@ export type Database = {
       open_blocker_count: {
         Args: { target_task: string };
         Returns: number;
+      };
+      all_projects_report: {
+        Args: { tz?: string };
+        Returns: {
+          project_id: string;
+          name: string;
+          status: string;
+          status_note: string | null;
+          status_updated_at: string | null;
+          task_count: number;
+          completed_count: number;
+          incomplete_count: number;
+          overdue_count: number;
+          completed_recent_count: number;
+        }[];
+      };
+      report_completed_series: {
+        Args: { filters?: Json; bucket_interval?: string; tz?: string };
+        Returns: { bucket_start: string; completed_count: number }[];
+      };
+      report_overdue_tasks: {
+        Args: { filters?: Json; tz?: string; max_results?: number };
+        Returns: {
+          task_id: string;
+          title: string;
+          project_id: string;
+          assignee_id: string | null;
+          due_on: string;
+          days_overdue: number;
+          parent_task_id: string | null;
+        }[];
+      };
+      report_task_rows: {
+        Args: { filters?: Json; tz?: string };
+        Returns: {
+          project_id: string;
+          task_id: string;
+          section_id: string | null;
+          assignee_id: string | null;
+          due_on: string | null;
+          completed_at: string | null;
+          is_subtask: boolean;
+        }[];
+      };
+      workspace_hidden_project_count: {
+        Args: Record<PropertyKey, never>;
+        Returns: number;
+      };
+      workspace_report: {
+        Args: { filters?: Json; group_by?: string; tz?: string };
+        Returns: {
+          bucket: string | null;
+          project_id: string | null;
+          task_count: number;
+          completed_count: number;
+          incomplete_count: number;
+          overdue_count: number;
+          completed_recent_count: number;
+        }[];
       };
       ensure_my_task_sections: {
         Args: Record<PropertyKey, never>;

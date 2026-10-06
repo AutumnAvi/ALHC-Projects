@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useOptimistic, useState, useTransition } from "react";
-import { ArrowDownUp, Columns3, Filter, Plus, Rows3, Search, X } from "lucide-react";
+import { ArrowDownUp, Columns3, Download, Filter, Plus, Rows3, Search, X } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { useCan } from "@/components/project/project-access";
@@ -282,6 +282,22 @@ export function ViewToolbar({
             />
             Show subtasks
           </label>
+        ) : null}
+
+        {layout === "list" ? (
+          // CSV of what the List shows: the current (or draft) filters, order, and columns.
+          <a
+            href={`/export/list?${new URLSearchParams({
+              project: projectId,
+              ...(view ? { view: view.id } : {}),
+              ...(isDraft ? { f: encodeConfig(current) } : {}),
+            }).toString()}`}
+            download
+            className={toolButton}
+          >
+            <Download className="size-3.5" aria-hidden />
+            Export CSV
+          </a>
         ) : null}
 
         <div className="ml-auto flex items-center gap-1.5">

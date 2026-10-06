@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Search } from "lucide-react";
+import { ExportLink } from "@/components/reports/report-chrome";
 import { SearchResults } from "@/components/search/search-results";
 import { TaskPaneBoundary } from "@/components/task/task-pane";
 import { EmptyState, PageHeader } from "@/components/ui";
@@ -15,7 +16,16 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
-      <PageHeader icon={Search} title="Search" description="Task titles and descriptions in every project you can read" />
+      <PageHeader
+        icon={Search}
+        title="Search"
+        description="Task titles and descriptions in every project you can read"
+        actions={
+          query && results.length ? (
+            <ExportLink href={`/export/search?${new URLSearchParams({ q: query }).toString()}`} variant="ghost" />
+          ) : null
+        }
+      />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-3xl px-gutter py-4">
           <form action="/search" role="search" className="relative">
