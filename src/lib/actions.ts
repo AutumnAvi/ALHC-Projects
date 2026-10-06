@@ -41,6 +41,7 @@ import {
 import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
 import { isReactionKey } from "@/lib/reactions";
+import { MAX_TAG_NAME } from "@/lib/tags";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isPortfolioRole, isProjectRole } from "@/lib/roles";
@@ -1270,6 +1271,9 @@ function bulkOperation(input: BulkOperation): Json {
       };
     case "my_section":
       return { action: "my_section", section_id: id(input.section_id, "section") };
+    case "add_tag":
+    case "remove_tag":
+      return { action: input.action, tag_id: id(input.tag_id, "tag") };
     case "set_field":
       if (input.value !== null && JSON.stringify(input.value).length > 20000) throw new InputError("Value is too long");
       return { action: "set_field", field_id: id(input.field_id, "field"), value: input.value ?? null };
@@ -1476,6 +1480,125 @@ export async function deleteComment(commentId: string): Promise<ActionResult> {
       .select("id");
     check(result);
     if (!result.data?.length) throw new InputError("You can only delete your own comments");
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tags (workspace names: anyone allowlisted creates; creator or workspace admin manages. Links follow
+// the task: Editors+ add and remove, through RLS.)
+// ---------------------------------------------------------------------------------------------
+
+const TAG_TAKEN = "A tag with that name already exists";
+
+function tagError(result: DbResult) {
+  if (result.error?.code === "23505") throw new InputError(TAG_TAKEN);
+  check(result, "Only the tag’s creator or a workspace admin can change it");
+}
+
+export async function createTag(name: string, color: string = "zinc"): Promise<ActionResult & { tagId?: string }> {
+  let tagId: string | undefined;
+  const outcome = await run(async () => {
+    if (!isOptionColor(color)) throw new InputError("Unknown colour");
+    const supabase = await createClient();
+    const result = await supabase
+      .from("tags")
+      .insert({ name: text(name, "Tag name", { max: MAX_TAG_NAME }), color })
+      .select("id")
+      .single();
+    tagError(result);
+    tagId = result.data?.id;
+  });
+  return outcome.error ? outcome : { tagId };
+}
+
+export async function updateTag(
+  tagId: string,
+  patch: { name?: string; color?: string; archived?: boolean },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: TablesUpdate<"tags"> = {};
+    if (patch.name !== undefined) update.name = text(patch.name, "Tag name", { max: MAX_TAG_NAME });
+    if (patch.color !== undefined) {
+      if (!isOptionColor(patch.color)) throw new InputError("Unknown colour");
+      update.color = patch.color;
+    }
+    if (patch.archived !== undefined) update.archived_at = patch.archived ? now() : null;
+    const supabase = await createClient();
+    const result = await supabase.from("tags").update(update).eq("id", id(tagId, "tag")).is("deleted_at", null).select("id");
+    tagError(result);
+    if (!result.data?.length) throw new InputError("Only the tag’s creator or a workspace admin can change it");
+  });
+}
+
+export async function addTaskTag(taskId: string, tagId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase.from("task_tags").insert({ task_id: id(taskId, "task"), tag_id: id(tagId, "tag") });
+    // Already there (a double click, or another tab): nothing to do.
+    if (result.error?.code === "23505") return;
+    check(result);
+  });
+}
+
+// Creates a tag (or reuses one with that name) and adds it to the task.
+export async function addNewTaskTag(taskId: string, name: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const clean = text(name, "Tag name", { max: MAX_TAG_NAME });
+    const existing = await supabase
+      .from("tags")
+      .select("id, name")
+      .is("deleted_at", null)
+      .ilike("name", clean.replace(/[\\%_]/g, (c) => `\\${c}`));
+    check(existing);
+    let tagId = existing.data?.find((t) => t.name.toLowerCase() === clean.toLowerCase())?.id;
+    if (!tagId) {
+      const created = await supabase.from("tags").insert({ name: clean }).select("id").single();
+      tagError(created);
+      tagId = created.data?.id;
+    }
+    if (!tagId) throw new InputError("Couldn’t create the tag");
+    const result = await supabase.from("task_tags").insert({ task_id: id(taskId, "task"), tag_id: tagId });
+    if (result.error?.code === "23505") return;
+    check(result);
+  });
+}
+
+// Board grouped by tag: dragging a card from one tag's column to another swaps the tags; to "No tag"
+// removes the column's tag. Either step is skipped when there is nothing to do.
+export async function moveTaskTag(taskId: string, fromTagId: string | null, toTagId: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    if (toTagId && toTagId !== fromTagId) {
+      const added = await supabase.from("task_tags").insert({ task_id: id(taskId, "task"), tag_id: id(toTagId, "tag") });
+      if (added.error?.code !== "23505") check(added);
+    }
+    if (fromTagId && fromTagId !== toTagId) {
+      checkUpdated(
+        await supabase
+          .from("task_tags")
+          .update({ deleted_at: now() })
+          .eq("task_id", id(taskId, "task"))
+          .eq("tag_id", id(fromTagId, "tag"))
+          .is("deleted_at", null)
+          .select("id"),
+      );
+    }
+  });
+}
+
+export async function removeTaskTag(taskId: string, tagId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase
+        .from("task_tags")
+        .update({ deleted_at: now() })
+        .eq("task_id", id(taskId, "task"))
+        .eq("tag_id", id(tagId, "tag"))
+        .is("deleted_at", null)
+        .select("id"),
+    );
   });
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import type { Tag } from "@/lib/tags";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useId, useRef, useState, type MouseEvent, type PointerEvent } from "react";
@@ -47,6 +48,7 @@ type Props = {
   dependencies?: ProjectDependency[];
   // Slack per dated task of the whole project (not just this view), from project_critical_path().
   criticalPath?: CriticalPath;
+  tags?: Tag[];
 };
 
 const LABEL_WIDTH = 256;
@@ -65,6 +67,7 @@ export function TimelineView({
   openTaskId,
   dependencies = [],
   criticalPath = EMPTY_CRITICAL_PATH,
+  tags = [],
 }: Props) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -126,7 +129,7 @@ export function TimelineView({
 
   const scheduled = optimisticTasks.filter((t) => t.startOn || t.dueOn);
   const tray = optimisticTasks.filter((t) => !t.startOn && !t.dueOn && !t.completedAt);
-  const groups = groupTasks(scheduled, config, { sections, profilesById, fields }).filter((g) => g.tasks.length > 0);
+  const groups = groupTasks(scheduled, config, { sections, profilesById, fields, tags }).filter((g) => g.tasks.length > 0);
   const showGroups = groupOf(config) !== "none";
 
   // Vertical centre of each visible row, in content coordinates (below the sticky header).

@@ -5,7 +5,8 @@ import type { Json } from "@/lib/supabase/database.types";
 // Shared view config schema for List, Board, Calendar, Timeline, and dashboard widgets. The
 // database validates the same shape (validate_view_config) and evaluates filters in
 // filter_project_tasks(). See the schema comment at the top of
-// supabase/migrations/20261005030000_views_insights.sql (plus the `start` key from 20261005040000_timeline.sql).
+// supabase/migrations/20261005030000_views_insights.sql (plus the `start` key from 20261005040000_timeline.sql
+// and filters.tags / group_by "tag" from 20261006100000_tags_collaboration.sql).
 
 export const VIEW_LAYOUTS = [
   { value: "list", label: "List" },
@@ -41,12 +42,14 @@ export type ViewFilters = {
   due?: DueFilter;
   fields?: FieldFilter[];
   text?: string;
+  // Tags (any-of; null = tasks with no tags). Since Tags and collaboration extras.
+  tags?: (string | null)[];
 };
 
 export type FieldRef = `field:${string}`;
 export type SortKey = "manual" | "due" | "start" | "title" | "created" | "assignee" | FieldRef;
 export type ViewSort = { key: SortKey; dir: "asc" | "desc" };
-export type GroupBy = "section" | "assignee" | "none" | FieldRef;
+export type GroupBy = "section" | "assignee" | "tag" | "none" | FieldRef;
 export type ColumnKey = "assignee" | "due" | "start" | "section" | FieldRef;
 
 export type ViewConfig = {
@@ -116,6 +119,7 @@ export function groupOptions(fields: FieldDef[]): { value: GroupBy; label: strin
   return [
     { value: "section", label: "Section" },
     { value: "assignee", label: "Assignee" },
+    { value: "tag", label: "Tag" },
     ...fields
       .filter((f) => f.fieldType === "single_select" && !f.boundToSections)
       .map((f) => ({ value: fieldRef(f.id), label: f.name })),
@@ -190,6 +194,8 @@ export function parseFilters(value: unknown): ViewFilters {
   if (sections) out.sections = sections;
   const assignees = idList(value.assignees, ["me"]);
   if (assignees) out.assignees = assignees;
+  const tags = idList(value.tags);
+  if (tags) out.tags = tags;
   const due = value.due;
   if (isObj(due) && DUE_KINDS.some((k) => k.value === due.kind)) {
     const kind = due.kind as DueKind;
@@ -231,7 +237,7 @@ export function parseViewConfig(value: unknown): ViewConfig {
       .slice(0, 3);
     if (sort.length && !(sort.length === 1 && sort[0].key === "manual" && sort[0].dir === "asc")) out.sort = sort;
   }
-  if (value.group_by === "assignee" || value.group_by === "none" || isFieldRef(value.group_by)) {
+  if (value.group_by === "assignee" || value.group_by === "tag" || value.group_by === "none" || isFieldRef(value.group_by)) {
     out.group_by = value.group_by;
   }
   if (Array.isArray(value.columns)) {
@@ -248,10 +254,13 @@ export function parseViewConfig(value: unknown): ViewConfig {
   return out;
 }
 
-// Removes references to sections/fields/people that no longer exist (or can't be used that way).
+// tagIds: the workspace's tags (omit to keep tag filters as they are).
+export type PruneContext = { sectionIds: Set<string>; fields: FieldDef[]; profileIds: Set<string>; tagIds?: Set<string> };
+
+// Removes references to sections/fields/people/tags that no longer exist (or can't be used that way).
 export function pruneConfig(
   config: ViewConfig,
-  context: { sectionIds: Set<string>; fields: FieldDef[]; profileIds: Set<string> },
+  context: PruneContext,
 ): ViewConfig {
   const fieldsById = new Map(context.fields.map((f) => [f.id, f]));
   const fieldOk = (ref: string) => {
@@ -276,7 +285,7 @@ export function pruneConfig(
 
 export function pruneFilters(
   filters: ViewFilters,
-  context: { sectionIds: Set<string>; fields: FieldDef[]; profileIds: Set<string> },
+  context: PruneContext,
 ): ViewFilters {
   const fieldIds = new Set(context.fields.map((f) => f.id));
   const out: ViewFilters = { ...filters };
@@ -289,6 +298,12 @@ export function pruneFilters(
   const fields = filters.fields?.filter((f) => fieldIds.has(f.field_id));
   if (fields?.length) out.fields = fields;
   else delete out.fields;
+  if (context.tagIds) {
+    const tagIds = context.tagIds;
+    const tags = filters.tags?.filter((t) => t === null || tagIds.has(t));
+    if (tags?.length) out.tags = tags;
+    else delete out.tags;
+  }
   return out;
 }
 

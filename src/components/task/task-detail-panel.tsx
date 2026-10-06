@@ -30,6 +30,8 @@ import { TaskDependencies } from "./task-dependencies";
 import { TaskFields } from "./task-fields";
 import { TaskRecurrence } from "./task-recurrence";
 import { TaskSubtasks } from "./task-subtasks";
+import { TaskTags } from "./task-tags";
+import type { Tag } from "@/lib/tags";
 import { useTaskHref } from "@/components/project/shared";
 import { SaveTaskTemplateButton } from "./save-task-template";
 import { PANE_CONTROL, PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
@@ -134,11 +136,13 @@ export function TaskDetailPanel({
   projects,
   profiles,
   memberId,
+  tags,
 }: {
   task: TaskDetail;
   projects: ProjectOption[];
   profiles: Profile[];
   memberId: string;
+  tags: Tag[];
 }) {
   const { href, close } = useClosePane();
   const [, run] = useServerAction();
@@ -365,6 +369,11 @@ export function TaskDetailPanel({
             </dt>
             <dd>
               <TaskRecurrence task={task} />
+            </dd>
+
+            <dt className={`${PANE_LABEL} self-start`}>Tags</dt>
+            <dd>
+              <TaskTags taskId={task.id} tagIds={task.tagIds} tags={tags} canEdit={canEdit} />
             </dd>
 
             <dt className={`${PANE_LABEL} self-start`}>Projects</dt>

@@ -6,6 +6,8 @@ import { displayName } from "@/components/avatar";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile, Section } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
+import { TagChip } from "@/components/tags/tag-chip";
+import type { Tag } from "@/lib/tags";
 import {
   DUE_KINDS,
   completionOf,
@@ -21,6 +23,8 @@ export type FilterContext = {
   sections: Pick<Section, "id" | "name">[];
   profiles: Profile[];
   fields: FieldDef[];
+  // Workspace tags (the Tag filter shows only when given).
+  tags?: Tag[];
 };
 
 const selectClass =
@@ -103,6 +107,12 @@ export function filterChips(filters: ViewFilters, context: FilterContext): Chip[
       remove: () => without(filters, "assignees"),
     });
   }
+  if (filters.tags?.length) {
+    const names = filters.tags.map((id) =>
+      id === null ? "No tag" : (context.tags?.find((t) => t.id === id)?.name ?? "Deleted tag"),
+    );
+    chips.push({ key: "tags", label: `Tag: ${names.join(", ")}`, remove: () => without(filters, "tags") });
+  }
   filters.fields?.forEach((filter, index) => {
     const field = context.fields.find((f) => f.id === filter.field_id);
     if (!field) return;
@@ -163,7 +173,7 @@ function toggleIn<T>(list: T[] | undefined, value: T): T[] {
   return current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
 }
 
-function setList<K extends "sections" | "assignees">(filters: ViewFilters, key: K, list: (string | null)[]): ViewFilters {
+function setList<K extends "sections" | "assignees" | "tags">(filters: ViewFilters, key: K, list: (string | null)[]): ViewFilters {
   return list.length ? { ...filters, [key]: list } : without(filters, key);
 }
 
@@ -388,6 +398,28 @@ export function FilterEditor({
           )}
         </div>
       </Group>
+
+      {context.tags?.length ? (
+        <Group title="Tag">
+          <div className="max-h-36 overflow-y-auto">
+            <Check
+              checked={filters.tags?.includes(null) ?? false}
+              onChange={() => onChange(setList(filters, "tags", toggleIn(filters.tags, null)))}
+            >
+              No tag
+            </Check>
+            {context.tags.map((t) => (
+              <Check
+                key={t.id}
+                checked={filters.tags?.includes(t.id) ?? false}
+                onChange={() => onChange(setList(filters, "tags", toggleIn(filters.tags, t.id)))}
+              >
+                <TagChip tag={t} />
+              </Check>
+            ))}
+          </div>
+        </Group>
+      ) : null}
 
       {context.fields.length > 0 ? (
         <Group title="Fields">

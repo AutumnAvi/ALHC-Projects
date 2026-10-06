@@ -36,6 +36,7 @@ import {
   type GoalViewer,
 } from "@/lib/goals";
 import { isTeamRole, type TeamRole } from "@/lib/teams";
+import { toTag, type Tag } from "@/lib/tags";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
   approvalTaskRequest,
@@ -108,6 +109,8 @@ export type ProjectTask = {
   kind: TaskKind;
   // Approval tasks: the status of the assignee's request (null: none yet, or not an approval task).
   approvalStatus: ApprovalTaskStatus | null;
+  // Active tag links (ids; look names and colours up in listTags()).
+  tagIds: string[];
 };
 
 export type TaskMembership = {
@@ -167,6 +170,7 @@ export type TaskDetail = {
   viewerRole: ProjectRole | null;
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
   memberRoles: Record<string, ProjectRole>;
+  tagIds: string[];
 };
 
 export type TaskDependency = {
@@ -364,7 +368,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
   if (taskIds.length === 0) return [];
 
   const approvalTaskIds = memberships.filter((m) => m.task.kind === "approval").map((m) => m.task.id);
-  const [subtasks, otherMemberships, values, blockers, approvalRequests] = await Promise.all([
+  const [subtasks, otherMemberships, values, blockers, approvalRequests, tagIds] = await Promise.all([
     supabase
       .from("tasks")
       .select("parent_task_id, completed_at")
@@ -399,6 +403,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
           .is("deleted_at", null)
           .neq("status", "cancelled")
       : Promise.resolve({ data: [], error: null }),
+    listTaskTagIds(taskIds),
   ]);
 
   const approvalsByTask = new Map<string, { subtaskId: string | null; approverId: string; status: string; createdAt: string }[]>();
@@ -455,8 +460,45 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     approvalStatus: parseApprovalTaskStatus(
       approvalTaskRequest(parseTaskKind(m.task.kind), m.task.assignee_id, approvalsByTask.get(m.task.id) ?? [])?.status,
     ),
+    tagIds: tagIds.get(m.task.id) ?? [],
   }));
 });
+
+// ---------------------------------------------------------------------------------------------
+// Tags (workspace-level names; links follow the task through RLS)
+// ---------------------------------------------------------------------------------------------
+
+// Every tag of the workspace, archived ones included (they stay on tasks), by name.
+export const listTags = cache(async (): Promise<Tag[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("tags")
+    .select("id, name, color, archived_at, created_by")
+    .is("deleted_at", null)
+    .order("name");
+  return rows(result, "tags").map(toTag);
+});
+
+// Active tag ids per task, for the tasks the viewer can read (RLS).
+export async function listTaskTagIds(taskIds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (taskIds.length === 0) return out;
+  const supabase = await createClient();
+  for (let i = 0; i < taskIds.length; i += 300) {
+    const result = await supabase
+      .from("task_tags")
+      .select("task_id, tag_id, tag:tags!inner(id)")
+      .in("task_id", taskIds.slice(i, i + 300))
+      .is("deleted_at", null)
+      .is("tag.deleted_at", null);
+    for (const r of rows(result, "task tags")) {
+      const list = out.get(r.task_id) ?? [];
+      list.push(r.tag_id);
+      out.set(r.task_id, list);
+    }
+  }
+  return out;
+}
 
 // A subtask as listed under its parent (the pane, List with “Show subtasks”).
 export type SubtaskItem = {
@@ -742,7 +784,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   }
   const role = maybe(viewerRole, "task role");
   const viewerProjectRole = isProjectRole(role) ? role : null;
-  const [dependencyCandidates, schedule] = await Promise.all([
+  const [dependencyCandidates, schedule, tagIds] = await Promise.all([
     hasRole(viewerProjectRole, "editor") && !isSubtask
       ? listDependencyCandidates(taskId, membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })))
       : Promise.resolve([]),
@@ -754,6 +796,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
           }),
         ).then((lists) => lists.flat())
       : Promise.resolve([]),
+    listTaskTagIds([taskId]),
   ]);
 
   const commentRows = rows(comments, "comments");
@@ -880,6 +923,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     })),
     viewerRole: viewerProjectRole,
     memberRoles,
+    tagIds: tagIds.get(taskId) ?? [],
     subtasks: toSubtaskItems(subtaskRows, grandchildren),
     parentTaskId: task.parent_task_id,
     ancestors,

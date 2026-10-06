@@ -16,6 +16,7 @@ import {
   listProjectViews,
   listSections,
   listSubtaskTrees,
+  listTags,
 } from "@/lib/data";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -63,7 +64,7 @@ export async function ProjectViewPage({
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
 
-  const [sections, tasks, profiles, fields, timeZone, dependencies, criticalPath, bulk] = await Promise.all([
+  const [sections, tasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags] = await Promise.all([
     listSections(projectId),
     listProjectTasks(projectId),
     listProfiles(),
@@ -72,18 +73,20 @@ export async function ProjectViewPage({
     layout === "timeline" ? listProjectDependencies(projectId) : Promise.resolve([]),
     layout === "timeline" ? projectCriticalPath(projectId) : Promise.resolve(EMPTY_CRITICAL_PATH),
     layout === "list" ? listBulkContext(projectId) : Promise.resolve(undefined),
+    listTags(),
   ]);
 
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
     fields,
     profileIds: new Set(profiles.map((p) => p.id)),
+    tagIds: new Set(tags.map((t) => t.id)),
   };
   const baseConfig = pruneConfig(view?.config ?? {}, context);
   const config = pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context);
   const matching = await filterProjectTaskIds(projectId, config.filters ?? {}, timeZone);
   const visible = tasks.filter((t) => matching.has(t.id));
-  const props = { projectId, sections, tasks: visible, profiles, fields, config, openTaskId };
+  const props = { projectId, sections, tasks: visible, profiles, fields, config, openTaskId, tags };
   // List's “Show subtasks” (?sub=1, off by default): each task's subtask tree under its row.
   const showSubtasks = layout === "list" && searchParams.sub === "1";
   const subtasks = showSubtasks ? await listSubtaskTrees(visible.map((t) => t.id)) : [];
@@ -97,7 +100,7 @@ export async function ProjectViewPage({
         layout={layout}
         baseConfig={baseConfig}
         config={config}
-        context={{ sections, profiles, fields }}
+        context={{ sections, profiles, fields, tags }}
       />
       {layout === "list" ? (
         // The toolbar stays put; the list scrolls under it with a sticky column header.

@@ -65,11 +65,13 @@ export function PersonalDashboardView({
   widgets,
   projects,
   people,
+  tags = [],
 }: {
   dashboard: PersonalDashboard;
   widgets: DashboardWidgetData[];
   projects: FilterOption[];
   people: FilterOption[];
+  tags?: FilterOption[];
 }) {
   const [pending, run] = useServerAction();
 
@@ -185,6 +187,7 @@ export function PersonalDashboardView({
               data={data}
               projects={projects}
               people={people}
+              tags={tags}
               first={index === 0}
               last={index === widgets.length - 1}
             />
@@ -199,19 +202,21 @@ function WidgetCard({
   data,
   projects,
   people,
+  tags = [],
   first,
   last,
 }: {
   data: DashboardWidgetData;
   projects: FilterOption[];
   people: FilterOption[];
+  tags?: FilterOption[];
   first: boolean;
   last: boolean;
 }) {
   const { widget, payload } = data;
   const [, run] = useServerAction();
   const [editing, setEditing] = useState(false);
-  const chips = describeReportFilters(widget.filters, projects, people);
+  const chips = describeReportFilters(widget.filters, projects, people, tags);
 
   return (
     <li
@@ -280,6 +285,7 @@ function WidgetCard({
           widget={widget}
           projects={projects}
           people={people}
+          tags={tags}
           onCancel={() => setEditing(false)}
           onSave={(patch) => {
             setEditing(false);
@@ -330,12 +336,14 @@ function WidgetEditor({
   widget,
   projects,
   people,
+  tags = [],
   onCancel,
   onSave,
 }: {
   widget: PersonalWidget;
   projects: FilterOption[];
   people: FilterOption[];
+  tags?: FilterOption[];
   onCancel: () => void;
   onSave: (patch: { title: string; kind: PersonalWidgetKind; filters: ReportFilters; interval: SeriesInterval }) => void;
 }) {
@@ -401,6 +409,7 @@ function WidgetEditor({
           onChange={setFilters}
           projects={projects}
           people={people}
+          tags={tags}
           showStatus
           idPrefix={prefix}
         />

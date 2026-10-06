@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useOptimistic, useState, useTransition } from "react";
-import { ArrowDownUp, Columns3, Download, Filter, Plus, Rows3, Search, X } from "lucide-react";
+import { ArrowDownUp, Columns3, Filter, Plus, Rows3, Search, X } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { useCan } from "@/components/project/project-access";
@@ -27,6 +27,7 @@ import {
   type ViewLayout,
 } from "@/lib/views";
 import { FilterChips, FilterEditor, filterChips, type FilterContext } from "./filter-editor";
+import { ExportLink } from "@/components/reports/report-chrome";
 
 // Shared with every view layout (List, Board, Calendar, Timeline) so the chrome reads as one product.
 const toolButton = "btn-ghost";
@@ -286,18 +287,14 @@ export function ViewToolbar({
 
         {layout === "list" ? (
           // CSV of what the List shows: the current (or draft) filters, order, and columns.
-          <a
+          <ExportLink
             href={`/export/list?${new URLSearchParams({
               project: projectId,
               ...(view ? { view: view.id } : {}),
               ...(isDraft ? { f: encodeConfig(current) } : {}),
             }).toString()}`}
-            download
             className={toolButton}
-          >
-            <Download className="size-3.5" aria-hidden />
-            Export CSV
-          </a>
+          />
         ) : null}
 
         <div className="ml-auto flex items-center gap-1.5">

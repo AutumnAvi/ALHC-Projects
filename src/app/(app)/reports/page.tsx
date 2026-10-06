@@ -57,12 +57,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     for (const [k, v] of Object.entries(extra ?? {})) p.set(k, v);
     return `/export/report?${p.toString()}`;
   };
-  const summary = describeReportFilters(filters, context.projects, context.people);
+  const summary = describeReportFilters(filters, context.projects, context.people, context.tags);
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 px-gutter py-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <ReportFiltersBar filters={filters} projects={context.projects} people={context.people} />
+        <ReportFiltersBar filters={filters} projects={context.projects} people={context.people} tags={context.tags} />
         <div className="flex items-center gap-2">
           <ExportLink href={exportHref("breakdown")} />
           <PrintButton />

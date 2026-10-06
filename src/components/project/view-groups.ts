@@ -2,6 +2,7 @@ import { displayName } from "@/components/avatar";
 import type { OptionColor, FieldDef } from "@/lib/fields";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
 import { groupOf, refFieldId, sortOf, type ViewConfig, type ViewSort } from "@/lib/views";
+import type { Tag } from "@/lib/tags";
 
 // A column (Board) or group (List). `target` says what moving a task into the group changes.
 export type TaskGroup = {
@@ -13,6 +14,8 @@ export type TaskGroup = {
     | { kind: "section"; sectionId: string | null }
     | { kind: "assignee"; assigneeId: string | null }
     | { kind: "field"; fieldId: string; optionId: string | null }
+    // Group by tag: a task with several tags is listed under each of them; null = "No tag".
+    | { kind: "tag"; tagId: string | null }
     | { kind: "none" };
   tasks: ProjectTask[];
 };
@@ -21,6 +24,8 @@ type Context = {
   sections: Section[];
   profilesById: Map<string, Profile>;
   fields: FieldDef[];
+  // Workspace tags (needed to group by tag).
+  tags?: Tag[];
 };
 
 function compareValues(a: string | number | null, b: string | number | null) {
@@ -120,6 +125,39 @@ export function groupTasks(
         label: "Unassigned",
         target: { kind: "assignee" as const, assigneeId: null },
         tasks: byAssignee.get(null) ?? [],
+      },
+    ];
+  }
+
+  if (groupBy === "tag") {
+    const known = new Map((context.tags ?? []).map((t) => [t.id, t] as const));
+    const byTag = new Map<string | null, ProjectTask[]>();
+    for (const task of sorted) {
+      const ids = task.tagIds.filter((id) => known.has(id));
+      for (const key of ids.length ? ids : [null]) {
+        const list = byTag.get(key) ?? [];
+        list.push(task);
+        byTag.set(key, list);
+      }
+    }
+    // Tags on the tasks shown, plus any the view filters on (so an empty filtered tag still shows).
+    const wanted = new Set([...byTag.keys(), ...(config.filters?.tags ?? [])]);
+    const tags = [...known.values()]
+      .filter((t) => wanted.has(t.id))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return [
+      ...tags.map((tag) => ({
+        key: `tag-${tag.id}`,
+        label: tag.name,
+        color: tag.color,
+        target: { kind: "tag" as const, tagId: tag.id },
+        tasks: byTag.get(tag.id) ?? [],
+      })),
+      {
+        key: "tag-none",
+        label: "No tag",
+        target: { kind: "tag" as const, tagId: null },
+        tasks: byTag.get(null) ?? [],
       },
     ];
   }

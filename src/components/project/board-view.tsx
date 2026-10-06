@@ -6,7 +6,9 @@ import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { approvalOpen } from "@/lib/task-kinds";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
-import { moveTask, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
+import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
+import { TagChips } from "@/components/tags/tag-chip";
+import type { Tag } from "@/lib/tags";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, refFieldId, sortOf, type ViewConfig } from "@/lib/views";
@@ -25,22 +27,26 @@ type Props = {
   fields: FieldDef[];
   config: ViewConfig;
   openTaskId: string | null;
+  tags: Tag[];
 };
 
 type DropTarget = { groupKey: string; beforeId: string | null };
 
 const DRAG_TYPE = "application/x-alhc-task";
 
-export function BoardView({ projectId, sections, tasks, profiles, fields, config, openTaskId }: Props) {
+export function BoardView({ projectId, sections, tasks, profiles, fields, config, openTaskId, tags }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
   const canEdit = useCan("editor");
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  // The column a card was dragged from (grouped by tag, a task sits in several columns).
+  const [dragFrom, setDragFrom] = useState<string | null>(null);
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
-  const groups = groupTasks(optimisticTasks, config, { sections, profilesById, fields });
+  const groups = groupTasks(optimisticTasks, config, { sections, profilesById, fields, tags });
+  const tagsById = new Map(tags.map((t) => [t.id, t] as const));
   const groupBy = groupOf(config);
   const bySection = groupBy === "section";
   // Precise positions only make sense when cards are shown in manual (sort_order) order.
@@ -62,7 +68,7 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
   // Viewers and commenters can't move cards: no drag, no "Move to" menu.
   const moveOptions = canEdit ? groups.filter((g) => g.target.kind !== "none") : [];
 
-  function move(task: ProjectTask, group: TaskGroup, beforeId: string | null) {
+  function move(task: ProjectTask, group: TaskGroup, beforeId: string | null, fromKey: string | null = null) {
     const target = group.target;
     if (target.kind === "section") {
       if (beforeId === task.id) return;
@@ -90,6 +96,16 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
         () => setFieldValue(task.id, target.fieldId, target.optionId),
         () => applyChange({ type: "field", taskId: task.id, fieldId: target.fieldId, value: target.optionId }),
       );
+    } else if (target.kind === "tag") {
+      const from = groups.find((g) => g.key === fromKey)?.target;
+      const fromTagId = from?.kind === "tag" ? from.tagId : null;
+      if (fromTagId === target.tagId || (target.tagId && task.tagIds.includes(target.tagId) && !fromTagId)) return;
+      const next = task.tagIds.filter((t) => t !== fromTagId);
+      if (target.tagId && !next.includes(target.tagId)) next.push(target.tagId);
+      run(
+        () => moveTaskTag(task.id, fromTagId, target.tagId),
+        () => applyChange({ type: "tags", taskId: task.id, tagIds: next }),
+      );
     }
   }
 
@@ -106,8 +122,9 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
     const taskId = event.dataTransfer.getData(DRAG_TYPE);
     const task = optimisticTasks.find((t) => t.id === taskId);
     const group = groups.find((g) => g.key === dropTarget?.groupKey);
-    if (task && group && dropTarget) move(task, group, dropTarget.beforeId);
+    if (task && group && dropTarget) move(task, group, dropTarget.beforeId, dragFrom);
     setDragging(null);
+    setDragFrom(null);
     setDropTarget(null);
   }
 
@@ -172,17 +189,20 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
                     fieldContext={fieldContext}
                     canEdit={canEdit}
                     onToggle={() => toggle(task)}
+                    tagsById={tagsById}
                     onMove={(key) => {
                       const target = groups.find((g) => g.key === key);
-                      if (target) move(task, target, null);
+                      if (target) move(task, target, null, group.key);
                     }}
                     onDragStart={(e) => {
                       e.dataTransfer.setData(DRAG_TYPE, task.id);
                       e.dataTransfer.effectAllowed = "move";
                       setDragging(task.id);
+                      setDragFrom(group.key);
                     }}
                     onDragEnd={() => {
                       setDragging(null);
+                      setDragFrom(null);
                       setDropTarget(null);
                     }}
                   />
@@ -227,6 +247,7 @@ function TaskCard({
   cardFields,
   fieldContext,
   canEdit,
+  tagsById,
   onToggle,
   onMove,
   onDragStart,
@@ -243,6 +264,7 @@ function TaskCard({
   cardFields: FieldDef[];
   fieldContext: FieldContext;
   canEdit: boolean;
+  tagsById: Map<string, Tag>;
   onToggle: () => void;
   onMove: (groupKey: string) => void;
   onDragStart: (e: DragEvent) => void;
@@ -284,6 +306,12 @@ function TaskCard({
           {task.title}
         </Link>
       </div>
+
+      {task.tagIds.length ? (
+        <div className="mt-1.5 flex flex-wrap gap-1 pl-6">
+          <TagChips ids={task.tagIds} byId={tagsById} max={4} />
+        </div>
+      ) : null}
 
       {cardFields.some((f) => task.fieldValues[f.id] != null || f.boundToSections) ? (
         <div className="mt-1.5 flex flex-wrap gap-1 pl-6">

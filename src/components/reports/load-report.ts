@@ -2,7 +2,7 @@ import "server-only";
 import { displayName } from "@/components/avatar";
 import type { BarDatum } from "@/components/dashboard/bar-chart";
 import type { OverdueRow } from "@/components/reports/report-blocks";
-import { allProjectsReport, listProfiles, listSectionLabels, reportOverdueTasks, type ReportRow } from "@/lib/data";
+import { allProjectsReport, listProfiles, listSectionLabels, listTags, reportOverdueTasks, type ReportRow } from "@/lib/data";
 import type { ReportFilters } from "@/lib/reports";
 
 // Labels for report buckets. Project names only ever come from all_projects_report (readable projects),
@@ -11,18 +11,20 @@ import type { ReportFilters } from "@/lib/reports";
 export type ReportContext = {
   projects: { id: string; name: string }[];
   people: { id: string; name: string }[];
+  tags: { id: string; name: string }[];
   projectName: (id: string | null) => string;
   personName: (id: string | null) => string;
 };
 
 export async function loadReportContext(timeZone: string): Promise<ReportContext> {
-  const [projects, profiles] = await Promise.all([allProjectsReport(timeZone), listProfiles()]);
+  const [projects, profiles, tags] = await Promise.all([allProjectsReport(timeZone), listProfiles(), listTags()]);
   const projectNames = new Map(projects.map((p) => [p.id, p.name]));
   const people = profiles.map((p) => ({ id: p.id, name: displayName(p) }));
   const personNames = new Map(people.map((p) => [p.id, p.name]));
   return {
     projects: projects.map((p) => ({ id: p.id, name: p.name })),
     people: people.sort((a, b) => a.name.localeCompare(b.name)),
+    tags: tags.map((t) => ({ id: t.id, name: t.archivedAt ? `${t.name} (archived)` : t.name })),
     projectName: (id) => (id ? (projectNames.get(id) ?? "A project you can’t open") : ""),
     personName: (id) => (id ? (personNames.get(id) ?? "Former member") : ""),
   };

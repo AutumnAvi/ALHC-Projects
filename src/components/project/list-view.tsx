@@ -22,6 +22,8 @@ import { AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
 import { Assignee, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, type TaskGroup } from "./view-groups";
+import { TagChips } from "@/components/tags/tag-chip";
+import type { Tag } from "@/lib/tags";
 
 type Props = {
   projectId: string;
@@ -34,6 +36,7 @@ type Props = {
   bulk?: Omit<BulkContext, "project">;
   // “Show subtasks” on: every listed task's subtask tree (null = off).
   subtasks?: SubtaskItem[] | null;
+  tags: Tag[];
 };
 
 type TaskDrop = { groupKey: string; beforeId: string | null };
@@ -52,7 +55,7 @@ function sortSections(list: Section[], change: { id: string; sortOrder: number }
     .sort((a, b) => a.sort_order - b.sort_order);
 }
 
-export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId, bulk, subtasks = null }: Props) {
+export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId, bulk, subtasks = null, tags }: Props) {
   const router = useRouter();
   const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
@@ -71,7 +74,8 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
-  const groups = groupTasks(optimisticTasks, config, { sections: optimisticSections, profilesById, fields });
+  const groups = groupTasks(optimisticTasks, config, { sections: optimisticSections, profilesById, fields, tags });
+  const tagsById = new Map(tags.map((t) => [t.id, t] as const));
   const bySection = groupOf(config) === "section";
   // Precise drop positions only make sense in manual (sort_order) order, like Board.
   const manualOrder = bySection && sortOf(config)[0]?.key === "manual";
@@ -198,6 +202,7 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
   };
   const rowProps = {
     profilesById,
+    tagsById,
     openTaskId,
     onToggle: toggle,
     canEdit,
@@ -520,6 +525,7 @@ function SectionGroup({
 function TaskRow({
   task,
   profilesById,
+  tagsById,
   openTaskId,
   onToggle,
   canEdit,
@@ -536,6 +542,7 @@ function TaskRow({
 }: {
   task: ProjectTask;
   profilesById: Map<string, Profile>;
+  tagsById: Map<string, Tag>;
   openTaskId: string | null;
   onToggle: (task: ProjectTask) => void;
   canEdit: boolean;
@@ -621,6 +628,7 @@ function TaskRow({
         <span className="flex shrink-0 items-center gap-2">
           <TaskBadges task={task} />
         </span>
+        <TagChips ids={task.tagIds} byId={tagsById} />
       </div>
       {columns.map((column) => {
         if (column === "assignee") {
