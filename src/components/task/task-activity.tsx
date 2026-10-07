@@ -18,11 +18,18 @@ import type { Json } from "@/lib/supabase/database.types";
 import { useRealtimeRefresh } from "@/lib/realtime";
 import { describeRecurrence, parseRecurrence } from "@/lib/recurrence";
 import { TASK_KIND_LABELS, parseTaskKind } from "@/lib/task-kinds";
+import { dependencyLabel, parseDependencyKind } from "@/lib/dependencies";
 import { useTaskHref } from "@/components/project/shared";
 
 type Entry =
   | { type: "comment"; at: string; comment: TaskComment }
   | { type: "story"; at: string; story: TaskStory };
+
+function num(data: Json, key: string): number | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = data[key];
+  return typeof value === "number" ? value : null;
+}
 
 function str(data: Json, key: string): string | null {
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -186,19 +193,55 @@ export function TaskActivity({
         );
       }
       case "dependency_added":
-      case "dependency_removed": {
+      case "dependency_removed":
+      case "dependency_changed": {
+        // The other task's title is only there when the viewer can read it.
+        const title = str(d, "task_title");
+        const other = title ? <>“{title}”</> : <>a task you can’t open</>;
+        const lag = typeof num(d, "lag_days") === "number" ? (num(d, "lag_days") as number) : 0;
+        const how = str(d, "kind") ? <> ({dependencyLabel(parseDependencyKind(str(d, "kind")), lag).toLowerCase()})</> : null;
+        if (story.kind === "dependency_changed") {
+          return (
+            <>
+              changed the dependency {str(d, "relation") === "blocked_by" ? "on" : "of"} {other} to{" "}
+              {dependencyLabel(parseDependencyKind(str(d, "kind")), lag).toLowerCase()}
+            </>
+          );
+        }
         const verb = story.kind === "dependency_added" ? "marked" : "unmarked";
-        const other = <>“{str(d, "task_title")}”</>;
         return str(d, "relation") === "blocked_by" ? (
           <>
             {verb} this as blocked by {other}
+            {how}
           </>
         ) : (
           <>
             {verb} this as blocking {other}
+            {how}
           </>
         );
       }
+      case "tag_added":
+        return <>added the tag “{str(d, "tag_name")}”</>;
+      case "tag_removed":
+        return <>removed the tag “{str(d, "tag_name")}”</>;
+      case "converted_to_subtask": {
+        const parentId = str(d, "parent_id");
+        return (
+          <>
+            made this a subtask of{" "}
+            {parentId ? (
+              <Link href={taskHref(parentId)} scroll={false} className="font-medium text-zinc-700 hover:underline">
+                “{str(d, "parent_title")}”
+              </Link>
+            ) : (
+              <>“{str(d, "parent_title")}”</>
+            )}
+          </>
+        );
+      }
+      case "converted_to_task":
+        return <>made this subtask a task in {str(d, "project_name")}</>;
       case "restored":
         return "restored this task from the Trash";
       case "kind_changed":

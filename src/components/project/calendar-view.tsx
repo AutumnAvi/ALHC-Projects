@@ -5,8 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useState, type DragEvent } from "react";
 import { Inbox } from "lucide-react";
 import { useCan } from "@/components/project/project-access";
-import { useServerAction } from "@/components/toast";
-import { updateTask } from "@/lib/actions";
+import { useDependencyShift } from "@/components/task/dependency-shift";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
 import { isIsoDate } from "@/lib/views";
@@ -79,7 +78,7 @@ export function CalendarView({
   const searchParams = useSearchParams();
   const today = useToday();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
-  const [, run] = useServerAction();
+  const shift = useDependencyShift();
   const canEdit = useCan("editor");
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropDate, setDropDate] = useState<string | null | undefined>(undefined);
@@ -104,13 +103,13 @@ export function CalendarView({
     window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
   }
 
+  // A later due date can push dependent tasks; useDependencyShift asks first (and offers Undo).
   function reschedule(taskId: string, dueOn: string | null) {
     const task = optimisticTasks.find((t) => t.id === taskId);
     if (!task || task.dueOn === dueOn) return;
-    run(
-      () => updateTask(taskId, { dueOn }),
-      () => applyChange({ type: "due", taskId, dueOn }),
-    );
+    shift.changeDates(task, { startOn: task.startOn, dueOn }, {
+      onOptimistic: (moves) => moves.forEach((m) => applyChange({ type: "due", taskId: m.taskId, dueOn: m.dueOn })),
+    });
   }
 
   const dropProps = (date: string | null) => ({
@@ -167,6 +166,7 @@ export function CalendarView({
 
   return (
     <div className={VIEW_BODY}>
+      {shift.dialog}
       <div className="flex min-w-0 flex-1 flex-col">
         <PeriodNav
           label={periodLabel(anchor, mode)}

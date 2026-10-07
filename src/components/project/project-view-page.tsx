@@ -20,7 +20,7 @@ import {
 } from "@/lib/data";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";
-import { decodeConfig, pruneConfig, type ProjectView, type ViewLayout } from "@/lib/views";
+import { decodeConfig, pruneConfig, showsSubtasks, type ProjectView, type ViewLayout } from "@/lib/views";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -83,12 +83,15 @@ export async function ProjectViewPage({
     tagIds: new Set(tags.map((t) => t.id)),
   };
   const baseConfig = pruneConfig(view?.config ?? {}, context);
-  const config = pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context);
+  let config = pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context);
+  // Older links carry ?sub=1: show it as an unsaved draft of the view's Show subtasks setting.
+  if (layout === "list" && searchParams.sub === "1" && !showsSubtasks(config)) config = { ...config, show_subtasks: true };
   const matching = await filterProjectTaskIds(projectId, config.filters ?? {}, timeZone);
   const visible = tasks.filter((t) => matching.has(t.id));
   const props = { projectId, sections, tasks: visible, profiles, fields, config, openTaskId, tags };
-  // List's “Show subtasks” (?sub=1, off by default): each task's subtask tree under its row.
-  const showSubtasks = layout === "list" && searchParams.sub === "1";
+  // List's “Show subtasks” (the view's show_subtasks setting, off by default): each task's subtask tree
+  // under its row.
+  const showSubtasks = layout === "list" && showsSubtasks(config);
   const subtasks = showSubtasks ? await listSubtaskTrees(visible.map((t) => t.id)) : [];
 
   return (

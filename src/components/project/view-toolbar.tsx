@@ -15,6 +15,7 @@ import {
   groupOf,
   groupOptions,
   sameConfig,
+  showsSubtasks,
   sortOf,
   sortOptions,
   withFilters,
@@ -61,6 +62,8 @@ export function ViewToolbar({
 
   function urlFor(next: ViewConfig | null) {
     const params = new URLSearchParams(searchParams.toString());
+    // ?sub=1 (older links) is folded into the config as show_subtasks.
+    params.delete("sub");
     if (next === null || sameConfig(next, baseConfig)) params.delete("f");
     else params.set("f", encodeConfig(next));
     const query = params.toString();
@@ -272,13 +275,12 @@ export function ViewToolbar({
             <input
               type="checkbox"
               className="size-3.5 accent-zinc-900"
-              checked={searchParams.get("sub") === "1"}
+              checked={showsSubtasks(current)}
               onChange={(e) => {
-                const params = new URLSearchParams(searchParams.toString());
-                if (e.currentTarget.checked) params.set("sub", "1");
-                else params.delete("sub");
-                const query = params.toString();
-                startTransition(() => router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false }));
+                // Part of the view config (saved with Save view), like grouping and columns.
+                const next: ViewConfig = { ...current, show_subtasks: true };
+                if (!e.currentTarget.checked) delete next.show_subtasks;
+                apply(next);
               }}
             />
             Show subtasks
