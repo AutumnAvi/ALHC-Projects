@@ -136,9 +136,9 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
             : labelOf(EMAIL_RECIPIENTS, a.to).toLowerCase()
       }`;
     case "send_slack":
-      return `post to Slack (${a.use_project_webhook !== true && str(a.webhook_hint) ? str(a.webhook_hint) : "project webhook"})`;
+      return `post to Slack${a.format === "blocks" ? " as a task card" : ""} (${a.use_project_webhook !== true && str(a.webhook_hint) ? str(a.webhook_hint) : "project webhook"})`;
     case "call_webhook":
-      return `call webhook (${a.use_project_webhook !== true && str(a.url_hint) ? str(a.url_hint) : "project webhook"})`;
+      return `call webhook (${a.use_project_webhook !== true && str(a.url_hint) ? str(a.url_hint) : "project webhook"}${a.signing_set === true ? ", signed" : ""})`;
     case "delay":
       return `wait ${a.hours} h`;
     default:

@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks (real tasks, nested up to 4 levels), with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios (nestable, with custom fields, a timeline, and cross-project progress and reporting), goals with sub-goals and progress, a teams directory with group invites, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies (lag, start-to-start, across projects and subtasks) with a critical path and confirmed auto-shift, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks (real tasks, nested up to 4 levels), with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios (nestable, with custom fields, a timeline, and cross-project progress and reporting), goals with sub-goals and progress, a teams directory with group invites, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies (lag, start-to-start, across projects and subtasks) with a critical path and confirmed auto-shift, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages (plain or Block Kit task cards), and signed outbound webhooks with a delivery log and retries. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -197,6 +197,12 @@ npm run build
 npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01, zz02, zz03, zz04…)
 ```
 
+## What's here (integration depth)
+
+- **Slack task cards.** A **Send Slack message** action can use **Message style → Block Kit (task card)**: your message, then the task title linked to it, project, assignee, due date, status, and an **Open task** button (the plain message is still sent for notifications). Any Slack message can include `{task_link}` — the task's title linked to it in the app. The link is the normal signed-in task link: people still sign in to open it, and nothing public or token-based is ever sent. Task details stay escaped, so a title can't ping `@channel` or add a link.
+- **Signed webhooks.** **Settings → Integrations → Signing secret → Generate** (Admins and above) creates a secret for the project webhook, and a **Call webhook** action with its own URL can generate its own. The secret is shown **once** — copy it into the receiver. Each request then carries `X-ALHC-Timestamp` and `X-ALHC-Signature` (an HMAC of the timestamp and the body) so the receiver can prove it came from here; see “Setup: Slack and webhooks”. The shared-secret header keeps working alongside it.
+- **Deliveries.** **Settings → Deliveries** (Admins and above) lists every Slack message and webhook call the project's rules queued: status, attempts, the receiver's response code, the last error, and when it was sent or will be tried next. Destinations show as host + last 4 characters only. A failed send is retried automatically after 5, 10, 20, then 30 minutes and marked failed after 5 attempts; **Retry** gives it one more attempt with the same content (up to 10), **Send now** skips the wait, and **Cancel** stops one that hasn't gone out.
+
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.
 
 ## Setup: Supabase
@@ -205,7 +211,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 2. **Apply the migrations.** Either:
    - CLI: `npx supabase login`, then `npx supabase link --project-ref <ref>`, then `npx supabase db push`
    - or open the SQL editor and run each file in `supabase/migrations/` in filename order.
-   - The production project is shared with another app, so new phases are applied one migration file at a time right after their PR merges (Supabase connector `apply_migration`); never reset or `db push --include-all` it. See “Shipping a phase” in `AGENTS.md`.
+   - The production project is shared with another app, so each new phase's migration file is applied with the Supabase connector's `apply_migration` (in small chunks, `<phase>_a`, `_b`, …) once its PR's checks pass and **before** the PR is merged; never reset or `db push --include-all` it. See “Shipping a phase” in `AGENTS.md`.
 3. **Add people to the allowlist** in the SQL editor (the emails they sign in with; they're normalised to lowercase):
 
    ```sql
@@ -249,7 +255,22 @@ Emails are also delivered right after any action in the app, so the cron mainly 
 
 1. **Slack:** in Slack, create an app (or open one) at api.slack.com/apps → **Incoming Webhooks** → turn it on → **Add New Webhook to Workspace** → pick a channel. Copy the `https://hooks.slack.com/services/…` URL into the project's **Settings → Integrations**, or into a single rule's **Send Slack message** action. No Slack OAuth app is needed.
 2. **Outbound webhooks:** paste the receiver's `https://` URL (plain `http`, local, and private-network addresses are rejected) and, optionally, a shared secret and header name. The receiver should compare the header to the secret.
-3. Delivery needs `SUPABASE_SERVICE_ROLE_KEY` (same as email). Set `INTEGRATIONS_MOCK=true` to log deliveries as `[integration:mocked]` instead of POSTing (useful for previews). `NEXT_PUBLIC_APP_URL` (or Vercel's production URL) adds `task.url` deep links to webhook payloads.
+3. **Signed webhooks (recommended):** generate a signing secret (project: Settings → Integrations; a single rule with its own URL: the action's **Request signing**), copy it when it's shown, and verify every request in the receiver:
+
+   ```js
+   // Node receiver: verify before trusting the body. `raw` is the exact request body string.
+   import { createHmac, timingSafeEqual } from "node:crypto";
+   function verify(raw, headers, secret) {
+     const ts = Number(headers["x-alhc-timestamp"]);
+     if (!Number.isInteger(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return false; // stale or missing
+     const expected = "sha256=" + createHmac("sha256", secret).update(`${ts}.${raw}`).digest("hex");
+     const given = String(headers["x-alhc-signature"] ?? "");
+     return given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+   }
+   ```
+
+   Retries send the same body with a new timestamp and the same `Idempotency-Key: integration-outbox-<id>`, so receivers can drop duplicates.
+4. Delivery needs `SUPABASE_SERVICE_ROLE_KEY` (same as email). Set `INTEGRATIONS_MOCK=true` to log deliveries as `[integration:mocked]` instead of POSTing (useful for previews). `NEXT_PUBLIC_APP_URL` (or Vercel's production URL) adds `task.url` deep links to webhook payloads and turns `{task_link}` / the Block Kit **Open task** button into links (without it they show the plain title and no button).
 4. To inspect deliveries (service role / SQL editor only — clients can't read this table): `select channel, target_hint, status, attempts, last_error from public.integration_outbox order by created_at desc;`.
 
 ## Setup: sign-in (email + password, interim)
@@ -301,7 +322,7 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | Optional. Email via Resend; mocked when unset |
    | `INTEGRATIONS_MOCK` | Optional. `true` logs Slack/webhook deliveries instead of sending them |
    | `CRON_SECRET` | Secret for `/api/cron/workflows` |
-   | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links and webhook `task.url` links |
+   | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links, webhook `task.url` links, and Slack task links |
    | `AUTH_GOOGLE_ENABLED` | Optional. `true` shows "Continue with Google" once the Google provider is configured |
 
    The Supabase ↔ Vercel Marketplace integration sets the same names automatically if you prefer it.

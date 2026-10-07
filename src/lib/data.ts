@@ -13,7 +13,12 @@ import {
 } from "@/lib/rules";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import { REACTIONS, type ReactionKey } from "@/lib/reactions";
-import { toProjectIntegrations, type ProjectIntegrations } from "@/lib/integrations-shared";
+import {
+  isDeliveryStatus,
+  toProjectIntegrations,
+  type IntegrationDelivery,
+  type ProjectIntegrations,
+} from "@/lib/integrations-shared";
 import {
   PROJECT_ROLES as ROLE_ORDER,
   hasRole,
@@ -1822,6 +1827,33 @@ export const getProjectIntegrations = cache(async (projectId: string): Promise<P
   const supabase = await createClient();
   const result = await supabase.rpc("get_project_integrations", { target_project: projectId });
   return toProjectIntegrations(maybe(result, "integration settings"));
+});
+
+// Delivery log for Settings → Deliveries (Admin+; the RPC refuses anyone else, so this returns null
+// without asking). Hints, statuses, and times only — never a URL, secret, or signature.
+export const listIntegrationDeliveries = cache(async (projectId: string): Promise<IntegrationDelivery[] | null> => {
+  if (!hasRole(await getProjectRole(projectId), "admin")) return null;
+  const supabase = await createClient();
+  const result = await supabase.rpc("list_integration_deliveries", { target_project: projectId, max_results: 200 });
+  return rows(result, "delivery log").map((row) => ({
+    id: row.id,
+    channel: row.channel === "slack" ? "slack" : "webhook",
+    taskId: row.task_id,
+    taskTitle: row.task_title,
+    ruleId: row.rule_id,
+    ruleName: row.rule_name,
+    targetHint: row.target_hint,
+    status: isDeliveryStatus(row.status) ? row.status : "pending",
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    responseStatus: row.response_status,
+    lastError: row.last_error,
+    signed: row.signed,
+    nextAttemptAt: row.next_attempt_at,
+    sentAt: row.sent_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
 });
 
 // ---------------------------------------------------------------------------------------------

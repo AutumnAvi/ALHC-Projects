@@ -633,6 +633,8 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          signing_secret: string | null;
+          max_attempts: number;
         };
         Insert: {
           id?: string;
@@ -654,6 +656,8 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          signing_secret?: string | null;
+          max_attempts?: number;
         };
         Update: {
           id?: string;
@@ -675,6 +679,8 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          signing_secret?: string | null;
+          max_attempts?: number;
         };
         Relationships: [];
       };
@@ -682,7 +688,7 @@ export type Database = {
         Row: {
           id: string;
           project_id: string;
-          rule_id: string;
+          rule_id: string | null;
           kind: string;
           value: string;
           created_at: string;
@@ -691,7 +697,7 @@ export type Database = {
         Insert: {
           id?: string;
           project_id: string;
-          rule_id: string;
+          rule_id?: string | null;
           kind: string;
           value: string;
           created_at?: string;
@@ -700,7 +706,7 @@ export type Database = {
         Update: {
           id?: string;
           project_id?: string;
-          rule_id?: string;
+          rule_id?: string | null;
           kind?: string;
           value?: string;
           created_at?: string;
@@ -3276,6 +3282,10 @@ export type Database = {
         Args: { target_approval: string };
         Returns: undefined;
       };
+      cancel_integration_delivery: {
+        Args: { target_delivery: string };
+        Returns: Json;
+      };
       claim_email_outbox: {
         Args: { max_items?: number; only_id?: string | null };
         Returns: Database["public"]["Tables"]["email_outbox"]["Row"][];
@@ -3357,6 +3367,28 @@ export type Database = {
       import_lookup: {
         Args: { import_source: string; external_ids: string[] };
         Returns: { project_id: string; kind: string; external_id: string }[];
+      };
+      list_integration_deliveries: {
+        Args: { target_project: string; max_results?: number };
+        Returns: {
+          id: string;
+          channel: string;
+          task_id: string | null;
+          task_title: string | null;
+          rule_id: string | null;
+          rule_name: string | null;
+          target_hint: string;
+          status: string;
+          attempts: number;
+          max_attempts: number;
+          response_status: number | null;
+          last_error: string | null;
+          signed: boolean;
+          next_attempt_at: string | null;
+          sent_at: string | null;
+          created_at: string;
+          updated_at: string;
+        }[];
       };
       list_portfolio_progress: {
         Args: Record<PropertyKey, never>;
@@ -3451,6 +3483,10 @@ export type Database = {
       };
       move_my_tasks: {
         Args: { target_tasks: string[]; target_section: string };
+        Returns: Json;
+      };
+      retry_integration_delivery: {
+        Args: { target_delivery: string };
         Returns: Json;
       };
       project_workload: {

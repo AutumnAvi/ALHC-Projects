@@ -6,7 +6,7 @@ import { after } from "next/server";
 import { getWorkspace } from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { drainOutbox } from "@/lib/email";
-import { drainIntegrationOutbox } from "@/lib/integrations";
+import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
 import { ImportParseError, buildImportPlan, importSteps, planExternalIds, type ImportPlan } from "@/lib/asana-import";
 import {
   IMPORTS_BUCKET,
@@ -22,6 +22,7 @@ import {
 } from "@/lib/imports-shared";
 import {
   MAX_SECRET_LENGTH,
+  SLACK_FORMATS,
   WEBHOOK_URL_ERROR,
   isAllowedHeaderName,
   isAllowedWebhookUrl,
@@ -2610,6 +2611,71 @@ export async function setProjectIntegration(
   return result.error ? result : { settings };
 }
 
+// Admin+: a new project signing secret for Call webhook requests to the project URL. Generated here and
+// returned once so the admin can copy it into the receiver; the database never hands it back.
+export async function generateProjectSigningSecret(
+  projectId: string,
+): Promise<ActionResult & { secret?: string; settings?: ProjectIntegrations }> {
+  let secret: string | undefined;
+  let settings: ProjectIntegrations | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const generated = generateSigningSecret();
+    const response = await supabase.rpc("set_project_integration", {
+      target_project: id(projectId),
+      setting: "signing_secret",
+      new_value: generated,
+    });
+    check(response);
+    settings = toProjectIntegrations(response.data);
+    secret = generated;
+  });
+  return result.error ? result : { secret, settings };
+}
+
+export async function clearProjectSigningSecret(
+  projectId: string,
+): Promise<ActionResult & { settings?: ProjectIntegrations }> {
+  let settings: ProjectIntegrations | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const response = await supabase.rpc("set_project_integration", {
+      target_project: id(projectId),
+      setting: "signing_secret",
+      new_value: null,
+    });
+    check(response);
+    settings = toProjectIntegrations(response.data);
+  });
+  return result.error ? result : { settings };
+}
+
+// Delivery log (Admin+ of the delivery's project; the RPCs check). A retry is sent right after the
+// response, reusing the stored payload; cancel stops a delivery that is still waiting.
+export async function retryIntegrationDelivery(deliveryId: string): Promise<ActionResult> {
+  const result = await run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("retry_integration_delivery", { target_delivery: id(deliveryId) }));
+  });
+  if (!result.error) {
+    after(async () => {
+      try {
+        await drainIntegrationOutbox({ onlyId: deliveryId, max: 1 });
+      } catch (error) {
+        console.error("Integration delivery failed", error);
+      }
+    });
+  }
+  return result;
+}
+
+export async function cancelIntegrationDelivery(deliveryId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("cancel_integration_delivery", { target_delivery: id(deliveryId) }));
+  });
+}
+
 export async function assignRequestNumber(taskId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
@@ -2850,6 +2916,9 @@ function checkIntegrationAction(action: RuleAction) {
   const urlKey = action.type === "send_slack" ? "webhook_url" : "url";
   const url = action[urlKey];
   if (typeof url === "string" && url.trim() && !isAllowedWebhookUrl(url.trim())) throw new InputError(WEBHOOK_URL_ERROR);
+  if (action.type === "send_slack" && "format" in action && !SLACK_FORMATS.some((f) => f.value === action.format)) {
+    throw new InputError("Send Slack message: choose plain text or Block Kit");
+  }
   if (action.type === "call_webhook") {
     if (typeof action.secret === "string" && action.secret.length > MAX_SECRET_LENGTH) {
       throw new InputError("The shared secret is limited to 500 characters");
@@ -2861,21 +2930,49 @@ function checkIntegrationAction(action: RuleAction) {
   }
 }
 
-function ruleRow(input: RuleInput) {
+// A Call webhook action's own signing secret is generated here (the builder sends
+// generate_signing_secret: true), stored by the database trigger like the shared secret, and returned
+// once with the save result. A typed value is refused; "" removes the saved one.
+export type RevealedSigningSecret = { action: number; secret: string };
+
+function prepareSigningSecret(action: RuleAction, index: number, revealed: RevealedSigningSecret[]): RuleAction {
+  const { generate_signing_secret: generate, ...rest } = action;
+  if (action.type !== "call_webhook") return rest;
+  if (typeof rest.signing_secret === "string" && rest.signing_secret !== "") {
+    throw new InputError("Call webhook: signing secrets are generated by the app");
+  }
+  if (generate !== true) return rest;
+  if (rest.use_project_webhook === true) {
+    throw new InputError("Call webhook: the project webhook is signed with the project’s signing secret (Settings → Integrations)");
+  }
+  const ownUrl = (typeof rest.url === "string" && rest.url.trim() !== "") || (rest.url_ref !== undefined && rest.url !== "");
+  if (!ownUrl) {
+    throw new InputError("Call webhook: add this action’s own URL to sign it with its own secret");
+  }
+  const secret = generateSigningSecret();
+  revealed.push({ action: index + 1, secret });
+  return { ...rest, signing_secret: secret };
+}
+
+function ruleRow(input: RuleInput, revealed: RevealedSigningSecret[] = []) {
   if (!isTriggerType(input.triggerType)) throw new InputError("Choose a trigger");
   if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
   input.actions.forEach(checkIntegrationAction);
+  const actions = input.actions.map((action, index) => prepareSigningSecret(action, index, revealed));
   return {
     name: text(input.name, "Rule name", { max: 200 }),
     trigger_type: input.triggerType,
     trigger_config: (input.triggerConfig ?? {}) as Json,
     conditions: (input.conditions ?? []) as Json,
-    actions: input.actions as Json,
+    actions: actions as Json,
   };
 }
 
-export async function createRule(projectId: string, input: RuleInput): Promise<ActionResult> {
-  return run(async () => {
+export type RuleSaveResult = ActionResult & { signingSecrets?: RevealedSigningSecret[] };
+
+export async function createRule(projectId: string, input: RuleInput): Promise<RuleSaveResult> {
+  const revealed: RevealedSigningSecret[] = [];
+  const result = await run(async () => {
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("rules")
@@ -2888,16 +2985,19 @@ export async function createRule(projectId: string, input: RuleInput): Promise<A
     check(
       await supabase
         .from("rules")
-        .insert({ project_id: projectId, ...ruleRow(input), sort_order: (last?.sort_order ?? 0) + ORDER_STEP }),
+        .insert({ project_id: projectId, ...ruleRow(input, revealed), sort_order: (last?.sort_order ?? 0) + ORDER_STEP }),
     );
   });
+  return result.error || revealed.length === 0 ? result : { signingSecrets: revealed };
 }
 
-export async function updateRule(ruleId: string, input: RuleInput): Promise<ActionResult> {
-  return run(async () => {
+export async function updateRule(ruleId: string, input: RuleInput): Promise<RuleSaveResult> {
+  const revealed: RevealedSigningSecret[] = [];
+  const result = await run(async () => {
     const supabase = await createClient();
-    check(await supabase.from("rules").update(ruleRow(input)).eq("id", id(ruleId)));
+    checkUpdated(await supabase.from("rules").update(ruleRow(input, revealed)).eq("id", id(ruleId)).select("id"));
   });
+  return result.error || revealed.length === 0 ? result : { signingSecrets: revealed };
 }
 
 export async function setRuleEnabled(ruleId: string, enabled: boolean): Promise<ActionResult> {
