@@ -539,7 +539,8 @@ export type Database = {
           id: string;
           recipient_id: string;
           actor_id: string | null;
-          task_id: string;
+          task_id: string | null;
+          message_id: string | null;
           comment_id: string | null;
           kind: string;
           read_at: string | null;
@@ -551,7 +552,8 @@ export type Database = {
           id?: string;
           recipient_id: string;
           actor_id?: string | null;
-          task_id: string;
+          task_id?: string | null;
+          message_id?: string | null;
           comment_id?: string | null;
           kind: string;
           read_at?: string | null;
@@ -563,7 +565,8 @@ export type Database = {
           id?: string;
           recipient_id?: string;
           actor_id?: string | null;
-          task_id?: string;
+          task_id?: string | null;
+          message_id?: string | null;
           comment_id?: string | null;
           kind?: string;
           read_at?: string | null;
@@ -572,6 +575,13 @@ export type Database = {
           data?: Json;
         };
         Relationships: [
+          {
+            foreignKeyName: "inbox_items_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "project_messages";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "inbox_items_actor_id_fkey";
             columns: ["actor_id"];
@@ -1994,6 +2004,7 @@ export type Database = {
           updated_at: string;
           deleted_at: string | null;
           kind: string;
+          tags: Json;
         };
         Insert: {
           id?: string;
@@ -2010,6 +2021,7 @@ export type Database = {
           updated_at?: string;
           deleted_at?: string | null;
           kind?: string;
+          tags?: Json;
         };
         Update: {
           id?: string;
@@ -2026,6 +2038,7 @@ export type Database = {
           updated_at?: string;
           deleted_at?: string | null;
           kind?: string;
+          tags?: Json;
         };
         Relationships: [
           {
@@ -2878,6 +2891,276 @@ export type Database = {
           },
         ];
       };
+      tags: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          name: string;
+          color: string;
+          archived_at: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id?: string;
+          name: string;
+          color?: string;
+          archived_at?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          name?: string;
+          color?: string;
+          archived_at?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "tags_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "tags_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      task_tags: {
+        Row: {
+          id: string;
+          task_id: string;
+          tag_id: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          tag_id: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          tag_id?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "task_tags_task_id_fkey";
+            columns: ["task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_tags_tag_id_fkey";
+            columns: ["tag_id"];
+            isOneToOne: false;
+            referencedRelation: "tags";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      project_messages: {
+        Row: {
+          id: string;
+          project_id: string;
+          thread_id: string | null;
+          title: string | null;
+          body: string;
+          author_id: string;
+          edited_at: string | null;
+          last_activity_at: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          thread_id?: string | null;
+          title?: string | null;
+          body: string;
+          author_id?: string;
+          edited_at?: string | null;
+          last_activity_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          thread_id?: string | null;
+          title?: string | null;
+          body?: string;
+          author_id?: string;
+          edited_at?: string | null;
+          last_activity_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_messages_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_messages_thread_id_fkey";
+            columns: ["thread_id"];
+            isOneToOne: false;
+            referencedRelation: "project_messages";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_messages_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      project_message_mentions: {
+        Row: {
+          message_id: string;
+          profile_id: string;
+          created_at: string;
+        };
+        Insert: {
+          message_id: string;
+          profile_id: string;
+          created_at?: string;
+        };
+        Update: {
+          message_id?: string;
+          profile_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_message_mentions_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "project_messages";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_message_mentions_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      project_message_reactions: {
+        Row: {
+          id: string;
+          message_id: string;
+          project_id: string;
+          profile_id: string;
+          emoji: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          message_id: string;
+          project_id?: string;
+          profile_id?: string;
+          emoji: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          message_id?: string;
+          project_id?: string;
+          profile_id?: string;
+          emoji?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_message_reactions_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "project_messages";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_message_reactions_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      tag_field_migrations: {
+        Row: {
+          field_id: string;
+          tags_created: number;
+          links_created: number;
+          migrated_at: string;
+        };
+        Insert: {
+          field_id: string;
+          tags_created?: number;
+          links_created?: number;
+          migrated_at?: string;
+        };
+        Update: {
+          field_id?: string;
+          tags_created?: number;
+          links_created?: number;
+          migrated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "tag_field_migrations_field_id_fkey";
+            columns: ["field_id"];
+            isOneToOne: false;
+            referencedRelation: "custom_fields";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       workspaces: {
         Row: {
           id: string;
@@ -3356,6 +3639,10 @@ export type Database = {
       workflow_tick: {
         Args: Record<PropertyKey, never>;
         Returns: Json;
+      };
+      can_manage_tag: {
+        Args: { target_tag: string };
+        Returns: boolean;
       };
       can_manage_project_template: {
         Args: { target_template: string };

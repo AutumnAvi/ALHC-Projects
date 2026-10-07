@@ -249,7 +249,7 @@ function mentionCandidates(task: TaskDetail, profiles: Profile[], memberId: stri
     .sort((a, b) => displayName(a).localeCompare(displayName(b)));
 }
 
-const COMMENT_INPUT =
+export const COMMENT_INPUT =
   "field-sizing-content min-h-16 w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100";
 
 function CommentItem({
@@ -392,12 +392,37 @@ function Reactions({
   nameOf: (profileId: string | null) => string;
 }) {
   const [, run] = useServerAction();
-  if (comment.reactions.length === 0 && !canReact) return null;
-  const react = (emoji: ReactionKey) => run(() => toggleReaction(comment.id, emoji));
+  return (
+    <ReactionBar
+      reactions={comment.reactions}
+      canReact={canReact}
+      memberId={memberId}
+      nameOf={nameOf}
+      onReact={(emoji) => run(() => toggleReaction(comment.id, emoji))}
+    />
+  );
+}
+
+// Reaction chips + an add-reaction picker (comments and project messages share it).
+export function ReactionBar({
+  reactions,
+  canReact,
+  memberId,
+  nameOf,
+  onReact,
+}: {
+  reactions: { emoji: ReactionKey; profileIds: string[] }[];
+  canReact: boolean;
+  memberId: string;
+  nameOf: (profileId: string | null) => string;
+  onReact: (emoji: ReactionKey) => void;
+}) {
+  if (reactions.length === 0 && !canReact) return null;
+  const react = onReact;
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1">
-      {comment.reactions.map(({ emoji, profileIds }) => {
+      {reactions.map(({ emoji, profileIds }) => {
         const { emoji: glyph, label } = reactionOf(emoji);
         const mine = profileIds.includes(memberId);
         const who = profileIds.map((profileId) => (profileId === memberId ? "You" : nameOf(profileId))).join(", ");
@@ -422,7 +447,7 @@ function Reactions({
           label="Add reaction"
           button={<SmilePlus className="size-3.5" />}
           buttonClassName={`inline-flex h-6 items-center rounded-full px-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 aria-expanded:bg-zinc-100 ${
-            comment.reactions.length ? "" : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100"
+            reactions.length ? "" : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100"
           }`}
           panelClassName="w-auto"
         >
@@ -451,7 +476,7 @@ function Reactions({
   );
 }
 
-function MentionText({ body, names }: { body: string; names: string[] }) {
+export function MentionText({ body, names }: { body: string; names: string[] }) {
   if (names.length === 0) return <>{body}</>;
   const escaped = [...names]
     .sort((a, b) => b.length - a.length)

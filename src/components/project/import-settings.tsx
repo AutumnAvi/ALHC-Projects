@@ -250,7 +250,7 @@ function PreviewCard({
     ["Attachment links", c.attachments.total, c.attachments.existing],
     ["Sections", c.sections.total, c.sections.existing],
     ["Custom fields", c.fields.total, c.fields.existing],
-    ["Tags (as a Tags field)", c.tags, null],
+    ["Tags (workspace tags, matched by name)", c.tags, null],
     ["Dependencies", c.dependencies, null],
   ];
   if (c.rules > 0) rows.push(["Rules (added turned off)", c.rules, null]);

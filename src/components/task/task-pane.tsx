@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { requireMember } from "@/lib/auth";
-import { getTaskDetail, listMyProjectRoles, listProfiles, listProjects } from "@/lib/data";
+import { getTaskDetail, listMyProjectRoles, listProfiles, listProjects, listTags } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 import { isUuid } from "@/lib/ids";
 import { TaskDetailPanel, TaskNotFoundPanel, TaskPaneLoading } from "./task-detail-panel";
@@ -17,12 +17,13 @@ export function TaskPaneBoundary({ taskId }: { taskId: string }) {
 
 export async function TaskPane({ taskId }: { taskId: string }) {
   if (!isUuid(taskId)) return <TaskNotFoundPanel />;
-  const [member, task, projects, profiles, roles] = await Promise.all([
+  const [member, task, projects, profiles, roles, tags] = await Promise.all([
     requireMember(),
     getTaskDetail(taskId),
     listProjects(),
     listProfiles(),
     listMyProjectRoles(),
+    listTags(),
   ]);
   if (!task) return <TaskNotFoundPanel />;
 
@@ -33,6 +34,7 @@ export async function TaskPane({ taskId }: { taskId: string }) {
       projects={projects.map(({ id, name }) => ({ id, name, canAdd: hasRole(roles.get(id), "editor") }))}
       profiles={profiles}
       memberId={member.id}
+      tags={tags}
     />
   );
 }

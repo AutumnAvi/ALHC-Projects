@@ -5,6 +5,8 @@ import { CheckCircle2, Circle, FolderClosed, SearchX } from "lucide-react";
 import { useTaskHref } from "@/components/project/shared";
 import { EmptyState } from "@/components/ui";
 import { formatDueDate } from "@/lib/dates";
+import { TagChips } from "@/components/tags/tag-chip";
+import type { Tag } from "@/lib/tags";
 
 export type SearchResult = {
   id: string;
@@ -14,18 +16,22 @@ export type SearchResult = {
   dueOn: string | null;
   projectId: string;
   projectName: string;
+  tagIds: string[];
 };
 
 export function SearchResults({
   query,
   results,
   openTaskId,
+  tags,
 }: {
   query: string;
   results: SearchResult[];
   openTaskId: string | null;
+  tags: Tag[];
 }) {
   const taskHref = useTaskHref();
+  const tagsById = new Map(tags.map((t) => [t.id, t] as const));
 
   return (
     <section className="mt-4" aria-label="Search results">
@@ -70,6 +76,7 @@ export function SearchResults({
                     ) : null}
                   </span>
                   <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-500">
+                    <TagChips ids={result.tagIds} byId={tagsById} max={2} />
                     {result.dueOn ? <span className="tabular-nums">{formatDueDate(result.dueOn)}</span> : null}
                     <span className="chip max-w-36">
                       <FolderClosed className="size-3 shrink-0" aria-hidden />

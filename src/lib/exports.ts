@@ -16,6 +16,7 @@ import {
   listProjectTasks,
   listSectionLabels,
   listSections,
+  listTags,
   portfolioReport,
   projectMetrics,
   reportCompletedSeries,
@@ -29,6 +30,7 @@ import { PROJECT_STATUS_LABELS, isProjectStatus, progressPercent, type Portfolio
 import { isSeriesInterval, seriesLabel, type ReportFilters } from "@/lib/reports";
 import type { Json } from "@/lib/supabase/database.types";
 import { columnsOf, decodeConfig, pruneConfig, pruneFilters, refFieldId } from "@/lib/views";
+import { tagsFor } from "@/lib/tags";
 
 // CSV builders for the export route (src/app/export/[kind]/route.ts). Each one reads through the same
 // data.ts functions as the page it mirrors — the signed-in user's Supabase client, never the service
@@ -60,13 +62,20 @@ export async function exportList(projectId: string, viewId: string | null, draft
   const view = viewId ? await getProjectView(viewId) : null;
   if (viewId && (!view || view.projectId !== projectId)) return null;
 
-  const [sections, tasks, profiles, fields] = await Promise.all([
+  const [sections, tasks, profiles, fields, tags] = await Promise.all([
     listSections(projectId),
     listProjectTasks(projectId),
     listProfiles(),
     listProjectFields(projectId),
+    listTags(),
   ]);
-  const context = { sectionIds: new Set(sections.map((s) => s.id)), fields, profileIds: new Set(profiles.map((p) => p.id)) };
+  const context = {
+    sectionIds: new Set(sections.map((s) => s.id)),
+    fields,
+    profileIds: new Set(profiles.map((p) => p.id)),
+    tagIds: new Set(tags.map((t) => t.id)),
+  };
+  const tagsById = new Map(tags.map((t) => [t.id, t] as const));
   const base = pruneConfig(view?.config ?? {}, context);
   const config = pruneConfig(decodeConfig(draft ?? undefined) ?? base, context);
   const matching = await filterProjectTaskIds(projectId, config.filters ?? {}, timeZone);
@@ -74,7 +83,7 @@ export async function exportList(projectId: string, viewId: string | null, draft
   const groups = groupTasks(
     tasks.filter((t) => matching.has(t.id)),
     config,
-    { sections, profilesById, fields },
+    { sections, profilesById, fields, tags },
   );
   const sectionNames = new Map(sections.map((s) => [s.id, s.name]));
   const person = people(profiles);
@@ -105,8 +114,12 @@ export async function exportList(projectId: string, viewId: string | null, draft
       );
     }
   }
-  header.push("Completed on", "Task ID");
-  cells.push((t) => day(t.completedAt), (t) => t.id);
+  header.push("Tags", "Completed on", "Task ID");
+  cells.push(
+    (t) => tagsFor(t.tagIds, tagsById).map((tag) => tag.name).join(", ") || null,
+    (t) => day(t.completedAt),
+    (t) => t.id,
+  );
 
   const seen = new Set<string>();
   const rows: CsvCell[][] = [];

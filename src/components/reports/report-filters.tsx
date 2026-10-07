@@ -77,13 +77,14 @@ function MultiPicker({
   );
 }
 
-// The report filter (projects, assignees, date range, Include subtasks, and optionally status), as
+// The report filter (projects, assignees, tags, date range, Include subtasks, and optionally status), as
 // controlled fields. Used by the Reports page (URL state) and the personal widget editor.
 export function ReportFilterFields({
   value,
   onChange,
   projects,
   people,
+  tags = [],
   showStatus = false,
   idPrefix,
 }: {
@@ -91,6 +92,7 @@ export function ReportFilterFields({
   onChange: (next: ReportFilters) => void;
   projects: FilterOption[];
   people: FilterOption[];
+  tags?: FilterOption[];
   showStatus?: boolean;
   idPrefix: string;
 }) {
@@ -123,6 +125,15 @@ export function ReportFilterFields({
         selected={value.assignees ?? []}
         onChange={(next) => set({ assignees: next })}
       />
+      {tags.length ? (
+        <MultiPicker
+          label="Tags"
+          allLabel="Any tag"
+          options={tags.map((t) => ({ key: t.id, value: t.id, name: t.name }))}
+          selected={value.tags ?? []}
+          onChange={(next) => set({ tags: next.filter((v): v is string => v !== null) })}
+        />
+      ) : null}
       <label className={FIELD_LABEL} htmlFor={`${idPrefix}-from`}>
         From
         <input
@@ -183,10 +194,12 @@ export function ReportFiltersBar({
   filters,
   projects,
   people,
+  tags,
 }: {
   filters: ReportFilters;
   projects: FilterOption[];
   people: FilterOption[];
+  tags?: FilterOption[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -203,7 +216,7 @@ export function ReportFiltersBar({
 
   return (
     <div className="flex flex-wrap items-end gap-3 print:hidden" aria-busy={pending}>
-      <ReportFilterFields value={filters} onChange={apply} projects={projects} people={people} idPrefix="report" />
+      <ReportFilterFields value={filters} onChange={apply} projects={projects} people={people} tags={tags} idPrefix="report" />
       {hasReportFilters(filters) ? (
         <button type="button" onClick={() => apply({})} className="btn-ghost h-7">
           <X className="size-3.5" aria-hidden /> Clear filters

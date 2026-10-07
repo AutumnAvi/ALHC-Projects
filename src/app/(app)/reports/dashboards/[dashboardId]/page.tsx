@@ -57,6 +57,6 @@ export default async function PersonalDashboardPage({ params }: PageProps<"/repo
   const data = await Promise.all(widgets.map(async (widget) => ({ widget, payload: await payload(widget) })));
 
   return (
-    <PersonalDashboardView dashboard={dashboard} widgets={data} projects={context.projects} people={context.people} />
+    <PersonalDashboardView dashboard={dashboard} widgets={data} projects={context.projects} people={context.people} tags={context.tags} />
   );
 }

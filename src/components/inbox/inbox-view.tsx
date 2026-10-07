@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Inbox,
   MessageSquare,
+  MessagesSquare,
   ShieldCheck,
   UserPlus,
   Workflow,
@@ -31,6 +32,7 @@ const KIND = {
   approval_requested: { icon: ShieldCheck, verb: "asked for your approval on" },
   approval_decided: { icon: ShieldCheck, verb: "decided an approval on" },
   rule: { icon: Workflow, verb: "notified you about" },
+  message: { icon: MessagesSquare, verb: "replied in" },
 } as const;
 
 const DECISION_VERB: Record<string, string> = {
@@ -52,6 +54,7 @@ function describe(item: InboxItem) {
   if (item.kind === "approval_requested" && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.resubmitted) {
     verb = "resubmitted for your approval";
   }
+  if (item.message && item.kind === "mention") verb = "mentioned you in";
   const detail =
     item.commentBody ?? dataText(item.data, "message") ?? dataText(item.data, "note") ?? null;
   return { ruleName, verb, detail };
@@ -196,7 +199,10 @@ export function InboxView({
                 const { ruleName, verb, detail } = describe(item);
                 const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : "Someone";
                 const { icon: Icon } = KIND[item.kind];
-                const open = openTaskId === item.taskId;
+                const open = item.taskId !== null && openTaskId === item.taskId;
+                const href = item.message
+                  ? `/projects/${item.message.projectId}/messages/${item.message.threadId}#message-${item.message.id}`
+                  : taskHref(item.taskId ?? "");
                 return (
                   <li
                     key={item.id}
@@ -212,8 +218,8 @@ export function InboxView({
                     <Avatar name={actorName} size="md" />
                     <div className="min-w-0 flex-1">
                       <Link
-                        href={taskHref(item.taskId)}
-                        scroll={false}
+                        href={href}
+                        scroll={item.message ? undefined : false}
                         onClick={() => {
                           if (!read) setItemRead(item, true);
                         }}
@@ -227,6 +233,7 @@ export function InboxView({
                           {item.taskTitle}
                         </span>
                         {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
+                        {item.message ? <span className="text-zinc-500"> · Messages in {item.message.projectName}</span> : null}
                         {read ? null : <span className="sr-only"> (unread)</span>}
                       </Link>
                       {detail ? <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{detail}</p> : null}

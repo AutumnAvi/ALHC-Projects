@@ -10,6 +10,7 @@ export type BulkOperation =
   | { action: "move_section"; project_id: string; section_id: string | null }
   | { action: "add_to_project"; project_id: string; section_id?: string | null }
   | { action: "set_field"; field_id: string; value: Json }
+  | { action: "add_tag" | "remove_tag"; tag_id: string }
   // My Tasks only: one of the viewer's own My Tasks sections (move_my_tasks()).
   | { action: "my_section"; section_id: string };
 
@@ -65,6 +66,10 @@ export function bulkVerb(action: BulkOperation["action"]): string {
       return "Added";
     case "set_field":
       return "Updated";
+    case "add_tag":
+      return "Tagged";
+    case "remove_tag":
+      return "Removed the tag from";
   }
 }
 

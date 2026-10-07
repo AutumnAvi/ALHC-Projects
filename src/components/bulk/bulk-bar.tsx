@@ -9,6 +9,7 @@ import {
   MoveRight,
   RotateCcw,
   SlidersHorizontal,
+  Tag as TagIcon,
   Trash2,
   UserRound,
   X,
@@ -20,6 +21,8 @@ import { MAX_BULK_TASKS, bulkVerb, taskCount, type BulkOperation, type BulkResul
 import type { Section } from "@/lib/data";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
+import { TagChip } from "@/components/tags/tag-chip";
+import { addableTags, type Tag } from "@/lib/tags";
 
 export type BulkPerson = { id: string; name: string };
 export type BulkContext = {
@@ -31,6 +34,8 @@ export type BulkContext = {
   project?: { id: string; sections: Section[]; fields: FieldDef[] };
   // My Tasks only (sections layout): the viewer's own My Tasks sections, for "Move".
   mySections?: { id: string; name: string }[];
+  // Workspace tags, for "Tag" (add or remove one tag).
+  tags?: Tag[];
 };
 
 type Summary = { operation: BulkOperation; total: number; result: BulkResult };
@@ -263,6 +268,31 @@ export function BulkBar({
             }
           </Popover>
 
+          {context.tags?.length ? (
+            <Popover
+              label="Add or remove a tag on selected tasks"
+              side="top"
+              buttonClassName={BAR_BUTTON}
+              panelClassName="w-64"
+              button={
+                <>
+                  <TagIcon className="size-4" aria-hidden />
+                  Tag
+                </>
+              }
+            >
+              {(close) => (
+                <TagBulkPicker
+                  tags={context.tags ?? []}
+                  onPick={(action, tagId) => {
+                    close();
+                    run({ action, tag_id: tagId });
+                  }}
+                />
+              )}
+            </Popover>
+          ) : null}
+
           {project ? (
             <Popover
               label="Set a field on selected tasks"
@@ -365,6 +395,64 @@ function PersonPicker({
         ))}
       </div>
       <p className="px-2 text-2xs text-zinc-400">People without access to a task are skipped for that task.</p>
+    </div>
+  );
+}
+
+function TagBulkPicker({
+  tags,
+  onPick,
+}: {
+  tags: Tag[];
+  onPick: (action: "add_tag" | "remove_tag", tagId: string) => void;
+}) {
+  const [mode, setMode] = useState<"add_tag" | "remove_tag">("add_tag");
+  const [query, setQuery] = useState("");
+  // Archived tags can't be added, but can still be removed.
+  const pool = mode === "add_tag" ? addableTags(tags) : [...tags].sort((a, b) => a.name.localeCompare(b.name));
+  const matches = pool.filter((t) => t.name.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 50);
+  return (
+    <div className="flex flex-col">
+      <div role="radiogroup" aria-label="Add or remove" className="mb-1 grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-0.5">
+        {(
+          [
+            ["add_tag", "Add tag"],
+            ["remove_tag", "Remove tag"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={mode === value}
+            onClick={() => setMode(value)}
+            className={`rounded px-2 py-1 text-xs font-medium ${mode === value ? "bg-white text-zinc-900 shadow-xs" : "text-zinc-600"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <label className="sr-only" htmlFor="bulk-tag-search">
+        Find a tag
+      </label>
+      <input
+        id="bulk-tag-search"
+        autoFocus
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Find a tag"
+        className="control my-1 w-full"
+      />
+      <div className="flex max-h-56 flex-col overflow-y-auto">
+        {matches.length === 0 ? (
+          <p className="px-2 py-1.5 text-xs text-zinc-500">No tags match. Create tags from a task’s Tags row.</p>
+        ) : null}
+        {matches.map((t) => (
+          <MenuItem key={t.id} onClick={() => onPick(mode, t.id)}>
+            <TagChip tag={t} />
+          </MenuItem>
+        ))}
+      </div>
     </div>
   );
 }

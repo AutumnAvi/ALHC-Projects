@@ -7,6 +7,7 @@ import {
   listProfiles,
   listProjectFields,
   listSections,
+  listTags,
   projectMetrics,
 } from "@/lib/data";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -24,17 +25,19 @@ const GROUP_BY = { count: "none", by_section: "section", by_assignee: "assignee"
 
 export default async function ProjectDashboardPage({ params }: PageProps<"/projects/[projectId]/dashboard">) {
   const { projectId } = await params;
-  const [widgets, sections, profiles, fields, timeZone] = await Promise.all([
+  const [widgets, sections, profiles, fields, timeZone, tags] = await Promise.all([
     listDashboardWidgets(projectId),
     listSections(projectId),
     listProfiles(),
     listProjectFields(projectId),
     getViewerTimeZone(),
+    listTags(),
   ]);
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
     fields,
     profileIds: new Set(profiles.map((p) => p.id)),
+    tagIds: new Set(tags.map((t) => t.id)),
   };
   const data = await Promise.all(
     widgets.map(async (widget) => {
@@ -47,7 +50,7 @@ export default async function ProjectDashboardPage({ params }: PageProps<"/proje
   return (
     <main className="min-h-0 flex-1 overflow-auto">
       <RoleGate need="editor" what="dashboard widgets">
-        <DashboardView projectId={projectId} widgets={data} context={{ sections, profiles, fields }} />
+        <DashboardView projectId={projectId} widgets={data} context={{ sections, profiles, fields, tags }} />
       </RoleGate>
     </main>
   );

@@ -52,6 +52,8 @@ export type PlanTask = {
   section_key: string | null;
   projects: { gid: string; section_name: string | null }[];
   fields: { key: string; value: Json }[];
+  // Asana tag names; import_batch matches them to workspace tags by name (creating missing ones).
+  tags: string[];
   followers: string[];
   subtasks: PlanSubtask[];
   comments: PlanComment[];
@@ -85,6 +87,8 @@ export type ImportPlan = {
 
 export class ImportParseError extends Error {}
 
+// Before Tags and collaboration extras, Asana tags were imported into a multi-select "Tags" field under
+// this key; the migration copies those values into native tags once. New imports send tag names instead.
 export const TAGS_FIELD_KEY = "asana:tags";
 
 // ---------------------------------------------------------------------------------------------
@@ -481,14 +485,15 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
     if (!field.options.some((o) => o.toLowerCase() === name.toLowerCase())) field.options.push(name.slice(0, 100));
   };
   const tagNames = new Set<string>();
-  const tagsValue = (names: string[]) => {
-    if (names.length === 0) return null;
-    const field = addField(TAGS_FIELD_KEY, "Tags", "multi_select");
-    for (const n of names) {
-      addOption(field, n);
+  const tagList = (names: string[]) => {
+    const out: string[] = [];
+    for (const raw of names) {
+      const n = raw.trim().slice(0, 50);
+      if (!n || out.some((o) => o.toLowerCase() === n.toLowerCase())) continue;
+      out.push(n);
       tagNames.add(n.toLowerCase());
     }
-    return { key: TAGS_FIELD_KEY, value: names as Json };
+    return out.slice(0, 100);
   };
 
   let nestedFlattened = 0;
@@ -573,12 +578,11 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
       }
       if (value !== null) values.push({ key: field.key, value });
     }
-    const tags = tagsValue(
+    const tags = tagList(
       arr(t.tags)
         .map((tag) => (isObj(tag) ? str(tag.name) : null))
         .filter((n): n is string => !!n),
     );
-    if (tags) values.push(tags);
 
     const followers: string[] = [];
     for (const f of arr(t.followers)) {
@@ -671,6 +675,7 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
       section_key: section,
       projects,
       fields: values,
+      tags,
       followers,
       subtasks,
       comments,
@@ -792,8 +797,7 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
         }
         if (value !== null) values.push({ key: field.key, value });
       }
-      const tags = tagsValue(t.tags);
-      if (tags) values.push(tags);
+      const tags = tagList(t.tags);
       tasks.push({
         gid: t.gid,
         title: t.title || "Untitled task",
@@ -807,6 +811,7 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
         section_key: addSection(null, t.section),
         projects: [],
         fields: values,
+        tags,
         followers: [],
         subtasks: subtasksFromCsv(t.gid, new Set(), 1),
         comments: [],

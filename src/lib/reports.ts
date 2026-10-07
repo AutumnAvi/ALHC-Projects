@@ -1,5 +1,6 @@
 // Workspace report vocabulary shared by server and client code. The report filter mirrors
-// validate_report_filters() in supabase/migrations/20261006090000_reporting_export.sql; the database
+// validate_report_filters() in supabase/migrations/20261006090000_reporting_export.sql (plus `tags` from
+// 20261006100000_tags_collaboration.sql); the database
 // rejects anything else (check_violation), so the parser here drops invalid parts instead.
 
 import type { Json } from "@/lib/supabase/database.types";
@@ -28,6 +29,8 @@ export type ReportFilters = {
   to?: string;
   status?: ReportStatus;
   include_subtasks?: boolean;
+  // Any-of, on each row's own tags (Tags and collaboration extras).
+  tags?: string[];
 };
 
 export type SeriesInterval = "day" | "week";
@@ -50,6 +53,10 @@ export function parseReportFilters(value: unknown): ReportFilters {
     const unique = [...new Set(assignees)].slice(0, MAX_FILTER_ITEMS);
     if (unique.length) out.assignees = unique;
   }
+  if (Array.isArray(raw.tags)) {
+    const tags = [...new Set(raw.tags.filter(isUuid).map((t) => t.toLowerCase()))].slice(0, MAX_FILTER_ITEMS);
+    if (tags.length) out.tags = tags;
+  }
   if (isIsoDate(raw.from)) out.from = raw.from;
   if (isIsoDate(raw.to)) out.to = raw.to;
   if (out.from && out.to && out.from > out.to) delete out.from;
@@ -64,7 +71,7 @@ export function reportFiltersJson(filters: ReportFilters): Json {
 
 // URL state for /reports (and the export links that reproduce it):
 //   p=<id>,<id>   projects      a=<id|me|none>,…  assignees      from / to = YYYY-MM-DD
-//   status=open|completed|overdue                  sub=1 = include subtasks
+//   status=open|completed|overdue                  sub=1 = include subtasks   t=<tag id>,… tags
 type Params = Record<string, string | string[] | undefined> | URLSearchParams;
 
 function param(params: Params, key: string): string | undefined {
@@ -86,6 +93,7 @@ export function filtersFromParams(params: Params): ReportFilters {
     to: param(params, "to"),
     status: param(params, "status"),
     include_subtasks: param(params, "sub") === "1",
+    tags: list("t"),
   });
 }
 
@@ -97,6 +105,7 @@ export function filtersToParams(filters: ReportFilters): URLSearchParams {
   if (filters.to) params.set("to", filters.to);
   if (filters.status && filters.status !== "all") params.set("status", filters.status);
   if (filters.include_subtasks) params.set("sub", "1");
+  if (filters.tags?.length) params.set("t", filters.tags.join(","));
   return params;
 }
 
@@ -153,6 +162,7 @@ export function describeReportFilters(
   filters: ReportFilters,
   projects: { id: string; name: string }[],
   people: { id: string; name: string }[],
+  tags: { id: string; name: string }[] = [],
 ): string[] {
   const parts: string[] = [];
   const projectNames = new Map(projects.map((p) => [p.id, p.name]));
@@ -168,6 +178,10 @@ export function describeReportFilters(
         .map((a) => (a === null ? "Unassigned" : a === "me" ? "Me" : (peopleNames.get(a) ?? "Former member")))
         .join(", ")}`,
     );
+  }
+  if (filters.tags?.length) {
+    const tagNames = new Map(tags.map((t) => [t.id, t.name]));
+    parts.push(`Tags: ${filters.tags.map((t) => tagNames.get(t) ?? "Deleted tag").join(", ")}`);
   }
   if (filters.from || filters.to) parts.push(`Due or completed ${filters.from ?? "…"} – ${filters.to ?? "…"}`);
   if (filters.status) parts.push(`Status: ${REPORT_STATUSES.find((s) => s.value === filters.status)?.label}`);
