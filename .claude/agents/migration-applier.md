@@ -18,7 +18,7 @@ Inputs: a migration file path (under `supabase/migrations/`) and a slug (snake_c
 
 ## 1. Check the starting point
 
-Call `list_migrations`. If any `<slug>_*` name is already recorded, stop and report it. Don't guess where to resume.
+Call `list_migrations` and note every `<slug>_*` name already recorded (a partial earlier apply). Recorded chunks are **skipped** in step 3, and the rest are applied as usual. The split in step 2 is deterministic (same file, same rules ⇒ same chunks), so the names line up with the earlier run. Stop and report instead of applying anything only if the recorded names aren't a contiguous run from `<slug>_a` (e.g. `_a`, `_c` without `_b`), or if more names are recorded than the split produces.
 
 ## 2. Split into chunks
 
@@ -29,14 +29,14 @@ How to group statements:
 - Keep chunks small: about 4 KB at most and no more than 4 non-trivial statements. Calls through the connector have timed out at 60 seconds even when the SQL itself takes milliseconds, so err small.
 - Keep a `create function` / `create or replace function` together with the `revoke` / `grant` / `comment on function` statements that follow it for the same function.
 - Keep a `create table` together with its indexes, triggers, RLS, policies, grants, and comments.
-- Put any `drop function` of a temporary helper the file defines for itself (e.g. `alhc_patch_function`) **alone in the final chunk**. Such a drop has hung on a lock before, and alone it can't hold up anything else.
+- Migrations keep `public.alhc_patch_function` in place (create or replace + revoke at the top, no drop at the end), because dropping it kept timing out through the connector. If an older-style file still ends with a `drop function` of a helper it defines, put that drop **alone in the final chunk** so it can't hold up anything else.
 - Leading comments and blank lines go with the statement after them; trailing ones with the statement before them.
 
 Write the chunks to `<tmpdir>/<slug>_a.sql`, `<slug>_b.sql`, …, then prove the split. Concatenate them in order and compare with the original byte for byte (`cmp`). If they differ, stop and report. Also confirm every chunk has balanced dollar quotes. Then list each chunk's name, size, and first statement.
 
 ## 3. Apply in order
 
-For each chunk, call `apply_migration` with `project_id: xsgmawawwstbrbukgsax`, `name: <slug>_<letter>`, and the chunk's exact text from the file you wrote (read it back; never retype or edit it).
+Skip every chunk whose name step 1 found recorded (report it as "already recorded"). For each remaining chunk, call `apply_migration` with `project_id: xsgmawawwstbrbukgsax`, `name: <slug>_<letter>`, and the chunk's exact text from the file you wrote (read it back; never retype or edit it).
 
 If a call fails or times out:
 
@@ -50,7 +50,7 @@ Never retry a chunk without that `list_migrations` check, and never retry more t
 
 ## 4. Report
 
-- Every chunk name, in order, marked applied, applied on retry, or not applied.
+- Every chunk name, in order, marked already recorded (skipped), applied, applied on retry, or not applied.
 - Every error or timeout, with the chunk name and the message.
 - The final `<slug>_*` names from `list_migrations`.
 - If you stopped: which chunk, and that the PR must not be merged until it is resolved.
