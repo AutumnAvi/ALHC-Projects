@@ -310,8 +310,6 @@ create policy import_runs_select_admin_or_workspace_admin on public.import_runs
       )
     )
   );
-drop policy if exists import_runs_select_admin on public.import_runs;
-drop policy if exists import_runs_select_workspace_admin on public.import_runs;
 
 -- Team leads / workspace admins manage memberships; anyone may leave (team_members_05_guard limits
 -- that to setting deleted_at).
@@ -325,8 +323,6 @@ create policy team_members_update_lead_or_own on public.team_members
     (select public.can_manage_team(team_id))
     or profile_id = (select auth.uid())
   );
-drop policy if exists team_members_update_lead on public.team_members;
-drop policy if exists team_members_update_own on public.team_members;
 
 -- ---------------------------------------------------------------------------
 -- 3. Log retention
@@ -389,3 +385,14 @@ begin
   end if;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- 2c (end). Drop the policies the merged ones replace
+-- ---------------------------------------------------------------------------
+-- Last in the file: the merged policies above already grant the same access, so until these run the
+-- old policies only duplicate it.
+
+drop policy if exists import_runs_select_admin on public.import_runs;
+drop policy if exists import_runs_select_workspace_admin on public.import_runs;
+drop policy if exists team_members_update_lead on public.team_members;
+drop policy if exists team_members_update_own on public.team_members;
