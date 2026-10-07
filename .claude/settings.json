@@ -1,8 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "mcp__supabase__apply_migration",
-      "mcp__supabase__list_migrations"
+      "mcp__Supabase__apply_migration",
+      "mcp__Supabase__list_migrations"
     ]
   }
 }

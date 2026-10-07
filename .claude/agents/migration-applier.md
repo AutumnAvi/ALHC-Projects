@@ -1,7 +1,7 @@
 ---
 name: migration-applier
 description: Applies one phase's Supabase migration file to the shared hosted project in small chunks. Use after every PR check passes and before merging. Give it the migration file path and the phase slug (e.g. supabase/migrations/20261007030000_integration_depth.sql and integration_depth).
-tools: Read, Bash, mcp__supabase__apply_migration, mcp__supabase__list_migrations
+tools: Read, Bash, mcp__Supabase__apply_migration, mcp__Supabase__list_migrations
 model: sonnet
 ---
 
