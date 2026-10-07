@@ -407,7 +407,8 @@ do $$
 declare
   result jsonb;
 begin
-  assert (select count(*) from public.project_members) = 0, 'anon cannot read memberships';
+  -- Since Review hardening anon has no table privileges at all, so this is a permission check, not RLS.
+  assert not has_table_privilege('anon', 'public.project_members', 'select'), 'anon cannot read memberships';
   assert public.get_public_form((select id from tp_ids where name = 'form')) ->> 'title' = 'Team intake',
     'public forms still load for anon';
   result := public.submit_form((select id from tp_ids where name = 'form'), 'guest@example.org', '{"title": "Need a flyer"}');
@@ -537,6 +538,8 @@ begin
   -- log returns hints only — never a URL, secret, or signature).
   -- Inbound integrations added receive_inbound_webhook (also granted to anon, like submit_form); endpoint
   -- management is invoker.
+  -- Review hardening added none: alhc_purge_old_logs (daily log retention from pg_cron) is definer but
+  -- revoked from every client role, like the other internal helpers.
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
     'assign_request_number,can_manage_project_template,cancel_approval,cancel_integration_delivery,create_project_from_template,custom_field_project,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'
@@ -554,6 +557,8 @@ begin
   assert not has_function_privilege('authenticated', 'public.backfill_project_members()', 'execute'),
     'backfill is not an RPC';
   assert has_function_privilege('service_role', 'public.workflow_tick()', 'execute'), 'service role keeps the tick';
+  assert not has_function_privilege('authenticated', 'public.alhc_purge_old_logs()', 'execute')
+    and not has_function_privilege('anon', 'public.alhc_purge_old_logs()', 'execute'), 'log purge is pg_cron only';
 end $$;
 
 -- Backfill ---------------------------------------------------------------------------------------

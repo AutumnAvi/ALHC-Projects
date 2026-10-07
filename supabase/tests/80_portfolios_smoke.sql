@@ -521,9 +521,10 @@ select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
 
 do $$
 begin
-  assert (select count(*) from public.portfolios) = 0, 'anon reads no portfolios';
-  assert (select count(*) from public.portfolio_members) = 0, 'anon reads no portfolio members';
-  assert (select count(*) from public.portfolio_projects) = 0, 'anon reads no portfolio projects';
+  -- Since Review hardening anon has no table privileges at all, so this is a permission check, not RLS.
+  assert not has_table_privilege('anon', 'public.portfolios', 'select'), 'anon reads no portfolios';
+  assert not has_table_privilege('anon', 'public.portfolio_members', 'select'), 'anon reads no portfolio members';
+  assert not has_table_privilege('anon', 'public.portfolio_projects', 'select'), 'anon reads no portfolio projects';
 end $$;
 
 reset role;
