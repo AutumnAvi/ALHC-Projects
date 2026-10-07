@@ -8,6 +8,26 @@ export const DEFAULT_SECRET_HEADER = "X-ALHC-Webhook-Secret";
 export const WEBHOOK_USER_AGENT = "ALHC-Projects-Webhook/1.0";
 export const MAX_SECRET_LENGTH = 500;
 
+// HMAC body signing (Integration depth). The drain signs every webhook that has a signing secret:
+//   X-ALHC-Timestamp: <unix seconds at send time>
+//   X-ALHC-Signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw request body>")>
+// Receivers recompute it over the raw body bytes, compare in constant time, and reject timestamps more
+// than SIGNATURE_TOLERANCE_SECONDS away from their clock (AGENTS.md → "Integration depth model").
+export const SIGNATURE_HEADER = "X-ALHC-Signature";
+export const TIMESTAMP_HEADER = "X-ALHC-Timestamp";
+export const SIGNATURE_TOLERANCE_SECONDS = 300;
+
+// Mirrors the outbox: 5 automatic attempts (backing off 5, 10, 20, then 30 minutes); each manual retry
+// allows one more, up to 10 in total (integration_retry_delay / retry_integration_delivery).
+export const MAX_AUTO_ATTEMPTS = 5;
+export const MAX_TOTAL_ATTEMPTS = 10;
+
+// send_slack { format }: plain text (default) or Block Kit with the plain text as fallback.
+export const SLACK_FORMATS = [
+  { value: "text", label: "Plain text" },
+  { value: "blocks", label: "Block Kit (task card)" },
+] as const;
+
 const URL_SHAPE = /^https:\/\/([A-Za-z0-9.-]+)(:[0-9]{1,5})?([/?#][^\s]*)?$/;
 const PRIVATE_HOST = [
   /(^|\.)(localhost|local|internal)$/,
@@ -29,6 +49,8 @@ const RESERVED_HEADERS = new Set([
   "transfer-encoding",
   "connection",
   "accept-encoding",
+  "x-alhc-signature",
+  "x-alhc-timestamp",
 ]);
 
 export function webhookHost(url: string): string | null {
@@ -64,6 +86,8 @@ export type ProjectIntegrations = {
   webhook: string | null;
   webhookSecretSet: boolean;
   webhookSecretHeader: string | null;
+  signingSecretSet: boolean;
+  signingSecretCreatedAt: string | null;
 };
 
 export function toProjectIntegrations(value: Json): ProjectIntegrations {
@@ -73,6 +97,8 @@ export function toProjectIntegrations(value: Json): ProjectIntegrations {
     webhook: typeof r.webhook === "string" ? r.webhook : null,
     webhookSecretSet: r.webhook_secret_set === true,
     webhookSecretHeader: typeof r.webhook_secret_header === "string" ? r.webhook_secret_header : null,
+    signingSecretSet: r.signing_secret_set === true,
+    signingSecretCreatedAt: typeof r.signing_secret_created_at === "string" ? r.signing_secret_created_at : null,
   };
 }
 
@@ -87,4 +113,50 @@ export type IntegrationSetting = (typeof INTEGRATION_SETTINGS)[number];
 
 export function isIntegrationSetting(value: unknown): value is IntegrationSetting {
   return INTEGRATION_SETTINGS.includes(value as IntegrationSetting);
+}
+
+// One row of the delivery log (list_integration_deliveries): hints only, never a URL, secret, or signature.
+export type DeliveryStatus = "pending" | "sending" | "sent" | "mocked" | "failed" | "cancelled";
+
+export type IntegrationDelivery = {
+  id: string;
+  channel: "slack" | "webhook";
+  taskId: string | null;
+  taskTitle: string | null;
+  ruleId: string | null;
+  ruleName: string | null;
+  targetHint: string;
+  status: DeliveryStatus;
+  attempts: number;
+  maxAttempts: number;
+  responseStatus: number | null;
+  lastError: string | null;
+  signed: boolean;
+  nextAttemptAt: string | null;
+  sentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
+  pending: "Waiting",
+  sending: "Sending",
+  sent: "Sent",
+  mocked: "Mocked",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+export function isDeliveryStatus(value: unknown): value is DeliveryStatus {
+  return typeof value === "string" && value in DELIVERY_STATUS_LABELS;
+}
+
+// Admin+ actions the log offers (the RPCs re-check): retry a waiting or failed delivery that still has
+// attempts left, cancel one that is waiting.
+export function canRetryDelivery(d: Pick<IntegrationDelivery, "status" | "attempts">) {
+  return (d.status === "pending" || d.status === "failed") && d.attempts < MAX_TOTAL_ATTEMPTS;
+}
+
+export function canCancelDelivery(d: Pick<IntegrationDelivery, "status">) {
+  return d.status === "pending";
 }
