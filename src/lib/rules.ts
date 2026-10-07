@@ -11,6 +11,7 @@ export const TRIGGERS = [
   { value: "due_approaching", label: "Due date is approaching" },
   { value: "approval_decided", label: "An approval is decided" },
   { value: "form_submitted", label: "A form is submitted" },
+  { value: "inbound_received", label: "Created by inbound webhook" },
 ] as const;
 
 export type TriggerType = (typeof TRIGGERS)[number]["value"];

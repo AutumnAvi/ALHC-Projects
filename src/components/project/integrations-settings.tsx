@@ -98,7 +98,11 @@ export function IntegrationsSettings({
         <Link href={`/projects/${projectId}/settings/deliveries`} className="text-accent-700 hover:underline">
           Deliveries
         </Link>{" "}
-        with retry and cancel.
+        with retry and cancel. To create tasks here from another tool, use{" "}
+        <Link href={`/projects/${projectId}/settings/inbound`} className="text-accent-700 hover:underline">
+          Inbound
+        </Link>{" "}
+        webhooks.
       </p>
     </div>
   );

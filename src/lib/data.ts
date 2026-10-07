@@ -44,6 +44,7 @@ import {
 import { isTeamRole, type TeamRole } from "@/lib/teams";
 import { toTag, type Tag } from "@/lib/tags";
 import type { Json, Tables } from "@/lib/supabase/database.types";
+import { isInboundCallStatus, type InboundCall, type InboundEndpoint } from "@/lib/inbound-shared";
 import {
   approvalTaskRequest,
   parseApprovalTaskStatus,
@@ -1853,6 +1854,86 @@ export const listIntegrationDeliveries = cache(async (projectId: string): Promis
     sentAt: row.sent_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }));
+});
+
+// Inbound webhook endpoints of a project (Admin+; RLS returns nothing to anyone else). The token hash
+// and signing secret columns aren't readable by clients at all — only the hint and whether one is set.
+export const listInboundEndpoints = cache(async (projectId: string): Promise<InboundEndpoint[] | null> => {
+  if (!hasRole(await getProjectRole(projectId), "admin")) return null;
+  const supabase = await createClient();
+  const [endpoints, calls] = await Promise.all([
+    supabase
+      .from("inbound_endpoints")
+      .select(
+        "id, project_id, name, section_id, assignee_id, tag_ids, enabled, token_hint, token_rotated_at, signing_secret_set_at, created_by, created_at",
+      )
+      .eq("project_id", projectId)
+      .is("deleted_at", null)
+      .order("created_at"),
+    supabase
+      .from("inbound_calls")
+      .select("endpoint_id, created_at")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .limit(500),
+  ]);
+  const lastCall = new Map<string, string>();
+  for (const call of rows(calls, "inbound calls")) {
+    if (!lastCall.has(call.endpoint_id)) lastCall.set(call.endpoint_id, call.created_at);
+  }
+  return rows(endpoints, "inbound endpoints").map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    sectionId: row.section_id,
+    assigneeId: row.assignee_id,
+    tagIds: row.tag_ids ?? [],
+    enabled: row.enabled,
+    tokenHint: row.token_hint,
+    tokenRotatedAt: row.token_rotated_at,
+    signed: row.signing_secret_set_at !== null,
+    signingSecretSetAt: row.signing_secret_set_at,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    lastCallAt: lastCall.get(row.id) ?? null,
+  }));
+});
+
+// The latest calls to the project's inbound endpoints (Admin+): status, HTTP status, the created task
+// (its title only when the viewer can read it), error, and warnings — never a body, token, or signature.
+export const listInboundCalls = cache(async (projectId: string): Promise<InboundCall[] | null> => {
+  if (!hasRole(await getProjectRole(projectId), "admin")) return null;
+  const supabase = await createClient();
+  const calls = rows(
+    await supabase
+      .from("inbound_calls")
+      .select("id, endpoint_id, status, http_status, task_id, error, warnings, idempotency_key, created_at")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .limit(100),
+    "inbound calls",
+  );
+  const taskIds = [...new Set(calls.flatMap((c) => (c.task_id ? [c.task_id] : [])))];
+  const titles = new Map<string, string>();
+  if (taskIds.length) {
+    const tasks = rows(
+      await supabase.from("tasks").select("id, title").in("id", taskIds).is("deleted_at", null),
+      "inbound tasks",
+    );
+    for (const t of tasks) titles.set(t.id, t.title);
+  }
+  return calls.map((row) => ({
+    id: row.id,
+    endpointId: row.endpoint_id,
+    status: isInboundCallStatus(row.status) ? row.status : "failed",
+    httpStatus: row.http_status,
+    taskId: row.task_id,
+    taskTitle: row.task_id ? (titles.get(row.task_id) ?? null) : null,
+    error: row.error,
+    warnings: Array.isArray(row.warnings) ? row.warnings.filter((w): w is string => typeof w === "string") : [],
+    idempotencyKey: row.idempotency_key,
+    createdAt: row.created_at,
   }));
 });
 

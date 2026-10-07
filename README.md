@@ -194,7 +194,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01, zz02, zz03, zz04…)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01 … zz06)
 ```
 
 ## What's here (integration depth)
@@ -202,6 +202,12 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 - **Slack task cards.** A **Send Slack message** action can use **Message style → Block Kit (task card)**: your message, then the task title linked to it, project, assignee, due date, status, and an **Open task** button (the plain message is still sent for notifications). Any Slack message can include `{task_link}` — the task's title linked to it in the app. The link is the normal signed-in task link: people still sign in to open it, and nothing public or token-based is ever sent. Task details stay escaped, so a title can't ping `@channel` or add a link.
 - **Signed webhooks.** **Settings → Integrations → Signing secret → Generate** (Admins and above) creates a secret for the project webhook, and a **Call webhook** action with its own URL can generate its own. The secret is shown **once** — copy it into the receiver. Each request then carries `X-ALHC-Timestamp` and `X-ALHC-Signature` (an HMAC of the timestamp and the body) so the receiver can prove it came from here; see “Setup: Slack and webhooks”. The shared-secret header keeps working alongside it.
 - **Deliveries.** **Settings → Deliveries** (Admins and above) lists every Slack message and webhook call the project's rules queued: status, attempts, the receiver's response code, the last error, and when it was sent or will be tried next. Destinations show as host + last 4 characters only. A failed send is retried automatically after 5, 10, 20, then 30 minutes and marked failed after 5 attempts; **Retry** gives it one more attempt with the same content (up to 10), **Send now** skips the wait, and **Cancel** stops one that hasn't gone out.
+
+## What's here (inbound integrations)
+
+- **Inbound webhooks.** **Settings → Inbound** (Admins and above) creates an endpoint per project: a name, the section new tasks land in, a default assignee, and default tags. Anything that can POST JSON — Zapier's *Webhooks* action, a website form, a script — sends `{ "title": … }` to the endpoint's URL and a task appears in the project, created as the person who made the endpoint. The URL's token is shown **once** (stored only as a hash); **Rotate token** replaces it, **Turn off** pauses it, **Delete** retires it. Optionally require signed requests (the same `X-ALHC-Timestamp` / `X-ALHC-Signature` scheme as outbound webhooks; stale timestamps and replays are refused). **Recent calls** lists each call's result, HTTP status, the task it created, and any error or warning — never the body or the token.
+- **Rules.** The new trigger **Created by inbound webhook** (any endpoint, or one) and the condition **Task came from → An inbound webhook** let existing rules react, e.g. ping Slack or route by a field.
+- See “Setup: inbound webhooks” for a curl example and signature code.
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.
 
@@ -272,6 +278,38 @@ Emails are also delivered right after any action in the app, so the cron mainly 
    Retries send the same body with a new timestamp and the same `Idempotency-Key: integration-outbox-<id>`, so receivers can drop duplicates.
 4. Delivery needs `SUPABASE_SERVICE_ROLE_KEY` (same as email). Set `INTEGRATIONS_MOCK=true` to log deliveries as `[integration:mocked]` instead of POSTing (useful for previews). `NEXT_PUBLIC_APP_URL` (or Vercel's production URL) adds `task.url` deep links to webhook payloads and turns `{task_link}` / the Block Kit **Open task** button into links (without it they show the plain title and no button).
 4. To inspect deliveries (service role / SQL editor only — clients can't read this table): `select channel, target_hint, status, attempts, last_error from public.integration_outbox order by created_at desc;`.
+
+## Setup: inbound webhooks
+
+1. In the project, open **Settings → Inbound → Add inbound webhook**. Pick the section, default assignee, and default tags, and whether requests must be signed. Copy the URL (and signing secret) when they're shown — they can't be shown again; **Rotate token** / **Replace signing secret** issue new ones.
+2. Send a request (unsigned endpoint; `<token>` is the part of the URL that starts with `alhc_in_`):
+
+   ```bash
+   curl -X POST 'https://<your app>/api/inbound/<token>' \
+     -H 'Content-Type: application/json' \
+     -H 'Idempotency-Key: order-1042' \
+     -d '{"title": "New flyer request", "notes": "From the website", "due_on": "2026-11-02",
+          "assignee_email": "someone@yourdomain.com", "tags": ["Web"],
+          "fields": {"Priority": "High", "Budget": 250}}'
+   ```
+
+   Body (JSON object, UTF-8, ≤ 64 KB): `title` (required, ≤ 500 characters), `notes`, `due_on` (`YYYY-MM-DD`), `assignee_email` (a project member, else the default assignee), `tags` (names of existing workspace tags, added to the defaults), `fields` (custom field values **by field name**: text, number, date, `true`/`false`, an option name or a list of them, member emails for people fields, a section name for a Status field bound to sections). Unknown tags, fields, keys, and non-member emails are skipped and reported as `warnings`. Answers: `201 {"ok": true, "task_id": …}`, `200` with `"duplicate": true` when the `Idempotency-Key` was already used (same task, nothing new), `400` / `413` / `422` with the reason, `429` past 60 calls a minute per endpoint, and a generic `401 {"ok": false, "error": "Unauthorized"}` for every authentication problem (unknown, rotated, turned-off, or deleted token; missing, wrong, stale, or replayed signature; an endpoint whose creator lost Editor access or whose project is archived) — so no answer confirms that a token exists. The **Recent calls** log tells admins which one it was.
+3. **Signed endpoints** also need `X-ALHC-Timestamp` (Unix seconds, within 300 seconds of the server clock) and `X-ALHC-Signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>` over the exact bytes you send. Each signature works once. In Node:
+
+   ```js
+   import { createHmac } from "node:crypto";
+   const body = JSON.stringify({ title: "New flyer request" });
+   const ts = Math.floor(Date.now() / 1000);
+   const signature = "sha256=" + createHmac("sha256", process.env.ALHC_SIGNING_SECRET).update(`${ts}.${body}`).digest("hex");
+   await fetch(url, {
+     method: "POST",
+     headers: { "Content-Type": "application/json", "X-ALHC-Timestamp": String(ts), "X-ALHC-Signature": signature },
+     body, // send exactly the string you signed
+   });
+   ```
+
+   Or from a shell: `sig=$(printf '%s' "$ts.$body" | openssl dgst -sha256 -hmac "$secret" -hex | sed 's/^.* //')`, then send `X-ALHC-Signature: sha256=$sig`.
+4. Tasks are written through the public (anon) key by the database function `receive_inbound_webhook` — never the service role — as the endpoint's creator, who must still be an Editor or above of the project. Rules the new task fires (Slack, email, webhooks) are delivered right after the response, like form submissions (that delivery needs `SUPABASE_SERVICE_ROLE_KEY`, as for every rule delivery).
 
 ## Setup: sign-in (email + password, interim)
 

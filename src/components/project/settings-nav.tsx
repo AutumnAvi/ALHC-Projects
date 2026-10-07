@@ -12,6 +12,7 @@ export function SettingsNav({ projectId }: { projectId: string }) {
     { href: `${base}/templates`, label: "Templates" },
     { href: `${base}/integrations`, label: "Integrations" },
     { href: `${base}/deliveries`, label: "Deliveries" },
+    { href: `${base}/inbound`, label: "Inbound" },
     { href: `${base}/import`, label: "Import" },
     { href: `${base}/trash`, label: "Trash" },
   ];

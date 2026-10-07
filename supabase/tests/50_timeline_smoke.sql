@@ -211,8 +211,9 @@ begin
   select string_agg(p.proname, ',' order by p.proname) into exposed
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.prosecdef and has_function_privilege('anon', p.oid, 'execute');
-  assert exposed = 'get_public_form,submit_form',
-    format('anon may only execute the public form RPCs among SECURITY DEFINER functions, got %s', exposed);
+  -- Inbound integrations added receive_inbound_webhook (the inbound webhook receiver, like submit_form).
+  assert exposed = 'get_public_form,receive_inbound_webhook,submit_form',
+    format('anon may only execute the public form RPCs and the inbound receiver among SECURITY DEFINER functions, got %s', exposed);
 
   assert not exists (
     select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace

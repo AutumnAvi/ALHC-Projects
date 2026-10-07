@@ -504,7 +504,9 @@ begin
   select string_agg(p.proname, ',' order by p.proname) into exposed
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.prosecdef and has_function_privilege('anon', p.oid, 'execute');
-  assert exposed = 'get_public_form,submit_form', format('anon SECURITY DEFINER surface changed: %s', exposed);
+  -- Inbound integrations added receive_inbound_webhook (checks a hashed token, signature, size, rate
+  -- limit, and Idempotency-Key, then writes the task as the endpoint's creator — the submit_form pattern).
+  assert exposed = 'get_public_form,receive_inbound_webhook,submit_form', format('anon SECURITY DEFINER surface changed: %s', exposed);
 
   select string_agg(p.proname, ',' order by p.proname) into exposed
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -533,12 +535,14 @@ begin
   -- Integration depth added cancel_integration_delivery, list_integration_deliveries, and
   -- retry_integration_delivery (Admin+ of the delivery's project; the outbox has no client path, and the
   -- log returns hints only — never a URL, secret, or signature).
+  -- Inbound integrations added receive_inbound_webhook (also granted to anon, like submit_form); endpoint
+  -- management is invoker.
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
     'assign_request_number,can_manage_project_template,cancel_approval,cancel_integration_delivery,create_project_from_template,custom_field_project,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'
     'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_batch,is_allowlisted,is_workspace_admin,list_integration_deliveries,move_portfolio_project,'
     'open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_role,'
-    'remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,'
+    'receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,'
     'request_approval,restore_task,resubmit_approval,retry_integration_delivery,rule_project,save_project_as_template,set_project_archived,set_project_integration,set_project_status,set_task_dependency,start_import_run,submit_form,'
     'task_request_label,task_role,transfer_portfolio_ownership,transfer_project_ownership,'
     'update_portfolio_member_role,update_project_member_role,update_project_template,workspace_hidden_project_count',

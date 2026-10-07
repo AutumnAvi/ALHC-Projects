@@ -23,6 +23,8 @@ export type RuleContext = {
   forms: { id: string; title: string }[];
   // Redacted project defaults (Settings → Integrations); null when not loaded (below Admin).
   integrations: ProjectIntegrations | null;
+  // Inbound webhooks of the project (Settings → Inbound); empty below Admin.
+  inboundEndpoints: { id: string; name: string }[];
 };
 
 export const inputClass =
@@ -88,6 +90,10 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
       return cfg.form_id
         ? `“${ctx.forms.find((f) => f.id === cfg.form_id)?.title ?? "A removed form"}” is submitted`
         : "Any form is submitted";
+    case "inbound_received":
+      return cfg.endpoint_id
+        ? `A task comes in through “${ctx.inboundEndpoints.find((e) => e.id === cfg.endpoint_id)?.name ?? "an inbound webhook"}”`
+        : "A task comes in through any inbound webhook";
     default:
       return labelOf(TRIGGERS, rule.triggerType);
   }
@@ -104,7 +110,9 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
     case "field_is_empty":
       return `${fieldName(ctx, c.field_id)} is ${c.type === "field_is_set" ? "set" : "empty"}`;
     case "source_is":
-      return `task came from ${c.source === "form" ? "a form" : str(c.source)}`;
+      return `task came from ${
+        c.source === "form" ? "a form" : c.source === "inbound" ? "an inbound webhook" : c.source === "manual" ? "the app" : str(c.source)
+      }`;
     default:
       return labelOf(CONDITIONS, c.type).toLowerCase();
   }

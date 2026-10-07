@@ -7,6 +7,7 @@ import {
   listProfiles,
   listProjectFields,
   listProjectForms,
+  listInboundEndpoints,
   listProjectRules,
   listRecentRuleRuns,
   listRulePresets,
@@ -23,7 +24,7 @@ export async function generateMetadata({
 
 export default async function ProjectRulesPage({ params }: PageProps<"/projects/[projectId]/rules">) {
   const { projectId } = await params;
-  const [rules, presets, sections, fields, profiles, forms, integrations] = await Promise.all([
+  const [rules, presets, sections, fields, profiles, forms, integrations, inbound] = await Promise.all([
     listProjectRules(projectId),
     listRulePresets(),
     listSections(projectId),
@@ -31,6 +32,7 @@ export default async function ProjectRulesPage({ params }: PageProps<"/projects/
     listProfiles(),
     listProjectForms(projectId),
     getProjectIntegrations(projectId),
+    listInboundEndpoints(projectId),
   ]);
   const runs = await listRecentRuleRuns(rules.map((r) => r.id));
 
@@ -48,6 +50,7 @@ export default async function ProjectRulesPage({ params }: PageProps<"/projects/
             people: profiles.map((p) => ({ id: p.id, name: p.full_name || p.email })),
             forms: forms.map((f) => ({ id: f.id, title: f.title })),
             integrations,
+            inboundEndpoints: (inbound ?? []).map((e) => ({ id: e.id, name: e.name })),
           }}
         />
       </RoleGate>
