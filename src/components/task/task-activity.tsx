@@ -133,6 +133,8 @@ export function TaskActivity({
         return <>resubmitted this to {nameOf(str(d, "approver_id"))} for approval</>;
       case "form_submitted":
         return <>submitted the form “{str(d, "form_title")}”</>;
+      case "inbound_received":
+        return <>added this through the inbound webhook “{str(d, "endpoint_name")}”</>;
       case "request_number_assigned":
         return <>assigned request number {str(d, "label")}</>;
       case "email_queued":

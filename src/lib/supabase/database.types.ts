@@ -534,6 +534,156 @@ export type Database = {
           },
         ];
       };
+      inbound_calls: {
+        Row: {
+          id: string;
+          endpoint_id: string;
+          project_id: string;
+          status: string;
+          http_status: number;
+          task_id: string | null;
+          error: string | null;
+          warnings: Json;
+          idempotency_key: string | null;
+          replay_digest: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          endpoint_id: string;
+          project_id: string;
+          status: string;
+          http_status: number;
+          task_id?: string | null;
+          error?: string | null;
+          warnings?: Json;
+          idempotency_key?: string | null;
+          replay_digest?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          endpoint_id?: string;
+          project_id?: string;
+          status?: string;
+          http_status?: number;
+          task_id?: string | null;
+          error?: string | null;
+          warnings?: Json;
+          idempotency_key?: string | null;
+          replay_digest?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "inbound_calls_endpoint_id_fkey";
+            columns: ["endpoint_id"];
+            isOneToOne: false;
+            referencedRelation: "inbound_endpoints";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inbound_calls_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inbound_calls_task_id_fkey";
+            columns: ["task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      inbound_endpoints: {
+        Row: {
+          id: string;
+          project_id: string;
+          name: string;
+          section_id: string | null;
+          assignee_id: string | null;
+          tag_ids: string[];
+          enabled: boolean;
+          token_hash: string;
+          token_hint: string;
+          token_rotated_at: string;
+          signing_secret: string | null;
+          signing_secret_set_at: string | null;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          name: string;
+          section_id?: string | null;
+          assignee_id?: string | null;
+          tag_ids?: string[];
+          enabled?: boolean;
+          token_hash?: string;
+          token_hint?: string;
+          token_rotated_at?: string;
+          signing_secret?: string | null;
+          signing_secret_set_at?: string | null;
+          created_by?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          name?: string;
+          section_id?: string | null;
+          assignee_id?: string | null;
+          tag_ids?: string[];
+          enabled?: boolean;
+          token_hash?: string;
+          token_hint?: string;
+          token_rotated_at?: string;
+          signing_secret?: string | null;
+          signing_secret_set_at?: string | null;
+          created_by?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "inbound_endpoints_assignee_id_fkey";
+            columns: ["assignee_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inbound_endpoints_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inbound_endpoints_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inbound_endpoints_section_id_fkey";
+            columns: ["section_id"];
+            isOneToOne: false;
+            referencedRelation: "sections";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       inbox_items: {
         Row: {
           id: string;
@@ -3483,6 +3633,35 @@ export type Database = {
       };
       move_my_tasks: {
         Args: { target_tasks: string[]; target_section: string };
+        Returns: Json;
+      };
+      create_inbound_endpoint: {
+        Args: {
+          target_project: string;
+          endpoint_name: string;
+          target_section?: string | null;
+          default_assignee?: string | null;
+          default_tags?: string[];
+          with_signing_secret?: boolean;
+        };
+        Returns: Json;
+      };
+      receive_inbound_webhook: {
+        Args: {
+          endpoint_token: string;
+          raw_body: string;
+          request_timestamp?: string | null;
+          request_signature?: string | null;
+          idempotency_key?: string | null;
+        };
+        Returns: Json;
+      };
+      rotate_inbound_token: {
+        Args: { target_endpoint: string };
+        Returns: Json;
+      };
+      set_inbound_signing_secret: {
+        Args: { target_endpoint: string; enable: boolean };
         Returns: Json;
       };
       retry_integration_delivery: {

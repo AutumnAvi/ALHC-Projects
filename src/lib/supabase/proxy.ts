@@ -3,8 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { readSupabaseEnv } from "@/lib/env";
 import type { Database } from "./database.types";
 
-// /forms serves public intake forms; /api/cron authorizes with CRON_SECRET instead of a session.
-const PUBLIC_PATHS = ["/login", "/denied", "/auth", "/forms", "/api/cron"];
+// /forms serves public intake forms; /api/cron authorizes with CRON_SECRET and /api/inbound with an
+// endpoint token (plus an optional signature) instead of a session.
+const PUBLIC_PATHS = ["/login", "/denied", "/auth", "/forms", "/api/cron", "/api/inbound"];
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));

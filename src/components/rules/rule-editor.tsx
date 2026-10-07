@@ -282,6 +282,21 @@ export function RuleEditor({
               })}
             </fieldset>
           ) : null}
+          {draft.triggerType === "inbound_received" ? (
+            <select
+              aria-label="Inbound webhook"
+              value={typeof draft.triggerConfig.endpoint_id === "string" ? draft.triggerConfig.endpoint_id : ""}
+              onChange={(e) => setConfig({ endpoint_id: e.currentTarget.value })}
+              className={inputClass}
+            >
+              <option value="">Any inbound webhook</option>
+              {ctx.inboundEndpoints.map((endpoint) => (
+                <option key={endpoint.id} value={endpoint.id}>
+                  {endpoint.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {draft.triggerType === "form_submitted" ? (
             <select
               aria-label="Form"
@@ -354,6 +369,7 @@ export function RuleEditor({
                 <option value="form">A form</option>
                 <option value="manual">Created in the app</option>
                 <option value="import">An import</option>
+                <option value="inbound">An inbound webhook</option>
               </select>
             ) : null}
             <button
