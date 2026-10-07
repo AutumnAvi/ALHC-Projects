@@ -1,6 +1,6 @@
 # ALHC Projects
 
-Our own project management software: projects, sections, tasks, and subtasks (real tasks, nested up to 4 levels), with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios (nestable, with custom fields, a timeline, and cross-project progress and reporting), goals with sub-goals and progress, a teams directory with group invites, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies with a critical path, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
+Our own project management software: projects, sections, tasks, and subtasks (real tasks, nested up to 4 levels), with saved List, Board, Calendar, and Timeline views, project dashboards, portfolios (nestable, with custom fields, a timeline, and cross-project progress and reporting), goals with sub-goals and progress, a teams directory with group invites, a task detail pane, multi-select bulk edits and keyboard shortcuts, recurring tasks, due/start times, task dependencies (lag, start-to-start, across projects and subtasks) with a critical path and confirmed auto-shift, a per-project Trash, comments, custom fields, attachments, My Tasks, an Inbox, search, approvals, public intake forms, request numbers, and a rules engine with email, Slack messages, and outbound webhooks. Built with Next.js 16 (App Router), Supabase (Auth + Postgres + RLS), and Tailwind CSS 4, and deployed on Vercel.
 
 Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](./AGENTS.md).
 
@@ -53,7 +53,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 - **Recurring tasks.** In the task pane, **Repeats** sets a task to repeat daily, weekly (optionally on chosen weekdays), monthly, or yearly, every N days/weeks/months/years, ending never, after a number of occurrences, or on a date. Completing a repeating task creates the next one (Asana style) with its dates moved forward, in the same projects and sections, with the same assignee, field values, followers, and subtasks (reopened, with their dates moved forward too). A task repeating monthly on the 31st lands on the last day of shorter months and comes back to the 31st. List rows and Board cards show a small repeat icon.
 - **Due and start times.** Next to each date in the pane there is an optional time, entered in your own time zone. Calendar, Timeline, filters, rules, and forms keep working by day; dragging a timed task to another day keeps its time. The start can't be after the due date, to the minute.
-- **Dependencies.** In the pane, **Blocked by** and **Blocking** link tasks in the same project (finish-to-start). A task can't be marked complete while a task it's blocked by is incomplete, and loops (A waits on B waits on A) are rejected. Blocked tasks show a lock with a count on List and Board, and the Timeline draws an arrow from each task to the one waiting on it (red when the waiting task starts before the first one is due). Editors and above can add or remove dependencies.
+- **Dependencies.** In the pane, **Blocked by** and **Blocking** link tasks (finish-to-start; since Scheduling depth and polish also start-to-start, with lag, across projects and between subtasks). A task can't be marked complete while a task it's blocked by is incomplete, and loops (A waits on B waits on A) are rejected. Blocked tasks show a lock with a count on List and Board, and the Timeline draws an arrow from each task to the one waiting on it (red when the waiting task starts before the first one is due). Editors and above can add or remove dependencies.
 - **Trash.** Settings → **Trash** lists the project's deleted tasks, with who deleted them and when, and a **Restore** button. Restoring puts a task back in every project it was in, with its history. Only Editors and above can see the Trash; deleted tasks never appear in views, search, My Tasks, or the Inbox. Nothing is ever deleted permanently.
 
 ## What's here (portfolios and reporting)
@@ -162,6 +162,16 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Attachment previews:** PNG, JPEG, GIF, and WebP images show as thumbnails in the task pane and open in a viewer (arrow keys move between images); PDFs open in the browser's PDF viewer. Other files (SVG included) always download. Files stay in the private bucket behind short-lived links.
 - **CSV exports** now say so when a file was cut at 10,000 rows, and cells starting with a tab or line break are kept as text too.
 
+## What's here (scheduling depth and polish)
+
+- **Richer dependencies.** Each link in the pane's **Blocked by** / **Blocking** lists has a type and a lag: **Finish → start** (the later task starts on or after the earlier one's due date, and can't be completed before it) or **Start → start** (it starts on or after the earlier one's start; it never blocks completion), plus a lag in whole days (−365 to 365; negative = overlap). Links work between subtasks and across projects, as long as you're an Editor of both tasks. You only see a link when you can open both tasks; a task you can't open never shows up by name — the pane just says it's also waiting on “a task you can't open”.
+- **Timeline and critical path** follow type and lag: start-to-start arrows leave the earlier bar's start, an arrow turns red when the later task starts before the link allows, and slack counts the lag.
+- **Auto-shift, with a confirm.** Moving a task later (drag on Timeline or Calendar, or a new date in the pane) checks the tasks that depend on it. If any would start too early, a dialog lists what would move (and by how much, following the chain) and what won't — completed tasks and tasks you can't edit stay put. Untick any you want to leave, then **Move … too**, **Only move this task**, or **Cancel**. Nothing else moves without that click, and the toast offers **Undo**, which puts every moved date back (tasks changed since keep their new dates). Moving earlier never pulls tasks in.
+- **Tag activity:** adding or removing a tag shows in the task's activity.
+- **Decide approvals from the Inbox:** an approval request in your Inbox has **Approve**, **Request changes**, and **Reject** buttons while it's waiting on you (only the approver sees them; Viewers can't decide).
+- **Convert a task to a subtask, and back.** Under **Projects** in the pane: “Convert to a subtask of …” (it leaves its projects and lives under the new parent) or, on a subtask, “Convert to a task in [project / section]”. Tags, field values, comments, dependencies, and its own subtasks stay with it; you need Editor on both sides, and the 4-level limit and loop checks still apply.
+- **Show subtasks is saved with the view** (List): toggling it is an unsaved change like grouping or columns; **Save view** keeps it for everyone.
+
 ## Local development
 
 ```bash
@@ -176,7 +186,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01, zz02…)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01, zz02, zz03…)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.

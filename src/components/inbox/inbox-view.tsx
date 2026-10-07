@@ -20,7 +20,7 @@ import { useTaskHref } from "@/components/project/shared";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { useServerAction } from "@/components/toast";
-import { archiveInboxItems, markInboxRead, markInboxUnread } from "@/lib/actions";
+import { archiveInboxItems, decideApproval, markInboxRead, markInboxUnread } from "@/lib/actions";
 import type { InboxItem, InboxTab, Profile } from "@/lib/data";
 import { useRealtimeRefresh } from "@/lib/realtime";
 
@@ -34,6 +34,14 @@ const KIND = {
   rule: { icon: Workflow, verb: "notified you about" },
   message: { icon: MessagesSquare, verb: "replied in" },
 } as const;
+
+const APPROVAL_STATE: Record<string, string> = {
+  pending: "Waiting for your decision",
+  approved: "You approved this",
+  changes_requested: "You requested changes",
+  rejected: "You rejected this",
+  cancelled: "This request was cancelled",
+};
 
 const DECISION_VERB: Record<string, string> = {
   approved: "approved",
@@ -101,6 +109,24 @@ export function InboxView({
     run(
       () => archiveInboxItems(ids, archived),
       () => move(ids === "all" ? shown.map((item) => item.id) : ids),
+    );
+  }
+
+  // The approver decides a pending request right here (decide_approval: approver only, Commenter+).
+  function decide(item: InboxItem, decision: "approved" | "changes_requested" | "rejected") {
+    if (!item.approval) return;
+    let note: string | undefined;
+    if (decision !== "approved") {
+      const answer = window.prompt(
+        decision === "rejected" ? "Reject — add a note for the requester (optional)" : "What should change? (optional)",
+      );
+      if (answer === null) return;
+      note = answer.trim() || undefined;
+    }
+    const approvalId = item.approval.id;
+    run(
+      () => decideApproval(approvalId, decision, note),
+      () => setRead({ ids: [item.id], read: true }),
     );
   }
 
@@ -237,6 +263,29 @@ export function InboxView({
                         {read ? null : <span className="sr-only"> (unread)</span>}
                       </Link>
                       {detail ? <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{detail}</p> : null}
+                      {item.approval && item.approval.approverId === memberId && item.approval.status === "pending" ? (
+                        <div className="relative z-10 mt-1.5 flex flex-wrap gap-1.5" aria-label={`Decide on “${item.taskTitle}”`}>
+                          <button type="button" onClick={() => decide(item, "approved")} className="btn-primary h-6 px-2 text-xs">
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => decide(item, "changes_requested")}
+                            className="btn-secondary h-6 px-2 text-xs"
+                          >
+                            Request changes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => decide(item, "rejected")}
+                            className="btn-secondary h-6 px-2 text-xs hover:border-red-300 hover:text-red-700"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      ) : item.approval && item.approval.approverId === memberId && item.kind === "approval_requested" ? (
+                        <p className="relative mt-1 text-xs text-zinc-500">{APPROVAL_STATE[item.approval.status]}</p>
+                      ) : null}
                       <p className="mt-1 flex items-center gap-1 text-xs text-zinc-400">
                         <Icon className="size-3.5" aria-hidden />
                         <Timestamp iso={item.createdAt} />

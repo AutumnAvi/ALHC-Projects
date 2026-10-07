@@ -6,7 +6,8 @@ import type { Json } from "@/lib/supabase/database.types";
 // database validates the same shape (validate_view_config) and evaluates filters in
 // filter_project_tasks(). See the schema comment at the top of
 // supabase/migrations/20261005030000_views_insights.sql (plus the `start` key from 20261005040000_timeline.sql
-// and filters.tags / group_by "tag" from 20261006100000_tags_collaboration.sql).
+// and filters.tags / group_by "tag" from 20261006100000_tags_collaboration.sql, and show_subtasks from
+// 20261007010000_scheduling_polish.sql).
 
 export const VIEW_LAYOUTS = [
   { value: "list", label: "List" },
@@ -57,6 +58,8 @@ export type ViewConfig = {
   sort?: ViewSort[];
   group_by?: GroupBy;
   columns?: ColumnKey[];
+  // List: draw each task's subtask tree under its row (absent = off). Since Scheduling depth and polish.
+  show_subtasks?: boolean;
 };
 
 export type ProjectView = {
@@ -251,6 +254,7 @@ export function parseViewConfig(value: unknown): ViewConfig {
     ].slice(0, 30);
     out.columns = columns;
   }
+  if (value.show_subtasks === true) out.show_subtasks = true;
   return out;
 }
 
@@ -357,6 +361,7 @@ export function toJson(config: ViewConfig | ViewFilters): Json {
 export const completionOf = (filters: ViewFilters | undefined): Completion => filters?.completion ?? "incomplete";
 export const groupOf = (config: ViewConfig): GroupBy => config.group_by ?? "section";
 export const sortOf = (config: ViewConfig): ViewSort[] => config.sort ?? [{ key: "manual", dir: "asc" }];
+export const showsSubtasks = (config: ViewConfig): boolean => config.show_subtasks === true;
 
 export function columnsOf(config: ViewConfig, fields: FieldDef[]): ColumnKey[] {
   return config.columns ?? ["assignee", "due", ...fields.filter((f) => f.showInViews).map((f) => fieldRef(f.id))];

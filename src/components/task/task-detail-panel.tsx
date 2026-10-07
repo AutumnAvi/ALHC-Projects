@@ -27,6 +27,7 @@ import { TaskApprovals } from "./task-approvals";
 import { TaskAttachments } from "./task-attachments";
 import { DateTimeField } from "./task-dates";
 import { TaskDependencies } from "./task-dependencies";
+import { TaskConvert } from "./task-convert";
 import { TaskFields } from "./task-fields";
 import { TaskRecurrence } from "./task-recurrence";
 import { TaskSubtasks } from "./task-subtasks";
@@ -148,8 +149,11 @@ export function TaskDetailPanel({
   const [, run] = useServerAction();
   const [completedAt, setOptimisticCompleted] = useOptimistic(task.completedAt);
   const completed = Boolean(completedAt);
-  const openBlockers = task.dependencies.filter((d) => d.relation === "blocked_by" && !d.completedAt);
-  const blocked = !completed && openBlockers.length > 0;
+  // Only finish-to-start links block completion; hidden ones (tasks the viewer can't open) count too.
+  const openBlockers =
+    task.dependencies.filter((d) => d.relation === "blocked_by" && d.kind === "finish_to_start" && !d.completedAt).length +
+    task.hiddenBlockers;
+  const blocked = !completed && openBlockers > 0;
   // An approval task is completed by its assignee's decision while the request is open.
   const approvalRequest = approvalTaskRequest(task.kind, task.assigneeId, task.approvals);
   const awaitingApproval = !completed && approvalOpen(parseApprovalTaskStatus(approvalRequest?.status));
@@ -201,7 +205,7 @@ export function TaskDetailPanel({
             {blocked ? (
               <span id="task-blocked-note" className="inline-flex items-center gap-1 text-xs text-amber-700">
                 <Lock className="size-3.5" aria-hidden />
-                Blocked by {openBlockers.length} task{openBlockers.length === 1 ? "" : "s"}
+                Blocked by {openBlockers} task{openBlockers === 1 ? "" : "s"}
               </span>
             ) : null}
           </>
@@ -383,6 +387,7 @@ export function TaskDetailPanel({
               ) : (
                 <Memberships task={task} addableProjects={addableProjects} />
               )}
+              <TaskConvert task={task} />
             </dd>
           </dl>
 

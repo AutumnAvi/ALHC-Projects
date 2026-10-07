@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
+import { useDependencyShift } from "./dependency-shift";
 import type { TaskDetail } from "@/lib/data";
 import { PANE_CONTROL } from "./pane-styles";
 
@@ -30,17 +31,20 @@ function browserTimeZone() {
 // browser's zone, and the database keeps the date equal to the time's local day.
 export function DateTimeField({ task, kind }: { task: TaskDetail; kind: "start" | "due" }) {
   const [, run] = useServerAction();
+  const shift = useDependencyShift();
   const date = kind === "start" ? task.startOn : task.dueOn;
   const instant = kind === "start" ? task.startAt : task.dueAt;
   const time = useLocalTime(instant);
   const label = kind === "start" ? "Start" : "Due";
 
+  // A later date can push tasks that depend on this one; useDependencyShift asks first (with Undo).
   function saveDate(input: HTMLInputElement) {
     const value = input.value || null;
-    run(async () => {
-      const result = await updateTask(task.id, kind === "start" ? { startOn: value } : { dueOn: value });
-      if (result.error) input.value = date ?? "";
-      return result;
+    const dates = kind === "start" ? { startOn: value, dueOn: task.dueOn } : { startOn: task.startOn, dueOn: value };
+    shift.changeDates(task, dates, {
+      onRevert: () => {
+        input.value = date ?? "";
+      },
     });
   }
 
@@ -57,6 +61,7 @@ export function DateTimeField({ task, kind }: { task: TaskDetail; kind: "start" 
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {shift.dialog}
       <input
         id={`task-${kind}`}
         type="date"

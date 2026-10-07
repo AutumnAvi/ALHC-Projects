@@ -24,6 +24,7 @@ import {
 } from "@/lib/roles";
 import { EMPTY_COUNTS, isPortfolioFieldType, type PortfolioCounts, type PortfolioFieldType } from "@/lib/portfolios";
 import type { CriticalPath, TaskSchedule } from "@/lib/critical-path";
+import { parseDependencyKind, type DependencyKind } from "@/lib/dependencies";
 import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
 import { isMyTaskSectionKind, type MyTaskPlacement, type MyTaskSection } from "@/lib/my-tasks";
 import type { WorkloadTask } from "@/lib/workload";
@@ -104,7 +105,7 @@ export type ProjectTask = {
   projectCount: number;
   fieldValues: Record<string, Json>;
   recurring: boolean;
-  // Incomplete predecessors (finish-to-start dependencies) the task is waiting on.
+  // Incomplete finish-to-start predecessors the task is waiting on (that the viewer can read).
   blockedBy: number;
   kind: TaskKind;
   // Approval tasks: the status of the assignee's request (null: none yet, or not an approval task).
@@ -137,8 +138,13 @@ export type TaskDetail = {
   // The occurrence spawned when this one was completed (if it still exists).
   nextOccurrenceId: string | null;
   dependencies: TaskDependency[];
-  // Tasks that can be linked: active tasks of the task's projects where the viewer is an Editor.
-  dependencyCandidates: { projectId: string; projectName: string; tasks: { id: string; title: string }[] }[];
+  // Incomplete finish-to-start predecessors the viewer can't open (they still block completion).
+  hiddenBlockers: number;
+  // Tasks that can be linked: active tasks of projects where the viewer is an Editor (the task's own
+  // projects first, then others), plus the other tasks and subtasks of the same task tree.
+  dependencyCandidates: DependencyCandidateGroup[];
+  // Projects (with sections) where the viewer is an Editor among the task's projects (a subtask: its root's).
+  editableProjectIds: string[];
   // Slack / critical path in each of the task's projects (project_critical_path); empty without a due date.
   schedule: (TaskSchedule & { projectId: string; projectName: string })[];
   assigneeId: string | null;
@@ -175,12 +181,18 @@ export type TaskDetail = {
 
 export type TaskDependency = {
   id: string;
-  // blocked_by: the other task must finish first; blocking: the other task waits on this one.
+  // blocked_by: the other task comes first; blocking: the other task waits on this one.
   relation: "blocked_by" | "blocking";
+  kind: DependencyKind;
+  lagDays: number;
   taskId: string;
   title: string;
   completedAt: string | null;
+  // The other task is a subtask (it has no projects of its own).
+  isSubtask: boolean;
 };
+
+export type DependencyCandidateGroup = { key: string; label: string; tasks: { id: string; title: string }[] };
 
 export type TaskAttachmentLink = { id: string; source: string; name: string; url: string | null };
 
@@ -391,6 +403,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
       .from("task_dependencies")
       .select("successor_id, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id)")
       .in("successor_id", taskIds)
+      .eq("kind", "finish_to_start")
       .is("deleted_at", null)
       .is("predecessor.deleted_at", null)
       .is("predecessor.completed_at", null),
@@ -582,24 +595,24 @@ export const projectCriticalPath = cache(async (projectId: string): Promise<Crit
   return { tasks, skipped };
 });
 
-export type ProjectDependency = { id: string; predecessorId: string; successorId: string };
+export type ProjectDependency = {
+  id: string;
+  predecessorId: string;
+  successorId: string;
+  kind: DependencyKind;
+  lagDays: number;
+};
 
-// Active dependencies of a project (for Timeline arrows). Both tasks must still be active.
+// Active dependencies between two active tasks of a project (Timeline arrows), wherever they were made.
 export const listProjectDependencies = cache(async (projectId: string): Promise<ProjectDependency[]> => {
   const supabase = await createClient();
-  const result = await supabase
-    .from("task_dependencies")
-    .select(
-      "id, predecessor_id, successor_id, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id), successor:tasks!task_dependencies_successor_id_fkey!inner(id)",
-    )
-    .eq("project_id", projectId)
-    .is("deleted_at", null)
-    .is("predecessor.deleted_at", null)
-    .is("successor.deleted_at", null);
+  const result = await supabase.rpc("project_dependencies", { target_project: projectId });
   return rows(result, "dependencies").map((d) => ({
     id: d.id,
     predecessorId: d.predecessor_id,
     successorId: d.successor_id,
+    kind: parseDependencyKind(d.kind),
+    lagDays: d.lag_days,
   }));
 });
 
@@ -635,12 +648,13 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .is("deleted_at", null)
       .is("project.deleted_at", null)
       .order("created_at"),
-    task.root_task_id
-      ? supabase
-          .from("tasks")
-          .select("id, title, completed_at, parent_task_id")
-          .or(`id.eq.${task.root_task_id},root_task_id.eq.${task.root_task_id}`)
-      : Promise.resolve({ data: [], error: null }),
+    // The whole task tree (root first): the breadcrumb, and dependency candidates within the tree.
+    supabase
+      .from("tasks")
+      .select("id, title, completed_at, parent_task_id, deleted_at")
+      .or(`id.eq.${scopeTaskId},root_task_id.eq.${scopeTaskId}`)
+      .order("created_at")
+      .limit(500),
   ]);
   const subtaskRows = rows(subtasks, "subtasks");
   const grandchildren = subtaskRows.length
@@ -758,7 +772,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     supabase
       .from("task_dependencies")
       .select(
-        "id, predecessor_id, successor_id, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id, title, completed_at), successor:tasks!task_dependencies_successor_id_fkey!inner(id, title, completed_at)",
+        "id, predecessor_id, successor_id, kind, lag_days, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id, title, completed_at, parent_task_id), successor:tasks!task_dependencies_successor_id_fkey!inner(id, title, completed_at, parent_task_id)",
       )
       .or(`predecessor_id.eq.${taskId},successor_id.eq.${taskId}`)
       .is("deleted_at", null)
@@ -784,9 +798,18 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   }
   const role = maybe(viewerRole, "task role");
   const viewerProjectRole = isProjectRole(role) ? role : null;
-  const [dependencyCandidates, schedule, tagIds] = await Promise.all([
-    hasRole(viewerProjectRole, "editor") && !isSubtask
-      ? listDependencyCandidates(taskId, membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })))
+  const myRoles = await listMyProjectRoles();
+  const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
+  const treeCandidates = rows(tree, "task tree")
+    .filter((r) => r.id !== taskId && r.deleted_at === null)
+    .map((r) => ({ id: r.id, title: r.title }));
+  const [dependencyCandidates, schedule, tagIds, blockerCount] = await Promise.all([
+    hasRole(viewerProjectRole, "editor")
+      ? listDependencyCandidates(
+          taskId,
+          membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })),
+          treeCandidates,
+        )
       : Promise.resolve([]),
     task.due_on && !isSubtask
       ? Promise.all(
@@ -797,7 +820,13 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
         ).then((lists) => lists.flat())
       : Promise.resolve([]),
     listTaskTagIds([taskId]),
+    supabase.rpc("open_blocker_count", { target_task: taskId }),
   ]);
+  const dependencyRows = rows(dependencies, "dependencies");
+  const visibleBlockers = dependencyRows.filter(
+    (d) => d.successor_id === taskId && d.kind === "finish_to_start" && d.predecessor.completed_at === null,
+  ).length;
+  const storyRows = await withDependencyTitles(rows(stories, "activity"));
 
   const commentRows = rows(comments, "comments");
   const approvalRows = rows(approvals, "approvals");
@@ -861,7 +890,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
         })).filter((r) => r.profileIds.length > 0),
       };
     }),
-    stories: rows(stories, "activity").map((st) => ({
+    stories: storyRows.map((st) => ({
       id: st.id,
       actorId: st.actor_id,
       kind: st.kind,
@@ -881,18 +910,23 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     recurrence: parseRecurrence(task.recurrence),
     recurrenceSeq: task.recurrence_seq,
     nextOccurrenceId: maybe(nextOccurrence, "next occurrence")?.id ?? null,
-    dependencies: rows(dependencies, "dependencies").map((d) => {
+    dependencies: dependencyRows.map((d) => {
       const blockedBy = d.successor_id === taskId;
       const other = blockedBy ? d.predecessor : d.successor;
       return {
         id: d.id,
         relation: blockedBy ? ("blocked_by" as const) : ("blocking" as const),
+        kind: parseDependencyKind(d.kind),
+        lagDays: d.lag_days,
         taskId: other.id,
         title: other.title,
         completedAt: other.completed_at,
+        isSubtask: other.parent_task_id !== null,
       };
     }),
+    hiddenBlockers: Math.max(0, (maybe(blockerCount, "blockers") ?? 0) - visibleBlockers),
     dependencyCandidates,
+    editableProjectIds,
     schedule,
     assigneeId: task.assignee_id,
     homeProjectId: task.home_project_id,
@@ -943,36 +977,97 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
 });
 
 const MAX_DEPENDENCY_CANDIDATES = 300;
+const MAX_OTHER_CANDIDATE_PROJECTS = 10;
+const MAX_OTHER_PROJECT_CANDIDATES = 100;
 
-// Active tasks that share a project with the task, in projects where the viewer can edit.
-async function listDependencyCandidates(taskId: string, projects: { id: string; name: string }[]) {
-  if (projects.length === 0) return [];
+// Tasks the viewer can link to: the same task tree (other subtasks / the parent), active tasks of the
+// task's projects where the viewer is an Editor, then of up to 10 other projects they edit (cross-project
+// links need Editor on both tasks, which set_task_dependency checks again).
+async function listDependencyCandidates(
+  taskId: string,
+  projects: { id: string; name: string }[],
+  tree: { id: string; title: string }[],
+): Promise<DependencyCandidateGroup[]> {
   const supabase = await createClient();
   const roles = await listMyProjectRoles();
-  const editable = projects.filter((p) => hasRole(roles.get(p.id), "editor"));
-  if (editable.length === 0) return [];
-  const result = await supabase
-    .from("task_projects")
-    .select("project_id, task:tasks!inner(id, title, completed_at)")
-    .in(
-      "project_id",
-      editable.map((p) => p.id),
-    )
-    .is("deleted_at", null)
-    .is("task.deleted_at", null)
-    .neq("task_id", taskId)
-    .order("sort_order")
-    .limit(MAX_DEPENDENCY_CANDIDATES * editable.length);
-  const memberships = rows(result, "dependency candidates");
-  return editable.map((p) => ({
-    projectId: p.id,
-    projectName: p.name,
-    tasks: memberships
-      .filter((m) => m.project_id === p.id)
-      .sort((a, b) => Number(Boolean(a.task.completed_at)) - Number(Boolean(b.task.completed_at)))
-      .slice(0, MAX_DEPENDENCY_CANDIDATES)
-      .map((m) => ({ id: m.task.id, title: m.task.title })),
-  }));
+  const own = projects.filter((p) => hasRole(roles.get(p.id), "editor"));
+  const ownIds = new Set(projects.map((p) => p.id));
+  const otherIds = [...roles.entries()]
+    .filter(([projectId, role]) => !ownIds.has(projectId) && hasRole(role, "editor"))
+    .map(([projectId]) => projectId);
+  const others = otherIds.length
+    ? rows(
+        await supabase
+          .from("projects")
+          .select("id, name")
+          .in("id", otherIds)
+          .is("deleted_at", null)
+          .order("name")
+          .limit(MAX_OTHER_CANDIDATE_PROJECTS),
+        "projects",
+      )
+    : [];
+  const all = [...own, ...others];
+  const memberships = all.length
+    ? rows(
+        await supabase
+          .from("task_projects")
+          .select("project_id, task:tasks!inner(id, title, completed_at)")
+          .in(
+            "project_id",
+            all.map((p) => p.id),
+          )
+          .is("deleted_at", null)
+          .is("task.deleted_at", null)
+          .neq("task_id", taskId)
+          .order("sort_order")
+          .limit(MAX_DEPENDENCY_CANDIDATES * all.length),
+        "dependency candidates",
+      )
+    : [];
+  const groups: DependencyCandidateGroup[] = [];
+  if (tree.length) groups.push({ key: "tree", label: "This task’s tree", tasks: tree.slice(0, MAX_DEPENDENCY_CANDIDATES) });
+  for (const p of all) {
+    const limit = own.includes(p) ? MAX_DEPENDENCY_CANDIDATES : MAX_OTHER_PROJECT_CANDIDATES;
+    groups.push({
+      key: p.id,
+      label: own.includes(p) ? p.name : `${p.name} (another project)`,
+      tasks: memberships
+        .filter((m) => m.project_id === p.id)
+        .sort((a, b) => Number(Boolean(a.task.completed_at)) - Number(Boolean(b.task.completed_at)))
+        .slice(0, limit)
+        .map((m) => ({ id: m.task.id, title: m.task.title })),
+    });
+  }
+  return groups.filter((g) => g.tasks.length > 0);
+}
+
+// Dependency stories only store the other task's title when every reader of this task can read it
+// (dependency_story_data); otherwise fill it in when the viewer can read the other task.
+async function withDependencyTitles<T extends { kind: string; data: Json }>(stories: T[]): Promise<T[]> {
+  const isDep = (k: string) => k === "dependency_added" || k === "dependency_removed" || k === "dependency_changed";
+  const missing = [
+    ...new Set(
+      stories.flatMap((st) => {
+        const d = st.data;
+        if (!isDep(st.kind) || !d || typeof d !== "object" || Array.isArray(d) || typeof d.task_title === "string") return [];
+        return typeof d.task_id === "string" ? [d.task_id] : [];
+      }),
+    ),
+  ];
+  if (missing.length === 0) return stories;
+  const supabase = await createClient();
+  const titles = new Map(
+    rows(await supabase.from("tasks").select("id, title").in("id", missing.slice(0, 200)), "tasks").map(
+      (t) => [t.id, t.title] as const,
+    ),
+  );
+  return stories.map((st) => {
+    const d = st.data;
+    if (!isDep(st.kind) || !d || typeof d !== "object" || Array.isArray(d) || typeof d.task_id !== "string") return st;
+    const title = titles.get(d.task_id);
+    return title && typeof d.task_title !== "string" ? { ...st, data: { ...d, task_title: title } } : st;
+  });
 }
 
 function toFieldDef(row: Tables<"custom_fields">): FieldDef {
@@ -1137,6 +1232,8 @@ export type InboxItem = {
   parentTitle: string | null;
   commentBody: string | null;
   message: { id: string; threadId: string; projectId: string; projectName: string } | null;
+  // approval_requested items: the request now (its approver decides it from the Inbox while pending).
+  approval: { id: string; status: TaskApproval["status"]; approverId: string } | null;
 };
 
 export type InboxTab = "active" | "archived";
@@ -1162,10 +1259,28 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
     .is("message.deleted_at", null)
     .is("message.project.deleted_at", null);
   messageQuery = tab === "archived" ? messageQuery.not("archived_at", "is", null) : messageQuery.is("archived_at", null);
-  const [parentTitle, messageItems] = await Promise.all([
+  const approvalIds = [
+    ...new Set(
+      items.flatMap((item) => {
+        const d = item.data;
+        if (item.kind !== "approval_requested" || !d || typeof d !== "object" || Array.isArray(d)) return [];
+        return typeof d.approval_id === "string" ? [d.approval_id] : [];
+      }),
+    ),
+  ];
+  const [parentTitle, messageItems, approvalRows] = await Promise.all([
     taskTitles(items.map((item) => item.task.parent_task_id)),
     messageQuery.order("created_at", { ascending: false }).limit(100).then((r) => rows(r, "inbox messages")),
+    approvalIds.length
+      ? supabase
+          .from("approval_requests")
+          .select("id, status, approver_id")
+          .in("id", approvalIds)
+          .is("deleted_at", null)
+          .then((r) => rows(r, "approvals"))
+      : Promise.resolve([]),
   ]);
+  const approvals = new Map(approvalRows.map((a) => [a.id, a] as const));
   // A reply's thread may be deleted (its replies are hidden then) and needs its title.
   const threadIds = [...new Set(messageItems.map((m) => m.message.thread_id).filter((t): t is string => t !== null))];
   const threads = threadIds.length
@@ -1192,6 +1307,15 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
       parentTitle: item.task.parent_task_id ? (parentTitle.get(item.task.parent_task_id) ?? null) : null,
       commentBody: item.comment?.body ?? null,
       message: null,
+      approval: (() => {
+        const d = item.data;
+        const approvalId =
+          item.kind === "approval_requested" && d && typeof d === "object" && !Array.isArray(d) && typeof d.approval_id === "string"
+            ? d.approval_id
+            : null;
+        const a = approvalId ? approvals.get(approvalId) : undefined;
+        return a ? { id: a.id, status: a.status as TaskApproval["status"], approverId: a.approver_id } : null;
+      })(),
     }));
   const messages: InboxItem[] = messageItems.flatMap((item) => {
     const m = item.message;
@@ -1211,6 +1335,7 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
         parentTitle: null,
         commentBody: m.body,
         message: { id: m.id, threadId: m.thread_id ?? m.id, projectId: m.project_id, projectName: m.project.name },
+        approval: null,
       },
     ];
   });

@@ -41,6 +41,17 @@ import {
 import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
 import { isReactionKey } from "@/lib/reactions";
+import {
+  isDependencyKind,
+  isLagDays,
+  parseShiftResult,
+  parseUndoResult,
+  type DependencyKind,
+  type ShiftChange,
+  type ShiftPlanRow,
+  type ShiftResult,
+  type UndoResult,
+} from "@/lib/dependencies";
 import { MAX_TAG_NAME } from "@/lib/tags";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
@@ -1163,17 +1174,116 @@ export async function restoreTask(taskId: string): Promise<ActionResult> {
   });
 }
 
-// Finish-to-start: `successorId` can't be completed until `predecessorId` is.
-export async function addTaskDependency(predecessorId: string, successorId: string): Promise<ActionResult> {
+// Adds a dependency, or changes the kind / lag of an existing one (Editor on both tasks, which may be in
+// different projects or be subtasks). Finish-to-start: `successorId` can't be completed until
+// `predecessorId` is, and starts on or after its due date + lag; start-to-start never blocks.
+export async function setTaskDependency(
+  predecessorId: string,
+  successorId: string,
+  kind: DependencyKind = "finish_to_start",
+  lagDays = 0,
+): Promise<ActionResult> {
   return run(async () => {
+    if (!isDependencyKind(kind)) throw new InputError("Unknown dependency type");
+    if (!isLagDays(lagDays)) throw new InputError("Lag is a whole number of days between -365 and 365");
     const supabase = await createClient();
     check(
-      await supabase.rpc("add_task_dependency", {
+      await supabase.rpc("set_task_dependency", {
         predecessor: id(predecessorId, "task"),
         successor: id(successorId, "task"),
+        dependency_kind: kind,
+        dependency_lag: lagDays,
       }),
     );
   });
+}
+
+// Read-only server calls: same error handling as run(), but no refresh (nothing changed).
+async function read<T>(fn: () => Promise<T>): Promise<{ error?: string; data?: T }> {
+  try {
+    return { data: await fn() };
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+}
+
+// What moving a task to these dates would do to the tasks that depend on it (nothing changes yet).
+export async function previewDependencyShift(
+  taskId: string,
+  dates: { startOn: string | null; dueOn: string | null },
+): Promise<{ error?: string; data?: ShiftPlanRow[] }> {
+  return read(async () => {
+    const startOn = optionalDate(dates.startOn, "start date");
+    const dueOn = optionalDate(dates.dueOn, "due date");
+    if (startOn && dueOn && startOn > dueOn) throw new InputError(START_AFTER_DUE);
+    const supabase = await createClient();
+    const result = await supabase.rpc("preview_dependency_shift", {
+      target_task: id(taskId, "task"),
+      new_start_on: startOn,
+      new_due_on: dueOn,
+    });
+    check(result);
+    return (result.data ?? []).map((r) => ({
+      taskId: r.task_id,
+      title: r.title,
+      startOn: r.start_on,
+      dueOn: r.due_on,
+      newStart: r.new_start,
+      newDue: r.new_due,
+      shiftDays: r.shift_days,
+      status: r.status === "move" ? ("move" as const) : ("skipped" as const),
+      reason: r.reason,
+    }));
+  });
+}
+
+// Moves the task and the confirmed dependents in one call; the result's changes feed undoDependencyShift.
+export async function applyDependencyShift(
+  taskId: string,
+  dates: { startOn: string | null; dueOn: string | null },
+  confirmedIds: string[],
+): Promise<ActionResult & { result?: ShiftResult }> {
+  let result: ShiftResult | undefined;
+  const outcome = await run(async () => {
+    const startOn = optionalDate(dates.startOn, "start date");
+    const dueOn = optionalDate(dates.dueOn, "due date");
+    if (startOn && dueOn && startOn > dueOn) throw new InputError(START_AFTER_DUE);
+    if (!Array.isArray(confirmedIds) || confirmedIds.length > 500) throw new InputError("Too many tasks to move at once");
+    const supabase = await createClient();
+    const response = await supabase.rpc("apply_dependency_shift", {
+      target_task: id(taskId, "task"),
+      new_start_on: startOn,
+      new_due_on: dueOn,
+      confirmed_tasks: [...new Set(confirmedIds.map((t) => id(t, "task")))],
+    });
+    if (/tasks_start_(on_before_due_on|at_before_due_at)/.test(response.error?.message ?? "")) {
+      throw new InputError(START_AFTER_DUE);
+    }
+    check(response);
+    result = parseShiftResult(response.data);
+  });
+  return outcome.error ? outcome : { result };
+}
+
+// Puts back the dates a shift changed (tasks edited since keep their new dates and are reported).
+export async function undoDependencyShift(changes: ShiftChange[]): Promise<ActionResult & { result?: UndoResult }> {
+  let result: UndoResult | undefined;
+  const outcome = await run(async () => {
+    if (!Array.isArray(changes) || changes.length === 0 || changes.length > 501) throw new InputError("Nothing to undo");
+    const payload = changes.map((c) => ({
+      task_id: id(c.task_id, "task"),
+      old_start_on: optionalDate(c.old_start_on, "start date"),
+      old_due_on: optionalDate(c.old_due_on, "due date"),
+      new_start_on: optionalDate(c.new_start_on, "start date"),
+      new_due_on: optionalDate(c.new_due_on, "due date"),
+    }));
+    const supabase = await createClient();
+    const response = await supabase.rpc("undo_dependency_shift", { changes: payload });
+    check(response);
+    result = parseUndoResult(response.data);
+  });
+  return outcome.error ? outcome : { result };
 }
 
 export async function removeTaskDependency(dependencyId: string): Promise<ActionResult> {
@@ -1387,6 +1497,33 @@ export async function updateSubtask(
 }
 
 // Moves a subtask before another one under the same parent (null = to the end).
+// Makes a task a subtask of another task (Editor on both; it leaves its projects) — tags, fields, comments,
+// and dependencies stay with it.
+export async function convertToSubtask(taskId: string, parentId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("convert_to_subtask", { target_task: id(taskId, "task"), new_parent: id(parentId, "task") }));
+  });
+}
+
+// Makes a subtask a top-level task of a project the viewer edits (default: its parent's home project).
+export async function convertToTask(
+  taskId: string,
+  projectId?: string | null,
+  sectionId?: string | null,
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("convert_to_task", {
+        target_task: id(taskId, "task"),
+        target_project: projectId ? id(projectId, "project") : null,
+        target_section: sectionId ? id(sectionId, "section") : null,
+      }),
+    );
+  });
+}
+
 export async function placeSubtask(subtaskId: string, beforeId: string | null): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();

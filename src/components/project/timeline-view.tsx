@@ -7,9 +7,9 @@ import { useId, useRef, useState, type MouseEvent, type PointerEvent } from "rea
 import { Inbox, Route } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useCan } from "@/components/project/project-access";
-import { useServerAction } from "@/components/toast";
-import { updateTask } from "@/lib/actions";
+import { useDependencyShift } from "@/components/task/dependency-shift";
 import { EMPTY_CRITICAL_PATH, slackLabel, type CriticalPath, type TaskSchedule } from "@/lib/critical-path";
+import { dependencyConflict } from "@/lib/dependencies";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectDependency, ProjectTask, Section } from "@/lib/data";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
@@ -74,7 +74,7 @@ export function TimelineView({
   const today = useToday();
   const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
-  const [, run] = useServerAction();
+  const shift = useDependencyShift();
   const canEdit = useCan("editor");
   const [trayDragging, setTrayDragging] = useState<{ taskId: string; x: number; y: number } | null>(null);
   const [dropDay, setDropDay] = useState<number | null>(null);
@@ -108,12 +108,13 @@ export function TimelineView({
     window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
   }
 
+  // Moving a task later can push the tasks that depend on it: useDependencyShift previews that and asks
+  // before anything else moves (with Undo afterwards).
   function reschedule(task: ProjectTask, dates: Dates) {
     if (task.startOn === dates.startOn && task.dueOn === dates.dueOn) return;
-    run(
-      () => updateTask(task.id, dates),
-      () => applyChange({ type: "dates", taskId: task.id, ...dates }),
-    );
+    shift.changeDates(task, dates, {
+      onOptimistic: (moves) => moves.forEach((m) => applyChange({ type: "dates", ...m })),
+    });
   }
 
   if (!anchor || !today) {
@@ -155,17 +156,25 @@ export function TimelineView({
     const succStart = daysBetween(start, b.start);
     // Only when both bars are at least partly inside the window.
     if (predEnd <= 0 || daysBetween(start, a.start) >= days || succStart >= days || daysBetween(start, b.end) < 0) return [];
-    const x1 = Math.min(predEnd, days) * dayWidth;
+    // Finish-to-start leaves the predecessor's end; start-to-start leaves its start (both enter the
+    // successor's start). Red when the successor starts before the link (kind + lag) allows.
+    const fromStart = dep.kind === "start_to_start";
+    const x1 = fromStart
+      ? Math.max(daysBetween(start, a.start), 0) * dayWidth
+      : Math.min(predEnd, days) * dayWidth;
     const x2 = Math.max(succStart, 0) * dayWidth;
     const pad = 8;
-    const path =
-      x2 - x1 >= 2 * pad
-        ? `M${x1},${y1} H${x1 + pad} V${y2} H${x2}`
-        : `M${x1},${y1} H${x1 + pad} V${y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 2)} H${x2 - pad} V${y2} H${x2}`;
+    const out = fromStart ? x1 - pad : x1 + pad;
+    const path = fromStart
+      ? `M${x1},${y1} H${Math.min(out, x2 - pad)} V${y2} H${x2}`
+      : x2 - x1 >= 2 * pad
+        ? `M${x1},${y1} H${out} V${y2} H${x2}`
+        : `M${x1},${y1} H${out} V${y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 2)} H${x2 - pad} V${y2} H${x2}`;
     const onPath = Boolean(
       criticalPath.tasks[dep.predecessorId]?.critical && criticalPath.tasks[dep.successorId]?.critical,
     );
-    return [{ id: dep.id, path, conflict: b.start < a.end, tone: showCritical ? (onPath ? "path" : "dim") : "normal" } as const];
+    const conflict = dependencyConflict(pred, succ, dep.kind, dep.lagDays);
+    return [{ id: dep.id, path, conflict, tone: showCritical ? (onPath ? "path" : "dim") : "normal" } as const];
   });
 
   function dayAt(clientX: number, clientY: number) {
@@ -219,6 +228,7 @@ export function TimelineView({
 
   return (
     <div className={VIEW_BODY}>
+      {shift.dialog}
       <div className="flex min-w-0 flex-1 flex-col">
         <PeriodNav
           label={label}
@@ -466,7 +476,7 @@ export function TimelineView({
   );
 }
 
-// Finish-to-start arrows drawn over the bars (pointer-transparent; the pane lists dependencies for
+// Dependency arrows (finish-to-start and start-to-start) drawn over the bars (pointer-transparent; the pane lists dependencies for
 // keyboard and screen-reader users). The sticky header and label column paint above them.
 function DependencyArrows({
   arrows,

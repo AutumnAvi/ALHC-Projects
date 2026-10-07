@@ -1680,6 +1680,7 @@ export type Database = {
           predecessor_id: string;
           successor_id: string;
           kind: string;
+          lag_days: number;
           created_by: string | null;
           created_at: string;
           updated_at: string;
@@ -1691,6 +1692,7 @@ export type Database = {
           predecessor_id: string;
           successor_id: string;
           kind?: string;
+          lag_days?: number;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -1702,6 +1704,7 @@ export type Database = {
           predecessor_id?: string;
           successor_id?: string;
           kind?: string;
+          lag_days?: number;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -3688,6 +3691,49 @@ export type Database = {
       };
       update_project_template: {
         Args: { target_template: string; template_name: string; template_description?: string | null };
+        Returns: undefined;
+      };
+      set_task_dependency: {
+        Args: { predecessor: string; successor: string; dependency_kind?: string; dependency_lag?: number };
+        Returns: string;
+      };
+      project_dependencies: {
+        Args: { target_project: string };
+        Returns: { id: string; predecessor_id: string; successor_id: string; kind: string; lag_days: number }[];
+      };
+      preview_dependency_shift: {
+        Args: { target_task: string; new_start_on: string | null; new_due_on: string | null };
+        Returns: {
+          task_id: string;
+          title: string;
+          start_on: string | null;
+          due_on: string | null;
+          new_start: string | null;
+          new_due: string | null;
+          shift_days: number;
+          status: string;
+          reason: string | null;
+        }[];
+      };
+      apply_dependency_shift: {
+        Args: {
+          target_task: string;
+          new_start_on: string | null;
+          new_due_on: string | null;
+          confirmed_tasks?: string[];
+        };
+        Returns: Json;
+      };
+      undo_dependency_shift: {
+        Args: { changes: Json };
+        Returns: Json;
+      };
+      convert_to_subtask: {
+        Args: { target_task: string; new_parent: string };
+        Returns: undefined;
+      };
+      convert_to_task: {
+        Args: { target_task: string; target_project?: string | null; target_section?: string | null };
         Returns: undefined;
       };
       project_critical_path: {
