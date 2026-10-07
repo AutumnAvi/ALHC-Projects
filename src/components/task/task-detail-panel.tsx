@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useOptimistic, type ReactNode } from "react";
 import { Check, ChevronRight, FileInput, FolderClosed, Hash, Home, Lock, Plus, SearchX, Trash2, X } from "lucide-react";
+import { DuplicateTaskButton } from "./duplicate-task-dialog";
+import { TaskLike } from "./task-like";
 import { displayName } from "@/components/avatar";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -164,10 +166,16 @@ export function TaskDetailPanel({
   const addableProjects = canEdit && !task.isSubtask ? projects.filter((p) => p.canAdd && !memberProjectIds.has(p.id)) : [];
   // Only people with access to one of the task's projects can be assigned (others couldn't see it).
   // An approval task's assignee approves it, so they need Commenter+ (the database refuses Viewers).
-  const assignable = profiles.filter(
-    (p) =>
-      p.id === task.assigneeId ||
-      (task.kind === "approval" ? hasRole(task.memberRoles[p.id], "commenter") : p.id in task.memberRoles),
+  // A private task is shared by assigning it, so anyone can be its assignee; a private task's subtask
+  // only its top-level task's creator or assignee (nobody else can read it).
+  const assignable = profiles.filter((p) =>
+    p.id === task.assigneeId
+      ? true
+      : task.isPrivate
+        ? !task.isSubtask || task.privateReaderIds.includes(p.id)
+        : task.kind === "approval"
+          ? hasRole(task.memberRoles[p.id], "commenter")
+          : p.id in task.memberRoles,
   );
   const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
 
@@ -239,6 +247,14 @@ export function TaskDetailPanel({
               defaultProjectId={home.projectId}
             />
           ) : null}
+          <TaskLike
+            taskId={task.id}
+            likeProfileIds={task.likeProfileIds}
+            profiles={profiles}
+            memberId={memberId}
+            canLike={hasRole(task.viewerRole, "commenter")}
+          />
+          {canEdit ? <DuplicateTaskButton taskId={task.id} title={task.title} isSubtask={task.isSubtask} /> : null}
           {canEdit ? (
             <button
               type="button"
@@ -385,7 +401,18 @@ export function TaskDetailPanel({
               {task.isSubtask ? (
                 <InheritedProjects task={task} />
               ) : (
-                <Memberships task={task} addableProjects={addableProjects} />
+                <>
+                  {task.isPrivate ? (
+                    <p className="flex items-start gap-1.5 py-1.5 text-sm text-zinc-600">
+                      <Lock className="mt-0.5 size-3.5 shrink-0 text-zinc-400" aria-hidden />
+                      <span>
+                        Private: only its creator and its assignee can see it. Adding it to a project makes it that
+                        project’s task, visible to the project’s members.
+                      </span>
+                    </p>
+                  ) : null}
+                  <Memberships task={task} addableProjects={addableProjects} />
+                </>
               )}
               <TaskConvert task={task} />
             </dd>
@@ -521,7 +548,7 @@ function Memberships({
             }}
             className="rounded border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
           >
-            <option value="">Add to another project…</option>
+            <option value="">{task.memberships.length ? "Add to another project…" : "Add to a project…"}</option>
             {addableProjects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
@@ -611,6 +638,11 @@ function InheritedProjects({ task }: { task: TaskDetail }) {
             </li>
           ))}
         </ul>
+      ) : task.isPrivate ? (
+        <span className="inline-flex items-center gap-1.5 text-zinc-600">
+          <Lock className="size-3.5 text-zinc-400" aria-hidden />
+          Private, like its top-level task
+        </span>
       ) : (
         <span className="text-zinc-500">None you can open</span>
       )}

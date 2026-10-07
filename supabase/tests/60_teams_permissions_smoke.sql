@@ -527,13 +527,16 @@ begin
   -- Tags and collaboration extras added none (its definer functions are triggers / helpers, revoked).
   -- Scheduling depth and polish added set_task_dependency (Editor on both tasks; definer so its cycle
   -- check sees every link); auto-shift, conversions, and project_dependencies are invoker.
+  -- Daily essentials added set_project_archived (Admin+ by the member's own role, since an archived
+  -- project caps every membership at Viewer); private tasks, duplicate_task, likes, and the multi-task
+  -- auto-shift are invoker.
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
     'assign_request_number,can_manage_project_template,cancel_approval,create_project_from_template,custom_field_project,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'
     'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_batch,is_allowlisted,is_workspace_admin,move_portfolio_project,'
     'open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_role,'
     'remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,'
-    'request_approval,restore_task,resubmit_approval,rule_project,save_project_as_template,set_project_integration,set_project_status,set_task_dependency,start_import_run,submit_form,'
+    'request_approval,restore_task,resubmit_approval,rule_project,save_project_as_template,set_project_archived,set_project_integration,set_project_status,set_task_dependency,start_import_run,submit_form,'
     'task_request_label,task_role,transfer_portfolio_ownership,transfer_project_ownership,'
     'update_portfolio_member_role,update_project_member_role,update_project_template,workspace_hidden_project_count',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);

@@ -42,17 +42,25 @@ import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules"
 import { isUuid } from "@/lib/ids";
 import { isReactionKey } from "@/lib/reactions";
 import {
+  MAX_SHIFT_MOVES,
   isDependencyKind,
   isLagDays,
   parseShiftResult,
   parseUndoResult,
   type DependencyKind,
   type ShiftChange,
+  type ShiftMove,
   type ShiftPlanRow,
   type ShiftResult,
   type UndoResult,
 } from "@/lib/dependencies";
 import { MAX_TAG_NAME } from "@/lib/tags";
+import {
+  isDuplicateTaskOptionKey,
+  parseDuplicateTaskResult,
+  type DuplicateTaskOptions,
+  type DuplicateTaskResult,
+} from "@/lib/duplicate-task";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isPortfolioRole, isProjectRole } from "@/lib/roles";
@@ -512,6 +520,15 @@ export async function transferProjectOwnership(projectId: string, profileId: str
 }
 
 // Project status (Editor+, through set_project_status so who/when are stamped by the database).
+// Archive / unarchive a project (Admin+ by your own role). Archived projects are read-only for everyone
+// and leave the sidebar, Home, and pickers; members still open them.
+export async function setProjectArchived(projectId: string, archived: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("set_project_archived", { target_project: id(projectId), archive: archived === true }));
+  });
+}
+
 export async function setProjectStatus(
   projectId: string,
   status: string,
@@ -1012,6 +1029,68 @@ export async function createTask(
   });
 }
 
+// Quick-add in My Tasks: a private task (no project) assigned to the caller. Only they and whoever they
+// assign it to can read it until it's added to a project.
+export async function createPrivateTask(title: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("create_private_task", { task_title: text(title, "Task name", { max: 1000 }) }));
+  });
+}
+
+// Duplicate a task (duplicate_task): the copy lands where the caller is an Editor (see the migration).
+export async function duplicateTask(
+  taskId: string,
+  options: DuplicateTaskOptions,
+): Promise<ActionResult & { result?: DuplicateTaskResult }> {
+  let result: DuplicateTaskResult | undefined;
+  const outcome = await run(async () => {
+    const payload: Record<string, boolean | string> = {};
+    for (const [key, value] of Object.entries(options ?? {})) {
+      if (key === "title") {
+        const title = optionalText(value, 1000);
+        if (title) payload.title = title;
+      } else if (isDuplicateTaskOptionKey(key) && typeof value === "boolean") {
+        payload[key] = value;
+      } else {
+        throw new InputError("Unknown duplicate option");
+      }
+    }
+    const supabase = await createClient();
+    const response = await supabase.rpc("duplicate_task", { target_task: id(taskId, "task"), options: payload });
+    check(response);
+    result = parseDuplicateTaskResult(response.data) ?? undefined;
+    if (!result) throw new DbError("The task couldn’t be duplicated");
+  });
+  return outcome.error ? outcome : { result };
+}
+
+// Like / unlike a task (Commenter+, own like only; the database checks both).
+export async function setTaskLiked(taskId: string, liked: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const task = id(taskId, "task");
+    if (liked) {
+      const result = await supabase.from("task_likes").insert({ task_id: task });
+      if (result.error?.code === "23505") return; // already liked
+      check(result);
+    } else {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new InputError("Sign in again to unlike");
+      check(
+        await supabase
+          .from("task_likes")
+          .update({ deleted_at: now() })
+          .eq("task_id", task)
+          .eq("profile_id", user.id)
+          .is("deleted_at", null),
+      );
+    }
+  });
+}
+
 function taskKindInput(value: unknown): TaskKind {
   if (!TASK_KINDS.includes(value as TaskKind)) throw new InputError("Choose a task type");
   return value as TaskKind;
@@ -1236,6 +1315,87 @@ export async function previewDependencyShift(
       reason: r.reason,
     }));
   });
+}
+
+function shiftMovesInput(moves: ShiftMove[]) {
+  if (!Array.isArray(moves) || moves.length === 0 || moves.length > MAX_SHIFT_MOVES) {
+    throw new InputError(`Choose 1 to ${MAX_SHIFT_MOVES} tasks`);
+  }
+  return moves.map((m) => {
+    const move: Record<string, string | null> = { task_id: id(m.taskId, "task") };
+    if (m.startOn !== undefined) move.start_on = optionalDate(m.startOn, "start date");
+    if (m.dueOn !== undefined) move.due_on = optionalDate(m.dueOn, "due date");
+    if (move.start_on && move.due_on && move.start_on > move.due_on) throw new InputError(START_AFTER_DUE);
+    return move;
+  });
+}
+
+function toPlanRows(
+  data: {
+    task_id: string;
+    title: string;
+    start_on: string | null;
+    due_on: string | null;
+    new_start: string | null;
+    new_due: string | null;
+    shift_days: number;
+    status: string;
+    reason: string | null;
+  }[],
+): ShiftPlanRow[] {
+  return data.map((r) => ({
+    taskId: r.task_id,
+    title: r.title,
+    startOn: r.start_on,
+    dueOn: r.due_on,
+    newStart: r.new_start,
+    newDue: r.new_due,
+    shiftDays: r.shift_days,
+    status: r.status === "move" ? ("move" as const) : ("skipped" as const),
+    reason: r.reason,
+  }));
+}
+
+// What moving several tasks at once (e.g. a bulk due date) would do to their dependents; pullEarlier
+// also brings dependents earlier when their predecessors move earlier. Nothing changes yet.
+export async function previewDependencyShifts(
+  moves: ShiftMove[],
+  pullEarlier = false,
+): Promise<{ error?: string; data?: ShiftPlanRow[] }> {
+  return read(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("preview_dependency_shifts", {
+      moves: shiftMovesInput(moves),
+      pull_earlier: pullEarlier === true,
+    });
+    check(result);
+    return toPlanRows(result.data ?? []);
+  });
+}
+
+// Moves the tasks and the confirmed dependents; tasks that can't move are reported in skipped. The
+// result's changes feed undoDependencyShift.
+export async function applyDependencyShifts(
+  moves: ShiftMove[],
+  confirmedIds: string[],
+  pullEarlier = false,
+): Promise<ActionResult & { result?: ShiftResult }> {
+  let result: ShiftResult | undefined;
+  const outcome = await run(async () => {
+    if (!Array.isArray(confirmedIds) || confirmedIds.length > 500) throw new InputError("Too many tasks to move at once");
+    const supabase = await createClient();
+    const response = await supabase.rpc("apply_dependency_shifts", {
+      moves: shiftMovesInput(moves),
+      confirmed_tasks: [...new Set(confirmedIds.map((t) => id(t, "task")))],
+      pull_earlier: pullEarlier === true,
+    });
+    if (/tasks_start_(on_before_due_on|at_before_due_at)/.test(response.error?.message ?? "")) {
+      throw new InputError(START_AFTER_DUE);
+    }
+    check(response);
+    result = parseShiftResult(response.data);
+  });
+  return outcome.error ? outcome : { result };
 }
 
 // Moves the task and the confirmed dependents in one call; the result's changes feed undoDependencyShift.

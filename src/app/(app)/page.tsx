@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { FolderClosed, House, LayoutTemplate } from "lucide-react";
+import { Archive, FolderClosed, House, LayoutTemplate } from "lucide-react";
 import { NewProjectForm } from "@/components/shell/new-project-form";
 import { EmptyState, PageHeader } from "@/components/ui";
-import { listProjects } from "@/lib/data";
+import { listArchivedProjects, listProjects } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Home" };
 
 export default async function HomePage() {
-  const projects = await listProjects();
+  const [projects, archived] = await Promise.all([listProjects(), listArchivedProjects()]);
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
@@ -74,6 +74,15 @@ export default async function HomePage() {
                 ))}
               </ul>
             )}
+            {archived.length > 0 ? (
+              <Link
+                href="/projects/archived"
+                className="mt-3 inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
+              >
+                <Archive className="size-3.5" aria-hidden />
+                Archived projects ({archived.length})
+              </Link>
+            ) : null}
           </section>
         </div>
       </div>

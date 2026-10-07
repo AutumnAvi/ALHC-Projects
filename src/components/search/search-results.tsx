@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, Circle, FolderClosed, SearchX } from "lucide-react";
+import { CheckCircle2, Circle, FolderClosed, Lock, SearchX } from "lucide-react";
 import { useTaskHref } from "@/components/project/shared";
 import { EmptyState } from "@/components/ui";
 import { formatDueDate } from "@/lib/dates";
@@ -14,8 +14,9 @@ export type SearchResult = {
   notes: string | null;
   completed: boolean;
   dueOn: string | null;
-  projectId: string;
-  projectName: string;
+  // Null for a private task (no project).
+  projectId: string | null;
+  projectName: string | null;
   tagIds: string[];
 };
 
@@ -37,7 +38,7 @@ export function SearchResults({
     <section className="mt-4" aria-label="Search results">
       {results.length === 0 ? (
         <EmptyState icon={SearchX} title={`No tasks match “${query}”`}>
-          Try a shorter word or another spelling. Search only covers projects you’re a member of.
+          Try a shorter word or another spelling. Search only covers projects you’re a member of and your private tasks.
         </EmptyState>
       ) : (
         <p className="text-xs text-zinc-500">
@@ -78,10 +79,17 @@ export function SearchResults({
                   <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-500">
                     <TagChips ids={result.tagIds} byId={tagsById} max={2} />
                     {result.dueOn ? <span className="tabular-nums">{formatDueDate(result.dueOn)}</span> : null}
-                    <span className="chip max-w-36">
-                      <FolderClosed className="size-3 shrink-0" aria-hidden />
-                      <span className="truncate">{result.projectName}</span>
-                    </span>
+                    {result.projectName ? (
+                      <span className="chip max-w-36">
+                        <FolderClosed className="size-3 shrink-0" aria-hidden />
+                        <span className="truncate">{result.projectName}</span>
+                      </span>
+                    ) : (
+                      <span className="chip" title="Private: only its creator and assignee can see it">
+                        <Lock className="size-3 shrink-0" aria-hidden />
+                        Private
+                      </span>
+                    )}
                   </span>
                 </Link>
               </li>
