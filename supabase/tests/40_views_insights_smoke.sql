@@ -369,7 +369,8 @@ begin
     raise exception 'anon must not read metrics';
   exception when insufficient_privilege then null;
   end;
-  assert (select count(*) from public.project_views) = 0, 'anon cannot read views';
+  -- Since Review hardening anon has no table privileges at all, so this is a permission check, not RLS.
+  assert not has_table_privilege('anon', 'public.project_views', 'select'), 'anon cannot read views';
 end $$;
 
 reset role;

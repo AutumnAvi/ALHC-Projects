@@ -665,7 +665,8 @@ begin
     raise exception 'anon must not run the scheduler';
   exception when insufficient_privilege then null;
   end;
-  assert (select count(*) from public.forms) = 0, 'anon cannot read forms directly';
+  -- Since Review hardening anon has no table privileges at all, so this is a permission check, not RLS.
+  assert not has_table_privilege('anon', 'public.forms', 'select'), 'anon cannot read forms directly';
 end $$;
 
 reset role;

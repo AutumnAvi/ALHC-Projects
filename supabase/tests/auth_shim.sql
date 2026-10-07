@@ -48,3 +48,21 @@ create table storage.objects (
 alter table storage.objects enable row level security;
 grant all on storage.objects to anon, authenticated, service_role;
 grant select on storage.buckets to anon, authenticated, service_role;
+
+-- pg_cron stand-in: just enough for migrations that schedule a job by name (cron.schedule upserts by
+-- job name, like pg_cron) and for suites that check the job exists. Nothing ever runs it.
+-- pg_extension has no pg_cron row, so migrations that check for the extension still skip.
+create schema cron;
+create table cron.job (
+  jobid bigserial primary key,
+  schedule text not null,
+  command text not null,
+  jobname text unique
+);
+create function cron.schedule(job_name text, schedule text, command text) returns bigint
+language sql
+as $$
+  insert into cron.job (jobname, schedule, command) values (job_name, schedule, command)
+  on conflict (jobname) do update set schedule = excluded.schedule, command = excluded.command
+  returning jobid
+$$;
