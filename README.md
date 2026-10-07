@@ -172,6 +172,14 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 - **Convert a task to a subtask, and back.** Under **Projects** in the pane: “Convert to a subtask of …” (it leaves its projects and lives under the new parent) or, on a subtask, “Convert to a task in [project / section]”. Tags, field values, comments, dependencies, and its own subtasks stay with it; you need Editor on both sides, and the 4-level limit and loop checks still apply.
 - **Show subtasks is saved with the view** (List): toggling it is an unsaved change like grouping or columns; **Save view** keeps it for everyone.
 
+## What's here (daily essentials)
+
+- **Private tasks in My Tasks.** The **Add task** box at the top of My Tasks creates a task with no project, assigned to you. Only you and whoever you assign it to can see it — nobody else can open it, find it in search, be @mentioned in it, follow it, or get notified about it (workspace admins included). Its subtasks follow the same rule. Add it to a project from the task pane (Projects → Add to a project…) and it becomes an ordinary task of that project; a project task can't be made private again.
+- **Duplicate task.** The copy button in the task pane header opens **Duplicate task**: name the copy and choose what comes along (subtasks, assignee, dates, tags, field values, followers, attachments as links to the original files, dependencies). The copy lands where you can edit — the task's projects where you're an Editor, right below the original (a subtask's copy sits next to it; a private task's copy stays private) — and opens in the pane. It starts open, gets its own Req #, and leaves out people who couldn't see it.
+- **Archive a project.** Project admins and owners use the project's **…** menu → **Archive project**. An archived project is read-only for everyone (no edits, comments, likes, rules, or form responses), shows a banner, and leaves the sidebar, Home, and every project picker. Its members still open it from **Archived projects** (linked on Home), where admins can **Unarchive** it. Non-members never see it. A task that's also in an active project stays editable there. Reports still count archived projects.
+- **Likes.** A heart in the task pane header: Commenters and above like a task (and unlike it); everyone who can open the task sees the count and, on hover, who liked it.
+- **Auto-shift everywhere you change dates.** The confirm-and-Undo prompt for dependent tasks now also comes up for a bulk **Due date** change in List and My Tasks and for drags in Workload (Timeline, Calendar, and the pane already had it). Moving a task earlier can now offer **Also pull dependents earlier (keep the gap)** — unticked by default, so nothing is pulled unless you ask. Rules never shift anything.
+
 ## Local development
 
 ```bash
@@ -186,7 +194,7 @@ Checks:
 npm run lint
 npm run typecheck
 npm run build
-npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01, zz02, zz03…)
+npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01, zz02, zz03, zz04…)
 ```
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.
@@ -197,6 +205,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 2. **Apply the migrations.** Either:
    - CLI: `npx supabase login`, then `npx supabase link --project-ref <ref>`, then `npx supabase db push`
    - or open the SQL editor and run each file in `supabase/migrations/` in filename order.
+   - The production project is shared with another app, so new phases are applied one migration file at a time right after their PR merges (Supabase connector `apply_migration`); never reset or `db push --include-all` it. See “Shipping a phase” in `AGENTS.md`.
 3. **Add people to the allowlist** in the SQL editor (the emails they sign in with; they're normalised to lowercase):
 
    ```sql
@@ -218,7 +227,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
    - Files are stored as `<task id>/<uuid>-<file name>` and are only reachable through short-lived signed URLs issued by the app (`/attachments/<id>`). Removing an attachment hides it but leaves the object in Storage.
    - Previews (Tags and collaboration extras) are served inline only when the file name, the recorded type, and the type Storage reports for the object all say PNG / JPEG / GIF / WebP / PDF; the app reads that with Storage's object info endpoint (`storage-js` `info()`). If that endpoint isn't available on your Storage version, every file simply downloads instead of previewing.
    - The Asana importer migration adds a second private bucket, **`imports`** (50 MB per file), for uploaded export files at `<project id>/<uploader id>/<uuid>-<file name>`. Only the uploader can read or remove them, and only while they're an Admin of the project; the app removes them when an import finishes. Raise the project-wide upload limit to 50 MB if you import large exports.
-7. **Realtime (optional):** the migrations add `comments`, `comment_reactions`, `task_stories`, `inbox_items`, `approval_requests`, `project_messages`, and `project_message_reactions` to the `supabase_realtime` publication, so comments, activity, approvals, messages, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
+7. **Realtime (optional):** the migrations add `comments`, `comment_reactions`, `task_stories`, `inbox_items`, `approval_requests`, `project_messages`, `project_message_reactions`, and `task_likes` to the `supabase_realtime` publication, so comments, activity, approvals, messages, and the inbox update live. If Realtime is disabled, the app still works: pages refresh after your own actions and the inbox badge polls every 60 seconds.
 8. **Scheduled rules (recommended):** enable the **`pg_cron`** extension (Database → Extensions) *before* applying the workflows migration, and it schedules `alhc-workflow-tick` every 5 minutes. That runs "wait N hours" steps and "due date is approaching" rules. If you enable `pg_cron` later, schedule it yourself in the SQL editor:
 
    ```sql

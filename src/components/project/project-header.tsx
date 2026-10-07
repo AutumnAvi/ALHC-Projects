@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import {
+  Archive,
+  ArchiveRestore,
   CalendarDays,
   ChartColumn,
   MessagesSquare,
@@ -39,6 +41,7 @@ import {
   deleteView,
   duplicateView,
   moveView,
+  setProjectArchived,
   updateProject,
   updateView,
 } from "@/lib/actions";
@@ -54,7 +57,16 @@ export const LAYOUT_ICONS: Record<ViewLayout, typeof List> = {
 
 const TAB_CLASS = HEADER_TAB;
 
-export function ProjectHeader({ project, views }: { project: Project; views: ProjectView[] }) {
+export function ProjectHeader({
+  project,
+  views,
+  canArchive,
+}: {
+  project: Project;
+  views: ProjectView[];
+  // Admin+ by the viewer's own role (an archived project is read-only for everyone).
+  canArchive: boolean;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [pending, run] = useServerAction();
@@ -168,6 +180,33 @@ export function ProjectHeader({ project, views }: { project: Project; views: Pro
                   }}
                 >
                   <LayoutTemplate className="size-4 text-zinc-500" /> Save as template…
+                </MenuItem>
+              ) : null}
+              {canArchive ? (
+                <MenuItem
+                  disabled={pending}
+                  onClick={() => {
+                    close();
+                    if (project.archived_at) {
+                      run(() => setProjectArchived(project.id, false));
+                    } else if (
+                      window.confirm(
+                        `Archive “${project.name}”? It becomes read-only and leaves the sidebar, Home, and project pickers. Members can still open it from Archived projects, and admins can unarchive it.`,
+                      )
+                    ) {
+                      run(() => setProjectArchived(project.id, true));
+                    }
+                  }}
+                >
+                  {project.archived_at ? (
+                    <>
+                      <ArchiveRestore className="size-4 text-zinc-500" /> Unarchive project
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="size-4 text-zinc-500" /> Archive project
+                    </>
+                  )}
                 </MenuItem>
               ) : null}
               {canDeleteProject ? (

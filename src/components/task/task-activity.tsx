@@ -49,6 +49,7 @@ export function TaskActivity({
   useRealtimeRefresh(`task-${task.id}`, [
     { table: "comments", filter: `task_id=eq.${task.id}` },
     { table: "comment_reactions", filter: `task_id=eq.${task.id}` },
+    { table: "task_likes", filter: `task_id=eq.${task.id}` },
     { table: "task_stories", filter: `task_id=eq.${task.id}` },
   ]);
 

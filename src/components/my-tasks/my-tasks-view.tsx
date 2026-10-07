@@ -13,6 +13,7 @@ import {
   Ellipsis,
   FolderClosed,
   GripVertical,
+  Lock,
   Pencil,
   Plus,
   Trash2,
@@ -28,6 +29,7 @@ import { useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import {
   createMyTaskSection,
+  createPrivateTask,
   deleteMyTaskSection,
   placeMyTask,
   placeMyTaskSection,
@@ -266,14 +268,17 @@ export function MyTasksView({
   });
 
   const toolbar = (
-    <div className="flex flex-wrap items-center gap-2 pt-2">
-      <p className="mr-auto text-xs text-zinc-500">
-        {bySections
-          ? "Drag tasks between your sections; only you see them. Newly assigned tasks land in Recently assigned."
-          : "Grouped by due date, in your local time."}
-      </p>
-      <Segmented label="Group My Tasks by" options={LAYOUTS} value={layout} onChange={chooseLayout} />
-    </div>
+    <>
+      <QuickAddPrivateTask />
+      <div className="flex flex-wrap items-center gap-2 pt-2">
+        <p className="mr-auto text-xs text-zinc-500">
+          {bySections
+            ? "Drag tasks between your sections; only you see them. Newly assigned tasks land in Recently assigned."
+            : "Grouped by due date, in your local time."}
+        </p>
+        <Segmented label="Group My Tasks by" options={LAYOUTS} value={layout} onChange={chooseLayout} />
+      </div>
+    </>
   );
 
   if (open.length === 0 && completed.length === 0) {
@@ -283,7 +288,7 @@ export function MyTasksView({
         <div className="mt-6">
           <EmptyState icon={CircleCheck} title="Nothing assigned to you">
             Tasks you’re assigned to in any project show up here: new ones in Recently assigned, ready to sort into
-            your own sections — or grouped by due date.
+            your own sections — or grouped by due date. Add a task above to keep a private to-do.
           </EmptyState>
         </div>
       </>
@@ -433,6 +438,52 @@ export function MyTasksView({
         onClear={selection.clear}
       />
     </div>
+  );
+}
+
+// Quick-add: a private task assigned to you, with no project. Only you and whoever you assign it to can
+// see it; adding it to a project (from the task pane) makes it an ordinary task of that project.
+function QuickAddPrivateTask() {
+  const [title, setTitle] = useState("");
+  const [pending, run] = useServerAction();
+
+  return (
+    <form
+      className="flex items-center gap-2 pt-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const value = title.trim();
+        if (!value) return;
+        setTitle("");
+        run(() => createPrivateTask(value));
+      }}
+    >
+      <label htmlFor="my-tasks-quick-add" className="sr-only">
+        Add a private task
+      </label>
+      <div className="relative min-w-0 flex-1">
+        <Plus className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400" aria-hidden />
+        <input
+          id="my-tasks-quick-add"
+          value={title}
+          maxLength={1000}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Add a task"
+          aria-describedby="my-tasks-quick-add-hint"
+          className="control w-full pl-8"
+        />
+      </div>
+      <button type="submit" className="btn-secondary" disabled={pending || !title.trim()}>
+        Add task
+      </button>
+      <p id="my-tasks-quick-add-hint" className="sr-only">
+        Private: only you and whoever you assign it to can see it, until you add it to a project.
+      </p>
+      <span className="hidden items-center gap-1 text-xs text-zinc-500 md:inline-flex" aria-hidden>
+        <Lock className="size-3" />
+        Private to you
+      </span>
+    </form>
   );
 }
 
@@ -748,14 +799,24 @@ function MyTaskRow({
           {task.parentTitle}
         </span>
       ) : null}
-      <Link
-        href={`/projects/${task.projectId}/list`}
-        draggable={false}
-        className="chip hidden max-w-40 shrink-0 truncate hover:bg-zinc-200 hover:text-zinc-900 sm:inline-flex"
-      >
-        <FolderClosed className="size-3 shrink-0" aria-hidden />
-        <span className="truncate">{task.projectName}</span>
-      </Link>
+      {task.projectId ? (
+        <Link
+          href={`/projects/${task.projectId}/list`}
+          draggable={false}
+          className="chip hidden max-w-40 shrink-0 truncate hover:bg-zinc-200 hover:text-zinc-900 sm:inline-flex"
+        >
+          <FolderClosed className="size-3 shrink-0" aria-hidden />
+          <span className="truncate">{task.projectName}</span>
+        </Link>
+      ) : (
+        <span
+          className="chip hidden shrink-0 sm:inline-flex"
+          title="Private: only you and its assignee can see it, until it’s added to a project"
+        >
+          <Lock className="size-3 shrink-0" aria-hidden />
+          Private
+        </span>
+      )}
       <span className={`w-16 shrink-0 text-right text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
         {task.dueOn ? formatDueDate(task.dueOn, today ? Number(today.slice(0, 4)) : undefined) : ""}
       </span>

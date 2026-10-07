@@ -10,6 +10,7 @@ import { useTaskHref } from "@/components/project/shared";
 import { PeriodNav, Segmented } from "@/components/project/view-chrome";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
+import { useDependencyShift } from "@/components/task/dependency-shift";
 import { setWorkloadCapacity, updateTask } from "@/lib/actions";
 import {
   WORKLOAD_ZOOMS,
@@ -72,9 +73,11 @@ export function WorkloadView({
   const [selected, setSelected] = useState<Cell | null>(null);
   const [dragging, setDragging] = useState<WorkloadTask | null>(null);
   const [dropCell, setDropCell] = useState<string | null>(null);
-  const [shown, applyChange] = useOptimistic(tasks, (current, change: Change) =>
+  const [shown, applyChange] = useOptimistic(tasks, (current, change: Pick<Change, "id"> & Partial<Change>) =>
     current.map((t) => (t.id === change.id ? { ...t, ...change } : t)),
   );
+  // Moving a task's dates can push (or, if asked, pull) its dependents: ask first, with Undo.
+  const shift = useDependencyShift();
 
   const byField = measure !== "";
   const unit = byField ? (measures.find((m) => m.value === measure)?.label ?? "value") : "tasks";
@@ -126,17 +129,24 @@ export function WorkloadView({
       startOn: task.startOn ? addDays(task.startOn, delta) : null,
       dueOn: addDays(task.dueOn, delta),
     };
-    const patch: { assigneeId?: string; startOn?: string | null; dueOn?: string } = {};
-    if (personId !== task.assigneeId) patch.assigneeId = personId;
-    if (delta !== 0) {
-      patch.dueOn = change.dueOn;
-      if (task.startOn) patch.startOn = change.startOn;
+    if (personId !== task.assigneeId) {
+      run(
+        () => updateTask(task.id, { assigneeId: personId }),
+        () => applyChange({ id: task.id, assigneeId: personId }),
+      );
     }
-    if (Object.keys(patch).length === 0) return;
-    run(
-      () => updateTask(task.id, patch),
-      () => applyChange(change),
-    );
+    if (delta !== 0) {
+      shift.changeDates(
+        { id: task.id, title: task.title },
+        { startOn: change.startOn, dueOn: change.dueOn },
+        {
+          onOptimistic: (moves) =>
+            moves.forEach((m) => {
+              if (m.dueOn) applyChange({ id: m.taskId, startOn: m.startOn, dueOn: m.dueOn });
+            }),
+        },
+      );
+    }
   }
 
   const selectedPerson = selected ? people.find((p) => p.id === selected.personId) : undefined;
@@ -145,6 +155,7 @@ export function WorkloadView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col px-gutter py-3">
+      {shift.dialog}
       <PeriodNav
         label={windowLabel(start, end)}
         prevLabel="Earlier"

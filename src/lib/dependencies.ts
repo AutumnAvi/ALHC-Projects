@@ -137,3 +137,10 @@ export function parseUndoResult(value: Json | null): UndoResult {
 export function shiftLabel(days: number) {
   return `${days > 0 ? "+" : "−"}${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"}`;
 }
+
+// Several tasks at once (preview_dependency_shifts / apply_dependency_shifts): each move gives the new
+// dates; a date left out (undefined) keeps the task's current one, null clears it. pullEarlier also moves
+// dependents earlier when their predecessors move earlier (keeping the gap).
+export const MAX_SHIFT_MOVES = 200;
+
+export type ShiftMove = { taskId: string; startOn?: string | null; dueOn?: string | null };

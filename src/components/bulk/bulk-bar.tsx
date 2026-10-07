@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
+import { useDependencyShift } from "@/components/task/dependency-shift";
 import { useNotify } from "@/components/toast";
 import { bulkEditTasks } from "@/lib/actions";
 import { MAX_BULK_TASKS, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
@@ -90,6 +91,8 @@ export function BulkBar({
 }) {
   const count = selected.length;
   const run = (operation: BulkOperation) => bulk.apply(selected, operation);
+  // A new due date can push (or, if asked, pull) the selected tasks' dependents: ask first, with Undo.
+  const shift = useDependencyShift();
   const project = context.project;
   const fields = project?.fields.filter((f) => !f.boundToSections) ?? [];
   const otherProjects = context.projects.filter((p) => p.id !== project?.id);
@@ -97,6 +100,7 @@ export function BulkBar({
   return (
     <>
       {bulk.summary ? <BulkSummary summary={bulk.summary} onClose={bulk.closeSummary} /> : null}
+      {shift.dialog}
       {count > 0 ? (
         <div
           role="toolbar"
@@ -160,7 +164,14 @@ export function BulkBar({
               <DuePicker
                 onPick={(dueOn) => {
                   close();
-                  run({ action: "set_due", due_on: dueOn });
+                  const ids = [...selected];
+                  if (dueOn === null || ids.length > MAX_BULK_TASKS) {
+                    run({ action: "set_due", due_on: dueOn });
+                  } else {
+                    shift.changeMany(ids.map((taskId) => ({ taskId, dueOn })), taskCount(ids.length), () =>
+                      bulk.apply(ids, { action: "set_due", due_on: dueOn }),
+                    );
+                  }
                 }}
               />
             )}

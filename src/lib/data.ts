@@ -82,10 +82,11 @@ export type Project = Pick<
   | "status_note"
   | "status_updated_at"
   | "status_updated_by"
+  | "archived_at"
 >;
 
 const PROJECT_COLUMNS =
-  "id, name, description, sort_order, approval_completes_task, status, status_note, status_updated_at, status_updated_by";
+  "id, name, description, sort_order, approval_completes_task, status, status_note, status_updated_at, status_updated_by, archived_at";
 export type Section = Pick<Tables<"sections">, "id" | "project_id" | "name" | "sort_order">;
 export type Profile = Pick<Tables<"profiles">, "id" | "email" | "full_name" | "avatar_url">;
 
@@ -148,7 +149,8 @@ export type TaskDetail = {
   // Slack / critical path in each of the task's projects (project_critical_path); empty without a due date.
   schedule: (TaskSchedule & { projectId: string; projectName: string })[];
   assigneeId: string | null;
-  homeProjectId: string;
+  // Null for a private task (and its subtasks): no project; only its creator and assignee can read it.
+  homeProjectId: string | null;
   createdAt: string;
   updatedAt: string;
   source: string;
@@ -177,6 +179,12 @@ export type TaskDetail = {
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
   memberRoles: Record<string, ProjectRole>;
   tagIds: string[];
+  // People who liked the task, oldest first.
+  likeProfileIds: string[];
+  // A private task (no project; for a subtask: its top-level task is private). Only its top-level task's
+  // creator and assignee (privateReaderIds) can read it, so only they can be assigned or follow.
+  isPrivate: boolean;
+  privateReaderIds: string[];
 };
 
 export type TaskDependency = {
@@ -194,7 +202,9 @@ export type TaskDependency = {
 
 export type DependencyCandidateGroup = { key: string; label: string; tasks: { id: string; title: string }[] };
 
-export type TaskAttachmentLink = { id: string; source: string; name: string; url: string | null };
+// Imported Asana attachments (name + link), and a duplicated task's links to the original's files
+// (attachmentId: opened through /attachments/<id>, which checks access to the original).
+export type TaskAttachmentLink = { id: string; source: string; name: string; url: string | null; attachmentId: string | null };
 
 export type TaskAttachment = {
   id: string;
@@ -263,7 +273,19 @@ export const getWorkspace = cache(async () => {
   return maybe(result, "workspace");
 });
 
-export const listProjects = cache(async (): Promise<Project[]> => {
+// Active projects the viewer can read: the sidebar, Home, and every project picker. Archived projects
+// are left out (listArchivedProjects); listReadableProjects has both, for labelling tasks.
+export const listProjects = cache(async (): Promise<Project[]> =>
+  (await listReadableProjects()).filter((p) => p.archived_at === null),
+);
+
+export const listArchivedProjects = cache(async (): Promise<Project[]> =>
+  (await listReadableProjects())
+    .filter((p) => p.archived_at !== null)
+    .sort((a, b) => b.archived_at!.localeCompare(a.archived_at!)),
+);
+
+export const listReadableProjects = cache(async (): Promise<Project[]> => {
   const supabase = await createClient();
   const result = await supabase
     .from("projects")
@@ -292,8 +314,16 @@ export const getProjectRole = cache(async (projectId: string): Promise<ProjectRo
   return isProjectRole(role) ? role : null;
 });
 
-// The viewer's own role in every project they belong to.
+// The viewer's effective role in every project they belong to: archived projects count as Viewer
+// (read-only for everyone, like project_role() in the database).
 export const listMyProjectRoles = cache(async (): Promise<Map<string, ProjectRole>> => {
+  const [own, projects] = await Promise.all([listOwnProjectRoles(), listReadableProjects()]);
+  const archived = new Set(projects.filter((p) => p.archived_at !== null).map((p) => p.id));
+  return new Map([...own].map(([projectId, role]) => [projectId, archived.has(projectId) ? "viewer" : role] as const));
+});
+
+// The viewer's own membership role, archived or not (who may archive / unarchive: Admin+).
+export const listOwnProjectRoles = cache(async (): Promise<Map<string, ProjectRole>> => {
   const { user } = await getViewer();
   if (!user) return new Map();
   const supabase = await createClient();
@@ -459,7 +489,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     startOn: m.task.start_on,
     dueOn: m.task.due_on,
     assigneeId: m.task.assignee_id,
-    homeProjectId: m.task.home_project_id,
+    homeProjectId: m.task.home_project_id ?? projectId,
     createdAt: m.task.created_at,
     sectionId: m.section_id,
     sortOrder: m.sort_order,
@@ -754,13 +784,15 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
           number: task.req_number,
         })
       : Promise.resolve({ data: null, error: null }),
-    supabase
-      .from("request_sequences")
-      .select("project_id")
-      .eq("project_id", task.home_project_id)
-      .eq("enabled", true)
-      .is("deleted_at", null)
-      .maybeSingle(),
+    task.home_project_id
+      ? supabase
+          .from("request_sequences")
+          .select("project_id")
+          .eq("project_id", task.home_project_id)
+          .eq("enabled", true)
+          .is("deleted_at", null)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
     supabase.rpc("task_role", { target_task: taskId }),
     projectIds.length
       ? supabase
@@ -784,7 +816,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       : Promise.resolve({ data: null, error: null }),
     supabase
       .from("task_attachment_links")
-      .select("id, source, name, url")
+      .select("id, source, name, url, attachment_id")
       .eq("task_id", taskId)
       .is("deleted_at", null)
       .order("created_at"),
@@ -826,7 +858,25 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   const visibleBlockers = dependencyRows.filter(
     (d) => d.successor_id === taskId && d.kind === "finish_to_start" && d.predecessor.completed_at === null,
   ).length;
-  const storyRows = await withDependencyTitles(rows(stories, "activity"));
+  const isPrivate = task.home_project_id === null;
+  const [storyRows, likes, privateRoot] = await Promise.all([
+    withDependencyTitles(rows(stories, "activity")),
+    supabase
+      .from("task_likes")
+      .select("profile_id")
+      .eq("task_id", taskId)
+      .is("deleted_at", null)
+      .order("created_at")
+      .then((r) => rows(r, "likes")),
+    isPrivate
+      ? supabase
+          .from("tasks")
+          .select("created_by, assignee_id")
+          .eq("id", scopeTaskId)
+          .maybeSingle()
+          .then((r) => maybe(r, "private task"))
+      : Promise.resolve(null),
+  ]);
 
   const commentRows = rows(comments, "comments");
   const approvalRows = rows(approvals, "approvals");
@@ -867,6 +917,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       source: a.source,
       name: a.name,
       url: a.url,
+      attachmentId: a.attachment_id,
     })),
     comments: commentRows.map((c) => {
       const deleted = c.deleted_at !== null;
@@ -958,6 +1009,11 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     viewerRole: viewerProjectRole,
     memberRoles,
     tagIds: tagIds.get(taskId) ?? [],
+    likeProfileIds: likes.map((l) => l.profile_id),
+    isPrivate,
+    privateReaderIds: [
+      ...new Set([privateRoot?.created_by, privateRoot?.assignee_id].filter((p): p is string => Boolean(p))),
+    ],
     subtasks: toSubtaskItems(subtaskRows, grandchildren),
     parentTaskId: task.parent_task_id,
     ancestors,
@@ -1113,15 +1169,17 @@ export type MyTask = {
   title: string;
   completedAt: string | null;
   dueOn: string | null;
-  projectId: string;
-  projectName: string;
+  // Null for a private task (no project: only its creator and assignee can read it).
+  projectId: string | null;
+  projectName: string | null;
   kind: TaskKind;
   // Subtasks: the parent task's title ("in <parent>").
   parentTitle: string | null;
 };
 
-// Tasks come back only when RLS lets the viewer read them (membership in one of their projects).
-// Each is labelled with its home project when the viewer can see it, else another visible project.
+// Tasks come back only when RLS lets the viewer read them (membership in one of their projects, or a
+// private task they created or are assigned). Each is labelled with its home project when the viewer can
+// see it, else another visible project; private tasks (and their subtasks) have no project.
 export const listMyTasks = cache(async (profileId: string) => {
   const supabase = await createClient();
   const select =
@@ -1143,7 +1201,7 @@ export const listMyTasks = cache(async (profileId: string) => {
       .not("completed_at", "is", null)
       .order("completed_at", { ascending: false })
       .limit(30),
-    listProjects(),
+    listReadableProjects(),
   ]);
   const openRows = rows(open, "my tasks");
   const doneRows = rows(done, "completed tasks");
@@ -1165,17 +1223,19 @@ export const listMyTasks = cache(async (profileId: string) => {
   ]);
 
   const toMyTask = (t: (typeof openRows)[number]): MyTask | null => {
-    const projectId = projectName.has(t.home_project_id)
-      ? t.home_project_id
-      : memberships.find((m) => m.task_id === scopeId(t) && projectName.has(m.project_id))?.project_id;
-    if (!projectId) return null;
+    const isPrivate = t.home_project_id === null;
+    const projectId =
+      t.home_project_id && projectName.has(t.home_project_id)
+        ? t.home_project_id
+        : memberships.find((m) => m.task_id === scopeId(t) && projectName.has(m.project_id))?.project_id;
+    if (!projectId && !isPrivate) return null;
     return {
       id: t.id,
       title: t.title,
       completedAt: t.completed_at,
       dueOn: t.due_on,
-      projectId,
-      projectName: projectName.get(projectId)!,
+      projectId: projectId ?? null,
+      projectName: projectId ? projectName.get(projectId)! : null,
       kind: parseTaskKind(t.kind),
       parentTitle: t.parent_task_id ? (parentTitle.get(t.parent_task_id) ?? null) : null,
     };
@@ -1503,7 +1563,7 @@ export type TrashedTask = {
   title: string;
   deletedAt: string;
   deletedBy: string | null;
-  homeProjectId: string;
+  homeProjectId: string | null;
   homeProjectName: string | null;
   completedAt: string | null;
   // Subtasks trashed on their own (with their parent still active): the parent's title.
@@ -1583,7 +1643,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
       )
       .eq("kind", "deleted")
       .order("created_at", { ascending: false }),
-    listProjects(),
+    listReadableProjects(),
   ]);
   const deletedBy = new Map<string, string | null>();
   for (const story of rows(stories, "deletions")) {
@@ -1596,7 +1656,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
     deletedAt: t.deleted_at!,
     deletedBy: deletedBy.get(t.id) ?? null,
     homeProjectId: t.home_project_id,
-    homeProjectName: projectName.get(t.home_project_id) ?? null,
+    homeProjectName: t.home_project_id ? (projectName.get(t.home_project_id) ?? null) : null,
     completedAt: t.completed_at,
     parentTitle: t.parentTitle,
   }));

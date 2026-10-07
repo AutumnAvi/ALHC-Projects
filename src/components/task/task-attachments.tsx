@@ -151,11 +151,19 @@ export function TaskAttachments({
       ) : null}
 
       {links.length > 0 ? (
-        <ul className="mt-2 divide-y divide-zinc-100 rounded-md border border-zinc-200" aria-label="Attachments still in Asana">
+        <ul className="mt-2 divide-y divide-zinc-100 rounded-md border border-zinc-200" aria-label="Linked attachments">
           {links.map((link) => (
             <li key={link.id} className="flex items-center gap-2.5 px-3 py-2">
               <ExternalLink className="size-4 shrink-0 text-zinc-400" aria-hidden />
-              {link.url ? (
+              {link.attachmentId ? (
+                // A duplicated task's attachment: the original file, through the same access-checked route.
+                <a
+                  href={`/attachments/${link.attachmentId}`}
+                  className="min-w-0 flex-1 truncate text-sm text-zinc-800 hover:underline"
+                >
+                  {link.name}
+                </a>
+              ) : link.url ? (
                 <a
                   href={link.url}
                   target="_blank"
@@ -167,7 +175,9 @@ export function TaskAttachments({
               ) : (
                 <span className="min-w-0 flex-1 truncate text-sm text-zinc-800">{link.name}</span>
               )}
-              <span className="shrink-0 text-xs text-zinc-400">In Asana · not copied</span>
+              <span className="shrink-0 text-xs text-zinc-400">
+                {link.attachmentId ? "Linked from the original task" : link.source === "asana" ? "In Asana · not copied" : "Link"}
+              </span>
             </li>
           ))}
         </ul>

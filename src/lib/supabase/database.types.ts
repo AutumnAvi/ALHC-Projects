@@ -1339,6 +1339,8 @@ export type Database = {
           status_note: string | null;
           status_updated_at: string | null;
           status_updated_by: string | null;
+          archived_at: string | null;
+          archived_by: string | null;
         };
         Insert: {
           id?: string;
@@ -1355,6 +1357,8 @@ export type Database = {
           status_note?: string | null;
           status_updated_at?: string | null;
           status_updated_by?: string | null;
+          archived_at?: string | null;
+          archived_by?: string | null;
         };
         Update: {
           id?: string;
@@ -1371,6 +1375,8 @@ export type Database = {
           status_note?: string | null;
           status_updated_at?: string | null;
           status_updated_by?: string | null;
+          archived_at?: string | null;
+          archived_by?: string | null;
         };
         Relationships: [
           {
@@ -1676,7 +1682,7 @@ export type Database = {
       task_dependencies: {
         Row: {
           id: string;
-          project_id: string;
+          project_id: string | null;
           predecessor_id: string;
           successor_id: string;
           kind: string;
@@ -1688,7 +1694,7 @@ export type Database = {
         };
         Insert: {
           id?: string;
-          project_id: string;
+          project_id?: string | null;
           predecessor_id: string;
           successor_id: string;
           kind?: string;
@@ -1700,7 +1706,7 @@ export type Database = {
         };
         Update: {
           id?: string;
-          project_id?: string;
+          project_id?: string | null;
           predecessor_id?: string;
           successor_id?: string;
           kind?: string;
@@ -1748,6 +1754,7 @@ export type Database = {
           source: string;
           name: string;
           url: string | null;
+          attachment_id: string | null;
           created_at: string;
           deleted_at: string | null;
         };
@@ -1757,6 +1764,7 @@ export type Database = {
           source: string;
           name: string;
           url?: string | null;
+          attachment_id?: string | null;
           created_at?: string;
           deleted_at?: string | null;
         };
@@ -1766,6 +1774,7 @@ export type Database = {
           source?: string;
           name?: string;
           url?: string | null;
+          attachment_id?: string | null;
           created_at?: string;
           deleted_at?: string | null;
         };
@@ -1890,6 +1899,48 @@ export type Database = {
           },
           {
             foreignKeyName: "task_followers_task_id_fkey";
+            columns: ["task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      task_likes: {
+        Row: {
+          id: string;
+          task_id: string;
+          profile_id: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          profile_id?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          profile_id?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "task_likes_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_likes_task_id_fkey";
             columns: ["task_id"];
             isOneToOne: false;
             referencedRelation: "tasks";
@@ -2071,7 +2122,7 @@ export type Database = {
         Row: {
           id: string;
           workspace_id: string;
-          home_project_id: string;
+          home_project_id: string | null;
           title: string;
           notes: string | null;
           completed_at: string | null;
@@ -2101,7 +2152,7 @@ export type Database = {
         Insert: {
           id?: string;
           workspace_id: string;
-          home_project_id: string;
+          home_project_id?: string | null;
           title: string;
           notes?: string | null;
           completed_at?: string | null;
@@ -2131,7 +2182,7 @@ export type Database = {
         Update: {
           id?: string;
           workspace_id?: string;
-          home_project_id?: string;
+          home_project_id?: string | null;
           title?: string;
           notes?: string | null;
           completed_at?: string | null;
@@ -3595,8 +3646,8 @@ export type Database = {
           completed_at: string | null;
           due_on: string | null;
           assignee_id: string | null;
-          home_project_id: string;
-          home_project_name: string;
+          home_project_id: string | null;
+          home_project_name: string | null;
         }[];
       };
       set_project_integration: {
@@ -3727,6 +3778,36 @@ export type Database = {
       undo_dependency_shift: {
         Args: { changes: Json };
         Returns: Json;
+      };
+      preview_dependency_shifts: {
+        Args: { moves: Json; pull_earlier?: boolean };
+        Returns: {
+          task_id: string;
+          title: string;
+          start_on: string | null;
+          due_on: string | null;
+          new_start: string | null;
+          new_due: string | null;
+          shift_days: number;
+          status: string;
+          reason: string | null;
+        }[];
+      };
+      apply_dependency_shifts: {
+        Args: { moves: Json; confirmed_tasks?: string[]; pull_earlier?: boolean };
+        Returns: Json;
+      };
+      create_private_task: {
+        Args: { task_title: string };
+        Returns: string;
+      };
+      duplicate_task: {
+        Args: { target_task: string; options?: Json };
+        Returns: Json;
+      };
+      set_project_archived: {
+        Args: { target_project: string; archive: boolean };
+        Returns: string | null;
       };
       convert_to_subtask: {
         Args: { target_task: string; new_parent: string };
