@@ -7,7 +7,7 @@ import type { TaskDetail } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 
 const SELECT =
-  "min-w-0 max-w-full rounded border border-transparent bg-transparent py-0.5 text-xs text-zinc-600 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none";
+  "min-w-0 max-w-full rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-600 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none";
 
 // Convert a task into a subtask of another task (it leaves its projects), or a subtask into a task of a
 // project you edit. Tags, field values, comments, dependencies, and its own subtasks come along; the

@@ -30,7 +30,7 @@ type Option = { id: string; name: string };
 type TagOption = Option & { archived: boolean };
 
 const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none disabled:opacity-50";
+  "field h-auto py-1.5";
 const buttonClass =
   "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-1 text-sm text-zinc-700 hover:border-accent-500 hover:text-accent-700 disabled:opacity-50";
 

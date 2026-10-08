@@ -65,7 +65,7 @@ export function SectionTitle({
             e.currentTarget.blur();
           }
         }}
-        className="field-sizing-content min-w-12 max-w-full truncate rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+        className="field-sizing-content min-w-12 max-w-full truncate rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
       />
       <span className="text-xs tabular-nums text-zinc-400">{count}</span>
       <button
@@ -169,7 +169,7 @@ export function AddTaskInput({
         onKeyDown={(e) => {
           if (e.key === "Escape") close();
         }}
-        className={`min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100 ${
+        className={`min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none ${
           variant === "card" ? "shadow-xs" : ""
         }`}
       />
@@ -287,7 +287,7 @@ export function AddSection({ projectId, variant }: { projectId: string; variant:
         onKeyDown={(e) => {
           if (e.key === "Escape") setOpen(false);
         }}
-        className="w-full rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
+        className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
       />
     </form>
   );

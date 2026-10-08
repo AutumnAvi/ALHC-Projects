@@ -6,7 +6,7 @@ import { saveRequestNumbering, updateProjectWorkflow } from "@/lib/actions";
 import type { Project, RequestSequence } from "@/lib/data";
 
 const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none";
+  "field h-auto py-1.5";
 
 function preview(prefix: string, pad: number, n: number) {
   return `${prefix}${String(n).padStart(pad, "0")}`;

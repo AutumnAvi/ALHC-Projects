@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { Crown, LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { PendingInvites } from "@/components/people/pending-invites";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
   addTeamToProject,
@@ -20,14 +21,15 @@ import {
   ROLE_LABELS,
   assignableRoles,
   hasRole,
+  isProjectRole,
   type ProjectRole,
 } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
+import type { PendingInvite } from "@/lib/workspace";
 
 export type TeamChoice = { id: string; name: string; memberCount: number };
 
-const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none disabled:opacity-50";
+const inputClass = "field";
 
 function memberName(member: ProjectMember) {
   return member.fullName?.trim() || member.email;
@@ -39,12 +41,15 @@ export function MembersManager({
   viewerId,
   viewerRole,
   teams,
+  invites,
 }: {
   projectId: string;
   members: ProjectMember[];
   viewerId: string;
   viewerRole: ProjectRole;
   teams: TeamChoice[];
+  // People invited before their first sign-in.
+  invites: PendingInvite[];
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
@@ -69,8 +74,8 @@ export function MembersManager({
             Invite people
           </h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Anyone already on the workspace allowlist who has signed in at least once can be added. Guests are just
-            people invited with a lower role, such as Viewer or Commenter.
+            Anyone in the workspace can be added; people who haven’t signed in yet join on their first sign-in. Guests
+            are just people invited with a lower role, such as Viewer or Commenter.
           </p>
           <form
             className="mt-4 flex flex-wrap items-end gap-3"
@@ -81,7 +86,10 @@ export function MembersManager({
               if (!input || !email) return;
               run(async () => {
                 const result = await inviteProjectMember(projectId, email, inviteRole);
-                if (!result.error) input.value = "";
+                if (!result.error) {
+                  input.value = "";
+                  if (result.pending) notify(`${email} hasn’t signed in yet. They’ll join this project on their first sign-in.`);
+                }
                 return result;
               });
             }}
@@ -338,6 +346,11 @@ export function MembersManager({
             );
           })}
         </ul>
+        <PendingInvites
+          invites={invites}
+          canManage={canManage}
+          roleLabel={(role) => (isProjectRole(role) ? ROLE_LABELS[role] : role)}
+        />
       </section>
 
       <section aria-labelledby="roles-heading">
@@ -353,8 +366,8 @@ export function MembersManager({
           ))}
         </dl>
         <p className="mt-3 text-xs text-zinc-500">
-          Workspace access (who can sign in at all) is managed separately on the allowlist. Removing someone here only
-          removes them from this project.
+          Workspace access (who can sign in at all) is managed by workspace admins on Settings → Workspace → Members.
+          Removing someone here only removes them from this project.
         </p>
       </section>
     </div>

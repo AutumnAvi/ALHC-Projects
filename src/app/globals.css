@@ -22,6 +22,11 @@
   --spacing-gutter: 1.5rem; /* px-gutter: horizontal page padding */
 }
 
+:root {
+  /* The soft focus ring around inputs (accent at low opacity). */
+  --focus-ring: color-mix(in oklab, var(--color-accent-500) 18%, transparent);
+}
+
 @layer base {
   html {
     color-scheme: light;
@@ -33,6 +38,27 @@
 
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-accent-500;
+  }
+
+  /* Softer inputs (Asana feel, batch 2): every text input, textarea, select, and search box gets a light
+     border color, a muted placeholder, and a soft focus ring instead of the hard outline. Utilities
+     (control, field, or a component's own classes) still win over these. */
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  textarea,
+  select {
+    border-color: var(--color-zinc-200);
+  }
+
+  ::placeholder {
+    color: var(--color-zinc-400);
+    opacity: 1;
+  }
+
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--focus-ring);
   }
 }
 
@@ -53,8 +79,15 @@
   @apply inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 aria-expanded:bg-zinc-100;
 }
 
+/* Inputs, selects, textareas. control = compact (toolbars, rows, popovers; 28 px like the buttons);
+   field = forms and dialogs (36 px, 8 px corners, roomier padding). Both: light border, muted placeholder,
+   and a soft accent ring on focus. For a textarea add h-auto (and py-*). */
 @utility control {
-  @apply h-7 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500 focus:outline-none;
+  @apply h-7 rounded-md border border-zinc-200 bg-white px-2.5 text-sm text-zinc-800 transition-[border-color,box-shadow] duration-150 placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-500 disabled:hover:border-zinc-200;
+}
+
+@utility field {
+  @apply h-9 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 transition-[border-color,box-shadow] duration-150 placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-500 disabled:hover:border-zinc-200 aria-[invalid=true]:border-red-300;
 }
 
 @utility chip {

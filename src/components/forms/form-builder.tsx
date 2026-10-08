@@ -18,7 +18,7 @@ import {
 } from "@/lib/forms";
 
 const inputClass =
-  "w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm focus:border-zinc-400 focus:outline-none";
+  "control h-auto min-h-8 w-full py-1";
 const labelClass = "text-xs font-medium text-zinc-600";
 
 type SectionRef = { id: string; name: string };

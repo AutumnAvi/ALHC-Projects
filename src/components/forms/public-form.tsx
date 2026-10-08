@@ -12,7 +12,7 @@ import {
 } from "@/lib/forms";
 
 const inputClass =
-  "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-500 focus:outline-none aria-[invalid=true]:border-red-400";
+  "field h-auto w-full py-2";
 
 function omit(errors: Record<string, string>, key: string) {
   if (!(key in errors)) return errors;

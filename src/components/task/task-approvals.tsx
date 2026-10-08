@@ -18,7 +18,7 @@ export const APPROVAL_STATUS: Record<TaskApproval["status"], { label: string; cl
 };
 
 const inputClass =
-  "w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none";
+  "field h-auto w-full py-1.5";
 
 export function TaskApprovals({
   task,

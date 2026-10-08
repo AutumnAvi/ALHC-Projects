@@ -332,7 +332,7 @@ function mentionCandidates(task: TaskDetail, profiles: Profile[], memberId: stri
 }
 
 export const COMMENT_INPUT =
-  "field-sizing-content min-h-16 w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100";
+  "field-sizing-content min-h-16 w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none";
 
 function CommentItem({
   comment,

@@ -28,7 +28,7 @@ export type RuleContext = {
 };
 
 export const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm focus:border-zinc-400 focus:outline-none";
+  "control h-auto min-h-8 py-1";
 export const labelClass = "text-xs font-medium text-zinc-600";
 
 // Fields a rule can write or compare. People fields are left to the task pane.

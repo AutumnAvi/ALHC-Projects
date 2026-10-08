@@ -10,7 +10,7 @@ import type { Project } from "@/lib/data";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus, type ProjectStatus } from "@/lib/portfolios";
 
 const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none disabled:opacity-50";
+  "field h-auto py-1.5";
 
 // Editors and above set the status (set_project_status); it shows as a badge on portfolio cards.
 export function ProjectStatusForm({ project }: { project: Project }) {

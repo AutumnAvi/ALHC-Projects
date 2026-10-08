@@ -501,7 +501,7 @@ export function TaskDetailPanel({
                   run(() => updateTask(task.id, { notes }));
                 }
               }}
-              className="mt-2 field-sizing-content min-h-20 w-full resize-y rounded-md border border-zinc-200 px-3 py-2 text-sm leading-relaxed placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100"
+              className="mt-2 field-sizing-content min-h-20 w-full resize-y rounded-md border border-zinc-200 px-3 py-2 text-sm leading-relaxed placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
             />
           </div>
 
@@ -567,7 +567,7 @@ function Memberships({
               onChange={(e) =>
                 run(() => moveTask(task.id, membership.projectId, e.target.value || null))
               }
-              className="max-w-36 rounded border border-transparent bg-transparent py-0.5 text-xs text-zinc-600 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+              className="max-w-36 rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-600 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
             >
               <option value="">No section</option>
               {membership.sections.map((section) => (
@@ -614,7 +614,7 @@ function Memberships({
               const projectId = e.target.value;
               if (projectId) run(() => addTaskToProject(task.id, projectId));
             }}
-            className="rounded border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+            className="rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
           >
             <option value="">{task.memberships.length ? "Add to another project…" : "Add to a project…"}</option>
             {addableProjects.map((project) => (

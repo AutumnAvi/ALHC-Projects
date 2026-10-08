@@ -3,7 +3,7 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { getWorkspace, listProjectTemplates } from "@/lib/data";
+import { getWorkspace, listMyTeamIds, listProjectTemplates, listTeams } from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { drainOutbox } from "@/lib/email";
 import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
@@ -66,6 +66,16 @@ import {
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isPortfolioRole, isProjectRole } from "@/lib/roles";
+import {
+  EMAIL_PATTERN,
+  LOGO_MAX_BYTES,
+  isProjectVisibility,
+  parseInviteResult,
+  senderNameProblem,
+  splitEmails,
+  type InviteResult,
+  type ProjectVisibility,
+} from "@/lib/workspace";
 import { isGoalStatus, isProgressMode } from "@/lib/goals";
 import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
 import { MAX_PORTFOLIO_FIELD_TEXT, isPortfolioFieldType, isProjectStatus } from "@/lib/portfolios";
@@ -179,6 +189,9 @@ export async function createProject(formData: FormData): Promise<ActionResult> {
   let projectId: string | null = null;
   const result = await run(async () => {
     const name = text(formData.get("name"), "Project name", { max: 200 });
+    const teamValue = formData.get("team");
+    const teamId = teamValue ? id(teamValue, "team") : null;
+    const visibility = projectVisibility(formData.get("visibility") ?? "private");
     const supabase = await createClient();
     const workspace = await getWorkspace();
     if (!workspace) throw new DbError("No workspace is available");
@@ -197,6 +210,9 @@ export async function createProject(formData: FormData): Promise<ActionResult> {
         workspace_id: workspace.id,
         name,
         sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
+        // No team: the database puts the project in the workspace's default team.
+        ...(teamId ? { team_id: teamId } : {}),
+        visibility,
       })
       .select("id")
       .single();
@@ -217,6 +233,44 @@ export async function createProject(formData: FormData): Promise<ActionResult> {
     redirect(formData.get("then") === "import" ? `/projects/${projectId}/settings/import` : `/projects/${projectId}/list`);
   }
   return result;
+}
+
+function projectVisibility(value: unknown): ProjectVisibility {
+  if (!isProjectVisibility(value)) throw new InputError("Choose who can find the project");
+  return value;
+}
+
+// Team and privacy (Admin+ through RLS; the database checks the team: active, and one you're in or the
+// default team).
+export async function updateProjectTeam(
+  projectId: string,
+  patch: { teamId?: string; visibility?: string },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: TablesUpdate<"projects"> = {};
+    if (patch.teamId !== undefined) update.team_id = id(patch.teamId, "team");
+    if (patch.visibility !== undefined) update.visibility = projectVisibility(patch.visibility);
+    const supabase = await createClient();
+    checkUpdated(await supabase.from("projects").update(update).eq("id", id(projectId)).select("id"));
+  });
+}
+
+// After a template or a duplicate is created: put it in the chosen team (best effort — the project
+// already exists in the default team if this is refused).
+async function placeNewProject(projectId: string, teamId: string | null, visibility: ProjectVisibility | null) {
+  if (!teamId && !visibility) return;
+  const supabase = await createClient();
+  await supabase
+    .from("projects")
+    .update({ ...(teamId ? { team_id: teamId } : {}), ...(visibility ? { visibility } : {}) })
+    .eq("id", projectId);
+}
+
+export async function joinProject(projectId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("join_project", { target_project: id(projectId) }));
+  });
 }
 
 export async function updateProject(
@@ -276,10 +330,12 @@ export async function saveProjectAsTemplate(
 
 export async function createProjectFromTemplate(
   templateId: string,
-  input: { name: string; startOn: string | null },
+  input: { name: string; startOn: string | null; teamId?: string | null; visibility?: string | null },
 ): Promise<ActionResult> {
   let projectId: string | null = null;
   const result = await run(async () => {
+    const teamId = input.teamId ? id(input.teamId, "team") : null;
+    const visibility = input.visibility ? projectVisibility(input.visibility) : null;
     const supabase = await createClient();
     const created = await supabase.rpc("create_project_from_template", {
       target_template: id(templateId, "template"),
@@ -289,6 +345,7 @@ export async function createProjectFromTemplate(
     check(created);
     projectId = parseCopyResult(created.data)?.projectId ?? null;
     if (!projectId) throw new DbError("The project could not be created");
+    await placeNewProject(projectId, teamId, visibility);
   });
   if (projectId && !result.error) redirect(`/projects/${projectId}`);
   return result;
@@ -318,6 +375,9 @@ export async function duplicateProject(
     check(created);
     newProjectId = parseCopyResult(created.data)?.projectId ?? null;
     if (!newProjectId) throw new DbError("The project could not be duplicated");
+    // A duplicate stays in the source's team and keeps its privacy.
+    const { data: source } = await supabase.from("projects").select("team_id, visibility").eq("id", projectId).maybeSingle();
+    if (source) await placeNewProject(newProjectId, source.team_id, isProjectVisibility(source.visibility) ? source.visibility : null);
   });
   if (newProjectId && !result.error) redirect(`/projects/${newProjectId}`);
   return result;
@@ -456,21 +516,37 @@ function role(value: unknown): string {
   return value;
 }
 
+// pending: they haven't signed in yet — the membership waits for their first sign-in.
+export type InviteActionResult = ActionResult & { pending?: boolean };
+
 export async function inviteProjectMember(
   projectId: string,
   email: string,
   memberRole: string,
-): Promise<ActionResult> {
-  return run(async () => {
+): Promise<InviteActionResult> {
+  let pending = false;
+  const result = await run(async () => {
     const address = text(email, "Email", { max: 320 }).toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
     const supabase = await createClient();
-    check(
-      await supabase.rpc("add_project_member", {
-        target_project: id(projectId),
-        member_email: address,
-        member_role: role(memberRole),
-      }),
+    const added = await supabase.rpc("add_project_member", {
+      target_project: id(projectId),
+      member_email: address,
+      member_role: role(memberRole),
+    });
+    check(added);
+    pending = added.data === null;
+  });
+  return { ...result, pending };
+}
+
+// Cancels a pending invite (project / portfolio Admin+, team leads and workspace admins; RLS decides).
+export async function cancelPendingInvite(inviteId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("pending_memberships").update({ deleted_at: now() }).eq("id", id(inviteId, "invite")).select("id"),
+      "Only the people who manage this can cancel the invite",
     );
   });
 }
@@ -586,6 +662,17 @@ export async function setProjectStatus(
 // ---------------------------------------------------------------------------------------------
 
 // The sidebar's New project → "Use a template" step: every workspace template (read with RLS).
+// Teams a new project can go in: the viewer's teams plus the default team (open to everyone), default
+// first. Read with the viewer's client.
+export async function listProjectTeamChoices(): Promise<{ id: string; name: string; isDefault: boolean }[]> {
+  const [workspace, teams, mine] = await Promise.all([getWorkspace(), listTeams(), listMyTeamIds()]);
+  const defaultId = workspace?.defaultTeamId ?? null;
+  return teams
+    .filter((t) => t.id === defaultId || mine.has(t.id))
+    .map((t) => ({ id: t.id, name: t.name, isDefault: t.id === defaultId }))
+    .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name));
+}
+
 export async function listProjectTemplateChoices() {
   const templates = await listProjectTemplates();
   return templates.map(({ id, name, description, summary }) => ({ id, name, description, summary }));
@@ -708,19 +795,21 @@ export async function invitePortfolioMember(
   portfolioId: string,
   email: string,
   memberRole: string,
-): Promise<ActionResult> {
-  return run(async () => {
+): Promise<InviteActionResult> {
+  let pending = false;
+  const result = await run(async () => {
     const address = text(email, "Email", { max: 320 }).toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
     const supabase = await createClient();
-    check(
-      await supabase.rpc("add_portfolio_member", {
-        target_portfolio: id(portfolioId),
-        member_email: address,
-        member_role: portfolioRole(memberRole),
-      }),
-    );
+    const added = await supabase.rpc("add_portfolio_member", {
+      target_portfolio: id(portfolioId),
+      member_email: address,
+      member_role: portfolioRole(memberRole),
+    });
+    check(added);
+    pending = added.data === null;
   });
+  return { ...result, pending };
 }
 
 export async function changePortfolioMemberRole(
@@ -2321,6 +2410,93 @@ export async function removeWorkspaceAdmin(profileId: string): Promise<ActionRes
 }
 
 // ---------------------------------------------------------------------------------------------
+// Workspace members and settings (Asana feel, batch 2). Workspace admins only; the database checks.
+// The invite email goes through the email outbox (drained after the response, like every email).
+// ---------------------------------------------------------------------------------------------
+
+const WORKSPACE_ADMINS_ONLY = "Only workspace admins can change this";
+
+export async function inviteToWorkspace(
+  emails: string,
+): Promise<ActionResult & { results?: InviteResult[] }> {
+  const results: InviteResult[] = [];
+  const outcome = await run(async () => {
+    const addresses = splitEmails(emails);
+    if (addresses.length === 0) throw new InputError("Enter at least one email address");
+    if (addresses.length > 50) throw new InputError("Invite at most 50 people at a time");
+    const bad = addresses.find((a) => a.length > 320 || !EMAIL_PATTERN.test(a));
+    if (bad) throw new InputError(`“${bad}” isn’t a valid email address`);
+    const supabase = await createClient();
+    for (const address of addresses) {
+      const invited = await supabase.rpc("invite_to_workspace", { member_email: address });
+      check(invited, WORKSPACE_ADMINS_ONLY);
+      const parsed = parseInviteResult(invited.data);
+      if (parsed) results.push(parsed);
+    }
+  });
+  return { ...outcome, results };
+}
+
+export async function resendWorkspaceInvite(address: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("resend_workspace_invite", { member_email: email(address) }), WORKSPACE_ADMINS_ONLY);
+  });
+}
+
+export async function removeWorkspaceMember(address: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("remove_workspace_member", { member_email: email(address) }), WORKSPACE_ADMINS_ONLY);
+  });
+}
+
+export async function updateWorkspaceSettings(patch: {
+  name?: string;
+  emailSenderName?: string | null;
+  defaultTeamId?: string;
+}): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const update: TablesUpdate<"workspaces"> = {};
+    if (patch.name !== undefined) update.name = text(patch.name, "Workspace name", { max: 100 });
+    if (patch.emailSenderName !== undefined) {
+      const sender = optionalText(patch.emailSenderName, 200);
+      const problem = sender ? senderNameProblem(sender) : null;
+      if (problem) throw new InputError(problem);
+      update.email_sender_name = sender;
+    }
+    if (patch.defaultTeamId !== undefined) update.default_team_id = id(patch.defaultTeamId, "team");
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("workspaces").update(update).eq("id", workspace.id).select("id"),
+      WORKSPACE_ADMINS_ONLY,
+    );
+  });
+}
+
+// The browser uploads the logo to the workspace-assets bucket (admins only, by Storage policy), then
+// records its path here; null removes the logo.
+export async function setWorkspaceLogo(path: string | null, size?: number): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    if (path !== null) {
+      if (typeof path !== "string" || !path.startsWith(`${workspace.id}/`) || path.length > 300) {
+        throw new InputError("Upload the logo again");
+      }
+      if (size !== undefined && size > LOGO_MAX_BYTES) throw new InputError("The logo must be 2 MB or smaller");
+    }
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("workspaces").update({ logo_path: path }).eq("id", workspace.id).select("id"),
+      WORKSPACE_ADMINS_ONLY,
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Teams directory (see 20261006050000_goals_teams.sql). Leads and workspace admins manage a team; a
 // team never grants project access — the group invite adds ordinary project members (Project Admin+).
 // ---------------------------------------------------------------------------------------------
@@ -2382,18 +2558,19 @@ export async function deleteTeam(teamId: string): Promise<ActionResult> {
   return result;
 }
 
-export async function addTeamMember(teamId: string, address: string, memberRole: string): Promise<ActionResult> {
-  return run(async () => {
+export async function addTeamMember(teamId: string, address: string, memberRole: string): Promise<InviteActionResult> {
+  let pending = false;
+  const result = await run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.rpc("add_team_member", {
-        target_team: id(teamId),
-        member_email: email(address),
-        member_role: teamRole(memberRole),
-      }),
-      TEAM_NOT_ALLOWED,
-    );
+    const added = await supabase.rpc("add_team_member", {
+      target_team: id(teamId),
+      member_email: email(address),
+      member_role: teamRole(memberRole),
+    });
+    check(added, TEAM_NOT_ALLOWED);
+    pending = added.data === null;
   });
+  return { ...result, pending };
 }
 
 export async function changeTeamMemberRole(teamId: string, profileId: string, memberRole: string): Promise<ActionResult> {

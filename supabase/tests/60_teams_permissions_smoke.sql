@@ -67,16 +67,10 @@ begin
     raise exception 'non-allowlisted invite should fail';
   exception when check_violation then null;
   end;
-  begin
-    perform public.add_project_member(p, 'pending@example.com', 'viewer');
-    raise exception 'invite of an allowlisted address with no profile yet should fail';
-  exception when check_violation then null;
-  end;
-  begin
-    perform public.add_project_member(p, 'unconfirmed@example.com', 'viewer');
-    raise exception 'invite of an unconfirmed account should fail';
-  exception when check_violation then null;
-  end;
+  -- Since Asana feel, batch 2: allowlisted people who haven't signed in (or confirmed) yet get a
+  -- pending invite (null = no membership yet) that applies on their first confirmed sign-in.
+  assert public.add_project_member(p, 'pending@example.com', 'viewer') is null, 'invite before sign-in is pending';
+  assert public.add_project_member(p, 'unconfirmed@example.com', 'viewer') is null, 'invite of an unconfirmed account is pending';
   begin
     perform public.add_project_member(p, 'editor@example.com', 'superuser');
     raise exception 'unknown roles should fail';
@@ -543,13 +537,16 @@ begin
   -- Email live added list_email_deliveries and retry_email_delivery (Admin+ of a project of the email's
   -- task; email_outbox has no client write path). The reply and delivery plumbing (post_email_reply,
   -- email_reply_token, the claim / complete pair) is service_role only, and the kick runs from pg_cron.
+  -- Asana feel, batch 2 added invite_to_workspace, resend_workspace_invite, remove_workspace_member
+  -- (workspace admins; the allowlist has no client write path) and browse_projects / join_project (own
+  -- projects plus team-visible projects of the caller's teams; never consults is_workspace_admin).
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
-    'assign_request_number,can_manage_project_template,cancel_approval,cancel_integration_delivery,create_project_from_template,custom_field_project,'
+    'assign_request_number,browse_projects,can_manage_project_template,cancel_approval,cancel_integration_delivery,create_project_from_template,custom_field_project,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'
-    'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_batch,is_allowlisted,is_workspace_admin,list_email_deliveries,list_integration_deliveries,move_portfolio_project,'
+    'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_batch,invite_to_workspace,is_allowlisted,is_workspace_admin,join_project,list_email_deliveries,list_integration_deliveries,move_portfolio_project,'
     'open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_role,'
-    'receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,'
-    'request_approval,restore_task,resubmit_approval,retry_email_delivery,retry_integration_delivery,rule_project,save_project_as_template,set_project_archived,set_project_integration,set_project_status,set_task_dependency,start_import_run,submit_form,'
+    'receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,remove_workspace_member,'
+    'request_approval,resend_workspace_invite,restore_task,resubmit_approval,retry_email_delivery,retry_integration_delivery,rule_project,save_project_as_template,set_project_archived,set_project_integration,set_project_status,set_task_dependency,start_import_run,submit_form,'
     'task_request_label,task_role,transfer_portfolio_ownership,transfer_project_ownership,'
     'update_portfolio_member_role,update_project_member_role,update_project_template,workspace_hidden_project_count',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);

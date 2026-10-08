@@ -160,7 +160,7 @@ function DependencyList({
                 const otherId = e.target.value;
                 if (otherId) run(() => onAdd(otherId));
               }}
-              className="min-w-0 flex-1 rounded border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+              className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
             >
               <option value="">{addLabel}</option>
               {candidates.map((group) => (
@@ -203,7 +203,7 @@ function LinkSettings({
           const kind = e.currentTarget.value;
           if (isDependencyKind(kind)) onChange(kind, item.lagDays);
         }}
-        className="rounded border border-transparent bg-transparent py-0.5 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+        className="rounded-md border border-transparent bg-transparent py-0.5 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
       >
         {DEPENDENCY_KINDS.map((k) => (
           <option key={k.value} value={k.value}>
@@ -234,7 +234,7 @@ function LinkSettings({
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
-        className="w-14 rounded border border-zinc-200 bg-transparent px-1 py-0.5 tabular-nums focus:border-zinc-300 focus:outline-none"
+        className="w-14 rounded-md border border-zinc-200 bg-transparent px-1 py-0.5 tabular-nums focus:border-zinc-300 focus:outline-none"
       />
       <span aria-hidden>days</span>
     </div>

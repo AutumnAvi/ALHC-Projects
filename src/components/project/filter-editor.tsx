@@ -28,7 +28,7 @@ export type FilterContext = {
 };
 
 const selectClass =
-  "w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm focus:border-accent-500 focus:outline-none";
+  "control h-8 w-full";
 const inputClass = selectClass;
 
 // ---------------------------------------------------------------------------------------------

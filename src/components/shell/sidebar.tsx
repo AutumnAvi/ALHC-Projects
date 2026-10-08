@@ -7,6 +7,7 @@ import {
   Briefcase,
   ChartColumn,
   CircleCheck,
+  Compass,
   House,
   Inbox,
   LayoutTemplate,
@@ -36,11 +37,14 @@ const EMPTY_LINK = "flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-le
 
 export function Sidebar({
   member,
+  workspace,
   projects,
   portfolios,
   unreadCount,
 }: {
   member: Member;
+  // Name and logo from Settings → Workspace → General.
+  workspace: { name: string; logoUrl: string | null };
   projects: SidebarProject[];
   portfolios: SidebarPortfolio[];
   unreadCount: number;
@@ -66,14 +70,19 @@ export function Sidebar({
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex print:hidden">
-      <Link href="/" className="flex h-bar shrink-0 items-center gap-2 px-4">
-        <span
-          aria-hidden
-          className="flex size-6 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white"
-        >
-          A
-        </span>
-        <span className="text-sm font-semibold tracking-tight">ALHC Projects</span>
+      <Link href="/" className="flex h-bar shrink-0 items-center gap-2 px-4" title={workspace.name}>
+        {workspace.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- public Storage URL
+          <img src={workspace.logoUrl} alt="" className="size-6 shrink-0 rounded-md object-contain" />
+        ) : (
+          <span
+            aria-hidden
+            className="flex size-6 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white"
+          >
+            {workspace.name.slice(0, 1).toUpperCase() || "A"}
+          </span>
+        )}
+        <span className="truncate text-sm font-semibold tracking-tight">{workspace.name}</span>
       </Link>
 
       <form action="/search" role="search" className="px-3 pb-2">
@@ -129,6 +138,16 @@ export function Sidebar({
           </div>
           {creating ? <NewProjectDialog onClose={() => setCreating(false)} /> : null}
           <ul className="flex flex-col gap-px">
+            <li>
+              <Link
+                href="/projects/browse"
+                aria-current={pathname === "/projects/browse" ? "page" : undefined}
+                className={NAV_LINK}
+              >
+                <Compass className="size-4 text-zinc-500 group-aria-[current=page]/nav:text-zinc-900" />
+                Browse projects
+              </Link>
+            </li>
             {projects.map((project) => {
               const active = pathname.startsWith(`/projects/${project.id}`);
               return (
@@ -224,7 +243,7 @@ export function Sidebar({
           href="/settings/workspace"
           aria-label="Workspace settings"
           title="Workspace settings"
-          aria-current={pathname === "/settings/workspace" ? "page" : undefined}
+          aria-current={pathname.startsWith("/settings/workspace") ? "page" : undefined}
           className="btn-icon hover:bg-zinc-200 aria-[current=page]:bg-zinc-200 aria-[current=page]:text-zinc-900"
         >
           <Settings className="size-4" />

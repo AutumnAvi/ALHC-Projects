@@ -6,13 +6,18 @@ import { RoleGate } from "@/components/project/project-access";
 import { ProjectSettings } from "@/components/project/project-settings";
 import { ProjectStatusForm } from "@/components/project/project-status-form";
 import { ProjectStatusHistory } from "@/components/project/project-status-history";
+import { ProjectTeamSettings } from "@/components/project/project-team-settings";
 import {
   getProject,
   getProjectOrigin,
   getRequestSequence,
+  getWorkspace,
+  listMyTeamIds,
   listProjectStatusUpdates,
+  listTeams,
   type ProjectOrigin,
 } from "@/lib/data";
+import { isProjectVisibility } from "@/lib/workspace";
 import { getViewerTimeZone } from "@/lib/timezone";
 
 export async function generateMetadata({
@@ -27,14 +32,21 @@ export default async function ProjectSettingsPage({
   params,
 }: PageProps<"/projects/[projectId]/settings">) {
   const { projectId } = await params;
-  const [project, sequence, origin, timeZone, statusUpdates] = await Promise.all([
+  const [project, sequence, origin, timeZone, statusUpdates, workspace, teams, myTeams] = await Promise.all([
     getProject(projectId),
     getRequestSequence(projectId),
     getProjectOrigin(projectId),
     getViewerTimeZone(),
     listProjectStatusUpdates(projectId),
+    getWorkspace(),
+    listTeams(),
+    listMyTeamIds(),
   ]);
   if (!project) notFound();
+  // The project's own team, the default team, and teams the viewer is on.
+  const teamChoices = teams
+    .filter((t) => t.id === project.team_id || t.id === workspace?.defaultTeamId || myTeams.has(t.id))
+    .map((t) => ({ id: t.id, name: t.name, isDefault: t.id === workspace?.defaultTeamId }));
 
   // Status is Editor+, so it sits outside the admin-only gate below.
   return (
@@ -43,6 +55,12 @@ export default async function ProjectSettingsPage({
       <ProjectStatusForm project={project} />
       <ProjectStatusHistory updates={statusUpdates} />
       <RoleGate need="admin" what="project settings">
+        <ProjectTeamSettings
+          projectId={project.id}
+          teamId={project.team_id}
+          visibility={isProjectVisibility(project.visibility) ? project.visibility : "private"}
+          teams={teamChoices}
+        />
         <ProjectSettings project={project} sequence={sequence} />
       </RoleGate>
     </>

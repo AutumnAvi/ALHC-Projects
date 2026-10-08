@@ -246,7 +246,7 @@ export function ProjectHeader({
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
-        className={`ml-8 w-[calc(100%-2rem)] truncate rounded border border-transparent bg-transparent px-1.5 py-px text-xs text-zinc-500 placeholder:text-zinc-400 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent ${
+        className={`ml-8 w-[calc(100%-2rem)] truncate rounded-md border border-transparent bg-transparent px-1.5 py-px text-xs text-zinc-500 placeholder:text-zinc-400 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent ${
           !canEditProject && !project.description ? "hidden" : ""
         }`}
       />

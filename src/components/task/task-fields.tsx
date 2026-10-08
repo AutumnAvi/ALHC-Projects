@@ -230,7 +230,7 @@ function FieldRow({
                 value=""
                 onChange={(e) => e.target.value && save([...selected, e.target.value])}
                 aria-label={`Add person to ${field.name}`}
-                className="rounded border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200"
+                className="rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200"
               >
                 <option value="">Add person…</option>
                 {remaining.map((p) => (

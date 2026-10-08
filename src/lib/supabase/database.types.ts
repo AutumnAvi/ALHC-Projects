@@ -14,18 +14,45 @@ export type Database = {
           email: string;
           note: string | null;
           created_at: string;
+          invited_by: string | null;
+          invited_at: string | null;
+          removed_at: string | null;
+          removed_by: string | null;
         };
         Insert: {
           email: string;
           note?: string | null;
           created_at?: string;
+          invited_by?: string | null;
+          invited_at?: string | null;
+          removed_at?: string | null;
+          removed_by?: string | null;
         };
         Update: {
           email?: string;
           note?: string | null;
           created_at?: string;
+          invited_by?: string | null;
+          invited_at?: string | null;
+          removed_at?: string | null;
+          removed_by?: string | null;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "allowed_emails_invited_by_fkey";
+            columns: ["invited_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "allowed_emails_removed_by_fkey";
+            columns: ["removed_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       approval_requests: {
         Row: {
@@ -1139,6 +1166,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           email_comments: boolean;
+          joined_at: string | null;
         };
         Insert: {
           id: string;
@@ -1148,6 +1176,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           email_comments?: boolean;
+          joined_at?: string | null;
         };
         Update: {
           id?: string;
@@ -1157,6 +1186,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           email_comments?: boolean;
+          joined_at?: string | null;
         };
         Relationships: [];
       };
@@ -1575,6 +1605,8 @@ export type Database = {
           status_updated_by: string | null;
           archived_at: string | null;
           archived_by: string | null;
+          team_id: string;
+          visibility: string;
         };
         Insert: {
           id?: string;
@@ -1593,6 +1625,8 @@ export type Database = {
           status_updated_by?: string | null;
           archived_at?: string | null;
           archived_by?: string | null;
+          team_id?: string | null;
+          visibility?: string;
         };
         Update: {
           id?: string;
@@ -1611,8 +1645,17 @@ export type Database = {
           status_updated_by?: string | null;
           archived_at?: string | null;
           archived_by?: string | null;
+          team_id?: string;
+          visibility?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "projects_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "projects_created_by_fkey";
             columns: ["created_by"];
@@ -3498,6 +3541,9 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          default_team_id: string | null;
+          logo_path: string | null;
+          email_sender_name: string | null;
         };
         Insert: {
           id?: string;
@@ -3505,6 +3551,9 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          default_team_id?: string | null;
+          logo_path?: string | null;
+          email_sender_name?: string | null;
         };
         Update: {
           id?: string;
@@ -3512,8 +3561,96 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          default_team_id?: string | null;
+          logo_path?: string | null;
+          email_sender_name?: string | null;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "workspaces_default_team_id_fkey";
+            columns: ["default_team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      pending_memberships: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          email: string;
+          project_id: string | null;
+          portfolio_id: string | null;
+          team_id: string | null;
+          role: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          applied_at: string | null;
+          applied_profile_id: string | null;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          email: string;
+          project_id?: string | null;
+          portfolio_id?: string | null;
+          team_id?: string | null;
+          role: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          applied_at?: string | null;
+          applied_profile_id?: string | null;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          email?: string;
+          project_id?: string | null;
+          portfolio_id?: string | null;
+          team_id?: string | null;
+          role?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          applied_at?: string | null;
+          applied_profile_id?: string | null;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "pending_memberships_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "pending_memberships_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "pending_memberships_portfolio_id_fkey";
+            columns: ["portfolio_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "pending_memberships_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+        ];
       };
     };
     Views: {
@@ -3522,6 +3659,37 @@ export type Database = {
     Functions: {
       add_portfolio_member: {
         Args: { target_portfolio: string; member_email: string; member_role?: string };
+        Returns: string | null;
+      };
+      invite_to_workspace: {
+        Args: { member_email: string };
+        Returns: Json;
+      };
+      resend_workspace_invite: {
+        Args: { member_email: string };
+        Returns: string;
+      };
+      remove_workspace_member: {
+        Args: { member_email: string };
+        Returns: undefined;
+      };
+      browse_projects: {
+        Args: { target_team?: string | null };
+        Returns: {
+          project_id: string;
+          name: string;
+          description: string | null;
+          team_id: string;
+          team_name: string;
+          visibility: string;
+          status: string;
+          archived: boolean;
+          member_count: number;
+          my_role: string | null;
+        }[];
+      };
+      join_project: {
+        Args: { target_project: string };
         Returns: string;
       };
       add_portfolio_project: {
@@ -3530,7 +3698,7 @@ export type Database = {
       };
       add_project_member: {
         Args: { target_project: string; member_email: string; member_role?: string };
-        Returns: string;
+        Returns: string | null;
       };
       add_workspace_admin: {
         Args: { target_workspace: string | null; member_email: string };
@@ -3857,7 +4025,7 @@ export type Database = {
       };
       add_team_member: {
         Args: { target_team: string; member_email: string; member_role?: string };
-        Returns: string;
+        Returns: string | null;
       };
       update_team_member_role: {
         Args: { target_team: string; target_profile: string; new_role: string };
