@@ -17,7 +17,7 @@ import {
 } from "@/lib/integrations-shared";
 
 const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none disabled:opacity-50";
+  "field h-auto py-1.5";
 const buttonClass = "rounded-md px-2.5 py-1 text-sm text-zinc-700 hover:bg-zinc-100 disabled:opacity-50";
 
 // Admin+ defaults for the Send Slack message / Call webhook rule actions. Saved values never come back

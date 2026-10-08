@@ -32,7 +32,7 @@ function applyChange(current: SubtaskItem[], change: Change): SubtaskItem[] {
 
 const SUBTASK_DRAG = "application/x-alhc-subtask";
 const SMALL_CONTROL =
-  "h-6 rounded border border-transparent bg-transparent px-1 text-xs text-zinc-600 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none disabled:hover:border-transparent";
+  "h-6 rounded-md border border-transparent bg-transparent px-1 text-xs text-zinc-600 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none disabled:hover:border-transparent";
 
 // The pane's Subtasks section: real subtasks (tasks with this task as parent). Inline add, rename,
 // complete, assign, start/due dates, reorder (drag, or Move up / Move down), delete, and open one in its
@@ -181,7 +181,7 @@ export function TaskSubtasks({ task, profiles }: { task: TaskDetail; profiles: P
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
                   }}
-                  className={`min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
+                  className={`min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
                     completed ? "text-zinc-400 line-through" : "text-zinc-800"
                   }`}
                 />

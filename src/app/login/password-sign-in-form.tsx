@@ -4,11 +4,20 @@ import { useActionState } from "react";
 import { passwordAuth, type PasswordAuthState } from "./actions";
 
 const inputClass =
-  "mt-1 block w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100";
+  "field mt-1 block h-10 w-full font-normal";
 
 // One form for both screens: /login signs in, /signup creates an account (confirmed by email, then the
 // allowlist gate in /auth/callback). Each screen links to the other.
-export function PasswordSignInForm({ next, mode = "sign-in" }: { next: string; mode?: "sign-in" | "sign-up" }) {
+export function PasswordSignInForm({
+  next,
+  mode = "sign-in",
+  defaultEmail,
+}: {
+  next: string;
+  mode?: "sign-in" | "sign-up";
+  // Prefilled from an invite link (/signup?email=…).
+  defaultEmail?: string;
+}) {
   const signUp = mode === "sign-up";
   const [state, formAction, pending] = useActionState<PasswordAuthState, FormData>(
     passwordAuth,
@@ -26,6 +35,7 @@ export function PasswordSignInForm({ next, mode = "sign-in" }: { next: string; m
           name="email"
           required
           autoComplete="email"
+          defaultValue={defaultEmail}
           className={inputClass}
         />
       </label>

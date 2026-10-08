@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
+import { ProjectPlacementFields, type Placement } from "@/components/projects/project-placement";
 import { useServerAction } from "@/components/toast";
 import { createProjectFromTemplate } from "@/lib/actions";
 import { describeSummary, localIsoDate, type TemplateSummary } from "@/lib/templates";
@@ -17,6 +18,7 @@ export function UseTemplateDialog({
   const [pending, run] = useServerAction();
   const [name, setName] = useState(template.name);
   const [startOn, setStartOn] = useState(() => localIsoDate());
+  const [placement, setPlacement] = useState<Placement>({ teamId: "", visibility: "team" });
   const { summary } = template;
 
   return (
@@ -28,7 +30,14 @@ export function UseTemplateDialog({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          run(() => createProjectFromTemplate(template.id, { name, startOn: startOn || null }));
+          run(() =>
+            createProjectFromTemplate(template.id, {
+              name,
+              startOn: startOn || null,
+              teamId: placement.teamId || null,
+              visibility: placement.visibility,
+            }),
+          );
         }}
         className="flex flex-col gap-4"
       >
@@ -64,6 +73,7 @@ export function UseTemplateDialog({
               : "No task in this template has a date yet."}
           </p>
         </div>
+        <ProjectPlacementFields value={placement} onChange={setPlacement} idPrefix="template-project" />
         {summary.rules > 0 ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             {summary.rules} rule{summary.rules === 1 ? "" : "s"} will be copied <strong>turned off</strong>. Check them in

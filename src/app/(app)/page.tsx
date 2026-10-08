@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Archive, FolderClosed, House, LayoutTemplate } from "lucide-react";
+import { Archive, Compass, FolderClosed, House, LayoutTemplate } from "lucide-react";
 import { NewProjectForm } from "@/components/shell/new-project-form";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { listArchivedProjects, listProjects } from "@/lib/data";
@@ -74,15 +74,24 @@ export default async function HomePage() {
                 ))}
               </ul>
             )}
-            {archived.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-4">
               <Link
-                href="/projects/archived"
-                className="mt-3 inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
+                href="/projects/browse"
+                className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
               >
-                <Archive className="size-3.5" aria-hidden />
-                Archived projects ({archived.length})
+                <Compass className="size-3.5" aria-hidden />
+                Browse projects you can join
               </Link>
-            ) : null}
+              {archived.length > 0 ? (
+                <Link
+                  href="/projects/archived"
+                  className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
+                >
+                  <Archive className="size-3.5" aria-hidden />
+                  Archived projects ({archived.length})
+                </Link>
+              ) : null}
+            </div>
           </section>
         </div>
       </div>

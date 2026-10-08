@@ -7,7 +7,7 @@ import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { SetupRequired } from "@/components/setup-required";
 import { ToastProvider } from "@/components/toast";
 import { requireMember } from "@/lib/auth";
-import { countUnreadInbox, listPortfolioProgress, listPortfolios, listProjects } from "@/lib/data";
+import { countUnreadInbox, getWorkspace, listPortfolioProgress, listPortfolios, listProjects } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/env";
 import { progressPercent } from "@/lib/portfolios";
 
@@ -16,7 +16,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!isSupabaseConfigured()) return <SetupRequired />;
 
   const member = await requireMember();
-  const [projects, portfolios, progress, unreadCount] = await Promise.all([
+  const [workspace, projects, portfolios, progress, unreadCount] = await Promise.all([
+    getWorkspace(),
     listProjects(),
     listPortfolios(),
     listPortfolioProgress(),
@@ -31,6 +32,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <div className="app-shell flex h-full">
         <Sidebar
           member={member}
+          workspace={{ name: workspace?.name ?? "ALHC Projects", logoUrl: workspace?.logoUrl ?? null }}
           projects={projects.map(({ id, name }) => ({ id, name }))}
           portfolios={portfolios.map(({ id, name }) => {
             const counts = progress.get(id);

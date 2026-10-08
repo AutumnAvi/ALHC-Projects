@@ -15,7 +15,7 @@ import { EmptyState } from "@/components/ui";
 import { ColorPicker } from "@/components/color-picker";
 
 const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm focus:border-zinc-400 focus:outline-none";
+  "control h-8";
 
 export function FieldsManager({
   projectId,

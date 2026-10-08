@@ -45,7 +45,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 ## What's here (teams & permissions)
 
 - **Project members and roles.** Every project has members with one of five roles: **Owner**, **Admin**, **Editor**, **Commenter**, **Viewer**. Viewers can read everything in the project; Commenters can also comment, follow, and decide approvals sent to them; Editors can change tasks, fields, sections, and views; Admins also manage rules, forms, settings, and members; Owners can also transfer ownership and delete the project. People who aren't members don't see the project at all (not in the sidebar, search, My Tasks, or Inbox).
-- **Members page.** Settings → **Members**: invite someone by email (they must already be on the allowlist and have signed in once), change roles, remove people, leave a project, or transfer ownership. A project always keeps at least one owner. "Guests" are simply people invited with a lower role such as Viewer or Commenter.
+- **Members page.** Settings → **Members**: invite someone by email (anyone in the workspace; people who haven't signed in yet get a pending invite that starts on their first sign-in), change roles, remove people, leave a project, or transfer ownership. A project always keeps at least one owner. "Guests" are simply people invited with a lower role such as Viewer or Commenter.
 - **Existing projects** were backfilled when the migration ran: the creator became the owner and everyone else on the allowlist became an Editor, so nobody lost access. Narrow access per project from the Members page.
 - **New projects** are owned by whoever creates them and start with only that person. Public forms keep working for anyone with the link.
 
@@ -219,6 +219,15 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 - **Comment emails.** A new comment emails every follower except its author: task, project, the comment, and an **Open task** link. Each email is checked again just before sending, so someone who lost access gets nothing. Everyone can turn this off in **Settings → Profile → Email me about comments** (on by default).
 - **Reply by email.** With inbound replies set up (“Setup: reply by email”), replying to a comment email posts the reply as a comment by you. Only the text above the quoted message is posted, and only from the address the email was sent to.
 
+## What's here (Asana feel, batch 2)
+
+- **Teams are required.** The workspace has a default team (**Autumn Lake**, created by the migration; every existing project joined it). New projects pick a team — the default team is preselected — and a privacy: **Public to team** (everyone on the team can find and join it) or **Private to members**. Existing projects stayed private. New members join the default team on their first sign-in. Team pages show members, when each joined, pending invites, and the team's projects.
+- **Members in the app.** Settings → Workspace → **Members** lists everyone (name, email, Admin / Member, signed in or invited, teams). Workspace admins invite by email (an invite email with a sign-up link goes through the email outbox), resend, remove (sign-in stops; their tasks, comments, and memberships stay), add back, and make people admins (never the last one).
+- **Invite before sign-in.** Projects, portfolios, and teams accept people who haven't signed in yet: the invite waits and becomes a membership on their first confirmed sign-in.
+- **Browse projects** (sidebar, Home, and team pages): your projects plus public projects of your teams, with **Join** (as an Editor). Private projects never appear for non-members, workspace admins included.
+- **Workspace settings** like Asana's admin console: General (name, logo, default team, past imports), Members, Teams, Tags, Email (sender name, delivery status, links to each project's Deliveries log), Security (sign-in methods, read-only). Everyone sees the same sections; admin-only ones are read-only for members.
+- **Softer inputs** everywhere: rounded corners, lighter borders, more padding, a soft focus ring, muted placeholders.
+
 ## Setup: Supabase
 
 1. **Create a project** at [supabase.com/dashboard](https://supabase.com/dashboard). Note the project ref (the `xxxx` in `https://xxxx.supabase.co`).
@@ -233,7 +242,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
    values ('avi@yourdomain.com', 'Avi');
    ```
 
-   To remove access later, run `delete from public.allowed_emails where email = '...';`. Their next request gets signed out. `supabase/seed.sql` only contains a placeholder (`owner@example.com`) and is applied by `supabase db reset` for local stacks.
+   Since Asana feel, batch 2, workspace admins do this in the app instead: Settings → Workspace → **Members** → *Invite people* adds the address and emails a sign-up link (through the email outbox), and *Remove* blocks future sign-ins without touching the person's work (`allowed_emails.removed_at`; their next request gets signed out). The SQL route still works for the very first people. `supabase/seed.sql` only contains a placeholder (`owner@example.com`) and is applied by `supabase db reset` for local stacks.
 4. **Workspace admin:** the Workspace admin and comments migration makes `avweinreb@autumnlakemarketing.com` the first workspace admin if that account already exists (signed in once, allowlisted); otherwise it does nothing. To set the first admin later, run in the SQL editor:
 
    ```sql

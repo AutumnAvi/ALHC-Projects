@@ -45,6 +45,13 @@ import {
   type GoalViewer,
 } from "@/lib/goals";
 import { isTeamRole, type TeamRole } from "@/lib/teams";
+import {
+  WORKSPACE_ASSETS_BUCKET,
+  isProjectVisibility,
+  type BrowseProject,
+  type PendingInvite,
+  type WorkspaceMember,
+} from "@/lib/workspace";
 import { toTag, type Tag } from "@/lib/tags";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import { isInboundCallStatus, type InboundCall, type InboundEndpoint } from "@/lib/inbound-shared";
@@ -92,10 +99,12 @@ export type Project = Pick<
   | "status_updated_at"
   | "status_updated_by"
   | "archived_at"
+  | "team_id"
+  | "visibility"
 >;
 
 const PROJECT_COLUMNS =
-  "id, name, description, sort_order, approval_completes_task, status, status_note, status_updated_at, status_updated_by, archived_at";
+  "id, name, description, sort_order, approval_completes_task, status, status_note, status_updated_at, status_updated_by, archived_at, team_id, visibility";
 export type Section = Pick<Tables<"sections">, "id" | "project_id" | "name" | "sort_order">;
 export type Profile = Pick<Tables<"profiles">, "id" | "email" | "full_name" | "avatar_url">;
 
@@ -284,16 +293,35 @@ function rows<T>(result: QueryResult<T[] | null>, what: string): T[] {
   return maybe(result, what) ?? [];
 }
 
-export const getWorkspace = cache(async () => {
+export type Workspace = {
+  id: string;
+  name: string;
+  defaultTeamId: string | null;
+  logoPath: string | null;
+  // Public URL of the logo (the workspace-assets bucket is public), or null.
+  logoUrl: string | null;
+  emailSenderName: string | null;
+};
+
+export const getWorkspace = cache(async (): Promise<Workspace | null> => {
   const supabase = await createClient();
   const result = await supabase
     .from("workspaces")
-    .select("id, name")
+    .select("id, name, default_team_id, logo_path, email_sender_name")
     .is("deleted_at", null)
     .order("created_at")
     .limit(1)
     .maybeSingle();
-  return maybe(result, "workspace");
+  const row = maybe(result, "workspace");
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    defaultTeamId: row.default_team_id,
+    logoPath: row.logo_path,
+    logoUrl: row.logo_path ? supabase.storage.from(WORKSPACE_ASSETS_BUCKET).getPublicUrl(row.logo_path).data.publicUrl : null,
+    emailSenderName: row.email_sender_name,
+  };
 });
 
 // Active projects the viewer can read: the sidebar, Home, and every project picker. Archived projects
@@ -2823,25 +2851,120 @@ export const canManageTeam = cache(async (teamId: string): Promise<boolean> => {
   return maybe(await supabase.rpc("can_manage_team", { target_team: teamId }), "team role") === true;
 });
 
-export type TeamProject = { projectId: string; name: string; status: string; role: string; addedAt: string };
+// ---------------------------------------------------------------------------------------------
+// Workspace people (Asana feel, batch 2): the allowlist is readable by everyone allowlisted, so the
+// Members page reads it with the viewer's client. Invite email status comes back for workspace admins
+// only (RLS on email_outbox).
+// ---------------------------------------------------------------------------------------------
 
-// Projects the team was added to, limited by RLS to the ones the viewer can already read.
-export const listTeamProjects = cache(async (teamId: string): Promise<TeamProject[]> => {
+export const listWorkspaceMembers = cache(async (): Promise<WorkspaceMember[]> => {
   const supabase = await createClient();
-  const result = await supabase
-    .from("team_projects")
-    .select("role, created_at, project:projects!team_projects_project_id_fkey!inner(id, name, status)")
-    .eq("team_id", teamId)
-    .is("deleted_at", null)
-    .is("project.deleted_at", null)
-    .order("created_at");
-  return rows(result, "team projects").map((r) => ({
-    projectId: r.project.id,
-    name: r.project.name,
-    status: r.project.status,
-    role: r.role,
-    addedAt: r.created_at,
+  const workspace = await getWorkspace();
+  const [allowed, profiles, admins, teamRows, invites] = await Promise.all([
+    supabase
+      .from("allowed_emails")
+      .select("email, invited_at, removed_at, created_at, inviter:profiles!allowed_emails_invited_by_fkey(full_name)")
+      .order("email"),
+    supabase.from("profiles").select("id, email, full_name"),
+    workspace
+      ? supabase.from("workspace_admins").select("profile_id").eq("workspace_id", workspace.id).is("deleted_at", null)
+      : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("team_members")
+      .select("profile_id, team:teams!team_members_team_id_fkey!inner(id, name, deleted_at)")
+      .is("deleted_at", null)
+      .is("team.deleted_at", null),
+    supabase
+      .from("email_outbox")
+      .select("to_email, status, last_error, sent_at, created_at")
+      .is("task_id", null)
+      .eq("payload->>kind", "invite")
+      .order("created_at", { ascending: false })
+      .limit(500),
+  ]);
+  const byEmail = new Map(rows(profiles, "people").map((p) => [p.email.toLowerCase(), p] as const));
+  const adminIds = new Set(rows(admins, "workspace admins").map((a) => a.profile_id));
+  const teamsByProfile = new Map<string, { id: string; name: string }[]>();
+  for (const m of rows(teamRows, "team memberships")) {
+    const list = teamsByProfile.get(m.profile_id) ?? [];
+    list.push({ id: m.team.id, name: m.team.name });
+    teamsByProfile.set(m.profile_id, list);
+  }
+  const latestInvite = new Map<string, WorkspaceMember["inviteEmail"]>();
+  for (const o of rows(invites, "invite emails")) {
+    if (!latestInvite.has(o.to_email)) {
+      latestInvite.set(o.to_email, { status: o.status, lastError: o.last_error, sentAt: o.sent_at, createdAt: o.created_at });
+    }
+  }
+  return rows(allowed, "workspace members")
+    .map((a): WorkspaceMember => {
+      const profile = byEmail.get(a.email) ?? null;
+      return {
+        email: a.email,
+        profileId: profile?.id ?? null,
+        name: profile?.full_name?.trim() || a.email,
+        role: profile && adminIds.has(profile.id) ? "admin" : "member",
+        status: a.removed_at ? "removed" : profile ? "active" : "invited",
+        teams: profile ? (teamsByProfile.get(profile.id) ?? []).sort((x, y) => x.name.localeCompare(y.name)) : [],
+        invitedAt: a.invited_at,
+        invitedByName: a.inviter?.full_name?.trim() || null,
+        removedAt: a.removed_at,
+        inviteEmail: latestInvite.get(a.email) ?? null,
+      };
+    })
+    .sort((x, y) => Number(y.role === "admin") - Number(x.role === "admin") || x.name.localeCompare(y.name));
+});
+
+// Pending invites (people who haven't signed in yet) for one project, portfolio, or team. RLS: with
+// the target (project / portfolio Viewer+, teams: everyone allowlisted).
+export const listPendingInvites = cache(
+  async (target: "project" | "portfolio" | "team", targetId: string): Promise<PendingInvite[]> => {
+    const supabase = await createClient();
+    const column = target === "project" ? "project_id" : target === "portfolio" ? "portfolio_id" : "team_id";
+    const result = await supabase
+      .from("pending_memberships")
+      .select("id, email, role, created_at, inviter:profiles!pending_memberships_created_by_fkey(full_name)")
+      .eq(column, targetId)
+      .is("applied_at", null)
+      .is("deleted_at", null)
+      .order("created_at");
+    return rows(result, "pending invites").map((r) => ({
+      id: r.id,
+      email: r.email,
+      role: r.role,
+      invitedAt: r.created_at,
+      invitedByName: r.inviter?.full_name?.trim() || null,
+    }));
+  },
+);
+
+// Browse projects: the viewer's own projects plus team-visible projects of their teams. Private
+// projects of others never come back (workspace admins included).
+export const browseProjects = cache(async (teamId?: string | null): Promise<BrowseProject[]> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("browse_projects", { target_team: teamId ?? null });
+  return rows(result, "projects to browse").map((r) => ({
+    projectId: r.project_id,
+    name: r.name,
+    description: r.description,
+    teamId: r.team_id,
+    teamName: r.team_name,
+    visibility: isProjectVisibility(r.visibility) ? r.visibility : "private",
+    status: r.status,
+    archived: r.archived,
+    memberCount: r.member_count,
+    myRole: r.my_role,
   }));
+});
+
+// Teams the viewer is in (active), for the New project team picker; the default team is always
+// offered too (anyone may put a project there).
+export const listMyTeamIds = cache(async (): Promise<Set<string>> => {
+  const { user } = await getViewer();
+  if (!user) return new Set();
+  const supabase = await createClient();
+  const result = await supabase.from("team_members").select("team_id").eq("profile_id", user.id).is("deleted_at", null);
+  return new Set(rows(result, "your teams").map((r) => r.team_id));
 });
 
 // ---------------------------------------------------------------------------------------------

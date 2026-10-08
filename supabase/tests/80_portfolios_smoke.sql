@@ -159,16 +159,10 @@ begin
     raise exception 'non-allowlisted invite should fail';
   exception when check_violation then null;
   end;
-  begin
-    perform public.add_portfolio_member(pf, 'pending@example.com', 'viewer');
-    raise exception 'invite of an allowlisted address with no profile yet should fail';
-  exception when check_violation then null;
-  end;
-  begin
-    perform public.add_portfolio_member(pf, 'unconfirmed@example.com', 'viewer');
-    raise exception 'invite of an unconfirmed account should fail';
-  exception when check_violation then null;
-  end;
+  -- Since Asana feel, batch 2: allowlisted people who haven't signed in (or confirmed) yet get a
+  -- pending invite (null = no membership yet) that applies on their first confirmed sign-in.
+  assert public.add_portfolio_member(pf, 'pending@example.com', 'viewer') is null, 'invite before sign-in is pending';
+  assert public.add_portfolio_member(pf, 'unconfirmed@example.com', 'viewer') is null, 'invite of an unconfirmed account is pending';
 
   -- Memberships and portfolio projects only change through the RPCs.
   update public.portfolio_members set role = 'viewer' where portfolio_id = pf;

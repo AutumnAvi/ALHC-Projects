@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { FolderKanban, LogOut, Target, Trash2, UserMinus, UserPlus, Users } from "lucide-react";
+import { Compass, LogOut, Target, Trash2, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { GoalStatusBadge } from "@/components/goals/goal-status-badge";
+import { PendingInvites } from "@/components/people/pending-invites";
 import { ProgressBar } from "@/components/portfolio/progress-bar";
-import { ProjectStatusBadge } from "@/components/project-status-badge";
-import { useServerAction } from "@/components/toast";
+import { BrowseProjectList } from "@/components/projects/browse-projects";
+import { Timestamp } from "@/components/timestamp";
+import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState, HEADER_TITLE_INPUT } from "@/components/ui";
 import { addTeamMember, changeTeamMemberRole, deleteTeam, removeTeamMember, updateTeam } from "@/lib/actions";
-import type { Team, TeamProject } from "@/lib/data";
+import type { Team } from "@/lib/data";
 import { NO_PROGRESS, type Goal, type GoalProgress } from "@/lib/goals";
 import { formatProgress } from "@/lib/portfolios";
-import { ROLE_LABELS, isProjectRole } from "@/lib/roles";
-import { TEAM_ROLES, TEAM_ROLE_LABELS, type TeamRole } from "@/lib/teams";
+import { TEAM_ROLES, TEAM_ROLE_LABELS, isTeamRole, type TeamRole } from "@/lib/teams";
+import type { BrowseProject, PendingInvite } from "@/lib/workspace";
 
 const CARD = "rounded-lg border border-zinc-200";
 const CARD_HEADER = "border-b border-zinc-200 px-5 py-4";
@@ -23,18 +25,25 @@ export function TeamDetail({
   team,
   viewerId,
   canManage,
+  isDefault,
   projects,
+  invites,
   goals,
   progress,
 }: {
   team: Team;
   viewerId: string;
   canManage: boolean;
-  projects: TeamProject[];
+  // The workspace's default team: new members join it automatically; it can't be deleted.
+  isDefault: boolean;
+  // The team's projects the viewer may see (Browse projects for this team).
+  projects: BrowseProject[];
+  invites: PendingInvite[];
   goals: Goal[];
   progress: Record<string, GoalProgress>;
 }) {
   const [pending, run] = useServerAction();
+  const notify = useNotify();
   const emailRef = useRef<HTMLInputElement>(null);
   const [inviteRole, setInviteRole] = useState<TeamRole>("member");
   const leadCount = team.members.filter((m) => m.role === "lead").length;
@@ -97,8 +106,9 @@ export function TeamDetail({
               className="control w-full resize-y read-only:border-transparent read-only:bg-transparent read-only:px-0"
             />
             <p className="mt-1 text-xs text-zinc-500">
-              Leads and workspace admins manage this team. Being on it doesn’t open any project; a project admin can add
-              the whole team from the project’s Settings → Members.
+              {isDefault ? "This is the workspace’s default team: new members join it automatically. " : ""}
+              Leads and workspace admins manage this team. Its members can find and join the team’s public projects;
+              private projects still need an invite.
             </p>
           </section>
 
@@ -118,7 +128,10 @@ export function TeamDetail({
                   if (!input || !email) return;
                   run(async () => {
                     const result = await addTeamMember(team.id, email, inviteRole);
-                    if (!result.error) input.value = "";
+                    if (!result.error) {
+                      input.value = "";
+                      if (result.pending) notify(`${email} hasn’t signed in yet. They’ll join the team on their first sign-in.`);
+                    }
                     return result;
                   });
                 }}
@@ -159,7 +172,7 @@ export function TeamDetail({
                   Add
                 </button>
                 <p className="basis-full text-xs text-zinc-500">
-                  They must be on the workspace allowlist and have signed in at least once.
+                  Anyone in the workspace. People who haven’t signed in yet join on their first sign-in.
                 </p>
               </form>
             ) : null}
@@ -180,7 +193,9 @@ export function TeamDetail({
                           {m.name}
                           {self ? <span className="font-normal text-zinc-500"> (you)</span> : null}
                         </p>
-                        <p className="truncate text-xs text-zinc-500">{m.email}</p>
+                        <p className="truncate text-xs text-zinc-500">
+                          {m.email} · joined <Timestamp iso={m.addedAt} />
+                        </p>
                       </div>
                       {canManage ? (
                         <>
@@ -249,37 +264,34 @@ export function TeamDetail({
                 })}
               </ul>
             )}
+            <PendingInvites
+              invites={invites}
+              canManage={canManage}
+              roleLabel={(role) => (isTeamRole(role) ? TEAM_ROLE_LABELS[role] : role)}
+            />
           </section>
 
-          <section className={CARD} aria-labelledby="team-projects-heading">
-            <div className={CARD_HEADER}>
-              <h2 id="team-projects-heading" className="text-sm font-semibold text-zinc-900">
-                Projects
-              </h2>
-              <p className="mt-1 text-xs text-zinc-500">
-                Projects this team was added to that you can open. Projects you aren’t a member of aren’t listed.
-              </p>
+          <section aria-labelledby="team-projects-heading">
+            <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h2 id="team-projects-heading" className="text-sm font-semibold text-zinc-900">
+                  Projects
+                </h2>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  The team’s projects you can see: yours, and public ones you can join. Private projects only show for
+                  their members.
+                </p>
+              </div>
+              <Link href={`/projects/browse?team=${team.id}`} className="btn-ghost">
+                <Compass className="size-3.5" aria-hidden />
+                Browse projects
+              </Link>
             </div>
-            {projects.length === 0 ? (
-              <EmptyState icon={FolderKanban} title="No projects to show" size="inline">
-                A project owner or admin adds the team from the project’s Settings → Members → Add a team.
-              </EmptyState>
-            ) : (
-              <ul className="divide-y divide-zinc-100">
-                {projects.map((p) => (
-                  <li key={p.projectId} className="flex items-center gap-3 px-5 py-2.5">
-                    <span aria-hidden className="ml-0.5 mr-0.5 size-2.5 shrink-0 rounded-sm bg-zinc-300" />
-                    <Link href={`/projects/${p.projectId}`} className="min-w-0 flex-1 truncate text-sm text-zinc-900 hover:underline">
-                      {p.name}
-                    </Link>
-                    <ProjectStatusBadge status={p.status} />
-                    <span className="chip" title="The role the team was added with">
-                      {isProjectRole(p.role) ? ROLE_LABELS[p.role] : p.role}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <BrowseProjectList
+              projects={projects}
+              groupByTeam={false}
+              emptyHint="New projects pick a team when they’re created. Public ones show up here for everyone on the team."
+            />
           </section>
 
           <section className={CARD} aria-labelledby="team-goals-heading">
@@ -325,14 +337,14 @@ export function TeamDetail({
             )}
           </section>
 
-          {canManage ? (
+          {canManage && !isDefault ? (
             <button
               type="button"
               disabled={pending}
               onClick={() => {
                 if (
                   window.confirm(
-                    `Delete ${team.name}? Project memberships it created stay as they are, and its goals keep working without a team.`,
+                    `Delete ${team.name}? Its projects move to the default team, project memberships stay as they are, and its goals keep working without a team.`,
                   )
                 ) {
                   run(() => deleteTeam(team.id));

@@ -112,8 +112,41 @@ function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
   };
 }
 
+// A workspace invite (Settings → Workspace → Members): who invited them (a name, never an address) and a
+// sign-up link for the recipient's own address.
+function renderInviteEmail(row: OutboxRow): Rendered {
+  const p = payloadOf(row);
+  const inviter = str(p.inviter_name) ?? "A workspace admin";
+  const workspace = str(p.workspace_name) ?? "ALHC Projects";
+  const origin = backgroundOrigin();
+  const signUp = origin ? `${origin}/signup?email=${encodeURIComponent(row.to_email)}` : null;
+  return {
+    subject: row.subject ?? "You’ve been invited to ALHC Projects",
+    ...layout(
+      "You’ve been invited to ALHC Projects",
+      [
+        `${inviter} invited you to ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
+        "Create your account with this email address. Projects and teams you were added to are waiting for you after you confirm your email.",
+      ],
+      [],
+      {
+        action: signUp ? { label: "Sign up", href: signUp } : null,
+        footer: [
+          origin ? `Already have an account? Sign in at ${origin}/login` : "Already have an account? Sign in with this address.",
+          "If you weren’t expecting this, you can ignore this email.",
+        ],
+      },
+    ),
+  };
+}
+
+function isInvite(row: OutboxRow) {
+  return !row.task_id && payloadOf(row).kind === "invite";
+}
+
 export function renderEmail(row: OutboxRow, options: { canReply?: boolean } = {}): Rendered {
   if (row.comment_id) return renderCommentEmail(row, Boolean(options.canReply));
+  if (isInvite(row)) return renderInviteEmail(row);
   const p = payloadOf(row);
   const label = str(p.request_label);
   const taskTitle = str(p.task_title) ?? "your request";
@@ -166,6 +199,25 @@ export function isEmailConfigured() {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
+// The From header: EMAIL_FROM, with the workspace's sender name (Settings → Workspace → Email) in front
+// of its address when one is set. The name can't carry quotes or brackets (database CHECK).
+export function fromHeader(configured: string, senderName: string | null): string {
+  if (!senderName) return configured;
+  const address = configured.match(/<([^<>]+)>\s*$/)?.[1]?.trim() ?? configured.trim();
+  return `"${senderName}" <${address}>`;
+}
+
+async function workspaceSenderName(admin: NonNullable<ReturnType<typeof createAdminClient>>): Promise<string | null> {
+  const { data } = await admin
+    .from("workspaces")
+    .select("email_sender_name")
+    .is("deleted_at", null)
+    .order("created_at")
+    .limit(1)
+    .maybeSingle();
+  return data?.email_sender_name ?? null;
+}
+
 // Reply-To for comment emails: the follower's per-task reply address, only when inbound replies are
 // configured (RESEND_WEBHOOK_SECRET). Other emails keep the optional EMAIL_REPLY_TO.
 async function replyTo(row: OutboxRow, admin: NonNullable<ReturnType<typeof createAdminClient>>): Promise<string | null> {
@@ -179,11 +231,12 @@ async function replyTo(row: OutboxRow, admin: NonNullable<ReturnType<typeof crea
 async function deliver(
   row: OutboxRow,
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  senderName: string | null,
 ): Promise<{ outcome: "sent" | "mocked" | "error"; id?: string; error?: string }> {
   const reply = await replyTo(row, admin);
   const email = renderEmail(row, { canReply: Boolean(reply && row.comment_id) });
   if (!isEmailConfigured()) {
-    console.info(`[email:mocked] id=${row.id} template=${row.comment_id ? "comment" : row.template}`);
+    console.info(`[email:mocked] id=${row.id} template=${row.comment_id ? "comment" : isInvite(row) ? "invite" : row.template}`);
     return { outcome: "mocked" };
   }
   const response = await fetch("https://api.resend.com/emails", {
@@ -194,7 +247,7 @@ async function deliver(
       "Idempotency-Key": `outbox-${row.id}`,
     },
     body: JSON.stringify({
-      from: process.env.EMAIL_FROM,
+      from: fromHeader(process.env.EMAIL_FROM!, senderName),
       to: [row.to_email],
       subject: email.subject,
       text: email.text,
@@ -222,10 +275,11 @@ export async function drainOutbox(options: { onlyId?: string | null; max?: numbe
   });
   if (error) throw new Error(`Failed to claim emails: ${error.message}`);
   const counts = { claimed: data?.length ?? 0, sent: 0, mocked: 0, failed: 0 };
+  const senderName = data?.length ? await workspaceSenderName(admin) : null;
   for (const row of data ?? []) {
     let result: Awaited<ReturnType<typeof deliver>>;
     try {
-      result = await deliver(row, admin);
+      result = await deliver(row, admin, senderName);
     } catch (e) {
       // Network errors keep only their kind (a message could carry request details).
       result = { outcome: "error", error: e instanceof Error && e.name === "TimeoutError" ? "Resend timed out" : "Couldn’t reach Resend" };

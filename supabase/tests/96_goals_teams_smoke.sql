@@ -55,11 +55,8 @@ begin
     raise exception 'only allowlisted people can join a team';
   exception when check_violation then null;
   end;
-  begin
-    perform public.add_team_member(team, 'pending@example.com', 'member');
-    raise exception 'people who never signed in can''t be added yet';
-  exception when check_violation then null;
-  end;
+  -- Since Asana feel, batch 2: someone who never signed in gets a pending team invite (null).
+  assert public.add_team_member(team, 'pending@example.com', 'member') is null, 'a pending team invite';
   begin
     perform public.add_team_member(team, 'later@example.com', 'owner');
     raise exception 'teams only have leads and members';
@@ -241,7 +238,7 @@ begin
     = array['Cora Commenter', 'Eddie Editor'], 'people already in the project are left alone';
   assert jsonb_array_length(result -> 'skipped') = 1
     and result -> 'skipped' -> 0 ->> 'name' = 'Gary Gone'
-    and result -> 'skipped' -> 0 ->> 'reason' like '%allowlist%', format('someone no longer allowlisted is skipped: %s', result);
+    and result -> 'skipped' -> 0 ->> 'reason' like '%in this workspace%', format('someone no longer allowlisted is skipped: %s', result);
 
   assert (select role from public.project_members
           where project_id = p and profile_id = '55555555-5555-4555-8555-555555555555' and deleted_at is null) = 'viewer',

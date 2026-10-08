@@ -46,7 +46,7 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
               defaultValue={query}
               key={query}
               placeholder="Search task titles, descriptions, and tags"
-              className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500 focus:outline-none"
+              className="field w-full pl-9 pr-3"
             />
           </form>
 

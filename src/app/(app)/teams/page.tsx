@@ -4,14 +4,14 @@ import { Users } from "lucide-react";
 import { NewTeamForm } from "@/components/teams/new-team-form";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { listTeams } from "@/lib/data";
+import { getWorkspace, listTeams } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Teams" };
 
-// The workspace's team directory. Everyone allowlisted sees every team and its members; a team never
-// grants access to projects by itself.
+// The workspace's team directory. Everyone allowlisted sees every team and its members. Every project
+// belongs to a team; team members can find and join the team's public projects (Browse projects).
 export default async function TeamsPage() {
-  const [member, teams] = await Promise.all([requireMember(), listTeams()]);
+  const [member, teams, workspace] = await Promise.all([requireMember(), listTeams(), getWorkspace()]);
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
@@ -23,8 +23,8 @@ export default async function TeamsPage() {
               Start a team
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500">
-              Anyone can start one and becomes its lead. Leads and workspace admins manage a team. Being on a team
-              doesn’t open any project: a project admin can add the whole team from the project’s Members page.
+              Anyone can start one and becomes its lead. Leads and workspace admins manage a team. Team members can
+              find and join the team’s public projects; private projects still need an invite.
             </p>
             <div className="mt-2">
               <NewTeamForm />
@@ -53,7 +53,10 @@ export default async function TeamsPage() {
                       <span className="flex items-center gap-2 text-sm font-medium text-zinc-900">
                         <Users className="size-4 text-zinc-400" aria-hidden />
                         <span className="truncate">{team.name}</span>
-                        {mine ? <span className="chip ml-auto">{mine.role === "lead" ? "You lead" : "Member"}</span> : null}
+                        <span className="ml-auto flex shrink-0 gap-1">
+                          {team.id === workspace?.defaultTeamId ? <span className="chip bg-accent-50 text-accent-700">Default</span> : null}
+                          {mine ? <span className="chip">{mine.role === "lead" ? "You lead" : "Member"}</span> : null}
+                        </span>
                       </span>
                       <span className="line-clamp-2 text-xs text-zinc-500">{team.description || "No description"}</span>
                       <span className="mt-auto truncate text-xs text-zinc-600">

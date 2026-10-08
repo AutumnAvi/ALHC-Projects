@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { ChevronLeft, FileInput, FolderPlus, LayoutTemplate } from "lucide-react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
+import { ProjectPlacementFields, type Placement } from "@/components/projects/project-placement";
 import { UseTemplateDialog } from "@/components/templates/use-template-dialog";
 import { createProject, listProjectTemplateChoices, type ActionResult } from "@/lib/actions";
 import { describeSummary } from "@/lib/templates";
@@ -91,6 +92,7 @@ function StartCard({
 }
 
 function NameForm({ then, hint }: { then: "list" | "import"; hint?: string }) {
+  const [placement, setPlacement] = useState<Placement>({ teamId: "", visibility: "team" });
   const [state, formAction, pending] = useActionState(async (_: ActionResult, formData: FormData) => {
     // A successful create redirects to the new project, so the result may be undefined.
     const result: ActionResult | undefined = await createProject(formData);
@@ -106,6 +108,7 @@ function NameForm({ then, hint }: { then: "list" | "import"; hint?: string }) {
         <input id="new-project-name" name="name" data-autofocus required maxLength={200} className="control mt-1 w-full" />
         {hint ? <p className={DIALOG_HINT}>{hint}</p> : null}
       </div>
+      <ProjectPlacementFields value={placement} onChange={setPlacement} idPrefix={`new-project-${then}`} />
       {state.error ? (
         <p role="alert" className="text-xs text-red-600">
           {state.error}

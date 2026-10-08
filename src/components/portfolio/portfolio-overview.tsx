@@ -32,7 +32,7 @@ type Card = {
 type Nested = PortfolioChild & { total: number; completed: number };
 
 const inputClass =
-  "rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm focus:border-accent-500 focus:outline-none disabled:opacity-50";
+  "field h-auto py-1.5";
 
 export function PortfolioOverview({
   portfolio,
