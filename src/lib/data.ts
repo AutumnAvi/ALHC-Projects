@@ -3,6 +3,7 @@ import { cache } from "react";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
+import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import { parseOptions, type FieldDef, type FieldOption, type FieldType } from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
 import {
@@ -119,7 +120,7 @@ export type ProjectTask = {
   kind: TaskKind;
   // Approval tasks: the status of the assignee's request (null: none yet, or not an approval task).
   approvalStatus: ApprovalTaskStatus | null;
-  // Active tag links (ids; look names and colours up in listTags()).
+  // Active tag links (ids; look names and colors up in listTags()).
   tagIds: string[];
 };
 
@@ -3162,4 +3163,83 @@ export const listPersonalWidgets = cache(async (dashboardId: string): Promise<Pe
         ]
       : [],
   );
+});
+
+// The viewer's own List column widths for a project (list_column_widths, own rows only by RLS).
+export const getListColumnWidths = cache(async (projectId: string): Promise<ColumnWidths> => {
+  if (!isUuid(projectId)) return {};
+  const supabase = await createClient();
+  const { data } = await supabase.from("list_column_widths").select("widths").eq("project_id", projectId).maybeSingle();
+  return parseColumnWidths(data?.widths);
+});
+
+// Files tab: every active attachment on the project's active tasks and their subtasks (read through
+// RLS, so only tasks the viewer can read), newest first.
+export type ProjectFile = {
+  id: string;
+  fileName: string;
+  contentType: string | null;
+  sizeBytes: number;
+  uploadedBy: string;
+  createdAt: string;
+  taskId: string;
+  taskTitle: string;
+};
+
+const FILE_COLUMNS = "id, file_name, content_type, size_bytes, uploaded_by, created_at, deleted_at";
+const MAX_PROJECT_FILES = 500;
+
+export const listProjectFiles = cache(async (projectId: string): Promise<ProjectFile[]> => {
+  if (!isUuid(projectId)) return [];
+  const supabase = await createClient();
+  type FileRow = {
+    id: string;
+    file_name: string;
+    content_type: string | null;
+    size_bytes: number;
+    uploaded_by: string;
+    created_at: string;
+    deleted_at: string | null;
+  };
+  type TaskRow = { id: string; title: string; deleted_at: string | null; task_attachments: FileRow[] };
+  const files: ProjectFile[] = [];
+  const add = (task: TaskRow) => {
+    if (task.deleted_at) return;
+    for (const f of task.task_attachments ?? []) {
+      if (f.deleted_at) continue;
+      files.push({
+        id: f.id,
+        fileName: f.file_name,
+        contentType: f.content_type,
+        sizeBytes: f.size_bytes,
+        uploadedBy: f.uploaded_by,
+        createdAt: f.created_at,
+        taskId: task.id,
+        taskTitle: task.title,
+      });
+    }
+  };
+
+  const memberships = await supabase
+    .from("task_projects")
+    .select(`task_id, tasks!inner(id, title, deleted_at, task_attachments(${FILE_COLUMNS}))`)
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .limit(5000);
+  const taskIds: string[] = [];
+  for (const row of rows(memberships, "project files")) {
+    const task = row.tasks as unknown as TaskRow;
+    taskIds.push(task.id);
+    add(task);
+  }
+  // Subtasks have no memberships: they live under their top-level task.
+  for (let i = 0; i < taskIds.length; i += 200) {
+    const subtasks = await supabase
+      .from("tasks")
+      .select(`id, title, deleted_at, task_attachments(${FILE_COLUMNS})`)
+      .in("root_task_id", taskIds.slice(i, i + 200))
+      .is("deleted_at", null);
+    for (const task of rows(subtasks, "subtask files")) add(task as unknown as TaskRow);
+  }
+  return files.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_PROJECT_FILES);
 });

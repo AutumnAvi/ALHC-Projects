@@ -15,7 +15,6 @@ import {
   ChevronRight,
   Copy,
   CopyPlus,
-  FileInput,
   FolderClosed,
   LayoutTemplate,
   List,
@@ -23,16 +22,16 @@ import {
   Pencil,
   Plus,
   Settings,
-  SlidersHorizontal,
   SquareKanban,
   Trash2,
   Users,
-  Workflow,
+  Paperclip,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
 import { DuplicateProjectDialog } from "@/components/project/duplicate-project-dialog";
+import { CustomizePanel, type CustomizeSummary } from "@/components/project/customize-panel";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import {
@@ -61,11 +60,13 @@ export function ProjectHeader({
   project,
   views,
   canArchive,
+  customize,
 }: {
   project: Project;
   views: ProjectView[];
   // Admin+ by the viewer's own role (an archived project is read-only for everyone).
   canArchive: boolean;
+  customize: CustomizeSummary;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -82,14 +83,13 @@ export function ProjectHeader({
     label: l.label,
     icon: LAYOUT_ICONS[l.value],
   }));
+  // Asana's tab bar: views, then Messages, Dashboard, Workload, and Files. Fields, forms, rules, task
+  // templates, integrations, and settings live in the Customize panel instead.
   const tabs = [
     { href: `${base}/messages`, label: "Messages", icon: MessagesSquare },
     { href: `${base}/dashboard`, label: "Dashboard", icon: ChartColumn },
     { href: `${base}/workload`, label: "Workload", icon: Gauge },
-    { href: `${base}/fields`, label: "Fields", icon: SlidersHorizontal },
-    { href: `${base}/forms`, label: "Forms", icon: FileInput },
-    { href: `${base}/rules`, label: "Rules", icon: Workflow },
-    { href: `${base}/settings`, label: "Settings", icon: Settings },
+    { href: `${base}/files`, label: "Files", icon: Paperclip },
   ];
 
   function saveName(value: string) {
@@ -137,6 +137,9 @@ export function ProjectHeader({
             <ProjectStatusBadge status={project.status} />
           </Link>
         </div>
+        <span className="print:hidden">
+          <CustomizePanel projectId={project.id} summary={customize} />
+        </span>
         <Popover
           label="Project options"
           align="end"

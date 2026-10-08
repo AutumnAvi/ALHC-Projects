@@ -1,12 +1,13 @@
 "use client";
 
+import { ColorPicker } from "@/components/color-picker";
 import { useState } from "react";
 import { ListPlus, Plus, Trash2, X } from "lucide-react";
 import { EmptyState } from "@/components/ui";
 import { useServerAction } from "@/components/toast";
 import { createPortfolioField, deletePortfolioField, updatePortfolioField } from "@/lib/actions";
 import type { PortfolioField } from "@/lib/data";
-import { OPTION_COLORS, OPTION_COLOR_CLASSES, type FieldOption, type OptionColor } from "@/lib/fields";
+import { OPTION_COLORS, OPTION_COLOR_CLASSES, type FieldOption } from "@/lib/fields";
 import { PORTFOLIO_FIELD_TYPES, isPortfolioFieldType, type PortfolioFieldType } from "@/lib/portfolios";
 
 const typeLabel = (type: PortfolioFieldType) => PORTFOLIO_FIELD_TYPES.find((t) => t.value === type)?.label ?? type;
@@ -163,25 +164,15 @@ function FieldRow({ field, canEdit }: { field: PortfolioField; canEdit: boolean 
               {option.name}
               {canEdit ? (
                 <>
-                  <select
-                    aria-label={`Colour of ${option.name}`}
+                  <ColorPicker
+                    compact
                     value={option.color}
                     disabled={pending}
-                    onChange={(e) =>
-                      saveOptions(
-                        field.options.map((o) =>
-                          o.id === option.id ? { ...o, color: e.currentTarget.value as OptionColor } : o,
-                        ),
-                      )
+                    label={`Color of ${option.name}`}
+                    onChange={(color) =>
+                      saveOptions(field.options.map((o) => (o.id === option.id ? { ...o, color } : o)))
                     }
-                    className="cursor-pointer bg-transparent text-2xs opacity-70"
-                  >
-                    {OPTION_COLORS.map((c) => (
-                      <option key={c} value={c} className="text-zinc-900">
-                        {c}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   <button
                     type="button"
                     disabled={pending}

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { AuthCard } from "@/components/auth-card";
 import { SetupRequired } from "@/components/setup-required";
+import Link from "next/link";
 import { getViewer, safeNextPath } from "@/lib/auth";
 import { isGoogleAuthEnabled, isSupabaseConfigured } from "@/lib/env";
 import { GoogleSignInButton } from "./google-sign-in-button";
@@ -20,6 +21,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
 
   const { user, allowlisted } = await getViewer();
   if (user) redirect(allowlisted ? next : "/auth/denied");
+  const signUpHref = next === "/" ? "/signup" : `/signup?next=${encodeURIComponent(next)}`;
 
   return (
     <AuthCard title="Sign in">
@@ -32,8 +34,14 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         </p>
       ) : null}
       <div className="mt-6">
-        <PasswordSignInForm next={next} />
+        <PasswordSignInForm next={next} mode="sign-in" />
       </div>
+      <p className="mt-4 text-center text-sm text-zinc-600">
+        New here?{" "}
+        <Link href={signUpHref} className="font-medium text-accent-700 hover:underline">
+          Create an account
+        </Link>
+      </p>
       {isGoogleAuthEnabled() ? (
         <div className="mt-6 border-t border-zinc-200 pt-6">
           <GoogleSignInButton next={next} />

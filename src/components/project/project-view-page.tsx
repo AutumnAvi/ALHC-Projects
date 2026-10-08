@@ -17,6 +17,7 @@ import {
   listSections,
   listSubtaskTrees,
   listTags,
+  getListColumnWidths,
 } from "@/lib/data";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -64,7 +65,7 @@ export async function ProjectViewPage({
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
 
-  const [sections, tasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags] = await Promise.all([
+  const [sections, tasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths] = await Promise.all([
     listSections(projectId),
     listProjectTasks(projectId),
     listProfiles(),
@@ -74,6 +75,7 @@ export async function ProjectViewPage({
     layout === "timeline" ? projectCriticalPath(projectId) : Promise.resolve(EMPTY_CRITICAL_PATH),
     layout === "list" ? listBulkContext(projectId) : Promise.resolve(undefined),
     listTags(),
+    layout === "list" ? getListColumnWidths(projectId) : Promise.resolve({}),
   ]);
 
   const context = {
@@ -108,7 +110,13 @@ export async function ProjectViewPage({
       {layout === "list" ? (
         // The toolbar stays put; the list scrolls under it with a sticky column header.
         <div className="min-h-0 flex-1 overflow-auto">
-          <ListView key={`list-${view?.id ?? "default"}`} {...props} bulk={bulk} subtasks={showSubtasks ? subtasks : null} />
+          <ListView
+            key={`list-${view?.id ?? "default"}`}
+            {...props}
+            bulk={bulk}
+            subtasks={showSubtasks ? subtasks : null}
+            columnWidths={columnWidths}
+          />
         </div>
       ) : null}
       {layout === "board" ? <BoardView key={`board-${view?.id ?? "default"}`} {...props} /> : null}

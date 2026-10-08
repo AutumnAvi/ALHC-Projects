@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 // A button with a floating panel. The panel is position: fixed so it isn't clipped by scrolling
-// containers (e.g. the project tab bar). Closes on outside click, Escape, scroll, and resize.
+// containers (e.g. the project tab bar), and it is kept inside the window: once drawn it flips to the
+// other side of the button when there's no room, then shifts to stay 8 px from every edge. Closes on
+// outside click, Escape, scroll, and resize.
 export function Popover({
   label,
   button,
@@ -22,13 +24,50 @@ export function Popover({
   panelClassName?: string;
   children: (close: () => void) => ReactNode;
 }) {
-  const [position, setPosition] = useState<{ top?: number; bottom?: number; left?: number; right?: number } | null>(
-    null,
-  );
+  const [position, setPosition] = useState<{
+    top?: number;
+    bottom?: number;
+    left?: number;
+    right?: number;
+    // Set once the panel has been measured and moved into view (so it's adjusted only once).
+    placed?: boolean;
+  } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const open = position !== null;
   const close = () => setPosition(null);
+
+  useLayoutEffect(() => {
+    if (!position || position.placed) return;
+    const panel = panelRef.current?.getBoundingClientRect();
+    const anchor = buttonRef.current?.getBoundingClientRect();
+    if (!panel || !anchor) return;
+    const margin = 8;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    // Keep the original anchor (top or bottom, left or right) unless that side overflows, so a panel
+    // that opens upward keeps its bottom on the button while its content grows or shrinks.
+    const next = { ...position, placed: true };
+    if (panel.bottom > height - margin || panel.top < margin) {
+      const above = anchor.top - panel.height - 4;
+      const below = anchor.bottom + 4;
+      const top =
+        panel.bottom > height - margin
+          ? above >= margin
+            ? above
+            : height - panel.height - margin
+          : below + panel.height <= height - margin
+            ? below
+            : margin;
+      next.top = Math.max(top, margin);
+      next.bottom = undefined;
+    }
+    if (panel.right > width - margin || panel.left < margin) {
+      next.left = Math.max(Math.min(panel.left, width - panel.width - margin), margin);
+      next.right = undefined;
+    }
+    setPosition(next);
+  }, [position]);
 
   useEffect(() => {
     if (!open) return;

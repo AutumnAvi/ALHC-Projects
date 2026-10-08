@@ -6,7 +6,10 @@ import { passwordAuth, type PasswordAuthState } from "./actions";
 const inputClass =
   "mt-1 block w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100";
 
-export function PasswordSignInForm({ next }: { next: string }) {
+// One form for both screens: /login signs in, /signup creates an account (confirmed by email, then the
+// allowlist gate in /auth/callback). Each screen links to the other.
+export function PasswordSignInForm({ next, mode = "sign-in" }: { next: string; mode?: "sign-in" | "sign-up" }) {
+  const signUp = mode === "sign-up";
   const [state, formAction, pending] = useActionState<PasswordAuthState, FormData>(
     passwordAuth,
     {},
@@ -15,6 +18,7 @@ export function PasswordSignInForm({ next }: { next: string }) {
   return (
     <form action={formAction} className="space-y-4">
       <input type="hidden" name="next" value={next} />
+      <input type="hidden" name="intent" value={mode} />
       <label className="block text-sm font-medium text-zinc-700">
         Email
         <input
@@ -32,9 +36,15 @@ export function PasswordSignInForm({ next }: { next: string }) {
           name="password"
           required
           minLength={6}
-          autoComplete="current-password"
+          autoComplete={signUp ? "new-password" : "current-password"}
+          aria-describedby={signUp ? "password-hint" : undefined}
           className={inputClass}
         />
+        {signUp ? (
+          <span id="password-hint" className="mt-1 block text-xs font-normal text-zinc-500">
+            At least 6 characters.
+          </span>
+        ) : null}
       </label>
       {state.error ? (
         <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -46,26 +56,13 @@ export function PasswordSignInForm({ next }: { next: string }) {
           {state.notice}
         </p>
       ) : null}
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          name="intent"
-          value="sign-in"
-          disabled={pending}
-          className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
-        >
-          Sign in
-        </button>
-        <button
-          type="submit"
-          name="intent"
-          value="sign-up"
-          disabled={pending}
-          className="flex-1 rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 shadow-xs transition hover:bg-zinc-50 disabled:cursor-wait disabled:opacity-60"
-        >
-          Sign up
-        </button>
-      </div>
+      <button
+        type="submit"
+        disabled={pending}
+        className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
+      >
+        {pending ? (signUp ? "Creating account…" : "Signing in…") : signUp ? "Create account" : "Sign in"}
+      </button>
     </form>
   );
 }

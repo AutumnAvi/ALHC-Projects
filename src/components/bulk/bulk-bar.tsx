@@ -17,7 +17,8 @@ import {
 import { MenuItem, Popover } from "@/components/popover";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { useNotify } from "@/components/toast";
-import { bulkEditTasks } from "@/lib/actions";
+import { addProjectMemberByProfile, bulkEditTasks } from "@/lib/actions";
+import { Dialog } from "@/components/dialog";
 import { MAX_BULK_TASKS, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import type { Section } from "@/lib/data";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
@@ -28,7 +29,12 @@ import { addableTags, type Tag } from "@/lib/tags";
 export type BulkPerson = { id: string; name: string };
 export type BulkContext = {
   viewerId: string;
+  // Everyone in the workspace.
   people: BulkPerson[];
+  // List only: who is already a member of the project (anyone else is offered "Add … and assign?").
+  memberIds?: string[];
+  // List only: the viewer is Admin+ of the project, so they can add members.
+  canAddMembers?: boolean;
   // Projects the viewer can add tasks to (Editor+), for "Add to project".
   projects: { id: string; name: string }[];
   // List only: sections and fields of the project the list belongs to.
@@ -96,10 +102,58 @@ export function BulkBar({
   const project = context.project;
   const fields = project?.fields.filter((f) => !f.boundToSections) ?? [];
   const otherProjects = context.projects.filter((p) => p.id !== project?.id);
+  // Assigning someone who isn't in the project: ask, add them (add_project_member's own checks), assign.
+  const [adding, setAdding] = useState<{ person: BulkPerson; taskIds: string[] } | null>(null);
+  const [addPending, startAdd] = useTransition();
+  const notify = useNotify();
+  const memberIds = context.memberIds ? new Set(context.memberIds) : null;
+
+  function assign(assigneeId: string | null) {
+    const person = assigneeId ? context.people.find((p) => p.id === assigneeId) : undefined;
+    if (project && memberIds && person && !memberIds.has(person.id)) {
+      setAdding({ person, taskIds: selected });
+      return;
+    }
+    run({ action: "assign", assignee_id: assigneeId });
+  }
+
+  function addAndAssign() {
+    if (!adding || !project) return;
+    const { person, taskIds } = adding;
+    startAdd(async () => {
+      const result = await addProjectMemberByProfile(project.id, person.id);
+      if (result.error) {
+        notify(result.error);
+        return;
+      }
+      setAdding(null);
+      bulk.apply(taskIds, { action: "assign", assignee_id: person.id });
+    });
+  }
 
   return (
     <>
       {bulk.summary ? <BulkSummary summary={bulk.summary} onClose={bulk.closeSummary} /> : null}
+      {adding ? (
+        <Dialog
+          title={`Add ${adding.person.name} to this project and assign?`}
+          description={
+            context.canAddMembers
+              ? `They join the project as an Editor, then ${taskCount(adding.taskIds.length)} ${adding.taskIds.length === 1 ? "is" : "are"} assigned to them.`
+              : "Only project admins and owners can add members. Ask one of them, or pick someone already in the project."
+          }
+          onClose={() => setAdding(null)}
+        >
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setAdding(null)} className="btn-secondary">
+              Cancel
+            </button>
+            <button type="button" onClick={addAndAssign} disabled={addPending || !context.canAddMembers} className="btn-primary">
+              {addPending ? "Adding…" : "Add and assign"}
+            </button>
+          </div>
+        </Dialog>
+      ) : null}
       {shift.dialog}
       {count > 0 ? (
         <div
@@ -139,10 +193,11 @@ export function BulkBar({
             {(close) => (
               <PersonPicker
                 people={context.people}
+                memberIds={memberIds}
                 viewerId={context.viewerId}
                 onPick={(assigneeId) => {
                   close();
-                  run({ action: "assign", assignee_id: assigneeId });
+                  assign(assigneeId);
                 }}
               />
             )}
@@ -366,16 +421,20 @@ export function BulkBar({
 
 function PersonPicker({
   people,
+  memberIds = null,
   viewerId,
   onPick,
 }: {
   people: BulkPerson[];
+  // In a project: its members (listed first); everyone else is marked "Not in this project".
+  memberIds?: Set<string> | null;
   viewerId: string;
   onPick: (id: string | null) => void;
 }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
-  const matches = people.filter((p) => !q || p.name.toLowerCase().includes(q)).slice(0, 50);
+  const found = people.filter((p) => !q || p.name.toLowerCase().includes(q));
+  const matches = (memberIds ? [...found.filter((p) => memberIds.has(p.id)), ...found.filter((p) => !memberIds.has(p.id))] : found).slice(0, 50);
   return (
     <div className="flex flex-col gap-1">
       <MenuItem onClick={() => onPick(viewerId)}>
@@ -401,7 +460,8 @@ function PersonPicker({
         {matches.length === 0 ? <p className="px-2 py-1.5 text-xs text-zinc-500">No one matches.</p> : null}
         {matches.map((p) => (
           <MenuItem key={p.id} onClick={() => onPick(p.id)}>
-            <span className="truncate">{p.name}</span>
+            <span className="min-w-0 flex-1 truncate">{p.name}</span>
+            {memberIds && !memberIds.has(p.id) ? <span className="shrink-0 text-2xs text-zinc-400">Not in this project</span> : null}
           </MenuItem>
         ))}
       </div>

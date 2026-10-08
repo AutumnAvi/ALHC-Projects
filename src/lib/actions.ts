@@ -3,7 +3,7 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { getWorkspace } from "@/lib/data";
+import { getWorkspace, listProjectTemplates } from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { drainOutbox } from "@/lib/email";
 import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
@@ -56,6 +56,7 @@ import {
   type UndoResult,
 } from "@/lib/dependencies";
 import { MAX_TAG_NAME } from "@/lib/tags";
+import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import {
   isDuplicateTaskOptionKey,
   parseDuplicateTaskResult,
@@ -212,7 +213,9 @@ export async function createProject(formData: FormData): Promise<ActionResult> {
       ),
     );
   });
-  if (projectId && !result.error) redirect(`/projects/${projectId}/list`);
+  if (projectId && !result.error) {
+    redirect(formData.get("then") === "import" ? `/projects/${projectId}/settings/import` : `/projects/${projectId}/list`);
+  }
   return result;
 }
 
@@ -472,6 +475,36 @@ export async function inviteProjectMember(
   });
 }
 
+// The bulk bar's "Add <name> to this project and assign?": the same add_project_member path as an
+// invite (Admin+ of the project, the person allowlisted and signed in), looked up by profile.
+export async function addProjectMemberByProfile(
+  projectId: string,
+  profileId: string,
+  memberRole = "editor",
+): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const { data: profile } = await supabase.from("profiles").select("email").eq("id", id(profileId, "person")).maybeSingle();
+    if (!profile?.email) throw new InputError("That person isn’t in this workspace");
+    // Already a member (e.g. added since the page loaded): keep their role; add_project_member would reset it.
+    const { data: existing } = await supabase
+      .from("project_members")
+      .select("id")
+      .eq("project_id", id(projectId))
+      .eq("profile_id", profileId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (existing) return;
+    check(
+      await supabase.rpc("add_project_member", {
+        target_project: id(projectId),
+        member_email: profile.email,
+        member_role: role(memberRole),
+      }),
+    );
+  });
+}
+
 export async function changeProjectMemberRole(
   projectId: string,
   profileId: string,
@@ -551,6 +584,12 @@ export async function setProjectStatus(
 // ---------------------------------------------------------------------------------------------
 // Portfolios (membership and project rules live in the SQL RPCs; see 20261005070000_portfolios.sql)
 // ---------------------------------------------------------------------------------------------
+
+// The sidebar's New project → "Use a template" step: every workspace template (read with RLS).
+export async function listProjectTemplateChoices() {
+  const templates = await listProjectTemplates();
+  return templates.map(({ id, name, description, summary }) => ({ id, name, description, summary }));
+}
 
 export async function createPortfolio(formData: FormData): Promise<ActionResult> {
   let portfolioId: string | null = null;
@@ -1014,6 +1053,8 @@ export async function createTask(
   sectionId: string | null,
   title: string,
   kind: TaskKind = "task",
+  // Asana's toolbar "+ Add task": the new task goes to the top of its section.
+  atTop = false,
 ): Promise<ActionResult> {
   return run(async () => {
     const taskKind = taskKindInput(kind);
@@ -1027,16 +1068,68 @@ export async function createTask(
     if (taskKind !== "task" && created.data) {
       checkUpdated(await supabase.from("tasks").update({ kind: taskKind }).eq("id", created.data).select("id"));
     }
+    if (atTop && created.data) {
+      let first = supabase
+        .from("task_projects")
+        .select("task_id, tasks!inner(deleted_at)")
+        .eq("project_id", id(projectId))
+        .is("deleted_at", null)
+        .is("tasks.deleted_at", null)
+        .neq("task_id", created.data)
+        .order("sort_order")
+        .limit(1);
+      first = sectionId ? first.eq("section_id", id(sectionId, "section")) : first.is("section_id", null);
+      const { data: top } = await first.maybeSingle();
+      if (top) {
+        check(
+          await supabase.rpc("place_task", {
+            target_task: created.data,
+            target_project: id(projectId),
+            target_section: sectionId ? id(sectionId, "section") : null,
+            before_task: top.task_id,
+          }),
+        );
+      }
+    }
   });
 }
 
 // Quick-add in My Tasks: a private task (no project) assigned to the caller. Only they and whoever they
 // assign it to can read it until it's added to a project.
-export async function createPrivateTask(title: string): Promise<ActionResult> {
+// With a section (the inline "Add task…" row of a My Tasks section), the task is placed at its end.
+export async function createPrivateTask(title: string, mySectionId: string | null = null): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(await supabase.rpc("create_private_task", { task_title: text(title, "Task name", { max: 1000 }) }));
+    const created = await supabase.rpc("create_private_task", { task_title: text(title, "Task name", { max: 1000 }) });
+    check(created);
+    if (mySectionId && created.data) {
+      check(
+        await supabase.rpc("place_my_task", {
+          target_task: created.data,
+          target_section: id(mySectionId, "section"),
+          before_task: null,
+        }),
+      );
+    }
   });
+}
+
+// List column widths for the signed-in person in one project (set_list_column_widths, own row, Viewer+).
+// No refresh: the List already shows the widths it sent.
+export async function saveListColumnWidths(projectId: string, widths: ColumnWidths): Promise<ActionResult> {
+  try {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("set_list_column_widths", {
+        target_project: id(projectId),
+        new_widths: parseColumnWidths(widths) as Json,
+      }),
+    );
+    return {};
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
 }
 
 // Duplicate a task (duplicate_task): the copy lands where the caller is an Editor (see the migration).
@@ -1796,7 +1889,7 @@ function tagError(result: DbResult) {
 export async function createTag(name: string, color: string = "zinc"): Promise<ActionResult & { tagId?: string }> {
   let tagId: string | undefined;
   const outcome = await run(async () => {
-    if (!isOptionColor(color)) throw new InputError("Unknown colour");
+    if (!isOptionColor(color)) throw new InputError("Unknown color");
     const supabase = await createClient();
     const result = await supabase
       .from("tags")
@@ -1817,7 +1910,7 @@ export async function updateTag(
     const update: TablesUpdate<"tags"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Tag name", { max: MAX_TAG_NAME });
     if (patch.color !== undefined) {
-      if (!isOptionColor(patch.color)) throw new InputError("Unknown colour");
+      if (!isOptionColor(patch.color)) throw new InputError("Unknown color");
       update.color = patch.color;
     }
     if (patch.archived !== undefined) update.archived_at = patch.archived ? now() : null;

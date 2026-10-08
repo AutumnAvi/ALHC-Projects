@@ -18,8 +18,8 @@ import {
   Users,
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
-import { NewPortfolioForm } from "@/components/shell/new-portfolio-form";
-import { NewProjectForm } from "@/components/shell/new-project-form";
+import { NewPortfolioDialog } from "@/components/shell/new-portfolio-dialog";
+import { NewProjectDialog } from "@/components/shell/new-project-dialog";
 import { UnreadBadge, useUnreadCount } from "@/components/shell/unread-count";
 import type { Member } from "@/lib/auth";
 import { formatProgress } from "@/lib/portfolios";
@@ -46,8 +46,13 @@ export function Sidebar({
   unreadCount: number;
 }) {
   const pathname = usePathname();
-  const [creating, setCreating] = useState(false);
-  const [creatingPortfolio, setCreatingPortfolio] = useState(false);
+  // Each dialog is open only on the page it was opened from, so the redirect after a create closes it.
+  const [creatingOn, setCreatingOn] = useState<string | null>(null);
+  const [creatingPortfolioOn, setCreatingPortfolioOn] = useState<string | null>(null);
+  const creating = creatingOn === pathname;
+  const creatingPortfolio = creatingPortfolioOn === pathname;
+  const setCreating = (open: boolean) => setCreatingOn(open ? pathname : null);
+  const setCreatingPortfolio = (open: boolean) => setCreatingPortfolioOn(open ? pathname : null);
   const unread = useUnreadCount(unreadCount, member.id, "sidebar");
   const links = [
     { href: "/", label: "Home", icon: House },
@@ -114,19 +119,15 @@ export function Sidebar({
             <h2 className={SECTION_HEADING}>Projects</h2>
             <button
               type="button"
-              onClick={() => setCreating((v) => !v)}
+              onClick={() => setCreating(true)}
               aria-label="New project"
-              aria-expanded={creating}
+              aria-haspopup="dialog"
               className={ADD_BUTTON}
             >
               <Plus className="size-4" />
             </button>
           </div>
-          {creating ? (
-            <div className="px-1 pb-2">
-              <NewProjectForm compact onDone={() => setCreating(false)} />
-            </div>
-          ) : null}
+          {creating ? <NewProjectDialog onClose={() => setCreating(false)} /> : null}
           <ul className="flex flex-col gap-px">
             {projects.map((project) => {
               const active = pathname.startsWith(`/projects/${project.id}`);
@@ -143,7 +144,7 @@ export function Sidebar({
                 </li>
               );
             })}
-            {projects.length === 0 && !creating ? (
+            {projects.length === 0 ? (
               <li>
                 <button type="button" onClick={() => setCreating(true)} className={EMPTY_LINK}>
                   <Plus className="size-3.5" aria-hidden />
@@ -163,19 +164,15 @@ export function Sidebar({
             </h2>
             <button
               type="button"
-              onClick={() => setCreatingPortfolio((v) => !v)}
+              onClick={() => setCreatingPortfolio(true)}
               aria-label="New portfolio"
-              aria-expanded={creatingPortfolio}
+              aria-haspopup="dialog"
               className={ADD_BUTTON}
             >
               <Plus className="size-4" />
             </button>
           </div>
-          {creatingPortfolio ? (
-            <div className="px-1 pb-2">
-              <NewPortfolioForm compact onDone={() => setCreatingPortfolio(false)} />
-            </div>
-          ) : null}
+          {creatingPortfolio ? <NewPortfolioDialog onClose={() => setCreatingPortfolio(false)} /> : null}
           <ul className="flex flex-col gap-px">
             {portfolios.map((portfolio) => {
               const active = pathname === `/portfolios/${portfolio.id}` || pathname.startsWith(`/portfolios/${portfolio.id}/`);
@@ -198,7 +195,7 @@ export function Sidebar({
                 </li>
               );
             })}
-            {portfolios.length === 0 && !creatingPortfolio ? (
+            {portfolios.length === 0 ? (
               <li>
                 <button type="button" onClick={() => setCreatingPortfolio(true)} className={EMPTY_LINK}>
                   <Plus className="size-3.5" aria-hidden />
