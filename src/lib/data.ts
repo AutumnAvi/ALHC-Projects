@@ -2865,7 +2865,7 @@ export const listWorkspaceMembers = cache(async (): Promise<WorkspaceMember[]> =
       .from("allowed_emails")
       .select("email, invited_at, removed_at, created_at, inviter:profiles!allowed_emails_invited_by_fkey(full_name)")
       .order("email"),
-    supabase.from("profiles").select("id, email, full_name"),
+    supabase.from("profiles").select("id, email, full_name, joined_at"),
     workspace
       ? supabase.from("workspace_admins").select("profile_id").eq("workspace_id", workspace.id).is("deleted_at", null)
       : Promise.resolve({ data: [], error: null }),
@@ -2904,7 +2904,9 @@ export const listWorkspaceMembers = cache(async (): Promise<WorkspaceMember[]> =
         profileId: profile?.id ?? null,
         name: profile?.full_name?.trim() || a.email,
         role: profile && adminIds.has(profile.id) ? "admin" : "member",
-        status: a.removed_at ? "removed" : profile ? "active" : "invited",
+        // Active once they've signed in with a confirmed address (profiles.joined_at); a profile alone can
+        // be an unconfirmed sign-up.
+        status: a.removed_at ? "removed" : profile?.joined_at ? "active" : "invited",
         teams: profile ? (teamsByProfile.get(profile.id) ?? []).sort((x, y) => x.name.localeCompare(y.name)) : [],
         invitedAt: a.invited_at,
         invitedByName: a.inviter?.full_name?.trim() || null,

@@ -88,6 +88,12 @@ $p$a.email = lower(u.email)$p$, $p$a.email = lower(u.email) and a.removed_at is 
 select public.alhc_patch_function('public.profile_in_workspace(uuid)'::regprocedure,
 $p$a.email = lower(p.email)$p$, $p$a.email = lower(p.email) and a.removed_at is null$p$);
 
+-- When the person first signed in with a confirmed, allowlisted account (set by
+-- apply_pending_memberships; backfilled for everyone already in). Members shows "Invited" until then.
+alter table public.profiles add column joined_at timestamptz;
+
+update public.profiles p set joined_at = p.created_at where public.profile_is_allowlisted(p.id) and p.joined_at is null;
+
 -- ---------------------------------------------------------------------------
 -- Workspace settings and project teams (columns)
 -- ---------------------------------------------------------------------------
@@ -180,6 +186,12 @@ begin
       new.applied_at := null;
       new.applied_profile_id := null;
       new.deleted_at := null;
+      if new.team_id is not null then
+        select t.workspace_id into new.workspace_id from public.teams t where t.id = new.team_id;
+      end if;
+      if not exists (select 1 from public.allowed_emails a where a.email = new.email and a.removed_at is null) then
+        raise exception '% isn''t in this workspace yet', new.email using errcode = 'check_violation';
+      end if;
     end if;
     return new;
   end if;
@@ -348,7 +360,7 @@ $$;
 
 revoke all on function public.ensure_default_team(uuid) from public, anon, authenticated;
 
-select public.ensure_default_team(w.id) from public.workspaces w where w.deleted_at is null;
+select public.ensure_default_team(w.id) from public.workspaces w;
 
 -- A workspace created later gets its default team right away (definer trigger, revoked).
 create or replace function public.on_workspace_created()
@@ -442,7 +454,8 @@ create trigger teams_06_default_team
   before update of deleted_at on public.teams
   for each row execute function public.guard_default_team();
 
--- A removed team's projects move to the default team (definer: its managers may not read them all).
+-- A removed team's projects move to the default team (definer: its managers may not read them all) and
+-- become private, so a project that was public to a small team never opens up to the whole workspace.
 create or replace function public.on_team_removed()
 returns trigger
 language plpgsql
@@ -452,7 +465,7 @@ as $$
 begin
   if old.deleted_at is null and new.deleted_at is not null then
     update public.projects p
-    set team_id = w.default_team_id
+    set team_id = w.default_team_id, visibility = 'private'
     from public.workspaces w
     where p.team_id = new.id and w.id = p.workspace_id and w.default_team_id is not null
       and w.default_team_id <> new.id;
@@ -493,6 +506,7 @@ begin
   if address is null then
     return 0;
   end if;
+  update public.profiles set joined_at = now() where id = target_profile and joined_at is null;
 
   begin
     select w.default_team_id into default_team
@@ -668,7 +682,9 @@ begin
       using errcode = 'check_violation',
             hint = 'Ask a workspace admin to invite them on Settings → Workspace → Members.';
   end if;
-  select p.id into target from public.profiles p where lower(p.email) = address and public.profile_in_workspace(p.id);
+  -- joined_at: a confirmed first sign-in (like the definer invites' profile_is_allowlisted check).
+  select p.id into target from public.profiles p
+  where lower(p.email) = address and p.joined_at is not null and public.profile_in_workspace(p.id);
   if target is null then
     update public.pending_memberships m
     set role = member_role
@@ -831,7 +847,8 @@ begin
   end if;
 
   select * into existing from public.allowed_emails a where a.email = address for update;
-  signed_in := exists (select 1 from public.profiles p where lower(p.email) = address and public.profile_is_allowlisted(p.id));
+  -- Has an account that signed in before (joined_at), whether or not the address is removed right now.
+  signed_in := exists (select 1 from public.profiles p where lower(p.email) = address and p.joined_at is not null);
   if existing.email is not null and existing.removed_at is null then
     return jsonb_build_object('email', address, 'status', case when signed_in then 'already_member' else 'already_invited' end);
   end if;
@@ -847,7 +864,10 @@ begin
     outcome := 'invited';
   end if;
 
-  email_id := public.queue_workspace_invite_email(address, ws);
+  -- Someone added back who already has an account just signs in again: no sign-up email.
+  if not signed_in then
+    email_id := public.queue_workspace_invite_email(address, ws);
+  end if;
   return jsonb_build_object('email', address, 'status', outcome, 'email_id', email_id);
 end;
 $$;

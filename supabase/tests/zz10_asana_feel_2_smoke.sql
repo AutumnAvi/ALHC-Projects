@@ -230,6 +230,12 @@ declare
   team uuid := (select id from af2_ids where name = 'other_team');
 begin
   assert public.add_team_member(team, 'af2-new@example.com', 'lead') is null, 'a pending team invite (workspace admin)';
+  begin
+    insert into public.pending_memberships (workspace_id, email, team_id, role)
+    values ('00000000-0000-4000-8000-000000000001', 'outsider@example.net', team, 'member');
+    raise exception 'direct pending inserts for people outside the workspace are refused';
+  exception when check_violation then null;
+  end;
   assert (select role from public.pending_memberships where team_id = team and email = 'af2-new@example.com') = 'lead',
     'stored with its role';
 end $$;
@@ -296,6 +302,7 @@ do $$
 declare
   newbie uuid := 'fafafafa-0000-4000-8000-000000000004';
 begin
+  assert (select joined_at from public.profiles where id = newbie) is null, 'not joined before confirming';
   assert not exists (select 1 from public.project_members where profile_id = newbie), 'nothing before the email is confirmed';
   assert not exists (select 1 from public.team_members where profile_id = newbie), 'not even the default team';
 end $$;
@@ -320,6 +327,7 @@ begin
   assert not exists (select 1 from public.pending_memberships where email = 'af2-new@example.com' and applied_at is null and deleted_at is null),
     'every pending invite is used';
   assert (select count(*) from public.pending_memberships where applied_profile_id = newbie) = 3, 'and records who used it';
+  assert (select joined_at from public.profiles where id = newbie) is not null, 'the first confirmed sign-in is recorded';
 end $$;
 
 -- Removing an email: sign-in stops, the work stays; re-adding restores access.
@@ -411,6 +419,8 @@ select set_config('request.jwt.claim.sub', 'fafafafa-0000-4000-8000-000000000001
 do $$
 begin
   assert public.invite_to_workspace('af2-new@example.com') ->> 'status' = 'restored', 're-adding a removed email restores it';
+  assert (select count(*) from public.email_outbox where to_email = 'af2-new@example.com') = 1,
+    'someone added back who already has an account gets no sign-up email';
 end $$;
 select set_config('request.jwt.claim.sub', 'fafafafa-0000-4000-8000-000000000004', false) is not null as ok \gset
 do $$
@@ -442,6 +452,8 @@ do $$
 begin
   assert (select team_id from public.projects where id = (select id from af2_ids where name = 'p_other'))
     = (select id from af2_ids where name = 'default_team'), 'a removed team''s projects move to the default team';
+  assert (select visibility from public.projects where id = (select id from af2_ids where name = 'p_other')) = 'private',
+    'and become private, so they don''t open up to the whole workspace';
 end $$;
 
 -- Workspace settings ----------------------------------------------------------------------------------------
