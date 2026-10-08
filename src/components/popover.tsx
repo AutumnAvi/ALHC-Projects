@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
-// A button with a floating panel. The panel is position: fixed so it isn't clipped by scrolling
-// containers (e.g. the project tab bar), and it is kept inside the window: once drawn it flips to the
+// A button with a floating panel. The panel is position: fixed and rendered on document.body (a portal),
+// so neither scrolling containers (e.g. the project tab bar) nor a transformed ancestor (the bulk bar is
+// centred with a transform, which would make "fixed" relative to it) can clip or offset it. It is kept
+// inside the window: once drawn it flips to the
 // other side of the button when there's no room, then shifts to stay 8 px from every edge. Closes on
 // outside click, Escape, scroll, and resize.
 export function Popover({
@@ -122,17 +125,21 @@ export function Popover({
       >
         {button}
       </button>
-      {position ? (
-        <div
-          ref={panelRef}
-          role="dialog"
-          aria-label={label}
-          style={{ top: position.top, bottom: position.bottom, left: position.left, right: position.right }}
-          className={`fixed z-40 max-h-[70vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-3 text-sm shadow-lg ${panelClassName}`}
-        >
-          {children(close)}
-        </div>
-      ) : null}
+      {position
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="dialog"
+              aria-label={label}
+              style={{ top: position.top, bottom: position.bottom, left: position.left, right: position.right }}
+              // Above dialogs (z-50): a popover opened from a dialog must not sit under it.
+              className={`fixed z-[60] max-h-[70vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-3 text-sm shadow-lg ${panelClassName}`}
+            >
+              {children(close)}
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

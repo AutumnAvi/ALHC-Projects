@@ -190,8 +190,8 @@ export function MyTasksView({
   };
 
   useListKeys({
-    move(delta, extend) {
-      const next = selection.move(delta, extend);
+    move(delta) {
+      const next = selection.move(delta);
       if (next) requestAnimationFrame(() => scrollRowIntoView(next));
     },
     open() {
@@ -797,22 +797,15 @@ function MyTaskRow({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
-      onMouseDown={(e) => {
-        if (e.shiftKey) e.preventDefault(); // no text selection on Shift-click ranges
-      }}
       onClick={(e) => {
         const control = (e.target as HTMLElement).closest("a, button, input, select, textarea, label");
-        const modified = e.shiftKey || e.metaKey || e.ctrlKey;
-        if (control && !(control.tagName === "A" && modified && control.getAttribute("data-task-link") !== null)) {
-          if (control.getAttribute("data-task-link") !== null) selection.setActive(task.id);
+        if (control) {
+          // The title link opens the task too (⌘/Ctrl-click: a new tab, the browser's own behaviour).
+          if (control.tagName === "A") selection.setActive(task.id);
           return;
         }
-        e.preventDefault();
-        // Shift / ⌘ / Ctrl-click multi-select (like Asana); a plain click opens the task in the pane.
-        if (modified) {
-          selection.click(task.id, e);
-          return;
-        }
+        // Clicking a row opens the task; only the checkbox on the left selects (and brings up the bulk bar).
+
         selection.setActive(task.id);
         if (!open) router.push(taskHref(task.id), { scroll: false });
       }}
