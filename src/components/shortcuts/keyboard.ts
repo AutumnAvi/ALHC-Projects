@@ -31,7 +31,7 @@ export type ListKeyHandlers = {
 
 const CHORD_MS = 1000;
 
-// List shortcuts: ↑/↓ (Shift extends), Enter, Esc, ⌘/Ctrl+Enter, and the Tab chords Tab→Q (quick add)
+// List shortcuts: ↑/↓ (moves the cursor), Enter, Esc, ⌘/Ctrl+Enter, and the Tab chords Tab→Q (quick add)
 // and Tab→M (assign to me). Tab keeps its normal focus behaviour; Q or M within a second afterwards,
 // with focus still outside a text field, completes the chord.
 export function useListKeys(handlers: ListKeyHandlers) {

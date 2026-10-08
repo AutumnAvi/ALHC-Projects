@@ -19,13 +19,12 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
     {
       title: "List views and My Tasks",
       items: [
-        { keys: ["↑", "↓"], label: "Select the previous or next task" },
-        { keys: ["Shift", "↑ / ↓"], label: "Extend the selection" },
-        { keys: ["Shift", "click"], label: "Select a range" },
-        { keys: [mod, "click"], label: "Add or remove a task from the selection" },
-        { keys: ["Enter"], label: "Open the selected task" },
+        { keys: ["↑", "↓"], label: "Move to the previous or next task" },
+        { keys: ["click"], label: "Open a task (the checkbox on the left selects it)" },
+        { keys: ["Shift", "checkbox"], label: "Select a range" },
+        { keys: ["Enter"], label: "Open the task under the cursor" },
         { keys: ["Esc"], label: "Close the task, or clear the selection" },
-        { keys: [mod, "Enter"], label: "Complete the selected tasks (reopen if all are complete)" },
+        { keys: [mod, "Enter"], label: "Complete the selected tasks, else the open or cursor task" },
         { keys: ["Tab", "then", "Q"], label: "Quick-add a task in the current section (List)" },
         { keys: ["Tab", "then", "M"], label: "Assign the selected tasks to me" },
       ],

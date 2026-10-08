@@ -160,8 +160,8 @@ export function ListView({
   };
 
   useListKeys({
-    move(delta, extend) {
-      const next = selection.move(delta, extend);
+    move(delta) {
+      const next = selection.move(delta);
       if (next) requestAnimationFrame(() => scrollRowIntoView(next));
     },
     open() {
@@ -735,23 +735,16 @@ function TaskRow({
       draggable={draggable}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      onMouseDown={(e) => {
-        if (e.shiftKey) e.preventDefault(); // no text selection on Shift-click ranges
-      }}
       onClick={(e) => {
         const target = e.target as HTMLElement;
         const control = target.closest("a, button, input, select, textarea, label");
-        const modified = e.shiftKey || e.metaKey || e.ctrlKey;
-        if (control && !(control.tagName === "A" && modified)) {
+        if (control) {
+          // The title link opens the task too (⌘/Ctrl-click: a new tab, the browser's own behaviour).
           if (control.tagName === "A") selection.setActive(task.id);
           return;
         }
-        e.preventDefault();
-        // Shift / ⌘ / Ctrl-click still multi-select (like Asana); a plain click opens the task.
-        if (modified) {
-          selection.click(task.id, e);
-          return;
-        }
+        // Clicking a row opens the task; only the checkbox on the left selects (and brings up the bulk bar).
+
         selection.setActive(task.id);
         if (!open) router.push(taskHref(task.id), { scroll: false });
       }}

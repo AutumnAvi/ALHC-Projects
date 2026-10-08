@@ -33,7 +33,7 @@ export function ProjectFiles({
   const shown = filter === "all" ? files : files.filter((f) => kindOf(f) === filter);
 
   return (
-    <div className="mx-auto max-w-5xl px-gutter py-4">
+    <div className="mx-auto w-full max-w-5xl px-gutter py-4">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="mr-auto text-sm font-semibold text-zinc-900">
           Files <span className="font-normal tabular-nums text-zinc-500">· {files.length}</span>
@@ -67,23 +67,23 @@ export function ProjectFiles({
           </EmptyState>
         </div>
       ) : (
-        <table className="mt-3 w-full text-sm">
+        <table className="mt-3 w-full table-fixed text-sm">
           <caption className="sr-only">Files attached to tasks in this project</caption>
           <thead>
             <tr className="border-b border-zinc-200 text-left text-xs font-medium text-zinc-500">
               <th scope="col" className="py-2 pr-3 font-medium">
                 Name
               </th>
-              <th scope="col" className="py-2 pr-3 font-medium">
+              <th scope="col" className="w-[32%] py-2 pr-3 font-medium">
                 Task
               </th>
-              <th scope="col" className="hidden py-2 pr-3 font-medium md:table-cell">
+              <th scope="col" className="hidden w-36 py-2 pr-3 font-medium md:table-cell">
                 Added by
               </th>
-              <th scope="col" className="hidden py-2 pr-3 font-medium sm:table-cell">
+              <th scope="col" className="hidden w-24 py-2 pr-3 font-medium sm:table-cell">
                 Added
               </th>
-              <th scope="col" className="py-2 font-medium">
+              <th scope="col" className="w-20 py-2 font-medium">
                 <span className="sr-only">Actions</span>
               </th>
             </tr>
@@ -94,14 +94,14 @@ export function ProjectFiles({
               const Icon = kind === "image" ? FileImage : FileText;
               return (
                 <tr key={file.id} className="border-b border-zinc-100 hover:bg-zinc-50">
-                  <th scope="row" className="max-w-0 py-2 pr-3 text-left font-normal">
+                  <th scope="row" className="py-2 pr-3 text-left font-normal">
                     <span className="flex min-w-0 items-center gap-2">
                       <Icon className="size-4 shrink-0 text-zinc-400" aria-hidden />
                       <span className="truncate text-zinc-900">{file.fileName}</span>
                       <span className="shrink-0 text-xs text-zinc-400">{formatBytes(file.sizeBytes)}</span>
                     </span>
                   </th>
-                  <td className="max-w-0 py-2 pr-3">
+                  <td className="py-2 pr-3">
                     <Link
                       href={`/projects/${projectId}/list?task=${file.taskId}`}
                       className="block truncate text-zinc-600 hover:text-zinc-900 hover:underline"
@@ -109,7 +109,7 @@ export function ProjectFiles({
                       {file.taskTitle}
                     </Link>
                   </td>
-                  <td className="hidden max-w-0 truncate py-2 pr-3 text-zinc-600 md:table-cell">
+                  <td className="hidden truncate py-2 pr-3 text-zinc-600 md:table-cell">
                     {uploaderNames[file.uploadedBy] ?? "Someone"}
                   </td>
                   <td className="hidden whitespace-nowrap py-2 pr-3 text-xs text-zinc-500 sm:table-cell">

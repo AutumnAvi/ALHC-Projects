@@ -4,8 +4,6 @@ import { useState } from "react";
 
 type State = { selected: string[]; anchor: string | null; active: string | null };
 
-export type ClickModifiers = { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean };
-
 function range(ids: string[], from: string | null, to: string): string[] {
   const end = ids.indexOf(to);
   const start = from ? ids.indexOf(from) : -1;
@@ -44,32 +42,18 @@ export function useTaskSelection(allIds: string[], navIds: string[]) {
     isSelected: (id: string) => selectedSet.has(id),
     active,
     toggle,
-    // Shift-click on a row selects the range, ⌘/Ctrl-click toggles (a plain click opens the task).
-    click(id: string, mods: ClickModifiers) {
-      if (mods.shiftKey) {
-        setState((s) => ({ selected: range(navIds, s.anchor ?? s.active, id), anchor: s.anchor ?? id, active: id }));
-      } else if (mods.metaKey || mods.ctrlKey) {
-        toggle(id);
-      } else {
-        setState({ selected: [id], anchor: id, active: id });
-      }
-    },
     setActive(id: string) {
       setState((s) => ({ ...s, active: id, anchor: s.selected.length ? s.anchor : id }));
     },
-    // ↑/↓ moves the keyboard cursor (Enter opens it); Shift extends the selection from the anchor, which
-    // brings up the bulk bar like the checkboxes do. Returns the new active id.
-    move(delta: 1 | -1, extend: boolean): string | null {
+    // ↑/↓ moves the keyboard cursor (Enter opens it). It never selects: only the checkboxes do, so the
+    // bulk bar appears only from them. Returns the new active id.
+    move(delta: 1 | -1): string | null {
       if (navIds.length === 0) return null;
       const from = active ?? selected.at(-1) ?? null;
       const index = from ? navIds.indexOf(from) : -1;
       const next =
         index === -1 ? (delta === 1 ? navIds[0] : navIds[navIds.length - 1]) : navIds[Math.min(Math.max(index + delta, 0), navIds.length - 1)];
-      setState((s) =>
-        extend
-          ? { selected: range(navIds, s.anchor ?? from ?? next, next), anchor: s.anchor ?? from ?? next, active: next }
-          : { selected: s.selected, anchor: next, active: next },
-      );
+      setState((s) => ({ ...s, anchor: s.selected.length ? s.anchor : next, active: next }));
       return next;
     },
     clear() {
