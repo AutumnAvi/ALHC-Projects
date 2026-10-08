@@ -22,6 +22,8 @@ Call `list_migrations` and note every `<slug>_*` name already recorded (a partia
 
 ## 2. Split into chunks
 
+**Tail.** If the file has a line that starts with `-- TAIL`, only the text **before** that line is yours to apply: split and apply that prefix, and never send anything from the `-- TAIL` line on (the hosted connector refuses statements containing `DROP` / `DELETE`, which is why they sit there; they are applied by hand). In the proof below, compare the joined chunks with that prefix instead of the whole file. In the report, say the tail was left for manual apply and quote its first line.
+
 Use a small script (Python via Bash) that walks the file once and tracks string and comment state. That covers `'…'` with `''` escapes, `"…"`, `-- …` line comments, `/* … */` block comments, and dollar quotes `$$ … $$` / `$tag$ … $tag$`. A statement ends at a `;` that is outside all of them. Chunk boundaries may only fall right after such a `;` plus the rest of its line, so a boundary is never inside a dollar-quoted body.
 
 How to group statements:
@@ -54,3 +56,4 @@ Never retry a chunk without that `list_migrations` check, and never retry more t
 - Every error or timeout, with the chunk name and the message.
 - The final `<slug>_*` names from `list_migrations`.
 - If you stopped: which chunk, and that the PR must not be merged until it is resolved.
+- If the file has a tail: that it was not applied, and that the PR must not be merged until it is applied by hand and its effect is confirmed.

@@ -21,6 +21,36 @@ import { TASK_KIND_LABELS, parseTaskKind } from "@/lib/task-kinds";
 import { dependencyLabel, parseDependencyKind } from "@/lib/dependencies";
 import { useTaskHref } from "@/components/project/shared";
 
+// The live state of a queued email, after "queued an email to …": sending, sent, failed with the reason,
+// or not sent because no email provider is configured.
+function EmailStatusNote({ email }: { email: TaskStory["email"] }) {
+  if (!email) return null;
+  switch (email.status) {
+    case "sent":
+      return <span className="text-emerald-700"> · Sent</span>;
+    case "mocked":
+      return <span className="text-zinc-500"> · Not sent (no email provider is set up)</span>;
+    case "sending":
+      return <span> · Sending…</span>;
+    case "failed":
+      return (
+        <span className="text-red-700">
+          {" "}
+          · Failed{email.error ? `: ${email.error}` : ""}
+        </span>
+      );
+    default:
+      return email.attempts > 0 ? (
+        <span className="text-amber-700">
+          {" "}
+          · Retrying (attempt {email.attempts} of {email.maxAttempts} failed{email.error ? `: ${email.error}` : ""})
+        </span>
+      ) : (
+        <span> · Queued</span>
+      );
+  }
+}
+
 type Entry =
   | { type: "comment"; at: string; comment: TaskComment }
   | { type: "story"; at: string; story: TaskStory };
@@ -51,6 +81,7 @@ export function TaskActivity({
     { table: "comment_reactions", filter: `task_id=eq.${task.id}` },
     { table: "task_likes", filter: `task_id=eq.${task.id}` },
     { table: "task_stories", filter: `task_id=eq.${task.id}` },
+    { table: "email_outbox", filter: `task_id=eq.${task.id}` },
   ]);
 
   const taskHref = useTaskHref();
@@ -138,7 +169,12 @@ export function TaskActivity({
       case "request_number_assigned":
         return <>assigned request number {str(d, "label")}</>;
       case "email_queued":
-        return <>emailed {str(d, "to")}</>;
+        return (
+          <>
+            queued an email to {str(d, "to")}
+            <EmailStatusNote email={story.email ?? null} />
+          </>
+        );
       case "integration_queued":
         return str(d, "channel") === "slack" ? (
           <>queued a Slack message to {str(d, "target")}</>

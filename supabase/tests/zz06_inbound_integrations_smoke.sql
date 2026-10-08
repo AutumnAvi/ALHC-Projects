@@ -769,7 +769,11 @@ begin
       'create_inbound_endpoint', 'rotate_inbound_token', 'set_inbound_signing_secret', 'guard_inbound_endpoint', 'log_inbound_call'
     )
   ), 'endpoint management is SECURITY INVOKER';
-  assert not exists (select 1 from pg_proc where proname = 'alhc_patch_function'), 'the patch helper is gone';
+  -- Since Email live the helper stays (AGENTS.md → Conventions); it must stay internal.
+  assert not exists (
+    select 1 from pg_proc where proname = 'alhc_patch_function'
+      and (has_function_privilege('authenticated', oid, 'execute') or has_function_privilege('anon', oid, 'execute'))
+  ), 'the patch helper is internal';
 end $$;
 
 select 'inbound integrations smoke: all assertions passed' as result;

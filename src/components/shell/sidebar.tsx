@@ -211,11 +211,18 @@ export function Sidebar({
       </nav>
 
       <div className="flex items-center gap-2 border-t border-zinc-200 px-3 py-2">
-        <Avatar name={member.name} size="md" />
-        <div className="min-w-0 flex-1 leading-tight">
-          <p className="truncate text-sm font-medium text-zinc-900">{member.name}</p>
-          <p className="truncate text-xs text-zinc-500">{member.email}</p>
-        </div>
+        <Link
+          href="/settings/profile"
+          title="Profile settings"
+          aria-current={pathname === "/settings/profile" ? "page" : undefined}
+          className="-mx-1 flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 hover:bg-zinc-200 aria-[current=page]:bg-zinc-200"
+        >
+          <Avatar name={member.name} size="md" />
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="block truncate text-sm font-medium text-zinc-900">{member.name}</span>
+            <span className="block truncate text-xs text-zinc-500">{member.email}</span>
+          </span>
+        </Link>
         <Link
           href="/settings/workspace"
           aria-label="Workspace settings"

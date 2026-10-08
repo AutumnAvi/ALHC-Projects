@@ -23,6 +23,7 @@ import {
   reportOverdueTasks,
   searchTasks,
   workspaceReport,
+  workspaceTotals,
   type Profile,
 } from "@/lib/data";
 import { fieldChips, type FieldDef } from "@/lib/fields";
@@ -212,7 +213,12 @@ export async function exportWorkspaceReport(
   }
 
   if (table === "overdue") {
-    const [overdue, projects] = await Promise.all([reportOverdueTasks(filters, timeZone, MAX_EXPORT_ROWS), allProjectsReport(timeZone)]);
+    // report_overdue_tasks caps at MAX_EXPORT_ROWS itself, so the deduped overdue total says whether it cut.
+    const [overdue, projects, totals] = await Promise.all([
+      reportOverdueTasks(filters, timeZone, MAX_EXPORT_ROWS),
+      allProjectsReport(timeZone),
+      workspaceTotals(filters, timeZone),
+    ]);
     const projectNames = new Map(projects.map((p) => [p.id, p.name]));
     return {
       title: "overdue tasks",
@@ -227,6 +233,7 @@ export async function exportWorkspaceReport(
           t.daysOverdue,
           t.taskId,
         ]),
+        totals.overdue,
       ),
     };
   }

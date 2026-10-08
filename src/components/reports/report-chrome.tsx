@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, type MouseEvent } from "react";
 import { useNotify } from "@/components/toast";
 import { MAX_EXPORT_ROWS, TRUNCATED_HEADER, TRUNCATED_NOTICE } from "@/lib/csv";
-import { ChartColumn, Download, LayoutDashboard, Printer, Table2 } from "lucide-react";
+import { ChartColumn, Download, LayoutDashboard, Printer, Table2, TriangleAlert } from "lucide-react";
 import { Segmented } from "@/components/project/view-chrome";
 import { HEADER_TAB } from "@/components/ui";
 import type { SeriesInterval } from "@/lib/reports";
@@ -112,8 +112,15 @@ export function ExportLink({
         <Download className={className ? "size-3.5" : "size-4"} aria-hidden /> {busy ? "Exporting…" : label}
       </a>
       {truncated ? (
-        <span role="status" className="text-xs text-amber-700" title={TRUNCATED_NOTICE}>
-          First {MAX_EXPORT_ROWS.toLocaleString("en-US")} rows only
+        <span
+          role="status"
+          className="inline-flex max-w-xs items-start gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800"
+        >
+          <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+          <span>
+            <span className="font-medium">Cut at {MAX_EXPORT_ROWS.toLocaleString("en-US")} rows.</span> Narrow the
+            filters to export the rest.
+          </span>
         </span>
       ) : null}
     </span>

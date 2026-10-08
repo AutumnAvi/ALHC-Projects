@@ -2784,6 +2784,30 @@ export async function retryIntegrationDelivery(deliveryId: string): Promise<Acti
   return result;
 }
 
+// Send a waiting email now, or give a failed one one more attempt (Admin+; the RPC re-checks). run()
+// drains the email outbox right after the response.
+export async function retryEmailDelivery(emailId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("retry_email_delivery", { target_email: id(emailId) }));
+  });
+}
+
+// "Email me about comments" (Settings → Profile). Own row only (profiles_update_own).
+export async function setEmailComments(enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to change this");
+    checkUpdated(
+      await supabase.from("profiles").update({ email_comments: enabled === true }).eq("id", user.id).select("id"),
+      "Couldn’t save your notification setting",
+    );
+  });
+}
+
 export async function cancelIntegrationDelivery(deliveryId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
