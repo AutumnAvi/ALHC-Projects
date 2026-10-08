@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Building2 } from "lucide-react";
 import { PageHeader } from "@/components/ui";
 import { WorkspaceSettings } from "@/components/workspace/workspace-settings";
@@ -26,6 +27,11 @@ export default async function WorkspaceSettingsPage() {
         icon={Building2}
         title="Workspace settings"
         description={`${workspace?.name ?? "Workspace"} · ${admin ? "You’re a workspace admin" : "Only workspace admins can change these"}`}
+        actions={
+          <Link href="/settings/profile" className="btn-ghost">
+            Your profile settings
+          </Link>
+        }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <WorkspaceSettings memberId={member.id} isAdmin={admin} admins={admins} runs={runs} />

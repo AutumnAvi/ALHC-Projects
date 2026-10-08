@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { isUuid } from "@/lib/ids";
 import { parseOptions, type FieldDef, type FieldOption, type FieldType } from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
 import {
@@ -16,6 +17,7 @@ import { REACTIONS, type ReactionKey } from "@/lib/reactions";
 import {
   isDeliveryStatus,
   toProjectIntegrations,
+  type EmailDelivery,
   type IntegrationDelivery,
   type ProjectIntegrations,
 } from "@/lib/integrations-shared";
@@ -254,7 +256,21 @@ export type TaskStory = {
   kind: string;
   data: Json;
   createdAt: string;
+  // email_queued stories: the email's live delivery state (null when the row is gone, e.g. purged).
+  email?: StoryEmailStatus | null;
 };
+
+export type StoryEmailStatus = {
+  status: "pending" | "sending" | "sent" | "mocked" | "failed";
+  error: string | null;
+  attempts: number;
+  maxAttempts: number;
+};
+
+const EMAIL_STATUSES = ["pending", "sending", "sent", "mocked", "failed"] as const;
+function isEmailStatus(value: string): value is StoryEmailStatus["status"] {
+  return (EMAIL_STATUSES as readonly string[]).includes(value);
+}
 
 type QueryResult<T> = { data: T; error: { message: string } | null };
 
@@ -903,6 +919,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       : Promise.resolve({ data: null, error: null }),
   ]);
   const ruleName = new Map(rows(ruleNames, "rules").map((r) => [r.id, r.name] as const));
+  const emailStatus = await storyEmailStatuses(storyRows);
 
   return {
     fields,
@@ -953,6 +970,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       kind: st.kind,
       data: st.data,
       createdAt: st.created_at,
+      ...(st.kind === "email_queued" ? { email: emailStatus.get(storyEmailId(st.data) ?? "") ?? null } : {}),
     })),
     id: task.id,
     title: task.title,
@@ -1106,6 +1124,35 @@ async function listDependencyCandidates(
 
 // Dependency stories only store the other task's title when every reader of this task can read it
 // (dependency_story_data); otherwise fill it in when the viewer can read the other task.
+function storyEmailId(data: Json): string | null {
+  const value = data && typeof data === "object" && !Array.isArray(data) ? data.email_id : null;
+  return typeof value === "string" && isUuid(value) ? value : null;
+}
+
+// Live status of the emails behind email_queued stories (email_outbox is readable with the task).
+async function storyEmailStatuses(stories: { kind: string; data: Json }[]): Promise<Map<string, StoryEmailStatus>> {
+  const ids = [...new Set(stories.filter((s) => s.kind === "email_queued").map((s) => storyEmailId(s.data)))].filter(
+    (id): id is string => Boolean(id),
+  );
+  if (ids.length === 0) return new Map();
+  const supabase = await createClient();
+  const result = await supabase
+    .from("email_outbox")
+    .select("id, status, last_error, attempts, max_attempts")
+    .in("id", ids.slice(0, 200));
+  return new Map(
+    rows(result, "email status").map((e) => [
+      e.id,
+      {
+        status: isEmailStatus(e.status) ? e.status : "pending",
+        error: e.status === "failed" || e.status === "pending" ? e.last_error : null,
+        attempts: e.attempts,
+        maxAttempts: e.max_attempts,
+      },
+    ]),
+  );
+}
+
 async function withDependencyTitles<T extends { kind: string; data: Json }>(stories: T[]): Promise<T[]> {
   const isDep = (k: string) => k === "dependency_added" || k === "dependency_removed" || k === "dependency_changed";
   const missing = [
@@ -1850,6 +1897,36 @@ export const listIntegrationDeliveries = cache(async (projectId: string): Promis
     responseStatus: row.response_status,
     lastError: row.last_error,
     signed: row.signed,
+    nextAttemptAt: row.next_attempt_at,
+    sentAt: row.sent_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+});
+
+// The signed-in person's "Email me about comments" setting (own row; on when unreadable).
+export const getEmailCommentsSetting = cache(async (profileId: string): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.from("profiles").select("email_comments").eq("id", profileId).maybeSingle();
+  return maybe(result, "profile")?.email_comments ?? true;
+});
+
+// Emails about the project's tasks for Settings → Deliveries (Admin+; null below Admin). Never a body.
+export const listEmailDeliveries = cache(async (projectId: string): Promise<EmailDelivery[] | null> => {
+  if (!hasRole(await getProjectRole(projectId), "admin")) return null;
+  const supabase = await createClient();
+  const result = await supabase.rpc("list_email_deliveries", { target_project: projectId, max_results: 200 });
+  return rows(result, "email log").map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    recipient: row.recipient,
+    taskId: row.task_id,
+    taskTitle: row.task_title,
+    ruleName: row.rule_name,
+    status: isDeliveryStatus(row.status) && row.status !== "cancelled" ? row.status : "pending",
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    lastError: row.last_error,
     nextAttemptAt: row.next_attempt_at,
     sentAt: row.sent_at,
     createdAt: row.created_at,

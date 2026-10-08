@@ -1,5 +1,6 @@
 import "server-only";
 import { createHmac, randomBytes } from "node:crypto";
+import { backgroundOrigin } from "@/lib/origin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
@@ -24,12 +25,7 @@ export function isIntegrationsMocked() {
 }
 
 // Absolute app origin for task deep links in webhook payloads; omitted when unknown.
-function appOrigin(): string | null {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "");
-  if (configured) return configured;
-  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL;
-  return vercel ? `https://${vercel}` : null;
-}
+const appOrigin = backgroundOrigin;
 
 function record(value: Json): Record<string, Json | undefined> {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};

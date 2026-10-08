@@ -1,9 +1,12 @@
 import "server-only";
+import { isInboundEmailConfigured, replyAddress, REPLY_MARKER } from "@/lib/email-reply";
+import { backgroundOrigin } from "@/lib/origin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 
-// Email delivery for the outbox the database fills (form confirmations, rule emails). Uses Resend's
-// HTTP API when RESEND_API_KEY and EMAIL_FROM are set; otherwise rows are marked "mocked" and logged.
+// Email delivery for the outbox the database fills (form confirmations, rule emails, comment emails to
+// followers). Uses Resend's HTTP API when RESEND_API_KEY and EMAIL_FROM are set; otherwise rows are
+// marked "mocked" and logged (id and template only — never an address, subject, or body).
 
 type OutboxRow = Tables<"email_outbox">;
 type Rendered = { subject: string; text: string; html: string };
@@ -21,10 +24,27 @@ function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
-function layout(heading: string, paragraphs: string[], rows: { label: string; value: string }[]) {
-  const text = [heading, "", ...paragraphs, ...(rows.length ? ["", ...rows.map((r) => `${r.label}: ${r.value}`)] : [])].join("\n");
+type Action = { label: string; href: string };
+
+function layout(
+  heading: string,
+  paragraphs: string[],
+  rows: { label: string; value: string }[],
+  options: { action?: Action | null; preface?: string | null; footer?: string[] } = {},
+) {
+  const { action, preface, footer = [] } = options;
+  const text = [
+    ...(preface ? [preface, ""] : []),
+    heading,
+    "",
+    ...paragraphs,
+    ...(rows.length ? ["", ...rows.map((r) => `${r.label}: ${r.value}`)] : []),
+    ...(action ? ["", `${action.label}: ${action.href}`] : []),
+    ...(footer.length ? ["", ...footer] : []),
+  ].join("\n");
   const html = `<!doctype html><html><body style="margin:0;background:#f4f4f5;font-family:ui-sans-serif,system-ui,sans-serif;color:#18181b">
 <div style="max-width:560px;margin:0 auto;padding:32px 16px">
+${preface ? `<p style="margin:0 0 12px;font-size:12px;color:#a1a1aa">${escapeHtml(preface)}</p>` : ""}
 <div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:24px">
 <h1 style="margin:0 0 12px;font-size:18px">${escapeHtml(heading)}</h1>
 ${paragraphs.map((p) => `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;white-space:pre-wrap">${escapeHtml(p)}</p>`).join("")}
@@ -38,13 +58,62 @@ ${
         .join("")}</table>`
     : ""
 }
+${
+  action
+    ? `<p style="margin:20px 0 0"><a href="${escapeHtml(action.href)}" style="display:inline-block;background:#18181b;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:8px 14px;border-radius:8px">${escapeHtml(action.label)}</a></p>`
+    : ""
+}
 </div>
+${footer.map((line) => `<p style="font-size:12px;color:#a1a1aa;margin:12px 0 0;text-align:center">${escapeHtml(line)}</p>`).join("")}
 <p style="font-size:12px;color:#a1a1aa;margin:16px 0 0;text-align:center">Sent by ALHC Projects</p>
 </div></body></html>`;
   return { text, html };
 }
 
-export function renderEmail(row: OutboxRow): Rendered {
+// The signed-in task link (never public or tokenized): the recipient's project, else My Tasks for a
+// private task. Null without a known app origin.
+function taskLink(row: OutboxRow, projectId: string | null): string | null {
+  const origin = backgroundOrigin();
+  if (!origin || !row.task_id) return null;
+  return projectId ? `${origin}/projects/${projectId}?task=${row.task_id}` : `${origin}/my-tasks?task=${row.task_id}`;
+}
+
+// A follower's comment email: task, project, who commented, the comment, and an Open task link. With
+// inbound replies on, a marker line tells the reader where to type (the inbound route cuts everything
+// below it).
+function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
+  const p = payloadOf(row);
+  const taskTitle = str(p.task_title) ?? "a task";
+  const author = str(p.author_name) ?? "Someone";
+  const project = str(p.project_name);
+  const label = str(p.request_label);
+  const link = taskLink(row, str(p.project_id));
+  const origin = backgroundOrigin();
+  return {
+    subject: row.subject ?? `${author} commented on “${taskTitle}”`,
+    ...layout(
+      `${author} commented on “${taskTitle}”`,
+      [str(p.comment_body) ?? ""],
+      [
+        { label: "Task", value: label ? `${label} · ${taskTitle}` : taskTitle },
+        { label: "Project", value: project ?? "Private task (My Tasks)" },
+      ],
+      {
+        action: link ? { label: "Open task", href: link } : null,
+        preface: canReply ? REPLY_MARKER : null,
+        footer: [
+          canReply
+            ? "Reply to this email to add a comment as you. Only the text above the quoted message is posted."
+            : "Open the task to reply.",
+          `You follow this task. Turn off comment emails in Settings → Profile${origin ? ` (${origin}/settings/profile)` : ""}.`,
+        ],
+      },
+    ),
+  };
+}
+
+export function renderEmail(row: OutboxRow, options: { canReply?: boolean } = {}): Rendered {
+  if (row.comment_id) return renderCommentEmail(row, Boolean(options.canReply));
   const p = payloadOf(row);
   const label = str(p.request_label);
   const taskTitle = str(p.task_title) ?? "your request";
@@ -97,10 +166,24 @@ export function isEmailConfigured() {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
-async function deliver(row: OutboxRow): Promise<{ outcome: "sent" | "mocked" | "error"; id?: string; error?: string }> {
-  const email = renderEmail(row);
+// Reply-To for comment emails: the follower's per-task reply address, only when inbound replies are
+// configured (RESEND_WEBHOOK_SECRET). Other emails keep the optional EMAIL_REPLY_TO.
+async function replyTo(row: OutboxRow, admin: NonNullable<ReturnType<typeof createAdminClient>>): Promise<string | null> {
+  if (!row.comment_id) return process.env.EMAIL_REPLY_TO?.trim() || null;
+  if (!isInboundEmailConfigured()) return null;
+  const { data, error } = await admin.rpc("email_reply_token", { target_email: row.id });
+  if (error || typeof data !== "string") return null;
+  return replyAddress(data);
+}
+
+async function deliver(
+  row: OutboxRow,
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+): Promise<{ outcome: "sent" | "mocked" | "error"; id?: string; error?: string }> {
+  const reply = await replyTo(row, admin);
+  const email = renderEmail(row, { canReply: Boolean(reply && row.comment_id) });
   if (!isEmailConfigured()) {
-    console.info(`[email:mocked] to=${row.to_email} subject="${email.subject}"`);
+    console.info(`[email:mocked] id=${row.id} template=${row.comment_id ? "comment" : row.template}`);
     return { outcome: "mocked" };
   }
   const response = await fetch("https://api.resend.com/emails", {
@@ -116,11 +199,15 @@ async function deliver(row: OutboxRow): Promise<{ outcome: "sent" | "mocked" | "
       subject: email.subject,
       text: email.text,
       html: email.html,
-      ...(process.env.EMAIL_REPLY_TO ? { reply_to: process.env.EMAIL_REPLY_TO } : {}),
+      ...(reply ? { reply_to: reply } : {}),
     }),
+    signal: AbortSignal.timeout(15_000),
   });
   const body = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
-  if (!response.ok) return { outcome: "error", error: body.message ?? `Resend responded ${response.status}` };
+  if (!response.ok) {
+    const reason = typeof body.message === "string" ? body.message.slice(0, 300) : "";
+    return { outcome: "error", error: `Resend responded ${response.status}${reason ? `: ${reason}` : ""}` };
+  }
   return { outcome: "sent", id: body.id };
 }
 
@@ -129,7 +216,7 @@ async function deliver(row: OutboxRow): Promise<{ outcome: "sent" | "mocked" | "
 export async function drainOutbox(options: { onlyId?: string | null; max?: number } = {}) {
   const admin = createAdminClient();
   if (!admin) return { claimed: 0, sent: 0, mocked: 0, failed: 0, skipped: "no service role key" as const };
-  const { data, error } = await admin.rpc("claim_email_outbox", {
+  const { data, error } = await admin.rpc("claim_email_deliveries", {
     max_items: options.max ?? 20,
     only_id: options.onlyId ?? null,
   });
@@ -138,9 +225,10 @@ export async function drainOutbox(options: { onlyId?: string | null; max?: numbe
   for (const row of data ?? []) {
     let result: Awaited<ReturnType<typeof deliver>>;
     try {
-      result = await deliver(row);
+      result = await deliver(row, admin);
     } catch (e) {
-      result = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+      // Network errors keep only their kind (a message could carry request details).
+      result = { outcome: "error", error: e instanceof Error && e.name === "TimeoutError" ? "Resend timed out" : "Couldn’t reach Resend" };
     }
     if (result.outcome === "error") counts.failed += 1;
     else counts[result.outcome] += 1;

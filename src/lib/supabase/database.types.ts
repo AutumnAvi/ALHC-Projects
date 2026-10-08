@@ -324,6 +324,9 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          to_profile_id: string | null;
+          comment_id: string | null;
+          max_attempts: number;
         };
         Insert: {
           id?: string;
@@ -342,6 +345,9 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          to_profile_id?: string | null;
+          comment_id?: string | null;
+          max_attempts?: number;
         };
         Update: {
           id?: string;
@@ -360,6 +366,75 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          to_profile_id?: string | null;
+          comment_id?: string | null;
+          max_attempts?: number;
+        };
+        Relationships: [];
+      };
+      email_replies: {
+        Row: {
+          id: string;
+          provider_id: string | null;
+          token_id: string | null;
+          task_id: string | null;
+          profile_id: string | null;
+          comment_id: string | null;
+          status: string;
+          reason: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          provider_id?: string | null;
+          token_id?: string | null;
+          task_id?: string | null;
+          profile_id?: string | null;
+          comment_id?: string | null;
+          status: string;
+          reason?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          provider_id?: string | null;
+          token_id?: string | null;
+          task_id?: string | null;
+          profile_id?: string | null;
+          comment_id?: string | null;
+          status?: string;
+          reason?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      email_reply_tokens: {
+        Row: {
+          id: string;
+          task_id: string;
+          profile_id: string;
+          token: string;
+          created_at: string;
+          last_used_at: string | null;
+          revoked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          profile_id: string;
+          token: string;
+          created_at?: string;
+          last_used_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          profile_id?: string;
+          token?: string;
+          created_at?: string;
+          last_used_at?: string | null;
+          revoked_at?: string | null;
         };
         Relationships: [];
       };
@@ -1063,6 +1138,7 @@ export type Database = {
           avatar_url: string | null;
           created_at: string;
           updated_at: string;
+          email_comments: boolean;
         };
         Insert: {
           id: string;
@@ -1071,6 +1147,7 @@ export type Database = {
           avatar_url?: string | null;
           created_at?: string;
           updated_at?: string;
+          email_comments?: boolean;
         };
         Update: {
           id?: string;
@@ -1079,6 +1156,7 @@ export type Database = {
           avatar_url?: string | null;
           created_at?: string;
           updated_at?: string;
+          email_comments?: boolean;
         };
         Relationships: [];
       };
@@ -3436,6 +3514,10 @@ export type Database = {
         Args: { target_delivery: string };
         Returns: Json;
       };
+      claim_email_deliveries: {
+        Args: { max_items?: number; only_id?: string | null };
+        Returns: Database["public"]["Tables"]["email_outbox"]["Row"][];
+      };
       claim_email_outbox: {
         Args: { max_items?: number; only_id?: string | null };
         Returns: Database["public"]["Tables"]["email_outbox"]["Row"][];
@@ -3517,6 +3599,26 @@ export type Database = {
       import_lookup: {
         Args: { import_source: string; external_ids: string[] };
         Returns: { project_id: string; kind: string; external_id: string }[];
+      };
+      list_email_deliveries: {
+        Args: { target_project: string; max_results?: number };
+        Returns: {
+          id: string;
+          kind: string;
+          recipient: string;
+          task_id: string;
+          task_title: string | null;
+          rule_id: string | null;
+          rule_name: string | null;
+          status: string;
+          attempts: number;
+          max_attempts: number;
+          last_error: string | null;
+          next_attempt_at: string | null;
+          sent_at: string | null;
+          created_at: string;
+          updated_at: string;
+        }[];
       };
       list_integration_deliveries: {
         Args: { target_project: string; max_results?: number };
@@ -3662,6 +3764,18 @@ export type Database = {
       };
       set_inbound_signing_secret: {
         Args: { target_endpoint: string; enable: boolean };
+        Returns: Json;
+      };
+      retry_email_delivery: {
+        Args: { target_email: string };
+        Returns: string;
+      };
+      email_reply_token: {
+        Args: { target_email: string };
+        Returns: string | null;
+      };
+      post_email_reply: {
+        Args: { reply_token: string; sender_email: string; reply_body: string; provider_email_id?: string | null };
         Returns: Json;
       };
       retry_integration_delivery: {

@@ -7,7 +7,7 @@
 
 export const MAX_EXPORT_ROWS = 10_000;
 export const TRUNCATED_HEADER = "X-Export-Truncated";
-export const TRUNCATED_NOTICE = `Only the first ${MAX_EXPORT_ROWS.toLocaleString("en-US")} rows were exported. Narrow the filters to export the rest.`;
+export const TRUNCATED_NOTICE = `This export was cut at ${MAX_EXPORT_ROWS.toLocaleString("en-US")} rows: the file has only the first ${MAX_EXPORT_ROWS.toLocaleString("en-US")}. Narrow the filters (or the date range) and export again to get the rest.`;
 
 export type CsvCell = string | number | boolean | null | undefined;
 
@@ -26,8 +26,14 @@ export type CsvTable = { header: string[]; rows: CsvCell[][]; truncated: boolean
 
 // Caps the rows at MAX_EXPORT_ROWS; `truncated` sets the X-Export-Truncated header, which the Export CSV
 // buttons (ExportLink) turn into a visible notice.
-export function csvTable(header: string[], rows: CsvCell[][]): CsvTable {
-  return { header, rows: rows.slice(0, MAX_EXPORT_ROWS), truncated: rows.length > MAX_EXPORT_ROWS };
+// `total` is for sources that were already capped at MAX_EXPORT_ROWS before they got here (the overdue
+// report): the real row count, so a cut file is still reported as cut.
+export function csvTable(header: string[], rows: CsvCell[][], total = rows.length): CsvTable {
+  return {
+    header,
+    rows: rows.slice(0, MAX_EXPORT_ROWS),
+    truncated: Math.max(total, rows.length) > MAX_EXPORT_ROWS,
+  };
 }
 
 export function toCsv(table: CsvTable): string {

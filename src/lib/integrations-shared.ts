@@ -160,3 +160,34 @@ export function canRetryDelivery(d: Pick<IntegrationDelivery, "status" | "attemp
 export function canCancelDelivery(d: Pick<IntegrationDelivery, "status">) {
   return d.status === "pending";
 }
+
+// One email in the delivery log (list_email_deliveries): never the body or payload. `kind` is the
+// template, or "comment" for a follower's comment email.
+export type EmailDelivery = {
+  id: string;
+  kind: string;
+  recipient: string;
+  taskId: string;
+  taskTitle: string | null;
+  ruleName: string | null;
+  status: Exclude<DeliveryStatus, "cancelled">;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  nextAttemptAt: string | null;
+  sentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export const EMAIL_KIND_LABELS: Record<string, string> = {
+  comment: "Comment email",
+  form_confirmation: "Form confirmation",
+  requester_update: "Requester update",
+  due_tomorrow: "Due tomorrow reminder",
+  custom: "Rule email",
+};
+
+export function emailKindLabel(kind: string): string {
+  return EMAIL_KIND_LABELS[kind] ?? "Email";
+}

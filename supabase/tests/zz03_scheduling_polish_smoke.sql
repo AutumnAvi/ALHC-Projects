@@ -778,7 +778,11 @@ begin
     assert not has_function_privilege('authenticated', fn, 'execute') and not has_function_privilege('anon', fn, 'execute'),
       format('%s is internal', fn);
   end loop;
-  assert not exists (select 1 from pg_proc where proname = 'alhc_patch_function'), 'the patch helper is gone';
+  -- Since Email live the helper stays (AGENTS.md → Conventions); it must stay internal.
+  assert not exists (
+    select 1 from pg_proc where proname = 'alhc_patch_function'
+      and (has_function_privilege('authenticated', oid, 'execute') or has_function_privilege('anon', oid, 'execute'))
+  ), 'the patch helper is internal';
   assert not has_table_privilege('anon', 'public.task_dependencies', 'select'), 'no anon table grant';
   assert not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'task_dependencies'
                      and cmd <> 'SELECT'), 'dependencies are only written through the RPCs';

@@ -627,13 +627,14 @@ declare
   claimed public.email_outbox;
   n integer := 0;
 begin
-  for claimed in select * from public.claim_email_outbox(100) loop
+  -- The drain's claim since Email live (claim_email_outbox is the legacy one and skips comment emails).
+  for claimed in select * from public.claim_email_deliveries(100) loop
     n := n + 1;
     perform public.complete_email_outbox(claimed.id, 'mocked');
   end loop;
   assert n >= 6, 'worker claims queued emails';
   assert (select count(*) from public.email_outbox where status = 'pending') = 0, 'all claimed';
-  assert (select count(*) from public.claim_email_outbox(100)) = 0, 'nothing left to claim';
+  assert (select count(*) from public.claim_email_deliveries(100)) = 0, 'nothing left to claim';
 end $$;
 
 -- Outsiders and anon -------------------------------------------------------------------------------

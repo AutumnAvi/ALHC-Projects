@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { DeliveryLog } from "@/components/project/delivery-log";
 import { ReadOnlyNotice } from "@/components/project/project-access";
-import { getProject, getProjectRole, listIntegrationDeliveries } from "@/lib/data";
+import { getProject, getProjectRole, listEmailDeliveries, listIntegrationDeliveries } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 
 export async function generateMetadata({
@@ -13,7 +13,7 @@ export async function generateMetadata({
   return { title: project ? `${project.name} · Deliveries` : "Deliveries" };
 }
 
-// Slack and webhook deliveries queued by this project's rules. Admin+ only: the log RPC refuses anyone
+// Emails about this project's tasks, and Slack and webhook deliveries queued by its rules. Admin+ only: the log RPC refuses anyone
 // else, so the page doesn't ask below Admin.
 export default async function ProjectDeliveriesPage({
   params,
@@ -25,12 +25,12 @@ export default async function ProjectDeliveriesPage({
   if (!hasRole(role, "admin")) {
     return (
       <div className="mx-auto max-w-3xl px-gutter py-5">
-        <ReadOnlyNotice need="admin" what="the delivery log (Slack and webhook deliveries)" />
+        <ReadOnlyNotice need="admin" what="the delivery log (emails, Slack, and webhooks)" />
       </div>
     );
   }
 
-  const deliveries = await listIntegrationDeliveries(projectId);
-  if (!deliveries) notFound();
-  return <DeliveryLog projectId={projectId} deliveries={deliveries} />;
+  const [deliveries, emails] = await Promise.all([listIntegrationDeliveries(projectId), listEmailDeliveries(projectId)]);
+  if (!deliveries || !emails) notFound();
+  return <DeliveryLog projectId={projectId} deliveries={deliveries} emails={emails} />;
 }

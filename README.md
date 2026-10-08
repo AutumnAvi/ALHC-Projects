@@ -211,6 +211,14 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 
 `npm run db:test` needs PostgreSQL server binaries (`initdb`, `pg_ctl`) installed locally, e.g. `brew install postgresql@16` or `apt install postgresql`. It doesn't touch any Supabase project.
 
+## What's here (email live)
+
+- **Email goes out within a minute.** Server actions still send right after they finish. On top of that, a database job (`alhc-delivery-kick`, every minute) asks the app to deliver anything due: email, Slack, and webhooks. It only calls the app when something is waiting. Set it up once in “Setup: email (Resend) and the workflows cron”.
+- **Honest status.** A task's activity says “queued an email to …”, then **Sent**, **Retrying (attempt n of 5 failed: reason)**, or **Failed: reason**. **Settings → Deliveries** (Admins and above) lists the project's emails next to Slack and webhooks, with **Retry** / **Send now**.
+- **Form submitters follow their request.** When someone with an ALHC account submits a form, and can open the project the form feeds, they follow the new task. Requesters without access keep getting the requester emails only.
+- **Comment emails.** A new comment emails every follower except its author: task, project, the comment, and an **Open task** link. Each email is checked again just before sending, so someone who lost access gets nothing. Everyone can turn this off in **Settings → Profile → Email me about comments** (on by default).
+- **Reply by email.** With inbound replies set up (“Setup: reply by email”), replying to a comment email posts the reply as a comment by you. Only the text above the quoted message is posted, and only from the address the email was sent to.
+
 ## Setup: Supabase
 
 1. **Create a project** at [supabase.com/dashboard](https://supabase.com/dashboard). Note the project ref (the `xxxx` in `https://xxxx.supabase.co`).
@@ -255,7 +263,34 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 3. Set `SUPABASE_SERVICE_ROLE_KEY` (server-only). The app uses it only to claim and deliver queued emails and for the cron route.
 4. Set `CRON_SECRET` to a long random string. `vercel.json` calls `/api/cron/workflows` daily, and Vercel sends the secret automatically. On a Pro plan you can make it more frequent (e.g. `*/15 * * * *`), or call it from any scheduler with `Authorization: Bearer <CRON_SECRET>`.
 
-Emails are also delivered right after any action in the app, so the cron mainly matters for emails queued by scheduled rules. Leave the Resend variables empty to mock email. To inspect what would have been sent, run `select to_email, template, subject, status from public.email_outbox order by created_at desc;`.
+5. **Delivery within a minute (pg_cron + pg_net).** The Email live migration enables `pg_net` and schedules `alhc-delivery-kick` every minute. When an email, Slack message, or webhook is due, it calls `<app url>/api/cron/workflows` with the cron secret. It reads both values from Supabase Vault and does nothing until they exist. Add them once in the SQL editor, pasting the real values (don't commit them anywhere):
+
+   ```sql
+   select vault.create_secret('https://<your production domain>', 'alhc_app_url', 'ALHC delivery kick: app origin');
+   select vault.create_secret('<the CRON_SECRET value from Vercel>', 'alhc_cron_secret', 'ALHC delivery kick: bearer secret');
+   ```
+
+   To change one later: `select vault.update_secret((select id from vault.secrets where name = 'alhc_cron_secret'), '<new value>');`. To check the kick: `select public.alhc_kick_delivery();` returns `true` when it made a request (only while something is due), and `select status_code, created from net._http_response order by created desc limit 5;` shows the app's answers (200 = delivered; 401 = the secret doesn't match `CRON_SECRET`).
+
+Emails are also delivered right after any action in the app, so the kick covers emails queued by scheduled rules, delayed steps, and anything that failed and is due for a retry. Leave the Resend variables empty to mock email. To inspect what would have been sent, run `select to_email, template, subject, status from public.email_outbox order by created_at desc;`.
+
+## Setup: reply by email
+
+Comment emails get a per-person, per-task **Reply-To** address (`r-<token>@reply.mail.autumnlakemarketing.com`) only when `RESEND_WEBHOOK_SECRET` is set. Without it, `/api/inbound/email` answers 503 and emails carry no Reply-To.
+
+1. **DNS:** add one MX record at the DNS host for `autumnlakemarketing.com`:
+
+   | Type | Host / name | Value | Priority |
+   | --- | --- | --- | --- |
+   | MX | `reply.mail` (= `reply.mail.autumnlakemarketing.com`) | the receiving server Resend shows for that domain (Resend → Domains → the domain → Receiving) | the priority Resend shows (usually 10) |
+
+   It's a new subdomain, so the root domain's Google Workspace mail is unaffected. It must be the only (lowest-priority) MX for that subdomain.
+2. **Resend → Domains:** add `reply.mail.autumnlakemarketing.com` (or turn on **Receiving** for an existing domain that covers it), add the MX record it shows, click **I've added the record**, and wait for Receiving to show **Verified**.
+3. **Resend → Webhooks → Add webhook:** endpoint `https://<your production domain>/api/inbound/email`, event **`email.received`** only. Copy its **signing secret** (`whsec_…`).
+4. **Vercel → Environment Variables (Production):** `RESEND_WEBHOOK_SECRET` = that signing secret. Optional `EMAIL_REPLY_DOMAIN` if you use another receiving domain. Redeploy.
+5. Test it: comment on a task someone else follows, have them reply to the email, and the reply shows up as their comment. If it doesn't, the Resend webhook's delivery log shows the route's answer. The route also logs `Reply by email: rejected (sender_mismatch | no_access | unknown_token | empty)` without the body or address.
+
+A reply is posted only when the token matches, the sender's address is that person's ALHC address, Resend didn't report a failed DMARC check, and the person can still comment on the task.
 
 ## Setup: Slack and webhooks
 
@@ -359,7 +394,9 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Needed to deliver email, Slack messages, and webhooks, and to run the cron route |
    | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | Optional. Email via Resend; mocked when unset |
    | `INTEGRATIONS_MOCK` | Optional. `true` logs Slack/webhook deliveries instead of sending them |
-   | `CRON_SECRET` | Secret for `/api/cron/workflows` |
+   | `CRON_SECRET` | Secret for `/api/cron/workflows` (also stored in Supabase Vault as `alhc_cron_secret` for the every-minute delivery kick) |
+   | `RESEND_WEBHOOK_SECRET` | Optional. Resend webhook signing secret (`whsec_…`) for reply by email; without it replies are off |
+   | `EMAIL_REPLY_DOMAIN` | Optional. Receiving domain for reply addresses (default `reply.mail.autumnlakemarketing.com`) |
    | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links, webhook `task.url` links, and Slack task links |
    | `AUTH_GOOGLE_ENABLED` | Optional. `true` shows "Continue with Google" once the Google provider is configured |
 
