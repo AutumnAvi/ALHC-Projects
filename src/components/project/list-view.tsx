@@ -327,14 +327,13 @@ export function ListView({
         const sectionIndex = group.section ? sectionGroups.indexOf(group) : -1;
         // The toolbar's "+ Add task" targets the first section group (top of the list).
         const topTarget = topAdd !== null && group.target.kind === "section" && group === groups.find((g) => g.target.kind === "section");
-        const firstByOrder = [...group.tasks].sort((a, b) => a.sortOrder - b.sortOrder)[0];
         const isTaskTarget = draggingTask !== null && taskDrop?.groupKey === group.key;
         const sectionId = group.section?.id;
         return (
           <SectionGroup
             key={group.key}
             title={<GroupTitle group={group} />}
-            collapsed={collapsed.has(group.key)}
+            collapsed={collapsed.has(group.key) && !topTarget}
             onToggleCollapsed={() =>
               setCollapsed((c) => {
                 const next = new Set(c);
@@ -397,7 +396,7 @@ export function ListView({
                   sectionId={group.target.sectionId}
                   variant="row"
                   defaultOpen
-                  beforeTaskId={firstByOrder?.id ?? null}
+                  atTop
                   onClose={() => setTopAdd(null)}
                 />
               </div>

@@ -45,17 +45,28 @@ export function Popover({
     const margin = 8;
     const width = window.innerWidth;
     const height = window.innerHeight;
-    let top = panel.top;
-    if (panel.bottom > height - margin) {
-      // Not enough room below: open above the button when it fits there, else pin to the bottom edge.
-      top = anchor.top - panel.height - 4 >= margin ? anchor.top - panel.height - 4 : height - panel.height - margin;
-    } else if (panel.top < margin) {
-      top = anchor.bottom + 4 + panel.height <= height - margin ? anchor.bottom + 4 : margin;
+    // Keep the original anchor (top or bottom, left or right) unless that side overflows, so a panel
+    // that opens upward keeps its bottom on the button while its content grows or shrinks.
+    const next = { ...position, placed: true };
+    if (panel.bottom > height - margin || panel.top < margin) {
+      const above = anchor.top - panel.height - 4;
+      const below = anchor.bottom + 4;
+      const top =
+        panel.bottom > height - margin
+          ? above >= margin
+            ? above
+            : height - panel.height - margin
+          : below + panel.height <= height - margin
+            ? below
+            : margin;
+      next.top = Math.max(top, margin);
+      next.bottom = undefined;
     }
-    let left = panel.left;
-    if (panel.right > width - margin) left = width - panel.width - margin;
-    if (left < margin) left = margin;
-    setPosition({ top: Math.max(top, margin), left, placed: true });
+    if (panel.right > width - margin || panel.left < margin) {
+      next.left = Math.max(Math.min(panel.left, width - panel.width - margin), margin);
+      next.right = undefined;
+    }
+    setPosition(next);
   }, [position]);
 
   useEffect(() => {

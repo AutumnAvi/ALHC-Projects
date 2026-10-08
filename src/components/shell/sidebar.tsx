@@ -46,8 +46,13 @@ export function Sidebar({
   unreadCount: number;
 }) {
   const pathname = usePathname();
-  const [creating, setCreating] = useState(false);
-  const [creatingPortfolio, setCreatingPortfolio] = useState(false);
+  // Each dialog is open only on the page it was opened from, so the redirect after a create closes it.
+  const [creatingOn, setCreatingOn] = useState<string | null>(null);
+  const [creatingPortfolioOn, setCreatingPortfolioOn] = useState<string | null>(null);
+  const creating = creatingOn === pathname;
+  const creatingPortfolio = creatingPortfolioOn === pathname;
+  const setCreating = (open: boolean) => setCreatingOn(open ? pathname : null);
+  const setCreatingPortfolio = (open: boolean) => setCreatingPortfolioOn(open ? pathname : null);
   const unread = useUnreadCount(unreadCount, member.id, "sidebar");
   const links = [
     { href: "/", label: "Home", icon: House },

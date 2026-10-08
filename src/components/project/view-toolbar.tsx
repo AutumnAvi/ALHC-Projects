@@ -107,7 +107,13 @@ export function ViewToolbar({
   return (
     <div className="shrink-0 border-b border-zinc-200 px-gutter py-1.5">
       <div className="flex min-h-7 flex-wrap items-center gap-1">
-        {canSave ? <AddTaskButton projectId={projectId} layout={layout} topSectionId={context.sections[0]?.id ?? null} /> : null}
+        {canSave ? (
+          <AddTaskButton
+            projectId={projectId}
+            inline={(layout === "list" || layout === "board") && groupOf(current) === "section"}
+            topSectionId={context.sections[0]?.id ?? null}
+          />
+        ) : null}
         <SearchBox value={filters.text ?? ""} onCommit={(text) => setFilters(text ? { ...filters, text } : withoutText(filters))} />
 
         <Popover
@@ -405,20 +411,21 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (value: strin
   );
 }
 
-// Asana's toolbar "+ Add task": List and Board open their inline add row in the top section; Calendar
-// and Timeline (no inline rows) take the name here and add it to the top section.
+// Asana's toolbar "+ Add task": List and Board grouped by section open their inline add row in the top
+// section; otherwise (Calendar, Timeline, other groupings) the name is taken here and the task added to
+// the top of the top section.
 function AddTaskButton({
   projectId,
-  layout,
+  inline,
   topSectionId,
 }: {
   projectId: string;
-  layout: ViewLayout;
+  inline: boolean;
   topSectionId: string | null;
 }) {
   const [pending, run] = useServerAction();
   const className = "btn-primary h-7 gap-1 px-2.5";
-  if (layout === "list" || layout === "board") {
+  if (inline) {
     return (
       <button type="button" onClick={requestAddTask} className={className}>
         <Plus className="size-3.5" aria-hidden />
@@ -445,7 +452,7 @@ function AddTaskButton({
             const title = String(new FormData(e.currentTarget).get("title") ?? "").trim();
             if (!title) return;
             close();
-            run(() => createTask(projectId, topSectionId, title));
+            run(() => createTask(projectId, topSectionId, title, "task", true));
           }}
         >
           <label htmlFor="toolbar-add-task" className="mb-1 block text-xs font-medium text-zinc-600">

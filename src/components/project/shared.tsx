@@ -95,20 +95,20 @@ export function requestAddTask() {
 }
 
 // `defaultOpen` starts with the input showing (Tab then Q, or the toolbar's "+ Add task", remounts it
-// with a new key to open it). `beforeTaskId` puts new tasks above that task (the top of the section).
+// with a new key to open it). `atTop` puts new tasks at the top of the section.
 export function AddTaskInput({
   projectId,
   sectionId,
   variant,
   defaultOpen = false,
-  beforeTaskId = null,
+  atTop = false,
   onClose,
 }: {
   projectId: string;
   sectionId: string | null;
   variant: "row" | "card";
   defaultOpen?: boolean;
-  beforeTaskId?: string | null;
+  atTop?: boolean;
   onClose?: () => void;
 }) {
   const [pending, run] = useServerAction();
@@ -148,7 +148,7 @@ export function AddTaskInput({
         const title = input?.value.trim();
         if (!input || !title) return;
         input.value = "";
-        run(() => createTask(projectId, sectionId, title, kind, beforeTaskId));
+        run(() => createTask(projectId, sectionId, title, kind, atTop));
       }}
       className={`flex items-center gap-1 ${variant === "row" ? "py-1.5 pl-9 pr-3" : ""}`}
     >

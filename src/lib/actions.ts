@@ -486,6 +486,15 @@ export async function addProjectMemberByProfile(
     const supabase = await createClient();
     const { data: profile } = await supabase.from("profiles").select("email").eq("id", id(profileId, "person")).maybeSingle();
     if (!profile?.email) throw new InputError("That person isn’t in this workspace");
+    // Already a member (e.g. added since the page loaded): keep their role; add_project_member would reset it.
+    const { data: existing } = await supabase
+      .from("project_members")
+      .select("id")
+      .eq("project_id", id(projectId))
+      .eq("profile_id", profileId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (existing) return;
     check(
       await supabase.rpc("add_project_member", {
         target_project: id(projectId),
@@ -1044,8 +1053,8 @@ export async function createTask(
   sectionId: string | null,
   title: string,
   kind: TaskKind = "task",
-  // Asana's toolbar "+ Add task": the new task goes above this one (the top of the section).
-  beforeTaskId: string | null = null,
+  // Asana's toolbar "+ Add task": the new task goes to the top of its section.
+  atTop = false,
 ): Promise<ActionResult> {
   return run(async () => {
     const taskKind = taskKindInput(kind);
@@ -1059,15 +1068,28 @@ export async function createTask(
     if (taskKind !== "task" && created.data) {
       checkUpdated(await supabase.from("tasks").update({ kind: taskKind }).eq("id", created.data).select("id"));
     }
-    if (beforeTaskId && created.data) {
-      check(
-        await supabase.rpc("place_task", {
-          target_task: created.data,
-          target_project: id(projectId),
-          target_section: sectionId ? id(sectionId, "section") : null,
-          before_task: id(beforeTaskId, "task"),
-        }),
-      );
+    if (atTop && created.data) {
+      let first = supabase
+        .from("task_projects")
+        .select("task_id, tasks!inner(deleted_at)")
+        .eq("project_id", id(projectId))
+        .is("deleted_at", null)
+        .is("tasks.deleted_at", null)
+        .neq("task_id", created.data)
+        .order("sort_order")
+        .limit(1);
+      first = sectionId ? first.eq("section_id", id(sectionId, "section")) : first.is("section_id", null);
+      const { data: top } = await first.maybeSingle();
+      if (top) {
+        check(
+          await supabase.rpc("place_task", {
+            target_task: created.data,
+            target_project: id(projectId),
+            target_section: sectionId ? id(sectionId, "section") : null,
+            before_task: top.task_id,
+          }),
+        );
+      }
     }
   });
 }
