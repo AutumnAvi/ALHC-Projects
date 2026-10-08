@@ -1,7 +1,7 @@
 import { PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
 
-// Status colours carry meaning (like overdue red elsewhere): accent = on track, amber = at risk,
-// red = off track, zinc = complete. The label is always spelled out, so colour is never the only cue.
+// Status colors carry meaning (like overdue red elsewhere): accent = on track, amber = at risk,
+// red = off track, zinc = complete. The label is always spelled out, so color is never the only cue.
 const STATUS_CLASS = {
   on_track: "bg-accent-50 text-accent-700 ring-accent-200",
   at_risk: "bg-amber-50 text-amber-800 ring-amber-200",

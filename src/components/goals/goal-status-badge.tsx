@@ -1,6 +1,6 @@
 import { GOAL_STATUS_LABELS, type GoalStatus } from "@/lib/goals";
 
-// Same colour language as the project status badge: accent = on track, amber = at risk, red = off
+// Same color language as the project status badge: accent = on track, amber = at risk, red = off
 // track or missed, zinc = achieved or dropped. The label is always spelled out.
 const STATUS_CLASS: Record<GoalStatus, string> = {
   on_track: "bg-accent-50 text-accent-700 ring-accent-200",

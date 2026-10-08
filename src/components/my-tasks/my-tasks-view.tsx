@@ -135,6 +135,8 @@ export function MyTasksView({
   const [taskDrop, setTaskDrop] = useState<{ sectionId: string; beforeId: string | null } | null>(null);
   const [draggingSection, setDraggingSection] = useState<string | null>(null);
   const [sectionDrop, setSectionDrop] = useState<{ beforeId: string | null } | null>(null);
+  // "+ Add task" in the toolbar opens an add row at the top (Recently assigned, where new tasks land).
+  const [topAdd, setTopAdd] = useState<number | null>(null);
   const [toggled, setToggled] = useOptimistic(
     new Map<string, boolean>(),
     (current, change: { id: string; completed: boolean }) => new Map(current).set(change.id, change.completed),
@@ -267,30 +269,41 @@ export function MyTasksView({
       }),
   });
 
+  const recentSectionId = (orderedSections.find((s) => s.kind === "recently_assigned") ?? orderedSections[0])?.id ?? null;
   const toolbar = (
-    <>
-      <QuickAddPrivateTask />
-      <div className="flex flex-wrap items-center gap-2 pt-2">
-        <p className="mr-auto text-xs text-zinc-500">
-          {bySections
-            ? "Drag tasks between your sections; only you see them. Newly assigned tasks land in Recently assigned."
-            : "Grouped by due date, in your local time."}
-        </p>
-        <Segmented label="Group My Tasks by" options={LAYOUTS} value={layout} onChange={chooseLayout} />
-      </div>
-    </>
+    <div className="flex flex-wrap items-center gap-2 pt-2">
+      <button type="button" onClick={() => setTopAdd((n) => (n ?? 0) + 1)} className="btn-primary h-7 gap-1 px-2.5">
+        <Plus className="size-3.5" aria-hidden />
+        Add task
+      </button>
+      <p className="mr-auto text-xs text-zinc-500">
+        {bySections
+          ? "Drag tasks between your sections; only you see them. Newly assigned tasks land in Recently assigned."
+          : "Grouped by due date, in your local time."}
+      </p>
+      <Segmented label="Group My Tasks by" options={LAYOUTS} value={layout} onChange={chooseLayout} />
+    </div>
   );
+  // In the due-date layout there are no sections to add into: the row sits above the groups.
+  const topAddRow =
+    topAdd !== null && !bySections ? (
+      <ul className="mt-3 border-y border-zinc-100">
+        <MyAddTaskRow key={`top-${topAdd}`} sectionId={null} defaultOpen onClose={() => setTopAdd(null)} />
+      </ul>
+    ) : null;
 
-  if (open.length === 0 && completed.length === 0) {
+  // With sections, an empty My Tasks still shows them (with their "Add task…" rows), like Asana.
+  if (open.length === 0 && completed.length === 0 && !bySections) {
     return (
       <>
         {toolbar}
         <div className="mt-6">
           <EmptyState icon={CircleCheck} title="Nothing assigned to you">
             Tasks you’re assigned to in any project show up here: new ones in Recently assigned, ready to sort into
-            your own sections — or grouped by due date. Add a task above to keep a private to-do.
+            your own sections — or grouped by due date. Use Add task to keep a private to-do.
           </EmptyState>
         </div>
+        {topAddRow}
       </>
     );
   }
@@ -298,6 +311,7 @@ export function MyTasksView({
   return (
     <div className="pb-20">
       {toolbar}
+      {topAddRow}
       {!bySections && today === null ? (
         <div role="status" className="mt-4">
           <span className="sr-only">Loading your tasks…</span>
@@ -353,8 +367,16 @@ export function MyTasksView({
                   setTaskDrop((current) => (current?.sectionId === section.id ? current : { sectionId: section.id, beforeId: null }));
                 }}
                 onBodyDrop={draggingTask ? dropTask : undefined}
-                empty={draggingTask ? "Drop here" : "No tasks here. Drag tasks in, or use Move in the bar below."}
+                empty={draggingTask ? "Drop here" : undefined}
               >
+                {topAdd !== null && section.id === recentSectionId ? (
+                  <MyAddTaskRow
+                    key={`top-${topAdd}`}
+                    sectionId={null}
+                    defaultOpen
+                    onClose={() => setTopAdd(null)}
+                  />
+                ) : null}
                 {group.tasks.map((task, i) => (
                   <MyTaskRow
                     key={task.id}
@@ -385,6 +407,7 @@ export function MyTasksView({
                     <DropLine />
                   </li>
                 ) : null}
+                <MyAddTaskRow sectionId={section.id} />
               </TaskGroup>
             );
           })}
@@ -413,7 +436,7 @@ export function MyTasksView({
           </TaskGroup>
         ))
       )}
-      {open.length === 0 ? (
+      {open.length === 0 && !bySections ? (
         <div className="mt-4">
           <EmptyState icon={CheckCheck} title="You’re all caught up" size="inline">
             No open tasks are assigned to you. Completed ones are listed below.
@@ -441,49 +464,80 @@ export function MyTasksView({
   );
 }
 
-// Quick-add: a private task assigned to you, with no project. Only you and whoever you assign it to can
-// see it; adding it to a project (from the task pane) makes it an ordinary task of that project.
-function QuickAddPrivateTask() {
+// Asana's inline "Add task…" row. The task is private (no project): only you and whoever you assign it
+// to can see it; adding it to a project (from the task pane) makes it an ordinary task of that project.
+// With a section it lands at the end of that section, else at the top of Recently assigned.
+function MyAddTaskRow({
+  sectionId,
+  defaultOpen = false,
+  onClose,
+}: {
+  sectionId: string | null;
+  defaultOpen?: boolean;
+  onClose?: () => void;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const [title, setTitle] = useState("");
   const [pending, run] = useServerAction();
+  const inputId = `my-tasks-add-${sectionId ?? "top"}`;
+  const close = () => {
+    setOpen(false);
+    setTitle("");
+    onClose?.();
+  };
+
+  if (!open) {
+    return (
+      <li>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex min-h-row w-full items-center gap-2 pl-9 pr-3 text-left text-sm text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"
+        >
+          <Plus className="size-4" aria-hidden />
+          Add task…
+        </button>
+      </li>
+    );
+  }
 
   return (
-    <form
-      className="flex items-center gap-2 pt-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const value = title.trim();
-        if (!value) return;
-        setTitle("");
-        run(() => createPrivateTask(value));
-      }}
-    >
-      <label htmlFor="my-tasks-quick-add" className="sr-only">
-        Add a private task
-      </label>
-      <div className="relative min-w-0 flex-1">
-        <Plus className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400" aria-hidden />
+    <li>
+      <form
+        className="flex items-center gap-2 py-1.5 pl-9 pr-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const value = title.trim();
+          if (!value) return;
+          setTitle("");
+          run(() => createPrivateTask(value, sectionId));
+        }}
+      >
+        <label htmlFor={inputId} className="sr-only">
+          New private task name
+        </label>
         <input
-          id="my-tasks-quick-add"
+          id={inputId}
+          autoFocus
           value={title}
           maxLength={1000}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Add a task"
-          aria-describedby="my-tasks-quick-add-hint"
-          className="control w-full pl-8"
+          onBlur={(e) => {
+            if (!e.currentTarget.value.trim()) close();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") close();
+          }}
+          placeholder={pending ? "Adding…" : "Task name, then Enter"}
+          aria-describedby={`${inputId}-hint`}
+          className="control min-w-0 flex-1"
         />
-      </div>
-      <button type="submit" className="btn-secondary" disabled={pending || !title.trim()}>
-        Add task
-      </button>
-      <p id="my-tasks-quick-add-hint" className="sr-only">
-        Private: only you and whoever you assign it to can see it, until you add it to a project.
-      </p>
-      <span className="hidden items-center gap-1 text-xs text-zinc-500 md:inline-flex" aria-hidden>
-        <Lock className="size-3" />
-        Private to you
-      </span>
-    </form>
+        <span id={`${inputId}-hint`} className="hidden shrink-0 items-center gap-1 text-xs text-zinc-500 md:inline-flex">
+          <Lock className="size-3" aria-hidden />
+          Private to you
+        </span>
+      </form>
+    </li>
   );
 }
 
@@ -729,6 +783,7 @@ function MyTaskRow({
   onDragEnd?: () => void;
   onDragOver?: (e: DragEvent<HTMLLIElement>) => void;
 }) {
+  const router = useRouter();
   const taskHref = useTaskHref();
   const done = isDone(task);
   const open = openTaskId === task.id;
@@ -753,9 +808,15 @@ function MyTaskRow({
           return;
         }
         e.preventDefault();
-        selection.click(task.id, e);
+        // Shift / ⌘ / Ctrl-click multi-select (like Asana); a plain click opens the task in the pane.
+        if (modified) {
+          selection.click(task.id, e);
+          return;
+        }
+        selection.setActive(task.id);
+        if (!open) router.push(taskHref(task.id), { scroll: false });
       }}
-      className={`group flex min-h-row items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
+      className={`group flex min-h-row cursor-pointer items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
         dropBefore ? "shadow-[inset_0_2px_0_var(--color-accent-500)]" : ""
       } ${
         selected ? "bg-accent-50" : open ? "bg-accent-50/60" : "hover:bg-zinc-50"

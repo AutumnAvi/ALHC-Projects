@@ -1,8 +1,8 @@
 import { OPTION_COLORS, OPTION_COLOR_CLASSES, isOptionColor, type OptionColor } from "@/lib/fields";
 
 // Workspace tags (Tags and collaboration extras; tables `tags` + `task_tags` in
-// 20261006100000_tags_collaboration.sql). Names and colours are readable by everyone allowlisted;
-// the creator or a workspace admin renames, recolours, and archives (canManageTag mirrors
+// 20261006100000_tags_collaboration.sql). Names and colors are readable by everyone allowlisted;
+// the creator or a workspace admin renames, recolors, and archives (canManageTag mirrors
 // can_manage_tag()). Archived tags stay on tasks but can't be added.
 
 export const TAG_COLORS = OPTION_COLORS;

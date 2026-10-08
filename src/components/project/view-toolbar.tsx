@@ -6,7 +6,8 @@ import { ArrowDownUp, Columns3, Filter, Plus, Rows3, Search, X } from "lucide-re
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { useCan } from "@/components/project/project-access";
-import { createView, updateView } from "@/lib/actions";
+import { createTask, createView, updateView } from "@/lib/actions";
+import { requestAddTask } from "./shared";
 import {
   columnsOf,
   completionOf,
@@ -100,11 +101,13 @@ export function ViewToolbar({
     { value: "start", label: "Start date" },
     { value: "section", label: "Section" },
     ...context.fields.map((f) => ({ value: fieldRef(f.id), label: f.name })),
+    { value: "tags", label: "Tags" },
   ];
 
   return (
     <div className="shrink-0 border-b border-zinc-200 px-gutter py-1.5">
       <div className="flex min-h-7 flex-wrap items-center gap-1">
+        {canSave ? <AddTaskButton projectId={projectId} layout={layout} topSectionId={context.sections[0]?.id ?? null} /> : null}
         <SearchBox value={filters.text ?? ""} onCommit={(text) => setFilters(text ? { ...filters, text } : withoutText(filters))} />
 
         <Popover
@@ -399,5 +402,62 @@ function SearchBox({ value, onCommit }: { value: string; onCommit: (value: strin
         className="control w-44 pl-7"
       />
     </label>
+  );
+}
+
+// Asana's toolbar "+ Add task": List and Board open their inline add row in the top section; Calendar
+// and Timeline (no inline rows) take the name here and add it to the top section.
+function AddTaskButton({
+  projectId,
+  layout,
+  topSectionId,
+}: {
+  projectId: string;
+  layout: ViewLayout;
+  topSectionId: string | null;
+}) {
+  const [pending, run] = useServerAction();
+  const className = "btn-primary h-7 gap-1 px-2.5";
+  if (layout === "list" || layout === "board") {
+    return (
+      <button type="button" onClick={requestAddTask} className={className}>
+        <Plus className="size-3.5" aria-hidden />
+        Add task
+      </button>
+    );
+  }
+  return (
+    <Popover
+      label="Add task"
+      buttonClassName={className}
+      panelClassName="w-72"
+      button={
+        <>
+          <Plus className="size-3.5" aria-hidden />
+          Add task
+        </>
+      }
+    >
+      {(close) => (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const title = String(new FormData(e.currentTarget).get("title") ?? "").trim();
+            if (!title) return;
+            close();
+            run(() => createTask(projectId, topSectionId, title));
+          }}
+        >
+          <label htmlFor="toolbar-add-task" className="mb-1 block text-xs font-medium text-zinc-600">
+            Task name
+          </label>
+          <input id="toolbar-add-task" name="title" autoFocus required maxLength={500} className="control w-full" />
+          <p className="mt-1 text-2xs text-zinc-500">Added to the top section. Set its dates in the task pane.</p>
+          <button type="submit" disabled={pending} className="btn-primary mt-2 w-full">
+            Add task
+          </button>
+        </form>
+      )}
+    </Popover>
   );
 }

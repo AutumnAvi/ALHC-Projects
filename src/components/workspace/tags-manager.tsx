@@ -8,10 +8,11 @@ import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { createTag, updateTag } from "@/lib/actions";
 import type { Profile } from "@/lib/data";
-import { MAX_TAG_NAME, TAG_COLORS, canManageTag, type Tag } from "@/lib/tags";
+import { MAX_TAG_NAME, canManageTag, type Tag } from "@/lib/tags";
+import { ColorPicker } from "@/components/color-picker";
 
 // Settings → Workspace → Tags. Everyone allowlisted sees every tag and can create one; the creator or a
-// workspace admin renames, recolours, and archives it. Tag names are workspace-wide; which tasks carry
+// workspace admin renames, recolors, and archives it. Tag names are workspace-wide; which tasks carry
 // a tag is only visible inside the projects you can read.
 export function TagsManager({
   tags,
@@ -35,9 +36,12 @@ export function TagsManager({
         <h2 id="workspace-tags-heading" className="text-sm font-semibold text-zinc-900">
           Tags <span className="font-normal text-zinc-500">· {active.length}</span>
         </h2>
+        <p className="mt-1 text-sm text-zinc-800">
+          Tags are workspace-wide labels you add to tasks in any project, so you can find, filter, and group related
+          work (for example “Print” or “Urgent”).
+        </p>
         <p className="mt-1 text-sm text-zinc-600">
-          Tags work across every project. Anyone can create one; its creator or a workspace admin can rename,
-          recolour, or archive it. Archived tags stay on tasks but can’t be added again. A tag never opens a project:
+          Anyone can create one; its creator or a workspace admin can rename it, change its color, or archive it. Archived tags stay on tasks but can’t be added again. A tag never opens a project:
           you only see tagged tasks in projects you’re a member of.
         </p>
       </div>
@@ -60,7 +64,7 @@ export function TagsManager({
           New tag
           <input id="new-tag-name" ref={nameRef} maxLength={MAX_TAG_NAME} required placeholder="e.g. Print" className="control w-56 font-normal" />
         </label>
-        <ColorSelect id="new-tag-color" value={color} onChange={setColor} label="Colour" />
+        <ColorField id="new-tag-color" value={color} onChange={setColor} />
         <button type="submit" disabled={pending} className="btn-primary">
           Create tag
         </button>
@@ -91,33 +95,20 @@ export function TagsManager({
   );
 }
 
-function ColorSelect({
+function ColorField({
   id,
   value,
   onChange,
-  label,
 }: {
   id: string;
   value: Tag["color"];
   onChange: (color: Tag["color"]) => void;
-  label: string;
 }) {
   return (
-    <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600" htmlFor={id}>
-      {label}
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.currentTarget.value as Tag["color"])}
-        className="control font-normal capitalize"
-      >
-        {TAG_COLORS.map((c) => (
-          <option key={c} value={c}>
-            {c === "zinc" ? "Grey" : c}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
+      <span id={id}>Color</span>
+      <ColorPicker value={value} onChange={onChange} label="Tag color" />
+    </div>
   );
 }
 
@@ -150,7 +141,7 @@ function TagRow({ tag, creatorName, canManage }: { tag: Tag; creatorName: string
               className="control w-56 font-normal"
             />
           </label>
-          <ColorSelect id={`tag-color-${tag.id}`} value={color} onChange={setColor} label="Colour" />
+          <ColorField id={`tag-color-${tag.id}`} value={color} onChange={setColor} />
           <button type="submit" className="btn-primary">
             Save
           </button>
@@ -179,7 +170,7 @@ function TagRow({ tag, creatorName, canManage }: { tag: Tag; creatorName: string
       </span>
       {canManage ? (
         <span className="flex items-center gap-1">
-          <button type="button" className="btn-icon" onClick={() => setEditing(true)} aria-label={`Rename or recolour ${tag.name}`}>
+          <button type="button" className="btn-icon" onClick={() => setEditing(true)} aria-label={`Rename or change the color of ${tag.name}`}>
             <Pencil className="size-3.5" aria-hidden />
           </button>
           <button

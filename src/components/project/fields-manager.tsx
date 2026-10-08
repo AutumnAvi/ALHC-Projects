@@ -7,13 +7,12 @@ import { createField, deleteField, updateField } from "@/lib/actions";
 import {
   FIELD_TYPES,
   OPTION_COLORS,
-  OPTION_COLOR_CLASSES,
   fieldTypeLabel,
   type FieldDef,
   type FieldOption,
-  type OptionColor,
 } from "@/lib/fields";
 import { EmptyState } from "@/components/ui";
+import { ColorPicker } from "@/components/color-picker";
 
 const inputClass =
   "rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm focus:border-zinc-400 focus:outline-none";
@@ -247,18 +246,11 @@ function OptionsEditor({
     <div className="mt-3 space-y-1.5">
       {options.map((option) => (
         <div key={option.id} className="flex items-center gap-2">
-          <select
-            aria-label={`Color for ${option.name}`}
+          <ColorPicker
             value={option.color}
-            onChange={(e) => patch(option.id, { color: e.currentTarget.value as OptionColor })}
-            className={`rounded px-1.5 py-0.5 text-xs ${OPTION_COLOR_CLASSES[option.color]}`}
-          >
-            {OPTION_COLORS.map((color) => (
-              <option key={color} value={color}>
-                {color}
-              </option>
-            ))}
-          </select>
+            onChange={(color) => patch(option.id, { color })}
+            label={`Color of ${option.name}`}
+          />
           <input
             aria-label={`Option name ${option.name}`}
             key={option.name}

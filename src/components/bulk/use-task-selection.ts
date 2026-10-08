@@ -44,7 +44,7 @@ export function useTaskSelection(allIds: string[], navIds: string[]) {
     isSelected: (id: string) => selectedSet.has(id),
     active,
     toggle,
-    // Row click: plain selects only this task, Shift selects the range, ⌘/Ctrl toggles.
+    // Shift-click on a row selects the range, ⌘/Ctrl-click toggles (a plain click opens the task).
     click(id: string, mods: ClickModifiers) {
       if (mods.shiftKey) {
         setState((s) => ({ selected: range(navIds, s.anchor ?? s.active, id), anchor: s.anchor ?? id, active: id }));
@@ -57,7 +57,8 @@ export function useTaskSelection(allIds: string[], navIds: string[]) {
     setActive(id: string) {
       setState((s) => ({ ...s, active: id, anchor: s.selected.length ? s.anchor : id }));
     },
-    // ↑/↓ moves the selection to the next task; Shift extends it from the anchor. Returns the new active id.
+    // ↑/↓ moves the keyboard cursor (Enter opens it); Shift extends the selection from the anchor, which
+    // brings up the bulk bar like the checkboxes do. Returns the new active id.
     move(delta: 1 | -1, extend: boolean): string | null {
       if (navIds.length === 0) return null;
       const from = active ?? selected.at(-1) ?? null;
@@ -67,7 +68,7 @@ export function useTaskSelection(allIds: string[], navIds: string[]) {
       setState((s) =>
         extend
           ? { selected: range(navIds, s.anchor ?? from ?? next, next), anchor: s.anchor ?? from ?? next, active: next }
-          : { selected: [next], anchor: next, active: next },
+          : { selected: s.selected, anchor: next, active: next },
       );
       return next;
     },

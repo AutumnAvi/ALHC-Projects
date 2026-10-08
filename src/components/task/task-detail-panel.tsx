@@ -2,8 +2,22 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useOptimistic, type ReactNode } from "react";
-import { Check, ChevronRight, FileInput, FolderClosed, Hash, Home, Lock, Plus, SearchX, Trash2, X } from "lucide-react";
+import { createContext, useContext, useEffect, useOptimistic, useSyncExternalStore, type ReactNode } from "react";
+import {
+  Check,
+  ChevronRight,
+  FileInput,
+  FolderClosed,
+  Hash,
+  Home,
+  Lock,
+  Maximize2,
+  Minimize2,
+  Plus,
+  SearchX,
+  Trash2,
+  X,
+} from "lucide-react";
 import { DuplicateTaskButton } from "./duplicate-task-dialog";
 import { TaskLike } from "./task-like";
 import { displayName } from "@/components/avatar";
@@ -53,8 +67,42 @@ function useClosePane() {
   return { href, close: () => router.push(href, { scroll: false }) };
 }
 
+// Compact pane on the right (Asana's default) or expanded to the full window; remembered per browser.
+const PANE_EXPANDED_KEY = "alhc.taskPane.expanded";
+const PaneSize = createContext<{ expanded: boolean; toggle: () => void }>({ expanded: false, toggle: () => undefined });
+
+const PANE_SIZE_EVENT = "alhc:pane-size";
+
+function readExpanded() {
+  try {
+    return window.localStorage.getItem(PANE_EXPANDED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function subscribePaneSize(onChange: () => void) {
+  window.addEventListener(PANE_SIZE_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(PANE_SIZE_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
 function PaneShell({ children, label }: { children: ReactNode; label: string }) {
   const { close } = useClosePane();
+  // The server (and the first client render) always draws the compact pane.
+  const expanded = useSyncExternalStore(subscribePaneSize, readExpanded, () => false);
+
+  function toggle() {
+    try {
+      window.localStorage.setItem(PANE_EXPANDED_KEY, expanded ? "0" : "1");
+    } catch {
+      // Private windows can refuse storage; then the pane stays as it is.
+    }
+    window.dispatchEvent(new Event(PANE_SIZE_EVENT));
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -67,12 +115,27 @@ function PaneShell({ children, label }: { children: ReactNode; label: string }) 
   }, [close]);
 
   return (
-    <aside
-      aria-label={label}
-      className="fixed inset-y-0 right-0 z-30 flex w-full max-w-xl flex-col border-l border-zinc-200 bg-white shadow-xl shadow-zinc-900/10"
-    >
-      {children}
-    </aside>
+    <PaneSize.Provider value={{ expanded, toggle }}>
+      <aside
+        aria-label={label}
+        data-expanded={expanded || undefined}
+        className={`group/pane fixed inset-y-0 right-0 z-30 flex w-full flex-col border-l border-zinc-200 bg-white shadow-xl shadow-zinc-900/10 ${
+          expanded ? "max-w-none" : "max-w-[34rem]"
+        }`}
+      >
+        {children}
+      </aside>
+    </PaneSize.Provider>
+  );
+}
+
+function ExpandButton() {
+  const { expanded, toggle } = useContext(PaneSize);
+  const label = expanded ? "Collapse task details" : "Expand task details to full screen";
+  return (
+    <button type="button" onClick={toggle} aria-label={label} title={expanded ? "Collapse" : "Expand"} aria-pressed={expanded} className="btn-icon">
+      {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+    </button>
   );
 }
 
@@ -81,6 +144,7 @@ export function TaskNotFoundPanel() {
   return (
     <PaneShell label="Task details">
       <div className="flex h-bar shrink-0 items-center justify-end border-b border-zinc-200 px-3">
+        <ExpandButton />
         <CloseButton href={href} />
       </div>
       <div className="p-gutter">
@@ -99,7 +163,8 @@ export function TaskPaneLoading() {
     <PaneShell label="Task details">
       <div className="flex h-bar shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
         <Skeleton className="h-7 w-32 rounded-md" />
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <ExpandButton />
           <CloseButton href={href} />
         </div>
       </div>
@@ -277,11 +342,13 @@ export function TaskDetailPanel({
               <Trash2 className="size-4" />
             </button>
           ) : null}
+          <ExpandButton />
           <CloseButton href={href} />
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-gutter py-4">
+        <div className="mx-auto w-full group-data-[expanded]/pane:max-w-3xl">
         {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
         {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
         {/* Below Editor every control in here is disabled; links (projects) still work. RLS enforces it. */}
@@ -450,6 +517,7 @@ export function TaskDetailPanel({
         </fieldset>
 
         <TaskActivity task={task} profiles={profiles} memberId={memberId} />
+        </div>
       </div>
 
       <CommentComposer task={task} profiles={profiles} memberId={memberId} />

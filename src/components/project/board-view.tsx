@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type DragEvent } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { approvalOpen } from "@/lib/task-kinds";
 import { useCan } from "@/components/project/project-access";
@@ -14,7 +14,7 @@ import type { FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, refFieldId, sortOf, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { GroupTitle } from "./list-view";
-import { AddSection, AddTaskInput, useTaskHref } from "./shared";
+import { ADD_TASK_EVENT, AddSection, AddTaskInput, useTaskHref } from "./shared";
 import { Assignee, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, type TaskGroup } from "./view-groups";
@@ -42,6 +42,14 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   // The column a card was dragged from (grouped by tag, a task sits in several columns).
   const [dragFrom, setDragFrom] = useState<string | null>(null);
+  // The toolbar's "+ Add task" opens the first column's add box.
+  const [addNonce, setAddNonce] = useState<number | null>(null);
+
+  useEffect(() => {
+    const onAdd = () => setAddNonce((n) => (n ?? 0) + 1);
+    window.addEventListener(ADD_TASK_EVENT, onAdd);
+    return () => window.removeEventListener(ADD_TASK_EVENT, onAdd);
+  }, []);
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
@@ -219,7 +227,13 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
 
             {group.target.kind === "section" ? (
               <div className="pt-1.5">
-                <AddTaskInput projectId={projectId} sectionId={group.target.sectionId} variant="card" />
+                <AddTaskInput
+                  key={addNonce !== null && group === groups.find((g) => g.target.kind === "section") ? `add-${addNonce}` : "add"}
+                  projectId={projectId}
+                  sectionId={group.target.sectionId}
+                  variant="card"
+                  defaultOpen={addNonce !== null && group === groups.find((g) => g.target.kind === "section")}
+                />
               </div>
             ) : null}
           </section>

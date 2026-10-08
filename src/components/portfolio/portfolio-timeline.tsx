@@ -26,7 +26,7 @@ import { OWN_PROJECTS_LABEL, PROJECT_STATUS_LABELS, isProjectStatus } from "@/li
 const LABEL_WIDTH = 256;
 const labelCell = { width: LABEL_WIDTH, minWidth: LABEL_WIDTH };
 
-// Bar colour = project status (the same meaning as the status badge: accent on track, amber at risk,
+// Bar color = project status (the same meaning as the status badge: accent on track, amber at risk,
 // red off track, zinc complete). The status is always spelled out for screen readers too.
 const BAR_CLASS = {
   on_track: "bg-accent-500 text-white",
@@ -208,7 +208,7 @@ export function PortfolioTimeline({
           </div>
         </div>
         <p className={VIEW_HINT}>
-          Each bar runs from the earliest start to the latest due date of the project’s open tasks, coloured by the
+          Each bar runs from the earliest start to the latest due date of the project’s open tasks, colored by the
           project’s status; diamonds are the project’s open milestones. Projects of nested portfolios are grouped
           under them.
         </p>

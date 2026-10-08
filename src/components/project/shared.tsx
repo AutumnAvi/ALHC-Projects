@@ -86,17 +86,30 @@ export function SectionTitle({
   );
 }
 
-// `defaultOpen` starts with the input showing (Tab then Q remounts it with a new key to open it).
+// The toolbar's "+ Add task" asks the List / Board on the page to open the inline add row of the top
+// section (a window event, so the toolbar doesn't need the view's state).
+export const ADD_TASK_EVENT = "alhc:add-task";
+
+export function requestAddTask() {
+  window.dispatchEvent(new CustomEvent(ADD_TASK_EVENT));
+}
+
+// `defaultOpen` starts with the input showing (Tab then Q, or the toolbar's "+ Add task", remounts it
+// with a new key to open it). `beforeTaskId` puts new tasks above that task (the top of the section).
 export function AddTaskInput({
   projectId,
   sectionId,
   variant,
   defaultOpen = false,
+  beforeTaskId = null,
+  onClose,
 }: {
   projectId: string;
   sectionId: string | null;
   variant: "row" | "card";
   defaultOpen?: boolean;
+  beforeTaskId?: string | null;
+  onClose?: () => void;
 }) {
   const [pending, run] = useServerAction();
   const [open, setOpen] = useState(defaultOpen);
@@ -106,6 +119,10 @@ export function AddTaskInput({
   const templates = useTaskTemplates();
 
   if (!canEdit) return null;
+  const close = () => {
+    setOpen(false);
+    onClose?.();
+  };
   if (!open) {
     return (
       <button
@@ -113,12 +130,12 @@ export function AddTaskInput({
         onClick={() => setOpen(true)}
         className={
           variant === "row"
-            ? "flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+            ? "flex min-h-row w-full items-center gap-2 pl-9 pr-3 text-left text-sm text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"
             : "flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm text-zinc-500 hover:bg-zinc-200/60 hover:text-zinc-800"
         }
       >
         <Plus className="size-4" />
-        Add task
+        Add task…
       </button>
     );
   }
@@ -131,9 +148,9 @@ export function AddTaskInput({
         const title = input?.value.trim();
         if (!input || !title) return;
         input.value = "";
-        run(() => createTask(projectId, sectionId, title, kind));
+        run(() => createTask(projectId, sectionId, title, kind, beforeTaskId));
       }}
-      className={`flex items-center gap-1 ${variant === "row" ? "px-3 py-1.5" : ""}`}
+      className={`flex items-center gap-1 ${variant === "row" ? "py-1.5 pl-9 pr-3" : ""}`}
     >
       <label className="sr-only" htmlFor={`add-task-${sectionId ?? "none"}-${variant}`}>
         New task name
@@ -146,11 +163,11 @@ export function AddTaskInput({
         onBlur={(e) => {
           // Moving to the template picker (inside this form) keeps the input open.
           if (!e.currentTarget.value.trim() && !e.currentTarget.form?.contains(e.relatedTarget as Node | null)) {
-            setOpen(false);
+            close();
           }
         }}
         onKeyDown={(e) => {
-          if (e.key === "Escape") setOpen(false);
+          if (e.key === "Escape") close();
         }}
         className={`min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-100 ${
           variant === "card" ? "shadow-xs" : ""
@@ -164,7 +181,7 @@ export function AddTaskInput({
         value={kind}
         onChange={(e) => setKind(parseTaskKind(e.currentTarget.value))}
         onKeyDown={(e) => {
-          if (e.key === "Escape") setOpen(false);
+          if (e.key === "Escape") close();
         }}
         className="control h-8 w-auto shrink-0 text-xs"
       >

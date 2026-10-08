@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useOptimistic, useState, useTransition, type DragEvent } from "react";
+import { useEffect, useOptimistic, useRef, useState, useTransition, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, ListTodo, SearchX } from "lucide-react";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
@@ -12,13 +12,20 @@ import { useCan } from "@/components/project/project-access";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { placeSection, placeTask, setTaskCompleted } from "@/lib/actions";
+import { placeSection, placeTask, saveListColumnWidths, setTaskCompleted } from "@/lib/actions";
+import {
+  MAX_COLUMN_WIDTH,
+  clampColumnWidth,
+  columnWidth,
+  type ColumnWidthKey,
+  type ColumnWidths,
+} from "@/lib/column-widths";
 import type { Profile, ProjectTask, Section, SubtaskItem } from "@/lib/data";
 import { subtasksByParent } from "@/lib/subtasks";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, hasActiveFilters, refFieldId, sortOf, type ColumnKey, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
-import { AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
+import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
 import { Assignee, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, type TaskGroup } from "./view-groups";
@@ -37,6 +44,8 @@ type Props = {
   // “Show subtasks” on: every listed task's subtask tree (null = off).
   subtasks?: SubtaskItem[] | null;
   tags: Tag[];
+  // The viewer's own saved column widths for this project (list_column_widths).
+  columnWidths?: ColumnWidths;
 };
 
 type TaskDrop = { groupKey: string; beforeId: string | null };
@@ -44,10 +53,12 @@ type SectionDrop = { beforeId: string | null };
 
 const TASK_DRAG = "application/x-alhc-task";
 const SECTION_DRAG = "application/x-alhc-section";
-const GRID = "grid items-center gap-3";
-// The List header sticks under the toolbar while rows scroll (the page's <main> is the scroller).
-const HEADER = "sticky top-0 z-10 border-b border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-500";
-const COLUMN_WIDTH: Record<string, string> = { assignee: "9rem", due: "6rem", start: "6rem", section: "8rem" };
+const GRID = "grid items-stretch";
+// The List header sticks under the toolbar while rows scroll (the page's <main> is the scroller); the
+// Task column sticks to the left while the other columns scroll sideways.
+const HEADER = "sticky top-0 z-20 border-b border-zinc-200 bg-white text-xs font-medium text-zinc-500";
+const CELL = "flex min-w-0 items-center px-2";
+const STICKY_CELL = "sticky left-0 z-[1] border-r border-zinc-100";
 
 function sortSections(list: Section[], change: { id: string; sortOrder: number }) {
   return list
@@ -55,7 +66,19 @@ function sortSections(list: Section[], change: { id: string; sortOrder: number }
     .sort((a, b) => a.sort_order - b.sort_order);
 }
 
-export function ListView({ projectId, sections, tasks, profiles, fields, config, openTaskId, bulk, subtasks = null, tags }: Props) {
+export function ListView({
+  projectId,
+  sections,
+  tasks,
+  profiles,
+  fields,
+  config,
+  openTaskId,
+  bulk,
+  subtasks = null,
+  tags,
+  columnWidths = {},
+}: Props) {
   const router = useRouter();
   const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
@@ -71,6 +94,39 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
   const [taskDrop, setTaskDrop] = useState<TaskDrop | null>(null);
   const [draggingSection, setDraggingSection] = useState<string | null>(null);
   const [sectionDrop, setSectionDrop] = useState<SectionDrop | null>(null);
+  // The toolbar's "+ Add task" opens an add row at the top of the first section.
+  const [topAdd, setTopAdd] = useState<number | null>(null);
+  const [widths, setWidths] = useState<ColumnWidths>(columnWidths);
+  const widthsRef = useRef(widths);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    widthsRef.current = widths;
+  }, [widths]);
+
+  useEffect(() => {
+    const onAdd = () => setTopAdd((n) => (n ?? 0) + 1);
+    window.addEventListener(ADD_TASK_EVENT, onAdd);
+    return () => window.removeEventListener(ADD_TASK_EVENT, onAdd);
+  }, []);
+
+  const resizeColumn = (key: ColumnWidthKey, width: number | null) =>
+    setWidths((current) => {
+      const next = { ...current };
+      if (width === null) delete next[key];
+      else next[key] = clampColumnWidth(key, width);
+      return next;
+    });
+  // Saved per person per project, a moment after the last change (the effect above has run by then).
+  const commitWidths = () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      startTransition(async () => {
+        const result = await saveListColumnWidths(projectId, widthsRef.current);
+        if (result.error) notify(result.error);
+      });
+    }, 400);
+  };
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
@@ -193,9 +249,16 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
   const columns = columnsOf(config, fields).filter(
     (c) => !c.startsWith("field:") || fieldsById.has(refFieldId(c) ?? ""),
   );
+  // Fixed pixel tracks (dragged to size) plus a filler, so the rows fill the page and scroll sideways
+  // once the columns are wider than it.
   const gridStyle = {
-    gridTemplateColumns: ["minmax(0,1fr)", ...columns.map((c) => COLUMN_WIDTH[c] ?? "8rem")].join(" "),
+    gridTemplateColumns: [
+      `${columnWidth(widths, "task")}px`,
+      ...columns.map((c) => `${columnWidth(widths, c)}px`),
+      "minmax(1.5rem,1fr)",
+    ].join(" "),
   };
+  const tagsInline = !columns.includes("tags");
   const fieldContext: FieldContext = {
     profilesById,
     sectionNames: new Map(optimisticSections.map((s) => [s.id, s.name])),
@@ -212,20 +275,34 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
     gridStyle,
     selection,
     selecting: selection.selected.length > 0,
+    tagsInline,
   };
   const sectionGroups = groups.filter((g) => g.section);
   const childrenOf = subtasks ? subtasksByParent(subtasks) : null;
   const toggleSubtask = (subtask: SubtaskItem) => run(() => setTaskCompleted(subtask.id, !subtask.completedAt));
 
   return (
-    <div className="px-gutter pb-24" style={{ minWidth: `${28 + columns.length * 8.75}rem` }}>
-      <div className={`${GRID} ${HEADER}`} style={gridStyle} aria-hidden>
-        <span className={canEdit ? "pl-12" : "pl-7"}>Task</span>
+    <div className="min-w-full px-gutter pb-24" style={{ width: "max-content" }}>
+      <div className={`${GRID} ${HEADER}`} style={gridStyle}>
+        <HeaderCell
+          label="Task"
+          className={`${STICKY_CELL} z-[2] bg-white ${canEdit ? "pl-[3.25rem]" : "pl-9"}`}
+          width={columnWidth(widths, "task")}
+          onResize={(w) => resizeColumn("task", w)}
+          onReset={() => resizeColumn("task", null)}
+          onCommit={commitWidths}
+        />
         {columns.map((column) => (
-          <span key={column} className="truncate">
-            {columnLabel(column, fieldsById)}
-          </span>
+          <HeaderCell
+            key={column}
+            label={columnLabel(column, fieldsById)}
+            width={columnWidth(widths, column)}
+            onResize={(w) => resizeColumn(column, w)}
+            onReset={() => resizeColumn(column, null)}
+            onCommit={commitWidths}
+          />
         ))}
+        <span aria-hidden />
       </div>
 
       {sections.length === 0 && tasks.length === 0 && !filtered ? (
@@ -248,6 +325,9 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
 
       {groups.map((group) => {
         const sectionIndex = group.section ? sectionGroups.indexOf(group) : -1;
+        // The toolbar's "+ Add task" targets the first section group (top of the list).
+        const topTarget = topAdd !== null && group.target.kind === "section" && group === groups.find((g) => g.target.kind === "section");
+        const firstByOrder = [...group.tasks].sort((a, b) => a.sortOrder - b.sortOrder)[0];
         const isTaskTarget = draggingTask !== null && taskDrop?.groupKey === group.key;
         const sectionId = group.section?.id;
         return (
@@ -309,6 +389,19 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
             // Row drops bubble here too; the row only refines the position during dragover.
             onBodyDrop={draggingTask ? dropTask : undefined}
           >
+            {topTarget && group.target.kind === "section" ? (
+              <div className="sticky left-0 w-[min(100%,48rem)]">
+                <AddTaskInput
+                  key={`top-${topAdd}`}
+                  projectId={projectId}
+                  sectionId={group.target.sectionId}
+                  variant="row"
+                  defaultOpen
+                  beforeTaskId={firstByOrder?.id ?? null}
+                  onClose={() => setTopAdd(null)}
+                />
+              </div>
+            ) : null}
             {group.tasks.map((task, index) => (
               <div
                 key={task.id}
@@ -353,19 +446,22 @@ export function ListView({ projectId, sections, tasks, profiles, fields, config,
               </div>
             ))}
             {isTaskTarget && taskDrop?.beforeId === null && group.tasks.length > 0 ? <DropLine /> : null}
-            {group.section && group.tasks.length === 0 ? (
-              <p className="flex min-h-row items-center border-b border-zinc-100 pl-10 text-xs text-zinc-400">
+            {group.section && group.tasks.length === 0 && (draggingTask || filtered || !canEdit) ? (
+              <p className="sticky left-0 flex min-h-row items-center border-b border-zinc-100 pl-10 text-xs text-zinc-400">
                 {draggingTask ? "Drop here" : filtered ? "No matching tasks in this section." : "No tasks in this section yet."}
               </p>
             ) : null}
             {group.target.kind === "section" ? (
-              <AddTaskInput
-                key={quickAdd?.groupKey === group.key ? `quick-${quickAdd.nonce}` : "add"}
-                projectId={projectId}
-                sectionId={group.target.sectionId}
-                variant="row"
-                defaultOpen={quickAdd?.groupKey === group.key}
-              />
+              // Asana's inline "Add task…" row at the end of every section.
+              <div className="sticky left-0 w-[min(100%,48rem)]">
+                <AddTaskInput
+                  key={quickAdd?.groupKey === group.key ? `quick-${quickAdd.nonce}` : "add"}
+                  projectId={projectId}
+                  sectionId={group.target.sectionId}
+                  variant="row"
+                  defaultOpen={quickAdd?.groupKey === group.key}
+                />
+              </div>
             ) : null}
           </SectionGroup>
         );
@@ -411,9 +507,10 @@ function DropLine() {
 
 function columnLabel(column: ColumnKey, fieldsById: Map<string, FieldDef>) {
   if (column === "assignee") return "Assignee";
-  if (column === "due") return "Due";
+  if (column === "due") return "Due date";
   if (column === "start") return "Start";
   if (column === "section") return "Section";
+  if (column === "tags") return "Tags";
   return fieldsById.get(refFieldId(column) ?? "")?.name ?? "";
 }
 
@@ -502,7 +599,11 @@ function SectionGroup({
   return (
     <section className="group/section mt-4" onDragOver={onBodyDragOver} onDrop={onBodyDrop}>
       {sectionDropBefore ? <DropLine /> : null}
-      <div className="flex h-8 items-center gap-1 px-1" onDragOver={onHeaderDragOver} onDrop={onHeaderDrop}>
+      <div
+        className="sticky left-0 flex h-8 w-[min(100%,48rem)] items-center gap-1 px-1"
+        onDragOver={onHeaderDragOver}
+        onDrop={onHeaderDrop}
+      >
         <button
           type="button"
           onClick={onToggleCollapsed}
@@ -522,6 +623,66 @@ function SectionGroup({
   );
 }
 
+// A resizable column header: drag the right edge (or focus it and use ←/→), double-click to reset.
+function HeaderCell({
+  label,
+  width,
+  className = "",
+  onResize,
+  onReset,
+  onCommit,
+}: {
+  label: string;
+  width: number;
+  className?: string;
+  onResize: (width: number) => void;
+  onReset: () => void;
+  onCommit: () => void;
+}) {
+  return (
+    <div className={`relative ${CELL} h-8 ${className}`}>
+      <span className="truncate">{label}</span>
+      <span
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`Resize the ${label} column`}
+        aria-valuenow={width}
+        aria-valuemax={MAX_COLUMN_WIDTH}
+        tabIndex={0}
+        title="Drag to resize · double-click to reset"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          const handle = e.currentTarget;
+          const startX = e.clientX;
+          handle.setPointerCapture(e.pointerId);
+          const move = (event: PointerEvent) => onResize(width + event.clientX - startX);
+          const up = () => {
+            handle.removeEventListener("pointermove", move);
+            handle.removeEventListener("pointerup", up);
+            handle.removeEventListener("pointercancel", up);
+            onCommit();
+          };
+          handle.addEventListener("pointermove", move);
+          handle.addEventListener("pointerup", up);
+          handle.addEventListener("pointercancel", up);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          e.stopPropagation();
+          onResize(width + (e.key === "ArrowRight" ? 16 : -16));
+          onCommit();
+        }}
+        onDoubleClick={() => {
+          onReset();
+          onCommit();
+        }}
+        className="absolute -right-1 top-1 bottom-1 z-[3] w-2 cursor-col-resize touch-none rounded after:absolute after:inset-y-0 after:left-1/2 after:w-px after:bg-zinc-200 hover:after:w-0.5 hover:after:bg-accent-400 focus-visible:outline-2 focus-visible:outline-accent-500"
+      />
+    </div>
+  );
+}
+
 function TaskRow({
   task,
   profilesById,
@@ -535,6 +696,7 @@ function TaskRow({
   gridStyle,
   selection,
   selecting,
+  tagsInline,
   draggable,
   dragging,
   onDragStart,
@@ -552,17 +714,21 @@ function TaskRow({
   gridStyle: React.CSSProperties;
   selection: TaskSelection;
   selecting: boolean;
+  tagsInline: boolean;
   draggable: boolean;
   dragging: boolean;
   onDragStart: (e: DragEvent) => void;
   onDragEnd: () => void;
 }) {
+  const router = useRouter();
   const taskHref = useTaskHref();
   const completed = Boolean(task.completedAt);
   const assignee = task.assigneeId ? profilesById.get(task.assigneeId) : undefined;
   const open = openTaskId === task.id;
   const selected = selection.isSelected(task.id);
   const active = selection.active === task.id;
+  // The sticky Task cell needs an opaque background of its own.
+  const tone = selected || open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50";
 
   return (
     <div
@@ -582,16 +748,24 @@ function TaskRow({
           return;
         }
         e.preventDefault();
-        selection.click(task.id, e);
+        // Shift / ⌘ / Ctrl-click still multi-select (like Asana); a plain click opens the task.
+        if (modified) {
+          selection.click(task.id, e);
+          return;
+        }
+        selection.setActive(task.id);
+        if (!open) router.push(taskHref(task.id), { scroll: false });
       }}
-      className={`group ${GRID} min-h-row border-b border-zinc-100 px-3 py-1 ${
-        selected ? "bg-accent-50" : open ? "bg-accent-50/60" : "hover:bg-zinc-50"
-      } ${active ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""} ${dragging ? "opacity-40" : ""} ${
-        draggable ? "cursor-grab active:cursor-grabbing" : ""
-      }`}
+      className={`group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${
+        selected || open ? "bg-accent-50" : "hover:bg-zinc-50"
+      } ${dragging ? "opacity-40" : ""} ${draggable ? "active:cursor-grabbing" : ""}`}
       style={gridStyle}
     >
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div
+        className={`${CELL} ${STICKY_CELL} gap-2.5 py-1 pl-3 ${tone} ${
+          active ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""
+        }`}
+      >
         {canEdit ? (
           <input
             type="checkbox"
@@ -628,44 +802,52 @@ function TaskRow({
         <span className="flex shrink-0 items-center gap-2">
           <TaskBadges task={task} />
         </span>
-        <TagChips ids={task.tagIds} byId={tagsById} />
+        {tagsInline ? <TagChips ids={task.tagIds} byId={tagsById} /> : null}
       </div>
       {columns.map((column) => {
         if (column === "assignee") {
           return (
-            <div key={column} className="min-w-0">
+            <div key={column} className={CELL}>
               <Assignee profile={assignee} showName />
             </div>
           );
         }
         if (column === "due") {
           return (
-            <div key={column}>
+            <div key={column} className={CELL}>
               <DueDate task={task} />
             </div>
           );
         }
         if (column === "start") {
           return (
-            <div key={column}>
+            <div key={column} className={CELL}>
               <StartDate task={task} />
             </div>
           );
         }
         if (column === "section") {
           return (
-            <div key={column} className="min-w-0 truncate text-xs text-zinc-600">
-              {task.sectionId ? fieldContext.sectionNames.get(task.sectionId) : ""}
+            <div key={column} className={`${CELL} text-xs text-zinc-600`}>
+              <span className="truncate">{task.sectionId ? fieldContext.sectionNames.get(task.sectionId) : ""}</span>
+            </div>
+          );
+        }
+        if (column === "tags") {
+          return (
+            <div key={column} className={`${CELL} overflow-hidden`}>
+              <TagChips ids={task.tagIds} byId={tagsById} />
             </div>
           );
         }
         const field = fieldsById.get(refFieldId(column) ?? "");
         return (
-          <div key={column} className="min-w-0">
+          <div key={column} className={CELL}>
             {field ? <FieldValueChips field={field} task={task} context={fieldContext} showName /> : null}
           </div>
         );
       })}
+      <span aria-hidden />
     </div>
   );
 }
@@ -694,6 +876,7 @@ function SubtaskRows({
   gridStyle: React.CSSProperties;
   onToggle: (subtask: SubtaskItem) => void;
 }) {
+  const router = useRouter();
   const taskHref = useTaskHref();
   const children = childrenOf.get(parentId) ?? [];
   if (children.length === 0) return null;
@@ -706,12 +889,16 @@ function SubtaskRows({
           <li key={subtask.id}>
             <div
               data-subtask-row={subtask.id}
-              className={`${GRID} min-h-row border-b border-zinc-100 px-3 py-1 ${open ? "bg-accent-50/60" : "hover:bg-zinc-50"}`}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("a, button, input, select, textarea, label")) return;
+                if (!open) router.push(taskHref(subtask.id), { scroll: false });
+              }}
+              className={`group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
               style={gridStyle}
             >
               <div
-                className="flex min-w-0 items-center gap-2.5"
-                style={{ paddingLeft: `${(canEdit ? 1.5 : 0) + depth * 1.25}rem` }}
+                className={`${CELL} ${STICKY_CELL} gap-2.5 py-1 ${open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50"}`}
+                style={{ paddingLeft: `${0.75 + (canEdit ? 1.5 : 0) + depth * 1.25}rem` }}
               >
                 <CompleteToggle
                   size="sm"
@@ -740,7 +927,7 @@ function SubtaskRows({
                 ) : null}
               </div>
               {columns.map((column) => (
-                <div key={column} className="min-w-0">
+                <div key={column} className={CELL}>
                   {column === "assignee" ? (
                     <Assignee profile={subtask.assigneeId ? profilesById.get(subtask.assigneeId) : undefined} showName />
                   ) : column === "due" ? (
@@ -750,6 +937,7 @@ function SubtaskRows({
                   ) : null}
                 </div>
               ))}
+              <span aria-hidden />
             </div>
             <SubtaskRows
               parentId={subtask.id}

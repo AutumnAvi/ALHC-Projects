@@ -1,7 +1,7 @@
 import { Tag as TagIcon, X } from "lucide-react";
 import { tagClass, tagsFor, type Tag } from "@/lib/tags";
 
-// A tag as a small coloured chip (server-safe). Archived tags read muted.
+// A tag as a small colored chip (server-safe). Archived tags read muted.
 export function TagChip({ tag, onRemove, removeDisabled }: { tag: Tag; onRemove?: () => void; removeDisabled?: boolean }) {
   return (
     <span

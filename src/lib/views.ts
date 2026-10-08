@@ -51,7 +51,7 @@ export type FieldRef = `field:${string}`;
 export type SortKey = "manual" | "due" | "start" | "title" | "created" | "assignee" | FieldRef;
 export type ViewSort = { key: SortKey; dir: "asc" | "desc" };
 export type GroupBy = "section" | "assignee" | "tag" | "none" | FieldRef;
-export type ColumnKey = "assignee" | "due" | "start" | "section" | FieldRef;
+export type ColumnKey = "assignee" | "due" | "start" | "section" | "tags" | FieldRef;
 
 export type ViewConfig = {
   filters?: ViewFilters;
@@ -248,7 +248,7 @@ export function parseViewConfig(value: unknown): ViewConfig {
       ...new Set(
         value.columns.filter(
           (c): c is ColumnKey =>
-            c === "assignee" || c === "due" || c === "start" || c === "section" || isFieldRef(c),
+            c === "assignee" || c === "due" || c === "start" || c === "section" || c === "tags" || isFieldRef(c),
         ),
       ),
     ].slice(0, 30);
@@ -364,7 +364,8 @@ export const sortOf = (config: ViewConfig): ViewSort[] => config.sort ?? [{ key:
 export const showsSubtasks = (config: ViewConfig): boolean => config.show_subtasks === true;
 
 export function columnsOf(config: ViewConfig, fields: FieldDef[]): ColumnKey[] {
-  return config.columns ?? ["assignee", "due", ...fields.filter((f) => f.showInViews).map((f) => fieldRef(f.id))];
+  // Asana's default List columns: Assignee, Due date, the fields shown in views (e.g. Priority), Tags.
+  return config.columns ?? ["assignee", "due", ...fields.filter((f) => f.showInViews).map((f) => fieldRef(f.id)), "tags"];
 }
 
 export function hasActiveFilters(filters: ViewFilters | undefined) {
