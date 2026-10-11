@@ -44,6 +44,8 @@ export function SearchPalette() {
     const openHere = () => setOpenState({ pathname: window.location.pathname, place: placement(triggerRef.current) });
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+        // Not over a modal (a Create dialog, Settings, the drawer): the palette would open underneath it.
+        if (document.querySelector("[aria-modal='true']")) return;
         e.preventDefault();
         setOpenState((current) =>
           current?.pathname === window.location.pathname
@@ -140,17 +142,6 @@ function Palette({ place, onClose }: { place: Place; onClose: (refocus: boolean)
     return () => window.clearTimeout(timer);
   }, [trimmed, kind, searchKey]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose(true);
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const groups: Group[] = [];
   if (!trimmed) {
     const shown = (recents ?? []).filter(
@@ -204,9 +195,19 @@ function Palette({ place, onClose }: { place: Place; onClose: (refocus: boolean)
       <div
         role="dialog"
         aria-label="Search"
+        // Focusable, so clicking inside keeps focus here and Esc reaches this handler. Esc stops here: it
+        // closes only the palette, never the task pane or a dialog underneath.
+        tabIndex={-1}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose(true);
+          }
+        }}
         onMouseDown={(e) => e.stopPropagation()}
         style={{ top: place.top, left: place.left, width: place.width }}
-        className="absolute overflow-hidden rounded-xl border border-zinc-200 bg-white text-sm shadow-2xl"
+        className="absolute overflow-hidden rounded-xl border border-zinc-200 bg-white text-sm shadow-2xl outline-none"
       >
         <div className="flex h-11 items-center gap-2 border-b border-zinc-100 px-3">
           <Search className="size-4 shrink-0 text-zinc-400" aria-hidden />
@@ -332,12 +333,12 @@ function taskItem(task: QuickTask, recent: boolean): Item {
               <span aria-hidden className={`size-2 shrink-0 rounded-[2px] ${projectColorClass(task.projectId)}`} />
               <span className="truncate">{task.projectName}</span>
             </>
-          ) : (
+          ) : task.isPrivate ? (
             <>
               <Lock className="size-3 shrink-0" aria-hidden />
               Private
             </>
-          )}
+          ) : null}
           {recent ? <span className="sr-only">, recently opened</span> : null}
         </span>
       </>

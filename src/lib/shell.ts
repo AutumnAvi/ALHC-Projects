@@ -14,7 +14,9 @@ export type QuickTask = {
   id: string;
   title: string;
   completed: boolean;
-  // Null for a private task (no project).
+  // A private task (no project): only its creator and assignee can read it.
+  isPrivate: boolean;
+  // A project of the task the person can read (its home project when they can), else null.
   projectId: string | null;
   projectName: string | null;
   // Where the task opens: its project's pane, My tasks for a private task (decided on the server).

@@ -87,6 +87,8 @@ export async function quickSearch(query: string, only: SearchKind | null = null)
           id: t.id,
           title: t.title,
           completed: Boolean(t.completed_at),
+          // search_tasks labels every project task with a project the person can read; null = private.
+          isPrivate: !t.home_project_id,
           projectId: t.home_project_id,
           projectName: t.home_project_name,
           href: t.home_project_id ? `/projects/${t.home_project_id}?task=${t.id}` : `/my-tasks?task=${t.id}`,
@@ -126,11 +128,32 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
   const [projects, taskResult] = await Promise.all([
     listReadableProjects(),
     taskIds.length
-      ? supabase.from("tasks").select("id, title, completed_at, home_project_id").in("id", taskIds).is("deleted_at", null)
+      ? supabase
+          .from("tasks")
+          .select("id, title, completed_at, home_project_id, root_task_id")
+          .in("id", taskIds)
+          .is("deleted_at", null)
       : null,
   ]);
   const projectsById = new Map(projects.map((p) => [p.id, p] as const));
-  const tasksById = new Map((taskResult && !taskResult.error ? taskResult.data ?? [] : []).map((t) => [t.id, t] as const));
+  const tasks = taskResult && !taskResult.error ? taskResult.data ?? [] : [];
+
+  // A task read through a project other than its home (multi-homed, or a subtask of such a task) is
+  // labelled and opened with one of its own (its root's) memberships that RLS shows the person.
+  const needOther = tasks.filter((t) => t.home_project_id && !projectsById.has(t.home_project_id));
+  const otherProject = new Map<string, string>();
+  if (needOther.length) {
+    const roots = [...new Set(needOther.map((t) => t.root_task_id ?? t.id))];
+    const memberships = await supabase
+      .from("task_projects")
+      .select("task_id, project_id")
+      .in("task_id", roots)
+      .is("deleted_at", null);
+    for (const row of memberships.error ? [] : memberships.data ?? []) {
+      if (projectsById.has(row.project_id) && !otherProject.has(row.task_id)) otherProject.set(row.task_id, row.project_id);
+    }
+  }
+  const tasksById = new Map(tasks.map((t) => [t.id, t] as const));
 
   return wanted.flatMap((ref): RecentItem[] => {
     if (ref.kind === "project") {
@@ -139,21 +162,28 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
     }
     const task = tasksById.get(ref.id);
     if (!task) return [];
-    const home = task.home_project_id ? projectsById.get(task.home_project_id) : undefined;
+    const isPrivate = !task.home_project_id;
+    const projectId = isPrivate
+      ? null
+      : projectsById.has(task.home_project_id!)
+        ? task.home_project_id
+        : (otherProject.get(task.root_task_id ?? task.id) ?? null);
+    const project = projectId ? projectsById.get(projectId) : undefined;
     return [
       {
         kind: "task",
         id: task.id,
         title: task.title,
         completed: Boolean(task.completed_at),
-        projectId: home?.id ?? null,
-        projectName: home?.name ?? null,
-        // A private task opens in My tasks; a task whose home project the person can't open (they read it
-        // through another project) opens in the Search page's pane, which shows any readable task.
-        href: !task.home_project_id
+        isPrivate,
+        projectId: project?.id ?? null,
+        projectName: project?.name ?? null,
+        // A private task opens in My tasks, others in a readable project's pane; the Search page's pane
+        // (which shows any readable task) is the fallback.
+        href: isPrivate
           ? `/my-tasks?task=${task.id}`
-          : home
-            ? `/projects/${home.id}?task=${task.id}`
+          : project
+            ? `/projects/${project.id}?task=${task.id}`
             : `/search?task=${task.id}`,
       },
     ];
