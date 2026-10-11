@@ -15,7 +15,7 @@ export function ProjectStatusHistory({ updates }: { updates: ProjectStatusUpdate
         </h2>
         {updates.length === 0 ? (
           <EmptyState icon={History} title="No status updates yet" size="inline">
-            Each time someone saves the project status above, it’s kept here with their note.
+            Each status update (from the header’s status menu, the Overview, or the form above) is kept here.
           </EmptyState>
         ) : (
           <ol className="mt-3 space-y-3">
@@ -27,6 +27,7 @@ export function ProjectStatusHistory({ updates }: { updates: ProjectStatusUpdate
                     <span className="font-medium text-zinc-700">{u.authorName ?? "Someone"}</span>
                     <Timestamp iso={u.createdAt} />
                   </div>
+                  {u.title ? <p className="mt-1 text-sm font-medium text-zinc-900">{u.title}</p> : null}
                   {u.note ? <p className="mt-1 text-sm whitespace-pre-wrap text-zinc-700">{u.note}</p> : null}
                 </div>
               </li>

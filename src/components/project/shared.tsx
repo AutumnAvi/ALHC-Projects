@@ -2,7 +2,18 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
-import { ListPlus, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ListPlus,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Rows3,
+  Trash2,
+} from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { useCan } from "@/components/project/project-access";
 import { useTaskTemplates } from "@/components/project/task-templates-context";
@@ -44,7 +55,7 @@ export function SectionTitle({
   }
 
   return (
-    <div className="group flex min-w-0 flex-1 items-center gap-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2">
       <label htmlFor={`section-${section.id}`} className="sr-only">
         Section name
       </label>
@@ -68,40 +79,220 @@ export function SectionTitle({
         className="field-sizing-content min-w-12 max-w-full truncate rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
       />
       <span className="text-xs tabular-nums text-zinc-400">{count}</span>
-      <button
-        type="button"
-        aria-label={`Delete section ${section.name}`}
-        title="Delete section"
-        onClick={() => {
-          const message = count
-            ? `Delete “${section.name}”? Its ${count} task(s) move to “No section”.`
-            : `Delete “${section.name}”?`;
-          if (window.confirm(message)) run(() => deleteSection(section.id));
-        }}
-        className="rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        <Trash2 className="size-3.5" />
-      </button>
     </div>
   );
 }
 
-// The toolbar's "+ Add task" asks the List / Board on the page to open the inline add row of the top
-// section (a window event, so the toolbar doesn't need the view's state).
-export const ADD_TASK_EVENT = "alhc:add-task";
+// Shown on a section header while it's hovered (or focused): "+" adds a task at the top of the section,
+// "…" renames it, adds a section before or after it, moves it, and deletes it once it holds no tasks
+// at all (completed and filtered-out ones count). Editors only.
+export function SectionActions({
+  projectId,
+  section,
+  taskCount,
+  nextSectionId,
+  orientation,
+  onAddTask,
+  onMoveUp,
+  onMoveDown,
+}: {
+  projectId: string;
+  section: Pick<Section, "id" | "name">;
+  // Every task in the section, whatever the view shows.
+  taskCount: number;
+  // The section after this one (null: it's the last), for "Add section below".
+  nextSectionId: string | null;
+  // List sections stack (above / below); Board columns sit side by side (left / right).
+  orientation: "vertical" | "horizontal";
+  onAddTask: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+}) {
+  const canEdit = useCan("editor");
+  if (!canEdit) return null;
+  const reveal = "opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100 group-focus-within/section:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100";
+  return (
+    <span className="flex shrink-0 items-center">
+      <button
+        type="button"
+        onClick={onAddTask}
+        aria-label={`Add a task to ${section.name}`}
+        title="Add task"
+        className={`btn-icon size-6 ${reveal}`}
+      >
+        <Plus className="size-4" />
+      </button>
+      <Popover
+        label={`Section actions for ${section.name}`}
+        panelClassName="w-60 p-1.5"
+        buttonClassName={`btn-icon size-6 ${reveal}`}
+        button={<MoreHorizontal className="size-4" aria-hidden />}
+      >
+        {(close) => (
+          <SectionMenu
+            projectId={projectId}
+            section={section}
+            taskCount={taskCount}
+            nextSectionId={nextSectionId}
+            orientation={orientation}
+            onMoveUp={onMoveUp}
+            onMoveDown={onMoveDown}
+            close={close}
+          />
+        )}
+      </Popover>
+    </span>
+  );
+}
 
-export function requestAddTask() {
-  window.dispatchEvent(new CustomEvent(ADD_TASK_EVENT));
+function SectionMenu({
+  projectId,
+  section,
+  taskCount,
+  nextSectionId,
+  orientation,
+  onMoveUp,
+  onMoveDown,
+  close,
+}: {
+  projectId: string;
+  section: Pick<Section, "id" | "name">;
+  taskCount: number;
+  nextSectionId: string | null;
+  orientation: "vertical" | "horizontal";
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  close: () => void;
+}) {
+  const [pending, run] = useServerAction();
+  // Adding a section asks for its name in the same panel; before = the section it goes in front of.
+  const [adding, setAdding] = useState<{ before: string | null; label: string } | null>(null);
+  const vertical = orientation === "vertical";
+
+  if (adding) {
+    return (
+      <form
+        className="p-1.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
+          if (!name) return;
+          close();
+          run(() => createSection(projectId, name, adding.before));
+        }}
+      >
+        <label htmlFor={`new-section-${section.id}`} className="mb-1 block text-xs font-medium text-zinc-600">
+          {adding.label}
+        </label>
+        <input
+          id={`new-section-${section.id}`}
+          name="name"
+          autoFocus
+          required
+          maxLength={200}
+          placeholder="Section name"
+          className="control w-full"
+        />
+        <button type="submit" disabled={pending} className="btn-primary mt-2 w-full">
+          Add section
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <>
+      <MenuItem
+        onClick={() => {
+          close();
+          // After the panel closes, so focus lands in the name.
+          requestAnimationFrame(() => {
+            const input = document.getElementById(`section-${section.id}`);
+            if (input instanceof HTMLInputElement) {
+              input.focus();
+              input.select();
+            }
+          });
+        }}
+      >
+        <Pencil className="size-4 text-zinc-500" /> Rename section
+      </MenuItem>
+      <MenuItem onClick={() => setAdding({ before: section.id, label: vertical ? "New section above" : "New section to the left" })}>
+        <Rows3 className="size-4 text-zinc-500" /> {vertical ? "Add section above" : "Add section to the left"}
+      </MenuItem>
+      <MenuItem onClick={() => setAdding({ before: nextSectionId, label: vertical ? "New section below" : "New section to the right" })}>
+        <Rows3 className="size-4 text-zinc-500" /> {vertical ? "Add section below" : "Add section to the right"}
+      </MenuItem>
+      {onMoveUp || onMoveDown ? <div role="separator" className="my-1 border-t border-zinc-100" /> : null}
+      {onMoveUp ? (
+        <MenuItem
+          onClick={() => {
+            close();
+            onMoveUp();
+          }}
+        >
+          {vertical ? <ArrowUp className="size-4 text-zinc-500" /> : <ArrowLeft className="size-4 text-zinc-500" />}
+          {vertical ? "Move up" : "Move left"}
+        </MenuItem>
+      ) : null}
+      {onMoveDown ? (
+        <MenuItem
+          onClick={() => {
+            close();
+            onMoveDown();
+          }}
+        >
+          {vertical ? <ArrowDown className="size-4 text-zinc-500" /> : <ArrowRight className="size-4 text-zinc-500" />}
+          {vertical ? "Move down" : "Move right"}
+        </MenuItem>
+      ) : null}
+      <div role="separator" className="my-1 border-t border-zinc-100" />
+      <MenuItem
+        danger
+        disabled={pending || taskCount > 0}
+        onClick={() => {
+          close();
+          run(() => deleteSection(section.id));
+        }}
+      >
+        <Trash2 className="size-4" /> Delete section
+      </MenuItem>
+      {taskCount > 0 ? (
+        <p className="px-2 pb-1 text-2xs text-zinc-500">
+          Only an empty section can be deleted. This one still has {taskCount === 1 ? "1 task" : `${taskCount} tasks`},
+          counting completed ones; move {taskCount === 1 ? "it" : "them"} to another section first.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+// The toolbar's "+ Add task" (and its Add milestone) asks the List / Board on the page to open the inline
+// add row of the top section (a window event, so the toolbar doesn't need the view's state).
+export const ADD_TASK_EVENT = "alhc:add-task";
+export type AddTaskRequest = { kind: TaskKind };
+
+export function requestAddTask(kind: TaskKind = "task") {
+  window.dispatchEvent(new CustomEvent<AddTaskRequest>(ADD_TASK_EVENT, { detail: { kind } }));
+}
+
+export function addTaskKindOf(event: Event): TaskKind {
+  const detail = (event as CustomEvent<Partial<AddTaskRequest> | null>).detail;
+  return parseTaskKind(detail?.kind);
 }
 
 // `defaultOpen` starts with the input showing (Tab then Q, or the toolbar's "+ Add task", remounts it
-// with a new key to open it). `atTop` puts new tasks at the top of the section.
+// with a new key to open it). `atTop` puts new tasks at the top of the section. In a List row the
+// closed state is Asana's grey "Add task…" text lined up with the task names (`indent`).
 export function AddTaskInput({
   projectId,
   sectionId,
   variant,
   defaultOpen = false,
   atTop = false,
+  defaultKind = "task",
+  indent = "pl-9",
+  idSuffix = "",
   onClose,
 }: {
   projectId: string;
@@ -109,11 +300,16 @@ export function AddTaskInput({
   variant: "row" | "card";
   defaultOpen?: boolean;
   atTop?: boolean;
+  defaultKind?: TaskKind;
+  // Row variant: left padding that lines the text up with the task names.
+  indent?: string;
+  // Keeps ids unique when a column has two add boxes (top and bottom).
+  idSuffix?: string;
   onClose?: () => void;
 }) {
   const [pending, run] = useServerAction();
   const [open, setOpen] = useState(defaultOpen);
-  const [kind, setKind] = useState<TaskKind>("task");
+  const [kind, setKind] = useState<TaskKind>(defaultKind);
   const inputRef = useRef<HTMLInputElement>(null);
   const canEdit = useCan("editor");
   const templates = useTaskTemplates();
@@ -124,18 +320,22 @@ export function AddTaskInput({
     onClose?.();
   };
   if (!open) {
-    return (
+    return variant === "row" ? (
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={
-          variant === "row"
-            ? "flex min-h-row w-full items-center gap-2 pl-9 pr-3 text-left text-sm text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"
-            : "flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm text-zinc-500 hover:bg-zinc-200/60 hover:text-zinc-800"
-        }
+        className={`flex min-h-row w-full items-center pr-3 text-left text-sm text-zinc-400 hover:text-zinc-600 ${indent}`}
+      >
+        Add task…
+      </button>
+    ) : (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm text-zinc-500 hover:bg-zinc-200/60 hover:text-zinc-800"
       >
         <Plus className="size-4" />
-        Add task…
+        Add task
       </button>
     );
   }
@@ -150,14 +350,14 @@ export function AddTaskInput({
         input.value = "";
         run(() => createTask(projectId, sectionId, title, kind, atTop));
       }}
-      className={`flex items-center gap-1 ${variant === "row" ? "py-1.5 pl-9 pr-3" : ""}`}
+      className={`flex items-center gap-1 ${variant === "row" ? `py-1.5 pr-3 ${indent}` : ""}`}
     >
-      <label className="sr-only" htmlFor={`add-task-${sectionId ?? "none"}-${variant}`}>
+      <label className="sr-only" htmlFor={`add-task-${sectionId ?? "none"}-${variant}${idSuffix}`}>
         New task name
       </label>
       <input
         ref={inputRef}
-        id={`add-task-${sectionId ?? "none"}-${variant}`}
+        id={`add-task-${sectionId ?? "none"}-${variant}${idSuffix}`}
         autoFocus
         placeholder={pending ? "Adding…" : `${kind === "task" ? "Task" : TASK_KIND_LABELS[kind]} name, then Enter`}
         onBlur={(e) => {
@@ -173,11 +373,11 @@ export function AddTaskInput({
           variant === "card" ? "shadow-xs" : ""
         }`}
       />
-      <label className="sr-only" htmlFor={`add-task-kind-${sectionId ?? "none"}-${variant}`}>
+      <label className="sr-only" htmlFor={`add-task-kind-${sectionId ?? "none"}-${variant}${idSuffix}`}>
         Type of the new task
       </label>
       <select
-        id={`add-task-kind-${sectionId ?? "none"}-${variant}`}
+        id={`add-task-kind-${sectionId ?? "none"}-${variant}${idSuffix}`}
         value={kind}
         onChange={(e) => setKind(parseTaskKind(e.currentTarget.value))}
         onKeyDown={(e) => {
@@ -250,7 +450,7 @@ export function AddSection({ projectId, variant }: { projectId: string; variant:
         className={
           variant === "list"
             ? "inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
-            : "flex w-72 shrink-0 items-center gap-1.5 rounded-xl border border-dashed border-zinc-300 px-3 py-2.5 text-sm font-medium text-zinc-600 hover:border-zinc-400 hover:text-zinc-900"
+            : "flex w-70 shrink-0 items-center gap-1.5 self-start rounded-xl bg-zinc-100/70 px-3 py-2.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
         }
       >
         <Plus className="size-4" />
@@ -270,7 +470,7 @@ export function AddSection({ projectId, variant }: { projectId: string; variant:
           () => setOpen(false),
         );
       }}
-      className={variant === "board" ? "w-72 shrink-0" : "max-w-sm"}
+      className={variant === "board" ? "w-70 shrink-0 self-start rounded-xl bg-zinc-100/70 p-2" : "max-w-sm"}
     >
       <label className="sr-only" htmlFor={`add-section-${variant}`}>
         New section name

@@ -2,17 +2,33 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useOptimistic, useRef, useState, useTransition, type DragEvent } from "react";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, ListTodo, SearchX } from "lucide-react";
+import { useEffect, useOptimistic, useRef, useState, useTransition, type DragEvent, type ReactNode } from "react";
+import {
+  ArrowDownNarrowWide,
+  ArrowUpNarrowWide,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  EyeOff,
+  GripVertical,
+  ListTodo,
+  Pencil,
+  Plus,
+  SearchX,
+} from "lucide-react";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
-import { approvalOpen } from "@/lib/task-kinds";
+import { MenuItem, Popover } from "@/components/popover";
+import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
 import { useCan } from "@/components/project/project-access";
+import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
+import { useViewConfig } from "@/components/project/view-config";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { placeSection, placeTask, saveListColumnWidths, setTaskCompleted } from "@/lib/actions";
+import { placeSection, placeTask, saveListColumnWidths, setTaskCompleted, updateTask } from "@/lib/actions";
 import {
   MAX_COLUMN_WIDTH,
   clampColumnWidth,
@@ -23,10 +39,20 @@ import {
 import type { Profile, ProjectTask, Section, SubtaskItem } from "@/lib/data";
 import { subtasksByParent } from "@/lib/subtasks";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
-import { columnsOf, groupOf, hasActiveFilters, refFieldId, sortOf, type ColumnKey, type ViewConfig } from "@/lib/views";
+import {
+  columnsOf,
+  fieldRef,
+  groupOf,
+  hasActiveFilters,
+  refFieldId,
+  sortOf,
+  type ColumnKey,
+  type SortKey,
+  type ViewConfig,
+} from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
-import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
-import { Assignee, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
+import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf, useTaskHref } from "./shared";
+import { Assignee, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, type TaskGroup } from "./view-groups";
 import { TagChips } from "@/components/tags/tag-chip";
@@ -46,24 +72,43 @@ type Props = {
   tags: Tag[];
   // The viewer's own saved column widths for this project (list_column_widths).
   columnWidths?: ColumnWidths;
+  // Every task per section, whatever the view shows (a section can be deleted only when empty).
+  sectionTaskCounts?: Record<string, number>;
 };
 
 type TaskDrop = { groupKey: string; beforeId: string | null };
 type SectionDrop = { beforeId: string | null };
+// The inline add row opened at the top of a group: the toolbar's "+ Add task" / "Add milestone" (the
+// first section, groupKey null) or a section header's "+".
+type TopAdd = { groupKey: string | null; nonce: number; kind: TaskKind };
 
 const TASK_DRAG = "application/x-alhc-task";
 const SECTION_DRAG = "application/x-alhc-section";
 const GRID = "grid items-stretch";
 // The List header sticks under the toolbar while rows scroll (the page's <main> is the scroller); the
-// Task column sticks to the left while the other columns scroll sideways.
+// Name column sticks to the left while the other columns scroll sideways.
 const HEADER = "sticky top-0 z-20 border-b border-zinc-200 bg-white text-xs font-medium text-zinc-500";
 const CELL = "flex min-w-0 items-center px-2";
 const STICKY_CELL = "sticky left-0 z-[1] border-r border-zinc-100";
+// The Name cell's leading controls, so the header, rows, subtasks, and the "Add task…" row line up:
+// Editors: drag handle (1rem) · checkbox (0.875rem) · completion (1.125rem), 0.5rem apart, after 0.375rem.
+const ROW_LEFT = { editor: "pl-1.5", viewer: "pl-3" } as const;
+const NAME_HEADER_INDENT = { editor: "pl-[3.25rem]", viewer: "pl-3" } as const;
+const TITLE_INDENT = { editor: "pl-[4.875rem]", viewer: "pl-[2.375rem]" } as const;
+const SUBTASK_BASE_REM = { editor: 3.25, viewer: 0.75 } as const;
 
 function sortSections(list: Section[], change: { id: string; sortOrder: number }) {
   return list
     .map((s) => (s.id === change.id ? { ...s, sort_order: change.sortOrder } : s))
     .sort((a, b) => a.sort_order - b.sort_order);
+}
+
+// What a column sorts by (Name = title); Section and Tags columns have no sort.
+function sortKeyFor(column: ColumnKey | "task", fieldsById: Map<string, FieldDef>): SortKey | null {
+  if (column === "task") return "title";
+  if (column === "assignee" || column === "due" || column === "start") return column;
+  const field = fieldsById.get(refFieldId(column) ?? "");
+  return field && !field.boundToSections ? fieldRef(field.id) : null;
 }
 
 export function ListView({
@@ -72,15 +117,19 @@ export function ListView({
   tasks,
   profiles,
   fields,
-  config,
+  config: configProp,
   openTaskId,
   bulk,
   subtasks = null,
   tags,
   columnWidths = {},
+  sectionTaskCounts = {},
 }: Props) {
   const router = useRouter();
   const taskHref = useTaskHref();
+  const viewConfig = useViewConfig();
+  // The page's (optimistic) config: column menus apply instantly as an unsaved draft.
+  const config = viewConfig?.current ?? configProp;
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [optimisticSections, moveSectionLocally] = useOptimistic(sections, sortSections);
   const [, run] = useServerAction();
@@ -88,14 +137,16 @@ export function ListView({
   const [, startTransition] = useTransition();
   const bulkEdit = useBulkEdit();
   const canEdit = useCan("editor");
+  const who = canEdit ? "editor" : "viewer";
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [quickAdd, setQuickAdd] = useState<{ groupKey: string; nonce: number } | null>(null);
   const [draggingTask, setDraggingTask] = useState<string | null>(null);
   const [taskDrop, setTaskDrop] = useState<TaskDrop | null>(null);
   const [draggingSection, setDraggingSection] = useState<string | null>(null);
   const [sectionDrop, setSectionDrop] = useState<SectionDrop | null>(null);
-  // The toolbar's "+ Add task" opens an add row at the top of the first section.
-  const [topAdd, setTopAdd] = useState<number | null>(null);
+  const [topAdd, setTopAdd] = useState<TopAdd | null>(null);
+  const [addingField, setAddingField] = useState(false);
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
   const [widths, setWidths] = useState<ColumnWidths>(columnWidths);
   const widthsRef = useRef(widths);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,7 +156,8 @@ export function ListView({
   }, [widths]);
 
   useEffect(() => {
-    const onAdd = () => setTopAdd((n) => (n ?? 0) + 1);
+    const onAdd = (event: Event) =>
+      setTopAdd((t) => ({ groupKey: null, nonce: (t?.nonce ?? 0) + 1, kind: addTaskKindOf(event) }));
     window.addEventListener(ADD_TASK_EVENT, onAdd);
     return () => window.removeEventListener(ADD_TASK_EVENT, onAdd);
   }, []);
@@ -152,12 +204,25 @@ export function ListView({
     );
   };
 
+  const rename = (task: ProjectTask, title: string) =>
+    run(
+      () => updateTask(task.id, { title }),
+      () => applyChange({ type: "title", taskId: task.id, title }),
+    );
+
   // Shortcuts act on the selection, else the task open in the pane, else the keyboard cursor.
   const targets = () => {
     if (selection.selected.length) return selection.selected;
     const one = openTaskId && tasksById.has(openTaskId) ? openTaskId : selection.active;
     return one ? [one] : [];
   };
+
+  const expand = (groupKey: string) =>
+    setCollapsed((c) => {
+      const next = new Set(c);
+      next.delete(groupKey);
+      return next;
+    });
 
   useListKeys({
     move(delta) {
@@ -189,11 +254,7 @@ export function ListView({
         groups.find((g) => g.target.kind === "section" && activeTask && g.tasks.includes(activeTask)) ??
         groups.find((g) => g.target.kind === "section");
       if (!group) return;
-      setCollapsed((c) => {
-        const next = new Set(c);
-        next.delete(group.key);
-        return next;
-      });
+      expand(group.key);
       setQuickAdd((q) => ({ groupKey: group.key, nonce: (q?.nonce ?? 0) + 1 }));
     },
     assignToMe() {
@@ -249,13 +310,17 @@ export function ListView({
   const columns = columnsOf(config, fields).filter(
     (c) => !c.startsWith("field:") || fieldsById.has(refFieldId(c) ?? ""),
   );
+  // Column menus write an explicit column list into the (draft) view config.
+  const applyColumns = (next: ColumnKey[]) => viewConfig?.apply({ ...config, columns: next });
+  const applySort = (key: SortKey, dir: "asc" | "desc") => viewConfig?.apply({ ...config, sort: [{ key, dir }] });
+  const firstSort = sortOf(config)[0];
   // Fixed pixel tracks (dragged to size) plus a filler, so the rows fill the page and scroll sideways
   // once the columns are wider than it.
   const gridStyle = {
     gridTemplateColumns: [
       `${columnWidth(widths, "task")}px`,
       ...columns.map((c) => `${columnWidth(widths, c)}px`),
-      "minmax(1.5rem,1fr)",
+      "minmax(2.5rem,1fr)",
     ].join(" "),
   };
   const tagsInline = !columns.includes("tags");
@@ -268,6 +333,7 @@ export function ListView({
     tagsById,
     openTaskId,
     onToggle: toggle,
+    onRename: rename,
     canEdit,
     columns,
     fieldsById,
@@ -278,21 +344,47 @@ export function ListView({
     tagsInline,
   };
   const sectionGroups = groups.filter((g) => g.section);
+  const firstSectionGroup = groups.find((g) => g.target.kind === "section");
   const childrenOf = subtasks ? subtasksByParent(subtasks) : null;
   const toggleSubtask = (subtask: SubtaskItem) => run(() => setTaskCompleted(subtask.id, !subtask.completedAt));
+  const editingField = editingFieldId ? fieldsById.get(editingFieldId) : undefined;
+
+  const columnMenu = (column: ColumnKey | "task", index: number) => {
+    const key = sortKeyFor(column, fieldsById);
+    const field = column === "task" ? undefined : fieldsById.get(refFieldId(column) ?? "");
+    return (
+      <ColumnMenu
+        label={column === "task" ? "Name" : columnLabel(column, fieldsById)}
+        sort={key ? { current: firstSort?.key === key ? firstSort.dir : null, apply: (dir) => applySort(key, dir) } : null}
+        onHide={column === "task" ? undefined : () => applyColumns(columns.filter((c) => c !== column))}
+        onMoveLeft={
+          column === "task" || index === 0
+            ? undefined
+            : () => applyColumns(columns.map((c, i) => (i === index - 1 ? column : i === index ? columns[index - 1] : c)))
+        }
+        onMoveRight={
+          column === "task" || index === columns.length - 1
+            ? undefined
+            : () => applyColumns(columns.map((c, i) => (i === index + 1 ? column : i === index ? columns[index + 1] : c)))
+        }
+        onEditField={field && canEdit ? () => setEditingFieldId(field.id) : undefined}
+      />
+    );
+  };
 
   return (
     <div className="min-w-full px-gutter pb-24" style={{ width: "max-content" }}>
       <div className={`${GRID} ${HEADER}`} style={gridStyle}>
         <HeaderCell
-          label="Task"
-          className={`${STICKY_CELL} z-[2] bg-white ${canEdit ? "pl-[3.25rem]" : "pl-9"}`}
+          label="Name"
+          className={`${STICKY_CELL} z-[2] bg-white ${NAME_HEADER_INDENT[who]}`}
           width={columnWidth(widths, "task")}
           onResize={(w) => resizeColumn("task", w)}
           onReset={() => resizeColumn("task", null)}
           onCommit={commitWidths}
+          menu={columnMenu("task", -1)}
         />
-        {columns.map((column) => (
+        {columns.map((column, index) => (
           <HeaderCell
             key={column}
             label={columnLabel(column, fieldsById)}
@@ -300,9 +392,22 @@ export function ListView({
             onResize={(w) => resizeColumn(column, w)}
             onReset={() => resizeColumn(column, null)}
             onCommit={commitWidths}
+            menu={columnMenu(column, index)}
           />
         ))}
-        <span aria-hidden />
+        <span className="flex items-center px-1">
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => setAddingField(true)}
+              aria-label="Add a field"
+              title="Add field"
+              className="btn-icon size-6 text-zinc-400 hover:text-zinc-700"
+            >
+              <Plus className="size-4" />
+            </button>
+          ) : null}
+        </span>
       </div>
 
       {sections.length === 0 && tasks.length === 0 && !filtered ? (
@@ -325,8 +430,11 @@ export function ListView({
 
       {groups.map((group) => {
         const sectionIndex = group.section ? sectionGroups.indexOf(group) : -1;
-        // The toolbar's "+ Add task" targets the first section group (top of the list).
-        const topTarget = topAdd !== null && group.target.kind === "section" && group === groups.find((g) => g.target.kind === "section");
+        // The toolbar's "+ Add task" targets the first section group; a section's "+" its own.
+        const topTarget =
+          topAdd !== null &&
+          group.target.kind === "section" &&
+          (topAdd.groupKey === group.key || (topAdd.groupKey === null && group === firstSectionGroup));
         const isTaskTarget = draggingTask !== null && taskDrop?.groupKey === group.key;
         const sectionId = group.section?.id;
         return (
@@ -344,10 +452,10 @@ export function ListView({
             }
             highlight={isTaskTarget && taskDrop?.beforeId === null}
             sectionDropBefore={draggingSection !== null && sectionDrop?.beforeId === sectionId && sectionId !== undefined}
-            sectionControls={
-              canDragSections && group.section && sectionId ? (
-                <SectionMoveControls
-                  name={group.section.name}
+            dragHandle={
+              canDragSections && sectionId ? (
+                <span
+                  draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData(SECTION_DRAG, sectionId);
                     e.dataTransfer.effectAllowed = "move";
@@ -357,11 +465,35 @@ export function ListView({
                     setDraggingSection(null);
                     setSectionDrop(null);
                   }}
-                  onUp={
-                    sectionIndex > 0 ? () => moveSection(sectionId, sectionGroups[sectionIndex - 1].section!.id) : undefined
+                  title="Drag to reorder"
+                  aria-hidden
+                  className="cursor-grab rounded p-0.5 text-zinc-400 opacity-0 hover:bg-zinc-100 active:cursor-grabbing group-hover/section:opacity-100 [@media(hover:none)]:opacity-100"
+                >
+                  <GripVertical className="size-4" />
+                </span>
+              ) : canEdit ? (
+                <span aria-hidden className="w-5 shrink-0" />
+              ) : null
+            }
+            actions={
+              group.section && sectionId ? (
+                <SectionActions
+                  projectId={projectId}
+                  section={group.section}
+                  taskCount={sectionTaskCounts[sectionId] ?? group.tasks.length}
+                  nextSectionId={optimisticSections[optimisticSections.findIndex((s) => s.id === sectionId) + 1]?.id ?? null}
+                  orientation="vertical"
+                  onAddTask={() => {
+                    expand(group.key);
+                    setTopAdd((t) => ({ groupKey: group.key, nonce: (t?.nonce ?? 0) + 1, kind: "task" }));
+                  }}
+                  onMoveUp={
+                    canDragSections && sectionIndex > 0
+                      ? () => moveSection(sectionId, sectionGroups[sectionIndex - 1].section!.id)
+                      : undefined
                   }
-                  onDown={
-                    sectionIndex < sectionGroups.length - 1
+                  onMoveDown={
+                    canDragSections && sectionIndex < sectionGroups.length - 1
                       ? () => moveSection(sectionId, sectionGroups[sectionIndex + 2]?.section?.id ?? null)
                       : undefined
                   }
@@ -388,14 +520,17 @@ export function ListView({
             // Row drops bubble here too; the row only refines the position during dragover.
             onBodyDrop={draggingTask ? dropTask : undefined}
           >
-            {topTarget && group.target.kind === "section" ? (
-              <div className="sticky left-0 w-[min(100%,48rem)]">
+            {topTarget && topAdd && group.target.kind === "section" ? (
+              <div className="sticky left-0 w-[min(100%,48rem)] border-b border-zinc-100">
                 <AddTaskInput
-                  key={`top-${topAdd}`}
+                  key={`top-${topAdd.nonce}`}
                   projectId={projectId}
                   sectionId={group.target.sectionId}
                   variant="row"
+                  indent={TITLE_INDENT[who]}
+                  idSuffix="-top"
                   defaultOpen
+                  defaultKind={topAdd.kind}
                   atTop
                   onClose={() => setTopAdd(null)}
                 />
@@ -446,18 +581,19 @@ export function ListView({
             ))}
             {isTaskTarget && taskDrop?.beforeId === null && group.tasks.length > 0 ? <DropLine /> : null}
             {group.section && group.tasks.length === 0 && (draggingTask || filtered || !canEdit) ? (
-              <p className="sticky left-0 flex min-h-row items-center border-b border-zinc-100 pl-10 text-xs text-zinc-400">
+              <p className={`sticky left-0 flex min-h-row items-center border-b border-zinc-100 text-xs text-zinc-400 ${TITLE_INDENT[who]}`}>
                 {draggingTask ? "Drop here" : filtered ? "No matching tasks in this section." : "No tasks in this section yet."}
               </p>
             ) : null}
             {group.target.kind === "section" ? (
-              // Asana's inline "Add task…" row at the end of every section.
+              // Asana's inline "Add task…" row at the end of every section: grey text under the names.
               <div className="sticky left-0 w-[min(100%,48rem)]">
                 <AddTaskInput
                   key={quickAdd?.groupKey === group.key ? `quick-${quickAdd.nonce}` : "add"}
                   projectId={projectId}
                   sectionId={group.target.sectionId}
                   variant="row"
+                  indent={TITLE_INDENT[who]}
                   defaultOpen={quickAdd?.groupKey === group.key}
                 />
               </div>
@@ -482,7 +618,7 @@ export function ListView({
       ) : null}
 
       {bySection ? (
-        <div className="mt-4">
+        <div className="sticky left-0 mt-4 w-fit">
           <AddSection projectId={projectId} variant="list" />
         </div>
       ) : null}
@@ -494,6 +630,25 @@ export function ListView({
           context={{ ...bulk, project: { id: projectId, sections: optimisticSections, fields } }}
           bulk={bulkEdit}
           onClear={selection.clear}
+        />
+      ) : null}
+
+      {addingField ? (
+        <NewFieldDialog
+          projectId={projectId}
+          onClose={() => setAddingField(false)}
+          onCreated={(fieldId) => {
+            // Pinned fields show in views with the default columns; a view with its own columns gets it
+            // as an unsaved change (Save view keeps it).
+            if (config.columns) applyColumns([...columns, fieldRef(fieldId)]);
+          }}
+        />
+      ) : null}
+      {editingField ? (
+        <EditFieldDialog
+          field={editingField}
+          sectionNames={optimisticSections.map((s) => s.name)}
+          onClose={() => setEditingFieldId(null)}
         />
       ) : null}
     </div>
@@ -529,91 +684,56 @@ export function GroupTitle({ group }: { group: TaskGroup }) {
   );
 }
 
-// Drag handle plus keyboard-reachable Move up / Move down buttons for a section.
-function SectionMoveControls({
-  name,
-  onDragStart,
-  onDragEnd,
-  onUp,
-  onDown,
-}: {
-  name: string;
-  onDragStart: (e: DragEvent) => void;
-  onDragEnd: () => void;
-  onUp?: () => void;
-  onDown?: () => void;
-}) {
-  const reveal = "opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100 [@media(hover:none)]:opacity-100";
-  return (
-    <span className="flex shrink-0 items-center">
-      <span
-        draggable
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
-        title="Drag to reorder"
-        aria-hidden
-        className={`cursor-grab rounded p-0.5 text-zinc-400 hover:bg-zinc-100 active:cursor-grabbing ${reveal}`}
-      >
-        <GripVertical className="size-4" />
-      </span>
-      {onUp ? (
-        <button type="button" onClick={onUp} aria-label={`Move section ${name} up`} title="Move up" className={`rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 ${reveal}`}>
-          <ArrowUp className="size-3.5" />
-        </button>
-      ) : null}
-      {onDown ? (
-        <button type="button" onClick={onDown} aria-label={`Move section ${name} down`} title="Move down" className={`rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 ${reveal}`}>
-          <ArrowDown className="size-3.5" />
-        </button>
-      ) : null}
-    </span>
-  );
-}
-
 function SectionGroup({
   title,
   collapsed,
   onToggleCollapsed,
   highlight,
   sectionDropBefore,
-  sectionControls,
+  dragHandle,
+  actions,
   onHeaderDragOver,
   onHeaderDrop,
   onBodyDragOver,
   onBodyDrop,
   children,
 }: {
-  title: React.ReactNode;
+  title: ReactNode;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   highlight: boolean;
   sectionDropBefore: boolean;
-  sectionControls: React.ReactNode;
+  dragHandle: ReactNode;
+  actions: ReactNode;
   onHeaderDragOver: (e: DragEvent<HTMLDivElement>) => void;
   onHeaderDrop?: (e: DragEvent) => void;
   onBodyDragOver: (e: DragEvent<HTMLElement>) => void;
   onBodyDrop?: (e: DragEvent) => void;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <section className="group/section mt-4" onDragOver={onBodyDragOver} onDrop={onBodyDrop}>
       {sectionDropBefore ? <DropLine /> : null}
       <div
-        className="sticky left-0 flex h-8 w-[min(100%,48rem)] items-center gap-1 px-1"
+        className="sticky left-0 flex h-9 w-[min(100%,48rem)] items-center gap-0.5"
         onDragOver={onHeaderDragOver}
         onDrop={onHeaderDrop}
       >
+        {dragHandle}
         <button
           type="button"
           onClick={onToggleCollapsed}
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand group" : "Collapse group"}
-          className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+          className="rounded p-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
         >
           {collapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
         </button>
-        {title}
-        {sectionControls}
+        {/* Asana puts "+" and "…" right after the name, so the pair sizes to its content. */}
+        <div className="flex min-w-0 items-center gap-1">
+          {title}
+          {actions}
+        </div>
       </div>
       {collapsed ? null : (
         <div className={`border-t border-zinc-200 ${highlight ? "bg-accent-50/40" : ""}`}>{children}</div>
@@ -622,11 +742,87 @@ function SectionGroup({
   );
 }
 
-// A resizable column header: drag the right edge (or focus it and use ←/→), double-click to reset.
+// A column header's chevron menu (on hover or focus): sort, hide, move, edit the field. Every change
+// is an unsaved draft of the view (Save view keeps it), like the toolbar's.
+function ColumnMenu({
+  label,
+  sort,
+  onHide,
+  onMoveLeft,
+  onMoveRight,
+  onEditField,
+}: {
+  label: string;
+  sort: { current: "asc" | "desc" | null; apply: (dir: "asc" | "desc") => void } | null;
+  onHide?: () => void;
+  onMoveLeft?: () => void;
+  onMoveRight?: () => void;
+  onEditField?: () => void;
+}) {
+  const item = (onClick: () => void, close: () => void) => () => {
+    close();
+    onClick();
+  };
+  return (
+    <Popover
+      label={`Options for the ${label} column`}
+      panelClassName="w-52 p-1.5"
+      buttonClassName="btn-icon size-5 shrink-0 opacity-0 group-hover/header:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100"
+      button={<ChevronDown className="size-3.5" aria-hidden />}
+    >
+      {(close) => (
+        <>
+          {sort ? (
+            <>
+              <MenuItem onClick={item(() => sort.apply("asc"), close)}>
+                <ArrowUpNarrowWide className="size-4 text-zinc-500" />
+                <span className="flex-1">Sort ascending</span>
+                {sort.current === "asc" ? <Check className="size-3.5 text-accent-600" aria-label="(current)" /> : null}
+              </MenuItem>
+              <MenuItem onClick={item(() => sort.apply("desc"), close)}>
+                <ArrowDownNarrowWide className="size-4 text-zinc-500" />
+                <span className="flex-1">Sort descending</span>
+                {sort.current === "desc" ? <Check className="size-3.5 text-accent-600" aria-label="(current)" /> : null}
+              </MenuItem>
+            </>
+          ) : null}
+          {sort && (onHide || onMoveLeft || onMoveRight || onEditField) ? (
+            <div role="separator" className="my-1 border-t border-zinc-100" />
+          ) : null}
+          {onEditField ? (
+            <MenuItem onClick={item(onEditField, close)}>
+              <Pencil className="size-4 text-zinc-500" /> Edit field
+            </MenuItem>
+          ) : null}
+          {onHide ? (
+            <MenuItem onClick={item(onHide, close)}>
+              <EyeOff className="size-4 text-zinc-500" /> Hide column
+            </MenuItem>
+          ) : null}
+          {onHide ? (
+            <>
+              <MenuItem disabled={!onMoveLeft} onClick={item(() => onMoveLeft?.(), close)}>
+                <ChevronLeft className="size-4 text-zinc-500" /> Move left
+              </MenuItem>
+              <MenuItem disabled={!onMoveRight} onClick={item(() => onMoveRight?.(), close)}>
+                <ChevronRight className="size-4 text-zinc-500" /> Move right
+              </MenuItem>
+            </>
+          ) : null}
+          {!sort && !onHide ? <p className="px-2 py-1 text-xs text-zinc-500">Nothing to change here.</p> : null}
+        </>
+      )}
+    </Popover>
+  );
+}
+
+// A resizable column header: drag the right edge (or focus it and use ←/→), double-click to reset. The
+// chevron menu shows on hover.
 function HeaderCell({
   label,
   width,
   className = "",
+  menu,
   onResize,
   onReset,
   onCommit,
@@ -634,13 +830,15 @@ function HeaderCell({
   label: string;
   width: number;
   className?: string;
+  menu: ReactNode;
   onResize: (width: number) => void;
   onReset: () => void;
   onCommit: () => void;
 }) {
   return (
-    <div className={`relative ${CELL} h-8 ${className}`}>
-      <span className="truncate">{label}</span>
+    <div className={`group/header relative ${CELL} h-8 gap-1 pr-2.5 hover:bg-zinc-50 ${className}`}>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {menu}
       <span
         role="separator"
         aria-orientation="vertical"
@@ -682,12 +880,86 @@ function HeaderCell({
   );
 }
 
+// The task name. Editors click it to rename in place (Enter saves, Esc cancels); the ">" at the end of
+// the cell, a click elsewhere on the row, or Enter on the selected row opens the task. Below Editor the
+// name is a link to the task.
+function TaskTitle({
+  task,
+  canEdit,
+  open,
+  editing,
+  setEditing,
+  onRename,
+}: {
+  task: ProjectTask;
+  canEdit: boolean;
+  open: boolean;
+  editing: boolean;
+  setEditing: (editing: boolean) => void;
+  onRename: (title: string) => void;
+}) {
+  const taskHref = useTaskHref();
+  const completed = Boolean(task.completedAt);
+  const tone = completed ? "text-zinc-400 line-through" : "text-zinc-900";
+  if (!canEdit) {
+    return (
+      <Link
+        href={taskHref(task.id)}
+        scroll={false}
+        draggable={false}
+        aria-current={open ? "true" : undefined}
+        className={`min-w-0 truncate text-sm hover:underline ${tone}`}
+      >
+        {task.title}
+      </Link>
+    );
+  }
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        defaultValue={task.title}
+        maxLength={500}
+        aria-label="Task name"
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={(e) => {
+          const title = e.currentTarget.value.trim();
+          setEditing(false);
+          if (title && title !== task.title) onRename(title);
+        }}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            e.currentTarget.value = task.title;
+            e.currentTarget.blur();
+          }
+        }}
+        className="h-6 min-w-0 flex-1 rounded border border-accent-500/60 bg-white px-1 text-sm text-zinc-900 shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      draggable={false}
+      onClick={() => setEditing(true)}
+      title="Rename"
+      aria-label={`Rename “${task.title}”`}
+      className={`-mx-1 min-w-0 truncate rounded px-1 text-left text-sm ring-zinc-200 group-hover:ring-1 hover:ring-zinc-300 ${tone}`}
+    >
+      {task.title}
+    </button>
+  );
+}
+
 function TaskRow({
   task,
   profilesById,
   tagsById,
   openTaskId,
   onToggle,
+  onRename,
   canEdit,
   columns,
   fieldsById,
@@ -706,6 +978,7 @@ function TaskRow({
   tagsById: Map<string, Tag>;
   openTaskId: string | null;
   onToggle: (task: ProjectTask) => void;
+  onRename: (task: ProjectTask, title: string) => void;
   canEdit: boolean;
   columns: ColumnKey[];
   fieldsById: Map<string, FieldDef>;
@@ -721,30 +994,31 @@ function TaskRow({
 }) {
   const router = useRouter();
   const taskHref = useTaskHref();
+  // Renaming in place: the row stops being draggable so the mouse can select text in the name.
+  const [editing, setEditing] = useState(false);
   const completed = Boolean(task.completedAt);
   const assignee = task.assigneeId ? profilesById.get(task.assigneeId) : undefined;
   const open = openTaskId === task.id;
   const selected = selection.isSelected(task.id);
   const active = selection.active === task.id;
-  // The sticky Task cell needs an opaque background of its own.
+  // The sticky Name cell needs an opaque background of its own.
   const tone = selected || open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50";
 
   return (
     <div
       data-task-row={task.id}
-      draggable={draggable}
+      draggable={draggable && !editing}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={(e) => {
         const target = e.target as HTMLElement;
         const control = target.closest("a, button, input, select, textarea, label");
         if (control) {
-          // The title link opens the task too (⌘/Ctrl-click: a new tab, the browser's own behaviour).
+          // The ">" (and a viewer's name link) opens the task (⌘/Ctrl-click: a new tab).
           if (control.tagName === "A") selection.setActive(task.id);
           return;
         }
         // Clicking a row opens the task; only the checkbox on the left selects (and brings up the bulk bar).
-
         selection.setActive(task.id);
         if (!open) router.push(taskHref(task.id), { scroll: false });
       }}
@@ -754,10 +1028,22 @@ function TaskRow({
       style={gridStyle}
     >
       <div
-        className={`${CELL} ${STICKY_CELL} gap-2.5 py-1 pl-3 ${tone} ${
+        className={`${CELL} ${STICKY_CELL} gap-2 py-1 ${canEdit ? ROW_LEFT.editor : ROW_LEFT.viewer} ${tone} ${
           active ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""
         }`}
       >
+        {canEdit ? (
+          // Asana's 6-dot handle at the far left (the whole row drags; this shows where to grab).
+          <span
+            aria-hidden
+            title={draggable ? "Drag to reorder" : undefined}
+            className={`flex w-4 shrink-0 justify-center text-zinc-400 ${
+              draggable ? "cursor-grab opacity-0 group-hover:opacity-100 active:cursor-grabbing" : "invisible"
+            }`}
+          >
+            <GripVertical className="size-4" />
+          </span>
+        ) : null}
         {canEdit ? (
           <input
             type="checkbox"
@@ -780,21 +1066,30 @@ function TaskRow({
           onToggle={() => onToggle(task)}
           label={kindToggleLabel(task.kind, task.title, completed)}
         />
+        <TaskTitle
+          task={task}
+          canEdit={canEdit}
+          open={open}
+          editing={editing}
+          setEditing={setEditing}
+          onRename={(title) => onRename(task, title)}
+        />
+        <span className="flex shrink-0 items-center gap-2">
+          <TaskBadges task={task} />
+          <CommentCount count={task.commentCount} />
+        </span>
+        {tagsInline ? <TagChips ids={task.tagIds} byId={tagsById} /> : null}
         <Link
           href={taskHref(task.id)}
           scroll={false}
           draggable={false}
+          aria-label={`Open “${task.title}”`}
           aria-current={open ? "true" : undefined}
-          className={`min-w-0 truncate text-sm hover:underline ${
-            completed ? "text-zinc-400 line-through" : "text-zinc-900"
-          }`}
+          title="Details"
+          className="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 opacity-0 hover:bg-zinc-200/70 hover:text-zinc-700 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
         >
-          {task.title}
+          <ChevronRight className="size-4" />
         </Link>
-        <span className="flex shrink-0 items-center gap-2">
-          <TaskBadges task={task} />
-        </span>
-        {tagsInline ? <TagChips ids={task.tagIds} byId={tagsById} /> : null}
       </div>
       {columns.map((column) => {
         if (column === "assignee") {
@@ -889,8 +1184,8 @@ function SubtaskRows({
               style={gridStyle}
             >
               <div
-                className={`${CELL} ${STICKY_CELL} gap-2.5 py-1 ${open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50"}`}
-                style={{ paddingLeft: `${0.75 + (canEdit ? 1.5 : 0) + depth * 1.25}rem` }}
+                className={`${CELL} ${STICKY_CELL} gap-2 py-1 ${open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50"}`}
+                style={{ paddingLeft: `${SUBTASK_BASE_REM[canEdit ? "editor" : "viewer"] + depth * 1.25}rem` }}
               >
                 <CompleteToggle
                   size="sm"

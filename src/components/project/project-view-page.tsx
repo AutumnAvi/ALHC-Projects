@@ -4,6 +4,7 @@ import { CalendarView } from "@/components/project/calendar-view";
 import { ListView } from "@/components/project/list-view";
 import { TimelineView } from "@/components/project/timeline-view";
 import { ViewToolbar } from "@/components/project/view-toolbar";
+import { ViewConfigProvider } from "@/components/project/view-config";
 import { TaskPaneBoundary } from "@/components/task/task-pane";
 import { listBulkContext } from "@/components/bulk/bulk-context";
 import {
@@ -95,42 +96,42 @@ export async function ProjectViewPage({
   // under its row.
   const showSubtasks = layout === "list" && showsSubtasks(config);
   const subtasks = showSubtasks ? await listSubtaskTrees(visible.map((t) => t.id)) : [];
+  // Every task per section, whatever the view shows: a section can be deleted only when it's empty.
+  const sectionTaskCounts: Record<string, number> = {};
+  for (const task of tasks) {
+    if (task.sectionId) sectionTaskCounts[task.sectionId] = (sectionTaskCounts[task.sectionId] ?? 0) + 1;
+  }
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
-      <ViewToolbar
-        key={`toolbar-${view?.id ?? layout}`}
-        projectId={projectId}
-        view={view}
-        layout={layout}
-        baseConfig={baseConfig}
-        config={config}
-        context={{ sections, profiles, fields, tags }}
-      />
-      {layout === "list" ? (
-        // The toolbar stays put; the list scrolls under it with a sticky column header.
-        <div className="min-h-0 flex-1 overflow-auto">
-          <ListView
-            key={`list-${view?.id ?? "default"}`}
+      <ViewConfigProvider key={`config-${view?.id ?? layout}`} baseConfig={baseConfig} config={config}>
+        <ViewToolbar projectId={projectId} view={view} layout={layout} context={{ sections, profiles, fields, tags }} />
+        {layout === "list" ? (
+          // The toolbar stays put; the list scrolls under it with a sticky column header.
+          <div className="min-h-0 flex-1 overflow-auto">
+            <ListView
+              key={`list-${view?.id ?? "default"}`}
+              {...props}
+              bulk={bulk}
+              subtasks={showSubtasks ? subtasks : null}
+              columnWidths={columnWidths}
+              sectionTaskCounts={sectionTaskCounts}
+            />
+          </div>
+        ) : null}
+        {layout === "board" ? (
+          <BoardView key={`board-${view?.id ?? "default"}`} {...props} sectionTaskCounts={sectionTaskCounts} />
+        ) : null}
+        {layout === "calendar" ? <CalendarView tasks={visible} profiles={profiles} openTaskId={openTaskId} /> : null}
+        {layout === "timeline" ? (
+          <TimelineView
+            key={`timeline-${view?.id ?? "default"}`}
             {...props}
-            bulk={bulk}
-            subtasks={showSubtasks ? subtasks : null}
-            columnWidths={columnWidths}
+            dependencies={dependencies}
+            criticalPath={criticalPath}
           />
-        </div>
-      ) : null}
-      {layout === "board" ? <BoardView key={`board-${view?.id ?? "default"}`} {...props} /> : null}
-      {layout === "calendar" ? (
-        <CalendarView tasks={visible} profiles={profiles} openTaskId={openTaskId} />
-      ) : null}
-      {layout === "timeline" ? (
-        <TimelineView
-          key={`timeline-${view?.id ?? "default"}`}
-          {...props}
-          dependencies={dependencies}
-          criticalPath={criticalPath}
-        />
-      ) : null}
+        ) : null}
+      </ViewConfigProvider>
       {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
     </main>
   );

@@ -79,6 +79,7 @@ import {
 import { isGoalStatus, isProgressMode } from "@/lib/goals";
 import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
 import { MAX_PORTFOLIO_FIELD_TEXT, isPortfolioFieldType, isProjectStatus } from "@/lib/portfolios";
+import { STATUS_TITLE_MAX } from "@/lib/project-page";
 import { MAX_TEMPLATE_SUBTASKS, parseCopyResult, type DuplicateOptions } from "@/lib/templates";
 import {
   VIEW_LAYOUTS,
@@ -275,14 +276,21 @@ export async function joinProject(projectId: string): Promise<ActionResult> {
 
 export async function updateProject(
   projectId: string,
-  patch: { name?: string; description?: string | null },
+  patch: { name?: string; description?: string | null; dueOn?: string | null },
 ): Promise<ActionResult> {
   return run(async () => {
-    const update: { name?: string; description?: string | null } = {};
+    const update: { name?: string; description?: string | null; due_on?: string | null } = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Project name", { max: 200 });
     if (patch.description !== undefined) update.description = optionalText(patch.description);
+    if (patch.dueOn !== undefined) update.due_on = optionalDate(patch.dueOn, "due date");
     const supabase = await createClient();
-    check(await supabase.from("projects").update(update).eq("id", id(projectId)));
+    const result = await supabase.from("projects").update(update).eq("id", id(projectId)).select("id");
+    // A preview deployed before 20261011020000_asana_parity_2.sql has no projects.due_on yet.
+    if (result.error?.code === "PGRST204" && update.due_on !== undefined) {
+      throw new InputError("Project due dates need this release’s database update, which isn’t applied yet");
+    }
+    // Admin+ (projects_update_admin): RLS turns anything below into zero rows.
+    checkUpdated(result, "Only project admins and owners can change the project’s details");
   });
 }
 
@@ -639,21 +647,41 @@ export async function setProjectArchived(projectId: string, archived: boolean): 
   });
 }
 
+// With a title (the status panel), through post_project_status_update, which hands the title to the same
+// set_project_status. A preview deployed before 20261011020000_asana_parity_2.sql doesn't have it yet:
+// then the title goes in front of the note, so nothing typed is lost.
 export async function setProjectStatus(
   projectId: string,
   status: string,
   note: string | null,
+  title?: string | null,
 ): Promise<ActionResult> {
   return run(async () => {
     if (!isProjectStatus(status)) throw new InputError("Choose a status");
+    const summary = optionalText(note, 2000);
     const supabase = await createClient();
-    check(
-      await supabase.rpc("set_project_status", {
-        target_project: id(projectId),
-        new_status: status,
-        note: optionalText(note, 2000),
-      }),
-    );
+    if (title === undefined) {
+      check(await supabase.rpc("set_project_status", { target_project: id(projectId), new_status: status, note: summary }));
+      return;
+    }
+    const heading = optionalText(title, STATUS_TITLE_MAX);
+    const posted = await supabase.rpc("post_project_status_update", {
+      target_project: id(projectId),
+      new_status: status,
+      update_title: heading,
+      summary,
+    });
+    // The title goes in front of the summary only while both fit the note's 2,000 characters.
+    const combined = heading && summary && heading.length + 2 + summary.length <= 2000 ? `${heading}\n\n${summary}` : (summary ?? heading);
+    const result =
+      posted.error?.code === "PGRST202"
+        ? await supabase.rpc("set_project_status", { target_project: id(projectId), new_status: status, note: combined })
+        : posted;
+    // On hold is refused by the old status check until the migration (and its tail) is applied.
+    if (status === "on_hold" && /status_check|Status must be/.test(result.error?.message ?? "")) {
+      throw new InputError("“On hold” isn’t available until this release’s database update is fully applied. Pick another status for now.");
+    }
+    check(result);
   });
 }
 
@@ -987,24 +1015,59 @@ export async function setPortfolioFieldValue(
 // Sections
 // ---------------------------------------------------------------------------------------------
 
-export async function createSection(projectId: string, name: string): Promise<ActionResult> {
+// Appends a section, or (beforeSectionId: "Add section above / below" on a section's menu) inserts it at
+// the midpoint before that one. Only a gap too small to split (after many inserts in one spot) needs
+// place_section afterwards to reindex.
+export async function createSection(
+  projectId: string,
+  name: string,
+  beforeSectionId: string | null = null,
+): Promise<ActionResult> {
   return run(async () => {
+    const sectionName = text(name, "Section name", { max: 200 });
     const supabase = await createClient();
-    const { data: last } = await supabase
+    let sortOrder: number;
+    let reindex = false;
+    if (beforeSectionId) {
+      const { data: before } = await supabase
+        .from("sections")
+        .select("sort_order")
+        .eq("id", id(beforeSectionId, "section"))
+        .eq("project_id", id(projectId))
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (!before) throw new InputError("That section was deleted. Refresh and try again.");
+      const { data: previous } = await supabase
+        .from("sections")
+        .select("sort_order")
+        .eq("project_id", projectId)
+        .is("deleted_at", null)
+        .lt("sort_order", before.sort_order)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      sortOrder = previous ? (previous.sort_order + before.sort_order) / 2 : before.sort_order - ORDER_STEP;
+      reindex = previous !== null && before.sort_order - previous.sort_order < 1e-6;
+    } else {
+      const { data: last } = await supabase
+        .from("sections")
+        .select("sort_order")
+        .eq("project_id", id(projectId))
+        .is("deleted_at", null)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      sortOrder = (last?.sort_order ?? 0) + ORDER_STEP;
+    }
+    const inserted = await supabase
       .from("sections")
-      .select("sort_order")
-      .eq("project_id", id(projectId))
-      .is("deleted_at", null)
-      .order("sort_order", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    check(
-      await supabase.from("sections").insert({
-        project_id: projectId,
-        name: text(name, "Section name", { max: 200 }),
-        sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
-      }),
-    );
+      .insert({ project_id: projectId, name: sectionName, sort_order: sortOrder })
+      .select("id")
+      .single();
+    check(inserted);
+    if (reindex && beforeSectionId && inserted.data) {
+      check(await supabase.rpc("place_section", { target_section: inserted.data.id, before_section: beforeSectionId }));
+    }
   });
 }
 
@@ -1020,12 +1083,24 @@ export async function renameSection(sectionId: string, name: string): Promise<Ac
   });
 }
 
+// Only an empty section is deleted (Asana): every active task in it counts, completed ones included, so
+// tasks added since the page loaded aren't silently moved to "No section".
 export async function deleteSection(sectionId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.from("sections").update({ deleted_at: now() }).eq("id", id(sectionId)),
-    );
+    const { count, error } = await supabase
+      .from("task_projects")
+      .select("task_id, task:tasks!inner(deleted_at)", { count: "exact", head: true })
+      .eq("section_id", id(sectionId, "section"))
+      .is("deleted_at", null)
+      .is("task.deleted_at", null);
+    check({ error });
+    if (count) {
+      throw new InputError(
+        `This section still has ${count === 1 ? "1 task" : `${count} tasks`}. Move ${count === 1 ? "it" : "them"} to another section first.`,
+      );
+    }
+    checkUpdated(await supabase.from("sections").update({ deleted_at: now() }).eq("id", sectionId).select("id"));
   });
 }
 
@@ -2250,16 +2325,20 @@ function fieldOptions(value: unknown): FieldOption[] {
   });
 }
 
+// Returns the new field's id. From the List's "+" column, `showInViews` pins it (so views with the
+// default columns show it right away) and `options` come along for select fields.
 export async function createField(
   projectId: string,
-  input: { name: string; fieldType: string; boundToSections?: boolean },
-): Promise<ActionResult> {
-  return run(async () => {
+  input: { name: string; fieldType: string; boundToSections?: boolean; showInViews?: boolean; options?: FieldOption[] },
+): Promise<ActionResult & { fieldId?: string }> {
+  let fieldId: string | undefined;
+  const result = await run(async () => {
     if (!isFieldType(input.fieldType)) throw new InputError("Unknown field type");
     const bound = Boolean(input.boundToSections);
     if (bound && input.fieldType !== "single_select") {
       throw new InputError("Only single-select fields can mirror sections");
     }
+    const withOptions = (input.fieldType === "single_select" || input.fieldType === "multi_select") && !bound;
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("custom_fields")
@@ -2269,19 +2348,26 @@ export async function createField(
       .order("sort_order", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const result = await supabase.from("custom_fields").insert({
-      project_id: projectId,
-      name: text(input.name, "Field name", { max: 100 }),
-      field_type: input.fieldType,
-      bound_to_sections: bound,
-      show_in_views: bound,
-      sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
-    });
-    if (result.error?.code === "23505") {
+    const inserted = await supabase
+      .from("custom_fields")
+      .insert({
+        project_id: projectId,
+        name: text(input.name, "Field name", { max: 100 }),
+        field_type: input.fieldType,
+        bound_to_sections: bound,
+        show_in_views: bound || Boolean(input.showInViews),
+        ...(withOptions && input.options?.length ? { options: fieldOptions(input.options) } : {}),
+        sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
+      })
+      .select("id")
+      .single();
+    if (inserted.error?.code === "23505") {
       throw new InputError("This project already has a section-bound field");
     }
-    check(result);
+    check(inserted);
+    fieldId = inserted.data?.id;
   });
+  return result.error ? result : { fieldId };
 }
 
 export async function updateField(

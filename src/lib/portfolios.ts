@@ -1,13 +1,15 @@
 // Portfolio and project-status vocabulary shared by server and client code. The database
-// (20261005070000_portfolios.sql) is the source of truth; this mirrors it for display.
+// (20261005070000_portfolios.sql, plus on_hold from 20261011020000_asana_parity_2.sql) is the source of
+// truth; this mirrors it for display. Asana's order: On track, At risk, Off track, On hold, Complete.
 
-export const PROJECT_STATUSES = ["on_track", "at_risk", "off_track", "complete"] as const;
+export const PROJECT_STATUSES = ["on_track", "at_risk", "off_track", "on_hold", "complete"] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   on_track: "On track",
   at_risk: "At risk",
   off_track: "Off track",
+  on_hold: "On hold",
   complete: "Complete",
 };
 

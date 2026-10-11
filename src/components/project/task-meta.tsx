@@ -1,19 +1,52 @@
 "use client";
 
-import { CalendarDays, Layers, ListChecks, Lock, Repeat, UserRound } from "lucide-react";
+import { CalendarDays, Layers, ListChecks, Lock, MessageSquare, Repeat, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
-import { formatDueDate, isOverdue, useToday } from "@/lib/dates";
+import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
 import { APPROVAL_STATUS_LABELS, type ApprovalTaskStatus } from "@/lib/task-kinds";
 
+// Asana's due dates: overdue in red, today and tomorrow in green (spelled out), the rest as dates.
+// Completed tasks stay neutral.
 export function DueDate({ task }: { task: Pick<ProjectTask, "dueOn" | "completedAt"> }) {
   const today = useToday();
   if (!task.dueOn) return null;
-  const overdue = isOverdue(task.dueOn, today, Boolean(task.completedAt));
+  const completed = Boolean(task.completedAt);
+  const overdue = isOverdue(task.dueOn, today, completed);
+  const soon = !completed && today !== null && (task.dueOn === today || task.dueOn === addDays(today, 1));
   const year = today ? Number(today.slice(0, 4)) : undefined;
+  const label =
+    today !== null && task.dueOn === today
+      ? "Today"
+      : today !== null && task.dueOn === addDays(today, 1)
+        ? "Tomorrow"
+        : today !== null && task.dueOn === addDays(today, -1)
+          ? "Yesterday"
+          : formatDueDate(task.dueOn, year);
   return (
-    <span className={`whitespace-nowrap text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
-      {formatDueDate(task.dueOn, year)}
+    <span
+      title={label === formatDueDate(task.dueOn, year) ? undefined : formatDueDate(task.dueOn, year)}
+      className={`whitespace-nowrap text-xs tabular-nums ${
+        overdue ? "font-medium text-red-600" : soon ? "font-medium text-green-700" : "text-zinc-500"
+      }`}
+    >
+      {label}
+      {overdue ? <span className="sr-only"> (overdue)</span> : null}
+    </span>
+  );
+}
+
+// The speech bubble with the number of comments (List rows, Board cards).
+export function CommentCount({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums text-zinc-500"
+      title={`${count} comment${count === 1 ? "" : "s"}`}
+    >
+      {count}
+      <MessageSquare className="size-3.5" aria-hidden />
+      <span className="sr-only"> comment{count === 1 ? "" : "s"}</span>
     </span>
   );
 }

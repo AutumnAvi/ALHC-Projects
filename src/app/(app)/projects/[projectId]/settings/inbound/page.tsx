@@ -54,7 +54,7 @@ export default async function ProjectInboundPage({ params }: PageProps<"/project
       endpoints={endpoints}
       calls={calls}
       sections={sections.map((s) => ({ id: s.id, name: s.name }))}
-      members={members.map((m) => ({ id: m.profileId, name: m.fullName?.trim() || m.email }))}
+      members={members.map((m) => ({ id: m.profileId, name: m.name }))}
       tags={tags.map((t) => ({ id: t.id, name: t.name, archived: t.archivedAt !== null }))}
     />
   );

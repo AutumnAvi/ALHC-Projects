@@ -26,12 +26,13 @@ import { OWN_PROJECTS_LABEL, PROJECT_STATUS_LABELS, isProjectStatus } from "@/li
 const LABEL_WIDTH = 256;
 const labelCell = { width: LABEL_WIDTH, minWidth: LABEL_WIDTH };
 
-// Bar color = project status (the same meaning as the status badge: accent on track, amber at risk,
-// red off track, zinc complete). The status is always spelled out for screen readers too.
+// Bar color = project status (the same meaning as the status badge: green on track, amber at risk,
+// red off track, blue on hold, zinc complete). The status is always spelled out for screen readers too.
 const BAR_CLASS = {
-  on_track: "bg-accent-500 text-white",
+  on_track: "bg-green-600 text-white",
   at_risk: "bg-amber-400 text-amber-950",
   off_track: "bg-red-500 text-white",
+  on_hold: "bg-accent-500 text-white",
   complete: "bg-zinc-300 text-zinc-700",
 } as const;
 

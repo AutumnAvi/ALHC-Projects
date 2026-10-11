@@ -30,6 +30,12 @@ export function hasRole(role: ProjectRole | null | undefined, min: ProjectRole):
   return Boolean(role) && RANK[role!] >= RANK[min];
 }
 
+// Asana's member order (header avatars, Overview, Share, Members page): owners first, then admins,
+// editors, commenters, viewers; by name within a role.
+export function compareMembers(a: { role: ProjectRole; name: string }, b: { role: ProjectRole; name: string }) {
+  return RANK[b.role] - RANK[a.role] || a.name.localeCompare(b.name);
+}
+
 // Roles a member with `role` may hand out: admins up to admin, owners anything.
 export function assignableRoles(role: ProjectRole | null | undefined): ProjectRole[] {
   if (role === "owner") return [...PROJECT_ROLES];

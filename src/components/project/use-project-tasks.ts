@@ -11,7 +11,8 @@ export type TaskChange =
   | { type: "field"; taskId: string; fieldId: string; value: Json }
   | { type: "due"; taskId: string; dueOn: string | null }
   | { type: "dates"; taskId: string; startOn: string | null; dueOn: string | null }
-  | { type: "tags"; taskId: string; tagIds: string[] };
+  | { type: "tags"; taskId: string; tagIds: string[] }
+  | { type: "title"; taskId: string; title: string };
 
 function apply(tasks: ProjectTask[], change: TaskChange): ProjectTask[] {
   const update = (patch: (t: ProjectTask) => ProjectTask) =>
@@ -33,6 +34,8 @@ function apply(tasks: ProjectTask[], change: TaskChange): ProjectTask[] {
       return update((t) => ({ ...t, startOn: change.startOn, dueOn: change.dueOn }));
     case "tags":
       return update((t) => ({ ...t, tagIds: change.tagIds }));
+    case "title":
+      return update((t) => ({ ...t, title: change.title }));
   }
 }
 
