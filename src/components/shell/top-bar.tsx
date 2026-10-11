@@ -58,8 +58,10 @@ export function TopBar() {
   );
 }
 
-const CREATE_ITEMS: { kind: ShellDialog["kind"]; label: string; icon: LucideIcon }[] = [
-  { kind: "task", label: "Task", icon: CircleCheck },
+// shortcut: the keys shown at the end of the item (Tab then Q opens the task dialog anywhere but a List
+// view or My tasks, where it adds a task inline).
+const CREATE_ITEMS: { kind: ShellDialog["kind"]; label: string; icon: LucideIcon; shortcut?: string[] }[] = [
+  { kind: "task", label: "Task", icon: CircleCheck, shortcut: ["Tab", "Q"] },
   { kind: "project", label: "Project", icon: FolderKanban },
   { kind: "message", label: "Message", icon: MessageSquare },
   { kind: "team", label: "Team", icon: Users },
@@ -83,7 +85,7 @@ function CreateMenu() {
     >
       {(close) => (
         <>
-          {CREATE_ITEMS.map(({ kind, label, icon: Icon }) => (
+          {CREATE_ITEMS.map(({ kind, label, icon: Icon, shortcut }) => (
             <MenuItem
               key={kind}
               onClick={() => {
@@ -91,7 +93,16 @@ function CreateMenu() {
                 openDialog({ kind } as ShellDialog);
               }}
             >
-              <Icon className="size-4 text-zinc-500" aria-hidden /> {label}
+              <Icon className="size-4 text-zinc-700" aria-hidden /> <span className="flex-1">{label}</span>
+              {shortcut ? (
+                <span className="flex items-center gap-0.5" aria-label={`Shortcut: ${shortcut.join(" then ")}`}>
+                  {shortcut.map((key) => (
+                    <kbd key={key} className="rounded border border-zinc-200 bg-zinc-50 px-1 font-sans text-2xs text-zinc-600">
+                      {key}
+                    </kbd>
+                  ))}
+                </span>
+              ) : null}
             </MenuItem>
           ))}
           <hr className="my-1.5 border-zinc-100" />
@@ -101,7 +112,7 @@ function CreateMenu() {
               openDialog({ kind: "invite" });
             }}
           >
-            <UserPlus className="size-4 text-zinc-500" aria-hidden /> Invite
+            <UserPlus className="size-4 text-zinc-700" aria-hidden /> Invite
           </MenuItem>
         </>
       )}
@@ -109,24 +120,36 @@ function CreateMenu() {
   );
 }
 
+// The person's name for the menu: their name, or the part of their email before @ when the account has
+// no name (password sign-ups fall back to the address), so the email isn't shown twice.
+function shownName(name: string, email: string) {
+  const trimmed = name.trim();
+  return trimmed && trimmed.toLowerCase() !== email.toLowerCase() && !trimmed.includes("@") ? trimmed : email.split("@")[0];
+}
+
 function AvatarMenu() {
   const router = useRouter();
   const { member, workspace, isWorkspaceAdmin, openDialog } = useShell();
+  const name = shownName(member.name, member.email);
   return (
     <Popover
       label="Your account"
       align="end"
-      panelClassName="w-64 p-1.5"
+      panelClassName="w-72 p-1.5"
       buttonClassName="inline-flex size-8 items-center justify-center rounded-full hover:ring-2 hover:ring-white/20 aria-expanded:ring-2 aria-expanded:ring-white/30"
-      button={<Avatar name={member.name} size="md" />}
+      button={<Avatar name={name} size="md" />}
     >
       {(close) => (
         <>
           <div className="flex items-center gap-2.5 px-2 py-2">
-            <Avatar name={member.name} size="md" />
+            <Avatar name={name} size="md" />
             <div className="min-w-0 leading-tight">
-              <p className="truncate text-sm font-medium text-zinc-900">{member.name}</p>
-              <p className="truncate text-xs text-zinc-500">{member.email}</p>
+              <p className="truncate text-sm font-medium text-zinc-900">{name}</p>
+              {/* The whole address, once: it wraps after the @ (or anywhere, if still too long). */}
+              <p className="text-xs text-zinc-500 [overflow-wrap:anywhere]">
+                {member.email.split("@")[0]}@<wbr />
+                {member.email.split("@").slice(1).join("@")}
+              </p>
             </div>
           </div>
           <div className="mx-2 mb-1.5 flex items-center gap-2 rounded-md bg-zinc-50 px-2 py-1.5 text-xs text-zinc-600">
@@ -152,7 +175,7 @@ function AvatarMenu() {
           <MenuItem
             onClick={() => {
               close();
-              openDialog({ kind: "settings", tab: "notifications" });
+              openDialog({ kind: "settings", tab: "profile" });
             }}
           >
             <Settings className="size-4 text-zinc-500" aria-hidden /> Settings

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
-import { Bell, BellOff, Pencil, SmilePlus, Trash2 } from "lucide-react";
+import { useOptimistic, useState, type ReactNode } from "react";
+import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { Popover } from "@/components/popover";
 import { Timestamp } from "@/components/timestamp";
@@ -20,6 +20,8 @@ import { describeRecurrence, parseRecurrence } from "@/lib/recurrence";
 import { TASK_KIND_LABELS, parseTaskKind } from "@/lib/task-kinds";
 import { dependencyLabel, parseDependencyKind } from "@/lib/dependencies";
 import { useTaskHref } from "@/components/project/shared";
+import { setActivityTab, useActivityTab } from "./pane-size";
+import { PeopleList } from "./person-picker";
 
 // The live state of a queued email, after "queued an email to …": sending, sent, failed with the reason,
 // or not sent because no email provider is configured.
@@ -85,6 +87,7 @@ export function TaskActivity({
   ]);
 
   const taskHref = useTaskHref();
+  const tab = useActivityTab();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const canComment = hasRole(task.viewerRole, "commenter");
   const candidates = mentionCandidates(task, profiles, memberId);
@@ -290,13 +293,46 @@ export function TaskActivity({
     }
   }
 
+  const comments = entries.filter((entry) => entry.type === "comment");
+  const shown = tab === "comments" ? comments : entries;
+  const commentCount = task.comments.filter((c) => !c.deleted).length;
+
   return (
-    <section className="mt-8 border-t border-zinc-200 pt-4" aria-labelledby="activity-heading">
-      <h3 id="activity-heading" className="text-sm font-semibold text-zinc-900">
-        Activity
-      </h3>
-      <ol className="mt-3 flex flex-col gap-3">
-        {entries.map((entry) =>
+    <section className="mt-8 border-t border-zinc-200 pt-1" aria-label="Comments and activity">
+      <div role="tablist" aria-label="Comments and activity" className="tab-strip gap-4">
+        {(
+          [
+            { key: "comments", label: "Comments", count: commentCount },
+            { key: "all", label: "All activity", count: 0 },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            id={`activity-tab-${t.key}`}
+            aria-selected={tab === t.key}
+            aria-controls="activity-panel"
+            onClick={() => setActivityTab(t.key)}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
+          >
+            {t.label}
+            {t.count ? <span className="rounded-full bg-zinc-100 px-1.5 text-2xs font-medium tabular-nums text-zinc-600">{t.count}</span> : null}
+          </button>
+        ))}
+      </div>
+      {shown.length === 0 ? (
+        <p id="activity-panel" role="tabpanel" aria-labelledby={`activity-tab-${tab}`} className="py-4 text-sm text-zinc-500">
+          {canComment ? "No comments yet. Ask a question or share an update below." : "No comments yet."}
+        </p>
+      ) : null}
+      <ol
+        id={shown.length ? "activity-panel" : undefined}
+        role={shown.length ? "tabpanel" : undefined}
+        aria-labelledby={shown.length ? `activity-tab-${tab}` : undefined}
+        className={`flex flex-col gap-3 ${shown.length ? "mt-3" : ""}`}
+      >
+        {shown.map((entry) =>
           entry.type === "story" ? (
             <li key={entry.story.id} className="flex items-baseline gap-2 pl-1 text-xs text-zinc-500">
               <span aria-hidden className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-zinc-300" />
@@ -579,7 +615,16 @@ export function MentionText({ body, names }: { body: string; names: string[] }) 
   );
 }
 
-export function CommentComposer({
+// People who can read the task: who can be added as a collaborator (followers must be able to read it).
+function readers(task: TaskDetail, profiles: Profile[]) {
+  return task.isPrivate
+    ? profiles.filter((p) => task.privateReaderIds.includes(p.id))
+    : profiles.filter((p) => task.memberRoles[p.id] !== undefined);
+}
+
+// The pane's footer (Asana parity, batch 3): a one-line "Add a comment" box that grows while you write,
+// and one row of collaborators (followers) with "+" and Leave / Join task. Commenters and above.
+export function TaskPaneFooter({
   task,
   profiles,
   memberId,
@@ -590,12 +635,15 @@ export function CommentComposer({
 }) {
   const [pending, run] = useServerAction();
   const [draft, setDraft] = useState("");
-  const following = task.followerIds.includes(memberId);
-  const followers = task.followerIds
+  const [focused, setFocused] = useState(false);
+  const [followerIds, setFollowerIds] = useOptimistic(task.followerIds);
+  const me = profiles.find((p) => p.id === memberId);
+  const following = followerIds.includes(memberId);
+  const followers = followerIds
     .map((followerId) => profiles.find((p) => p.id === followerId))
     .filter((p): p is Profile => Boolean(p));
-
   const canComment = hasRole(task.viewerRole, "commenter");
+  const open = focused || draft.trim() !== "";
 
   function submit() {
     const body = draft.trim();
@@ -608,55 +656,96 @@ export function CommentComposer({
     });
   }
 
+  function follow(profileId: string, on: boolean) {
+    run(
+      () => setFollowing(task.id, profileId, on),
+      () => setFollowerIds(on ? [...followerIds, profileId] : followerIds.filter((id) => id !== profileId)),
+    );
+  }
+
   return (
-    <div className="shrink-0 border-t border-zinc-200 bg-zinc-50 px-gutter py-2.5">
+    <div className="shrink-0 border-t border-zinc-200 bg-white px-gutter pb-2 pt-2.5 print:hidden">
       {canComment ? (
-        <>
-          <label htmlFor="new-comment" className="sr-only">
-            Add a comment
-          </label>
-          <MentionTextarea
-            id="new-comment"
-            rows={2}
-            value={draft}
-            onValueChange={setDraft}
-            candidates={mentionCandidates(task, profiles, memberId)}
-            onSubmit={submit}
-            placeholder="Add a comment. Type @ to mention someone"
-            className={COMMENT_INPUT}
-          />
-          <div className="mt-2 flex items-center gap-3">
-            <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-zinc-500">
-              <span className="shrink-0">Followers</span>
-              <span className="flex -space-x-1" aria-label={`Followers: ${followers.map(displayName).join(", ")}`}>
-                {followers.slice(0, 6).map((p) => (
-                  <span key={p.id} className="rounded-full ring-2 ring-zinc-50">
-                    <Avatar name={displayName(p)} />
-                  </span>
-                ))}
-              </span>
-              <button
-                type="button"
-                onClick={() => run(() => setFollowing(task.id, memberId, !following))}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-zinc-200/70 hover:text-zinc-800"
-              >
-                {following ? <BellOff className="size-3.5" /> : <Bell className="size-3.5" />}
-                {following ? "Unfollow" : "Follow"}
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={submit}
-              disabled={pending}
-              className="rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-60"
-            >
-              Comment
-            </button>
+        <div className="flex items-start gap-2">
+          <Avatar name={me ? displayName(me) : "You"} size="md" />
+          <div
+            onFocus={() => setFocused(true)}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+            }}
+            className={`min-w-0 flex-1 rounded-lg border bg-white transition-[border-color,box-shadow] ${
+              open ? "border-accent-500/60 shadow-[0_0_0_3px_var(--focus-ring)]" : "border-zinc-200 hover:border-zinc-300"
+            }`}
+          >
+            <label htmlFor="new-comment" className="sr-only">
+              Add a comment
+            </label>
+            <MentionTextarea
+              id="new-comment"
+              rows={1}
+              value={draft}
+              onValueChange={setDraft}
+              candidates={mentionCandidates(task, profiles, memberId)}
+              onSubmit={submit}
+              placeholder="Add a comment"
+              className={`block w-full resize-none border-0 bg-transparent px-3 text-sm shadow-none outline-none placeholder:text-zinc-500 focus-visible:shadow-none field-sizing-content ${
+                open ? "min-h-16 py-2" : "h-8 min-h-8 py-1.5"
+              }`}
+            />
+            {open ? (
+              <div className="flex items-center gap-2 px-2 pb-1.5">
+                <span className="mr-auto text-2xs text-zinc-500">Type @ to mention someone · ⌘/Ctrl+Enter to send</span>
+                <button type="button" onClick={submit} disabled={pending || !draft.trim()} className="btn-primary h-7 px-3">
+                  Comment
+                </button>
+              </div>
+            ) : null}
           </div>
-        </>
+        </div>
       ) : (
-        <p className="text-sm text-zinc-600">You can view this task. Commenters and above can comment and follow.</p>
+        <p className="text-sm text-zinc-600">You can view this task. Commenters and above can comment and collaborate.</p>
       )}
+      <div className="mt-1.5 flex min-h-7 items-center gap-2 text-xs text-zinc-500">
+        <span className="shrink-0">Collaborators</span>
+        <span className="flex -space-x-1" aria-label={`Collaborators: ${followers.map(displayName).join(", ") || "none"}`}>
+          {followers.slice(0, 8).map((p) => (
+            <span key={p.id} className="rounded-full ring-2 ring-white" data-tooltip={displayName(p)}>
+              <Avatar name={displayName(p)} />
+            </span>
+          ))}
+        </span>
+        {followers.length > 8 ? <span className="tabular-nums">+{followers.length - 8}</span> : null}
+        {canComment ? (
+          <Popover
+            label="Add or remove collaborators"
+            tooltip="Add collaborators"
+            side="top"
+            panelClassName="w-72 p-0"
+            buttonClassName="inline-flex size-6 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-500 hover:border-zinc-400 hover:text-zinc-800 aria-expanded:border-zinc-400"
+            button={<Plus className="size-3.5" aria-hidden />}
+          >
+            {() => (
+              <PeopleList
+                label="Collaborators"
+                people={readers(task, profiles)}
+                selected={followerIds}
+                emptyNote="Only people who can open this task can collaborate."
+                onPick={(profileId) => follow(profileId, !followerIds.includes(profileId))}
+              />
+            )}
+          </Popover>
+        ) : null}
+        {canComment ? (
+          <button
+            type="button"
+            onClick={() => follow(memberId, !following)}
+            className="ml-auto inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+          >
+            {following ? <BellOff className="size-3.5" aria-hidden /> : <Bell className="size-3.5" aria-hidden />}
+            {following ? "Leave task" : "Join task"}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

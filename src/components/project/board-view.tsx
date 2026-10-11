@@ -156,7 +156,8 @@ export function BoardView({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 items-start gap-3 overflow-x-auto px-gutter py-3">
+    // Columns stretch to the board's height (Asana), each scrolling its own cards.
+    <div className="flex min-h-0 flex-1 items-stretch gap-3 overflow-x-auto px-gutter py-3">
       {groups.map((group) => {
         const droppable = group.target.kind !== "none";
         const isTarget = dragging && dropTarget?.groupKey === group.key;
@@ -179,7 +180,7 @@ export function BoardView({
               );
             }}
             onDrop={handleDrop}
-            className={`group/section flex max-h-full w-70 shrink-0 flex-col rounded-xl p-2 transition-colors ${
+            className={`group/section flex w-70 shrink-0 flex-col rounded-xl p-2 transition-colors ${
               isTarget ? "bg-accent-50 ring-1 ring-accent-200" : "bg-zinc-100/70"
             }`}
           >
@@ -270,7 +271,7 @@ export function BoardView({
             </ol>
 
             {group.tasks.length === 0 && !isTarget ? (
-              <p className="rounded-lg border border-dashed border-zinc-300/80 px-2 py-4 text-center text-xs text-zinc-400">
+              <p className="rounded-lg border border-dashed border-zinc-300 bg-white/60 px-2 py-4 text-center text-xs text-zinc-600">
                 {dragging ? "Drop here" : group.target.kind === "section" ? "No tasks yet. Add one above or drag a card here." : "No tasks"}
               </p>
             ) : null}

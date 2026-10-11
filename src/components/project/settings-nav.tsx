@@ -17,7 +17,7 @@ export function SettingsNav({ projectId }: { projectId: string }) {
     { href: `${base}/trash`, label: "Trash" },
   ];
   return (
-    <nav aria-label="Project settings" className="mx-auto flex max-w-3xl gap-1 overflow-x-auto px-gutter pt-4">
+    <nav aria-label="Project settings" className="mx-auto flex max-w-3xl gap-1 overflow-x-auto overflow-y-hidden px-gutter pt-4">
       {items.map((item) => (
         <Link
           key={item.href}

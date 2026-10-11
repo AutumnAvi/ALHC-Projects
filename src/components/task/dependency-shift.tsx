@@ -15,6 +15,8 @@ type Options = {
   onOptimistic?: (moves: MovedTask[]) => void;
   // Called when the change didn't happen (cancelled or refused), e.g. to reset an input.
   onRevert?: () => void;
+  // Called just before the confirm dialog opens (e.g. to close the date picker it would sit under).
+  onPrompt?: () => void;
 };
 
 type Choice = { confirmed: string[]; pull: boolean } | "only" | "cancel";
@@ -99,6 +101,7 @@ export function useDependencyShift(): {
       }
 
       // Keep the transition (and the optimistic position) while the person decides.
+      options.onPrompt?.();
       const choice = await new Promise<Choice>((resolve) =>
         setPrompt({
           subject,

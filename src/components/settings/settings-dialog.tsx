@@ -29,7 +29,7 @@ export function SettingsDialog({ tab: initialTab, onClose }: { tab: SettingsTab;
   }, []);
 
   return (
-    <Dialog title="Settings" onClose={onClose} width="max-w-2xl">
+    <Dialog title="Settings" onClose={onClose} width="max-w-2xl" compact>
       {failed ? (
         <p className="text-sm text-red-600">Couldn’t load your settings. Try again.</p>
       ) : (

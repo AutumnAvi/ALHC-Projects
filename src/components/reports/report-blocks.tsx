@@ -2,7 +2,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { EyeOff } from "lucide-react";
 import { CountBarChart, type BarDatum } from "@/components/dashboard/bar-chart";
-import { formatDueDate } from "@/lib/dates";
+// Not "@/lib/dates": that module is client-only, and this file renders on the server.
+import { dayLabel } from "@/lib/date-input";
 import { RECENT_DAYS, formatProgress, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
 
 // Server-safe building blocks shared by the Reports overview and personal dashboards. Charts are the
@@ -134,7 +135,7 @@ export function OverdueTable({ rows, caption, limit }: { rows: OverdueRow[]; cap
               <td className={`${TD} max-w-48 truncate text-zinc-600`}>{row.projectName}</td>
               <td className={`${TD} text-zinc-600`}>{row.assignee || <span className="text-zinc-400">Unassigned</span>}</td>
               <td className={`${TD} whitespace-nowrap text-right tabular-nums text-red-700`}>
-                {formatDueDate(row.dueOn, CURRENT_YEAR)}{" "}
+                {dayLabel(row.dueOn, CURRENT_YEAR)}{" "}
                 <span className="text-xs text-zinc-500">
                   ({row.daysOverdue} {row.daysOverdue === 1 ? "day" : "days"})
                 </span>

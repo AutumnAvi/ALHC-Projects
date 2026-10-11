@@ -1000,7 +1000,8 @@ function TaskRow({
   const assignee = task.assigneeId ? profilesById.get(task.assigneeId) : undefined;
   const open = openTaskId === task.id;
   const selected = selection.isSelected(task.id);
-  const active = selection.active === task.id;
+  // The keyboard cursor's blue edge (after ↑/↓ only; a clicked row keeps none once the pane closes).
+  const active = selection.cursor === task.id;
   // The sticky Name cell needs an opaque background of its own.
   const tone = selected || open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50";
 

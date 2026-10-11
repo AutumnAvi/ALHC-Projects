@@ -116,6 +116,29 @@
   @apply inline-flex max-w-full items-center gap-1 rounded bg-zinc-100 px-1.5 py-px text-xs text-zinc-600;
 }
 
+/* A row of underlined tabs (project and portfolio headers, Reports, Settings → Workspace, the Settings
+   modal). It scrolls sideways when the tabs don't fit but never vertically — a 1px overflow there made
+   Windows draw a stray stacked up/down scrollbar at the end of the row — and draws its hairline inside,
+   so the active tab's underline covers it. */
+@utility tab-strip {
+  @apply flex overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--color-zinc-200)];
+  scrollbar-width: thin;
+}
+
+/* The task pane (Asana parity, batch 3). On wide screens it sits next to the page at about 45% of the
+   content width, and the page narrows to fit: .app-main (position: relative, the pane's containing
+   block) gets the same width as right padding. Padding percentages count the whole row, so the sidebar
+   (--sidebar-w, set by AppShell) is taken out first. Narrower screens show the pane over the page. */
+@media (min-width: 64rem) {
+  .app-main:has([data-task-pane="side"]) {
+    padding-right: min(max(calc((100% - var(--sidebar-w, 0px)) * 0.45), 26rem), 56rem);
+  }
+
+  [data-task-pane="side"] {
+    width: min(max(45%, 26rem), 56rem);
+  }
+}
+
 @utility skeleton {
   @apply animate-pulse rounded bg-zinc-100;
 }
@@ -151,6 +174,29 @@
   .report-card,
   .report-card tr {
     break-inside: avoid;
+  }
+
+  /* Print from a task's "…" menu (html[data-print-task]): only the task pane, flowing on the page. */
+  html[data-print-task] body *:not(:has([data-task-pane])):not([data-task-pane]):not([data-task-pane] *) {
+    display: none !important;
+  }
+
+  html[data-print-task] .app-main {
+    padding: 0 !important;
+  }
+
+  html[data-print-task] [data-task-pane],
+  html[data-print-task] [data-task-pane-backdrop] {
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
   }
 
   a {

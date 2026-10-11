@@ -2,15 +2,20 @@
 
 import Link from "next/link";
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
-import { ArrowDown, ArrowUp, ChevronRight, GripVertical, ListChecks, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, GripVertical, ListChecks, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { Avatar, displayName } from "@/components/avatar";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
+import { MenuItem, Popover } from "@/components/popover";
 import { useTaskHref } from "@/components/project/shared";
 import { useServerAction } from "@/components/toast";
 import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask } from "@/lib/actions";
+import { addDays, useToday } from "@/lib/dates";
 import type { Profile, SubtaskItem, TaskDetail } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 import { MAX_SUBTASK_DEPTH, subtaskOrderBefore } from "@/lib/subtasks";
+import { DateRangePicker } from "./date-picker";
+import { PersonPicker } from "./person-picker";
+import { useDateText } from "./task-dates";
 import { PANE_HEADING } from "./pane-styles";
 
 type Change =
@@ -31,13 +36,29 @@ function applyChange(current: SubtaskItem[], change: Change): SubtaskItem[] {
 }
 
 const SUBTASK_DRAG = "application/x-alhc-subtask";
-const SMALL_CONTROL =
-  "h-6 rounded-md border border-transparent bg-transparent px-1 text-xs text-zinc-600 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none disabled:hover:border-transparent";
+// Hover-only controls that stay visible on touch screens and while focused or open.
+const REVEAL = "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100";
 
-// The pane's Subtasks section: real subtasks (tasks with this task as parent). Inline add, rename,
-// complete, assign, start/due dates, reorder (drag, or Move up / Move down), delete, and open one in its
-// own pane (where it has its own subtasks, comments, fields, and so on).
-export function TaskSubtasks({ task, profiles }: { task: TaskDetail; profiles: Profile[] }) {
+// Whether the pane shows the Subtasks section (Editors can always add the first one).
+export function canAddSubtask(task: TaskDetail) {
+  return hasRole(task.viewerRole, "editor") && task.ancestors.length < MAX_SUBTASK_DEPTH;
+}
+
+// The pane's Subtasks (Asana parity, batch 3): one line per subtask — complete, rename in place,
+// assignee and dates in pickers, a menu to move or delete, and ">" to open it in its own pane (where it
+// has its own subtasks, comments, fields, and so on). "+ Add subtask" below; the header's subtask
+// button opens the same input (adding / onAddingChange).
+export function TaskSubtasks({
+  task,
+  profiles,
+  adding,
+  onAddingChange,
+}: {
+  task: TaskDetail;
+  profiles: Profile[];
+  adding: boolean;
+  onAddingChange: (adding: boolean) => void;
+}) {
   const [, run] = useServerAction();
   const taskHref = useTaskHref();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -55,6 +76,8 @@ export function TaskSubtasks({ task, profiles }: { task: TaskDetail; profiles: P
         p.id === s.assigneeId ||
         (s.kind === "approval" ? hasRole(task.memberRoles[p.id], "commenter") : p.id in task.memberRoles),
     );
+
+  if (subtasks.length === 0 && !(canEdit && !atDepthLimit)) return null;
 
   function move(subtask: SubtaskItem, beforeId: string | null) {
     if (beforeId === subtask.id) return;
@@ -82,48 +105,56 @@ export function TaskSubtasks({ task, profiles }: { task: TaskDetail; profiles: P
     if (subtask) move(subtask, beforeId);
   }
 
+  function add() {
+    const input = inputRef.current;
+    const title = input?.value.trim();
+    if (!input || !title) return;
+    input.value = "";
+    run(() => createSubtask(task.id, title));
+  }
+
   return (
-    <section className="mt-6" aria-labelledby="subtasks-heading">
-      <div className="flex items-baseline justify-between">
-        <h3 id="subtasks-heading" className={PANE_HEADING}>
-          Subtasks
-        </h3>
-        {subtasks.length > 0 ? (
+    <section id="task-subtasks" className="mt-6" aria-labelledby={subtasks.length ? "subtasks-heading" : undefined}>
+      {subtasks.length > 0 ? (
+        <div className="flex items-baseline justify-between">
+          <h3 id="subtasks-heading" className={PANE_HEADING}>
+            Subtasks
+          </h3>
           <span className="text-xs tabular-nums text-zinc-500">
             {done} of {subtasks.length} done
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
-      <ul
-        className="mt-2 divide-y divide-zinc-100 rounded-md border border-zinc-200"
-        onDragOver={(e) => {
-          if (!dragging) return;
-          e.preventDefault();
-          if (dropBefore === undefined) setDropBefore(null);
-        }}
-        onDrop={dragging ? drop : undefined}
-      >
-        {subtasks.map((subtask, index) => {
-          const completed = Boolean(subtask.completedAt);
-          const approval = approvalBySubtask.get(subtask.id);
-          const showDrop = dragging !== null && dragging !== subtask.id && dropBefore === subtask.id;
-          return (
-            <li
-              key={subtask.id}
-              className={`group px-2 py-1.5 ${dragging === subtask.id ? "opacity-40" : ""} ${
-                showDrop ? "shadow-[inset_0_2px_0_var(--color-accent-500)]" : ""
-              }`}
-              onDragOver={(e) => {
-                if (!dragging || dragging === subtask.id) return;
-                e.preventDefault();
-                e.stopPropagation();
-                const rect = e.currentTarget.getBoundingClientRect();
-                const after = e.clientY > rect.top + rect.height / 2;
-                setDropBefore(after ? (subtasks[index + 1]?.id ?? null) : subtask.id);
-              }}
-            >
-              <div className="flex items-center gap-2">
+      {subtasks.length > 0 || adding ? (
+        <ul
+          className="mt-1.5 border-t border-zinc-100"
+          onDragOver={(e) => {
+            if (!dragging) return;
+            e.preventDefault();
+            if (dropBefore === undefined) setDropBefore(null);
+          }}
+          onDrop={dragging ? drop : undefined}
+        >
+          {subtasks.map((subtask, index) => {
+            const completed = Boolean(subtask.completedAt);
+            const approval = approvalBySubtask.get(subtask.id);
+            const showDrop = dragging !== null && dragging !== subtask.id && dropBefore === subtask.id;
+            return (
+              <li
+                key={subtask.id}
+                className={`group flex min-h-9 items-center gap-1.5 border-b border-zinc-100 pr-1 hover:bg-zinc-50 ${
+                  dragging === subtask.id ? "opacity-40" : ""
+                } ${showDrop ? "shadow-[inset_0_2px_0_var(--color-accent-500)]" : ""}`}
+                onDragOver={(e) => {
+                  if (!dragging || dragging === subtask.id) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const after = e.clientY > rect.top + rect.height / 2;
+                  setDropBefore(after ? (subtasks[index + 1]?.id ?? null) : subtask.id);
+                }}
+              >
                 {canEdit ? (
                   <span
                     draggable
@@ -138,14 +169,16 @@ export function TaskSubtasks({ task, profiles }: { task: TaskDetail; profiles: P
                     }}
                     title="Drag to reorder"
                     aria-hidden
-                    className="cursor-grab rounded text-zinc-300 opacity-0 hover:text-zinc-500 active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                    className="flex w-4 shrink-0 cursor-grab justify-center text-zinc-300 opacity-0 hover:text-zinc-500 active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                   >
                     <GripVertical className="size-3.5" />
                   </span>
-                ) : null}
+                ) : (
+                  <span className="w-1 shrink-0" aria-hidden />
+                )}
                 {approval ? (
                   <span
-                    title="Approval subtask: decide it in Approvals below"
+                    data-tooltip="Approval subtask: decide it in Approvals below"
                     className={`inline-flex size-4 shrink-0 items-center justify-center ${
                       approval.status === "approved" ? "text-green-700" : "text-amber-600"
                     }`}
@@ -173,6 +206,7 @@ export function TaskSubtasks({ task, profiles }: { task: TaskDetail; profiles: P
                 <input
                   id={`subtask-${subtask.id}`}
                   defaultValue={subtask.title}
+                  readOnly={!canEdit}
                   onBlur={(e) => {
                     const title = e.currentTarget.value.trim();
                     if (!title) e.currentTarget.value = subtask.title;
@@ -181,7 +215,7 @@ export function TaskSubtasks({ task, profiles }: { task: TaskDetail; profiles: P
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
                   }}
-                  className={`min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
+                  className={`h-7 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:bg-white focus:outline-none read-only:hover:border-transparent ${
                     completed ? "text-zinc-400 line-through" : "text-zinc-800"
                   }`}
                 />
@@ -195,149 +229,199 @@ export function TaskSubtasks({ task, profiles }: { task: TaskDetail; profiles: P
                     {subtask.subtaskDoneCount}/{subtask.subtaskCount}
                   </span>
                 ) : null}
-                {canEdit && index > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => move(subtask, subtasks[index - 1].id)}
-                    aria-label={`Move subtask ${subtask.title} up`}
-                    title="Move up"
-                    className="rounded p-0.5 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-zinc-700 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                  >
-                    <ArrowUp className="size-3.5" />
-                  </button>
-                ) : null}
-                {canEdit && index < subtasks.length - 1 ? (
-                  <button
-                    type="button"
-                    onClick={() => move(subtask, subtasks[index + 2]?.id ?? null)}
-                    aria-label={`Move subtask ${subtask.title} down`}
-                    title="Move down"
-                    className="rounded p-0.5 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-zinc-700 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                  >
-                    <ArrowDown className="size-3.5" />
-                  </button>
-                ) : null}
+                <SubtaskAssignee subtask={subtask} people={assignableFor(subtask)} canEdit={canEdit} onChange={(assigneeId) => patch(subtask, { assigneeId })} />
+                <SubtaskDates subtask={subtask} canEdit={canEdit} onChange={(dates) => patch(subtask, dates)} />
                 {canEdit ? (
-                  <button
-                    type="button"
-                    aria-label={`Delete subtask ${subtask.title}`}
-                    title="Delete subtask (and its subtasks)"
-                    onClick={() =>
-                      run(
-                        () => deleteSubtask(subtask.id),
-                        () => change({ type: "remove", id: subtask.id }),
-                      )
-                    }
-                    className="rounded p-0.5 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                  <Popover
+                    label={`More for subtask ${subtask.title}`}
+                    tooltip="More actions"
+                    align="end"
+                    panelClassName="w-52 p-1.5"
+                    buttonClassName={`btn-icon size-6 ${REVEAL}`}
+                    button={<MoreHorizontal className="size-4" aria-hidden />}
                   >
-                    <Trash2 className="size-3.5" />
-                  </button>
+                    {(close) => (
+                      <>
+                        <MenuItem
+                          disabled={index === 0}
+                          onClick={() => {
+                            close();
+                            move(subtask, subtasks[index - 1].id);
+                          }}
+                        >
+                          <ArrowUp className="size-4 text-zinc-500" aria-hidden /> Move up
+                        </MenuItem>
+                        <MenuItem
+                          disabled={index === subtasks.length - 1}
+                          onClick={() => {
+                            close();
+                            move(subtask, subtasks[index + 2]?.id ?? null);
+                          }}
+                        >
+                          <ArrowDown className="size-4 text-zinc-500" aria-hidden /> Move down
+                        </MenuItem>
+                        <MenuItem
+                          danger
+                          onClick={() => {
+                            close();
+                            run(
+                              () => deleteSubtask(subtask.id),
+                              () => change({ type: "remove", id: subtask.id }),
+                            );
+                          }}
+                        >
+                          <Trash2 className="size-4" aria-hidden /> Delete subtask
+                        </MenuItem>
+                      </>
+                    )}
+                  </Popover>
                 ) : null}
                 <Link
                   href={taskHref(subtask.id)}
                   scroll={false}
                   aria-label={`Open subtask ${subtask.title}`}
-                  title="Open subtask"
+                  data-tooltip="Open subtask"
                   className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
                 >
                   <ChevronRight className="size-4" />
                 </Link>
-              </div>
-              <div className={`mt-0.5 flex flex-wrap items-center gap-1 ${canEdit ? "pl-[3.25rem]" : "pl-6"}`}>
-                <label className="sr-only" htmlFor={`subtask-assignee-${subtask.id}`}>
-                  {subtask.kind === "approval" ? "Approver" : "Assignee"} of {subtask.title}
-                </label>
-                <select
-                  id={`subtask-assignee-${subtask.id}`}
-                  key={`a-${subtask.assigneeId ?? "none"}`}
-                  defaultValue={subtask.assigneeId ?? ""}
-                  disabled={!canEdit}
-                  onChange={(e) => patch(subtask, { assigneeId: e.currentTarget.value || null })}
-                  className={`${SMALL_CONTROL} max-w-40`}
-                >
-                  <option value="">No assignee</option>
-                  {assignableFor(subtask).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {displayName(p)}
-                    </option>
-                  ))}
-                </select>
-                {subtask.kind === "milestone" ? null : (
-                  <>
-                    <label className="sr-only" htmlFor={`subtask-start-${subtask.id}`}>
-                      Start date of {subtask.title}
-                    </label>
-                    <input
-                      id={`subtask-start-${subtask.id}`}
-                      key={`s-${subtask.startOn ?? ""}`}
-                      type="date"
-                      title="Start date"
-                      defaultValue={subtask.startOn ?? ""}
-                      max={subtask.dueOn ?? undefined}
-                      disabled={!canEdit}
-                      onChange={(e) => patch(subtask, { startOn: e.currentTarget.value || null })}
-                      className={`${SMALL_CONTROL} w-32`}
-                    />
-                    <span aria-hidden className="text-xs text-zinc-300">
-                      →
-                    </span>
-                  </>
-                )}
-                <label className="sr-only" htmlFor={`subtask-due-${subtask.id}`}>
-                  Due date of {subtask.title}
+              </li>
+            );
+          })}
+          {adding ? (
+            <li className="flex min-h-9 items-center gap-1.5 border-b border-zinc-100 pl-5 pr-1">
+              <span aria-hidden className="size-4 shrink-0 rounded-full border border-dashed border-zinc-300" />
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  add();
+                }}
+                className="min-w-0 flex-1"
+              >
+                <label className="sr-only" htmlFor="new-subtask">
+                  New subtask name
                 </label>
                 <input
-                  id={`subtask-due-${subtask.id}`}
-                  key={`d-${subtask.dueOn ?? ""}`}
-                  type="date"
-                  title="Due date"
-                  defaultValue={subtask.dueOn ?? ""}
-                  min={subtask.startOn ?? undefined}
-                  disabled={!canEdit}
-                  onChange={(e) => patch(subtask, { dueOn: e.currentTarget.value || null })}
-                  className={`${SMALL_CONTROL} w-32`}
+                  ref={inputRef}
+                  id="new-subtask"
+                  autoFocus
+                  placeholder="Write a subtask name, then press Enter"
+                  onBlur={(e) => {
+                    if (!e.currentTarget.value.trim()) onAddingChange(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.currentTarget.value = "";
+                      onAddingChange(false);
+                    }
+                  }}
+                  className="h-7 w-full rounded-md border border-transparent bg-transparent px-1 text-sm placeholder:text-zinc-500 focus:outline-none"
                 />
-              </div>
+              </form>
             </li>
-          );
-        })}
-        {canEdit && !atDepthLimit ? (
-          <li className="px-3 py-1.5">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const input = inputRef.current;
-                const title = input?.value.trim();
-                if (!input || !title) return;
-                input.value = "";
-                run(() => createSubtask(task.id, title));
-              }}
-              className="flex items-center gap-2.5"
-            >
-              <Plus className="size-4 text-zinc-400" aria-hidden />
-              <label className="sr-only" htmlFor="new-subtask">
-                New subtask
-              </label>
-              <input
-                ref={inputRef}
-                id="new-subtask"
-                placeholder={subtasks.length ? "Add another subtask" : "Break this task into steps"}
-                className="min-w-0 flex-1 bg-transparent py-0.5 text-sm placeholder:text-zinc-400 focus:outline-none"
-              />
-            </form>
-          </li>
-        ) : null}
-        {subtasks.length === 0 && (!canEdit || atDepthLimit) ? (
-          <li className="px-3 py-2 text-xs text-zinc-500">
-            {atDepthLimit
-              ? `No subtasks. Subtasks nest up to ${MAX_SUBTASK_DEPTH} levels, and this one is at the limit.`
-              : "No subtasks yet. Editors can break this task into steps here."}
-          </li>
-        ) : null}
-      </ul>
+          ) : null}
+        </ul>
+      ) : null}
+
+      {canEdit && !atDepthLimit && !adding ? (
+        <button type="button" onClick={() => onAddingChange(true)} className="btn-ghost -ml-1 mt-1 h-7 px-1.5 text-zinc-600 print:hidden">
+          <Plus className="size-4" aria-hidden />
+          Add subtask
+        </button>
+      ) : null}
       {canEdit && atDepthLimit && subtasks.length > 0 ? (
         <p className="mt-1 text-xs text-zinc-500">Subtasks nest up to {MAX_SUBTASK_DEPTH} levels; this one is at the limit.</p>
       ) : null}
     </section>
+  );
+}
+
+// The subtask's assignee: their avatar, or a dashed person on hover; a picker for Editors.
+function SubtaskAssignee({
+  subtask,
+  people,
+  canEdit,
+  onChange,
+}: {
+  subtask: SubtaskItem;
+  people: Profile[];
+  canEdit: boolean;
+  onChange: (assigneeId: string | null) => void;
+}) {
+  const assignee = people.find((p) => p.id === subtask.assigneeId);
+  const name = assignee ? displayName(assignee) : null;
+  const face = name ? (
+    <Avatar name={name} />
+  ) : (
+    <span className="inline-flex size-5 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-400">
+      <UserRound className="size-3" aria-hidden />
+    </span>
+  );
+  if (!canEdit) return name ? <span className="shrink-0">{face}<span className="sr-only">Assigned to {name}</span></span> : null;
+  return (
+    <PersonPicker
+      label={`${subtask.kind === "approval" ? "Approver" : "Assignee"} of ${subtask.title}: ${name ?? "nobody"}. Change`}
+      tooltip={name ?? "Assign"}
+      align="end"
+      people={people}
+      value={subtask.assigneeId}
+      onPick={onChange}
+      onClear={() => onChange(null)}
+      buttonClassName={`inline-flex size-6 shrink-0 items-center justify-center rounded-full hover:bg-zinc-100 ${name ? "" : REVEAL}`}
+      button={face}
+    />
+  );
+}
+
+// The subtask's dates: the due date (red when overdue, green today / tomorrow), or a dashed calendar on
+// hover; the same date picker as the task's, without times or Repeats.
+function SubtaskDates({
+  subtask,
+  canEdit,
+  onChange,
+}: {
+  subtask: SubtaskItem;
+  canEdit: boolean;
+  onChange: (dates: { startOn: string | null; dueOn: string | null }) => void;
+}) {
+  const today = useToday();
+  const dateText = useDateText();
+  const completed = Boolean(subtask.completedAt);
+  const { startOn, dueOn } = subtask;
+  const overdue = Boolean(dueOn && today && !completed && dueOn < today);
+  const soon = Boolean(dueOn && today && !completed && (dueOn === today || dueOn === addDays(today, 1)));
+  const text = dueOn ? (startOn && startOn !== dueOn ? `${dateText(startOn)} – ${dateText(dueOn)}` : dateText(dueOn)) : startOn ? `Starts ${dateText(startOn)}` : null;
+  const shown = text ? (
+    <span className={`whitespace-nowrap text-xs tabular-nums ${overdue ? "font-medium text-red-600" : soon ? "font-medium text-green-700" : "text-zinc-500"}`}>
+      {text}
+    </span>
+  ) : (
+    <span className="inline-flex size-5 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-400">
+      <CalendarDays className="size-3" aria-hidden />
+    </span>
+  );
+  if (!canEdit) return text ? <span className="shrink-0">{shown}</span> : null;
+  return (
+    <Popover
+      label={`Dates of ${subtask.title}: ${text ?? "none"}. Change`}
+      tooltip={text ? undefined : "Set a due date"}
+      align="end"
+      panelClassName="w-[19rem] p-0"
+      buttonClassName={`inline-flex h-6 shrink-0 items-center rounded-md px-1 hover:bg-zinc-100 aria-expanded:bg-zinc-100 ${text ? "" : REVEAL}`}
+      button={shown}
+    >
+      {(close) => (
+        <DateRangePicker
+          value={{ start: startOn, due: dueOn }}
+          allowStart={subtask.kind !== "milestone"}
+          onChange={(next, shouldClose) => {
+            if (shouldClose) close();
+            if (next.start !== startOn || next.due !== dueOn) onChange({ startOn: next.start, dueOn: next.due });
+          }}
+        />
+      )}
+    </Popover>
   );
 }

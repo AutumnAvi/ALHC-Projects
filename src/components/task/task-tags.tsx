@@ -45,7 +45,7 @@ export function TaskTags({ taskId, tagIds, tags, canEdit }: { taskId: string; ta
       {canEdit ? (
         <Popover
           label="Add a tag"
-          buttonClassName="btn-ghost h-6 px-1.5 text-xs"
+          buttonClassName="btn-ghost h-6 px-1.5 text-xs print:hidden"
           button={
             <>
               <Plus className="size-3.5" aria-hidden />

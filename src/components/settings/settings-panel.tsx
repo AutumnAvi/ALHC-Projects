@@ -26,7 +26,7 @@ export function SettingsPanel({
 }) {
   return (
     <div>
-      <div role="tablist" aria-label="Settings" className="flex gap-1 overflow-x-auto border-b border-zinc-200">
+      <div role="tablist" aria-label="Settings" className="tab-strip gap-1">
         {SETTINGS_TABS.map((t) => (
           <button
             key={t.key}
@@ -36,13 +36,13 @@ export function SettingsPanel({
             aria-selected={tab === t.key}
             aria-controls={`settings-panel-${t.key}`}
             onClick={() => onTabChange(t.key)}
-            className="-mb-px shrink-0 border-b-2 border-transparent px-2.5 pb-2 text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
+            className="shrink-0 border-b-2 border-transparent px-2.5 pb-2 text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
           >
             {t.label}
           </button>
         ))}
       </div>
-      <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="pt-5">
+      <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="pt-4">
         {!data ? (
           <div role="status" className="flex flex-col gap-3">
             <span className="sr-only">Loading your settings…</span>
@@ -64,7 +64,7 @@ export function SettingsPanel({
   );
 }
 
-const ROW = "grid gap-x-6 gap-y-1 py-3 sm:grid-cols-[9rem_1fr]";
+const ROW = "grid gap-x-6 gap-y-1 py-2.5 sm:grid-cols-[9rem_1fr]";
 const TERM = "text-sm text-zinc-500";
 
 function initials(name: string) {
@@ -166,8 +166,8 @@ const SIDEBAR_OPTIONS = [
   { value: "hidden", label: "Hidden" },
 ] as const;
 const PANE_OPTIONS = [
-  { value: "compact", label: "Compact" },
-  { value: "expanded", label: "Full width" },
+  { value: "compact", label: "Side pane" },
+  { value: "expanded", label: "Full screen" },
 ] as const;
 const MY_TASKS_OPTIONS = [
   { value: "sections", label: "Sections" },

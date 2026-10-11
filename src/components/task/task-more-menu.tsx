@@ -1,0 +1,192 @@
+"use client";
+
+import { useState } from "react";
+import {
+  Check,
+  CircleCheck,
+  Copy,
+  Diamond,
+  GitBranch,
+  LayoutTemplate,
+  Link2,
+  ListPlus,
+  MoreHorizontal,
+  Paperclip,
+  Printer,
+  Repeat,
+  ShieldCheck,
+  ThumbsUp,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
+import { MenuItem, Popover } from "@/components/popover";
+import { useServerAction } from "@/components/toast";
+import { deleteTask, setTaskKind } from "@/lib/actions";
+import type { TaskDetail } from "@/lib/data";
+import { describeRecurrence } from "@/lib/recurrence";
+import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/task-kinds";
+import { DuplicateTaskDialog } from "./duplicate-task-dialog";
+import { SaveTaskTemplateDialog } from "./save-task-template";
+import { ConvertTaskDialog, canConvert } from "./task-convert";
+import { OPEN_REPEATS_EVENT } from "./task-dates";
+
+const KIND_ICONS: Record<TaskKind, LucideIcon> = { task: CircleCheck, milestone: Diamond, approval: ThumbsUp };
+const HEADING = "px-2 pb-0.5 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-zinc-500";
+
+// Prints only the task: html[data-print-task] makes the print stylesheet hide everything else.
+export function printTask() {
+  const root = document.documentElement;
+  root.dataset.printTask = "";
+  const done = () => {
+    delete root.dataset.printTask;
+    window.removeEventListener("afterprint", done);
+  };
+  window.addEventListener("afterprint", done);
+  window.print();
+}
+
+// The pane's "…" (Asana parity, batch 3): what used to crowd the top of the pane — Repeats, the task
+// type, approvals — plus convert, save as template, duplicate, copy link, print, and delete. Viewers and
+// Commenters get the read-only items.
+export function TaskMoreMenu({
+  task,
+  canEdit,
+  canAddSubtask,
+  onRequestApproval,
+  onAddSubtask,
+  onAttach,
+  onCopyLink,
+  onDeleted,
+}: {
+  task: TaskDetail;
+  canEdit: boolean;
+  canAddSubtask: boolean;
+  onRequestApproval: () => void;
+  onAddSubtask: () => void;
+  onAttach: () => void;
+  onCopyLink: () => void;
+  onDeleted: () => void;
+}) {
+  const [, run] = useServerAction();
+  const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | null>(null);
+  const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+  const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
+
+  function changeKind(kind: TaskKind) {
+    if (kind === task.kind) return;
+    if (kind === "milestone" && task.startOn && !window.confirm("A milestone has only a due date. Clear the start date?")) return;
+    run(() => setTaskKind(task.id, kind));
+  }
+
+  function remove() {
+    const message = task.isSubtask
+      ? `Delete subtask “${task.title}”? It moves to the Trash with its own subtasks, where Editors can restore it.`
+      : `Delete “${task.title}”? It moves to the Trash of each of its projects (with its subtasks), where Editors can restore it.`;
+    if (!window.confirm(message)) return;
+    run(async () => {
+      const result = await deleteTask(task.id);
+      if (!result.error) onDeleted();
+      return result;
+    });
+  }
+
+  const item = (Icon: LucideIcon, label: string, onClick: () => void, close: () => void) => (
+    <MenuItem
+      onClick={() => {
+        close();
+        onClick();
+      }}
+    >
+      <Icon className="size-4 text-zinc-500" aria-hidden /> {label}
+    </MenuItem>
+  );
+
+  return (
+    <>
+      <Popover
+        label="More actions"
+        tooltip="More actions"
+        align="end"
+        panelClassName="w-64 p-1.5"
+        buttonClassName="btn-icon"
+        button={<MoreHorizontal className="size-4" aria-hidden />}
+      >
+        {(close) => (
+          <>
+            {canEdit ? (
+              <>
+                {item(
+                  Repeat,
+                  task.recurrence ? `Repeats: ${describeRecurrence(task.recurrence)}` : "Set to repeat…",
+                  () => window.dispatchEvent(new Event(OPEN_REPEATS_EVENT)),
+                  close,
+                )}
+                {item(ShieldCheck, "Request approval…", onRequestApproval, close)}
+                {canAddSubtask ? item(ListPlus, "Add subtask", onAddSubtask, close) : null}
+                {item(Paperclip, "Attach files…", onAttach, close)}
+                <div role="separator" className="my-1 border-t border-zinc-100" />
+                <p className={HEADING} id="task-type-heading">
+                  Task type
+                </p>
+                <div role="group" aria-labelledby="task-type-heading">
+                  {TASK_KINDS.map((kind) => {
+                    const Icon = KIND_ICONS[kind];
+                    return (
+                      <MenuItem
+                        key={kind}
+                        onClick={() => {
+                          close();
+                          changeKind(kind);
+                        }}
+                      >
+                        <Icon className="size-4 text-zinc-500" aria-hidden />
+                        <span className="flex-1">{TASK_KIND_LABELS[kind]}</span>
+                        {kind === task.kind ? <Check className="size-4 text-accent-600" aria-label="Current type" /> : null}
+                      </MenuItem>
+                    );
+                  })}
+                </div>
+                <div role="separator" className="my-1 border-t border-zinc-100" />
+                {canConvert(task) ? item(GitBranch, task.isSubtask ? "Convert to a task…" : "Convert to a subtask…", () => setDialog("convert"), close) : null}
+                {home && editableProjects.length ? item(LayoutTemplate, "Save as task template…", () => setDialog("template"), close) : null}
+                {item(Copy, task.isSubtask ? "Duplicate subtask…" : "Duplicate task…", () => setDialog("duplicate"), close)}
+              </>
+            ) : null}
+            {item(Link2, "Copy task link", onCopyLink, close)}
+            {item(Printer, "Print", printTask, close)}
+            {canEdit ? (
+              <>
+                <div role="separator" className="my-1 border-t border-zinc-100" />
+                <MenuItem
+                  danger
+                  onClick={() => {
+                    close();
+                    remove();
+                  }}
+                >
+                  <Trash2 className="size-4" aria-hidden /> {task.isSubtask ? "Delete subtask" : "Delete task"}
+                </MenuItem>
+              </>
+            ) : null}
+          </>
+        )}
+      </Popover>
+      {dialog === "duplicate" ? (
+        <DuplicateTaskDialog taskId={task.id} title={task.title} isSubtask={task.isSubtask} onClose={() => setDialog(null)} />
+      ) : null}
+      {dialog === "convert" ? <ConvertTaskDialog task={task} onClose={() => setDialog(null)} /> : null}
+      {dialog === "template" && home ? (
+        <SaveTaskTemplateDialog
+          taskId={task.id}
+          title={
+            task.requestLabel && task.title.startsWith(`[${task.requestLabel}] `) ? task.title.slice(task.requestLabel.length + 3) : task.title
+          }
+          hasAssignee={Boolean(task.assigneeId)}
+          projects={editableProjects.map((m) => ({ id: m.projectId, name: m.projectName }))}
+          defaultProjectId={editableProjects.find((m) => m.isHome)?.projectId ?? editableProjects[0].projectId}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+    </>
+  );
+}

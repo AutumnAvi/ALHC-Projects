@@ -4,9 +4,10 @@ import type { LucideIcon } from "lucide-react";
 // Shared page chrome, empty states, and loading skeletons. Server-safe (no hooks), so pages,
 // loading.tsx files, and client components can all use them.
 
-// Underlined tabs in the project and portfolio headers.
+// Underlined tabs in the project and portfolio headers, Reports, and Settings → Workspace; the row
+// around them is a `tab-strip` (globals.css), whose hairline the active underline covers.
 export const HEADER_TAB =
-  "-mb-px inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent px-2 text-sm text-zinc-500 hover:text-zinc-900 aria-[current=page]:border-accent-500 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
+  "inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent px-2 text-sm text-zinc-500 hover:text-zinc-900 aria-[current=page]:border-accent-500 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
 
 // Inline-editable object name (project, portfolio): looks like a heading until hovered or focused.
 export const HEADER_TITLE_INPUT =

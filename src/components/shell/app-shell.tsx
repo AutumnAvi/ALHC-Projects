@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { TooltipLayer } from "@/components/tooltip-layer";
 import { ShellDialogs } from "@/components/shell/shell-dialogs";
 import { useShell } from "@/components/shell/shell-context";
 import { SidebarContent, type SidebarProject } from "@/components/shell/sidebar";
@@ -27,7 +28,12 @@ export function AppShell({
   return (
     <div className="app-shell flex h-full flex-col">
       <TopBar />
-      <div className="flex min-h-0 flex-1">
+      {/* --sidebar-w: the sidebar column's width, so the task pane can size itself to the content area
+          (globals.css). app-main is the pane's containing block. */}
+      <div
+        className="flex min-h-0 flex-1"
+        style={{ "--sidebar-w": sidebar.collapsed ? "0px" : "15rem" } as CSSProperties}
+      >
         {sidebar.collapsed ? null : (
           <aside
             id="app-sidebar"
@@ -38,9 +44,10 @@ export function AppShell({
           </aside>
         )}
         {drawerOpen ? <SidebarDrawer>{<SidebarContent {...sidebarProps} />}</SidebarDrawer> : null}
-        <div className="app-main flex min-w-0 flex-1 flex-col">{children}</div>
+        <div className="app-main relative flex min-w-0 flex-1 flex-col">{children}</div>
       </div>
       <ShellDialogs />
+      <TooltipLayer />
     </div>
   );
 }

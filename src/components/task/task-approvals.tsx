@@ -20,20 +20,26 @@ export const APPROVAL_STATUS: Record<TaskApproval["status"], { label: string; cl
 const inputClass =
   "field h-auto w-full py-1.5";
 
+// The pane's Approvals block: approval requests on this task (an approval task's own request is in the
+// banner at the top instead). Since Asana parity, batch 3 it shows only when there are requests, or
+// while an Editor writes one ("…" → Request approval opens the form: requesting / onRequestingChange).
 export function TaskApprovals({
   task,
   profiles,
   memberId,
   excludeId = null,
+  requesting: open,
+  onRequestingChange: setOpen,
 }: {
   task: TaskDetail;
   profiles: Profile[];
   memberId: string;
   // An approval task's own request, shown in the banner at the top of the pane instead.
   excludeId?: string | null;
+  requesting: boolean;
+  onRequestingChange: (requesting: boolean) => void;
 }) {
   const [pending, run] = useServerAction();
-  const [open, setOpen] = useState(false);
   const [approverId, setApproverId] = useState("");
   const [note, setNote] = useState("");
   const [asSubtask, setAsSubtask] = useState(true);
@@ -46,6 +52,7 @@ export function TaskApprovals({
     const profile = profileId ? profilesById.get(profileId) : undefined;
     return profile ? displayName(profile) : "Someone";
   };
+  if (approvals.length === 0 && !open) return null;
 
   return (
     <section className="mt-6" aria-labelledby="approvals-heading">
@@ -56,7 +63,7 @@ export function TaskApprovals({
         {canEdit ? (
           <button
             type="button"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => setOpen(!open)}
             aria-expanded={open}
             className="rounded px-1.5 py-0.5 text-xs font-medium text-accent-700 hover:bg-accent-50"
           >
@@ -93,6 +100,7 @@ export function TaskApprovals({
             </label>
             <select
               id="approval-approver"
+              autoFocus
               value={approverId}
               onChange={(e) => setApproverId(e.currentTarget.value)}
               className={`${inputClass} mt-1`}

@@ -119,7 +119,7 @@ export function ProjectHeader({
   }
 
   return (
-    <header className="border-b border-zinc-200 px-gutter pt-2.5">
+    <header className="px-gutter pt-2.5">
       <div className="flex items-center gap-2">
         <HeaderGlyph icon={FolderClosed} color={projectColorClass(project.id)} />
         <div className="flex min-w-0 flex-1 items-center gap-0.5">
@@ -164,7 +164,7 @@ export function ProjectHeader({
         </div>
       </div>
 
-      <nav aria-label="Project views" className="mt-1 flex items-center gap-0.5 overflow-x-auto print:hidden">
+      <nav aria-label="Project views" className="tab-strip -mx-gutter mt-1 items-center gap-0.5 px-gutter print:hidden">
         <Link href={overviewHref} aria-current={pathname === overviewHref ? "page" : undefined} className={TAB_CLASS}>
           <ClipboardList className="size-3.5" />
           Overview
@@ -499,9 +499,10 @@ function ViewTab({
       </Link>
       {active && canEdit ? (
         <Popover
-          label={`Options for view ${view.name}`}
+          label={`View options for ${view.name}`}
+          tooltip="View options"
           panelClassName="w-48"
-          buttonClassName="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800 aria-expanded:bg-zinc-100"
+          buttonClassName="rounded p-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 aria-expanded:bg-zinc-100"
           button={<MoreHorizontal className="size-4" aria-hidden />}
         >
           {(close) => (

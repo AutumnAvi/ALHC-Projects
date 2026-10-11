@@ -236,6 +236,16 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 - **Settings** opens as a window with **Profile**, **Notifications** (comment emails), **Account**, and **Display** (sidebar, how task details open, how My tasks opens).
 - **Look.** Blue buttons and links, bigger page titles, colored pills for choice fields everywhere, a dashed person or calendar in empty Assignee and Due date cells when you hover a row, green check marks for done tasks, and list pages that use the full width.
 
+## What's here (Asana parity, batch 3)
+
+- **Task pane like Asana's.** Clicking a task opens it on the right at about 45% of the page, and the list narrows to fit instead of being covered (on small screens the pane slides over the page). The top of the pane has **✓ Mark complete** (it turns green when done), the assignee's avatar (click to reassign), attach files, add a subtask, copy the task link, full screen, **…** (more actions), and close.
+- **Fields in two columns:** Assignee, Due date, Projects (each with its section in a dropdown, and **Add to projects**), Dependencies (**Add dependencies**), Tags, then your custom fields as colored pills; after five fields the rest sit behind **Show N more fields**. The description has no box until you click into it. Subtasks are one line each, with their assignee and dates in pickers. Attachments show as cards with a thumbnail.
+- **A real date picker** instead of the browser's mm/dd/yyyy boxes: a month calendar, **Today / Tomorrow / Next week**, an optional start date, an optional time, and **Repeats** at the bottom. You can also type a date (10/14, Oct 14, tomorrow) or a time (9, 2:15 pm).
+- **Comments and All activity** are two tabs at the bottom. The comment box is a single line until you click it, and below it one row shows the task's collaborators, with **+** to add people and **Leave task**.
+- **The … menu** holds Repeats, Task type (task, milestone, approval), Request approval, Convert, Save as template, Duplicate, Copy link, **Print** (prints just the task), and Delete. Approval tasks still show their approval box at the top.
+- **Full screen:** the expand button shows the task as a large card over the app, with a **Wide view** option. Esc or the collapse button goes back to the pane.
+- **Polish:** no leftover blue edge on a row after the pane closes; the search box opens centered near the top over a dimmed page; the avatar menu shows your name and email once; Settings opens on Profile; no stray scroll arrows on tab rows; tooltips on icon buttons (e.g. **View options** next to the current view); clearer placeholders, Board columns, Create menu icons (Tab then Q creates a task), and sidebar text.
+
 ## Setup: Supabase
 
 1. **Create a project** at [supabase.com/dashboard](https://supabase.com/dashboard). Note the project ref (the `xxxx` in `https://xxxx.supabase.co`).

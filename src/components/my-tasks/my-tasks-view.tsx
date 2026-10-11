@@ -814,7 +814,7 @@ function MyTaskRow({
         dropBefore ? "shadow-[inset_0_2px_0_var(--color-accent-500)]" : ""
       } ${
         selected ? "bg-accent-50" : open ? "bg-accent-50/60" : "hover:bg-zinc-50"
-      } ${selection.active === task.id ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""} ${
+      } ${selection.cursor === task.id ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""} ${
         dragging ? "opacity-40" : ""
       } ${onDragStart ? "cursor-grab active:cursor-grabbing" : ""}`}
     >

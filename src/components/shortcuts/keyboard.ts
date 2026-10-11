@@ -58,6 +58,8 @@ export function useListKeys(handlers: ListKeyHandlers) {
       if (dialogOpen()) return;
       const key = e.key.toLowerCase();
       if (chord && !e.metaKey && !e.ctrlKey && !e.altKey && (key === "q" || key === "m")) {
+        // Without an inline add here (My tasks), Tab→Q is left to the global Create → Task.
+        if (key === "q" && !h.quickAdd) return;
         e.preventDefault();
         if (key === "q") h.quickAdd?.();
         else h.assignToMe();

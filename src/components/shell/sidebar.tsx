@@ -112,8 +112,8 @@ export function SidebarContent({
             </li>
           ))}
           {starred.length === 0 ? (
-            <li className="flex items-start gap-2 px-2 py-1 text-xs text-shell-muted">
-              <Star className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <li className="flex items-start gap-2 px-2 py-1 text-xs text-shell-text">
+              <Star className="mt-0.5 size-3.5 shrink-0 text-shell-text" aria-hidden />
               Star a project from its header to keep it here.
             </li>
           ) : null}
@@ -154,12 +154,12 @@ export function SidebarContent({
         </Group>
       </nav>
 
-      <div className="shrink-0 border-t border-shell-line p-2">
+      <div className="shrink-0 border-t border-shell-line px-3 py-3">
         <button
           type="button"
           onClick={() => openDialog({ kind: "invite" })}
           aria-haspopup="dialog"
-          className="flex h-8 w-full items-center justify-center gap-2 rounded-md border border-shell-line text-sm text-shell-text hover:bg-shell-hover hover:text-white"
+          className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-shell-line text-sm text-shell-text hover:bg-shell-hover hover:text-white"
         >
           <UserPlus className="size-4" aria-hidden />
           Invite
@@ -235,14 +235,14 @@ function Group({
           className={
             Icon
               ? `${NAV_LINK} min-w-0 flex-1 text-left`
-              : "flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md px-1 text-left text-xs font-medium text-shell-muted hover:text-white"
+              : "flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md px-1 text-left text-xs font-medium text-shell-text hover:text-white"
           }
         >
           {Icon ? <Icon className={NAV_ICON} aria-hidden /> : null}
           {Icon ? <span className="flex-1 truncate">{title}</span> : null}
           <ChevronRight
             aria-hidden
-            className={`size-3.5 shrink-0 text-shell-muted transition-transform ${open ? "rotate-90" : ""}`}
+            className={`size-3.5 shrink-0 text-shell-text transition-transform ${open ? "rotate-90" : ""}`}
           />
           {Icon ? null : <span className="truncate">{title}</span>}
         </button>

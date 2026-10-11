@@ -16,6 +16,10 @@ export function Popover({
   align = "start",
   side = "bottom",
   panelClassName = "w-72",
+  tooltip,
+  buttonId,
+  disabled = false,
+  onOpenChange,
   children,
 }: {
   label: string;
@@ -25,6 +29,12 @@ export function Popover({
   // "top" opens above the button (for bars docked at the bottom of the screen).
   side?: "bottom" | "top";
   panelClassName?: string;
+  // A visible hover / focus tooltip for icon-only buttons (TooltipLayer).
+  tooltip?: string;
+  // Lets other controls open it (document.getElementById(buttonId).click()).
+  buttonId?: string;
+  disabled?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: (close: () => void) => ReactNode;
 }) {
   const [position, setPosition] = useState<{
@@ -39,6 +49,15 @@ export function Popover({
   const panelRef = useRef<HTMLDivElement>(null);
   const open = position !== null;
   const close = () => setPosition(null);
+  const onOpenChangeRef = useRef(onOpenChange);
+
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  }, [onOpenChange]);
+
+  useEffect(() => {
+    onOpenChangeRef.current?.(open);
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!position || position.placed) return;
@@ -80,6 +99,8 @@ export function Popover({
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Handled here: the task pane (and other Escape listeners) leave it alone.
+        e.preventDefault();
         setPosition(null);
         buttonRef.current?.focus();
       }
@@ -116,10 +137,13 @@ export function Popover({
     <>
       <button
         ref={buttonRef}
+        id={buttonId}
         type="button"
         aria-label={label}
         aria-haspopup="dialog"
         aria-expanded={open}
+        data-tooltip={tooltip}
+        disabled={disabled}
         onClick={toggle}
         className={buttonClassName}
       >
