@@ -8,17 +8,23 @@ import {
   ArchiveRestore,
   CalendarDays,
   ChartColumn,
-  MessagesSquare,
-  Gauge,
   ChartGantt,
+  Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Copy,
   CopyPlus,
   FolderClosed,
+  Gauge,
   LayoutTemplate,
+  Link2,
   List,
+  Lock,
+  MessagesSquare,
   MoreHorizontal,
+  Paperclip,
   Pencil,
   Plus,
   Settings,
@@ -26,16 +32,17 @@ import {
   Star,
   Trash2,
   Users,
-  Paperclip,
 } from "lucide-react";
+import { Avatar } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
-import { ProjectStatusBadge } from "@/components/project-status-badge";
+import { PROJECT_STATUS_CLASS, PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
 import { projectColorClass } from "@/lib/project-colors";
 import { DuplicateProjectDialog } from "@/components/project/duplicate-project-dialog";
 import { CustomizePanel, type CustomizeSummary } from "@/components/project/customize-panel";
 import { useCan } from "@/components/project/project-access";
-import { useServerAction } from "@/components/toast";
+import { copyProjectLink, useProjectPage } from "@/components/project/project-page-context";
+import { useNotify, useServerAction } from "@/components/toast";
 import {
   createView,
   deleteProject,
@@ -48,6 +55,7 @@ import {
   updateView,
 } from "@/lib/actions";
 import type { Project } from "@/lib/data";
+import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
 import { VIEW_LAYOUTS, type ProjectView, type ViewLayout } from "@/lib/views";
 
 export const LAYOUT_ICONS: Record<ViewLayout, typeof List> = {
@@ -59,12 +67,19 @@ export const LAYOUT_ICONS: Record<ViewLayout, typeof List> = {
 
 const TAB_CLASS = HEADER_TAB;
 
+// Who's in the project, for the avatars next to Share (owners first, like the Members page).
+export type HeaderMember = { profileId: string; name: string; role: string };
+
+// Asana's project header: icon, name, a chevron with the project's actions, the star, and the status
+// (a menu in place; picking one opens the status update panel). On the right, member avatars, Share,
+// and Customize. Tabs: Overview, the saved views, Dashboard, Messages, Workload, Files, and "+".
 export function ProjectHeader({
   project,
   views,
   canArchive,
   customize,
   starred,
+  members,
 }: {
   project: Project;
   views: ProjectView[];
@@ -73,14 +88,13 @@ export function ProjectHeader({
   customize: CustomizeSummary;
   // In the viewer's sidebar Starred section.
   starred: boolean;
+  members: HeaderMember[];
 }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const [pending, run] = useServerAction();
+  const [, run] = useServerAction();
+  const { openShare } = useProjectPage();
   const canEditViews = useCan("editor");
   const canEditProject = useCan("admin");
-  const canDeleteProject = useCan("owner");
-  const [duplicating, setDuplicating] = useState(false);
   const base = `/projects/${project.id}`;
 
   // Older /list, /board, /calendar, /timeline links render the default config when no saved view exists.
@@ -89,31 +103,26 @@ export function ProjectHeader({
     label: l.label,
     icon: LAYOUT_ICONS[l.value],
   }));
-  // Asana's tab bar: views, then Messages, Dashboard, Workload, and Files. Fields, forms, rules, task
-  // templates, integrations, and settings live in the Customize panel instead.
+  // Asana's tab bar: Overview, the views, then Dashboard, Messages, Workload, and Files. Fields, forms,
+  // rules, task templates, integrations, and settings live in the Customize panel instead.
   const tabs = [
-    { href: `${base}/messages`, label: "Messages", icon: MessagesSquare },
     { href: `${base}/dashboard`, label: "Dashboard", icon: ChartColumn },
+    { href: `${base}/messages`, label: "Messages", icon: MessagesSquare },
     { href: `${base}/workload`, label: "Workload", icon: Gauge },
     { href: `${base}/files`, label: "Files", icon: Paperclip },
   ];
+  const overviewHref = `${base}/overview`;
 
   function saveName(value: string) {
     const name = value.trim();
     if (name && name !== project.name) run(() => updateProject(project.id, { name }));
   }
 
-  function saveDescription(value: string) {
-    if (value.trim() !== (project.description ?? "")) {
-      run(() => updateProject(project.id, { description: value }));
-    }
-  }
-
   return (
     <header className="border-b border-zinc-200 px-gutter pt-2.5">
       <div className="flex items-center gap-2">
         <HeaderGlyph icon={FolderClosed} color={projectColorClass(project.id)} />
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5">
           <label htmlFor="project-name" className="sr-only">
             Project name
           </label>
@@ -135,130 +144,31 @@ export function ProjectHeader({
             }}
             className={`${HEADER_TITLE_INPUT} field-sizing-content min-w-24 max-w-full`}
           />
+          <ProjectMenu project={project} canArchive={canArchive} />
           <StarToggle projectId={project.id} starred={starred} />
-          <Link
-            href={`${base}/settings`}
-            className="hidden shrink-0 rounded-full sm:inline-flex"
-            title={project.status_note ? `Status note: ${project.status_note}` : "Project status — change it in Settings"}
-          >
-            <ProjectStatusBadge status={project.status} />
-          </Link>
+          <span className="ml-1.5 hidden sm:inline-flex">
+            <StatusControl project={project} overviewHref={overviewHref} />
+          </span>
         </div>
-        <span className="print:hidden">
+        <div className="flex shrink-0 items-center gap-2 print:hidden">
+          <MemberStack members={members} onOpen={openShare} />
+          <button type="button" onClick={openShare} className="btn-primary h-7 px-3">
+            {project.visibility === "team" ? (
+              <Users className="size-3.5" aria-hidden />
+            ) : (
+              <Lock className="size-3.5" aria-hidden />
+            )}
+            Share
+          </button>
           <CustomizePanel projectId={project.id} summary={customize} />
-        </span>
-        <Popover
-          label="Project options"
-          align="end"
-          panelClassName="w-52 p-1.5"
-          buttonClassName="btn-icon"
-          button={<MoreHorizontal className="size-4" aria-hidden />}
-        >
-          {(close) => (
-            <>
-              <MenuItem
-                onClick={() => {
-                  close();
-                  router.push(`${base}/settings`);
-                }}
-              >
-                <Settings className="size-4 text-zinc-500" /> Project settings
-              </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  close();
-                  router.push(`${base}/settings/members`);
-                }}
-              >
-                <Users className="size-4 text-zinc-500" /> Members
-              </MenuItem>
-              {canEditViews ? (
-                <MenuItem
-                  onClick={() => {
-                    close();
-                    setDuplicating(true);
-                  }}
-                >
-                  <CopyPlus className="size-4 text-zinc-500" /> Duplicate project…
-                </MenuItem>
-              ) : null}
-              {canEditProject ? (
-                <MenuItem
-                  onClick={() => {
-                    close();
-                    router.push(`${base}/settings/templates`);
-                  }}
-                >
-                  <LayoutTemplate className="size-4 text-zinc-500" /> Save as template…
-                </MenuItem>
-              ) : null}
-              {canArchive ? (
-                <MenuItem
-                  disabled={pending}
-                  onClick={() => {
-                    close();
-                    if (project.archived_at) {
-                      run(() => setProjectArchived(project.id, false));
-                    } else if (
-                      window.confirm(
-                        `Archive “${project.name}”? It becomes read-only and leaves the sidebar, Home, and project pickers. Members can still open it from Archived projects, and admins can unarchive it.`,
-                      )
-                    ) {
-                      run(() => setProjectArchived(project.id, true));
-                    }
-                  }}
-                >
-                  {project.archived_at ? (
-                    <>
-                      <ArchiveRestore className="size-4 text-zinc-500" /> Unarchive project
-                    </>
-                  ) : (
-                    <>
-                      <Archive className="size-4 text-zinc-500" /> Archive project
-                    </>
-                  )}
-                </MenuItem>
-              ) : null}
-              {canDeleteProject ? (
-                <MenuItem
-                  danger
-                  disabled={pending}
-                  onClick={() => {
-                    close();
-                    if (window.confirm(`Delete “${project.name}”? Its tasks stay recoverable in the database.`)) {
-                      run(() => deleteProject(project.id));
-                    }
-                  }}
-                >
-                  <Trash2 className="size-4" /> Delete project
-                </MenuItem>
-              ) : null}
-            </>
-          )}
-        </Popover>
-        {duplicating ? <DuplicateProjectDialog project={project} onClose={() => setDuplicating(false)} /> : null}
+        </div>
       </div>
-      <label htmlFor="project-description" className="sr-only">
-        Project description
-      </label>
-      <input
-        id="project-description"
-        key={`desc-${project.description ?? ""}`}
-        defaultValue={project.description ?? ""}
-        placeholder={canEditProject ? "Add a short description" : undefined}
-        readOnly={!canEditProject}
-        onBlur={(e) => {
-          if (canEditProject) saveDescription(e.currentTarget.value);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-        }}
-        className={`ml-8 w-[calc(100%-2rem)] truncate rounded-md border border-transparent bg-transparent px-1.5 py-px text-xs text-zinc-500 placeholder:text-zinc-400 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent ${
-          !canEditProject && !project.description ? "hidden" : ""
-        }`}
-      />
 
       <nav aria-label="Project views" className="mt-1 flex items-center gap-0.5 overflow-x-auto print:hidden">
+        <Link href={overviewHref} aria-current={pathname === overviewHref ? "page" : undefined} className={TAB_CLASS}>
+          <ClipboardList className="size-3.5" />
+          Overview
+        </Link>
         {views.map((view, index) => (
           <ViewTab
             key={view.id}
@@ -277,17 +187,21 @@ export function ProjectHeader({
             {label}
           </Link>
         ))}
+        {tabs.map(({ href, label, icon: Icon }) => {
+          const active = pathname === href || pathname.startsWith(`${href}/`);
+          return (
+            <Link key={href} href={href} aria-current={active ? "page" : undefined} className={TAB_CLASS}>
+              <Icon className="size-3.5" />
+              {label}
+            </Link>
+          );
+        })}
         {canEditViews ? (
           <Popover
-            label="Add view"
+            label="Add a view"
             panelClassName="w-48"
-            buttonClassName="btn-ghost h-6 px-1.5 text-zinc-500"
-            button={
-              <>
-                <Plus className="size-4" aria-hidden />
-                <span className="sr-only sm:not-sr-only">View</span>
-              </>
-            }
+            buttonClassName="btn-icon ml-0.5 size-6 text-zinc-500"
+            button={<Plus className="size-4" aria-hidden />}
           >
             {(close) =>
               VIEW_LAYOUTS.map(({ value, label }) => {
@@ -307,18 +221,222 @@ export function ProjectHeader({
             }
           </Popover>
         ) : null}
-        <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-zinc-200" />
-        {tabs.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`);
-          return (
-            <Link key={href} href={href} aria-current={active ? "page" : undefined} className={TAB_CLASS}>
-              <Icon className="size-3.5" />
-              {label}
-            </Link>
-          );
-        })}
       </nav>
     </header>
+  );
+}
+
+// The chevron next to the name: what used to be the "…" project options.
+function ProjectMenu({ project, canArchive }: { project: Project; canArchive: boolean }) {
+  const router = useRouter();
+  const notify = useNotify();
+  const [pending, run] = useServerAction();
+  const canEditViews = useCan("editor");
+  const canEditProject = useCan("admin");
+  const canDeleteProject = useCan("owner");
+  const [duplicating, setDuplicating] = useState(false);
+  const base = `/projects/${project.id}`;
+
+  return (
+    <>
+      <Popover
+        label="Project actions"
+        panelClassName="w-56 p-1.5"
+        buttonClassName="btn-icon size-6 shrink-0 print:hidden"
+        button={<ChevronDown className="size-4" aria-hidden />}
+      >
+        {(close) => (
+          <>
+            <MenuItem
+              onClick={() => {
+                close();
+                router.push(`${base}/settings`);
+              }}
+            >
+              <Settings className="size-4 text-zinc-500" /> Project settings
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                close();
+                router.push(`${base}/settings/members`);
+              }}
+            >
+              <Users className="size-4 text-zinc-500" /> Members
+            </MenuItem>
+            <MenuItem
+              onClick={async () => {
+                close();
+                notify((await copyProjectLink(project.id)) ? "Project link copied" : "Couldn’t copy the link");
+              }}
+            >
+              <Link2 className="size-4 text-zinc-500" /> Copy project link
+            </MenuItem>
+            {canEditViews || canEditProject || canArchive || canDeleteProject ? (
+              <div role="separator" className="my-1 border-t border-zinc-100" />
+            ) : null}
+            {canEditViews ? (
+              <MenuItem
+                onClick={() => {
+                  close();
+                  setDuplicating(true);
+                }}
+              >
+                <CopyPlus className="size-4 text-zinc-500" /> Duplicate project…
+              </MenuItem>
+            ) : null}
+            {canEditProject ? (
+              <MenuItem
+                onClick={() => {
+                  close();
+                  router.push(`${base}/settings/templates`);
+                }}
+              >
+                <LayoutTemplate className="size-4 text-zinc-500" /> Save as template…
+              </MenuItem>
+            ) : null}
+            {canArchive ? (
+              <MenuItem
+                disabled={pending}
+                onClick={() => {
+                  close();
+                  if (project.archived_at) {
+                    run(() => setProjectArchived(project.id, false));
+                  } else if (
+                    window.confirm(
+                      `Archive “${project.name}”? It becomes read-only and leaves the sidebar, Home, and project pickers. Members can still open it from Archived projects, and admins can unarchive it.`,
+                    )
+                  ) {
+                    run(() => setProjectArchived(project.id, true));
+                  }
+                }}
+              >
+                {project.archived_at ? (
+                  <>
+                    <ArchiveRestore className="size-4 text-zinc-500" /> Unarchive project
+                  </>
+                ) : (
+                  <>
+                    <Archive className="size-4 text-zinc-500" /> Archive project
+                  </>
+                )}
+              </MenuItem>
+            ) : null}
+            {canDeleteProject ? (
+              <MenuItem
+                danger
+                disabled={pending}
+                onClick={() => {
+                  close();
+                  if (window.confirm(`Delete “${project.name}”? Its tasks stay recoverable in the database.`)) {
+                    run(() => deleteProject(project.id));
+                  }
+                }}
+              >
+                <Trash2 className="size-4" /> Delete project
+              </MenuItem>
+            ) : null}
+          </>
+        )}
+      </Popover>
+      {duplicating ? <DuplicateProjectDialog project={project} onClose={() => setDuplicating(false)} /> : null}
+    </>
+  );
+}
+
+// The status pill. Editors pick a status in place, which opens the status update panel; everyone else
+// sees the pill (it links to the Overview, where the latest update is). A project whose status was never
+// set reads "Set status", like Asana.
+function StatusControl({ project, overviewHref }: { project: Project; overviewHref: string }) {
+  const canEdit = useCan("editor");
+  const { openStatusUpdate } = useProjectPage();
+  const status = isProjectStatus(project.status) ? project.status : null;
+  const set = status !== null && project.status_updated_at !== null;
+  const pill = (
+    <>
+      {set ? (
+        <>
+          <span aria-hidden className={`size-2 rounded-full ${PROJECT_STATUS_DOT[status]}`} />
+          {PROJECT_STATUS_LABELS[status]}
+        </>
+      ) : (
+        "Set status"
+      )}
+      {canEdit ? <ChevronDown className="size-3.5 opacity-70" aria-hidden /> : null}
+    </>
+  );
+  const pillClass = `inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium ring-1 ring-inset ${
+    set ? PROJECT_STATUS_CLASS[status] : "text-zinc-600 ring-zinc-200 hover:bg-zinc-50"
+  }`;
+
+  if (!canEdit) {
+    return (
+      <Link
+        href={overviewHref}
+        className={pillClass}
+        title={project.status_note ? `Status note: ${project.status_note}` : "Project status — see the Overview"}
+      >
+        {pill}
+      </Link>
+    );
+  }
+  return (
+    <Popover
+      label={set ? `Project status: ${PROJECT_STATUS_LABELS[status]}. Change it` : "Set the project status"}
+      panelClassName="w-52 p-1.5"
+      buttonClassName={`${pillClass} aria-expanded:ring-zinc-400`}
+      button={pill}
+    >
+      {(close) => (
+        <>
+          {PROJECT_STATUSES.map((value) => (
+            <MenuItem
+              key={value}
+              onClick={() => {
+                close();
+                openStatusUpdate(value);
+              }}
+            >
+              <span aria-hidden className={`size-2.5 rounded-full ${PROJECT_STATUS_DOT[value]}`} />
+              <span className="flex-1">{PROJECT_STATUS_LABELS[value]}</span>
+              {set && value === status ? <Check className="size-3.5 text-zinc-500" aria-label="current" /> : null}
+            </MenuItem>
+          ))}
+          <div role="separator" className="my-1 border-t border-zinc-100" />
+          <Link
+            href={overviewHref}
+            onClick={close}
+            className="flex w-full items-center rounded-md px-2 py-1.5 text-xs text-accent-700 hover:bg-zinc-100"
+          >
+            See status updates
+          </Link>
+        </>
+      )}
+    </Popover>
+  );
+}
+
+// Up to three member avatars and a count; opens Share.
+function MemberStack({ members, onOpen }: { members: HeaderMember[]; onOpen: () => void }) {
+  if (members.length === 0) return null;
+  const shown = members.slice(0, 3);
+  const more = members.length - shown.length;
+  const names = shown.map((m) => m.name).join(", ");
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`${members.length} ${members.length === 1 ? "member" : "members"}: ${names}${more ? ` and ${more} more` : ""}. Share`}
+      className="hidden items-center rounded-full p-0.5 hover:bg-zinc-100 md:inline-flex"
+    >
+      <span className="flex -space-x-1">
+        {shown.map((m) => (
+          <span key={m.profileId} className="rounded-full ring-2 ring-white">
+            <Avatar name={m.name} size="md" />
+          </span>
+        ))}
+      </span>
+      {more > 0 ? <span className="ml-1 pr-1.5 text-xs font-medium tabular-nums text-zinc-600">+{more}</span> : null}
+    </button>
   );
 }
 
@@ -459,7 +577,7 @@ function StarToggle({ projectId, starred: saved }: { projectId: string; starred:
           () => setStarred(!starred),
         )
       }
-      className="btn-icon shrink-0 print:hidden"
+      className="btn-icon size-6 shrink-0 print:hidden"
     >
       <Star className={`size-4 ${starred ? "fill-amber-400 text-amber-500" : ""}`} aria-hidden />
     </button>

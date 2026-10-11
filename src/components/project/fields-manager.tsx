@@ -138,7 +138,9 @@ export function FieldsManager({
   );
 }
 
-function FieldRow({
+// One field's editor (name, show in views, options with colors, delete): the Fields page, and the
+// List's column menu → Edit field.
+export function FieldRow({
   field,
   sectionNames,
   run,
@@ -227,7 +229,7 @@ function FieldRow({
   );
 }
 
-function OptionsEditor({
+export function OptionsEditor({
   options,
   onChange,
   fieldName,

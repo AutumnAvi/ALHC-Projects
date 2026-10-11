@@ -20,6 +20,7 @@ import {
   ROLE_DESCRIPTIONS,
   ROLE_LABELS,
   assignableRoles,
+  compareMembers,
   hasRole,
   isProjectRole,
   type ProjectRole,
@@ -31,9 +32,6 @@ export type TeamChoice = { id: string; name: string; memberCount: number };
 
 const inputClass = "field";
 
-function memberName(member: ProjectMember) {
-  return member.fullName?.trim() || member.email;
-}
 
 export function MembersManager({
   projectId,
@@ -61,10 +59,7 @@ export function MembersManager({
   const isOwner = viewerRole === "owner";
   const grantable = assignableRoles(viewerRole);
   const ownerCount = members.filter((m) => m.role === "owner").length;
-  const sorted = [...members].sort(
-    (a, b) =>
-      PROJECT_ROLES.indexOf(a.role) - PROJECT_ROLES.indexOf(b.role) || memberName(a).localeCompare(memberName(b)),
-  );
+  const sorted = [...members].sort(compareMembers);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-gutter py-5">
@@ -238,7 +233,7 @@ export function MembersManager({
         <ul className="divide-y divide-zinc-100">
           {sorted.map((member) => {
             const self = member.profileId === viewerId;
-            const name = memberName(member);
+            const name = member.name;
             // Admins manage everyone except owners; owners manage everyone. The SQL RPCs enforce the same.
             const manageable = canManage && (member.role !== "owner" || isOwner);
             const options = grantable.includes(member.role) ? grantable : [member.role, ...grantable];

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, type DragEvent } from "react";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
-import { approvalOpen } from "@/lib/task-kinds";
+import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
@@ -14,8 +14,8 @@ import type { FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, refFieldId, sortOf, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { GroupTitle } from "./list-view";
-import { ADD_TASK_EVENT, AddSection, AddTaskInput, useTaskHref } from "./shared";
-import { Assignee, DueDate, StartDate, TaskBadges } from "./task-meta";
+import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, addTaskKindOf, useTaskHref } from "./shared";
+import { Assignee, CommentCount, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, type TaskGroup } from "./view-groups";
 
@@ -28,13 +28,31 @@ type Props = {
   config: ViewConfig;
   openTaskId: string | null;
   tags: Tag[];
+  // Every task per section, whatever the view shows (a section can be deleted only when empty).
+  sectionTaskCounts?: Record<string, number>;
 };
 
 type DropTarget = { groupKey: string; beforeId: string | null };
+// The add box opened at the top of a column: the toolbar's "+ Add task" / "Add milestone" (the first
+// section column, groupKey null) or a column header's "+".
+type TopAdd = { groupKey: string | null; nonce: number; kind: TaskKind };
 
 const DRAG_TYPE = "application/x-alhc-task";
 
-export function BoardView({ projectId, sections, tasks, profiles, fields, config, openTaskId, tags }: Props) {
+// Asana's Board: ~280px light-grey columns with white cards (soft shadow, 8px corners) showing the
+// field pills, assignee, due date, and subtask / comment counts; "+ Add task" at the top of each column
+// (and at the bottom on hover); an "Add section" column at the end.
+export function BoardView({
+  projectId,
+  sections,
+  tasks,
+  profiles,
+  fields,
+  config,
+  openTaskId,
+  tags,
+  sectionTaskCounts = {},
+}: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [, run] = useServerAction();
   const canEdit = useCan("editor");
@@ -42,11 +60,11 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   // The column a card was dragged from (grouped by tag, a task sits in several columns).
   const [dragFrom, setDragFrom] = useState<string | null>(null);
-  // The toolbar's "+ Add task" opens the first column's add box.
-  const [addNonce, setAddNonce] = useState<number | null>(null);
+  const [topAdd, setTopAdd] = useState<TopAdd | null>(null);
 
   useEffect(() => {
-    const onAdd = () => setAddNonce((n) => (n ?? 0) + 1);
+    const onAdd = (event: Event) =>
+      setTopAdd((t) => ({ groupKey: null, nonce: (t?.nonce ?? 0) + 1, kind: addTaskKindOf(event) }));
     window.addEventListener(ADD_TASK_EVENT, onAdd);
     return () => window.removeEventListener(ADD_TASK_EVENT, onAdd);
   }, []);
@@ -72,6 +90,7 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
     profilesById,
     sectionNames: new Map(sections.map((s) => [s.id, s.name])),
   };
+  const firstSectionGroup = groups.find((g) => g.target.kind === "section");
 
   // Viewers and commenters can't move cards: no drag, no "Move to" menu.
   const moveOptions = canEdit ? groups.filter((g) => g.target.kind !== "none") : [];
@@ -137,10 +156,15 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
   }
 
   return (
-    <div className="flex min-h-0 flex-1 items-start gap-2.5 overflow-x-auto px-gutter py-3">
+    <div className="flex min-h-0 flex-1 items-start gap-3 overflow-x-auto px-gutter py-3">
       {groups.map((group) => {
         const droppable = group.target.kind !== "none";
         const isTarget = dragging && dropTarget?.groupKey === group.key;
+        const sectionId = group.section?.id;
+        const topTarget =
+          topAdd !== null &&
+          group.target.kind === "section" &&
+          (topAdd.groupKey === group.key || (topAdd.groupKey === null && group === firstSectionGroup));
         return (
           <section
             key={group.key}
@@ -155,15 +179,41 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
               );
             }}
             onDrop={handleDrop}
-            className={`flex max-h-full w-72 shrink-0 flex-col rounded-lg border p-1.5 transition-colors ${
-              isTarget ? "border-accent-200 bg-accent-50" : "border-transparent bg-zinc-100/60"
+            className={`group/section flex max-h-full w-70 shrink-0 flex-col rounded-xl p-2 transition-colors ${
+              isTarget ? "bg-accent-50 ring-1 ring-accent-200" : "bg-zinc-100/70"
             }`}
           >
-            <header className="flex h-8 shrink-0 items-center gap-1 px-1">
+            <header className="flex h-8 shrink-0 items-center gap-1 pl-1">
               <GroupTitle group={group} />
+              {group.section && sectionId ? (
+                <SectionActions
+                  projectId={projectId}
+                  section={group.section}
+                  taskCount={sectionTaskCounts[sectionId] ?? group.tasks.length}
+                  nextSectionId={sections[sections.findIndex((s) => s.id === sectionId) + 1]?.id ?? null}
+                  orientation="horizontal"
+                  onAddTask={() => setTopAdd((t) => ({ groupKey: group.key, nonce: (t?.nonce ?? 0) + 1, kind: "task" }))}
+                />
+              ) : null}
             </header>
 
-            <ol className="flex min-h-8 flex-col gap-1.5 overflow-y-auto pt-0.5">
+            {group.target.kind === "section" ? (
+              <div className="pb-1.5">
+                <AddTaskInput
+                  key={topTarget && topAdd ? `top-${topAdd.nonce}` : "top"}
+                  projectId={projectId}
+                  sectionId={group.target.sectionId}
+                  variant="card"
+                  idSuffix="-top"
+                  atTop
+                  defaultOpen={topTarget}
+                  defaultKind={topTarget && topAdd ? topAdd.kind : "task"}
+                  onClose={topTarget ? () => setTopAdd(null) : undefined}
+                />
+              </div>
+            ) : null}
+
+            <ol className="flex min-h-8 flex-col gap-2 overflow-y-auto p-0.5">
               {group.tasks.map((task, index) => (
                 <li
                   key={task.id}
@@ -220,19 +270,19 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
             </ol>
 
             {group.tasks.length === 0 && !isTarget ? (
-              <p className="rounded-md border border-dashed border-zinc-300/80 px-2 py-3 text-center text-xs text-zinc-400">
-                {dragging ? "Drop here" : group.target.kind === "section" ? "No tasks yet. Add one below or drag a card here." : "No tasks"}
+              <p className="rounded-lg border border-dashed border-zinc-300/80 px-2 py-4 text-center text-xs text-zinc-400">
+                {dragging ? "Drop here" : group.target.kind === "section" ? "No tasks yet. Add one above or drag a card here." : "No tasks"}
               </p>
             ) : null}
 
-            {group.target.kind === "section" ? (
-              <div className="pt-1.5">
+            {group.target.kind === "section" && group.tasks.length > 0 ? (
+              // The bottom "+ Add task" shows while the column is hovered (always on touch screens).
+              <div className="pt-1.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/section:opacity-100 [@media(hover:none)]:opacity-100">
                 <AddTaskInput
-                  key={addNonce !== null && group === groups.find((g) => g.target.kind === "section") ? `add-${addNonce}` : "add"}
                   projectId={projectId}
                   sectionId={group.target.sectionId}
                   variant="card"
-                  defaultOpen={addNonce !== null && group === groups.find((g) => g.target.kind === "section")}
+                  idSuffix="-bottom"
                 />
               </div>
             ) : null}
@@ -246,7 +296,7 @@ export function BoardView({ projectId, sections, tasks, profiles, fields, config
 }
 
 function DropIndicator() {
-  return <div aria-hidden className="mb-1.5 h-0.5 rounded-full bg-accent-500" />;
+  return <div aria-hidden className="mb-2 h-0.5 rounded-full bg-accent-500" />;
 }
 
 function TaskCard({
@@ -288,14 +338,16 @@ function TaskCard({
   const completed = Boolean(task.completedAt);
   const due = showDue && task.dueOn;
   const start = showStart && task.startOn;
+  const hasCounts =
+    task.approvalStatus !== null || task.recurring || task.blockedBy > 0 || task.subtaskCount > 0 || task.projectCount > 1 || task.commentCount > 0;
 
   return (
     <article
       draggable={moveOptions.length > 0}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className={`group relative rounded-lg border bg-white px-2.5 py-2 shadow-xs transition ${
-        open ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200 hover:border-zinc-300"
+      className={`group relative rounded-lg border bg-white px-3 py-2.5 shadow-[0_1px_2px_rgb(0_0_0/0.06)] transition-[border-color,box-shadow] ${
+        open ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200/80 hover:border-zinc-300 hover:shadow-[0_2px_6px_rgb(0_0_0/0.08)]"
       } ${dragging ? "opacity-40" : ""} ${moveOptions.length > 0 ? "cursor-grab active:cursor-grabbing" : ""}`}
     >
       <div className="flex items-start gap-2">
@@ -321,28 +373,29 @@ function TaskCard({
         </Link>
       </div>
 
-      {task.tagIds.length ? (
-        <div className="mt-1.5 flex flex-wrap gap-1 pl-6">
-          <TagChips ids={task.tagIds} byId={tagsById} max={4} />
-        </div>
-      ) : null}
-
       {cardFields.some((f) => task.fieldValues[f.id] != null || f.boundToSections) ? (
-        <div className="mt-1.5 flex flex-wrap gap-1 pl-6">
+        <div className="mt-2 flex flex-wrap gap-1">
           {cardFields.map((field) => (
             <FieldValueChips key={field.id} field={field} task={task} context={fieldContext} showName />
           ))}
         </div>
       ) : null}
 
-      {due || start || task.approvalStatus || task.subtaskCount > 0 || task.projectCount > 1 || assignee ? (
-        <div className="mt-2 flex min-h-5 items-center gap-2 pl-6">
+      {task.tagIds.length ? (
+        <div className="mt-2 flex flex-wrap gap-1">
+          <TagChips ids={task.tagIds} byId={tagsById} max={4} />
+        </div>
+      ) : null}
+
+      {due || start || hasCounts || assignee ? (
+        <div className="mt-2.5 flex min-h-6 items-center gap-2">
+          {assignee ? <Assignee profile={assignee} /> : null}
           {start ? <StartDate task={task} prefix={due ? "" : "Starts "} /> : null}
           {start && due ? <span className="-mx-1.5 text-xs text-zinc-400">–</span> : null}
           {showDue ? <DueDate task={task} /> : null}
-          <TaskBadges task={task} />
-          <span className="ml-auto">
-            <Assignee profile={assignee} />
+          <span className="ml-auto flex items-center gap-2">
+            <TaskBadges task={task} />
+            <CommentCount count={task.commentCount} />
           </span>
         </div>
       ) : null}

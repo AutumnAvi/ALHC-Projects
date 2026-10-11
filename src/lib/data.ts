@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
+import { displayName } from "@/components/avatar";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
@@ -139,6 +140,8 @@ export type ProjectTask = {
   approvalStatus: ApprovalTaskStatus | null;
   // Active tag links (ids; look names and colors up in listTags()).
   tagIds: string[];
+  // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
+  commentCount: number;
 };
 
 export type TaskMembership = {
@@ -415,6 +418,8 @@ export const listOwnProjectRoles = cache(async (): Promise<Map<string, ProjectRo
 export type ProjectMember = {
   profileId: string;
   role: ProjectRole;
+  // Full name, else the email (displayName()).
+  name: string;
   email: string;
   fullName: string | null;
   avatarUrl: string | null;
@@ -436,11 +441,27 @@ export const listProjectMembers = cache(async (projectId: string): Promise<Proje
     .map((m) => ({
       profileId: m.profile_id,
       role: m.role as ProjectRole,
+      name: displayName(m.profile),
       email: m.profile.email,
       fullName: m.profile.full_name,
       avatarUrl: m.profile.avatar_url,
       addedAt: m.created_at,
     }));
+});
+
+// People in the workspace: profiles whose address is still on the allowlist (removed people left out).
+// The search palette's People and the Share dialog's invite search.
+export const listActivePeople = cache(async (): Promise<{ id: string; name: string; email: string }[]> => {
+  const supabase = await createClient();
+  const [profiles, allowed] = await Promise.all([
+    listProfiles(),
+    supabase.from("allowed_emails").select("email").is("removed_at", null),
+  ]);
+  if (allowed.error) return [];
+  const active = new Set((allowed.data ?? []).map((row) => row.email.toLowerCase()));
+  return profiles
+    .filter((p) => active.has(p.email.toLowerCase()))
+    .map((p) => ({ id: p.id, name: displayName(p), email: p.email }));
 });
 
 export const listProfiles = cache(async (): Promise<Profile[]> => {
@@ -483,7 +504,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
   if (taskIds.length === 0) return [];
 
   const approvalTaskIds = memberships.filter((m) => m.task.kind === "approval").map((m) => m.task.id);
-  const [subtasks, otherMemberships, values, blockers, approvalRequests, tagIds] = await Promise.all([
+  const [subtasks, otherMemberships, values, blockers, approvalRequests, tagIds, commentCounts] = await Promise.all([
     supabase
       .from("tasks")
       .select("parent_task_id, completed_at")
@@ -520,6 +541,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
           .neq("status", "cancelled")
       : Promise.resolve({ data: [], error: null }),
     listTaskTagIds(taskIds),
+    listCommentCounts(taskIds),
   ]);
 
   const approvalsByTask = new Map<string, { subtaskId: string | null; approverId: string; status: string; createdAt: string }[]>();
@@ -577,8 +599,25 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
       approvalTaskRequest(parseTaskKind(m.task.kind), m.task.assignee_id, approvalsByTask.get(m.task.id) ?? [])?.status,
     ),
     tagIds: tagIds.get(m.task.id) ?? [],
+    commentCount: commentCounts.get(m.task.id) ?? 0,
   }));
 });
+
+// Comments per task the viewer can read, not deleted: one grouped count in SQL (task_comment_counts,
+// invoker, so comments RLS decides). A preview deployed before 20261011020000_asana_parity_2.sql shows no
+// counts rather than failing the page.
+export async function listCommentCounts(taskIds: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (taskIds.length === 0) return counts;
+  const supabase = await createClient();
+  const result = await supabase.rpc("task_comment_counts", { task_ids: taskIds });
+  if (result.error) {
+    console.error(`[comments] couldn't count comments: ${result.error.message}`);
+    return counts;
+  }
+  for (const row of result.data ?? []) counts.set(row.task_id, Number(row.comment_count));
+  return counts;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Tags (workspace-level names; links follow the task through RLS)
@@ -2471,18 +2510,24 @@ export type ProjectStatusUpdate = {
   id: string;
   projectId: string;
   status: string;
+  // The status panel's title (Asana parity, batch 2); null for older updates and plain status changes.
+  title: string | null;
   note: string | null;
   authorName: string | null;
   createdAt: string;
 };
 
 const STATUS_UPDATE_COLUMNS =
+  "id, project_id, status, title, note, created_at, author:profiles!project_status_updates_author_id_fkey(full_name, email)";
+// Before 20261011020000_asana_parity_2.sql (a preview deployed ahead of its migration): no title.
+const STATUS_UPDATE_COLUMNS_UNTITLED =
   "id, project_id, status, note, created_at, author:profiles!project_status_updates_author_id_fkey(full_name, email)";
 
 function toStatusUpdate(r: {
   id: string;
   project_id: string;
   status: string;
+  title?: string | null;
   note: string | null;
   created_at: string;
   author: { full_name: string | null; email: string } | null;
@@ -2491,10 +2536,16 @@ function toStatusUpdate(r: {
     id: r.id,
     projectId: r.project_id,
     status: r.status,
+    title: r.title ?? null,
     note: r.note,
     authorName: r.author ? r.author.full_name?.trim() || r.author.email : null,
     createdAt: r.created_at,
   };
+}
+
+// Postgres "undefined column": a column this release reads hasn't been migrated yet.
+function isMissingColumn(error: { code?: string } | null) {
+  return error?.code === "42703";
 }
 
 // A project's status history, newest first (project Viewers+).
@@ -2506,6 +2557,15 @@ export const listProjectStatusUpdates = cache(async (projectId: string): Promise
     .eq("project_id", projectId)
     .order("created_at", { ascending: false })
     .limit(50);
+  if (isMissingColumn(result.error)) {
+    const untitled = await supabase
+      .from("project_status_updates")
+      .select(STATUS_UPDATE_COLUMNS_UNTITLED)
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    return rows(untitled, "status history").map(toStatusUpdate);
+  }
   return rows(result, "status history").map(toStatusUpdate);
 });
 
@@ -2520,11 +2580,131 @@ export async function listLatestStatusUpdates(projectIds: string[]): Promise<Map
     .in("project_id", projectIds)
     .order("created_at", { ascending: false })
     .limit(2000);
-  for (const r of rows(result, "status updates")) {
-    if (!latest.has(r.project_id)) latest.set(r.project_id, toStatusUpdate(r));
+  const updates = isMissingColumn(result.error)
+    ? rows(
+        await supabase
+          .from("project_status_updates")
+          .select(STATUS_UPDATE_COLUMNS_UNTITLED)
+          .in("project_id", projectIds)
+          .order("created_at", { ascending: false })
+          .limit(2000),
+        "status updates",
+      ).map(toStatusUpdate)
+    : rows(result, "status updates").map(toStatusUpdate);
+  for (const update of updates) {
+    if (!latest.has(update.projectId)) latest.set(update.projectId, update);
   }
   return latest;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Project page (Asana parity, batch 2): the Overview tab and the Share dialog. Every read uses the
+// viewer's client, so RLS decides: project rows, members, stories, and team records for project
+// Viewers+, goal links only for projects the viewer can read. Workspace admins get nothing extra.
+// ---------------------------------------------------------------------------------------------
+
+function personName(person: { full_name: string | null; email: string } | null): string | null {
+  return person ? displayName(person) : null;
+}
+
+export type ProjectOverviewInfo = { createdAt: string; createdByName: string | null; dueOn: string | null };
+
+// When and by whom the project was created, and its due date (projects.due_on; a preview deployed
+// before 20261011020000_asana_parity_2.sql reads no due date).
+export const getProjectOverviewInfo = cache(async (projectId: string): Promise<ProjectOverviewInfo | null> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("projects")
+    .select("created_at, due_on, creator:profiles!projects_created_by_fkey(full_name, email)")
+    .eq("id", projectId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (isMissingColumn(result.error)) {
+    const row = maybe(
+      await supabase
+        .from("projects")
+        .select("created_at, creator:profiles!projects_created_by_fkey(full_name, email)")
+        .eq("id", projectId)
+        .is("deleted_at", null)
+        .maybeSingle(),
+      "project",
+    );
+    return row ? { createdAt: row.created_at, createdByName: personName(row.creator), dueOn: null } : null;
+  }
+  const row = maybe(result, "project");
+  return row ? { createdAt: row.created_at, createdByName: personName(row.creator), dueOn: row.due_on } : null;
+});
+
+export type ProjectStoryKind = "created_from_template" | "duplicated" | "archived" | "unarchived";
+export type ProjectStoryItem = {
+  id: string;
+  kind: ProjectStoryKind;
+  actorName: string | null;
+  // The template or source project name, as it was at copy time.
+  fromName: string | null;
+  createdAt: string;
+};
+
+const PROJECT_STORY_KINDS: readonly string[] = ["created_from_template", "duplicated", "archived", "unarchived"];
+
+// Project-level history (project_stories: copies, archive / unarchive), newest first.
+export const listProjectStories = cache(async (projectId: string): Promise<ProjectStoryItem[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_stories")
+    .select("id, kind, data, created_at, actor:profiles(email, full_name)")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  return rows(result, "project history").flatMap((story): ProjectStoryItem[] => {
+    if (!PROJECT_STORY_KINDS.includes(story.kind)) return [];
+    const data = story.data && typeof story.data === "object" && !Array.isArray(story.data) ? story.data : {};
+    const name = story.kind === "duplicated" ? data.source_project_name : data.template_name;
+    return [
+      {
+        id: story.id,
+        kind: story.kind as ProjectStoryKind,
+        actorName: personName(story.actor),
+        fromName: typeof name === "string" ? name : null,
+        createdAt: story.created_at,
+      },
+    ];
+  });
+});
+
+export type ProjectGoalLink = { linkId: string; goal: Goal };
+
+// Goals this project is connected to (goal_links; RLS shows a link only to people who can read the
+// project, and goals are readable by everyone allowlisted).
+export const listProjectGoalLinks = cache(async (projectId: string): Promise<ProjectGoalLink[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("goal_links")
+    .select(`id, goal:goals!goal_links_goal_id_fkey(${GOAL_COLUMNS}, deleted_at)` as const)
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("created_at");
+  return rows(result, "connected goals").flatMap((r): ProjectGoalLink[] =>
+    r.goal && r.goal.deleted_at === null ? [{ linkId: r.id, goal: toGoal(r.goal) }] : [],
+  );
+});
+
+export type ProjectTeamAccess = { teamId: string; name: string; role: string };
+
+// Teams added to the project with a group invite (team_projects: a record of the invite, readable with
+// the project). The people themselves are ordinary members.
+export const listProjectTeamAccess = cache(async (projectId: string): Promise<ProjectTeamAccess[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("team_projects")
+    .select("team_id, role, team:teams!team_projects_team_id_fkey(name, deleted_at)")
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("created_at");
+  return rows(result, "teams on the project").flatMap((r): ProjectTeamAccess[] =>
+    r.team && r.team.deleted_at === null ? [{ teamId: r.team_id, name: r.team.name, role: r.role }] : [],
+  );
+});
 
 // ---------------------------------------------------------------------------------------------
 // Imports (Admin+ read; RLS returns nothing below Admin)

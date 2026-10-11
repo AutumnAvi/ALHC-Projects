@@ -10,6 +10,7 @@ import { getViewer } from "@/lib/auth";
 import {
   getGoalViewer,
   getMySettings,
+  listActivePeople,
   listGoals,
   listMyProjectRoles,
   listProfiles,
@@ -24,7 +25,6 @@ import {
   EMPTY_RESULTS,
   MAX_RECENTS,
   isSearchKind,
-  type QuickPerson,
   type QuickProject,
   type QuickResults,
   type QuickTask,
@@ -52,20 +52,6 @@ function rank<T>(items: T[], label: (item: T) => string, needle: string): T[] {
   });
 }
 
-// People in the workspace: profiles whose address is still on the allowlist (removed people left out).
-async function activePeople(): Promise<QuickPerson[]> {
-  const supabase = await createClient();
-  const [profiles, allowed] = await Promise.all([
-    listProfiles(),
-    supabase.from("allowed_emails").select("email").is("removed_at", null),
-  ]);
-  if (allowed.error) return [];
-  const active = new Set((allowed.data ?? []).map((row) => row.email.toLowerCase()));
-  return profiles
-    .filter((p) => active.has(p.email.toLowerCase()))
-    .map((p) => ({ id: p.id, name: displayName(p), email: p.email }));
-}
-
 // The palette's live results. `only` narrows to one kind (a chip), with more rows.
 export async function quickSearch(query: string, only: SearchKind | null = null): Promise<QuickResults> {
   const q = typeof query === "string" ? query.trim().slice(0, 200) : "";
@@ -78,7 +64,7 @@ export async function quickSearch(query: string, only: SearchKind | null = null)
   const [taskResult, projects, people] = await Promise.all([
     !kind || kind === "tasks" ? supabase.rpc("search_tasks", { query: q, max_results: limit }) : null,
     !kind || kind === "projects" ? listReadableProjects() : null,
-    !kind || kind === "people" ? activePeople() : null,
+    !kind || kind === "people" ? listActivePeople() : null,
   ]);
 
   const tasks: QuickTask[] =

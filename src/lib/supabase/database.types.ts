@@ -1607,6 +1607,7 @@ export type Database = {
           archived_by: string | null;
           team_id: string;
           visibility: string;
+          due_on: string | null;
         };
         Insert: {
           id?: string;
@@ -1627,6 +1628,7 @@ export type Database = {
           archived_by?: string | null;
           team_id?: string | null;
           visibility?: string;
+          due_on?: string | null;
         };
         Update: {
           id?: string;
@@ -1647,6 +1649,7 @@ export type Database = {
           archived_by?: string | null;
           team_id?: string;
           visibility?: string;
+          due_on?: string | null;
         };
         Relationships: [
           {
@@ -3104,6 +3107,7 @@ export type Database = {
           note: string | null;
           author_id: string | null;
           created_at: string;
+          title: string | null;
         };
         Insert: {
           id?: string;
@@ -3112,6 +3116,7 @@ export type Database = {
           note?: string | null;
           author_id?: string | null;
           created_at?: string;
+          title?: string | null;
         };
         Update: {
           id?: string;
@@ -3120,6 +3125,7 @@ export type Database = {
           note?: string | null;
           author_id?: string | null;
           created_at?: string;
+          title?: string | null;
         };
         Relationships: [
           {
@@ -4032,6 +4038,14 @@ export type Database = {
       post_email_reply: {
         Args: { reply_token: string; sender_email: string; reply_body: string; provider_email_id?: string | null };
         Returns: Json;
+      };
+      post_project_status_update: {
+        Args: { target_project: string; new_status: string; update_title?: string | null; summary?: string | null };
+        Returns: undefined;
+      };
+      task_comment_counts: {
+        Args: { task_ids: string[] };
+        Returns: { task_id: string; comment_count: number }[];
       };
       retry_integration_delivery: {
         Args: { target_delivery: string };
