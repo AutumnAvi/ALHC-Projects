@@ -2,17 +2,29 @@
 
 import { useSyncExternalStore } from "react";
 
-// Compact pane on the right (Asana's default) or expanded to the full window; remembered per browser.
-// Shared by the pane's Expand button and Settings → Display.
+// How task details open (Asana parity, batch 3), remembered per browser: the side pane next to the list
+// (Asana's default) or full screen (a centered card over the app); Wide view widens that card. The
+// expand button in the pane and Settings → Display both set them. The comments area's tab too.
 const PANE_EXPANDED_KEY = "alhc.taskPane.expanded";
+const PANE_WIDE_KEY = "alhc.taskPane.wide";
+const ACTIVITY_TAB_KEY = "alhc.taskPane.activity";
 const PANE_SIZE_EVENT = "alhc:pane-size";
 
-function readExpanded() {
+function read(key: string) {
   try {
-    return window.localStorage.getItem(PANE_EXPANDED_KEY) === "1";
+    return window.localStorage.getItem(key);
   } catch {
-    return false;
+    return null;
   }
+}
+
+function write(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Private windows can refuse storage; then the setting lasts until the page reloads at most.
+  }
+  window.dispatchEvent(new Event(PANE_SIZE_EVENT));
 }
 
 function subscribePaneSize(onChange: () => void) {
@@ -24,16 +36,29 @@ function subscribePaneSize(onChange: () => void) {
   };
 }
 
-// The server (and the first client render) always draws the compact pane.
+// The server (and the first client render) always draws the side pane, narrow, on the Comments tab.
 export function usePaneExpanded(): boolean {
-  return useSyncExternalStore(subscribePaneSize, readExpanded, () => false);
+  return useSyncExternalStore(subscribePaneSize, () => read(PANE_EXPANDED_KEY) === "1", () => false);
 }
 
 export function setPaneExpanded(expanded: boolean) {
-  try {
-    window.localStorage.setItem(PANE_EXPANDED_KEY, expanded ? "1" : "0");
-  } catch {
-    // Private windows can refuse storage; then the pane stays as it is.
-  }
-  window.dispatchEvent(new Event(PANE_SIZE_EVENT));
+  write(PANE_EXPANDED_KEY, expanded ? "1" : "0");
+}
+
+export function usePaneWide(): boolean {
+  return useSyncExternalStore(subscribePaneSize, () => read(PANE_WIDE_KEY) === "1", () => false);
+}
+
+export function setPaneWide(wide: boolean) {
+  write(PANE_WIDE_KEY, wide ? "1" : "0");
+}
+
+export type ActivityTab = "comments" | "all";
+
+export function useActivityTab(): ActivityTab {
+  return useSyncExternalStore(subscribePaneSize, () => (read(ACTIVITY_TAB_KEY) === "all" ? "all" : "comments"), () => "comments");
+}
+
+export function setActivityTab(tab: ActivityTab) {
+  write(ACTIVITY_TAB_KEY, tab);
 }

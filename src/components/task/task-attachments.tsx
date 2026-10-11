@@ -16,29 +16,14 @@ import {
 import type { TaskAttachment, TaskAttachmentLink } from "@/lib/data";
 import { createClient } from "@/lib/supabase/client";
 
-export function TaskAttachments({
-  taskId,
-  attachments,
-  links = [],
-}: {
-  taskId: string;
-  attachments: TaskAttachment[];
-  // Imported attachments that stayed in Asana: name + link only (files aren't copied).
-  links?: TaskAttachmentLink[];
-}) {
+// Uploading files to a task: one hidden file input, opened by the pane header's paperclip and the
+// Attachments section's "Attach" card. Files go straight to the private bucket, then registerAttachment
+// records them (Editors; RLS and the Storage policy decide).
+export function useAttachmentUpload(taskId: string) {
   const [, run] = useServerAction();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  // Thumbnails that failed to load (e.g. the route downloaded instead) fall back to the file icon.
-  const [brokenIds, setBrokenIds] = useState<ReadonlySet<string>>(() => new Set());
-  // Index into `images` of the attachment shown in the lightbox (null = closed).
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const thumbRefs = useRef(new Map<string, HTMLButtonElement>());
-
-  const kinds = new Map(attachments.map((a) => [a.id, previewKind(a.fileName, a.contentType)]));
-  const images = attachments.filter((a) => kinds.get(a.id) === "image" && !brokenIds.has(a.id));
-  const openImage = lightboxIndex === null ? null : (images[lightboxIndex] ?? null);
 
   async function upload(files: FileList) {
     setError(null);
@@ -71,20 +56,74 @@ export function TaskAttachments({
     if (inputRef.current) inputRef.current.value = "";
   }
 
+  const input = (
+    <input
+      ref={inputRef}
+      type="file"
+      multiple
+      tabIndex={-1}
+      aria-hidden
+      className="sr-only"
+      onChange={(e) => e.currentTarget.files && void upload(e.currentTarget.files)}
+    />
+  );
+  return { input, pick: () => inputRef.current?.click(), uploading, error };
+}
+
+export type AttachmentUpload = ReturnType<typeof useAttachmentUpload>;
+
+const CARD = "group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white transition hover:border-zinc-300 hover:shadow-sm";
+const CARD_PREVIEW = "flex h-20 w-full shrink-0 items-center justify-center bg-zinc-50 text-zinc-400";
+
+function extensionOf(name: string) {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && dot > name.length - 7 ? name.slice(dot + 1).toUpperCase() : "FILE";
+}
+
+// The pane's Attachments (Asana parity, batch 3): cards with an image thumbnail (or the file type), the
+// name, size, and age; images open in a lightbox, PDFs in the browser's viewer, the rest download.
+// Shown once a task has files (the header's paperclip adds the first).
+export function TaskAttachments({
+  attachments,
+  links = [],
+  upload,
+  canEdit,
+}: {
+  attachments: TaskAttachment[];
+  // Imported attachments that stayed in Asana: name + link only (files aren't copied).
+  links?: TaskAttachmentLink[];
+  upload: AttachmentUpload;
+  canEdit: boolean;
+}) {
+  const [, run] = useServerAction();
+  // Thumbnails that failed to load (e.g. the route downloaded instead) fall back to the file icon.
+  const [brokenIds, setBrokenIds] = useState<ReadonlySet<string>>(() => new Set());
+  // Index into `images` of the attachment shown in the lightbox (null = closed).
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const thumbRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  const kinds = new Map(attachments.map((a) => [a.id, previewKind(a.fileName, a.contentType)]));
+  const images = attachments.filter((a) => kinds.get(a.id) === "image" && !brokenIds.has(a.id));
+  const openImage = lightboxIndex === null ? null : (images[lightboxIndex] ?? null);
+
+  if (attachments.length === 0 && links.length === 0 && upload.uploading === 0 && !upload.error) return null;
+
   return (
     <section className="mt-6" aria-labelledby="attachments-heading">
       <div className="flex items-baseline justify-between">
         <h3 id="attachments-heading" className="text-sm font-semibold text-zinc-900">
           Attachments
         </h3>
-        <span className="text-xs text-zinc-400">Up to 25 MB each</span>
+        <span className="text-xs text-zinc-500">Up to 25 MB each</span>
       </div>
 
-      {attachments.length > 0 ? (
-        <ul className="mt-2 divide-y divide-zinc-100 rounded-md border border-zinc-200">
-          {attachments.map((attachment) => (
-            <li key={attachment.id} className="group flex items-center gap-2.5 px-3 py-2">
-              {kinds.get(attachment.id) === "image" && !brokenIds.has(attachment.id) ? (
+      <ul className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2" aria-label="Attached files">
+        {attachments.map((attachment) => {
+          const kind = kinds.get(attachment.id);
+          const thumbnail = kind === "image" && !brokenIds.has(attachment.id);
+          return (
+            <li key={attachment.id} className={CARD}>
+              {thumbnail ? (
                 <button
                   type="button"
                   ref={(el) => {
@@ -93,110 +132,120 @@ export function TaskAttachments({
                   }}
                   onClick={() => setLightboxIndex(images.findIndex((a) => a.id === attachment.id))}
                   aria-label={`Preview ${attachment.fileName}`}
-                  className="shrink-0 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500"
+                  className={`${CARD_PREVIEW} focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-500`}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element -- auth-gated redirect to a short-lived signed URL; next/image can't optimise it */}
-                  <img
+                  <Thumbnail
                     src={`/attachments/${attachment.id}?preview=1`}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    width={40}
-                    height={40}
-                    onError={() => setBrokenIds((prev) => new Set(prev).add(attachment.id))}
-                    className="size-10 rounded-md border border-zinc-200 bg-zinc-50 object-cover"
+                    onBroken={() => setBrokenIds((prev) => new Set(prev).add(attachment.id))}
                   />
                 </button>
               ) : (
-                <FileText className="size-4 shrink-0 text-zinc-400" aria-hidden />
-              )}
-              <a
-                href={`/attachments/${attachment.id}`}
-                target="_blank"
-                rel="noreferrer"
-                className="min-w-0 flex-1 truncate text-sm text-zinc-800 hover:underline"
-              >
-                {attachment.fileName}
-              </a>
-              {kinds.get(attachment.id) === "pdf" ? (
                 <a
-                  href={`/attachments/${attachment.id}?preview=1`}
+                  href={kind === "pdf" ? `/attachments/${attachment.id}?preview=1` : `/attachments/${attachment.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Open ${attachment.fileName} in a new tab`}
-                  className="btn-ghost h-6 px-1.5 text-xs"
+                  tabIndex={-1}
+                  aria-hidden
+                  className={CARD_PREVIEW}
                 >
-                  <ExternalLink className="size-3.5" aria-hidden />
-                  Open
+                  <span className="flex flex-col items-center gap-1">
+                    <FileText className="size-6" />
+                    <span className="text-2xs font-semibold tracking-wide text-zinc-500">{extensionOf(attachment.fileName)}</span>
+                  </span>
                 </a>
-              ) : null}
-              <span className="shrink-0 text-xs tabular-nums text-zinc-400">
-                {formatBytes(attachment.sizeBytes)} · <Timestamp iso={attachment.createdAt} />
-              </span>
-              <button
-                type="button"
-                aria-label={`Remove attachment ${attachment.fileName}`}
-                onClick={() => {
-                  if (window.confirm(`Remove “${attachment.fileName}” from this task?`)) {
-                    run(() => deleteAttachment(attachment.id));
-                  }
-                }}
-                className="rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
-              >
-                <Trash2 className="size-3.5" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {links.length > 0 ? (
-        <ul className="mt-2 divide-y divide-zinc-100 rounded-md border border-zinc-200" aria-label="Linked attachments">
-          {links.map((link) => (
-            <li key={link.id} className="flex items-center gap-2.5 px-3 py-2">
-              <ExternalLink className="size-4 shrink-0 text-zinc-400" aria-hidden />
-              {link.attachmentId ? (
-                // A duplicated task's attachment: the original file, through the same access-checked route.
-                <a
-                  href={`/attachments/${link.attachmentId}`}
-                  className="min-w-0 flex-1 truncate text-sm text-zinc-800 hover:underline"
-                >
-                  {link.name}
-                </a>
-              ) : link.url ? (
-                <a
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="min-w-0 flex-1 truncate text-sm text-zinc-800 hover:underline"
-                >
-                  {link.name}
-                </a>
-              ) : (
-                <span className="min-w-0 flex-1 truncate text-sm text-zinc-800">{link.name}</span>
               )}
-              <span className="shrink-0 text-xs text-zinc-400">
-                {link.attachmentId ? "Linked from the original task" : link.source === "asana" ? "In Asana · not copied" : "Link"}
+              <div className="min-w-0 px-2 py-1.5">
+                <a
+                  href={kind === "pdf" ? `/attachments/${attachment.id}?preview=1` : `/attachments/${attachment.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={attachment.fileName}
+                  className="block truncate text-xs font-medium text-zinc-800 hover:underline"
+                >
+                  {attachment.fileName}
+                </a>
+                <p className="truncate text-2xs tabular-nums text-zinc-500">
+                  {formatBytes(attachment.sizeBytes)} · <Timestamp iso={attachment.createdAt} />
+                </p>
+              </div>
+              <span className="absolute right-1 top-1 flex gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+                <a
+                  href={`/attachments/${attachment.id}?download`}
+                  aria-label={`Download ${attachment.fileName}`}
+                  data-tooltip="Download"
+                  className="rounded bg-white/90 p-1 text-zinc-500 shadow-sm hover:text-zinc-900"
+                >
+                  <Download className="size-3.5" />
+                </a>
+                {canEdit ? (
+                  <button
+                    type="button"
+                    aria-label={`Remove attachment ${attachment.fileName}`}
+                    data-tooltip="Remove"
+                    onClick={() => {
+                      if (window.confirm(`Remove “${attachment.fileName}” from this task?`)) {
+                        run(() => deleteAttachment(attachment.id));
+                      }
+                    }}
+                    className="rounded bg-white/90 p-1 text-zinc-500 shadow-sm hover:text-red-600"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                ) : null}
               </span>
             </li>
-          ))}
-        </ul>
-      ) : null}
-
-      <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 focus-within:ring-2 focus-within:ring-accent-100">
-        <Paperclip className="size-4" aria-hidden />
-        {uploading > 0 ? `Uploading ${uploading}…` : "Attach files"}
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          className="sr-only"
-          onChange={(e) => e.currentTarget.files && void upload(e.currentTarget.files)}
-        />
-      </label>
-      {error ? (
+          );
+        })}
+        {links.map((link) => {
+          const href = link.attachmentId ? `/attachments/${link.attachmentId}` : link.url;
+          const note = link.attachmentId ? "Linked from the original task" : link.source === "asana" ? "In Asana · not copied" : "Link";
+          return (
+            <li key={link.id} className={CARD}>
+              <span className={CARD_PREVIEW} aria-hidden>
+                <ExternalLink className="size-6" />
+              </span>
+              <div className="min-w-0 px-2 py-1.5">
+                {href ? (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    title={link.name}
+                    className="block truncate text-xs font-medium text-zinc-800 hover:underline"
+                  >
+                    {link.name}
+                  </a>
+                ) : (
+                  <span title={link.name} className="block truncate text-xs font-medium text-zinc-800">
+                    {link.name}
+                  </span>
+                )}
+                <p className="truncate text-2xs text-zinc-500">{note}</p>
+              </div>
+            </li>
+          );
+        })}
+        {upload.uploading > 0 ? (
+          <li className={`${CARD} items-center justify-center p-3 text-xs text-zinc-500`} aria-live="polite">
+            Uploading {upload.uploading}…
+          </li>
+        ) : null}
+        {canEdit ? (
+          <li className="print:hidden">
+            <button
+              type="button"
+              onClick={upload.pick}
+              className="flex h-full min-h-[7.5rem] w-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-zinc-300 text-xs text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 hover:text-zinc-900"
+            >
+              <Paperclip className="size-4" aria-hidden />
+              Attach files
+            </button>
+          </li>
+        ) : null}
+      </ul>
+      {upload.error ? (
         <p role="alert" className="mt-1 text-xs text-red-600">
-          {error}
+          {upload.error}
         </p>
       ) : null}
 
@@ -215,6 +264,24 @@ export function TaskAttachments({
         />
       ) : null}
     </section>
+  );
+}
+
+// An image card's thumbnail. A load that failed before the page hydrated never reaches onError, so the
+// mount check catches it too; either way the card falls back to the file icon.
+function Thumbnail({ src, onBroken }: { src: string; onBroken: () => void }) {
+  const ref = useRef<HTMLImageElement>(null);
+  const brokenRef = useRef(onBroken);
+  useEffect(() => {
+    brokenRef.current = onBroken;
+  }, [onBroken]);
+  useEffect(() => {
+    const img = ref.current;
+    if (img && img.complete && img.naturalWidth === 0) brokenRef.current();
+  }, []);
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- auth-gated redirect to a short-lived signed URL; next/image can't optimise it
+    <img ref={ref} src={src} alt="" loading="lazy" decoding="async" onError={onBroken} className="size-full object-cover" />
   );
 }
 

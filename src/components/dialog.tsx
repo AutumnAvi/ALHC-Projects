@@ -11,12 +11,15 @@ export function Dialog({
   onClose,
   children,
   width = "max-w-md",
+  compact = false,
 }: {
   title: string;
   description?: ReactNode;
   onClose: () => void;
   children: ReactNode;
   width?: string;
+  // Tighter padding (the Settings modal).
+  compact?: boolean;
 }) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -56,7 +59,7 @@ export function Dialog({
         aria-modal="true"
         aria-labelledby={titleId}
         onMouseDown={(e) => e.stopPropagation()}
-        className={`max-h-[90vh] w-full ${width} overflow-y-auto rounded-xl border border-zinc-200 bg-white p-5 text-sm shadow-xl`}
+        className={`max-h-[90vh] w-full ${width} overflow-y-auto rounded-xl border border-zinc-200 bg-white text-sm shadow-xl ${compact ? "px-4 pb-4 pt-3.5" : "p-5"}`}
       >
         <div className="flex items-start gap-2">
           <h2 id={titleId} className="flex-1 text-base font-semibold text-zinc-900">
@@ -67,7 +70,7 @@ export function Dialog({
           </button>
         </div>
         {description ? <div className="mt-1 text-xs text-zinc-500">{description}</div> : null}
-        <div ref={bodyRef} className="mt-4">
+        <div ref={bodyRef} className={compact ? "mt-2.5" : "mt-4"}>
           {children}
         </div>
       </div>

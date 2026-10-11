@@ -1,50 +1,81 @@
 "use client";
 
-import { useOptimistic } from "react";
-import { Check, X } from "lucide-react";
+import { useOptimistic, useState } from "react";
+import { CalendarDays, Check, ChevronDown, Plus, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useServerAction } from "@/components/toast";
 import { moveTask, setFieldValue } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { MenuItem, Popover } from "@/components/popover";
-import { PILL } from "@/components/project/field-chips";
-import { OPTION_COLOR_CLASSES, type FieldDef, type FieldOption } from "@/lib/fields";
+import { PILL, isChoiceField } from "@/components/project/field-chips";
+import { OPTION_COLOR_CLASSES, fieldChips, type FieldDef, type FieldOption } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
+import { formatDueDate } from "@/lib/dates";
+import { SingleDatePicker } from "./date-picker";
+import { PersonPicker } from "./person-picker";
+import { useDateText } from "./task-dates";
 import { PANE_CONTROL, PANE_FIELDS, PANE_LABEL } from "./pane-styles";
 
 const INPUT = `${PANE_CONTROL} w-full max-w-64`;
 
-export function TaskFields({ task, profiles }: { task: TaskDetail; profiles: Profile[] }) {
+// Custom fields in the pane's field grid (Asana parity, batch 3): the first FIELDS_SHOWN are always
+// shown, the rest behind "Show N more fields". Grouped by project when the task is in several projects
+// with fields.
+const FIELDS_SHOWN = 5;
+
+export function TaskFields({ task, profiles, canEdit }: { task: TaskDetail; profiles: Profile[]; canEdit: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   if (task.fields.length === 0) return null;
   const byProject = task.memberships
     .map((m) => ({ membership: m, fields: task.fields.filter((f) => f.projectId === m.projectId) }))
     .filter((group) => group.fields.length > 0);
   const showProjectNames = byProject.length > 1;
+  const total = byProject.reduce((n, g) => n + g.fields.length, 0);
+  const hidden = expanded ? 0 : Math.max(total - FIELDS_SHOWN, 0);
+  // How many fields of each group fit in the first FIELDS_SHOWN (in order).
+  const shownCounts = byProject.map((_, index) => {
+    const before = byProject.slice(0, index).reduce((n, g) => n + g.fields.length, 0);
+    return expanded ? byProject[index].fields.length : Math.max(Math.min(byProject[index].fields.length, FIELDS_SHOWN - before), 0);
+  });
 
   return (
-    <section aria-label="Custom fields" className="mt-1">
-      {byProject.map(({ membership, fields }) => (
-        <div key={membership.projectId} className="mt-1">
-          {showProjectNames ? (
-            <h3 className="mb-0.5 mt-3 text-2xs font-semibold uppercase tracking-wider text-zinc-400">
-              {membership.projectName}
-            </h3>
-          ) : null}
-          <dl className={PANE_FIELDS}>
-            {fields.map((field) => (
-              <FieldRow
-                key={field.id}
-                field={field}
-                task={task}
-                profiles={profiles}
-                value={task.fieldValues[field.id] ?? null}
-                sectionId={membership.sectionId}
-                sections={membership.sections}
-              />
-            ))}
-          </dl>
-        </div>
-      ))}
+    <section aria-label="Custom fields">
+      {byProject.map(({ membership, fields }, index) =>
+        shownCounts[index] > 0 ? (
+          <div key={membership.projectId}>
+            {showProjectNames ? (
+              <h3 className="mb-0.5 mt-2 text-2xs font-semibold uppercase tracking-wider text-zinc-500">
+                {membership.projectName}
+              </h3>
+            ) : null}
+            <dl className={PANE_FIELDS}>
+              {fields.slice(0, shownCounts[index]).map((field) => (
+                <FieldRow
+                  key={field.id}
+                  field={field}
+                  task={task}
+                  profiles={profiles}
+                  canEdit={canEdit}
+                  value={task.fieldValues[field.id] ?? null}
+                  sectionId={membership.sectionId}
+                  sections={membership.sections}
+                />
+              ))}
+            </dl>
+          </div>
+        ) : null,
+      )}
+      {total > FIELDS_SHOWN ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((e) => !e)}
+          className="btn-ghost -ml-2 mt-0.5 h-7 px-2 text-xs text-zinc-600 print:hidden"
+        >
+          <ChevronDown className={`size-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden />
+          {expanded ? "Show fewer fields" : `Show ${hidden} more field${hidden === 1 ? "" : "s"}`}
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -53,6 +84,7 @@ function FieldRow({
   field,
   task,
   profiles,
+  canEdit,
   value: savedValue,
   sectionId,
   sections,
@@ -60,11 +92,13 @@ function FieldRow({
   field: FieldDef;
   task: TaskDetail;
   profiles: Profile[];
+  canEdit: boolean;
   value: Json;
   sectionId: string | null;
   sections: { id: string; name: string }[];
 }) {
   const [, run] = useServerAction();
+  const dateText = useDateText();
   // Toggle-style editors build on this value, so quick successive clicks don't overwrite each other.
   const [value, setValue] = useOptimistic(savedValue);
   const [section, setSection] = useOptimistic(sectionId);
@@ -76,7 +110,32 @@ function FieldRow({
     );
 
   let control: React.ReactNode;
-  if (field.boundToSections) {
+  if (!canEdit) {
+    // Below Editor: the value as it reads in List and Board (pills for choices, plain text otherwise).
+    const chips = fieldChips(field, field.boundToSections ? null : value, {
+      personName: (personId) => {
+        const p = profiles.find((profile) => profile.id === personId);
+        return p ? displayName(p) : null;
+      },
+      sectionName: field.boundToSections ? (sections.find((s) => s.id === section)?.name ?? null) : null,
+    });
+    control =
+      chips.length === 0 ? (
+        <span className="px-1 text-sm text-zinc-500">—</span>
+      ) : isChoiceField(field) ? (
+        <span className="flex min-h-8 flex-wrap items-center gap-1 px-1">
+          {chips.map((chip, i) => (
+            <span key={`${chip.label}-${i}`} className={`${PILL} ${OPTION_COLOR_CLASSES[chip.color]}`}>
+              {chip.label}
+            </span>
+          ))}
+        </span>
+      ) : (
+        <span className="flex min-h-8 items-center px-1 text-sm text-zinc-800">
+          {field.fieldType === "date" && typeof value === "string" ? dateText(value) : chips.map((chip) => chip.label).join(", ")}
+        </span>
+      );
+  } else if (field.boundToSections) {
     control = (
       <ChoicePill
         fieldName={field.name}
@@ -127,18 +186,41 @@ function FieldRow({
           />
         );
         break;
-      case "date":
+      case "date": {
+        const day = typeof value === "string" ? value : null;
         control = (
-          <input
-            id={inputId}
-            type="date"
-            key={String(value ?? "")}
-            defaultValue={typeof value === "string" ? value : ""}
-            onChange={(e) => save(e.target.value || null)}
-            className={`${INPUT} w-auto`}
-          />
+          <Popover
+            label={`${field.name}: ${day ? formatDueDate(day) : "empty"}. Change`}
+            panelClassName="w-[19rem] p-0"
+            buttonClassName="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
+            button={
+              <>
+                <span
+                  aria-hidden
+                  className={`inline-flex size-6 shrink-0 items-center justify-center rounded-full ${
+                    day ? "text-zinc-500" : "border border-dashed border-zinc-300 text-zinc-400"
+                  }`}
+                >
+                  <CalendarDays className="size-3.5" />
+                </span>
+                <span className={day ? "text-zinc-800" : "text-zinc-500"}>{day ? dateText(day) : "No date"}</span>
+              </>
+            }
+          >
+            {(close) => (
+              <SingleDatePicker
+                label={field.name}
+                value={day}
+                onChange={(next) => {
+                  close();
+                  if (next !== day) save(next);
+                }}
+              />
+            )}
+          </Popover>
         );
         break;
+      }
       case "boolean":
         control = (
           <input
@@ -218,20 +300,19 @@ function FieldRow({
               );
             })}
             {remaining.length > 0 ? (
-              <select
-                id={inputId}
-                value=""
-                onChange={(e) => e.target.value && save([...selected, e.target.value])}
-                aria-label={`Add person to ${field.name}`}
-                className="rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200"
-              >
-                <option value="">Add person…</option>
-                {remaining.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {displayName(p)}
-                  </option>
-                ))}
-              </select>
+              <PersonPicker
+                label={`Add a person to ${field.name}`}
+                people={remaining}
+                value={null}
+                onPick={(personId) => save([...selected, personId])}
+                buttonClassName="inline-flex h-7 items-center gap-1 rounded-md px-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 aria-expanded:bg-zinc-100 print:hidden"
+                button={
+                  <>
+                    <Plus className="size-3.5" aria-hidden />
+                    {selected.length ? <span className="sr-only">Add person</span> : "Add person"}
+                  </>
+                }
+              />
             ) : null}
           </div>
         );
@@ -243,9 +324,11 @@ function FieldRow({
   return (
     <>
       <dt className={PANE_LABEL}>
-        {field.boundToSections ||
+        {!canEdit ||
+        field.boundToSections ||
         field.fieldType === "single_select" ||
         field.fieldType === "multi_select" ||
+        field.fieldType === "date" ||
         field.fieldType === "people" ? (
           field.name
         ) : (

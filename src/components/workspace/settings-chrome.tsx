@@ -21,7 +21,7 @@ const TABS = [
 export function WorkspaceSettingsTabs() {
   const pathname = usePathname();
   return (
-    <nav aria-label="Workspace settings" className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200 px-gutter print:hidden">
+    <nav aria-label="Workspace settings" className="tab-strip shrink-0 gap-1 px-gutter print:hidden">
       {TABS.map((tab) => (
         <Link key={tab.href} href={tab.href} aria-current={pathname === tab.href ? "page" : undefined} className={HEADER_TAB}>
           {tab.label}

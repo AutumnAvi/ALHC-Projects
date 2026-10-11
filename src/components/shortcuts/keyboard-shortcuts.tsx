@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Keyboard, X } from "lucide-react";
 import { OPEN_SEARCH_EVENT } from "@/components/shell/search-palette";
+import { useShell } from "@/components/shell/shell-context";
 import { isMac, isTypingTarget } from "./keyboard";
 
 type Shortcut = { keys: string[]; label: string };
@@ -15,6 +16,7 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
         { keys: ["?"], label: "Show or hide these shortcuts" },
         { keys: ["/"], label: "Search tasks, projects, and people" },
         { keys: [mod, "K"], label: "Search (works while typing too)" },
+        { keys: ["Tab", "then", "Q"], label: "Create a task (in a List view: add one in the current section)" },
       ],
     },
     {
@@ -33,17 +35,45 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
   ];
 }
 
-// Global shortcuts: `?` toggles the help overlay and `/` opens the search palette (⌘/Ctrl+K is handled by
-// the palette itself). Neither fires while typing.
+const CHORD_MS = 1000;
+
+// Global shortcuts: `?` toggles the help overlay, `/` opens the search palette (⌘/Ctrl+K is handled by
+// the palette itself), and Tab then Q opens Create → Task — unless a List view or My tasks took the chord
+// for its inline add (they prevent the event's default, checked once every listener has run). None fires
+// while typing.
 export function KeyboardShortcuts() {
+  const { openDialog } = useShell();
   const [open, setOpen] = useState(false);
   const [mod, setMod] = useState("Ctrl");
   const closeRef = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
+  const openDialogRef = useRef(openDialog);
 
   useEffect(() => {
+    openDialogRef.current = openDialog;
+  }, [openDialog]);
+
+  useEffect(() => {
+    let tabAt = 0;
     function onKey(e: KeyboardEvent) {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return;
+      if (isTypingTarget(e.target)) {
+        tabAt = 0;
+        return;
+      }
+      if (e.key === "Tab" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        tabAt = Date.now();
+        return;
+      }
+      const chord = Date.now() - tabAt < CHORD_MS;
+      tabAt = 0;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (chord && e.key.toLowerCase() === "q") {
+        if (document.querySelector("[role='dialog'], [role='alertdialog']")) return;
+        window.setTimeout(() => {
+          if (!e.defaultPrevented) openDialogRef.current({ kind: "task" });
+        }, 0);
+        return;
+      }
       if (e.key === "?") {
         e.preventDefault();
         setMod(isMac() ? "⌘" : "Ctrl");

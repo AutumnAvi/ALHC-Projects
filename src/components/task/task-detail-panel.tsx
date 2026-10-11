@@ -2,62 +2,49 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, useContext, useEffect, useOptimistic, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useOptimistic, useState, type ReactNode } from "react";
 import {
+  ArrowRightToLine,
   Check,
   ChevronRight,
   FileInput,
-  FolderClosed,
   Hash,
-  Home,
+  Link2,
+  ListPlus,
   Lock,
   Maximize2,
   Minimize2,
-  Plus,
+  MoveHorizontal,
+  Paperclip,
   SearchX,
-  Trash2,
+  UserRound,
   X,
 } from "lucide-react";
-import { DuplicateTaskButton } from "./duplicate-task-dialog";
 import { TaskLike } from "./task-like";
-import { setPaneExpanded, usePaneExpanded } from "./pane-size";
+import { setPaneExpanded, setPaneWide, usePaneExpanded, usePaneWide } from "./pane-size";
 import { RecordRecent } from "@/components/shell/shell-context";
-import { displayName } from "@/components/avatar";
-import { useServerAction } from "@/components/toast";
-import { EmptyState } from "@/components/ui";
-import {
-  addTaskToProject,
-  assignRequestNumber,
-  deleteTask,
-  moveTask,
-  removeTaskFromProject,
-  setHomeProject,
-  setTaskCompleted,
-  setTaskKind,
-  updateTask,
-} from "@/lib/actions";
-import { TASK_KINDS, TASK_KIND_LABELS, approvalOpen, approvalTaskRequest, parseApprovalTaskStatus, parseTaskKind } from "@/lib/task-kinds";
-import { ApprovalTaskBanner } from "./task-approval-banner";
+import { Avatar, displayName } from "@/components/avatar";
+import { useNotify, useServerAction } from "@/components/toast";
+import { EmptyState, Skeleton } from "@/components/ui";
+import { assignRequestNumber, setTaskCompleted, updateTask } from "@/lib/actions";
+import { approvalOpen, approvalTaskRequest, parseApprovalTaskStatus } from "@/lib/task-kinds";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
-import { CommentComposer, TaskActivity } from "./task-activity";
-import { TaskApprovals } from "./task-approvals";
-import { TaskAttachments } from "./task-attachments";
-import { DateTimeField } from "./task-dates";
-import { TaskDependencies } from "./task-dependencies";
-import { TaskConvert } from "./task-convert";
-import { TaskFields } from "./task-fields";
-import { TaskRecurrence } from "./task-recurrence";
-import { TaskSubtasks } from "./task-subtasks";
-import { TaskTags } from "./task-tags";
 import type { Tag } from "@/lib/tags";
 import { useTaskHref } from "@/components/project/shared";
-import { SaveTaskTemplateButton } from "./save-task-template";
-import { PANE_CONTROL, PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
-import { Skeleton } from "@/components/ui";
-
-// canAdd: the viewer is an Editor there, so the task can be added to that project.
-type ProjectOption = { id: string; name: string; canAdd: boolean };
+import { ApprovalTaskBanner } from "./task-approval-banner";
+import { TaskActivity, TaskPaneFooter } from "./task-activity";
+import { TaskApprovals } from "./task-approvals";
+import { TaskAttachments, useAttachmentUpload } from "./task-attachments";
+import { TaskDueDate } from "./task-dates";
+import { TaskDependencies, hasDependencyRow } from "./task-dependencies";
+import { TaskFields } from "./task-fields";
+import { TaskMoreMenu } from "./task-more-menu";
+import { PersonPicker } from "./person-picker";
+import { TaskProjects, type ProjectOption } from "./task-projects";
+import { TaskSubtasks, canAddSubtask } from "./task-subtasks";
+import { TaskTags } from "./task-tags";
+import { PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
 
 function useClosePane() {
   const router = useRouter();
@@ -69,57 +56,108 @@ function useClosePane() {
   return { href, close: () => router.push(href, { scroll: false }) };
 }
 
-const PaneSize = createContext<{ expanded: boolean; toggle: () => void }>({ expanded: false, toggle: () => undefined });
+const PaneMode = createContext<{ expanded: boolean; wide: boolean }>({ expanded: false, wide: false });
 
+// The task pane (Asana parity, batch 3). Side: next to the page at about 45% of the content width, the
+// page narrowing to fit (globals.css; over the page on narrower screens). Full screen: a centered card
+// over the app (sidebar hidden), wider in Wide view. Both modes keep the same elements, so switching
+// keeps drafts. Escape returns from full screen to the pane, then closes the pane — never while typing
+// or while a popover, dialog, or the search palette is open on top.
 function PaneShell({ children, label }: { children: ReactNode; label: string }) {
   const { close } = useClosePane();
-  // Compact or expanded, remembered per browser (also set from Settings → Display).
   const expanded = usePaneExpanded();
-
-  function toggle() {
-    setPaneExpanded(!expanded);
-  }
+  const wide = usePaneWide();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
-      const editing = target?.closest("input, textarea, select");
-      if (e.key === "Escape" && !editing) close();
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (document.querySelector("[role='dialog']:not([data-task-pane]), [role='alertdialog']")) return;
+      if (expanded) setPaneExpanded(false);
+      else close();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [close]);
+  }, [close, expanded]);
 
   return (
-    <PaneSize.Provider value={{ expanded, toggle }}>
-      <aside
-        aria-label={label}
-        data-expanded={expanded || undefined}
-        className={`group/pane fixed inset-y-0 right-0 z-30 flex w-full flex-col border-l border-zinc-200 bg-white shadow-xl shadow-zinc-900/10 ${
-          expanded ? "max-w-none" : "max-w-[34rem]"
-        }`}
+    <PaneMode.Provider value={{ expanded, wide }}>
+      <div
+        data-task-pane-backdrop={expanded ? "" : undefined}
+        onMouseDown={(e) => {
+          if (expanded && e.target === e.currentTarget) setPaneExpanded(false);
+        }}
+        className={expanded ? "fixed inset-0 z-50 flex justify-center bg-zinc-950/80 p-3 sm:p-6" : "contents"}
       >
-        {children}
-      </aside>
-    </PaneSize.Provider>
+        <aside
+          data-task-pane={expanded ? "full" : "side"}
+          role={expanded ? "dialog" : undefined}
+          aria-modal={expanded ? true : undefined}
+          aria-label={label}
+          className={
+            expanded
+              ? `relative flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-2xl ${wide ? "max-w-[96rem]" : "max-w-4xl"}`
+              : "absolute inset-y-0 right-0 z-30 flex w-full flex-col border-l border-zinc-200 bg-white shadow-xl shadow-zinc-900/10 sm:max-w-[34rem] lg:max-w-none lg:shadow-none"
+          }
+        >
+          {children}
+        </aside>
+      </div>
+    </PaneMode.Provider>
   );
 }
 
 function ExpandButton() {
-  const { expanded, toggle } = useContext(PaneSize);
-  const label = expanded ? "Collapse task details" : "Expand task details to full screen";
+  const { expanded } = useContext(PaneMode);
+  const label = expanded ? "Exit full screen" : "Full screen";
   return (
-    <button type="button" onClick={toggle} aria-label={label} title={expanded ? "Collapse" : "Expand"} aria-pressed={expanded} className="btn-icon">
+    <button
+      type="button"
+      onClick={() => setPaneExpanded(!expanded)}
+      aria-label={label}
+      data-tooltip={label}
+      aria-pressed={expanded}
+      className="btn-icon max-sm:hidden"
+    >
       {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
     </button>
   );
 }
 
+// Full screen only: a wider card.
+function WideViewToggle() {
+  const { expanded, wide } = useContext(PaneMode);
+  if (!expanded) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => setPaneWide(!wide)}
+      aria-pressed={wide}
+      className="btn-ghost h-7 px-2 text-xs aria-pressed:bg-zinc-100 aria-pressed:text-zinc-900 max-md:hidden"
+    >
+      <MoveHorizontal className="size-3.5" aria-hidden />
+      Wide view
+    </button>
+  );
+}
+
+function CloseButton({ href }: { href: string }) {
+  const { expanded } = useContext(PaneMode);
+  return (
+    <Link href={href} scroll={false} aria-label="Close task details" data-tooltip="Close" className="btn-icon">
+      {expanded ? <X className="size-4" /> : <ArrowRightToLine className="size-4" />}
+    </Link>
+  );
+}
+
+const HEADER = "flex h-12 shrink-0 items-center gap-2 border-b border-zinc-200 px-3 print:hidden";
+
 export function TaskNotFoundPanel() {
   const { href } = useClosePane();
   return (
     <PaneShell label="Task details">
-      <div className="flex h-bar shrink-0 items-center justify-end border-b border-zinc-200 px-3">
+      <div className={`${HEADER} justify-end`}>
         <ExpandButton />
         <CloseButton href={href} />
       </div>
@@ -137,8 +175,8 @@ export function TaskPaneLoading() {
   const { href } = useClosePane();
   return (
     <PaneShell label="Task details">
-      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
-        <Skeleton className="h-7 w-32 rounded-md" />
+      <div className={HEADER}>
+        <Skeleton className="h-8 w-32 rounded-md" />
         <div className="ml-auto flex items-center gap-1">
           <ExpandButton />
           <CloseButton href={href} />
@@ -146,9 +184,9 @@ export function TaskPaneLoading() {
       </div>
       <div role="status" className="px-gutter py-4">
         <span className="sr-only">Loading task…</span>
-        <Skeleton className="h-6 w-3/4" />
-        <div className={`mt-4 ${PANE_FIELDS}`}>
-          {["w-24", "w-28", "w-28", "w-20", "w-40"].map((width, i) => (
+        <Skeleton className="h-7 w-3/4" />
+        <div className={`mt-5 ${PANE_FIELDS}`}>
+          {["w-24", "w-28", "w-36", "w-20", "w-40"].map((width, i) => (
             <div key={i} className="contents">
               <Skeleton className="my-2.5 h-3 w-16" />
               <Skeleton className={`my-2.5 h-3 ${width}`} />
@@ -156,22 +194,9 @@ export function TaskPaneLoading() {
           ))}
         </div>
         <Skeleton className="mt-6 h-3.5 w-24" />
-        <Skeleton className="mt-2 h-20 w-full rounded-md" />
+        <Skeleton className="mt-2 h-16 w-full rounded-md" />
       </div>
     </PaneShell>
-  );
-}
-
-function CloseButton({ href }: { href: string }) {
-  return (
-    <Link
-      href={href}
-      scroll={false}
-      aria-label="Close task details"
-      className="btn-icon"
-    >
-      <X className="size-4" />
-    </Link>
   );
 }
 
@@ -189,8 +214,15 @@ export function TaskDetailPanel({
   tags: Tag[];
 }) {
   const { href, close } = useClosePane();
+  const expanded = usePaneExpanded();
+  const wide = usePaneWide();
   const [, run] = useServerAction();
+  const notify = useNotify();
+  const upload = useAttachmentUpload(task.id);
   const [completedAt, setOptimisticCompleted] = useOptimistic(task.completedAt);
+  const [assigneeId, setOptimisticAssignee] = useOptimistic(task.assigneeId);
+  const [addingSubtask, setAddingSubtask] = useState(false);
+  const [requestingApproval, setRequestingApproval] = useState(false);
   const completed = Boolean(completedAt);
   // Only finish-to-start links block completion; hidden ones (tasks the viewer can't open) count too.
   const openBlockers =
@@ -218,77 +250,88 @@ export function TaskDetailPanel({
           ? hasRole(task.memberRoles[p.id], "commenter")
           : p.id in task.memberRoles,
   );
-  const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+  const assignee = profiles.find((p) => p.id === assigneeId);
+  const assigneeName = assignee ? displayName(assignee) : null;
+  const assigneeLabel = task.kind === "approval" ? "Approver" : "Assignee";
+
+  function assign(profileId: string | null) {
+    run(
+      () => updateTask(task.id, { assigneeId: profileId }),
+      () => setOptimisticAssignee(profileId),
+    );
+  }
+
+  async function copyLink() {
+    // The task in its home project (else another of its projects the viewer can open); a private task in
+    // My tasks. People still need access to open it.
+    const project = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+    const path = project ? `/projects/${project.projectId}?task=${task.id}` : `/my-tasks?task=${task.id}`;
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+      notify("Task link copied");
+    } catch {
+      notify("Couldn’t copy the link");
+    }
+  }
+
+  const face = assignee ? (
+    <Avatar name={assigneeName ?? ""} size="md" />
+  ) : (
+    <span className="inline-flex size-7 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-400">
+      <UserRound className="size-3.5" aria-hidden />
+    </span>
+  );
 
   return (
     <PaneShell label={`Task: ${task.title}`}>
       <RecordRecent kind="task" id={task.id} />
-      <div className="flex h-bar shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
+      {upload.input}
+      <div className={HEADER}>
         {canEdit ? (
-          <>
-            <button
-              type="button"
-              disabled={blocked || awaitingApproval}
-              title={
-                awaitingApproval
-                  ? "The assignee completes this by approving or rejecting it"
-                  : blocked
-                    ? "Complete the tasks this one is blocked by first"
-                    : undefined
-              }
-              aria-describedby={blocked ? "task-blocked-note" : undefined}
-              onClick={() =>
-                run(
-                  () => setTaskCompleted(task.id, !completed),
-                  () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
-                )
-              }
-              className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                completed
-                  ? "border-accent-200 bg-accent-50 text-accent-700"
-                  : "border-zinc-300 text-zinc-700 enabled:hover:border-accent-500 enabled:hover:text-accent-700"
-              }`}
-            >
-              <Check className="size-4" />
-              {completed ? "Completed" : task.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
-            </button>
-            {blocked ? (
-              <span id="task-blocked-note" className="inline-flex items-center gap-1 text-xs text-amber-700">
-                <Lock className="size-3.5" aria-hidden />
-                Blocked by {openBlockers} task{openBlockers === 1 ? "" : "s"}
+          <button
+            type="button"
+            disabled={blocked || awaitingApproval}
+            data-tooltip={
+              awaitingApproval
+                ? "The assignee completes this by approving or rejecting it"
+                : blocked
+                  ? "Complete the tasks this one is blocked by first"
+                  : undefined
+            }
+            aria-describedby={blocked ? "task-blocked-note" : undefined}
+            aria-pressed={completed}
+            onClick={() =>
+              run(
+                () => setTaskCompleted(task.id, !completed),
+                () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
+              )
+            }
+            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              completed
+                ? "border-green-600 bg-green-600 text-white enabled:hover:border-green-700 enabled:hover:bg-green-700"
+                : "border-zinc-300 bg-white text-zinc-700 enabled:hover:border-green-600 enabled:hover:bg-green-50 enabled:hover:text-green-700"
+            }`}
+          >
+            <Check className="size-4" strokeWidth={2.5} aria-hidden />
+            {completed ? "Completed" : task.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
+          </button>
+        ) : (
+          <span className="flex min-w-0 items-center gap-2 text-xs text-zinc-500">
+            {completed ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-green-50 px-2 py-1 font-medium text-green-700">
+                <Check className="size-3.5" aria-hidden /> Completed
               </span>
             ) : null}
-          </>
-        ) : (
-          <span className="text-xs text-zinc-500">
-            {completed ? "Completed · " : ""}
-            {task.viewerRole === "commenter" ? "You can comment on this task" : "View only"}
+            <span className="truncate">{task.viewerRole === "commenter" ? "You can comment on this task" : "View only"}</span>
           </span>
         )}
-        <div className="ml-auto flex min-w-0 items-center gap-1">
-          {home ? (
-            <Link
-              href={`/projects/${home.projectId}/list?task=${task.id}`}
-              title={`Open in ${home.projectName}`}
-              className="mr-1 hidden min-w-0 items-center gap-1 truncate rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 sm:inline-flex"
-            >
-              <FolderClosed className="size-3 shrink-0" aria-hidden />
-              <span className="truncate">{home.projectName}</span>
-            </Link>
-          ) : null}
-          {canEdit && home ? (
-            <SaveTaskTemplateButton
-              taskId={task.id}
-              title={
-                task.requestLabel && task.title.startsWith(`[${task.requestLabel}] `)
-                  ? task.title.slice(task.requestLabel.length + 3)
-                  : task.title
-              }
-              hasAssignee={Boolean(task.assigneeId)}
-              projects={task.memberships.map((m) => ({ id: m.projectId, name: m.projectName }))}
-              defaultProjectId={home.projectId}
-            />
-          ) : null}
+        {blocked && canEdit ? (
+          <span id="task-blocked-note" className="hidden min-w-0 items-center gap-1 truncate text-xs text-amber-700 sm:inline-flex">
+            <Lock className="size-3.5 shrink-0" aria-hidden />
+            Blocked by {openBlockers} task{openBlockers === 1 ? "" : "s"}
+          </span>
+        ) : null}
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <TaskLike
             taskId={task.id}
             likeProfileIds={task.likeProfileIds}
@@ -296,40 +339,63 @@ export function TaskDetailPanel({
             memberId={memberId}
             canLike={hasRole(task.viewerRole, "commenter")}
           />
-          {canEdit ? <DuplicateTaskButton taskId={task.id} title={task.title} isSubtask={task.isSubtask} /> : null}
           {canEdit ? (
-            <button
-              type="button"
-              onClick={() => {
-                const message = task.isSubtask
-                  ? `Delete subtask “${task.title}”? It moves to the Trash with its own subtasks, where Editors can restore it.`
-                  : `Delete “${task.title}”? It moves to the Trash of each of its projects (with its subtasks), where Editors can restore it.`;
-                if (window.confirm(message)) {
-                  run(async () => {
-                    const result = await deleteTask(task.id);
-                    if (!result.error) close();
-                    return result;
-                  });
-                }
-              }}
-              aria-label="Delete task"
-              title="Delete task"
-              className="btn-icon hover:bg-red-50 hover:text-red-700"
-            >
-              <Trash2 className="size-4" />
+            <PersonPicker
+              label={`${assigneeLabel}: ${assigneeName ?? "nobody"}. Change`}
+              tooltip={assigneeName ? `${assigneeLabel}: ${assigneeName}` : `Choose ${task.kind === "approval" ? "an approver" : "an assignee"}`}
+              align="end"
+              people={assignable}
+              value={assigneeId}
+              onPick={assign}
+              onClear={() => assign(null)}
+              clearLabel={task.kind === "approval" ? "Remove approver" : "Remove assignee"}
+              buttonClassName="inline-flex size-8 items-center justify-center rounded-full hover:bg-zinc-100 aria-expanded:bg-zinc-100"
+              button={face}
+            />
+          ) : assignee ? (
+            <span className="inline-flex size-8 items-center justify-center" data-tooltip={`${assigneeLabel}: ${assigneeName}`}>
+              {face}
+            </span>
+          ) : null}
+          {canEdit ? (
+            <button type="button" onClick={upload.pick} aria-label="Attach files" data-tooltip="Attach files" className="btn-icon max-sm:hidden">
+              <Paperclip className="size-4" />
             </button>
           ) : null}
+          {canAddSubtask(task) ? (
+            <button
+              type="button"
+              onClick={() => setAddingSubtask(true)}
+              aria-label="Add subtask"
+              data-tooltip="Add subtask"
+              className="btn-icon max-sm:hidden"
+            >
+              <ListPlus className="size-4" />
+            </button>
+          ) : null}
+          <button type="button" onClick={copyLink} aria-label="Copy task link" data-tooltip="Copy task link" className="btn-icon max-sm:hidden">
+            <Link2 className="size-4" />
+          </button>
+          <WideViewToggle />
           <ExpandButton />
+          <TaskMoreMenu
+            task={task}
+            canEdit={canEdit}
+            canAddSubtask={canAddSubtask(task)}
+            onRequestApproval={() => setRequestingApproval(true)}
+            onAddSubtask={() => setAddingSubtask(true)}
+            onAttach={upload.pick}
+            onCopyLink={copyLink}
+            onDeleted={close}
+          />
           <CloseButton href={href} />
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-gutter py-4">
-        <div className="mx-auto w-full group-data-[expanded]/pane:max-w-3xl">
-        {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
-        {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
-        {/* Below Editor every control in here is disabled; links (projects) still work. RLS enforces it. */}
-        <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
+          {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
+          {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
           <label htmlFor="task-title" className="sr-only">
             Task name
           </label>
@@ -337,7 +403,9 @@ export function TaskDetailPanel({
             id="task-title"
             defaultValue={task.title}
             rows={1}
+            readOnly={!canEdit}
             onBlur={(e) => {
+              if (!canEdit) return;
               const title = e.currentTarget.value.trim();
               if (!title) e.currentTarget.value = task.title;
               else if (title !== task.title) run(() => updateTask(task.id, { title }));
@@ -348,7 +416,7 @@ export function TaskDetailPanel({
                 e.currentTarget.blur();
               }
             }}
-            className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent px-2 py-1 text-2xl font-semibold tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
+            className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent bg-transparent px-2 py-1 text-2xl font-semibold leading-tight tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent ${
               completed ? "text-zinc-500" : "text-zinc-900"
             }`}
           />
@@ -356,253 +424,124 @@ export function TaskDetailPanel({
           <RequestBadges task={task} />
 
           <dl className={`mt-3 ${PANE_FIELDS}`}>
-            <dt className={PANE_LABEL}>
-              <label htmlFor="task-kind">Type</label>
-            </dt>
-            <dd>
-              <select
-                id="task-kind"
-                key={task.kind}
-                defaultValue={task.kind}
-                aria-describedby="task-kind-hint"
-                onChange={(e) => {
-                  const kind = parseTaskKind(e.currentTarget.value);
-                  if (kind === "milestone" && task.startOn) {
-                    if (!window.confirm("A milestone has only a due date. Clear the start date?")) {
-                      e.currentTarget.value = task.kind;
-                      return;
+            <dt className={PANE_LABEL}>{assigneeLabel}</dt>
+            <dd className="min-w-0">
+              {canEdit ? (
+                <div className="group/assignee flex min-h-8 items-center">
+                  <PersonPicker
+                    label={`${assigneeLabel}: ${assigneeName ?? "nobody"}. Change`}
+                    people={assignable}
+                    value={assigneeId}
+                    onPick={assign}
+                    onClear={() => assign(null)}
+                    clearLabel={task.kind === "approval" ? "Remove approver" : "Remove assignee"}
+                    buttonClassName="inline-flex h-8 min-w-0 max-w-full items-center gap-2 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
+                    button={
+                      <>
+                        {assignee ? <Avatar name={assigneeName ?? ""} /> : (
+                          <span className="inline-flex size-6 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-400">
+                            <UserRound className="size-3.5" aria-hidden />
+                          </span>
+                        )}
+                        <span className={`truncate ${assignee ? "text-zinc-800" : "text-zinc-500"}`}>{assigneeName ?? "No assignee"}</span>
+                      </>
                     }
-                  }
-                  run(() => setTaskKind(task.id, kind));
-                }}
-                className={`${PANE_CONTROL} w-full max-w-64`}
-              >
-                {TASK_KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {TASK_KIND_LABELS[k]}
-                  </option>
-                ))}
-              </select>
-              <p id="task-kind-hint" className="sr-only">
-                Milestones have only a due date. An approval task’s assignee approves it.
-              </p>
+                  />
+                  {assignee ? (
+                    <button
+                      type="button"
+                      onClick={() => assign(null)}
+                      aria-label={task.kind === "approval" ? "Remove the approver" : "Remove the assignee"}
+                      data-tooltip={task.kind === "approval" ? "Remove approver" : "Remove assignee"}
+                      className="ml-0.5 rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-zinc-700 focus-visible:opacity-100 group-hover/assignee:opacity-100 [@media(hover:none)]:opacity-100"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              ) : (
+                <span className="flex min-h-8 items-center gap-2 px-1 text-sm">
+                  {assignee ? <Avatar name={assigneeName ?? ""} /> : null}
+                  <span className={assignee ? "text-zinc-800" : "text-zinc-500"}>{assigneeName ?? "No assignee"}</span>
+                </span>
+              )}
             </dd>
 
-            <dt className={PANE_LABEL}>
-              <label htmlFor="task-assignee">{task.kind === "approval" ? "Approver" : "Assignee"}</label>
-            </dt>
-            <dd>
-              <select
-                id="task-assignee"
-                key={task.assigneeId ?? "none"}
-                defaultValue={task.assigneeId ?? ""}
-                onChange={(e) =>
-                  run(() => updateTask(task.id, { assigneeId: e.target.value || null }))
-                }
-                className={`${PANE_CONTROL} w-full max-w-64`}
-              >
-                <option value="">No assignee</option>
-                {assignable.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {displayName(profile)}
-                  </option>
-                ))}
-              </select>
-            </dd>
-
-            {task.kind === "milestone" ? null : (
-              <>
-                <dt className={PANE_LABEL}>
-                  <label htmlFor="task-start">Start date</label>
-                </dt>
-                <dd>
-                  <DateTimeField task={task} kind="start" />
-                </dd>
-              </>
-            )}
-
-            <dt className={PANE_LABEL}>
-              <label htmlFor="task-due">Due date</label>
-            </dt>
-            <dd>
-              <DateTimeField task={task} kind="due" />
-            </dd>
-
-            <dt className={`${PANE_LABEL} self-start`}>
-              <label htmlFor="task-repeat">Repeats</label>
-            </dt>
-            <dd>
-              <TaskRecurrence task={task} />
-            </dd>
-
-            <dt className={`${PANE_LABEL} self-start`}>Tags</dt>
-            <dd>
-              <TaskTags taskId={task.id} tagIds={task.tagIds} tags={tags} canEdit={canEdit} />
+            <dt className={PANE_LABEL}>Due date</dt>
+            <dd className="min-w-0">
+              <TaskDueDate task={task} canEdit={canEdit} />
             </dd>
 
             <dt className={`${PANE_LABEL} self-start`}>Projects</dt>
-            <dd>
-              {task.isSubtask ? (
-                <InheritedProjects task={task} />
-              ) : (
-                <>
-                  {task.isPrivate ? (
-                    <p className="flex items-start gap-1.5 py-1.5 text-sm text-zinc-600">
-                      <Lock className="mt-0.5 size-3.5 shrink-0 text-zinc-400" aria-hidden />
-                      <span>
-                        Private: only its creator and its assignee can see it. Adding it to a project makes it that
-                        project’s task, visible to the project’s members.
-                      </span>
-                    </p>
-                  ) : null}
-                  <Memberships task={task} addableProjects={addableProjects} />
-                </>
-              )}
-              <TaskConvert task={task} />
+            <dd className="min-w-0">
+              <TaskProjects task={task} addableProjects={addableProjects} canEdit={canEdit} />
             </dd>
+
+            {hasDependencyRow(task, canEdit) ? (
+              <>
+                <dt className={`${PANE_LABEL} self-start`}>Dependencies</dt>
+                <dd className="min-w-0">
+                  <TaskDependencies task={task} canEdit={canEdit} />
+                </dd>
+              </>
+            ) : null}
+
+            {canEdit || task.tagIds.length ? (
+              <>
+                <dt className={`${PANE_LABEL} self-start`}>Tags</dt>
+                <dd className="min-w-0">
+                  <TaskTags taskId={task.id} tagIds={task.tagIds} tags={tags} canEdit={canEdit} />
+                </dd>
+              </>
+            ) : null}
           </dl>
 
-          <TaskFields task={task} profiles={profiles} />
+          <TaskFields task={task} profiles={profiles} canEdit={canEdit} />
 
-          <div className="mt-6">
-            <label htmlFor="task-notes" className={PANE_HEADING}>
-              Description
-            </label>
-            <textarea
-              id="task-notes"
-              defaultValue={task.notes ?? ""}
-              placeholder="Add details, links, or context for this task"
-              onBlur={(e) => {
-                if (e.currentTarget.value.trim() !== (task.notes ?? "")) {
-                  const notes = e.currentTarget.value;
-                  run(() => updateTask(task.id, { notes }));
-                }
-              }}
-              className="mt-2 field-sizing-content min-h-20 w-full resize-y rounded-md border border-zinc-200 px-3 py-2 text-sm leading-relaxed placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
-            />
-          </div>
+          <section className="mt-6" aria-labelledby="task-notes-heading">
+            <h3 id="task-notes-heading" className={PANE_HEADING}>
+              <label htmlFor="task-notes">Description</label>
+            </h3>
+            {canEdit ? (
+              <textarea
+                id="task-notes"
+                defaultValue={task.notes ?? ""}
+                placeholder="What is this task about? Add details, links, or context."
+                onBlur={(e) => {
+                  if (e.currentTarget.value.trim() !== (task.notes ?? "").trim()) {
+                    const notes = e.currentTarget.value;
+                    run(() => updateTask(task.id, { notes }));
+                  }
+                }}
+                // Borderless until hovered or focused, like Asana's description.
+                className="-mx-2 mt-1 field-sizing-content min-h-16 w-[calc(100%+1rem)] resize-none rounded-md border border-transparent bg-transparent px-2 py-1.5 text-sm leading-relaxed text-zinc-800 placeholder:text-zinc-500 hover:border-zinc-200 focus:border-accent-500/60 focus:bg-white focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
+              />
+            ) : task.notes ? (
+              <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">{task.notes}</p>
+            ) : (
+              <p className="mt-1 text-sm text-zinc-500">No description.</p>
+            )}
+          </section>
 
-          <TaskSubtasks task={task} profiles={profiles} />
-        </fieldset>
+          <TaskSubtasks task={task} profiles={profiles} adding={addingSubtask} onAddingChange={setAddingSubtask} />
 
-        <TaskDependencies task={task} />
+          <TaskApprovals
+            task={task}
+            profiles={profiles}
+            memberId={memberId}
+            excludeId={approvalRequest?.id ?? null}
+            requesting={requestingApproval}
+            onRequestingChange={setRequestingApproval}
+          />
 
-        <TaskApprovals task={task} profiles={profiles} memberId={memberId} excludeId={approvalRequest?.id ?? null} />
+          <TaskAttachments attachments={task.attachments} links={task.attachmentLinks} upload={upload} canEdit={canEdit} />
 
-        <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
-          <TaskAttachments taskId={task.id} attachments={task.attachments} links={task.attachmentLinks} />
-        </fieldset>
-
-        <TaskActivity task={task} profiles={profiles} memberId={memberId} />
+          <TaskActivity task={task} profiles={profiles} memberId={memberId} />
         </div>
       </div>
 
-      <CommentComposer task={task} profiles={profiles} memberId={memberId} />
+      <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
     </PaneShell>
-  );
-}
-
-function Memberships({
-  task,
-  addableProjects,
-}: {
-  task: TaskDetail;
-  addableProjects: ProjectOption[];
-}) {
-  const [, run] = useServerAction();
-
-  return (
-    <div className="flex flex-col gap-1 py-1">
-      <ul className="flex flex-col gap-1">
-        {task.memberships.map((membership) => (
-          <li
-            key={membership.projectId}
-            className="group/membership flex min-h-8 items-center gap-2 rounded-md border border-zinc-200 px-2 py-1"
-          >
-            <Link
-              href={`/projects/${membership.projectId}/list?task=${task.id}`}
-              className="min-w-0 flex-1 truncate font-medium text-zinc-800 hover:underline"
-            >
-              {membership.projectName}
-            </Link>
-            {membership.isHome ? (
-              <span
-                className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-medium text-zinc-600"
-                title="Home project — the task's primary project"
-              >
-                <Home className="size-3" />
-                Home
-              </span>
-            ) : null}
-            <label className="sr-only" htmlFor={`section-${membership.projectId}`}>
-              Section in {membership.projectName}
-            </label>
-            <select
-              id={`section-${membership.projectId}`}
-              key={membership.sectionId ?? "none"}
-              defaultValue={membership.sectionId ?? ""}
-              onChange={(e) =>
-                run(() => moveTask(task.id, membership.projectId, e.target.value || null))
-              }
-              className="max-w-36 rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-600 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
-            >
-              <option value="">No section</option>
-              {membership.sections.map((section) => (
-                <option key={section.id} value={section.id}>
-                  {section.name}
-                </option>
-              ))}
-            </select>
-            {membership.isHome ? null : (
-              <>
-                <button
-                  type="button"
-                  onClick={() => run(() => setHomeProject(task.id, membership.projectId))}
-                  aria-label={`Make ${membership.projectName} the home project`}
-                  title="Make home project"
-                  className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
-                >
-                  <Home className="size-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => run(() => removeTaskFromProject(task.id, membership.projectId))}
-                  aria-label={`Remove from ${membership.projectName}`}
-                  title="Remove from project"
-                  className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-red-600"
-                >
-                  <X className="size-3.5" />
-                </button>
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
-      {addableProjects.length > 0 ? (
-        <div className="flex items-center gap-1.5">
-          <Plus className="size-3.5 text-zinc-400" aria-hidden />
-          <label className="sr-only" htmlFor="add-to-project">
-            Add task to another project
-          </label>
-          <select
-            id="add-to-project"
-            value=""
-            onChange={(e) => {
-              const projectId = e.target.value;
-              if (projectId) run(() => addTaskToProject(task.id, projectId));
-            }}
-            className="rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
-          >
-            <option value="">{task.memberships.length ? "Add to another project…" : "Add to a project…"}</option>
-            {addableProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -661,45 +600,5 @@ function ParentBreadcrumb({ task }: { task: TaskDetail }) {
         </span>
       ))}
     </nav>
-  );
-}
-
-// A subtask's projects are its top-level task's (read-only here; change them on that task).
-function InheritedProjects({ task }: { task: TaskDetail }) {
-  const taskHref = useTaskHref();
-  const root = task.ancestors[0];
-  return (
-    <div className="flex flex-col gap-1 py-1.5 text-sm">
-      {task.memberships.length ? (
-        <ul className="flex flex-wrap gap-1">
-          {task.memberships.map((m) => (
-            <li key={m.projectId}>
-              <Link
-                href={`/projects/${m.projectId}/list?task=${task.id}`}
-                className="chip hover:bg-zinc-200"
-              >
-                {m.projectName}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      ) : task.isPrivate ? (
-        <span className="inline-flex items-center gap-1.5 text-zinc-600">
-          <Lock className="size-3.5 text-zinc-400" aria-hidden />
-          Private, like its top-level task
-        </span>
-      ) : (
-        <span className="text-zinc-500">None you can open</span>
-      )}
-      {root ? (
-        <p className="text-xs text-zinc-500">
-          Same as its top-level task,{" "}
-          <Link href={taskHref(root.id)} scroll={false} className="underline hover:text-zinc-800">
-            {root.title}
-          </Link>
-          .
-        </p>
-      ) : null}
-    </div>
   );
 }

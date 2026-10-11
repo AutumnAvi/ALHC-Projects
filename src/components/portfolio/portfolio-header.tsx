@@ -28,7 +28,7 @@ export function PortfolioHeader({ portfolio }: { portfolio: Portfolio }) {
   }
 
   return (
-    <header className="border-b border-zinc-200 px-gutter pt-2.5">
+    <header className="px-gutter pt-2.5">
       <div className="flex items-center gap-2">
         <HeaderGlyph icon={Briefcase} />
         <label htmlFor="portfolio-name" className="sr-only">
@@ -53,7 +53,7 @@ export function PortfolioHeader({ portfolio }: { portfolio: Portfolio }) {
           className={`${HEADER_TITLE_INPUT} w-full`}
         />
       </div>
-      <nav aria-label="Portfolio" className="mt-1 flex items-center gap-0.5 overflow-x-auto print:hidden">
+      <nav aria-label="Portfolio" className="tab-strip -mx-gutter mt-1 items-center gap-0.5 px-gutter print:hidden">
         {tabs.map(({ href, label, icon: Icon, exact }) => {
           const active = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
           return (

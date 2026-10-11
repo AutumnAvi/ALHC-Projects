@@ -1,105 +1,104 @@
 "use client";
 
 import { useState } from "react";
-import { LayoutTemplate } from "lucide-react";
-import { Popover } from "@/components/popover";
+import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { useNotify, useServerAction } from "@/components/toast";
 import { saveTaskAsTemplate } from "@/lib/actions";
 
-// Pane header: save this task as a task template of one of its projects (Editor+ there). Captures the
-// title, notes, subtasks, that project's field values, and optionally the assignee.
-export function SaveTaskTemplateButton({
+// The pane's "…" → Save as task template: a task template of one of the task's projects (Editor+
+// there). Captures the title, notes, subtasks, that project's field values, and optionally the assignee.
+export function SaveTaskTemplateDialog({
   taskId,
   title,
   hasAssignee,
   projects,
   defaultProjectId,
+  onClose,
 }: {
   taskId: string;
   title: string;
   hasAssignee: boolean;
   projects: { id: string; name: string }[];
   defaultProjectId: string;
+  onClose: () => void;
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
   const [projectId, setProjectId] = useState(defaultProjectId);
 
   return (
-    <Popover
-      label="Save as task template"
-      align="end"
-      panelClassName="w-72"
-      buttonClassName="btn-icon"
-      button={<LayoutTemplate className="size-4" aria-hidden />}
+    <Dialog
+      title="Save as task template"
+      description="Keeps the title, notes, subtasks, and this project’s field values. Comments, files, and dates are left out."
+      onClose={onClose}
     >
-      {(close) => (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const data = new FormData(e.currentTarget);
-            run(async () => {
-              const result = await saveTaskAsTemplate(taskId, projectId, {
-                name: String(data.get("name") ?? ""),
-                includeAssignee: data.get("include_assignee") === "on",
-              });
-              if (!result.error) {
-                close();
-                notify("Task template saved — find it under “Add task” → Template");
-              }
-              return result;
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const data = new FormData(e.currentTarget);
+          run(async () => {
+            const result = await saveTaskAsTemplate(taskId, projectId, {
+              name: String(data.get("name") ?? ""),
+              includeAssignee: data.get("include_assignee") === "on",
             });
-          }}
-          className="flex flex-col gap-3"
-        >
-          <p className="text-xs font-semibold text-zinc-900">Save as task template</p>
+            if (!result.error) {
+              onClose();
+              notify("Task template saved — find it under “Add task” → Template");
+            }
+            return result;
+          });
+        }}
+        className="flex flex-col gap-3"
+      >
+        <div>
+          <label htmlFor="task-template-name" className={DIALOG_LABEL}>
+            Template name
+          </label>
+          <input
+            id="task-template-name"
+            name="name"
+            required
+            data-autofocus
+            maxLength={100}
+            defaultValue={title.slice(0, 100)}
+            className="field mt-1 w-full"
+          />
+        </div>
+        {projects.length > 1 ? (
           <div>
-            <label htmlFor="task-template-name" className="block text-xs font-medium text-zinc-700">
-              Template name
+            <label htmlFor="task-template-project" className={DIALOG_LABEL}>
+              Project
             </label>
-            <input
-              id="task-template-name"
-              name="name"
-              required
-              autoFocus
-              maxLength={100}
-              defaultValue={title.slice(0, 100)}
-              className="control mt-1 w-full"
-            />
+            <select
+              id="task-template-project"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="field mt-1 w-full"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <p className={DIALOG_HINT}>The template is listed under that project’s Add task.</p>
           </div>
-          {projects.length > 1 ? (
-            <div>
-              <label htmlFor="task-template-project" className="block text-xs font-medium text-zinc-700">
-                Project
-              </label>
-              <select
-                id="task-template-project"
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                className="control mt-1 w-full"
-              >
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-          {hasAssignee ? (
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
-              <input type="checkbox" name="include_assignee" className="size-4 accent-accent-600" />
-              Include the assignee
-            </label>
-          ) : null}
-          <p className="text-2xs text-zinc-500">
-            Keeps the title, notes, subtasks, and this project’s field values. Comments, files, and dates are left out.
-          </p>
-          <button type="submit" disabled={pending} className="btn-primary self-start">
+        ) : null}
+        {hasAssignee ? (
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input type="checkbox" name="include_assignee" className="size-4 accent-accent-600" />
+            Include the assignee
+          </label>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" disabled={pending} className="btn-primary">
             {pending ? "Saving…" : "Save template"}
           </button>
-        </form>
-      )}
-    </Popover>
+        </div>
+      </form>
+    </Dialog>
   );
 }

@@ -18,7 +18,7 @@ export function ReportsTabs() {
     { href: "/reports/dashboards", label: "My dashboards", icon: LayoutDashboard, exact: false },
   ];
   return (
-    <nav aria-label="Reports" className="flex items-center gap-0.5 overflow-x-auto border-b border-zinc-200 px-gutter print:hidden">
+    <nav aria-label="Reports" className="tab-strip items-center gap-0.5 px-gutter print:hidden">
       {tabs.map(({ href, label, icon: Icon, exact }) => {
         const active = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
         return (

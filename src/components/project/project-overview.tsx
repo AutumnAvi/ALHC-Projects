@@ -108,7 +108,7 @@ function Description({ projectId, description }: { projectId: string; descriptio
             if (value.trim() !== (description ?? "").trim()) run(() => updateProject(projectId, { description: value }));
           }}
           // Borderless until hovered or focused, like Asana's description.
-          className="mt-2 field-sizing-content min-h-20 w-full resize-none rounded-lg border border-transparent bg-transparent px-2 py-1.5 -ml-2 text-sm leading-relaxed text-zinc-800 hover:border-zinc-200 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
+          className="mt-2 field-sizing-content min-h-20 w-full resize-none rounded-lg border border-transparent bg-transparent px-2 py-1.5 -ml-2 text-sm leading-relaxed text-zinc-800 placeholder:text-zinc-500 hover:border-zinc-200 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
         />
       ) : description ? (
         <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-zinc-800">{description}</p>

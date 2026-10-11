@@ -2,29 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Copy } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useTaskHref } from "@/components/project/shared";
 import { useNotify } from "@/components/toast";
 import { duplicateTask } from "@/lib/actions";
 import { DUPLICATE_TASK_OPTIONS, describeDuplicateSkips, type DuplicateTaskOptionKey } from "@/lib/duplicate-task";
 
-// Pane header button + dialog: name the copy and choose what comes along. The copy lands in this task's
-// projects where you're an Editor (a subtask's copy next to it; a private task's copy stays private),
-// then opens in the pane.
-export function DuplicateTaskButton({ taskId, title, isSubtask }: { taskId: string; title: string; isSubtask: boolean }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button type="button" onClick={() => setOpen(true)} aria-label="Duplicate task" title="Duplicate task" className="btn-icon">
-        <Copy className="size-4" />
-      </button>
-      {open ? <DuplicateTaskDialog taskId={taskId} title={title} isSubtask={isSubtask} onClose={() => setOpen(false)} /> : null}
-    </>
-  );
-}
-
-function DuplicateTaskDialog({
+// Duplicate task (the pane's "…" menu): name the copy and choose what comes along. The copy lands in this
+// task's projects where you're an Editor (a subtask's copy next to it; a private task's copy stays
+// private), then opens in the pane.
+export function DuplicateTaskDialog({
   taskId,
   title,
   isSubtask,

@@ -27,31 +27,27 @@ export const OPEN_SEARCH_EVENT = "alhc:open-search";
 const noopSubscribe = () => () => undefined;
 
 // Search in the top bar (Asana parity, batch 1): a centered pill ("Search ALHC", ⌘/Ctrl+K or "/") that
-// opens a command palette over it, with Tasks / Projects / People chips, Recents, and results that update
+// opens a command palette — centered near the top of the window over a dimmed page (since batch 3; it
+// no longer covers the pill) — with Tasks / Projects / People chips, Recents, and results that update
 // as you type. Results come from the server with the person's own session, so they only ever include
 // what that person can open.
 export function SearchPalette() {
   const pathname = usePathname();
   const { workspace } = useShell();
-  // Open only on the page it was opened from, so following a result closes it. The panel's position is
-  // measured from the pill when it opens.
-  const [openState, setOpenState] = useState<{ pathname: string; place: Place } | null>(null);
+  // Open only on the page it was opened from, so following a result closes it.
+  const [openState, setOpenState] = useState<{ pathname: string } | null>(null);
   const open = openState?.pathname === pathname;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const mod = useSyncExternalStore(noopSubscribe, () => (isMac() ? "⌘" : "Ctrl"), () => "Ctrl");
 
   useEffect(() => {
-    const openHere = () => setOpenState({ pathname: window.location.pathname, place: placement(triggerRef.current) });
+    const openHere = () => setOpenState({ pathname: window.location.pathname });
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
         // Not over a modal (a Create dialog, Settings, the drawer): the palette would open underneath it.
         if (document.querySelector("[aria-modal='true']")) return;
         e.preventDefault();
-        setOpenState((current) =>
-          current?.pathname === window.location.pathname
-            ? null
-            : { pathname: window.location.pathname, place: placement(triggerRef.current) },
-        );
+        setOpenState((current) => (current?.pathname === window.location.pathname ? null : { pathname: window.location.pathname }));
       }
     }
     window.addEventListener("keydown", onKey);
@@ -67,7 +63,7 @@ export function SearchPalette() {
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpenState({ pathname, place: placement(triggerRef.current) })}
+        onClick={() => setOpenState({ pathname })}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-keyshortcuts="Meta+K Control+K /"
@@ -81,7 +77,6 @@ export function SearchPalette() {
       </button>
       {open && openState ? (
         <Palette
-          place={openState.place}
           onClose={(refocus) => {
             setOpenState(null);
             if (refocus) triggerRef.current?.focus();
@@ -100,7 +95,7 @@ type Item = {
 };
 type Group = { heading: string; items: Item[] };
 
-function Palette({ place, onClose }: { place: Place; onClose: (refocus: boolean) => void }) {
+function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
   const router = useRouter();
   const { member } = useShell();
   const listId = useId();
@@ -191,7 +186,7 @@ function Palette({ place, onClose }: { place: Place; onClose: (refocus: boolean)
 
   let index = -1;
   return (
-    <div className="fixed inset-0 z-50 print:hidden" onMouseDown={() => onClose(false)}>
+    <div className="fixed inset-0 z-50 bg-zinc-900/40 print:hidden" onMouseDown={() => onClose(false)}>
       <div
         role="dialog"
         aria-label="Search"
@@ -206,8 +201,8 @@ function Palette({ place, onClose }: { place: Place; onClose: (refocus: boolean)
           }
         }}
         onMouseDown={(e) => e.stopPropagation()}
-        style={{ top: place.top, left: place.left, width: place.width }}
-        className="absolute overflow-hidden rounded-xl border border-zinc-200 bg-white text-sm shadow-2xl outline-none"
+        // Like a command palette: centered, below the top bar (never over the search pill).
+        className="absolute left-1/2 top-[max(4.5rem,12vh)] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-xl border border-zinc-200 bg-white text-sm shadow-2xl shadow-zinc-900/30 outline-none"
       >
         <div className="flex h-11 items-center gap-2 border-b border-zinc-100 px-3">
           <Search className="size-4 shrink-0 text-zinc-400" aria-hidden />
@@ -376,16 +371,4 @@ function personItem(person: QuickPerson): Item {
       </>
     ),
   };
-}
-
-type Place = { top: number; left: number; width: number };
-
-// Over the search pill: as wide as 40rem allows, centered on the pill, kept 8 px inside the window.
-function placement(anchor: HTMLElement | null): Place {
-  const viewport = typeof window === "undefined" ? 1024 : window.innerWidth;
-  const width = Math.min(640, viewport - 16);
-  const rect = anchor?.getBoundingClientRect();
-  const center = rect && rect.width > 40 ? rect.left + rect.width / 2 : viewport / 2;
-  const left = Math.max(8, Math.min(center - width / 2, viewport - width - 8));
-  return { top: rect ? Math.max(rect.top - 2, 4) : 6, left, width };
 }

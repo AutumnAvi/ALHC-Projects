@@ -1,242 +1,283 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, Circle, EyeOff, Plus, X } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, Circle, EyeOff, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import { Popover } from "@/components/popover";
+import { Segmented } from "@/components/project/view-chrome";
 import { useTaskHref } from "@/components/project/shared";
 import { useServerAction } from "@/components/toast";
 import { removeTaskDependency, setTaskDependency } from "@/lib/actions";
 import { slackLabel } from "@/lib/critical-path";
 import { DEPENDENCY_KINDS, MAX_LAG_DAYS, dependencyLabel, isDependencyKind, type DependencyKind } from "@/lib/dependencies";
 import type { TaskDependency, TaskDetail } from "@/lib/data";
-import { hasRole } from "@/lib/roles";
 
-// "Blocked by": tasks this one comes after. "Blocking": tasks that come after this one. Each link is
-// finish-to-start (the later task starts on/after the earlier one's due date + lag, and can't be completed
-// before it) or start-to-start (starts on/after the earlier one's start + lag; never blocks completion).
+type Relation = TaskDependency["relation"];
+const RELATION_LABELS: Record<Relation, string> = { blocked_by: "Blocked by", blocking: "Blocking" };
+
+// Whether the pane shows a Dependencies row at all (Editors always can add one).
+export function hasDependencyRow(task: TaskDetail, canEdit: boolean) {
+  return canEdit || task.dependencies.length > 0 || task.schedule.length > 0 || task.hiddenBlockers > 0;
+}
+
+// The pane's Dependencies row (Asana parity, batch 3): "Blocked by" (tasks this one comes after) and
+// "Blocking" (tasks that come after it), one line each, with "Add dependencies" below. Each link is
+// finish-to-start (the later task starts on/after the earlier one's due date + lag, and can't be
+// completed before it) or start-to-start (starts on/after its start + lag; never blocks completion).
 // Editors of both tasks add, change, and remove links — across projects and between subtasks too.
-export function TaskDependencies({ task }: { task: TaskDetail }) {
-  const canEdit = hasRole(task.viewerRole, "editor");
-  const blockedBy = task.dependencies.filter((d) => d.relation === "blocked_by");
-  const blocking = task.dependencies.filter((d) => d.relation === "blocking");
-  if (!canEdit && task.dependencies.length === 0 && task.schedule.length === 0 && task.hiddenBlockers === 0) return null;
+export function TaskDependencies({ task, canEdit }: { task: TaskDetail; canEdit: boolean }) {
   const multiProject = task.schedule.length > 1;
-
   const linked = new Set(task.dependencies.map((d) => d.taskId));
   const candidates = task.dependencyCandidates
     .map((group) => ({ ...group, tasks: group.tasks.filter((t) => !linked.has(t.id)) }))
     .filter((group) => group.tasks.length > 0);
+  const ordered = [
+    ...task.dependencies.filter((d) => d.relation === "blocked_by"),
+    ...task.dependencies.filter((d) => d.relation === "blocking"),
+  ];
 
   return (
-    <section className="mt-6" aria-labelledby="dependencies-heading">
-      <h3 id="dependencies-heading" className="text-sm font-semibold text-zinc-900">
-        Dependencies
-      </h3>
+    <div className="flex min-h-8 flex-col justify-center gap-0.5 py-0.5">
+      {ordered.length ? (
+        <ul className="flex flex-col" aria-label="Dependencies">
+          {ordered.map((item, index) => (
+            <DependencyItem
+              key={item.id}
+              task={task}
+              item={item}
+              canEdit={canEdit}
+              showRelation={index === 0 || ordered[index - 1].relation !== item.relation}
+            />
+          ))}
+        </ul>
+      ) : !canEdit ? (
+        <span className="px-1 text-sm text-zinc-500">None</span>
+      ) : null}
+      {task.hiddenBlockers > 0 ? (
+        <p className="flex items-center gap-1.5 px-1 text-xs text-zinc-600">
+          <EyeOff className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+          Also waiting on {task.hiddenBlockers === 1 ? "1 task" : `${task.hiddenBlockers} tasks`} you can’t open
+        </p>
+      ) : null}
       {task.schedule.length > 0 ? (
-        <ul className="mt-1 space-y-0.5 text-xs text-zinc-600" aria-label="Schedule">
+        <ul className="px-1 text-xs text-zinc-500" aria-label="Schedule">
           {task.schedule.map((s) => (
             <li key={s.projectId}>
-              <span className={s.critical ? "font-medium text-zinc-900" : undefined}>{slackLabel(s)}</span>
+              <span className={s.critical ? "font-medium text-zinc-800" : undefined}>{slackLabel(s)}</span>
               {multiProject ? <span className="text-zinc-400"> · {s.projectName}</span> : null}
             </li>
           ))}
         </ul>
       ) : null}
-      {task.hiddenBlockers > 0 ? (
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-zinc-600">
-          <EyeOff className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
-          Also waiting on {task.hiddenBlockers === 1 ? "1 task" : `${task.hiddenBlockers} tasks`} you can’t open; it can’t be
-          completed until {task.hiddenBlockers === 1 ? "that one is" : "they are"}.
-        </p>
-      ) : null}
-      <div className="mt-2 grid gap-3 sm:grid-cols-2">
-        <DependencyList
-          id="blocked-by"
-          title="Blocked by"
-          empty="Nothing — this task can be completed any time."
-          items={blockedBy}
-          canEdit={canEdit}
-          candidates={candidates}
-          addLabel="Add a task this waits on…"
-          onAdd={(otherId) => setTaskDependency(otherId, task.id)}
-          onChange={(item, kind, lag) => setTaskDependency(item.taskId, task.id, kind, lag)}
-        />
-        <DependencyList
-          id="blocking"
-          title="Blocking"
-          empty="No tasks are waiting on this one."
-          items={blocking}
-          canEdit={canEdit}
-          candidates={candidates}
-          addLabel="Add a task waiting on this…"
-          onAdd={(otherId) => setTaskDependency(task.id, otherId)}
-          onChange={(item, kind, lag) => setTaskDependency(task.id, item.taskId, kind, lag)}
-        />
-      </div>
-    </section>
+      {canEdit ? <AddDependency task={task} candidates={candidates} /> : null}
+    </div>
   );
 }
 
-function DependencyList({
-  id,
-  title,
-  empty,
-  items,
+function DependencyItem({
+  task,
+  item,
   canEdit,
-  candidates,
-  addLabel,
-  onAdd,
-  onChange,
+  showRelation,
 }: {
-  id: string;
-  title: string;
-  empty: string;
-  items: TaskDependency[];
+  task: TaskDetail;
+  item: TaskDependency;
   canEdit: boolean;
-  candidates: TaskDetail["dependencyCandidates"];
-  addLabel: string;
-  onAdd: (otherId: string) => Promise<{ error?: string }>;
-  onChange: (item: TaskDependency, kind: DependencyKind, lagDays: number) => Promise<{ error?: string }>;
+  showRelation: boolean;
 }) {
-  const [pending, run] = useServerAction();
   const taskHref = useTaskHref();
-
+  const custom = item.kind !== "finish_to_start" || item.lagDays !== 0;
   return (
-    <div className="rounded-md border border-zinc-200">
-      <h4 id={`${id}-heading`} className="border-b border-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-600">
-        {title}
-        {items.length ? <span className="ml-1.5 tabular-nums text-zinc-400">{items.length}</span> : null}
-      </h4>
-      <ul aria-labelledby={`${id}-heading`} className="divide-y divide-zinc-100">
-        {items.map((item) => (
-          <li key={item.id} className="group px-3 py-1.5 text-sm">
-            <div className="flex items-center gap-2">
-              {item.completedAt ? (
-                <CheckCircle2 className="size-4 shrink-0 text-green-600" aria-label="Completed" />
-              ) : (
-                <Circle className="size-4 shrink-0 text-zinc-400" aria-label="Incomplete" />
-              )}
-              <Link
-                href={taskHref(item.taskId)}
-                scroll={false}
-                className={`min-w-0 flex-1 truncate hover:underline ${
-                  item.completedAt ? "text-zinc-400 line-through" : "text-zinc-800"
-                }`}
-              >
-                {item.title}
-              </Link>
-              {item.isSubtask ? <span className="chip shrink-0">Subtask</span> : null}
-              {canEdit ? (
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() => run(() => removeTaskDependency(item.id))}
-                  aria-label={`Remove dependency on ${item.title}`}
-                  title="Remove dependency"
-                  className="rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-50"
-                >
-                  <X className="size-3.5" />
-                </button>
-              ) : null}
-            </div>
-            {canEdit ? (
-              <LinkSettings item={item} pending={pending} onChange={(kind, lag) => run(() => onChange(item, kind, lag))} />
-            ) : (
-              <p className="ml-6 text-xs text-zinc-500">{dependencyLabel(item.kind, item.lagDays)}</p>
-            )}
-          </li>
-        ))}
-        {items.length === 0 ? <li className="px-3 py-1.5 text-xs text-zinc-500">{empty}</li> : null}
-        {canEdit && candidates.length > 0 ? (
-          <li className="flex items-center gap-1.5 px-3 py-1.5">
-            <Plus className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
-            <label className="sr-only" htmlFor={`${id}-add`}>
-              {addLabel}
+    <li className="group/dep flex min-h-7 min-w-0 items-center gap-1.5 px-1 text-sm">
+      <span className={`w-16 shrink-0 text-xs text-zinc-500 ${showRelation ? "" : "invisible"}`}>{RELATION_LABELS[item.relation]}</span>
+      {item.completedAt ? (
+        <CheckCircle2 className="size-3.5 shrink-0 text-green-600" aria-label="Completed" />
+      ) : (
+        <Circle className="size-3.5 shrink-0 text-zinc-400" aria-label="Incomplete" />
+      )}
+      <Link
+        href={taskHref(item.taskId)}
+        scroll={false}
+        className={`min-w-20 truncate hover:underline ${item.completedAt ? "text-zinc-500 line-through" : "text-zinc-800"}`}
+      >
+        {item.title}
+      </Link>
+      {item.isSubtask ? <span className="chip shrink-0">Subtask</span> : null}
+      {custom ? <span className="min-w-0 truncate text-xs text-zinc-500">{dependencyLabel(item.kind, item.lagDays)}</span> : null}
+      {canEdit ? <LinkOptions task={task} item={item} /> : null}
+    </li>
+  );
+}
+
+// Type, lag, and removal of one link (Editors). The lag commits on blur / Enter.
+function LinkOptions({ task, item }: { task: TaskDetail; item: TaskDependency }) {
+  const [pending, run] = useServerAction();
+  const change = (kind: DependencyKind, lag: number) =>
+    run(() =>
+      item.relation === "blocked_by" ? setTaskDependency(item.taskId, task.id, kind, lag) : setTaskDependency(task.id, item.taskId, kind, lag),
+    );
+  return (
+    <Popover
+      label={`Options for the dependency on ${item.title}`}
+      tooltip="Dependency options"
+      align="end"
+      panelClassName="w-64"
+      buttonClassName="btn-icon ml-auto size-6 shrink-0 opacity-0 focus-visible:opacity-100 group-hover/dep:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100"
+      button={<MoreHorizontal className="size-4" aria-hidden />}
+    >
+      {(close) => (
+        <div className="flex flex-col gap-2.5">
+          <div>
+            <label htmlFor={`dep-kind-${item.id}`} className="text-xs font-medium text-zinc-600">
+              Type
             </label>
             <select
-              id={`${id}-add`}
-              value=""
+              id={`dep-kind-${item.id}`}
+              value={item.kind}
               disabled={pending}
               onChange={(e) => {
-                const otherId = e.target.value;
-                if (otherId) run(() => onAdd(otherId));
+                const kind = e.currentTarget.value;
+                if (isDependencyKind(kind)) change(kind, item.lagDays);
               }}
-              className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent py-0.5 text-xs text-zinc-500 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+              className="control mt-1 w-full"
             >
-              <option value="">{addLabel}</option>
-              {candidates.map((group) => (
-                <optgroup key={group.key} label={group.label}>
-                  {group.tasks.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.title}
-                    </option>
-                  ))}
-                </optgroup>
+              {DEPENDENCY_KINDS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
               ))}
             </select>
-          </li>
-        ) : null}
-      </ul>
-    </div>
+          </div>
+          <div>
+            <label htmlFor={`dep-lag-${item.id}`} className="text-xs font-medium text-zinc-600">
+              Lag in days (negative = overlap)
+            </label>
+            <input
+              id={`dep-lag-${item.id}`}
+              type="number"
+              step={1}
+              min={-MAX_LAG_DAYS}
+              max={MAX_LAG_DAYS}
+              key={`${item.id}-${item.lagDays}`}
+              defaultValue={item.lagDays}
+              disabled={pending}
+              onBlur={(e) => {
+                const input = e.currentTarget;
+                const lag = Number(input.value);
+                if (!Number.isInteger(lag) || Math.abs(lag) > MAX_LAG_DAYS) {
+                  input.value = String(item.lagDays);
+                  return;
+                }
+                if (lag !== item.lagDays) change(item.kind, lag);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+              className="control mt-1 w-24 tabular-nums"
+            />
+          </div>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              close();
+              run(() => removeTaskDependency(item.id));
+            }}
+            className="btn-ghost justify-start px-1.5 text-red-700 hover:bg-red-50 hover:text-red-800"
+          >
+            <Trash2 className="size-3.5" aria-hidden />
+            Remove dependency
+          </button>
+        </div>
+      )}
+    </Popover>
   );
 }
 
-// Kind and lag of one link (Editors). The lag commits on blur / Enter.
-function LinkSettings({
-  item,
-  pending,
-  onChange,
-}: {
-  item: TaskDependency;
-  pending: boolean;
-  onChange: (kind: DependencyKind, lagDays: number) => void;
-}) {
+// "Add dependencies": pick whether the other task comes before (Blocked by) or after (Blocking), then
+// find it among this task's tree, its projects you edit, and a few other projects you edit.
+function AddDependency({ task, candidates }: { task: TaskDetail; candidates: TaskDetail["dependencyCandidates"] }) {
+  const [, run] = useServerAction();
+  const [relation, setRelation] = useState<Relation>("blocked_by");
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const groups = candidates
+    .map((g) => ({ ...g, tasks: g.tasks.filter((t) => !q || t.title.toLowerCase().includes(q)).slice(0, 30) }))
+    .filter((g) => g.tasks.length > 0);
+
+  function add(otherId: string) {
+    run(() => (relation === "blocked_by" ? setTaskDependency(otherId, task.id) : setTaskDependency(task.id, otherId)));
+  }
+
   return (
-    <div className="ml-6 mt-0.5 flex items-center gap-1.5 text-xs text-zinc-500">
-      <label className="sr-only" htmlFor={`dep-kind-${item.id}`}>
-        Dependency type for {item.title}
-      </label>
-      <select
-        id={`dep-kind-${item.id}`}
-        value={item.kind}
-        disabled={pending}
-        onChange={(e) => {
-          const kind = e.currentTarget.value;
-          if (isDependencyKind(kind)) onChange(kind, item.lagDays);
-        }}
-        className="rounded-md border border-transparent bg-transparent py-0.5 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
-      >
-        {DEPENDENCY_KINDS.map((k) => (
-          <option key={k.value} value={k.value}>
-            {k.label}
-          </option>
-        ))}
-      </select>
-      <label htmlFor={`dep-lag-${item.id}`}>Lag</label>
-      <input
-        id={`dep-lag-${item.id}`}
-        type="number"
-        step={1}
-        min={-MAX_LAG_DAYS}
-        max={MAX_LAG_DAYS}
-        key={`${item.id}-${item.lagDays}`}
-        defaultValue={item.lagDays}
-        disabled={pending}
-        title="Days between the two tasks (negative = overlap)"
-        onBlur={(e) => {
-          const input = e.currentTarget;
-          const lag = Number(input.value);
-          if (!Number.isInteger(lag) || Math.abs(lag) > MAX_LAG_DAYS) {
-            input.value = String(item.lagDays);
-            return;
-          }
-          if (lag !== item.lagDays) onChange(item.kind, lag);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-        }}
-        className="w-14 rounded-md border border-zinc-200 bg-transparent px-1 py-0.5 tabular-nums focus:border-zinc-300 focus:outline-none"
-      />
-      <span aria-hidden>days</span>
-    </div>
+    <Popover
+      label="Add dependencies"
+      panelClassName="w-80 p-0"
+      buttonClassName="inline-flex h-7 items-center gap-1 self-start rounded-md px-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 aria-expanded:bg-zinc-100 print:hidden"
+      button={
+        <>
+          <Plus className="size-3.5" aria-hidden />
+          Add dependencies
+        </>
+      }
+    >
+      {(close) => (
+        <div>
+          <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-2.5 py-2">
+            <Segmented
+              label="This task is"
+              options={[
+                { value: "blocked_by", label: "Blocked by" },
+                { value: "blocking", label: "Blocking" },
+              ]}
+              value={relation}
+              onChange={setRelation}
+            />
+          </div>
+          <div className="flex items-center gap-2 border-b border-zinc-100 px-2.5">
+            <Search className="size-4 shrink-0 text-zinc-400" aria-hidden />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.currentTarget.value)}
+              aria-label="Find a task"
+              placeholder="Find a task"
+              className="h-9 min-w-0 flex-1 border-0 bg-transparent p-0 text-sm shadow-none outline-none focus-visible:shadow-none"
+            />
+          </div>
+          <div className="max-h-72 overflow-y-auto p-1">
+            {groups.map((group) => (
+              <div key={group.key} role="group" aria-label={group.label}>
+                <p aria-hidden className="px-2 pb-0.5 pt-2 text-2xs font-semibold uppercase tracking-wider text-zinc-500">
+                  {group.label}
+                </p>
+                <ul>
+                  {group.tasks.map((t) => (
+                    <li key={t.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          close();
+                          add(t.id);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-800 hover:bg-zinc-100"
+                      >
+                        <Circle className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+                        <span className="truncate">{t.title}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+            {groups.length === 0 ? (
+              <p className="px-2 py-2 text-xs text-zinc-500">
+                {q ? `No task you can edit matches “${query.trim()}”.` : "No other tasks you can edit to link to."}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </Popover>
   );
 }
