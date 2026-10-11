@@ -17,7 +17,7 @@ export default async function TeamsPage() {
     <main className="flex min-h-0 flex-1 flex-col">
       <PageHeader icon={Users} title="Teams" description="Who works together, for goals and adding people to projects in one go" />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-gutter py-6">
+        <div className="px-gutter py-6">
           <section aria-labelledby="new-team-heading" className="max-w-md">
             <h2 id="new-team-heading" className="text-sm font-semibold text-zinc-900">
               Start a team

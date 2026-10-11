@@ -13,7 +13,7 @@ export default async function DashboardsPage() {
   const dashboards = await listPersonalDashboards();
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 px-gutter py-5">
+    <div className="space-y-5 px-gutter py-5">
       <div>
         <p className="text-sm text-zinc-600">
           Your own dashboards of report widgets across the projects you can open. Nobody else can see them — not even

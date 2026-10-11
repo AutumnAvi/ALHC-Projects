@@ -4,7 +4,7 @@ import { LoadingRegion, Skeleton } from "@/components/ui";
 export default function Loading() {
   return (
     <LoadingRegion label="Loading reports…">
-      <div className="mx-auto w-full max-w-6xl px-gutter py-5">
+      <div className="w-full px-gutter py-5">
         <div className="flex gap-3">
           <Skeleton className="h-7 w-48 rounded-md" />
           <Skeleton className="h-7 w-48 rounded-md" />

@@ -167,7 +167,7 @@ export function GoalsView({
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-gutter py-5">
+    <div className="px-gutter py-5">
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
           <label htmlFor="goals-team" className="text-xs font-medium text-zinc-600">

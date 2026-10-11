@@ -33,7 +33,7 @@ export function ProjectFiles({
   const shown = filter === "all" ? files : files.filter((f) => kindOf(f) === filter);
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-gutter py-4">
+    <div className="w-full px-gutter py-4">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="mr-auto text-sm font-semibold text-zinc-900">
           Files <span className="font-normal tabular-nums text-zinc-500">· {files.length}</span>

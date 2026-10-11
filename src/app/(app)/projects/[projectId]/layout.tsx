@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { ArchivedProjectBanner } from "@/components/project/archived-banner";
 import { ProjectAccessProvider } from "@/components/project/project-access";
 import { ProjectHeader } from "@/components/project/project-header";
+import { RecordRecent } from "@/components/shell/shell-context";
 import { TaskTemplatesProvider } from "@/components/project/task-templates-context";
 import {
   getProject,
@@ -11,6 +12,7 @@ import {
   listProjectForms,
   listProjectRules,
   listProjectViews,
+  listStarredProjectIds,
   listTaskTemplates,
 } from "@/lib/data";
 import { fieldTypeLabel } from "@/lib/fields";
@@ -24,7 +26,7 @@ export default async function ProjectLayout({
 }: LayoutProps<"/projects/[projectId]">) {
   const { projectId } = await params;
   if (!isUuid(projectId)) notFound();
-  const [project, views, role, taskTemplates, ownRoles, fields, forms, rules] = await Promise.all([
+  const [project, views, role, taskTemplates, ownRoles, fields, forms, rules, starredIds] = await Promise.all([
     getProject(projectId),
     listProjectViews(projectId),
     getProjectRole(projectId),
@@ -33,6 +35,7 @@ export default async function ProjectLayout({
     listProjectFields(projectId),
     listProjectForms(projectId),
     listProjectRules(projectId),
+    listStarredProjectIds(),
   ]);
   if (!project || !role) notFound();
   // An archived project caps every role at Viewer (role); archiving is decided by the member's own role.
@@ -49,7 +52,14 @@ export default async function ProjectLayout({
     <ProjectAccessProvider role={role}>
       <TaskTemplatesProvider templates={taskTemplates.map(({ id, name, title }) => ({ id, name, title }))}>
         <div className="flex min-h-0 flex-1 flex-col">
-          <ProjectHeader project={project} views={views} canArchive={canArchive} customize={customize} />
+          <RecordRecent kind="project" id={project.id} />
+          <ProjectHeader
+            project={project}
+            views={views}
+            canArchive={canArchive}
+            customize={customize}
+            starred={starredIds.includes(project.id)}
+          />
           {project.archived_at ? <ArchivedProjectBanner projectId={project.id} canUnarchive={canArchive} /> : null}
           {children}
         </div>

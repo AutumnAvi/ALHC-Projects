@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui";
 import { joinProject } from "@/lib/actions";
 import { ROLE_LABELS, isProjectRole } from "@/lib/roles";
 import { VISIBILITY_LABELS, type BrowseProject } from "@/lib/workspace";
+import { projectColorClass } from "@/lib/project-colors";
 
 // Projects the viewer may see: their own, plus team-visible projects of their teams (Join = Editor).
 // Private projects of others never reach this list.
@@ -56,7 +57,7 @@ export function BrowseProjectList({
                 <li key={p.projectId} className="flex flex-wrap items-center gap-3 px-4 py-3">
                   <span
                     aria-hidden
-                    className={`ml-0.5 size-2.5 shrink-0 rounded-sm ${member ? "bg-accent-500" : "bg-zinc-300"}`}
+                    className={`ml-0.5 size-3.5 shrink-0 rounded-[4px] ${projectColorClass(p.projectId)} ${member ? "" : "opacity-50"}`}
                   />
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-2 text-sm">

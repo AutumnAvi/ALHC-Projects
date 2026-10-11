@@ -9,7 +9,7 @@ import { requireMember } from "@/lib/auth";
 import { listMyTaskLayout, listMyTasks } from "@/lib/data";
 import { MY_TASKS_LAYOUT_COOKIE, isMyTasksLayout } from "@/lib/my-tasks";
 
-export const metadata: Metadata = { title: "My Tasks" };
+export const metadata: Metadata = { title: "My tasks" };
 
 export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks">) {
   const { task } = await searchParams;
@@ -25,11 +25,11 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
     <main className="flex min-h-0 flex-1 flex-col">
       <PageHeader
         icon={CircleCheck}
-        title="My Tasks"
+        title="My tasks"
         description="Everything assigned to you, across every project, in your own sections or by due date"
       />
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto max-w-4xl px-gutter pb-8 pt-2">
+        <div className="px-gutter pb-8 pt-2">
           <MyTasksView
             open={open}
             completed={completed}

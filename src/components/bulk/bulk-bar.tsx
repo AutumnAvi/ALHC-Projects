@@ -234,7 +234,7 @@ export function BulkBar({
 
           {context.mySections?.length ? (
             <Popover
-              label="Move selected tasks to one of your My Tasks sections"
+              label="Move selected tasks to one of your My tasks sections"
               side="top"
               buttonClassName={BAR_BUTTON}
               panelClassName="w-60"
@@ -247,7 +247,7 @@ export function BulkBar({
             >
               {(close) => (
                 <div className="flex flex-col">
-                  <p className="px-2 pb-1 text-xs font-medium text-zinc-500">Move to section (only in your My Tasks)</p>
+                  <p className="px-2 pb-1 text-xs font-medium text-zinc-500">Move to section (only in your My tasks)</p>
                   {context.mySections?.map((section) => (
                     <MenuItem
                       key={section.id}
@@ -613,7 +613,7 @@ function FieldValueInput({
         {field.options.length === 0 ? <p className="text-xs text-zinc-500">No options yet — add them under Fields.</p> : null}
         {field.options.map((o) => (
           <MenuItem key={o.id} onClick={() => onPick(o.id)}>
-            <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[o.color]}`}>{o.name}</span>
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[o.color]}`}>{o.name}</span>
           </MenuItem>
         ))}
         <div className="pt-1">{clear}</div>

@@ -27,7 +27,7 @@ export default async function AllProjectsReportPage() {
   const latest = await listLatestStatusUpdates(projects.map((p) => p.id));
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 px-gutter py-5">
+    <div className="space-y-5 px-gutter py-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-zinc-600">
           Every project you can open, with its status and task counts. “Recently” means completed on one of the last{" "}

@@ -1,8 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Keyboard, X } from "lucide-react";
+import { OPEN_SEARCH_EVENT } from "@/components/shell/search-palette";
 import { isMac, isTypingTarget } from "./keyboard";
 
 type Shortcut = { keys: string[]; label: string };
@@ -13,11 +13,12 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
       title: "Anywhere",
       items: [
         { keys: ["?"], label: "Show or hide these shortcuts" },
-        { keys: ["/"], label: "Search tasks" },
+        { keys: ["/"], label: "Search tasks, projects, and people" },
+        { keys: [mod, "K"], label: "Search (works while typing too)" },
       ],
     },
     {
-      title: "List views and My Tasks",
+      title: "List views and My tasks",
       items: [
         { keys: ["↑", "↓"], label: "Move to the previous or next task" },
         { keys: ["click"], label: "Open a task (the checkbox on the left selects it)" },
@@ -32,9 +33,9 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
   ];
 }
 
-// Global shortcuts: `?` toggles the help overlay and `/` jumps to search. Neither fires while typing.
+// Global shortcuts: `?` toggles the help overlay and `/` opens the search palette (⌘/Ctrl+K is handled by
+// the palette itself). Neither fires while typing.
 export function KeyboardShortcuts() {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mod, setMod] = useState("Ctrl");
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -52,18 +53,12 @@ export function KeyboardShortcuts() {
         });
       } else if (e.key === "/" && !document.querySelector("[role='dialog'], [role='alertdialog']")) {
         e.preventDefault();
-        const input = document.getElementById("sidebar-search") as HTMLInputElement | null;
-        if (input && input.offsetParent !== null) {
-          input.focus();
-          input.select();
-        } else {
-          router.push("/search");
-        }
+        window.dispatchEvent(new Event(OPEN_SEARCH_EVENT));
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     if (!open) return;

@@ -114,7 +114,7 @@ export function MembersSettings({
                 role="tab"
                 aria-selected={filter === f.key}
                 onClick={() => setFilter(f.key)}
-                className="-mb-px border-b-2 border-transparent px-2 pb-2 text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-zinc-900 aria-selected:font-medium aria-selected:text-zinc-900"
+                className="-mb-px border-b-2 border-transparent px-2 pb-2 text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
               >
                 {f.label} <span className="tabular-nums text-zinc-400">{count}</span>
               </button>

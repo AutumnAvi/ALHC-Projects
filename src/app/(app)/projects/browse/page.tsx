@@ -32,7 +32,7 @@ export default async function BrowseProjectsPage({ searchParams }: PageProps<"/p
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-gutter py-5">
+        <div className="px-gutter py-5">
           <nav aria-label="Filter by team" className="mb-4 flex flex-wrap gap-1.5">
             <Link href="/projects/browse" aria-current={!teamId ? "page" : undefined} className="chip px-2 py-0.5 hover:bg-zinc-200 aria-[current=page]:bg-zinc-900 aria-[current=page]:text-white">
               All teams

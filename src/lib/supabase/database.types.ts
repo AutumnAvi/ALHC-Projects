@@ -2225,6 +2225,51 @@ export type Database = {
           },
         ];
       };
+      project_stars: {
+        Row: {
+          id: string;
+          profile_id: string;
+          project_id: string;
+          starred_at: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          project_id: string;
+          starred_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          project_id?: string;
+          starred_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_stars_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_stars_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       task_likes: {
         Row: {
           id: string;
@@ -4347,6 +4392,10 @@ export type Database = {
       set_list_column_widths: {
         Args: { target_project: string; new_widths: Json };
         Returns: Json;
+      };
+      set_project_starred: {
+        Args: { target_project: string; starred: boolean };
+        Returns: boolean;
       };
       set_project_archived: {
         Args: { target_project: string; archive: boolean };

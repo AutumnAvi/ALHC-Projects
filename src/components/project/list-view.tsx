@@ -26,7 +26,7 @@ import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, hasActiveFilters, refFieldId, sortOf, type ColumnKey, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionTitle, useTaskHref } from "./shared";
-import { Assignee, DueDate, StartDate, TaskBadges } from "./task-meta";
+import { Assignee, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, type TaskGroup } from "./view-groups";
 import { TagChips } from "@/components/tags/tag-chip";
@@ -518,7 +518,7 @@ export function GroupTitle({ group }: { group: TaskGroup }) {
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2 px-1 text-sm font-semibold text-zinc-900">
       {group.color ? (
-        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[group.color]}`}>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[group.color]}`}>
           {group.label}
         </span>
       ) : (
@@ -800,21 +800,21 @@ function TaskRow({
         if (column === "assignee") {
           return (
             <div key={column} className={CELL}>
-              <Assignee profile={assignee} showName />
+              {assignee ? <Assignee profile={assignee} showName /> : <EmptyCellHint kind="person" />}
             </div>
           );
         }
         if (column === "due") {
           return (
             <div key={column} className={CELL}>
-              <DueDate task={task} />
+              {task.dueOn ? <DueDate task={task} /> : <EmptyCellHint kind="date" />}
             </div>
           );
         }
         if (column === "start") {
           return (
             <div key={column} className={CELL}>
-              <StartDate task={task} />
+              {task.startOn ? <StartDate task={task} /> : <EmptyCellHint kind="date" />}
             </div>
           );
         }
@@ -921,11 +921,15 @@ function SubtaskRows({
               {columns.map((column) => (
                 <div key={column} className={CELL}>
                   {column === "assignee" ? (
-                    <Assignee profile={subtask.assigneeId ? profilesById.get(subtask.assigneeId) : undefined} showName />
+                    subtask.assigneeId && profilesById.get(subtask.assigneeId) ? (
+                      <Assignee profile={profilesById.get(subtask.assigneeId)} showName />
+                    ) : (
+                      <EmptyCellHint kind="person" />
+                    )
                   ) : column === "due" ? (
-                    <DueDate task={subtask} />
+                    subtask.dueOn ? <DueDate task={subtask} /> : <EmptyCellHint kind="date" />
                   ) : column === "start" ? (
-                    <StartDate task={subtask} />
+                    subtask.startOn ? <StartDate task={subtask} /> : <EmptyCellHint kind="date" />
                   ) : null}
                 </div>
               ))}

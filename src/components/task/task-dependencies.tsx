@@ -111,7 +111,7 @@ function DependencyList({
           <li key={item.id} className="group px-3 py-1.5 text-sm">
             <div className="flex items-center gap-2">
               {item.completedAt ? (
-                <CheckCircle2 className="size-4 shrink-0 text-accent-600" aria-label="Completed" />
+                <CheckCircle2 className="size-4 shrink-0 text-green-600" aria-label="Completed" />
               ) : (
                 <Circle className="size-4 shrink-0 text-zinc-400" aria-label="Incomplete" />
               )}

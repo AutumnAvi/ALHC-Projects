@@ -81,7 +81,7 @@ export function PersonalDashboardView({
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-gutter py-5">
+    <div className="px-gutter py-5">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <label htmlFor="dashboard-name" className="sr-only">
           Dashboard name

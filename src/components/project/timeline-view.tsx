@@ -346,7 +346,7 @@ export function TimelineView({
                   <div className="relative flex h-8 items-end border-b border-zinc-200 bg-zinc-50/80">
                     <div className="sticky left-0 z-10 flex items-center gap-2 px-3 pb-1.5" style={labelCell}>
                       {group.color ? (
-                        <span className={`truncate rounded px-1.5 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[group.color]}`}>
+                        <span className={`truncate rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[group.color]}`}>
                           {group.label}
                         </span>
                       ) : (

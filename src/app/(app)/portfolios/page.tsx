@@ -16,7 +16,7 @@ export default async function PortfoliosPage() {
     <main className="flex min-h-0 flex-1 flex-col">
       <PageHeader icon={Briefcase} title="Portfolios" description="Follow the progress of several projects together" />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-gutter py-6">
+        <div className="px-gutter py-6">
           <section aria-labelledby="new-portfolio-heading" className="max-w-md">
             <h2 id="new-portfolio-heading" className="text-sm font-semibold text-zinc-900">
               Start a portfolio

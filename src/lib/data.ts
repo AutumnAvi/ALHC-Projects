@@ -1,5 +1,6 @@
 import "server-only";
 import { cache } from "react";
+import { cookies } from "next/headers";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
@@ -34,7 +35,14 @@ import { EMPTY_COUNTS, isPortfolioFieldType, type PortfolioCounts, type Portfoli
 import type { CriticalPath, TaskSchedule } from "@/lib/critical-path";
 import { parseDependencyKind, type DependencyKind } from "@/lib/dependencies";
 import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
-import { isMyTaskSectionKind, type MyTaskPlacement, type MyTaskSection } from "@/lib/my-tasks";
+import {
+  MY_TASKS_LAYOUT_COOKIE,
+  isMyTaskSectionKind,
+  isMyTasksLayout,
+  type MyTaskPlacement,
+  type MyTaskSection,
+  type MyTasksLayout,
+} from "@/lib/my-tasks";
 import type { WorkloadTask } from "@/lib/workload";
 import {
   isGoalStatus,
@@ -329,6 +337,20 @@ export const getWorkspace = cache(async (): Promise<Workspace | null> => {
 export const listProjects = cache(async (): Promise<Project[]> =>
   (await listReadableProjects()).filter((p) => p.archived_at === null),
 );
+
+// Starred projects (Asana parity, batch 1): the viewer's own stars, oldest first (RLS: own rows only).
+// The sidebar keeps the ones it can also read (listProjects), so a star on a project the viewer lost, or
+// one that was archived or deleted, shows nothing. A missing table (a preview deployed before its
+// migration is applied) reads as no stars rather than breaking the app shell.
+export const listStarredProjectIds = cache(async (): Promise<string[]> => {
+  const supabase = await createClient();
+  const result = await supabase.from("project_stars").select("project_id").is("deleted_at", null).order("starred_at");
+  if (result.error) {
+    console.error(`[stars] couldn't load starred projects: ${result.error.message}`);
+    return [];
+  }
+  return (result.data ?? []).map((row) => row.project_id);
+});
 
 export const listArchivedProjects = cache(async (): Promise<Project[]> =>
   (await listReadableProjects())
@@ -1938,6 +1960,55 @@ export const getEmailCommentsSetting = cache(async (profileId: string): Promise<
   const supabase = await createClient();
   const result = await supabase.from("profiles").select("email_comments").eq("id", profileId).maybeSingle();
   return maybe(result, "profile")?.email_comments ?? true;
+});
+
+// Everything the Settings modal (and /settings/profile) shows about the signed-in person: their name,
+// workspace role, teams, the comment-email switch, when they joined, and how they sign in.
+export type MySettings = {
+  name: string;
+  email: string;
+  isWorkspaceAdmin: boolean;
+  workspaceName: string;
+  teams: { id: string; name: string; lead: boolean }[];
+  emailComments: boolean;
+  joinedAt: string | null;
+  signInMethod: "google" | "password";
+  // How My tasks opens (the my_tasks_layout cookie), for Settings → Display.
+  myTasksLayout: MyTasksLayout;
+};
+
+export const getMySettings = cache(async (): Promise<MySettings | null> => {
+  const { user, allowlisted } = await getViewer();
+  if (!user || !allowlisted) return null;
+  const supabase = await createClient();
+  const [profile, admin, teams, workspace, cookieStore] = await Promise.all([
+    supabase.from("profiles").select("full_name, email_comments, joined_at").eq("id", user.id).maybeSingle(),
+    isWorkspaceAdmin(),
+    listTeams(),
+    getWorkspace(),
+    cookies(),
+  ]);
+  const layout = cookieStore.get(MY_TASKS_LAYOUT_COOKIE)?.value;
+  const row = maybe(profile, "profile");
+  const meta = user.user_metadata ?? {};
+  const email = user.email ?? "";
+  const name =
+    row?.full_name?.trim() || (meta.full_name as string | undefined) || (meta.name as string | undefined) || email;
+  const providers = (user.app_metadata?.providers as string[] | undefined) ?? [user.app_metadata?.provider as string];
+  return {
+    name,
+    email,
+    isWorkspaceAdmin: admin,
+    workspaceName: workspace?.name ?? "ALHC Projects",
+    teams: teams.flatMap((team) => {
+      const me = team.members.find((m) => m.profileId === user.id);
+      return me ? [{ id: team.id, name: team.name, lead: me.role === "lead" }] : [];
+    }),
+    emailComments: row?.email_comments ?? true,
+    joinedAt: row?.joined_at ?? null,
+    signInMethod: providers.includes("google") ? "google" : "password",
+    myTasksLayout: isMyTasksLayout(layout) ? layout : "sections",
+  };
 });
 
 // Emails about the project's tasks for Settings → Deliveries (Admin+; null below Admin). Never a body.
