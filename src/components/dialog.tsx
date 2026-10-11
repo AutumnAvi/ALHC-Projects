@@ -59,7 +59,7 @@ export function Dialog({
         className={`max-h-[90vh] w-full ${width} overflow-y-auto rounded-xl border border-zinc-200 bg-white p-5 text-sm shadow-xl`}
       >
         <div className="flex items-start gap-2">
-          <h2 id={titleId} className="flex-1 font-semibold text-zinc-900">
+          <h2 id={titleId} className="flex-1 text-base font-semibold text-zinc-900">
             {title}
           </h2>
           <button type="button" onClick={onClose} aria-label="Close" className="btn-icon -mr-1 -mt-1">

@@ -1,50 +1,49 @@
 import type { ReactNode } from "react";
+import { cookies } from "next/headers";
 import { connection } from "next/server";
-import { MobileBar } from "@/components/shell/mobile-bar";
+import { AppShell } from "@/components/shell/app-shell";
+import { ShellProvider } from "@/components/shell/shell-context";
 import { KeyboardShortcuts } from "@/components/shortcuts/keyboard-shortcuts";
-import { Sidebar } from "@/components/shell/sidebar";
 import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { SetupRequired } from "@/components/setup-required";
 import { ToastProvider } from "@/components/toast";
 import { requireMember } from "@/lib/auth";
-import { countUnreadInbox, getWorkspace, listPortfolioProgress, listPortfolios, listProjects } from "@/lib/data";
+import { countUnreadInbox, getWorkspace, isWorkspaceAdmin, listProjects, listStarredProjectIds } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/env";
-import { progressPercent } from "@/lib/portfolios";
+import { SIDEBAR_COOKIE, parseSidebarPrefs } from "@/lib/sidebar-prefs";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   await connection();
   if (!isSupabaseConfigured()) return <SetupRequired />;
 
   const member = await requireMember();
-  const [workspace, projects, portfolios, progress, unreadCount] = await Promise.all([
+  const [workspace, projects, starredIds, unreadCount, admin, cookieStore] = await Promise.all([
     getWorkspace(),
     listProjects(),
-    listPortfolios(),
-    listPortfolioProgress(),
+    listStarredProjectIds(),
     countUnreadInbox(),
+    isWorkspaceAdmin(),
+    cookies(),
   ]);
 
   return (
     <ToastProvider>
-      <TimeZoneCookie />
-      <KeyboardShortcuts />
-      {/* app-shell / app-main: the print stylesheet (globals.css) lets these flow onto paper. */}
-      <div className="app-shell flex h-full">
-        <Sidebar
-          member={member}
-          workspace={{ name: workspace?.name ?? "ALHC Projects", logoUrl: workspace?.logoUrl ?? null }}
+      <ShellProvider
+        member={{ id: member.id, name: member.name, email: member.email }}
+        isWorkspaceAdmin={admin}
+        workspace={{ name: workspace?.name ?? "ALHC Projects", logoUrl: workspace?.logoUrl ?? null }}
+        initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
+      >
+        <TimeZoneCookie />
+        <KeyboardShortcuts />
+        <AppShell
           projects={projects.map(({ id, name }) => ({ id, name }))}
-          portfolios={portfolios.map(({ id, name }) => {
-            const counts = progress.get(id);
-            return { id, name, percent: counts ? progressPercent(counts.completed, counts.total) : null };
-          })}
+          starredIds={starredIds}
           unreadCount={unreadCount}
-        />
-        <div className="app-main flex min-w-0 flex-1 flex-col">
-          <MobileBar memberId={member.id} unreadCount={unreadCount} />
+        >
           {children}
-        </div>
-      </div>
+        </AppShell>
+      </ShellProvider>
     </ToastProvider>
   );
 }

@@ -52,7 +52,7 @@ export function PortfolioReport({
   const showVia = projects.some((p) => p.via !== null);
   const columns = 8 + fields.length + (showVia ? 1 : 0);
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-gutter py-5">
+    <div className="space-y-8 px-gutter py-5">
       <div className="flex flex-wrap justify-end gap-2">
         <ExportLink href={`/export/portfolio?portfolio=${portfolioId}`} />
         <PrintButton />

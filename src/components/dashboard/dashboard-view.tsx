@@ -42,7 +42,7 @@ export function DashboardView({
   const [pending, run] = useServerAction();
 
   return (
-    <div className="mx-auto max-w-6xl px-gutter py-5">
+    <div className="px-gutter py-5">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-zinc-900">Dashboard</h2>
@@ -61,7 +61,7 @@ export function DashboardView({
             label="Add widget"
             align="end"
             panelClassName="w-56"
-            buttonClassName="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
+            buttonClassName="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-accent-600"
             button={
               <>
                 <Plus className="size-4" aria-hidden /> Add widget
@@ -328,7 +328,7 @@ function WidgetEditor({
         >
           Cancel
         </button>
-        <button type="submit" className="rounded-md bg-zinc-900 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-zinc-800">
+        <button type="submit" className="rounded-md bg-accent-500 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-accent-600">
           Save widget
         </button>
       </div>

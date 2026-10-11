@@ -64,7 +64,7 @@ export function PortfolioOverview({
   const childChoice = nestCandidates.some((c) => c.id === selectedChild) ? selectedChild : (nestCandidates[0]?.id ?? "");
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-gutter py-5">
+    <div className="space-y-6 px-gutter py-5">
       <section aria-labelledby="progress-heading" className="rounded-lg border border-zinc-200 p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 id="progress-heading" className="text-sm font-semibold text-zinc-900">
@@ -162,7 +162,7 @@ export function PortfolioOverview({
                 <button
                   type="submit"
                   disabled={pending || !choice}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
                 >
                   <Plus className="size-4" aria-hidden />
                   Add
@@ -320,7 +320,7 @@ export function PortfolioOverview({
                 <button
                   type="submit"
                   disabled={pending || !childChoice}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
                 >
                   <Plus className="size-4" aria-hidden />
                   Add

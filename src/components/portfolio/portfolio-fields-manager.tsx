@@ -159,7 +159,7 @@ function FieldRow({ field, canEdit }: { field: PortfolioField; canEdit: boolean 
           {field.options.map((option) => (
             <span
               key={option.id}
-              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[option.color]}`}
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[option.color]}`}
             >
               {option.name}
               {canEdit ? (

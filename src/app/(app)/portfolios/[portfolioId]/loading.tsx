@@ -4,7 +4,7 @@ import { LoadingRegion, Skeleton } from "@/components/ui";
 export default function Loading() {
   return (
     <LoadingRegion label="Loading portfolio…">
-      <div className="mx-auto w-full max-w-5xl space-y-4 px-gutter py-5">
+      <div className="w-full space-y-4 px-gutter py-5">
         <div className="rounded-lg border border-zinc-200 p-4">
           <Skeleton className="h-3.5 w-24" />
           <Skeleton className="mt-3 h-2 w-full rounded-full" />

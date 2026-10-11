@@ -194,7 +194,7 @@ export function InboxView({
             key={key}
             href={href}
             aria-current={tab === key ? "page" : undefined}
-            className="-mb-px border-b-2 border-transparent py-2 text-sm text-zinc-600 hover:text-zinc-900 aria-[current=page]:border-zinc-900 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"
+            className="-mb-px border-b-2 border-transparent py-2 text-sm text-zinc-600 hover:text-zinc-900 aria-[current=page]:border-accent-500 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900"
           >
             {label}
           </Link>
@@ -202,7 +202,7 @@ export function InboxView({
       </nav>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto max-w-3xl px-gutter py-4">
+        <div className="px-gutter py-4">
           {shown.length === 0 ? (
             archivedTab ? (
               <EmptyState icon={Archive} title="Nothing archived">

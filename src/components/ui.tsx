@@ -6,22 +6,22 @@ import type { LucideIcon } from "lucide-react";
 
 // Underlined tabs in the project and portfolio headers.
 export const HEADER_TAB =
-  "-mb-px inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent px-2 text-sm text-zinc-500 hover:text-zinc-900 aria-[current=page]:border-zinc-900 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
+  "-mb-px inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 border-transparent px-2 text-sm text-zinc-500 hover:text-zinc-900 aria-[current=page]:border-accent-500 aria-[current=page]:font-medium aria-[current=page]:text-zinc-900";
 
 // Inline-editable object name (project, portfolio): looks like a heading until hovered or focused.
 export const HEADER_TITLE_INPUT =
-  "min-w-0 truncate rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-lg font-semibold tracking-tight text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent";
+  "min-w-0 truncate rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-xl font-semibold tracking-tight text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent";
 
-// The square icon chip in front of a project or portfolio name.
-export function HeaderGlyph({ icon: Icon }: { icon: LucideIcon }) {
+// The rounded-square icon in front of a project or portfolio name (a project passes its color).
+export function HeaderGlyph({ icon: Icon, color = "bg-accent-500" }: { icon: LucideIcon; color?: string }) {
   return (
-    <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent-600 text-white">
+    <span aria-hidden className={`flex size-8 shrink-0 items-center justify-center rounded-lg text-white ${color}`}>
       <Icon className="size-4" />
     </span>
   );
 }
 
-// The bar at the top of a top-level page (Home, My Tasks, Inbox, Search, Portfolios). Same height
+// The bar at the top of a top-level page (Home, My tasks, Inbox, Search, Portfolios). Same height
 // and gutter as the project header, so moving between pages doesn't shift the layout.
 export function PageHeader({
   icon: Icon,
@@ -42,7 +42,7 @@ export function PageHeader({
         </span>
       ) : null}
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-base font-semibold tracking-tight text-zinc-900">{title}</h1>
+        <h1 className="truncate text-xl font-semibold tracking-tight text-zinc-900">{title}</h1>
         {description ? <p className="truncate text-xs text-zinc-500">{description}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
@@ -125,7 +125,7 @@ export function PageSkeleton({ label = "Loading…", groups = 2 }: { label?: str
         <Skeleton className="size-7 rounded-md" />
         <Skeleton className="h-4 w-40" />
       </div>
-      <div className="mx-auto w-full max-w-4xl px-gutter py-5">
+      <div className="w-full px-gutter py-5">
         {Array.from({ length: groups }, (_, i) => (
           <div key={i} className="mt-5 first:mt-0">
             <Skeleton className="mb-2 ml-1 h-3.5 w-28" />

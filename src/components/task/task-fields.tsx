@@ -1,12 +1,14 @@
 "use client";
 
 import { useOptimistic } from "react";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useServerAction } from "@/components/toast";
 import { moveTask, setFieldValue } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
-import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
+import { MenuItem, Popover } from "@/components/popover";
+import { PILL } from "@/components/project/field-chips";
+import { OPTION_COLOR_CLASSES, type FieldDef, type FieldOption } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { PANE_CONTROL, PANE_FIELDS, PANE_LABEL } from "./pane-styles";
 
@@ -65,6 +67,7 @@ function FieldRow({
   const [, run] = useServerAction();
   // Toggle-style editors build on this value, so quick successive clicks don't overwrite each other.
   const [value, setValue] = useOptimistic(savedValue);
+  const [section, setSection] = useOptimistic(sectionId);
   const inputId = `field-${field.id}`;
   const save = (next: Json) =>
     run(
@@ -75,20 +78,18 @@ function FieldRow({
   let control: React.ReactNode;
   if (field.boundToSections) {
     control = (
-      <select
-        id={inputId}
-        key={sectionId ?? "none"}
-        defaultValue={sectionId ?? ""}
-        onChange={(e) => run(() => moveTask(task.id, field.projectId, e.target.value || null))}
-        className={INPUT}
-      >
-        <option value="">No section</option>
-        {sections.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
+      <ChoicePill
+        fieldName={field.name}
+        value={section}
+        options={sections.map((s) => ({ id: s.id, name: s.name, color: "zinc" as const }))}
+        emptyLabel="No section"
+        onChange={(next) =>
+          run(
+            () => moveTask(task.id, field.projectId, next),
+            () => setSection(next),
+          )
+        }
+      />
     );
   } else {
     switch (field.fieldType) {
@@ -152,20 +153,12 @@ function FieldRow({
         break;
       case "single_select":
         control = (
-          <select
-            id={inputId}
-            key={String(value ?? "")}
-            defaultValue={typeof value === "string" ? value : ""}
-            onChange={(e) => save(e.target.value || null)}
-            className={INPUT}
-          >
-            <option value="">—</option>
-            {field.options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
+          <ChoicePill
+            fieldName={field.name}
+            value={typeof value === "string" ? value : null}
+            options={field.options}
+            onChange={(next) => save(next)}
+          />
         );
         break;
       case "multi_select": {
@@ -250,7 +243,10 @@ function FieldRow({
   return (
     <>
       <dt className={PANE_LABEL}>
-        {field.fieldType === "multi_select" || field.fieldType === "people" ? (
+        {field.boundToSections ||
+        field.fieldType === "single_select" ||
+        field.fieldType === "multi_select" ||
+        field.fieldType === "people" ? (
           field.name
         ) : (
           <label htmlFor={inputId}>{field.name}</label>
@@ -258,5 +254,69 @@ function FieldRow({
       </dt>
       <dd className="min-w-0">{control}</dd>
     </>
+  );
+}
+
+// A single choice shown as Asana's colored pill; clicking it lists the options (and Clear).
+function ChoicePill({
+  fieldName,
+  value,
+  options,
+  emptyLabel = "—",
+  onChange,
+}: {
+  fieldName: string;
+  value: string | null;
+  options: FieldOption[];
+  emptyLabel?: string;
+  onChange: (next: string | null) => void;
+}) {
+  const selected = options.find((o) => o.id === value) ?? null;
+  return (
+    <Popover
+      label={`${fieldName}: ${selected ? selected.name : "empty"}. Change`}
+      panelClassName="w-60 p-1.5"
+      buttonClassName="-mx-1 inline-flex min-h-7 max-w-full items-center rounded-md px-1 hover:bg-zinc-100 aria-expanded:bg-zinc-100"
+      button={
+        selected ? (
+          <span className={`${PILL} ${OPTION_COLOR_CLASSES[selected.color]}`}>{selected.name}</span>
+        ) : (
+          <span className="text-sm text-zinc-400">{emptyLabel}</span>
+        )
+      }
+    >
+      {(close) => (
+        <>
+          {options.length === 0 ? (
+            <p className="px-2 py-1.5 text-xs text-zinc-500">No options yet — add them under Fields.</p>
+          ) : null}
+          {options.map((o) => (
+            <MenuItem
+              key={o.id}
+              onClick={() => {
+                close();
+                if (o.id !== value) onChange(o.id);
+              }}
+            >
+              <span className={`${PILL} ${OPTION_COLOR_CLASSES[o.color]}`}>{o.name}</span>
+              {o.id === value ? <Check className="ml-auto size-4 text-accent-600" aria-label="Selected" /> : null}
+            </MenuItem>
+          ))}
+          {value ? (
+            <>
+              <hr className="my-1 border-zinc-100" />
+              <MenuItem
+                onClick={() => {
+                  close();
+                  onChange(null);
+                }}
+              >
+                <span className="text-zinc-500">{emptyLabel === "—" ? "Clear" : emptyLabel}</span>
+              </MenuItem>
+            </>
+          ) : null}
+        </>
+      )}
+    </Popover>
   );
 }

@@ -17,7 +17,7 @@ export function PortfolioFieldDisplay({ field, value }: { field: PortfolioField;
     const option = field.options.find((o) => o.id === value);
     if (!option) return <span className="text-zinc-400">—</span>;
     return (
-      <span className={`inline-block max-w-full truncate rounded px-1.5 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[option.color]}`}>
+      <span className={`inline-block max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[option.color]}`}>
         {option.name}
       </span>
     );

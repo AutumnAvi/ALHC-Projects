@@ -4,6 +4,7 @@ import { Archive, Compass, FolderClosed, House, LayoutTemplate } from "lucide-re
 import { NewProjectForm } from "@/components/shell/new-project-form";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { listArchivedProjects, listProjects } from "@/lib/data";
+import { projectColorClass } from "@/lib/project-colors";
 
 export const metadata: Metadata = { title: "Home" };
 
@@ -14,7 +15,7 @@ export default async function HomePage() {
     <main className="flex min-h-0 flex-1 flex-col">
       <PageHeader icon={House} title="Home" description="Projects you’re a member of" />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-gutter py-6">
+        <div className="px-gutter py-6">
           <section aria-labelledby="new-project-heading" className="max-w-md">
             <h2 id="new-project-heading" className="text-sm font-semibold text-zinc-900">
               Start a project
@@ -59,7 +60,7 @@ export default async function HomePage() {
                     >
                       <span
                         aria-hidden
-                        className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent-50 text-accent-700 group-hover:bg-accent-100"
+                        className={`flex size-7 shrink-0 items-center justify-center rounded-lg text-white ${projectColorClass(project.id)}`}
                       >
                         <FolderClosed className="size-4" />
                       </span>

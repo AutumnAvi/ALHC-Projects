@@ -4,19 +4,41 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
-  --color-accent-50: #eef6f5;
-  --color-accent-100: #d6eae7;
-  --color-accent-200: #aed4cf;
-  --color-accent-500: #2b8178;
-  --color-accent-600: #1f6a63;
-  --color-accent-700: #195550;
+  /* Accent = Asana blue (Asana parity, batch 1): primary buttons, links, the active tab underline, focus
+     rings, selection. Teal survives only as one of the project colors (src/lib/project-colors.ts). */
+  --color-accent-50: #f0f4fc;
+  --color-accent-100: #dfe8f8;
+  --color-accent-200: #c0d1f1;
+  --color-accent-300: #96b2e6;
+  --color-accent-400: #6b91dc;
+  --color-accent-500: #4573d2;
+  --color-accent-600: #3a63bb;
+  --color-accent-700: #31529b;
+  --color-accent-800: #2a457f;
+  --color-accent-900: #233a68;
+
+  /* The dark shell: the top bar and the sidebar (light grey text, a lighter active row). */
+  --color-shell: #1e1f21;
+  --color-shell-hover: #2b2c2f;
+  --color-shell-active: #3a3b3e;
+  --color-shell-line: #34353a;
+  --color-shell-text: #d4d5d8;
+  --color-shell-muted: #9b9ca1;
+  /* The "+ Create" pill (charcoal text on coral keeps the label readable). */
+  --color-coral: #f06a6a;
+  --color-coral-hover: #f38585;
+
+  /* Body text is 13px like Asana (text-sm); meta text stays 12px (text-xs) and 11px (text-2xs). */
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
 
   /* Small meta text (badges, avatar initials, tray labels): `text-2xs`. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
 
   /* Shared chrome sizes so the shell, headers, toolbars, and rows line up across views. */
-  --spacing-bar: 3rem; /* h-bar: top bars (sidebar brand, page headers, task pane header) */
+  --spacing-topbar: 2.75rem; /* h-topbar: the dark top bar across the app */
+  --spacing-bar: 3rem; /* h-bar: page headers, task pane header */
   --spacing-toolbar: 2.75rem; /* min-h-toolbar: view toolbars */
   --spacing-row: 2.25rem; /* h-row / min-h-row: list rows (List, My Tasks, search) */
   --spacing-gutter: 1.5rem; /* px-gutter: horizontal page padding */
@@ -33,7 +55,7 @@
   }
 
   body {
-    @apply bg-white text-zinc-900 antialiased;
+    @apply bg-white text-sm text-zinc-900 antialiased;
   }
 
   :focus-visible {
@@ -62,9 +84,9 @@
   }
 }
 
-/* Buttons and controls shared by chrome, toolbars, and page headers. Zinc neutrals, one accent. */
+/* Buttons and controls shared by chrome, toolbars, and page headers. Zinc neutrals, one accent (blue). */
 @utility btn-primary {
-  @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50;
+  @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md bg-accent-500 px-2.5 text-sm font-medium text-white hover:bg-accent-600 disabled:cursor-not-allowed disabled:opacity-50;
 }
 
 @utility btn-secondary {

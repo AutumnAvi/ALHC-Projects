@@ -37,6 +37,7 @@ import {
   setTaskCompleted,
 } from "@/lib/actions";
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
+import { EmptyCellHint } from "@/components/project/task-meta";
 import type { MyTask } from "@/lib/data";
 import {
   MY_TASKS_LAYOUT_COOKIE,
@@ -281,7 +282,7 @@ export function MyTasksView({
           ? "Drag tasks between your sections; only you see them. Newly assigned tasks land in Recently assigned."
           : "Grouped by due date, in your local time."}
       </p>
-      <Segmented label="Group My Tasks by" options={LAYOUTS} value={layout} onChange={chooseLayout} />
+      <Segmented label="Group My tasks by" options={LAYOUTS} value={layout} onChange={chooseLayout} />
     </div>
   );
   // In the due-date layout there are no sections to add into: the row sits above the groups.
@@ -871,8 +872,8 @@ function MyTaskRow({
           Private
         </span>
       )}
-      <span className={`w-16 shrink-0 text-right text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
-        {task.dueOn ? formatDueDate(task.dueOn, today ? Number(today.slice(0, 4)) : undefined) : ""}
+      <span className={`flex w-16 shrink-0 justify-end text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
+        {task.dueOn ? formatDueDate(task.dueOn, today ? Number(today.slice(0, 4)) : undefined) : <EmptyCellHint kind="date" />}
       </span>
     </li>
   );

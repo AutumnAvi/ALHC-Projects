@@ -62,7 +62,7 @@ export function RulesView({
         <button
           type="button"
           onClick={() => setEditing("new")}
-          className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600"
         >
           <Plus className="size-4" aria-hidden />
           New rule
@@ -288,7 +288,7 @@ function PresetCard({ projectId, preset, ctx }: { projectId: string; preset: Rul
             <button
               type="submit"
               disabled={pending || missing}
-              className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+              className="rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
             >
               Install
             </button>

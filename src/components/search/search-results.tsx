@@ -59,7 +59,7 @@ export function SearchResults({
                   className="flex min-h-row items-start gap-3 px-3 py-2"
                 >
                   <Icon
-                    className={`mt-0.5 size-4 shrink-0 ${result.completed ? "text-accent-600" : "text-zinc-300"}`}
+                    className={`mt-0.5 size-4 shrink-0 ${result.completed ? "text-green-600" : "text-zinc-300"}`}
                     aria-label={result.completed ? "Completed" : "Open"}
                   />
                   <span className="min-w-0 flex-1">

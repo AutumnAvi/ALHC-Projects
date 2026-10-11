@@ -19,7 +19,7 @@ export default async function WorkspaceSettingsLayout({ children }: { children: 
         description={`${workspace?.name ?? "Workspace"} · Your role: ${admin ? "Admin" : "Member"}`}
         actions={
           <Link href="/settings/profile" className="btn-ghost">
-            Your profile settings
+            Your settings
           </Link>
         }
       />

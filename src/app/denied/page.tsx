@@ -23,7 +23,7 @@ export default async function DeniedPage({ searchParams }: PageProps<"/denied">)
       </p>
       <Link
         href="/login"
-        className="mt-6 inline-flex w-full items-center justify-center rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+        className="mt-6 inline-flex w-full items-center justify-center rounded-lg bg-accent-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-600"
       >
         Sign in with a different account
       </Link>

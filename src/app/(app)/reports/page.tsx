@@ -60,7 +60,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const summary = describeReportFilters(filters, context.projects, context.people, context.tags);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 px-gutter py-5">
+    <div className="space-y-5 px-gutter py-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <ReportFiltersBar filters={filters} projects={context.projects} people={context.people} tags={context.tags} />
         <div className="flex items-center gap-2">

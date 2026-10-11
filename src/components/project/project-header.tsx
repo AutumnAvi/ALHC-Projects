@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useOptimistic, useState } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -23,6 +23,7 @@ import {
   Plus,
   Settings,
   SquareKanban,
+  Star,
   Trash2,
   Users,
   Paperclip,
@@ -30,6 +31,7 @@ import {
 import { MenuItem, Popover } from "@/components/popover";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
+import { projectColorClass } from "@/lib/project-colors";
 import { DuplicateProjectDialog } from "@/components/project/duplicate-project-dialog";
 import { CustomizePanel, type CustomizeSummary } from "@/components/project/customize-panel";
 import { useCan } from "@/components/project/project-access";
@@ -41,6 +43,7 @@ import {
   duplicateView,
   moveView,
   setProjectArchived,
+  setProjectStarred,
   updateProject,
   updateView,
 } from "@/lib/actions";
@@ -61,12 +64,15 @@ export function ProjectHeader({
   views,
   canArchive,
   customize,
+  starred,
 }: {
   project: Project;
   views: ProjectView[];
   // Admin+ by the viewer's own role (an archived project is read-only for everyone).
   canArchive: boolean;
   customize: CustomizeSummary;
+  // In the viewer's sidebar Starred section.
+  starred: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -106,7 +112,7 @@ export function ProjectHeader({
   return (
     <header className="border-b border-zinc-200 px-gutter pt-2.5">
       <div className="flex items-center gap-2">
-        <HeaderGlyph icon={FolderClosed} />
+        <HeaderGlyph icon={FolderClosed} color={projectColorClass(project.id)} />
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <label htmlFor="project-name" className="sr-only">
             Project name
@@ -129,6 +135,7 @@ export function ProjectHeader({
             }}
             className={`${HEADER_TITLE_INPUT} field-sizing-content min-w-24 max-w-full`}
           />
+          <StarToggle projectId={project.id} starred={starred} />
           <Link
             href={`${base}/settings`}
             className="hidden shrink-0 rounded-full sm:inline-flex"
@@ -432,5 +439,29 @@ function ViewTab({
         </Popover>
       ) : null}
     </span>
+  );
+}
+
+// Asana's star next to the project name: adds the project to the viewer's sidebar Starred section (their
+// own, on every device). Anyone who can open the project can star it.
+function StarToggle({ projectId, starred: saved }: { projectId: string; starred: boolean }) {
+  const [, run] = useServerAction();
+  const [starred, setStarred] = useOptimistic(saved);
+  return (
+    <button
+      type="button"
+      aria-pressed={starred}
+      aria-label="Star project"
+      title={starred ? "Remove from Starred" : "Add to Starred"}
+      onClick={() =>
+        run(
+          () => setProjectStarred(projectId, !starred),
+          () => setStarred(!starred),
+        )
+      }
+      className="btn-icon shrink-0 print:hidden"
+    >
+      <Star className={`size-4 ${starred ? "fill-amber-400 text-amber-500" : ""}`} aria-hidden />
+    </button>
   );
 }

@@ -1,5 +1,5 @@
 import { PageSkeleton } from "@/components/ui";
 
 export default function Loading() {
-  return <PageSkeleton label="Loading profile settings…" />;
+  return <PageSkeleton label="Loading settings…" />;
 }

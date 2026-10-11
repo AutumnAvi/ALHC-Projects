@@ -31,7 +31,7 @@ export function TemplateGallery({
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-gutter py-6">
+    <div className="px-gutter py-6">
       <section aria-labelledby="project-templates-heading">
         <div className="flex items-baseline gap-2">
           <h2 id="project-templates-heading" className="text-sm font-semibold text-zinc-900">

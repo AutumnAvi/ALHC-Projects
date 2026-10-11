@@ -228,6 +228,14 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 - **Workspace settings** like Asana's admin console: General (name, logo, default team, past imports), Members, Teams, Tags, Email (sender name, delivery status, links to each project's Deliveries log), Security (sign-in methods, read-only). Everyone sees the same sections; admin-only ones are read-only for members.
 - **Softer inputs** everywhere: rounded corners, lighter borders, more padding, a soft focus ring, muted placeholders.
 
+## What's here (Asana parity, batch 1)
+
+- **Top bar.** A dark bar across the top: **☰** hides or shows the sidebar (on a phone it opens it as a drawer), **+ Create** makes a task (in My tasks), project, message, team, portfolio, or goal, or invites people, and your avatar opens **Profile**, **Settings**, **Admin console** (workspace admins), **Invite**, and **Log out**.
+- **Search.** Click **Search** in the top bar, or press **⌘/Ctrl+K** or **/**. Recently opened tasks and projects show first; as you type, matching tasks, projects, and people appear (use the **Tasks / Projects / People** chips to narrow it). It only ever shows what you can open. Press Enter to see every matching task on the Search page.
+- **Sidebar.** Home, My tasks, Inbox, then Projects, Portfolios, and Goals; **More** holds Reports, Teams, and Templates. **Star** a project from the star next to its name and it shows under **Starred**. Every project has its own color. **Invite** sits at the bottom.
+- **Settings** opens as a window with **Profile**, **Notifications** (comment emails), **Account**, and **Display** (sidebar, how task details open, how My tasks opens).
+- **Look.** Blue buttons and links, bigger page titles, colored pills for choice fields everywhere, a dashed person or calendar in empty Assignee and Due date cells when you hover a row, green check marks for done tasks, and list pages that use the full width.
+
 ## Setup: Supabase
 
 1. **Create a project** at [supabase.com/dashboard](https://supabase.com/dashboard). Note the project ref (the `xxxx` in `https://xxxx.supabase.co`).

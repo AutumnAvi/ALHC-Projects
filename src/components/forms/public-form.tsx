@@ -141,7 +141,7 @@ export function PublicForm({ form }: { form: PublicFormDef }) {
       <button
         type="submit"
         disabled={pending || !form.acceptingResponses}
-        className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+        className="inline-flex items-center rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
       >
         {pending ? "Submitting…" : "Submit"}
       </button>

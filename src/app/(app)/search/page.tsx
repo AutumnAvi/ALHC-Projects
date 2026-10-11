@@ -30,7 +30,7 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
         }
       />
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto max-w-3xl px-gutter py-4">
+        <div className="px-gutter py-4">
           <form action="/search" role="search" className="relative">
             <Search
               className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400"

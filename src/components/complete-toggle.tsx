@@ -22,8 +22,9 @@ export function CompleteToggle({
 }) {
   const dimensions = size === "sm" ? "size-4" : "size-[18px]";
   const idle = kind === "approval" ? "border-zinc-300 text-zinc-400" : "border-zinc-300 text-transparent";
-  const hover = disabled ? "" : kind === "milestone" ? "group-hover/toggle:border-accent-500 group-hover/toggle:text-accent-500" : "hover:border-accent-500 hover:text-accent-500";
-  const colors = completed ? "border-accent-600 bg-accent-600 text-white" : `${idle} ${hover}`;
+  // Asana's completion green: a green check on hover, a filled green circle once done.
+  const hover = disabled ? "" : kind === "milestone" ? "group-hover/toggle:border-green-600 group-hover/toggle:text-green-600" : "hover:border-green-600 hover:text-green-600";
+  const colors = completed ? "border-green-600 bg-green-600 text-white" : `${idle} ${hover}`;
   if (kind === "milestone") {
     return (
       <button

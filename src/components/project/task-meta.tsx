@@ -1,6 +1,6 @@
 "use client";
 
-import { Layers, ListChecks, Lock, Repeat } from "lucide-react";
+import { CalendarDays, Layers, ListChecks, Lock, Repeat, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
@@ -26,6 +26,20 @@ export function StartDate({ task, prefix = "" }: { task: Pick<ProjectTask, "star
     <span className="whitespace-nowrap text-xs tabular-nums text-zinc-500">
       {prefix}
       {formatDueDate(task.startOn, year)}
+    </span>
+  );
+}
+
+// Asana's dashed person / calendar circle in an empty assignee or date cell, shown while the row is
+// hovered (rows carry `group`). Decorative: clicking the row opens the task to set it.
+export function EmptyCellHint({ kind }: { kind: "person" | "date" }) {
+  const Icon = kind === "person" ? UserRound : CalendarDays;
+  return (
+    <span
+      aria-hidden
+      className="inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:hidden"
+    >
+      <Icon className="size-3.5" />
     </span>
   );
 }

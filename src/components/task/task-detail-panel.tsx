@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, useContext, useEffect, useOptimistic, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useOptimistic, type ReactNode } from "react";
 import {
   Check,
   ChevronRight,
@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { DuplicateTaskButton } from "./duplicate-task-dialog";
 import { TaskLike } from "./task-like";
+import { setPaneExpanded, usePaneExpanded } from "./pane-size";
+import { RecordRecent } from "@/components/shell/shell-context";
 import { displayName } from "@/components/avatar";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -67,41 +69,15 @@ function useClosePane() {
   return { href, close: () => router.push(href, { scroll: false }) };
 }
 
-// Compact pane on the right (Asana's default) or expanded to the full window; remembered per browser.
-const PANE_EXPANDED_KEY = "alhc.taskPane.expanded";
 const PaneSize = createContext<{ expanded: boolean; toggle: () => void }>({ expanded: false, toggle: () => undefined });
-
-const PANE_SIZE_EVENT = "alhc:pane-size";
-
-function readExpanded() {
-  try {
-    return window.localStorage.getItem(PANE_EXPANDED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function subscribePaneSize(onChange: () => void) {
-  window.addEventListener(PANE_SIZE_EVENT, onChange);
-  window.addEventListener("storage", onChange);
-  return () => {
-    window.removeEventListener(PANE_SIZE_EVENT, onChange);
-    window.removeEventListener("storage", onChange);
-  };
-}
 
 function PaneShell({ children, label }: { children: ReactNode; label: string }) {
   const { close } = useClosePane();
-  // The server (and the first client render) always draws the compact pane.
-  const expanded = useSyncExternalStore(subscribePaneSize, readExpanded, () => false);
+  // Compact or expanded, remembered per browser (also set from Settings → Display).
+  const expanded = usePaneExpanded();
 
   function toggle() {
-    try {
-      window.localStorage.setItem(PANE_EXPANDED_KEY, expanded ? "0" : "1");
-    } catch {
-      // Private windows can refuse storage; then the pane stays as it is.
-    }
-    window.dispatchEvent(new Event(PANE_SIZE_EVENT));
+    setPaneExpanded(!expanded);
   }
 
   useEffect(() => {
@@ -246,6 +222,7 @@ export function TaskDetailPanel({
 
   return (
     <PaneShell label={`Task: ${task.title}`}>
+      <RecordRecent kind="task" id={task.id} />
       <div className="flex h-bar shrink-0 items-center gap-2 border-b border-zinc-200 px-3">
         {canEdit ? (
           <>
@@ -371,7 +348,7 @@ export function TaskDetailPanel({
                 e.currentTarget.blur();
               }
             }}
-            className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent px-2 py-1 text-xl font-semibold tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
+            className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent px-2 py-1 text-2xl font-semibold tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
               completed ? "text-zinc-500" : "text-zinc-900"
             }`}
           />

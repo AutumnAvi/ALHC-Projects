@@ -96,7 +96,7 @@ function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
       [str(p.comment_body) ?? ""],
       [
         { label: "Task", value: label ? `${label} · ${taskTitle}` : taskTitle },
-        { label: "Project", value: project ?? "Private task (My Tasks)" },
+        { label: "Project", value: project ?? "Private task (My tasks)" },
       ],
       {
         action: link ? { label: "Open task", href: link } : null,
@@ -105,7 +105,7 @@ function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
           canReply
             ? "Reply to this email to add a comment as you. Only the text above the quoted message is posted."
             : "Open the task to reply.",
-          `You follow this task. Turn off comment emails in Settings → Profile${origin ? ` (${origin}/settings/profile)` : ""}.`,
+          `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}/settings/profile?tab=notifications)` : ""}.`,
         ],
       },
     ),

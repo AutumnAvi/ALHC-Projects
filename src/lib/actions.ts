@@ -1186,11 +1186,17 @@ export async function createTask(
 // Quick-add in My Tasks: a private task (no project) assigned to the caller. Only they and whoever they
 // assign it to can read it until it's added to a project.
 // With a section (the inline "Add task…" row of a My Tasks section), the task is placed at its end.
-export async function createPrivateTask(title: string, mySectionId: string | null = null): Promise<ActionResult> {
-  return run(async () => {
+// Returns the new task's id (Create → Task offers to open it).
+export async function createPrivateTask(
+  title: string,
+  mySectionId: string | null = null,
+): Promise<ActionResult & { taskId?: string }> {
+  let taskId: string | undefined;
+  const result = await run(async () => {
     const supabase = await createClient();
     const created = await supabase.rpc("create_private_task", { task_title: text(title, "Task name", { max: 1000 }) });
     check(created);
+    taskId = created.data ?? undefined;
     if (mySectionId && created.data) {
       check(
         await supabase.rpc("place_my_task", {
@@ -1200,6 +1206,16 @@ export async function createPrivateTask(title: string, mySectionId: string | nul
         }),
       );
     }
+  });
+  return { ...result, taskId: result.error ? undefined : taskId };
+}
+
+// Star or unstar a project for the signed-in person (the sidebar's Starred section). Starring needs
+// Viewer+ of the project; unstarring always works.
+export async function setProjectStarred(projectId: string, starred: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("set_project_starred", { target_project: id(projectId, "project"), starred: starred === true }));
   });
 }
 

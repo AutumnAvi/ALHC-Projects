@@ -20,7 +20,7 @@ export default async function ArchivedProjectsPage() {
         description="Read-only projects you’re a member of, out of the sidebar, Home, and pickers"
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-gutter py-6">
+        <div className="px-gutter py-6">
           {projects.length === 0 ? (
             <EmptyState icon={Archive} title="No archived projects">
               When a project admin or owner archives a project (project … menu → Archive project), it moves here.
