@@ -1,6 +1,6 @@
 # ALHC-Projects roadmap (everything not built yet)
 
-Updated: 2026-10-07 ~17:45 IDT (added Group 0, "Simulated or not live yet", and item 1.0). App: https://alhc-projects.vercel.app · repo AutumnAvi/ALHC-Projects (main after PR #26 + `f95700e`).
+Updated: 2026-10-12 (Asana parity batch 5 honesty gaps added to Group 0). App: https://alhc-projects.vercel.app · repo AutumnAvi/ALHC-Projects (main after PR #36 + `6dedf9f`).
 Sources: SHIP-STATUS.md, END-OF-BUILD-CHECKLIST.md, ai-actions-proposal.md, AGENTS.md "Follow-ups" + "Phases" on main, research/asana-feature-map-v1-2026-10-05.md, plus general Asana knowledge (marked "Asana").
 
 **Size:** S = a small paste or part of a phase · M = about one Claude phase · L = several phases or outside setup.
@@ -34,6 +34,17 @@ Read-only audit of `main` at `f95700e`, 2026-10-07. The Vercel project `alhc-pro
 
 **Checked and real today:** in-app Inbox notifications, @mentions, approvals, file attachments (private Supabase Storage with 60-second signed links), live updates, public forms creating tasks, and inbound webhooks creating tasks (anon RPC `receive_inbound_webhook`; any email/Slack their rules queue still waits on the service key).
 **No code at all, so nothing pretends:** push notifications, the Inbox email digest, the iCal feed, scheduled report emails, and email open/bounce tracking (see Groups 1–2).
+
+**Asana parity, batch 5 (honest gaps on main):**
+- Team Messages: coming later (links to project Messages)
+- Settings → Email forwarding: coming later
+- Inbox notification settings: no per-kind switches yet
+- Last activity = last sign-in only (not general activity)
+- People widget / search people open Reports filtered to the person (no profile page)
+- Invite emails only when Resend is configured
+- Team Calendar is read-only
+- Create project / Create goal from a team page don't preselect the team
+- Home → Create task opens Create → Task (private) rather than an inline widget row
 
 **Quickest path to "email + Slack actually work":** add `SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET` in Vercel (Slack and webhooks go live right away). Set up Resend with a verified domain, then add `RESEND_API_KEY` + `EMAIL_FROM`. Set custom SMTP in Supabase Auth for sign-up emails. Redeploy. Avi enters every value himself, never in chat.
 
