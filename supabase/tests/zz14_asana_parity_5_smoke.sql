@@ -197,6 +197,8 @@ do $$
 declare
   team uuid := (select id from ap5_ids where name = 'team');
   n integer;
+  theirs uuid;
+  their_portfolio uuid;
 begin
   assert not public.can_curate_team(team), 'outsiders don''t curate';
   assert exists (select 1 from public.team_curated_work
@@ -206,11 +208,26 @@ begin
     'a portfolio they aren''t in stays invisible';
   assert not exists (select 1 from public.team_curated_work where project_id = (select id from ap5_ids where name = 'mine')),
     'someone else''s private project stays invisible';
+  -- A project of their own (not pinned yet, so only the insert policy can refuse it) and one they can
+  -- read: outsiders pin neither, and the guard lets both through to RLS.
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'AP5 Outsider P')
+  returning id into theirs;
   begin
-    insert into public.team_curated_work (team_id, project_id) values (team, (select id from ap5_ids where name = 'p'));
-    raise exception 'outsiders can''t pin';
-  exception when insufficient_privilege or unique_violation then null;
+    insert into public.team_curated_work (team_id, project_id) values (team, theirs);
+    raise exception 'outsiders can''t pin their own project';
+  exception when insufficient_privilege then null;
   end;
+  insert into public.portfolios (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'AP5 Outsider portfolio')
+  returning id into their_portfolio;
+  begin
+    insert into public.team_curated_work (team_id, portfolio_id) values (team, their_portfolio);
+    raise exception 'outsiders can''t pin their own portfolio';
+  exception when insufficient_privilege then null;
+  end;
+  update public.team_curated_work set deleted_at = now()
+  where team_id = team and project_id = (select id from ap5_ids where name = 'p') and deleted_at is null;
+  get diagnostics n = row_count;
+  assert n = 0, 'outsiders can''t unpin';
   update public.team_curated_work set sort_order = 1 where team_id = team;
   get diagnostics n = row_count;
   assert n = 0, 'outsiders can''t reorder or unpin';

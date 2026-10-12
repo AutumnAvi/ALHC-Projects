@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Ellipsis, RotateCcw, Search, Send, UserMinus, UserPlus, Users } from "lucide-react";
 import { AdminPage } from "@/components/admin/admin-chrome";
@@ -17,7 +17,7 @@ import {
   removeWorkspaceMember,
   resendWorkspaceInvite,
 } from "@/lib/actions";
-import { MEMBER_STATUS_LABELS, USER_TABS, type UserTab } from "@/lib/admin";
+import { MEMBER_STATUS_LABELS, USER_TABS, isUserTab, type UserTab } from "@/lib/admin";
 import {
   WORKSPACE_ROLE_LABELS,
   describeInviteEmail,
@@ -60,7 +60,6 @@ export function UsersAdmin({
   members,
   lastSignIn,
   viewerId,
-  initialTab,
   timeZone,
   emailConfigured,
   signupUrl,
@@ -69,7 +68,6 @@ export function UsersAdmin({
   // Last sign-in per lowercased address (null = never signed in); null when the database can't tell.
   lastSignIn: Record<string, string | null> | null;
   viewerId: string;
-  initialTab: UserTab;
   timeZone: string;
   emailConfigured: boolean;
   signupUrl: string;
@@ -77,7 +75,11 @@ export function UsersAdmin({
   const router = useRouter();
   const notify = useNotify();
   const [pending, run] = useServerAction();
-  const [tab, setTab] = useState<UserTab>(initialTab);
+  // The tab lives in the address (?tab=, shareable, survives a reload). Reading it from the address —
+  // which history.replaceState updates too — keeps it right when a link opens this page again with
+  // another tab (Next keeps this component mounted across ?tab= changes).
+  const requested = useSearchParams().get("tab");
+  const tab: UserTab = isUserTab(requested) ? requested : "all";
   const [query, setQuery] = useState("");
   const [inviting, setInviting] = useState(false);
 
@@ -89,8 +91,7 @@ export function UsersAdmin({
   );
 
   function chooseTab(next: UserTab) {
-    setTab(next);
-    // Keep the tab in the address (shareable, survives a reload) without a server round trip.
+    // No server round trip: the address is the state.
     window.history.replaceState(null, "", next === "all" ? "/admin/users" : `/admin/users?tab=${next}`);
   }
 
@@ -229,7 +230,7 @@ export function UsersAdmin({
                       Status
                     </th>
                     <th scope="col" className="w-32 px-3 py-2 font-medium">
-                      Last activity
+                      <span data-tooltip="When they last signed in">Last activity</span>
                     </th>
                     <th scope="col" className="w-36 px-3 py-2 font-medium">
                       Invited by

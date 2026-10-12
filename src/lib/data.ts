@@ -3755,28 +3755,36 @@ export type Collaborator = { id: string; name: string; email: string; sharedProj
 
 // People who share the most active projects with the viewer (Home → People). project_members is
 // readable for the projects the viewer is in (project Viewer+), so this only ever counts projects they
-// can open; people removed from the workspace are left out.
+// can open; people removed from the workspace are left out. PostgREST returns at most 1,000 rows a
+// request, so the memberships of the viewer's active projects are read page by page (in a stable order).
+const COLLABORATOR_PAGE = 1000;
+const COLLABORATOR_MAX_ROWS = 20_000;
+
 export const listFrequentCollaborators = cache(async (limit = 12): Promise<Collaborator[]> => {
   const { user } = await getViewer();
   if (!user) return [];
   const supabase = await createClient();
-  const [members, projects, people] = await Promise.all([
-    supabase
-      .from("project_members")
-      .select("project_id, profile_id")
-      .is("deleted_at", null)
-      .neq("profile_id", user.id)
-      .limit(5000),
-    listProjects(),
-    listActivePeople(),
-  ]);
-  const active = new Set(projects.map((p) => p.id));
+  const [projects, people] = await Promise.all([listProjects(), listActivePeople()]);
+  if (projects.length === 0) return [];
   const shared = new Map<string, Set<string>>();
-  for (const m of rows(members, "project members")) {
-    if (!active.has(m.project_id)) continue;
-    const set = shared.get(m.profile_id) ?? new Set<string>();
-    set.add(m.project_id);
-    shared.set(m.profile_id, set);
+  for (let from = 0; from < COLLABORATOR_MAX_ROWS; from += COLLABORATOR_PAGE) {
+    const page = rows(
+      await supabase
+        .from("project_members")
+        .select("project_id, profile_id")
+        .in("project_id", projects.map((p) => p.id))
+        .is("deleted_at", null)
+        .neq("profile_id", user.id)
+        .order("id")
+        .range(from, from + COLLABORATOR_PAGE - 1),
+      "project members",
+    );
+    for (const m of page) {
+      const set = shared.get(m.profile_id) ?? new Set<string>();
+      set.add(m.project_id);
+      shared.set(m.profile_id, set);
+    }
+    if (page.length < COLLABORATOR_PAGE) break;
   }
   return people
     .filter((p) => p.id !== user.id && shared.has(p.id))
