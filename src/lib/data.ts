@@ -53,7 +53,14 @@ import {
   type GoalStatus,
   type GoalViewer,
 } from "@/lib/goals";
-import { isTeamRole, type TeamRole } from "@/lib/teams";
+import {
+  TEAM_CALENDAR_LIMIT,
+  isTeamRole,
+  type CuratedWorkItem,
+  type TeamCalendarTask,
+  type TeamRole,
+} from "@/lib/teams";
+import { INBOX_LIMIT, type InboxTab } from "@/lib/inbox";
 import {
   WORKSPACE_ASSETS_BUCKET,
   isProjectVisibility,
@@ -1452,6 +1459,9 @@ export type InboxItem = {
   actorId: string | null;
   readAt: string | null;
   archivedAt: string | null;
+  // Asana parity, batch 5: the Bookmarks tab. Always null on a database without
+  // 20261012050000_asana_parity_5.sql (hasBatch5Schema()).
+  bookmarkedAt: string | null;
   createdAt: string;
   // Task items: the task. Message items (Messages tab): null, and `message` is set; taskTitle then
   // holds the thread's title.
@@ -1465,29 +1475,92 @@ export type InboxItem = {
   approval: { id: string; status: TaskApproval["status"]; approverId: string } | null;
 };
 
-export type InboxTab = "active" | "archived";
+export type { InboxTab } from "@/lib/inbox";
 
-// The Inbox tab (not archived) or the Archived tab; newest first, 100 at most.
-export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxItem[]> => {
+// Asana parity, batch 5 (20261012050000_asana_parity_5.sql): Inbox bookmarks, team curated work, and
+// the Admin console's last activity. A preview deployed before the migration is applied hides them. The
+// migration adds inbox_items.bookmarked_at last, so its presence means the whole batch is there.
+export const hasBatch5Schema = cache(async (): Promise<boolean> => {
   const supabase = await createClient();
-  let query = supabase
-    .from("inbox_items")
-    .select(
-      "id, kind, data, actor_id, read_at, archived_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(body, deleted_at)",
-    )
-    .is("task.deleted_at", null);
-  query = tab === "archived" ? query.not("archived_at", "is", null) : query.is("archived_at", null);
-  const result = await query.order("created_at", { ascending: false }).limit(100);
-  const items = rows(result, "inbox");
-  let messageQuery = supabase
-    .from("inbox_items")
-    .select(
-      "id, kind, data, actor_id, read_at, archived_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))",
-    )
-    .is("task_id", null)
-    .is("message.deleted_at", null)
-    .is("message.project.deleted_at", null);
-  messageQuery = tab === "archived" ? messageQuery.not("archived_at", "is", null) : messageQuery.is("archived_at", null);
+  const result = await supabase.from("inbox_items").select("bookmarked_at").limit(1);
+  return !isMissingColumn(result.error);
+});
+
+type InboxRowBase = {
+  id: string;
+  kind: string;
+  data: Json;
+  actor_id: string | null;
+  read_at: string | null;
+  archived_at: string | null;
+  bookmarked_at?: string | null;
+  created_at: string;
+};
+type InboxTaskRow = InboxRowBase & {
+  task: { id: string; title: string; parent_task_id: string | null };
+  comment: { body: string; deleted_at: string | null } | null;
+};
+type InboxMessageRow = InboxRowBase & {
+  message: {
+    id: string;
+    project_id: string;
+    thread_id: string | null;
+    title: string | null;
+    body: string;
+    deleted_at: string | null;
+    project: { name: string };
+  };
+};
+
+// One Inbox tab, newest first, INBOX_LIMIT task items and INBOX_LIMIT message items at most:
+//   activity = not archived, archive = archived, bookmarks = bookmarked (archived or not),
+//   mentioned = @mentions (archived or not).
+// Without this release's migration there are no bookmarks: that tab is empty and every item's
+// bookmarkedAt is null.
+export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<InboxItem[]> => {
+  const supabase = await createClient();
+  const bookmarks = await hasBatch5Schema();
+  if (tab === "bookmarks" && !bookmarks) return [];
+
+  // The tab as a PostgREST filter: [column, operator, value].
+  const [column, operator, value]: [string, string, string | null] =
+    tab === "archive"
+      ? ["archived_at", "not.is", null]
+      : tab === "bookmarks"
+        ? ["bookmarked_at", "not.is", null]
+        : tab === "mentioned"
+          ? ["kind", "eq", "mention"]
+          : ["archived_at", "is", null];
+
+  const taskColumns = bookmarks
+    ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(body, deleted_at)"
+    : "id, kind, data, actor_id, read_at, archived_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(body, deleted_at)";
+  const messageColumns = bookmarks
+    ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))"
+    : "id, kind, data, actor_id, read_at, archived_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))";
+  const [taskResult, messageResult] = await Promise.all([
+    supabase
+      .from("inbox_items")
+      .select(taskColumns)
+      .is("task.deleted_at", null)
+      .filter(column, operator, value)
+      .order("created_at", { ascending: false })
+      .limit(INBOX_LIMIT)
+      .overrideTypes<InboxTaskRow[], { merge: false }>(),
+    supabase
+      .from("inbox_items")
+      .select(messageColumns)
+      .is("task_id", null)
+      .is("message.deleted_at", null)
+      .is("message.project.deleted_at", null)
+      .filter(column, operator, value)
+      .order("created_at", { ascending: false })
+      .limit(INBOX_LIMIT)
+      .overrideTypes<InboxMessageRow[], { merge: false }>(),
+  ]);
+  const items = rows(taskResult, "inbox");
+  const messageItems = rows(messageResult, "inbox messages");
+
   const approvalIds = [
     ...new Set(
       items.flatMap((item) => {
@@ -1497,9 +1570,8 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
       }),
     ),
   ];
-  const [parentTitle, messageItems, approvalRows] = await Promise.all([
+  const [parentTitle, approvalRows] = await Promise.all([
     taskTitles(items.map((item) => item.task.parent_task_id)),
-    messageQuery.order("created_at", { ascending: false }).limit(100).then((r) => rows(r, "inbox messages")),
     approvalIds.length
       ? supabase
           .from("approval_requests")
@@ -1530,6 +1602,7 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
       actorId: item.actor_id,
       readAt: item.read_at,
       archivedAt: item.archived_at,
+      bookmarkedAt: item.bookmarked_at ?? null,
       createdAt: item.created_at,
       taskId: item.task.id,
       taskTitle: item.task.title,
@@ -1558,6 +1631,7 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
         actorId: item.actor_id,
         readAt: item.read_at,
         archivedAt: item.archived_at,
+        bookmarkedAt: item.bookmarked_at ?? null,
         createdAt: item.created_at,
         taskId: null,
         taskTitle: (thread ? thread.title : m.title) ?? "Message",
@@ -1568,7 +1642,10 @@ export const listInbox = cache(async (tab: InboxTab = "active"): Promise<InboxIt
       },
     ];
   });
-  return [...taskItems, ...messages].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+  // Newest first; items made in the same transaction keep a stable order.
+  return [...taskItems, ...messages]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+    .slice(0, INBOX_LIMIT);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -3190,6 +3267,7 @@ export const listWorkspaceMembers = cache(async (): Promise<WorkspaceMember[]> =
         teams: profile ? (teamsByProfile.get(profile.id) ?? []).sort((x, y) => x.name.localeCompare(y.name)) : [],
         invitedAt: a.invited_at,
         invitedByName: a.inviter?.full_name?.trim() || null,
+        addedAt: a.created_at,
         removedAt: a.removed_at,
         inviteEmail: latestInvite.get(a.email) ?? null,
       };
@@ -3666,4 +3744,187 @@ export const listProjectFiles = cache(async (projectId: string): Promise<Project
     for (const task of rows(subtasks, "subtask files")) add(task as unknown as TaskRow);
   }
   return files.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_PROJECT_FILES);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Asana parity, batch 5: Home's People widget, the team page (curated work, calendar), and the
+// Admin console (last activity, invite deliveries). Everything reads with the viewer's own client.
+// ---------------------------------------------------------------------------------------------
+
+export type Collaborator = { id: string; name: string; email: string; sharedProjects: number };
+
+// People who share the most active projects with the viewer (Home → People). project_members is
+// readable for the projects the viewer is in (project Viewer+), so this only ever counts projects they
+// can open; people removed from the workspace are left out. PostgREST returns at most 1,000 rows a
+// request, so the memberships of the viewer's active projects are read page by page (in a stable order).
+const COLLABORATOR_PAGE = 1000;
+const COLLABORATOR_MAX_ROWS = 20_000;
+
+export const listFrequentCollaborators = cache(async (limit = 12): Promise<Collaborator[]> => {
+  const { user } = await getViewer();
+  if (!user) return [];
+  const supabase = await createClient();
+  const [projects, people] = await Promise.all([listProjects(), listActivePeople()]);
+  if (projects.length === 0) return [];
+  const shared = new Map<string, Set<string>>();
+  for (let from = 0; from < COLLABORATOR_MAX_ROWS; from += COLLABORATOR_PAGE) {
+    const page = rows(
+      await supabase
+        .from("project_members")
+        .select("project_id, profile_id")
+        .in("project_id", projects.map((p) => p.id))
+        .is("deleted_at", null)
+        .neq("profile_id", user.id)
+        .order("id")
+        .range(from, from + COLLABORATOR_PAGE - 1),
+      "project members",
+    );
+    for (const m of page) {
+      const set = shared.get(m.profile_id) ?? new Set<string>();
+      set.add(m.project_id);
+      shared.set(m.profile_id, set);
+    }
+    if (page.length < COLLABORATOR_PAGE) break;
+  }
+  return people
+    .filter((p) => p.id !== user.id && shared.has(p.id))
+    .map((p) => ({ ...p, sharedProjects: shared.get(p.id)!.size }))
+    .sort((a, b) => b.sharedProjects - a.sharedProjects || a.name.localeCompare(b.name))
+    .slice(0, limit);
+});
+
+// A team's Curated work in order, only the items the viewer can open (RLS). Null on a database without
+// 20261012050000_asana_parity_5.sql.
+export const listTeamCuratedWork = cache(async (teamId: string): Promise<CuratedWorkItem[] | null> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("team_curated_work")
+    .select(
+      "id, project_id, portfolio_id, sort_order, project:projects(id, name, description, status, archived_at, deleted_at), portfolio:portfolios(id, name, notes, deleted_at)",
+    )
+    .eq("team_id", teamId)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  if (result.error && ["PGRST205", "42P01", "PGRST200"].includes(result.error.code ?? "")) return null;
+  return rows(result, "curated work").flatMap((row): CuratedWorkItem[] => {
+    if (row.project && !row.project.deleted_at) {
+      return [
+        {
+          id: row.id,
+          kind: "project",
+          targetId: row.project.id,
+          name: row.project.name,
+          description: row.project.description,
+          status: row.project.status,
+          archived: row.project.archived_at !== null,
+          sortOrder: row.sort_order,
+        },
+      ];
+    }
+    if (row.portfolio && !row.portfolio.deleted_at) {
+      return [
+        {
+          id: row.id,
+          kind: "portfolio",
+          targetId: row.portfolio.id,
+          name: row.portfolio.name,
+          description: row.portfolio.notes,
+          status: null,
+          archived: false,
+          sortOrder: row.sort_order,
+        },
+      ];
+    }
+    return [];
+  });
+});
+
+// Tasks due from `from` to `to` (local days, inclusive) in the team's projects the viewer is a member
+// of — the team Calendar. Public-to-team projects the viewer hasn't joined and private projects of
+// others are never read (browse_projects only lists the former, with no role, and RLS hides tasks).
+// Top-level tasks only (subtasks have no memberships); a multi-homed task shows once, under its first
+// team project.
+export async function listTeamCalendarTasks(
+  teamId: string,
+  from: string,
+  to: string,
+): Promise<{ tasks: TeamCalendarTask[]; projectCount: number; capped: boolean }> {
+  const projects = (await browseProjects(teamId)).filter((p) => p.myRole !== null);
+  if (projects.length === 0) return { tasks: [], projectCount: 0, capped: false };
+  const names = new Map(projects.map((p) => [p.projectId, p.name] as const));
+  const supabase = await createClient();
+  const result = await supabase
+    .from("task_projects")
+    .select("project_id, task:tasks!inner(id, title, due_on, completed_at, assignee_id, kind, deleted_at)")
+    .in("project_id", [...names.keys()])
+    .is("deleted_at", null)
+    .is("task.deleted_at", null)
+    .gte("task.due_on", from)
+    .lte("task.due_on", to)
+    .order("project_id")
+    .limit(TEAM_CALENDAR_LIMIT);
+  const seen = new Set<string>();
+  const tasks: TeamCalendarTask[] = [];
+  const list = rows(result, "team calendar");
+  for (const row of list) {
+    const t = row.task;
+    if (!t.due_on || seen.has(t.id)) continue;
+    seen.add(t.id);
+    tasks.push({
+      id: t.id,
+      title: t.title,
+      dueOn: t.due_on,
+      completedAt: t.completed_at,
+      assigneeId: t.assignee_id,
+      kind: t.kind,
+      projectId: row.project_id,
+      projectName: names.get(row.project_id) ?? "Project",
+    });
+  }
+  tasks.sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.title.localeCompare(b.title));
+  return { tasks, projectCount: projects.length, capped: list.length >= TEAM_CALENDAR_LIMIT };
+}
+
+// When each allowlisted address last signed in (Admin console → Users). Null when the viewer isn't a
+// workspace admin, or on a database without 20261012050000_asana_parity_5.sql.
+export const listWorkspaceMemberActivity = cache(async (): Promise<Map<string, string | null> | null> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("list_workspace_member_activity");
+  if (result.error && ["PGRST202", "42501", "42883"].includes(result.error.code ?? "")) return null;
+  return new Map(rows(result, "member activity").map((r) => [r.email.toLowerCase(), r.last_sign_in_at] as const));
+});
+
+export type InviteDelivery = {
+  id: string;
+  email: string;
+  status: string;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  sentAt: string | null;
+  createdAt: string;
+};
+
+// The latest workspace invite emails (Admin console → Email). RLS: workspace admins read invite rows;
+// everyone else gets none.
+export const listInviteDeliveries = cache(async (limit = 50): Promise<InviteDelivery[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("email_outbox")
+    .select("id, to_email, status, attempts, max_attempts, last_error, sent_at, created_at")
+    .is("task_id", null)
+    .eq("payload->>kind", "invite")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return rows(result, "invite emails").map((r) => ({
+    id: r.id,
+    email: r.to_email,
+    status: r.status,
+    attempts: r.attempts,
+    maxAttempts: r.max_attempts,
+    lastError: r.last_error,
+    sentAt: r.sent_at,
+    createdAt: r.created_at,
+  }));
 });

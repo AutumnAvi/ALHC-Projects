@@ -41,10 +41,10 @@ export function PeriodNav({
       <button type="button" onClick={onToday} className="btn-secondary mr-1">
         Today
       </button>
-      <button type="button" onClick={onPrev} aria-label={prevLabel} className="btn-icon">
+      <button type="button" onClick={onPrev} aria-label={prevLabel} data-tooltip={prevLabel} className="btn-icon">
         <ChevronLeft className="size-4" />
       </button>
-      <button type="button" onClick={onNext} aria-label={nextLabel} className="btn-icon">
+      <button type="button" onClick={onNext} aria-label={nextLabel} data-tooltip={nextLabel} className="btn-icon">
         <ChevronRight className="size-4" />
       </button>
       <h2 className="ml-1 text-sm font-semibold text-zinc-900" aria-live="polite">

@@ -258,8 +258,8 @@ function EndpointFields({
         {shownTags.length === 0 ? (
           <p className="text-xs text-zinc-500">
             No tags yet — create them in{" "}
-            <Link href="/settings/workspace" className="text-accent-700 hover:underline">
-              Settings → Workspace
+            <Link href="/settings/workspace/tags" className="text-accent-700 hover:underline">
+              Settings → Workspace → Tags
             </Link>
             .
           </p>

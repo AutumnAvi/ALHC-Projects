@@ -1,15 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
+import { ADMIN_PATH_FOR_SETTINGS } from "@/lib/admin";
 import { isWorkspaceAdmin } from "@/lib/data";
 import { isGoogleAuthEnabled } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Security · Workspace settings" };
 
-// Settings → Workspace → Security: how people sign in. Read-only for everyone — sign-in methods are set
-// up in Supabase Auth by whoever runs the project, never from the app.
+// Settings → Workspace → Security (members): how people sign in. Read-only for everyone — sign-in
+// methods are set up in Supabase Auth by whoever runs the project, never from the app. Workspace admins
+// see this in Admin console → Security.
 export default async function WorkspaceSecurityPage() {
-  const admin = await isWorkspaceAdmin();
+  if (await isWorkspaceAdmin()) redirect(ADMIN_PATH_FOR_SETTINGS["/settings/workspace/security"]);
   const google = isGoogleAuthEnabled();
   const methods = [
     { name: "Email and password", state: "On", note: "People create an account at /signup and confirm their address by email." },
@@ -22,7 +25,7 @@ export default async function WorkspaceSecurityPage() {
         id="workspace-sign-in"
         title="Sign-in methods"
         description="Shown for reference. These are set up in Supabase Auth, not here."
-        isAdmin={admin}
+        isAdmin={false}
         flush
       >
         <ul className="divide-y divide-zinc-100">
@@ -37,7 +40,7 @@ export default async function WorkspaceSecurityPage() {
           ))}
         </ul>
       </SettingsCard>
-      <SettingsCard id="workspace-access" title="Who can get in" isAdmin={admin}>
+      <SettingsCard id="workspace-access" title="Who can get in" isAdmin={false}>
         <p className="text-sm text-zinc-700">
           Only people on the{" "}
           <Link href="/settings/workspace/members" className="text-accent-700 hover:underline">

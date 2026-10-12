@@ -1,5 +1,5 @@
-import { PageSkeleton } from "@/components/ui";
+import { TeamCardsSkeleton } from "@/components/teams/team-skeletons";
 
 export default function Loading() {
-  return <PageSkeleton label="Loading teams…" />;
+  return <TeamCardsSkeleton label="Loading teams…" />;
 }

@@ -60,3 +60,83 @@ export function describeTeamInvite(teamName: string, result: TeamInviteResult): 
   ].filter(Boolean);
   return `${teamName}: ${bits.join(" · ")}`;
 }
+
+// ---------------------------------------------------------------------------------------------
+// The team page (Asana parity, batch 5): Overview, Members, All work, Messages, Calendar.
+// ---------------------------------------------------------------------------------------------
+
+export const TEAM_TABS = [
+  { key: "overview", label: "Overview", segment: "" },
+  { key: "members", label: "Members", segment: "members" },
+  { key: "work", label: "All work", segment: "work" },
+  { key: "messages", label: "Messages", segment: "messages" },
+  { key: "calendar", label: "Calendar", segment: "calendar" },
+] as const;
+export type TeamTab = (typeof TEAM_TABS)[number]["key"];
+
+export function teamTabHref(teamId: string, tab: TeamTab): string {
+  const segment = TEAM_TABS.find((t) => t.key === tab)?.segment ?? "";
+  return segment ? `/teams/${teamId}/${segment}` : `/teams/${teamId}`;
+}
+
+// One item of a team's Curated work (team_curated_work): a project or portfolio the viewer can open.
+export type CuratedWorkItem = {
+  id: string;
+  kind: "project" | "portfolio";
+  targetId: string;
+  name: string;
+  // A project's description or a portfolio's notes.
+  description: string | null;
+  // Projects only: their status (on_track, …) and whether they're archived.
+  status: string | null;
+  archived: boolean;
+  sortOrder: number;
+};
+
+export const CURATED_ORDER_STEP = 1024;
+
+// A task on the team Calendar: due in one of the team's projects the viewer is a member of.
+export type TeamCalendarTask = {
+  id: string;
+  title: string;
+  dueOn: string;
+  completedAt: string | null;
+  assigneeId: string | null;
+  kind: string;
+  projectId: string;
+  projectName: string;
+};
+
+// The most tasks the team Calendar loads for one period.
+export const TEAM_CALENDAR_LIMIT = 1000;
+
+// Where a curated item lands when it moves one place up (-1) or down (+1) among the items the viewer
+// sees: the midpoint between its new neighbors, or a step past the end at either edge, so items hidden
+// from the viewer keep their places. Null when it can't move that way.
+export function curatedMoveOrder(
+  items: readonly Pick<CuratedWorkItem, "sortOrder">[],
+  index: number,
+  delta: -1 | 1,
+): number | null {
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= items.length) return null;
+  const others = items.filter((_, i) => i !== index);
+  const before = others[target - 1]?.sortOrder;
+  const after = others[target]?.sortOrder;
+  if (before === undefined) return after === undefined ? null : after - CURATED_ORDER_STEP;
+  if (after === undefined) return before + CURATED_ORDER_STEP;
+  return (before + after) / 2;
+}
+
+// The days the team Calendar shows for a month ("YYYY-MM"): whole weeks, Sunday through Saturday, from
+// the week of the 1st to the week of the last day (4 to 6 weeks). Plain UTC day math, server-safe.
+export function teamCalendarDays(month: string): string[] {
+  const [year, m] = month.split("-").map(Number);
+  const first = new Date(Date.UTC(year, m - 1, 1));
+  const last = new Date(Date.UTC(year, m, 0));
+  const start = Date.UTC(year, m - 1, 1 - first.getUTCDay());
+  const end = Date.UTC(year, m - 1, last.getUTCDate() + 6 - last.getUTCDay());
+  const days: string[] = [];
+  for (let time = start; time <= end; time += 86_400_000) days.push(new Date(time).toISOString().slice(0, 10));
+  return days;
+}

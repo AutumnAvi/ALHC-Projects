@@ -2538,6 +2538,23 @@ export async function archiveInboxItems(itemIds: string[] | "all", archived = tr
   });
 }
 
+// Bookmark (or un-bookmark) one of the viewer's notifications (Asana parity, batch 5: the Inbox's
+// Bookmarks tab). RLS and the column grant limit it to the viewer's own items.
+export async function setInboxBookmark(itemId: string, bookmarked: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("inbox_items")
+      .update({ bookmarked_at: bookmarked ? now() : null })
+      .eq("id", id(itemId))
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") throw new DbError(BATCH5_SCHEMA_MISSING);
+    checkUpdated(result, "That notification isn’t in your Inbox anymore");
+  });
+}
+
+const BATCH5_SCHEMA_MISSING = "This needs this release’s database update, which isn’t applied yet";
+
 // ---------------------------------------------------------------------------------------------
 // Workspace admins (Settings → Workspace). Admins add and remove admins; the last one stays.
 // ---------------------------------------------------------------------------------------------
@@ -2686,6 +2703,64 @@ export async function createTeam(formData: FormData): Promise<ActionResult> {
   });
   if (teamId && !result.error) redirect(`/teams/${teamId}`);
   return result;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Team curated work (Asana parity, batch 5): the team Overview's pinned projects and portfolios.
+// Team members, leads, and workspace admins curate (can_curate_team); only work the person can open
+// can be pinned, and each item shows only to people who can open it (RLS).
+// ---------------------------------------------------------------------------------------------
+
+const CURATE_NOT_ALLOWED = "Only people on this team (and workspace admins) can change its curated work";
+
+export async function addTeamCuratedWork(
+  teamId: string,
+  target: { projectId: string } | { portfolioId: string },
+): Promise<ActionResult> {
+  return run(async () => {
+    const team = id(teamId, "team");
+    const supabase = await createClient();
+    const last = await supabase
+      .from("team_curated_work")
+      .select("sort_order")
+      .eq("team_id", team)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (last.error && ["PGRST205", "42P01"].includes(last.error.code ?? "")) throw new DbError(BATCH5_SCHEMA_MISSING);
+    check(last);
+    const result = await supabase.from("team_curated_work").insert({
+      team_id: team,
+      ...("projectId" in target ? { project_id: id(target.projectId, "project") } : { portfolio_id: id(target.portfolioId, "portfolio") }),
+      sort_order: (last.data?.sort_order ?? 0) + ORDER_STEP,
+    });
+    // Already curated: nothing to do.
+    if (result.error?.code === "23505") return;
+    check(result, CURATE_NOT_ALLOWED);
+  });
+}
+
+export async function removeTeamCuratedWork(itemId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("team_curated_work").update({ deleted_at: now() }).eq("id", id(itemId)).is("deleted_at", null).select("id"),
+      CURATE_NOT_ALLOWED,
+    );
+  });
+}
+
+// Reorder: the app sends a midpoint between the visible neighbours (hidden items keep their places).
+export async function moveTeamCuratedWork(itemId: string, sortOrder: number): Promise<ActionResult> {
+  return run(async () => {
+    if (!Number.isFinite(sortOrder)) throw new InputError("Invalid position");
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("team_curated_work").update({ sort_order: sortOrder }).eq("id", id(itemId)).select("id"),
+      CURATE_NOT_ALLOWED,
+    );
+  });
 }
 
 export async function updateTeam(

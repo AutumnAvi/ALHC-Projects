@@ -1,115 +1,91 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Archive, Compass, FolderClosed, House, Plus } from "lucide-react";
-import { OpenDialogButton } from "@/components/shell/open-dialog-button";
-import { EmptyState, PageHeader } from "@/components/ui";
-import { listArchivedProjects, listProjects } from "@/lib/data";
-import { projectColorClass } from "@/lib/project-colors";
+import { CircleCheck, House, UsersRound } from "lucide-react";
+import { MyTasksWidget } from "@/components/home/my-tasks-widget";
+import { PeopleWidget } from "@/components/home/people-widget";
+import { ProjectsWidget } from "@/components/home/projects-widget";
+import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { PageHeader } from "@/components/ui";
+import { requireMember } from "@/lib/auth";
+import { listArchivedProjects, listFrequentCollaborators, listMyTasks, listProjects, listStarredProjectIds } from "@/lib/data";
+import {
+  RECENT_COMPLETED_LIMIT,
+  completedThisWeek,
+  firstName,
+  greetingFor,
+  hourIn,
+  longDateIn,
+  plural,
+  splitHomeTasks,
+} from "@/lib/home";
+import { getViewerTimeZone } from "@/lib/timezone";
+import { todayIn } from "@/lib/workload";
 
 export const metadata: Metadata = { title: "Home" };
 
-export default async function HomePage() {
-  const [projects, archived] = await Promise.all([listProjects(), listArchivedProjects()]);
+// Every collaborator counts toward "My week"; the People widget shows them all (it scrolls).
+const COLLABORATOR_LIMIT = 500;
+
+// Home (Asana parity, batch 5): the date and a greeting in the viewer's time zone, a "My week" summary,
+// then the My tasks, Projects, and People widgets. `?task=` opens the task pane next to it.
+export default async function HomePage({ searchParams }: PageProps<"/">) {
+  const { task } = await searchParams;
+  const openTaskId = typeof task === "string" ? task : null;
+  const member = await requireMember();
+  const timeZone = await getViewerTimeZone();
+  const today = todayIn(timeZone);
+  const [{ open, completed }, projects, archived, starredIds, collaborators] = await Promise.all([
+    listMyTasks(member.id),
+    listProjects(),
+    listArchivedProjects(),
+    listStarredProjectIds(),
+    listFrequentCollaborators(COLLABORATOR_LIMIT),
+  ]);
+
+  const tasks = splitHomeTasks(open, completed, today);
+  const doneThisWeek = completedThisWeek(completed, today, timeZone);
+  // Only the latest completed tasks are read: when all of them are from this week there may be more.
+  const doneLabel =
+    completed.length >= RECENT_COMPLETED_LIMIT && doneThisWeek === completed.length
+      ? `${doneThisWeek}+ tasks completed`
+      : plural(doneThisWeek, "task completed", "tasks completed");
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
-      <PageHeader
-        icon={House}
-        title="Home"
-        description="Projects you’re a member of"
-        actions={
-          <OpenDialogButton dialog={{ kind: "project" }} className="btn-primary h-8 px-3">
-            <Plus className="size-4" aria-hidden />
-            Create project
-          </OpenDialogButton>
-        }
-      />
+      <PageHeader icon={House} title="Home" />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="px-gutter py-6">
-          <section aria-labelledby="projects-heading">
-            <div className="flex items-baseline gap-2">
-              <h2 id="projects-heading" className="text-sm font-semibold text-zinc-900">
-                Projects
-              </h2>
-              {projects.length > 0 ? (
-                <span className="text-xs tabular-nums text-zinc-400">{projects.length}</span>
-              ) : null}
-            </div>
-            {projects.length === 0 ? (
-              <div className="mt-3">
-                <EmptyState
-                  icon={FolderClosed}
-                  title="No projects yet"
-                  action={
-                    <OpenDialogButton dialog={{ kind: "project" }} className="btn-primary h-8 px-3">
-                      <Plus className="size-4" aria-hidden />
-                      Create project
-                    </OpenDialogButton>
-                  }
-                >
-                  Start one from a template or from scratch, or ask a project’s owner or admin to invite you.
-                </EmptyState>
-              </div>
-            ) : (
-              <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <li>
-                  <OpenDialogButton
-                    dialog={{ kind: "project" }}
-                    className="flex h-full w-full items-center gap-2.5 rounded-lg border border-dashed border-zinc-300 bg-white p-3 text-left text-sm text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 hover:text-zinc-900"
-                  >
-                    <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-dashed border-zinc-300">
-                      <Plus className="size-4" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block font-medium">Create project</span>
-                      <span className="block text-xs text-zinc-500">From a template, blank, or an Asana import</span>
-                    </span>
-                  </OpenDialogButton>
-                </li>
-                {projects.map((project) => (
-                  <li key={project.id}>
-                    <Link
-                      href={`/projects/${project.id}`}
-                      className="group flex h-full items-start gap-2.5 rounded-lg border border-zinc-200 bg-white p-3 hover:border-zinc-300 hover:bg-zinc-50"
-                    >
-                      <span
-                        aria-hidden
-                        className={`flex size-7 shrink-0 items-center justify-center rounded-lg text-white ${projectColorClass(project.id)}`}
-                      >
-                        <FolderClosed className="size-4" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-zinc-900">{project.name}</span>
-                        <span className="mt-0.5 line-clamp-2 block text-xs text-zinc-500">
-                          {project.description || "No description"}
-                        </span>
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="mt-3 flex flex-wrap gap-4">
-              <Link
-                href="/projects/browse"
-                className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
-              >
-                <Compass className="size-3.5" aria-hidden />
-                Browse projects you can join
-              </Link>
-              {archived.length > 0 ? (
-                <Link
-                  href="/projects/archived"
-                  className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
-                >
-                  <Archive className="size-3.5" aria-hidden />
-                  Archived projects ({archived.length})
-                </Link>
-              ) : null}
-            </div>
-          </section>
+        <div className="flex flex-col items-center px-gutter pb-6 pt-8 text-center">
+          <p className="text-sm text-zinc-500">{longDateIn(timeZone)}</p>
+          <h2 className="mt-1 text-3xl font-medium tracking-tight text-zinc-900">
+            {greetingFor(hourIn(timeZone))}, {firstName(member.name, member.email)}
+          </h2>
+          <p className="mt-4 inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-full bg-zinc-100 px-4 py-1.5 text-sm text-zinc-600">
+            <span className="font-medium text-zinc-800">My week</span>
+            <span aria-hidden className="h-4 w-px bg-zinc-300" />
+            <span className="inline-flex items-center gap-1.5">
+              <CircleCheck className="size-4 text-zinc-500" aria-hidden />
+              {doneLabel}
+            </span>
+            <span className="inline-flex items-center gap-1.5" data-tooltip="People who share a project with you">
+              <UsersRound className="size-4 text-zinc-500" aria-hidden />
+              {plural(collaborators.length, "collaborator")}
+              <span className="sr-only"> (people who share a project with you)</span>
+            </span>
+          </p>
+        </div>
+        {/* A size container: two columns only when there's room, also with the task pane open. */}
+        <div className="@container px-gutter pb-10">
+          <div className="grid gap-4 @4xl:grid-cols-2">
+            <MyTasksWidget tasks={tasks} openTaskId={openTaskId} />
+            <ProjectsWidget
+              projects={projects.map(({ id, name }) => ({ id, name }))}
+              starredIds={starredIds}
+              archivedCount={archived.length}
+            />
+            <PeopleWidget collaborators={collaborators} />
+          </div>
         </div>
       </div>
+      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
     </main>
   );
 }

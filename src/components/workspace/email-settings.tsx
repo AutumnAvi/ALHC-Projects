@@ -6,8 +6,8 @@ import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { updateWorkspaceSettings } from "@/lib/actions";
 import { SENDER_NAME_MAX, senderNameProblem } from "@/lib/workspace";
 
-// Settings → Workspace → Email → Sender name (workspace admins). Shown in front of the configured
-// from-address on every email the app sends.
+// Admin console → Email → Sender name (read-only on Settings → Workspace → Email for members). Shown in
+// front of the configured from-address on every email the app sends.
 export function SenderNameSettings({
   senderName,
   fromAddress,

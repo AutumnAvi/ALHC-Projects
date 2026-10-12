@@ -7,8 +7,8 @@ import { Lock } from "lucide-react";
 import { HEADER_TAB } from "@/components/ui";
 import { ONLY_ADMINS_NOTE } from "@/lib/workspace";
 
-// Settings → Workspace sections, like Asana's admin console. Everyone sees the same tabs and cards;
-// admin-only cards are read-only for members, with a one-line note.
+// Settings → Workspace sections for members (workspace admins use the Admin console, /admin, instead).
+// Admin-only cards are read-only for members, with a one-line note; the Admin console reuses SettingsCard.
 const TABS = [
   { href: "/settings/workspace", label: "General" },
   { href: "/settings/workspace/members", label: "Members" },

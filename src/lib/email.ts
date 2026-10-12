@@ -1,6 +1,7 @@
 import "server-only";
 import { isInboundEmailConfigured, replyAddress, REPLY_MARKER } from "@/lib/email-reply";
 import { backgroundOrigin } from "@/lib/origin";
+import { settingsHref } from "@/lib/shell";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 
@@ -105,7 +106,7 @@ function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
           canReply
             ? "Reply to this email to add a comment as you. Only the text above the quoted message is posted."
             : "Open the task to reply.",
-          `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}/settings/profile?tab=notifications)` : ""}.`,
+          `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
         ],
       },
     ),

@@ -2,26 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { MailPlus, RotateCcw, Send, UserMinus, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Timestamp } from "@/components/timestamp";
-import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { AdminOnlyNote, SettingsCard } from "@/components/workspace/settings-chrome";
-import {
-  addWorkspaceAdmin,
-  inviteToWorkspace,
-  removeWorkspaceAdmin,
-  removeWorkspaceMember,
-  resendWorkspaceInvite,
-} from "@/lib/actions";
-import {
-  WORKSPACE_ROLE_LABELS,
-  describeInviteEmail,
-  describeInvites,
-  type MemberStatus,
-  type WorkspaceMember,
-} from "@/lib/workspace";
+import { WORKSPACE_ROLE_LABELS, type MemberStatus, type WorkspaceMember } from "@/lib/workspace";
 
 const FILTERS: { key: MemberStatus; label: string }[] = [
   { key: "active", label: "Members" },
@@ -29,68 +15,36 @@ const FILTERS: { key: MemberStatus; label: string }[] = [
   { key: "removed", label: "Removed" },
 ];
 
-// Settings → Workspace → Members: everyone on the workspace's allowed list with their role, whether
-// they've signed in, and their teams. Workspace admins invite (an email goes out through the outbox),
-// resend, remove (sign-in stops; their work stays), add back, and make people admins.
-export function MembersSettings({
-  members,
-  isAdmin,
-  viewerId,
-}: {
-  members: WorkspaceMember[];
-  isAdmin: boolean;
-  viewerId: string;
-}) {
-  const [pending, run] = useServerAction();
-  const notify = useNotify();
+const EMPTY: Record<MemberStatus, { title: string; body: string }> = {
+  active: { title: "No members", body: "People show up here once they’ve signed in for the first time." },
+  invited: { title: "No pending invites", body: "People a workspace admin invites show up here until they sign in." },
+  removed: {
+    title: "No one removed",
+    body: "People removed from the workspace can’t sign in. Their work stays, and a workspace admin can add them back.",
+  },
+};
+
+// Settings → Workspace → Members (members, read-only): everyone on the workspace's allowlist with their
+// role, whether they've signed in, and their teams, plus who the workspace admins are. Workspace admins
+// invite, resend, remove, add back, and change roles in Admin console → Users (components/admin/users-admin.tsx).
+export function MembersSettings({ members, viewerId }: { members: WorkspaceMember[]; viewerId: string }) {
   const [filter, setFilter] = useState<MemberStatus>("active");
-  const [emails, setEmails] = useState("");
-  const adminCount = members.filter((m) => m.role === "admin" && m.status === "active").length;
   const shown = members.filter((m) => m.status === filter);
+  const admins = members.filter((m) => m.role === "admin" && m.status === "active");
 
   return (
     <>
       <SettingsCard
         id="workspace-invite"
         title="Invite people"
-        description="Adds them to the workspace and emails them a sign-up link. Until they sign in you can already add them to projects, portfolios, and teams; those memberships start on their first sign-in."
+        description="Workspace admins invite people by email. Until someone signs in they can already be added to projects, portfolios, and teams; those memberships start on their first sign-in."
         adminOnly
-        isAdmin={isAdmin}
+        isAdmin={false}
       >
-        <form
-          className="flex flex-wrap items-end gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!emails.trim()) return;
-            run(async () => {
-              const result = await inviteToWorkspace(emails);
-              if (!result.error) {
-                setEmails("");
-                notify(describeInvites(result.results ?? []));
-                setFilter("invited");
-              }
-              return result;
-            });
-          }}
-        >
-          <div className="flex min-w-64 flex-1 flex-col gap-1">
-            <label htmlFor="workspace-invite-emails" className="text-xs font-medium text-zinc-600">
-              Email addresses
-            </label>
-            <input
-              id="workspace-invite-emails"
-              value={emails}
-              onChange={(e) => setEmails(e.currentTarget.value)}
-              autoComplete="off"
-              placeholder="name@autumnlakemarketing.com, another@example.com"
-              className="field"
-            />
-          </div>
-          <button type="submit" disabled={pending || !emails.trim()} className="btn-primary h-9">
-            <MailPlus className="size-3.5" aria-hidden />
-            Send invites
-          </button>
-        </form>
+        <p className="text-sm text-zinc-700">
+          {admins.length === 1 ? "Workspace admin: " : "Workspace admins: "}
+          {admins.map((a) => a.name).join(", ") || "none yet"}
+        </p>
       </SettingsCard>
 
       <SettingsCard
@@ -101,7 +55,7 @@ export function MembersSettings({
           </>
         }
         description="Admins manage the workspace: members, teams, settings, and every project template. Being an admin never opens private projects — project access always comes from project membership."
-        isAdmin={isAdmin}
+        isAdmin={false}
         flush
       >
         <div role="tablist" aria-label="Show" className="flex gap-1 border-b border-zinc-100 px-4 pt-2">
@@ -121,50 +75,15 @@ export function MembersSettings({
             );
           })}
         </div>
-        {!isAdmin ? <AdminOnlyNote className="border-b border-zinc-100 px-5 py-2" /> : null}
+        <AdminOnlyNote className="border-b border-zinc-100 px-5 py-2" />
         {shown.length === 0 ? (
-          <EmptyState icon={Users} title={filter === "invited" ? "No pending invites" : filter === "removed" ? "No one removed" : "No members"} size="inline">
-            {filter === "invited"
-              ? "People you invite show up here until they sign in for the first time."
-              : filter === "removed"
-                ? "People removed from the workspace can’t sign in. Their work stays, and you can add them back here."
-                : "Invite people above."}
+          <EmptyState icon={Users} title={EMPTY[filter].title} size="inline">
+            {EMPTY[filter].body}
           </EmptyState>
         ) : (
           <ul className="divide-y divide-zinc-100">
             {shown.map((m) => (
-              <MemberRow
-                key={m.email}
-                member={m}
-                self={m.profileId === viewerId}
-                isAdmin={isAdmin}
-                lastAdmin={m.role === "admin" && adminCount <= 1}
-                pending={pending}
-                onRole={(next) =>
-                  run(() => (next === "admin" ? addWorkspaceAdmin(m.email) : removeWorkspaceAdmin(m.profileId!)))
-                }
-                onResend={() =>
-                  run(async () => {
-                    const result = await resendWorkspaceInvite(m.email);
-                    if (!result.error) notify(`Invite sent again to ${m.email}`);
-                    return result;
-                  })
-                }
-                onRemove={() => {
-                  const question =
-                    m.status === "invited"
-                      ? `Cancel the invite for ${m.email}? Their pending project and team invites are cancelled too.`
-                      : `Remove ${m.name} from the workspace? They can’t sign in anymore. Their tasks, comments, and memberships stay, and you can add them back later.`;
-                  if (window.confirm(question)) run(() => removeWorkspaceMember(m.email));
-                }}
-                onRestore={() =>
-                  run(async () => {
-                    const result = await inviteToWorkspace(m.email);
-                    if (!result.error) notify(`${m.name} can sign in again`);
-                    return result;
-                  })
-                }
-              />
+              <MemberRow key={m.email} member={m} self={m.profileId === viewerId} />
             ))}
           </ul>
         )}
@@ -173,29 +92,7 @@ export function MembersSettings({
   );
 }
 
-function MemberRow({
-  member: m,
-  self,
-  isAdmin,
-  lastAdmin,
-  pending,
-  onRole,
-  onResend,
-  onRemove,
-  onRestore,
-}: {
-  member: WorkspaceMember;
-  self: boolean;
-  isAdmin: boolean;
-  lastAdmin: boolean;
-  pending: boolean;
-  onRole: (role: "admin" | "member") => void;
-  onResend: () => void;
-  onRemove: () => void;
-  onRestore: () => void;
-}) {
-  const inviteEmail = describeInviteEmail(m.inviteEmail);
-  const canChangeRole = isAdmin && m.status === "active" && m.profileId !== null;
+function MemberRow({ member: m, self }: { member: WorkspaceMember; self: boolean }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3">
       <Avatar name={m.name} size="md" />
@@ -225,9 +122,6 @@ function MemberRow({
             </>
           ) : null}
         </p>
-        {m.status === "invited" && inviteEmail ? (
-          <p className={`text-xs ${m.inviteEmail?.status === "failed" ? "text-red-600" : "text-zinc-500"}`}>{inviteEmail}</p>
-        ) : null}
         {m.teams.length ? (
           <p className="mt-1 flex flex-wrap gap-1">
             {m.teams.map((t) => (
@@ -240,69 +134,10 @@ function MemberRow({
       </div>
 
       {m.status === "active" ? (
-        canChangeRole ? (
-          <>
-            <label htmlFor={`workspace-role-${m.email}`} className="sr-only">
-              Workspace role for {m.name}
-            </label>
-            <select
-              id={`workspace-role-${m.email}`}
-              key={m.role}
-              defaultValue={m.role}
-              disabled={pending || lastAdmin}
-              title={lastAdmin ? "A workspace needs at least one admin. Make someone else an admin first." : undefined}
-              onChange={(e) => {
-                const next = e.currentTarget.value as "admin" | "member";
-                const question =
-                  next === "member" && self
-                    ? "Stop being a workspace admin? Another admin will have to make you one again."
-                    : null;
-                if (question && !window.confirm(question)) {
-                  e.currentTarget.value = m.role;
-                  return;
-                }
-                onRole(next);
-              }}
-              className="control"
-            >
-              <option value="admin">{WORKSPACE_ROLE_LABELS.admin}</option>
-              <option value="member">{WORKSPACE_ROLE_LABELS.member}</option>
-            </select>
-          </>
-        ) : (
-          <span className={`chip ${m.role === "admin" ? "bg-accent-50 text-accent-700" : ""}`}>{WORKSPACE_ROLE_LABELS[m.role]}</span>
-        )
+        <span className={`chip ${m.role === "admin" ? "bg-accent-50 text-accent-700" : ""}`}>{WORKSPACE_ROLE_LABELS[m.role]}</span>
       ) : (
         <span className="chip">{m.status === "invited" ? "Invited" : "Removed"}</span>
       )}
-
-      {isAdmin ? (
-        <div className="flex items-center gap-1">
-          {m.status === "invited" ? (
-            <button type="button" disabled={pending} onClick={onResend} className="btn-ghost" title="Send the invite email again">
-              <Send className="size-3.5" aria-hidden />
-              Resend
-            </button>
-          ) : null}
-          {m.status === "removed" ? (
-            <button type="button" disabled={pending} onClick={onRestore} className="btn-ghost">
-              <RotateCcw className="size-3.5" aria-hidden />
-              Add back
-            </button>
-          ) : !self && m.role !== "admin" ? (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={onRemove}
-              aria-label={m.status === "invited" ? `Cancel the invite for ${m.email}` : `Remove ${m.name} from the workspace`}
-              title={m.status === "invited" ? "Cancel invite" : "Remove from workspace"}
-              className="btn-icon hover:bg-red-50 hover:text-red-700"
-            >
-              <UserMinus className="size-4" />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </li>
   );
 }
