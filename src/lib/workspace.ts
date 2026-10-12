@@ -55,6 +55,9 @@ export type WorkspaceMember = {
   teams: { id: string; name: string }[];
   invitedAt: string | null;
   invitedByName: string | null;
+  // When the address was put on the allowlist (the invite date for people added before invites were
+  // recorded, e.g. in SQL).
+  addedAt: string;
   removedAt: string | null;
   // Workspace admins only (RLS): the latest invite email to this address.
   inviteEmail: InviteEmailStatus | null;

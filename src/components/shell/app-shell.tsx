@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { TooltipLayer } from "@/components/tooltip-layer";
+import { SettingsFromUrl } from "@/components/shell/settings-from-url";
 import { ShellDialogs } from "@/components/shell/shell-dialogs";
 import { useShell } from "@/components/shell/shell-context";
 import { SidebarContent, type SidebarProject } from "@/components/shell/sidebar";
@@ -47,6 +48,10 @@ export function AppShell({
         <div className="app-main relative flex min-w-0 flex-1 flex-col">{children}</div>
       </div>
       <ShellDialogs />
+      {/* ?settings=<tab> on any page opens the Settings modal (links from emails, /settings/profile). */}
+      <Suspense fallback={null}>
+        <SettingsFromUrl />
+      </Suspense>
       <TooltipLayer />
     </div>
   );
@@ -90,6 +95,7 @@ function SidebarDrawer({ children }: { children: ReactNode }) {
             type="button"
             onClick={() => setDrawerOpen(false)}
             aria-label="Close sidebar"
+            data-tooltip="Close sidebar"
             className="inline-flex size-8 items-center justify-center rounded-md text-shell-text hover:bg-shell-hover"
           >
             <X className="size-4" />

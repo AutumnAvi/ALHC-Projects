@@ -11,9 +11,9 @@ import type { Profile } from "@/lib/data";
 import { MAX_TAG_NAME, canManageTag, type Tag } from "@/lib/tags";
 import { ColorPicker } from "@/components/color-picker";
 
-// Settings → Workspace → Tags. Everyone allowlisted sees every tag and can create one; the creator or a
-// workspace admin renames, recolors, and archives it. Tag names are workspace-wide; which tasks carry
-// a tag is only visible inside the projects you can read.
+// Settings → Workspace → Tags and Admin console → Tags. Everyone allowlisted sees every tag and can
+// create one; the creator or a workspace admin renames, recolors, and archives it. Tag names are
+// workspace-wide; which tasks carry a tag is only visible inside the projects you can read.
 export function TagsManager({
   tags,
   profiles,

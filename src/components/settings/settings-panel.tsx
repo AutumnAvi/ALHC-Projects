@@ -1,48 +1,93 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
+import { ArrowUpRight, Forward, Reply, Webhook } from "lucide-react";
 import { Segmented } from "@/components/project/view-chrome";
-import { NotificationSettings } from "@/components/settings/profile-settings";
+import { InboxNotifications, NotificationSettings } from "@/components/settings/notification-settings";
 import { useShell } from "@/components/shell/shell-context";
 import { setPaneExpanded, usePaneExpanded } from "@/components/task/pane-size";
 import { Skeleton } from "@/components/ui";
 import type { MySettings } from "@/lib/data";
 import { MY_TASKS_LAYOUT_COOKIE, type MyTasksLayout } from "@/lib/my-tasks";
-import { SETTINGS_TABS, type SettingsTab } from "@/lib/shell";
+import { projectColorClass } from "@/lib/project-colors";
+import { SETTINGS_TABS, type EmailSetup, type SettingsTab } from "@/lib/shell";
 import { WORKSPACE_ROLE_LABELS } from "@/lib/workspace";
 
-// The Settings tabs (Asana's "My settings"): Profile, Notifications, Account, Display. Shown in the
-// modal from the avatar menu and on /settings/profile (links from emails land there).
+export type SettingsData = { me: MySettings; email: EmailSetup };
+
+// The Settings modal's tabs (Asana's "My settings"): Profile, Notifications, Email forwarding, Account,
+// Display, across the top. ←/→, Home, and End move between tabs (ARIA tabs); the modal focuses the open
+// tab first (Dialog looks for data-autofocus).
 export function SettingsPanel({
   data,
   tab,
   onTabChange,
 }: {
   // null while the modal is loading it.
-  data: MySettings | null;
+  data: SettingsData | null;
   tab: SettingsTab;
   onTabChange: (tab: SettingsTab) => void;
 }) {
+  const { closeDialog } = useShell();
+  // "Email me about comments" once changed here (Notifications), so Email forwarding agrees with it.
+  const [commentEmails, setCommentEmails] = useState<boolean | null>(null);
+
+  function onTabKey(event: KeyboardEvent<HTMLButtonElement>) {
+    const index = SETTINGS_TABS.findIndex((t) => t.key === tab);
+    const last = SETTINGS_TABS.length - 1;
+    const next =
+      event.key === "ArrowRight"
+        ? (index + 1) % SETTINGS_TABS.length
+        : event.key === "ArrowLeft"
+          ? (index + last) % SETTINGS_TABS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    onTabChange(SETTINGS_TABS[next].key);
+    document.getElementById(`settings-tab-${SETTINGS_TABS[next].key}`)?.focus();
+  }
+
   return (
     <div>
       <div role="tablist" aria-label="Settings" className="tab-strip gap-1">
-        {SETTINGS_TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            id={`settings-tab-${t.key}`}
-            aria-selected={tab === t.key}
-            aria-controls={`settings-panel-${t.key}`}
-            onClick={() => onTabChange(t.key)}
-            className="shrink-0 border-b-2 border-transparent px-2.5 pb-2 text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
-          >
-            {t.label}
-          </button>
-        ))}
+        {SETTINGS_TABS.map((t) => {
+          const selected = tab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              id={`settings-tab-${t.key}`}
+              aria-selected={selected}
+              aria-controls={`settings-panel-${t.key}`}
+              tabIndex={selected ? 0 : -1}
+              data-autofocus={selected || undefined}
+              onClick={() => onTabChange(t.key)}
+              onKeyDown={onTabKey}
+              className="shrink-0 border-b-2 border-transparent px-2.5 pb-2 text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
-      <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="pt-4">
+      {/* A steady height, so switching tabs doesn't make the modal jump. Following a link closes the modal:
+          the shell only does that on a new page, and a link can lead to the page it was opened on. */}
+      <div
+        role="tabpanel"
+        id={`settings-panel-${tab}`}
+        aria-labelledby={`settings-tab-${tab}`}
+        className="min-h-88 pt-4"
+        onClick={(event) => {
+          const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+          if (!modified && (event.target as Element).closest("a[href]")) closeDialog();
+        }}
+      >
         {!data ? (
           <div role="status" className="flex flex-col gap-3">
             <span className="sr-only">Loading your settings…</span>
@@ -51,13 +96,28 @@ export function SettingsPanel({
             <Skeleton className="h-4 w-1/3" />
           </div>
         ) : tab === "profile" ? (
-          <ProfileTab data={data} />
+          <ProfileTab data={data.me} />
         ) : tab === "notifications" ? (
-          <NotificationSettings email={data.email} emailComments={data.emailComments} />
+          <div className="flex flex-col gap-6">
+            <NotificationSettings
+              email={data.me.email}
+              enabled={commentEmails ?? data.me.emailComments}
+              onEnabledChange={setCommentEmails}
+              sending={data.email.sending}
+              replyByEmail={data.email.replyByEmail}
+            />
+            <InboxNotifications />
+          </div>
+        ) : tab === "email_forwarding" ? (
+          <EmailForwardingTab
+            email={data.email}
+            commentEmails={commentEmails ?? data.me.emailComments}
+            onTabChange={onTabChange}
+          />
         ) : tab === "account" ? (
-          <AccountTab data={data} />
+          <AccountTab data={data.me} />
         ) : (
-          <DisplayTab data={data} />
+          <DisplayTab data={data.me} />
         )}
       </div>
     </div>
@@ -66,6 +126,8 @@ export function SettingsPanel({
 
 const ROW = "grid gap-x-6 gap-y-1 py-2.5 sm:grid-cols-[9rem_1fr]";
 const TERM = "text-sm text-zinc-500";
+const HEADING = "text-sm font-semibold text-zinc-900";
+const CARD = "rounded-lg border border-zinc-200 px-4 py-3";
 
 function initials(name: string) {
   const parts = name.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
@@ -124,18 +186,128 @@ function ProfileTab({ data }: { data: MySettings }) {
       </dl>
       <p className="mt-3 text-xs text-zinc-500">
         Your name comes from your sign-in account.{" "}
-        <Link href="/settings/workspace" className="text-accent-700 hover:underline">
-          {data.isWorkspaceAdmin ? "Open the admin console" : "View workspace settings"}
-        </Link>
+        {data.isWorkspaceAdmin ? (
+          <Link href="/admin" className="text-accent-700 hover:underline">
+            Open the admin console
+          </Link>
+        ) : (
+          <Link href="/settings/workspace" className="text-accent-700 hover:underline">
+            View workspace settings
+          </Link>
+        )}
       </p>
     </div>
   );
 }
 
+// Forwarding emails into tasks isn't built: say so, and point at the two email-ish ways in that work
+// today (replying to a comment email, and a project's inbound webhooks).
+function EmailForwardingTab({
+  email,
+  commentEmails,
+  onTabChange,
+}: {
+  email: EmailSetup;
+  commentEmails: boolean;
+  onTabChange: (tab: SettingsTab) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-6">
+      <section aria-labelledby="forwarding-heading">
+        <div className="flex items-center gap-2">
+          <Forward aria-hidden className="size-4 text-zinc-400" />
+          <h3 id="forwarding-heading" className={HEADING}>
+            Forward emails to create tasks
+          </h3>
+          <span className="chip">Coming later</span>
+        </div>
+        <p className="mt-1 text-sm text-zinc-600">
+          Turning an email into a task by forwarding it to a special address isn’t built yet, so there’s no
+          forwarding address to copy here.
+        </p>
+      </section>
+
+      <section aria-labelledby="works-today-heading">
+        <h3 id="works-today-heading" className={HEADING}>
+          What works today
+        </h3>
+        <div className="mt-2 flex flex-col gap-3">
+          <div className={`${CARD} flex items-start gap-3`}>
+            <Reply aria-hidden className="mt-0.5 size-4 shrink-0 text-zinc-400" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-medium text-zinc-900">Reply to comment emails</h4>
+                <span className={`chip ${email.replyByEmail ? "bg-green-50 text-green-700" : ""}`}>
+                  {email.replyByEmail ? "On" : "Off"}
+                </span>
+              </div>
+              <p className="mt-0.5 text-sm text-zinc-600">
+                {email.replyByEmail
+                  ? "Reply to an email about a comment on a task you follow, and your reply is posted on the task as a comment from you. Only the text above the quoted message is posted, and only while you can still comment on the task."
+                  : email.sending
+                    ? "Replies to comment emails aren’t set up for this workspace, so open the task from the email to comment."
+                    : "Emails aren’t sent from this workspace yet (no email provider is set up), so there are no comment emails to reply to."}
+              </p>
+              {email.replyByEmail && !commentEmails ? (
+                <p className="mt-1.5 text-sm text-zinc-600">
+                  Your comment emails are off, so there’s nothing to reply to.{" "}
+                  <button
+                    type="button"
+                    onClick={() => onTabChange("notifications")}
+                    className="text-accent-700 hover:underline"
+                  >
+                    Turn them on in Notifications
+                  </button>
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className={`${CARD} flex items-start gap-3`}>
+            <Webhook aria-hidden className="mt-0.5 size-4 shrink-0 text-zinc-400" />
+            <div className="min-w-0 flex-1">
+              <h4 className="text-sm font-medium text-zinc-900">Create tasks from other tools</h4>
+              <p className="mt-0.5 text-sm text-zinc-600">
+                Forms, scripts, and automation services that can send an HTTPS request can add tasks to a project
+                through an inbound webhook. A project’s admins set them up under Customize → Apps → Inbound webhooks.
+              </p>
+              {email.inboundProjects.length === 0 ? (
+                <p className="mt-1.5 text-sm text-zinc-500">
+                  You don’t administer any project, so ask a project’s admin to set one up.
+                </p>
+              ) : (
+                <>
+                  <p className="mt-2 text-xs font-medium text-zinc-500">Projects you administer</p>
+                  <ul className="mt-1 max-h-44 overflow-y-auto">
+                    {email.inboundProjects.map((project) => (
+                      <li key={project.id}>
+                        <Link
+                          href={`/projects/${project.id}/settings/inbound`}
+                          className="group flex items-center gap-2 rounded-md px-1.5 py-1 text-sm text-zinc-800 hover:bg-zinc-50"
+                        >
+                          <span aria-hidden className={`size-3 shrink-0 rounded-[3px] ${projectColorClass(project.id)}`} />
+                          <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                          <span className="shrink-0 text-xs text-zinc-500 group-hover:text-accent-700">
+                            Inbound webhooks
+                          </span>
+                          <ArrowUpRight aria-hidden className="size-3.5 shrink-0 text-zinc-400" />
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function AccountTab({ data }: { data: MySettings }) {
-  const joined = data.joinedAt
-    ? new Date(data.joinedAt).toLocaleDateString("en-US", { dateStyle: "medium", timeZone: "UTC" })
-    : null;
+  // The modal only ever renders in the browser, so the day is the viewer's own.
+  const joined = data.joinedAt ? new Date(data.joinedAt).toLocaleDateString("en-US", { dateStyle: "medium" }) : null;
   return (
     <div>
       <dl className="-mt-3 divide-y divide-zinc-100 border-b border-zinc-100">
@@ -179,6 +351,8 @@ function DisplayTab({ data }: { data: MySettings }) {
   const { sidebar, setSidebarCollapsed } = useShell();
   const expanded = usePaneExpanded();
   const [myTasks, setMyTasks] = useState<MyTasksLayout>(data.myTasksLayout);
+  // The modal only ever renders in the browser, so this is the zone the tz cookie carries.
+  const [timeZone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
 
   return (
     <div>
@@ -218,6 +392,15 @@ function DisplayTab({ data }: { data: MySettings }) {
                 document.cookie = `${MY_TASKS_LAYOUT_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax`;
               }}
             />
+          </dd>
+        </div>
+        <div className={ROW}>
+          <dt className={TERM}>Time zone</dt>
+          <dd>
+            <p className="text-sm text-zinc-900">{timeZone.replaceAll("_", " ")}</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              From this browser. “Today”, “Overdue”, and times on tasks follow it.
+            </p>
           </dd>
         </div>
       </dl>

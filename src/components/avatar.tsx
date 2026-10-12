@@ -9,7 +9,8 @@ function initials(name: string) {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
-const SIZES = { sm: "size-5 text-[10px]", md: "size-7 text-xs" } as const;
+// lg: Home's widgets (the My tasks header, People tiles).
+const SIZES = { sm: "size-5 text-[10px]", md: "size-7 text-xs", lg: "size-12 text-base" } as const;
 
 export function Avatar({ name, size = "sm" }: { name: string; size?: keyof typeof SIZES }) {
   return (

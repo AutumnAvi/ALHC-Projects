@@ -1,5 +1,5 @@
 // The app shell's shared vocabulary (Asana parity, batch 1): search palette results, recents, the
-// Settings modal's tabs, and the Create menu's dialogs. Browser + server.
+// Settings modal's tabs and links, and the Create menu's dialogs. Browser + server.
 
 export type SearchKind = "tasks" | "projects" | "people";
 export const SEARCH_KINDS: { key: SearchKind; label: string }[] = [
@@ -40,11 +40,28 @@ export const quickPersonHref = (person: Pick<QuickPerson, "id">) => `/reports?a=
 export const SETTINGS_TABS = [
   { key: "profile", label: "Profile" },
   { key: "notifications", label: "Notifications" },
+  { key: "email_forwarding", label: "Email forwarding" },
   { key: "account", label: "Account" },
   { key: "display", label: "Display" },
 ] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
 export const isSettingsTab = (value: unknown): value is SettingsTab => SETTINGS_TABS.some((t) => t.key === value);
+
+// Settings is a modal (Asana parity, batch 5), so a link to it is a page with ?settings=<tab>: the shell
+// opens the modal on that tab (SettingsFromUrl) and takes the parameter out of the address. Links from
+// emails and the old /settings/profile page land on Home.
+export const SETTINGS_PARAM = "settings";
+export const settingsHref = (tab: SettingsTab) => `/?${SETTINGS_PARAM}=${tab}`;
+
+// What Settings → Notifications and Email forwarding say about email in this workspace (read with the
+// person's own session when the modal opens): whether emails go out at all, whether replying to a comment
+// email posts a comment, and the active projects the person administers by their own role, where they
+// can set up inbound webhooks.
+export type EmailSetup = {
+  sending: boolean;
+  replyByEmail: boolean;
+  inboundProjects: { id: string; name: string }[];
+};
 
 // What the Create menu (and the sidebar's "+" and Invite) can open.
 export type ShellDialog =

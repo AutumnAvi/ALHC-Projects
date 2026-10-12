@@ -184,7 +184,7 @@ function AvatarMenu() {
             <MenuItem
               onClick={() => {
                 close();
-                router.push("/settings/workspace");
+                router.push("/admin");
               }}
             >
               <ShieldCheck className="size-4 text-zinc-500" aria-hidden /> Admin console

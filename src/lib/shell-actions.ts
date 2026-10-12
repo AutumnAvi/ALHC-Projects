@@ -20,6 +20,8 @@ import {
   listTeams,
   type MySettings,
 } from "@/lib/data";
+import { isEmailConfigured } from "@/lib/email";
+import { isInboundEmailConfigured } from "@/lib/email-reply";
 import { fieldTypeLabel, isFieldType } from "@/lib/fields";
 import type { GalleryTemplate, TemplatePreview } from "@/lib/templates";
 import { isUuid } from "@/lib/ids";
@@ -32,6 +34,7 @@ import {
   type QuickResults,
   type QuickTask,
   type RecentItem,
+  type EmailSetup,
   type RecentRef,
   type SearchKind,
 } from "@/lib/shell";
@@ -179,8 +182,24 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
   });
 }
 
-export async function loadMySettings(): Promise<MySettings | null> {
-  return getMySettings();
+// What the Settings modal loads when it opens (since Asana parity, batch 5), in one round trip: the
+// person's own settings and what email can do in this workspace (configuration, plus the active projects
+// they administer by their own role, where inbound webhooks are set up).
+export async function loadSettings(): Promise<{ me: MySettings; email: EmailSetup } | null> {
+  if (!(await signedIn())) return null;
+  const [me, projects, roles] = await Promise.all([getMySettings(), listProjects(), listMyProjectRoles()]);
+  if (!me) return null;
+  const sending = isEmailConfigured();
+  return {
+    me,
+    email: {
+      sending,
+      // Replies only come back when comment emails go out with a Reply-To address.
+      replyByEmail: sending && isInboundEmailConfigured(),
+      // listProjects() is active projects only; an archived one caps everyone at Viewer anyway.
+      inboundProjects: projects.flatMap((p) => (hasRole(roles.get(p.id), "admin") ? [{ id: p.id, name: p.name }] : [])),
+    },
+  };
 }
 
 // Projects the person can post a message in (Commenter+, active; an archived project caps everyone at

@@ -1,5 +1,5 @@
-import { PageSkeleton } from "@/components/ui";
+import { InboxSkeleton } from "@/components/inbox/inbox-skeleton";
 
 export default function Loading() {
-  return <PageSkeleton label="Loading your inbox…" />;
+  return <InboxSkeleton />;
 }

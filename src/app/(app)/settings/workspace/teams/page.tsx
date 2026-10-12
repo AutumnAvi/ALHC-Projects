@@ -1,25 +1,32 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Users } from "lucide-react";
-import { NewTeamForm } from "@/components/teams/new-team-form";
+import { redirect } from "next/navigation";
+import { Plus, Users } from "lucide-react";
+import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState } from "@/components/ui";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
+import { ADMIN_PATH_FOR_SETTINGS } from "@/lib/admin";
 import { getWorkspace, isWorkspaceAdmin, listTeams } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Teams · Workspace settings" };
 
-// Settings → Workspace → Teams: every team, which one is the default, and starting a new one (anyone).
+// Settings → Workspace → Teams (members): every team, which one is the default, and starting a new one
+// (anyone). Workspace admins see this in Admin console → Teams.
 export default async function WorkspaceTeamsPage() {
-  const [workspace, admin, teams] = await Promise.all([getWorkspace(), isWorkspaceAdmin(), listTeams()]);
+  if (await isWorkspaceAdmin()) redirect(ADMIN_PATH_FOR_SETTINGS["/settings/workspace/teams"]);
+  const [workspace, teams] = await Promise.all([getWorkspace(), listTeams()]);
   return (
     <>
       <SettingsCard
         id="workspace-new-team"
         title="Start a team"
         description="Every project belongs to a team. Anyone can start a team and becomes its lead; leads and workspace admins manage it."
-        isAdmin={admin}
+        isAdmin={false}
       >
-        <NewTeamForm />
+        <OpenDialogButton dialog={{ kind: "team" }} className="btn-primary">
+          <Plus className="size-3.5" aria-hidden />
+          Create team
+        </OpenDialogButton>
       </SettingsCard>
       <SettingsCard
         id="workspace-teams"
@@ -28,13 +35,13 @@ export default async function WorkspaceTeamsPage() {
             Teams <span className="font-normal text-zinc-500">· {teams.length}</span>
           </>
         }
-        description="New members join the default team automatically. Change the default on General."
-        isAdmin={admin}
+        description="New members join the default team automatically. Workspace admins choose the default team."
+        isAdmin={false}
         flush
       >
         {teams.length === 0 ? (
           <EmptyState icon={Users} title="No teams yet" size="inline">
-            Start one above.
+            Start one with Create team above.
           </EmptyState>
         ) : (
           <ul className="divide-y divide-zinc-100">

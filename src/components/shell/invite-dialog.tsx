@@ -10,7 +10,7 @@ import { inviteToWorkspace } from "@/lib/actions";
 import { describeInvites } from "@/lib/workspace";
 
 // Invite (the Create menu, the sidebar's Invite button, the avatar menu): workspace admins invite people
-// by email, exactly like Settings → Workspace → Members (an invite email through the outbox, pending
+// by email, exactly like Admin console → Users (an invite email through the outbox, pending
 // project / team invites until they sign in). Everyone else is told who can.
 export function InviteDialog({ onClose }: { onClose: () => void }) {
   const { isWorkspaceAdmin, workspace } = useShell();
@@ -59,8 +59,8 @@ export function InviteDialog({ onClose }: { onClose: () => void }) {
               className="field mt-1 w-full"
             />
             <p className={DIALOG_HINT}>
-              They get an email with a sign-up link. Until they sign in you can already add them to projects, portfolios,
-              and teams.
+              When email is set up they get an invite with a sign-up link; otherwise send them the sign-up page
+              yourself. Until they sign in you can already add them to projects, portfolios, and teams.
             </p>
           </div>
           {error ? (
@@ -69,8 +69,8 @@ export function InviteDialog({ onClose }: { onClose: () => void }) {
             </p>
           ) : null}
           <div className="flex items-center justify-between gap-2">
-            <Link href="/settings/workspace/members" onClick={onClose} className="text-xs text-accent-700 hover:underline">
-              Manage members
+            <Link href="/admin/users" onClick={onClose} className="text-xs text-accent-700 hover:underline">
+              Manage users
             </Link>
             <div className="flex gap-2">
               <button type="button" onClick={onClose} className="btn-secondary">

@@ -15,7 +15,8 @@ import { LOGO_MAX_BYTES, LOGO_TYPES, WORKSPACE_ASSETS_BUCKET, logoObjectPath } f
 
 const LABEL = "text-xs font-medium text-zinc-600";
 
-// Settings → Workspace → General: name, logo, default team (workspace admins), and past imports.
+// Admin console → Organization (and, read-only for members, Settings → Workspace → General): name,
+// logo, default team (workspace admins), and past imports.
 export function GeneralSettings({
   workspace,
   isAdmin,
@@ -188,7 +189,7 @@ export function GeneralSettings({
               ))}
             </select>
           </div>
-          <Link href="/settings/workspace/teams" className="btn-ghost h-9">
+          <Link href={isAdmin ? "/admin/teams" : "/settings/workspace/teams"} className="btn-ghost h-9">
             Manage teams
           </Link>
         </div>

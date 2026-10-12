@@ -807,6 +807,7 @@ export type Database = {
           kind: string;
           read_at: string | null;
           archived_at: string | null;
+          bookmarked_at: string | null;
           created_at: string;
           data: Json;
         };
@@ -820,6 +821,7 @@ export type Database = {
           kind: string;
           read_at?: string | null;
           archived_at?: string | null;
+          bookmarked_at?: string | null;
           created_at?: string;
           data?: Json;
         };
@@ -833,6 +835,7 @@ export type Database = {
           kind?: string;
           read_at?: string | null;
           archived_at?: string | null;
+          bookmarked_at?: string | null;
           created_at?: string;
           data?: Json;
         };
@@ -2941,6 +2944,71 @@ export type Database = {
           },
         ];
       };
+      team_curated_work: {
+        Row: {
+          id: string;
+          team_id: string;
+          project_id: string | null;
+          portfolio_id: string | null;
+          sort_order: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          team_id: string;
+          project_id?: string | null;
+          portfolio_id?: string | null;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          team_id?: string;
+          project_id?: string | null;
+          portfolio_id?: string | null;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "team_curated_work_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_curated_work_portfolio_id_fkey";
+            columns: ["portfolio_id"];
+            isOneToOne: false;
+            referencedRelation: "portfolios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_curated_work_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_curated_work_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       team_projects: {
         Row: {
           id: string;
@@ -3875,6 +3943,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: { field_id: string; name: string; field_type: string; description: string | null; options: Json }[];
       };
+      list_workspace_member_activity: {
+        Args: Record<PropertyKey, never>;
+        Returns: { email: string; last_sign_in_at: string | null }[];
+      };
       browse_project_people: {
         Args: { target_team?: string | null };
         Returns: { project_id: string; owner_ids: string[]; member_ids: string[]; modified_at: string | null }[];
@@ -4121,6 +4193,10 @@ export type Database = {
         Returns: boolean;
       };
       can_manage_team: {
+        Args: { target_team: string };
+        Returns: boolean;
+      };
+      can_curate_team: {
         Args: { target_team: string };
         Returns: boolean;
       };

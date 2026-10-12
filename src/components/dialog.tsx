@@ -65,7 +65,7 @@ export function Dialog({
           <h2 id={titleId} className="flex-1 text-base font-semibold text-zinc-900">
             {title}
           </h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="btn-icon -mr-1 -mt-1">
+          <button type="button" onClick={onClose} aria-label="Close" data-tooltip="Close" className="btn-icon -mr-1 -mt-1">
             <X className="size-4" />
           </button>
         </div>
