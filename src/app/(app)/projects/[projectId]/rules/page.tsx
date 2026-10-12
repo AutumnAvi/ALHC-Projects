@@ -1,18 +1,8 @@
 import type { Metadata } from "next";
 import { RoleGate } from "@/components/project/project-access";
 import { RulesView } from "@/components/rules/rules-view";
-import {
-  getProject,
-  getProjectIntegrations,
-  listProfiles,
-  listProjectFields,
-  listProjectForms,
-  listInboundEndpoints,
-  listProjectRules,
-  listRecentRuleRuns,
-  listRulePresets,
-  listSections,
-} from "@/lib/data";
+import { getProject, listProjectRules, listRecentRuleRuns, listRulePresets } from "@/lib/data";
+import { loadRuleContext } from "./context";
 
 export async function generateMetadata({
   params,
@@ -24,35 +14,17 @@ export async function generateMetadata({
 
 export default async function ProjectRulesPage({ params }: PageProps<"/projects/[projectId]/rules">) {
   const { projectId } = await params;
-  const [rules, presets, sections, fields, profiles, forms, integrations, inbound] = await Promise.all([
+  const [rules, presets, context] = await Promise.all([
     listProjectRules(projectId),
     listRulePresets(),
-    listSections(projectId),
-    listProjectFields(projectId),
-    listProfiles(),
-    listProjectForms(projectId),
-    getProjectIntegrations(projectId),
-    listInboundEndpoints(projectId),
+    loadRuleContext(projectId),
   ]);
   const runs = await listRecentRuleRuns(rules.map((r) => r.id));
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
       <RoleGate need="admin" what="rules">
-        <RulesView
-          projectId={projectId}
-          rules={rules}
-          runs={runs}
-          presets={presets}
-          context={{
-            sections: sections.map((s) => ({ id: s.id, name: s.name })),
-            fields,
-            people: profiles.map((p) => ({ id: p.id, name: p.full_name || p.email })),
-            forms: forms.map((f) => ({ id: f.id, title: f.title })),
-            integrations,
-            inboundEndpoints: (inbound ?? []).map((e) => ({ id: e.id, name: e.name })),
-          }}
-        />
+        <RulesView projectId={projectId} rules={rules} runs={runs} presets={presets} context={context} />
       </RoleGate>
     </main>
   );

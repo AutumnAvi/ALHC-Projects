@@ -195,3 +195,67 @@ export function runReason(detail: Json): string | null {
   if (typeof actions.error === "string") return actions.error;
   return null;
 }
+
+export function triggerLabel(type: TriggerType): string {
+  return labelOf(TRIGGERS, type);
+}
+
+// Rule branches (Asana parity, batch 4; mirrors rule_item_branch() / validate_rule_branches() in
+// 20261011040000_asana_parity_4.sql): conditions and actions may carry "branch": 0–4 (missing = 0).
+// Branch 0 is "Check if", the next ones "Else if"; the first branch whose conditions pass runs its
+// actions, and a last branch without conditions is "Otherwise". A rule without branch keys is one
+// branch, exactly as before.
+export const MAX_RULE_BRANCHES = 5;
+export const MAX_BRANCH_ACTIONS = 10;
+export const MAX_BRANCH_CONDITIONS = 20;
+
+export type RuleBranch = { conditions: RuleCondition[]; actions: RuleAction[] };
+
+export function itemBranch(item: Record<string, Json>): number {
+  const value = item.branch;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value < MAX_RULE_BRANCHES ? value : 0;
+}
+
+export function ruleBranchCount(rule: Pick<RuleDef, "conditions" | "actions">): number {
+  return 1 + Math.max(0, ...rule.conditions.map(itemBranch), ...rule.actions.map(itemBranch));
+}
+
+function withoutBranch<T extends Record<string, Json>>(item: T): T {
+  const copy = { ...item };
+  delete copy.branch;
+  return copy;
+}
+
+// The rule's branches in order, without their branch keys (for the builder).
+export function splitBranches(rule: Pick<RuleDef, "conditions" | "actions">): RuleBranch[] {
+  return Array.from({ length: ruleBranchCount(rule) }, (_, b) => ({
+    conditions: rule.conditions.filter((c) => itemBranch(c) === b).map(withoutBranch),
+    actions: rule.actions.filter((a) => itemBranch(a) === b).map(withoutBranch),
+  }));
+}
+
+// Back to the stored lists. A single branch writes no branch keys (byte-for-byte the old shape).
+export function joinBranches(branches: RuleBranch[]): Pick<RuleDef, "conditions" | "actions"> {
+  if (branches.length <= 1) {
+    return { conditions: branches[0]?.conditions ?? [], actions: branches[0]?.actions ?? [] };
+  }
+  return {
+    conditions: branches.flatMap((b, i) => b.conditions.map((c) => (i === 0 ? withoutBranch(c) : { ...c, branch: i }))),
+    actions: branches.flatMap((b, i) => b.actions.map((a) => (i === 0 ? withoutBranch(a) : { ...a, branch: i }))),
+  };
+}
+
+// The same checks as validate_rule_branches(), for a clear message before saving.
+export function branchProblem(branches: RuleBranch[]): string | null {
+  if (branches.length > MAX_RULE_BRANCHES) return `A rule can have up to ${MAX_RULE_BRANCHES} branches`;
+  for (const [i, b] of branches.entries()) {
+    const name = i === 0 ? "Check if" : i === branches.length - 1 && b.conditions.length === 0 ? "Otherwise" : `Else if ${i}`;
+    if (b.actions.length === 0) return `${name}: add at least one action`;
+    if (b.actions.length > MAX_BRANCH_ACTIONS) return `${name}: up to ${MAX_BRANCH_ACTIONS} actions`;
+    if (b.conditions.length > MAX_BRANCH_CONDITIONS) return `${name}: up to ${MAX_BRANCH_CONDITIONS} conditions`;
+    if (branches.length > 1 && b.conditions.length === 0 && i < branches.length - 1) {
+      return `${name}: add a condition (only the last branch, Otherwise, can run without one)`;
+    }
+  }
+  return null;
+}

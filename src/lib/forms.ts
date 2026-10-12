@@ -1,3 +1,4 @@
+import type { FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 
 // Mirrors the forms.questions shape validated by the `validate_form` trigger and enforced again by
@@ -11,9 +12,16 @@ export const QUESTION_TYPES = [
   { value: "checkbox", label: "Checkbox" },
   { value: "date", label: "Date" },
   { value: "number", label: "Number" },
+  // Asana parity, batch 4 (20261011040000_asana_parity_4.sql): an email address, and a heading that
+  // only shows text between questions (never answered, required, or mapped).
+  { value: "email", label: "Email" },
+  { value: "heading", label: "Heading" },
 ] as const;
 
 export type QuestionType = (typeof QUESTION_TYPES)[number]["value"];
+
+// The question types that need this release's database update.
+export const BATCH4_QUESTION_TYPES: readonly QuestionType[] = ["email", "heading"];
 
 export type MapTarget = "title" | "notes" | "due_on" | "section" | "field";
 
@@ -66,6 +74,11 @@ export function isChoice(type: QuestionType) {
 // Questions that can drive show_if: their answers are option ids (checkbox → "true").
 export function isBranchSource(question: FormQuestion) {
   return isChoice(question.type) || question.type === "checkbox";
+}
+
+// A heading only shows text: nothing to answer.
+export function isAnswerable(question: Pick<FormQuestion, "type">) {
+  return question.type !== "heading";
 }
 
 export function branchOptions(question: FormQuestion): QuestionOption[] {
@@ -152,7 +165,7 @@ export function validateSubmission(
 
   const visible = visibleQuestionIds(questions, answers);
   for (const question of questions) {
-    if (!visible.has(question.id)) continue;
+    if (!visible.has(question.id) || !isAnswerable(question)) continue;
     const value = answers[question.id];
     if (!answered(value)) {
       if (question.required) errors[question.id] = "This question is required";
@@ -184,8 +197,16 @@ export function validateSubmission(
         break;
       case "checkbox":
         break;
+      case "email":
+        if (typeof value !== "string" || !EMAIL_PATTERN.test(value.trim()) || value.trim().length > 320) {
+          errors[question.id] = "Enter a valid email address";
+        }
+        break;
     }
-    if (!errors[question.id]) clean[question.id] = typeof value === "string" ? value.trim() : value;
+    if (!errors[question.id]) {
+      clean[question.id] =
+        typeof value === "string" ? (question.type === "email" ? value.trim().toLowerCase() : value.trim()) : value;
+    }
   }
   return { errors, clean };
 }
@@ -204,5 +225,100 @@ export function mapTargetLabel(target: MapTarget | undefined, fieldName?: string
       return fieldName ?? "Field";
     default:
       return "Description summary only";
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Builder helpers (the form editor): which answers can fill which task details. They mirror what
+// validate_form accepts and what submit_form writes, so a saved form never maps an answer that would be
+// dropped.
+// ---------------------------------------------------------------------------------------------
+
+// Mirrors the conversions submit_form performs when writing a mapped answer into a field.
+export function fieldAccepts(field: Pick<FieldDef, "fieldType" | "boundToSections">, type: QuestionType) {
+  if (type === "heading") return false;
+  if (field.boundToSections) return type === "single_select";
+  switch (field.fieldType) {
+    case "text":
+      return true;
+    case "number":
+      return type === "number";
+    case "date":
+      return type === "date";
+    case "boolean":
+      return type === "checkbox";
+    case "single_select":
+    case "multi_select":
+      return isChoice(type);
+    default:
+      return false;
+  }
+}
+
+export function mappingAllowed(question: FormQuestion, fields: FieldDef[]) {
+  const target = question.maps_to?.target;
+  if (!target) return true;
+  if (question.type === "heading") return false;
+  if (target === "due_on") return question.type === "date";
+  if (target === "section") return question.type === "single_select";
+  if (target === "field") {
+    const field = fields.find((f) => f.id === question.maps_to?.field_id);
+    return Boolean(field && fieldAccepts(field, question.type));
+  }
+  return true;
+}
+
+// Drops anything the database would reject after edits: branching on a later or removed question,
+// branching on options that no longer exist, mappings the question type can't satisfy, and the parts a
+// heading can't have. While editing, a branch with no options picked yet is kept so the parent choice
+// isn't lost; saving drops it.
+export function normalizeQuestions(questions: FormQuestion[], fields: FieldDef[], forSave = false): FormQuestion[] {
+  const earlier = new Map<string, FormQuestion>();
+  return questions.map((q) => {
+    const next: FormQuestion = { ...q };
+    if (!isChoice(next.type)) delete next.options;
+    if (next.type === "heading") {
+      delete next.required;
+      delete next.maps_to;
+    }
+    if (!mappingAllowed(next, fields)) delete next.maps_to;
+    if (next.show_if) {
+      const parent = earlier.get(next.show_if.question_id);
+      const valid = parent && isBranchSource(parent) ? branchOptions(parent).map((o) => o.id) : null;
+      const optionIds = next.show_if.option_ids.filter((id) => valid?.includes(id));
+      if (valid && (optionIds.length || !forSave)) {
+        next.show_if = { question_id: next.show_if.question_id, option_ids: optionIds };
+      } else {
+        delete next.show_if;
+      }
+    }
+    earlier.set(next.id, next);
+    return next;
+  });
+}
+
+// A question that asks for a project field's value and fills it in (Asana's field-based questions).
+// People fields can't be asked on a form (there's no people question).
+export function questionForField(field: FieldDef, sectionOptions: QuestionOption[], newId: () => string): FormQuestion | null {
+  const base = { id: newId(), label: field.name, maps_to: { target: "field" as const, field_id: field.id } };
+  if (field.boundToSections) {
+    return sectionOptions.length ? { ...base, type: "single_select", options: sectionOptions } : null;
+  }
+  switch (field.fieldType) {
+    case "text":
+      return { ...base, type: "short_text" };
+    case "number":
+      return { ...base, type: "number" };
+    case "date":
+      return { ...base, type: "date" };
+    case "boolean":
+      return { ...base, type: "checkbox" };
+    case "single_select":
+    case "multi_select":
+      return field.options.length
+        ? { ...base, type: field.fieldType, options: field.options.map((o) => ({ id: o.id, label: o.name })) }
+        : null;
+    default:
+      return null;
   }
 }

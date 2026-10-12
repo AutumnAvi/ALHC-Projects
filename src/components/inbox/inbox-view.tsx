@@ -63,6 +63,15 @@ function describe(item: InboxItem) {
     verb = "resubmitted for your approval";
   }
   if (item.message && item.kind === "mention") verb = "mentioned you in";
+  // A field set to "Notify collaborators when changed" (Asana parity, batch 4): kind rule with
+  // data.field_change, so the release before it still shows it as a notification.
+  const fieldName = item.kind === "rule" && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.field_change
+    ? dataText(item.data, "field_name")
+    : null;
+  if (fieldName) {
+    const value = dataText(item.data, "value_text");
+    return { ruleName, verb: `changed ${fieldName} on`, detail: value ? `${fieldName}: ${value}` : `${fieldName} was cleared` };
+  }
   const detail =
     item.commentBody ?? dataText(item.data, "message") ?? dataText(item.data, "note") ?? null;
   return { ruleName, verb, detail };

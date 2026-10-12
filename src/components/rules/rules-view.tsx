@@ -2,19 +2,18 @@
 
 import Link from "next/link";
 import { useOptimistic, useState } from "react";
-import { Pencil, Plus, Trash2, Workflow } from "lucide-react";
+import { GitBranch, Pencil, Plus, Trash2, Workflow } from "lucide-react";
+import { useCan } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { deleteRule, installRulePreset, setRuleEnabled } from "@/lib/actions";
 import { runReason, type RuleDef, type RulePreset, type RuleRun } from "@/lib/rules";
 import type { Json } from "@/lib/supabase/database.types";
-import { RuleEditor } from "./rule-editor";
 import {
   FieldSelect,
   PersonSelect,
   SectionSelect,
-  describeAction,
-  describeCondition,
+  describeBranches,
   describeTrigger,
   inputClass,
   labelClass,
@@ -44,119 +43,131 @@ export function RulesView({
   context: RuleContext;
 }) {
   const [pending, run] = useServerAction();
-  const [editing, setEditing] = useState<string | "new" | null>(null);
+  const canEdit = useCan("admin");
   const [optimisticRules, setOptimistic] = useOptimistic(rules, (current, patch: { id: string; enabled: boolean }) =>
     current.map((r) => (r.id === patch.id ? { ...r, enabled: patch.enabled } : r)),
   );
   const ruleNames = new Map(rules.map((r) => [r.id, r.name] as const));
+  const base = `/projects/${projectId}`;
 
   return (
     <div className="mx-auto max-w-3xl px-gutter py-5">
-      <p className="text-sm text-zinc-600">
-        Rules react to changes in this project: when something happens, check conditions, then run actions in order.
-        Rules never trigger themselves, chains stop after five rules, and Status fields always follow the section.
-      </p>
-
-      <div className="mt-6 flex items-center gap-2">
-        <h2 className="flex-1 text-sm font-semibold text-zinc-900">Rules</h2>
-        <button
-          type="button"
-          onClick={() => setEditing("new")}
-          className="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600"
-        >
-          <Plus className="size-4" aria-hidden />
-          New rule
-        </button>
+      <div className="flex flex-wrap items-start gap-3">
+        <p className="min-w-0 flex-1 text-sm text-zinc-600">
+          Rules react to changes in this project: when something happens, check conditions (with Else if branches),
+          then run actions in order. Rules never trigger themselves, chains stop after five rules, and Status fields
+          always follow the section.
+        </p>
+        {canEdit ? (
+          <Link href={`${base}/rules/new`} className="btn-primary h-8 px-3">
+            <Plus className="size-4" aria-hidden />
+            Add rule
+          </Link>
+        ) : null}
       </div>
 
-      {editing === "new" ? (
-        <div className="mt-3">
-          <RuleEditor projectId={projectId} rule={null} ctx={context} onDone={() => setEditing(null)} />
-        </div>
-      ) : null}
-
-      {optimisticRules.length === 0 && editing !== "new" ? (
+      <h2 className="mt-6 text-sm font-semibold text-zinc-900">Rules</h2>
+      {optimisticRules.length === 0 ? (
         <div className="mt-3">
           <EmptyState icon={Workflow} title="No rules yet" size="inline">
-            Start from a template below or build one. New rules start turned off until you enable them.
+            Start from a template below or build one on the rule canvas.
           </EmptyState>
         </div>
       ) : (
-        <ul className="mt-3 space-y-3" aria-label="Rules">
-          {optimisticRules.map((rule) =>
-            editing === rule.id ? (
-              <li key={rule.id}>
-                <RuleEditor projectId={projectId} rule={rule} ctx={context} onDone={() => setEditing(null)} />
-              </li>
-            ) : (
-              <li key={rule.id} className="rounded-lg border border-zinc-200 p-4">
-                <div className="flex items-start gap-3">
-                  <label className="mt-0.5 flex items-center" title={rule.enabled ? "Turn off" : "Turn on"}>
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      aria-label={`${rule.name} enabled`}
-                      checked={rule.enabled}
-                      disabled={pending}
-                      onChange={(e) => {
-                        const enabled = e.currentTarget.checked;
-                        run(() => setRuleEnabled(rule.id, enabled), () => setOptimistic({ id: rule.id, enabled }));
-                      }}
-                      className="peer sr-only"
-                    />
-                    <span
-                      aria-hidden
-                      className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-600 peer-checked:after:translate-x-4 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
-                    />
-                  </label>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-zinc-900">
+        <ul className="mt-3 divide-y divide-zinc-100 rounded-lg border border-zinc-200" aria-label="Rules">
+          {optimisticRules.map((rule) => {
+            const flow = describeBranches(rule, context);
+            return (
+              <li key={rule.id} className="flex items-start gap-3 px-4 py-3">
+                <label className="mt-0.5 flex items-center" data-tooltip={rule.enabled ? "Turn off" : "Turn on"}>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label={`${rule.name} on`}
+                    checked={rule.enabled}
+                    disabled={pending || !canEdit}
+                    onChange={(e) => {
+                      const enabled = e.currentTarget.checked;
+                      run(() => setRuleEnabled(rule.id, enabled), () => setOptimistic({ id: rule.id, enabled }));
+                    }}
+                    className="peer sr-only"
+                  />
+                  <span
+                    aria-hidden
+                    className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+                  />
+                </label>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-zinc-900">
+                    <Link href={`${base}/rules/${rule.id}`} className="hover:underline">
                       {rule.name}
-                      {rule.presetKey ? (
-                        <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-normal text-zinc-600">
-                          template
-                        </span>
-                      ) : null}
-                    </p>
-                    <p className="mt-1 text-sm text-zinc-600">
-                      <span className="font-medium text-zinc-700">When</span> {describeTrigger(rule, context).toLowerCase()}
-                      {rule.conditions.length ? (
-                        <>
-                          , <span className="font-medium text-zinc-700">if</span>{" "}
-                          {rule.conditions.map((c) => describeCondition(c, context)).join(" and ")}
-                        </>
-                      ) : null}
-                      , <span className="font-medium text-zinc-700">then</span>{" "}
-                      {rule.actions.map((a) => describeAction(a, context)).join(", then ")}.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={`Edit ${rule.name}`}
-                    onClick={() => setEditing(rule.id)}
-                    className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                  >
-                    <Pencil className="size-4" />
-                  </button>
+                    </Link>
+                    {rule.presetKey ? (
+                      <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-normal text-zinc-600">template</span>
+                    ) : null}
+                    {flow.length > 1 ? (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-normal text-zinc-600">
+                        <GitBranch className="size-3" aria-hidden />
+                        {flow.length} branches
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    <span className="font-medium text-zinc-700">When</span> {describeTrigger(rule, context).toLowerCase()}
+                    {flow.length === 1 ? (
+                      <>
+                        {flow[0].conditions ? (
+                          <>
+                            , <span className="font-medium text-zinc-700">if</span> {flow[0].conditions}
+                          </>
+                        ) : null}
+                        , <span className="font-medium text-zinc-700">then</span> {flow[0].actions}.
+                      </>
+                    ) : (
+                      ":"
+                    )}
+                  </p>
+                  {flow.length > 1 ? (
+                    <ul className="mt-1 space-y-0.5 text-sm text-zinc-600">
+                      {flow.map((branch, i) => (
+                        <li key={i}>
+                          <span className="font-medium text-zinc-700">{branch.label}</span>
+                          {branch.conditions ? ` ${branch.conditions}` : ""}, <span className="font-medium text-zinc-700">then</span>{" "}
+                          {branch.actions}.
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+                <Link
+                  href={`${base}/rules/${rule.id}`}
+                  aria-label={`${canEdit ? "Edit" : "Open"} ${rule.name}`}
+                  data-tooltip={canEdit ? "Edit rule" : "Open rule"}
+                  className="btn-icon"
+                >
+                  <Pencil className="size-4" />
+                </Link>
+                {canEdit ? (
                   <button
                     type="button"
                     aria-label={`Delete ${rule.name}`}
+                    data-tooltip="Delete rule"
                     disabled={pending}
                     onClick={() => {
                       if (window.confirm(`Delete the rule “${rule.name}”?`)) run(() => deleteRule(rule.id));
                     }}
-                    className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-700"
+                    className="btn-icon hover:bg-red-50 hover:text-red-700"
                   >
                     <Trash2 className="size-4" />
                   </button>
-                </div>
+                ) : null}
               </li>
-            ),
-          )}
+            );
+          })}
         </ul>
       )}
 
-      <section aria-labelledby="rule-templates" className="mt-8">
+      <section aria-labelledby="rule-templates" className="mt-8" id="templates">
         <h2 id="rule-templates" className="text-sm font-semibold text-zinc-900">
           Templates
         </h2>

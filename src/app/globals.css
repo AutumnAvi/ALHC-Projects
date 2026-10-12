@@ -139,6 +139,14 @@
   }
 }
 
+/* The Customize panel (Asana parity, batch 4) sits on the right like the task pane: on wide screens the
+   page narrows by its width (20rem), so the header's Share and Customize stay in view. */
+@media (min-width: 64rem) {
+  .app-main:has(#customize-panel) {
+    padding-right: 20rem;
+  }
+}
+
 @utility skeleton {
   @apply animate-pulse rounded bg-zinc-100;
 }

@@ -2,6 +2,7 @@
 // the Share dialog's data, and the Overview's activity. The database decides everything for real
 // (set_project_status / post_project_status_update, add_project_member, add_team_to_project, RLS).
 
+import type { ProjectIntegrations } from "@/lib/integrations-shared";
 import type { ProjectRole } from "@/lib/roles";
 import type { PendingInvite, ProjectVisibility } from "@/lib/workspace";
 
@@ -66,3 +67,12 @@ const ACTIVITY_ORDER: Record<ProjectActivityItem["kind"], number> = { status: 0,
 export function sortActivity(items: ProjectActivityItem[]): ProjectActivityItem[] {
   return [...items].sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || ACTIVITY_ORDER[a.kind] - ACTIVITY_ORDER[b.kind]);
 }
+
+// Customize → Emails and Apps (loadCustomizeDetails): Admin+ only; hints, names, and counts — never a
+// URL or secret.
+export type CustomizeDetails = {
+  admin: boolean;
+  integrations: ProjectIntegrations | null;
+  inbound: { id: string; name: string; enabled: boolean }[] | null;
+  deliveries: { failed: number; waiting: number; emailsSent: number } | null;
+};

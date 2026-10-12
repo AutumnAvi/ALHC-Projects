@@ -3,7 +3,7 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { getWorkspace, listMyTeamIds, listProjectTemplates, listTeams } from "@/lib/data";
+import { getWorkspace, hasBatch4Schema, listFieldLibrary, listMyTeamIds, listProjectTemplates, listTeams } from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { drainOutbox } from "@/lib/email";
 import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
@@ -30,7 +30,7 @@ import {
   toProjectIntegrations,
   type ProjectIntegrations,
 } from "@/lib/integrations-shared";
-import { isFieldType, isOptionColor, type FieldOption } from "@/lib/fields";
+import { MAX_FIELD_DESCRIPTION, isFieldType, isOptionColor, type FieldOption, type LibraryField } from "@/lib/fields";
 import {
   isChoice,
   isQuestionType,
@@ -39,7 +39,7 @@ import {
   type FormAnswers,
   type FormQuestion,
 } from "@/lib/forms";
-import { isTriggerType, type RuleAction, type RuleCondition } from "@/lib/rules";
+import { branchProblem, isTriggerType, splitBranches, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
 import { isReactionKey } from "@/lib/reactions";
 import {
@@ -2325,11 +2325,40 @@ function fieldOptions(value: unknown): FieldOption[] {
   });
 }
 
+const FIELD_EXTRAS_MISSING = "Field descriptions, the field library, and notifications need this release’s database update, which isn’t applied yet";
+
+// Description, library, and notify (Asana parity, batch 4): only the keys that were given.
+function fieldExtras(input: { description?: string | null; inLibrary?: boolean; notifyOnChange?: boolean }, bound: boolean) {
+  const extras: { description?: string | null; in_library?: boolean; notify_on_change?: boolean } = {};
+  if (input.description !== undefined) extras.description = optionalText(input.description, MAX_FIELD_DESCRIPTION);
+  if (input.inLibrary !== undefined) {
+    if (bound && input.inLibrary) throw new InputError("The Status field follows the sections, so it can’t join the field library");
+    extras.in_library = Boolean(input.inLibrary);
+  }
+  if (input.notifyOnChange !== undefined) {
+    if (bound && input.notifyOnChange) {
+      throw new InputError("The Status field follows the sections; use a rule to tell people when a task moves");
+    }
+    extras.notify_on_change = Boolean(input.notifyOnChange);
+  }
+  return extras;
+}
+
 // Returns the new field's id. From the List's "+" column, `showInViews` pins it (so views with the
-// default columns show it right away) and `options` come along for select fields.
+// default columns show it right away) and `options` come along for select fields. A field added from
+// the workspace library is an ordinary new field with the library field's definition.
 export async function createField(
   projectId: string,
-  input: { name: string; fieldType: string; boundToSections?: boolean; showInViews?: boolean; options?: FieldOption[] },
+  input: {
+    name: string;
+    fieldType: string;
+    boundToSections?: boolean;
+    showInViews?: boolean;
+    options?: FieldOption[];
+    description?: string | null;
+    inLibrary?: boolean;
+    notifyOnChange?: boolean;
+  },
 ): Promise<ActionResult & { fieldId?: string }> {
   let fieldId: string | undefined;
   const result = await run(async () => {
@@ -2338,6 +2367,7 @@ export async function createField(
     if (bound && input.fieldType !== "single_select") {
       throw new InputError("Only single-select fields can mirror sections");
     }
+    const extras = fieldExtras(input, bound);
     const withOptions = (input.fieldType === "single_select" || input.fieldType === "multi_select") && !bound;
     const supabase = await createClient();
     const { data: last } = await supabase
@@ -2357,6 +2387,7 @@ export async function createField(
         bound_to_sections: bound,
         show_in_views: bound || Boolean(input.showInViews),
         ...(withOptions && input.options?.length ? { options: fieldOptions(input.options) } : {}),
+        ...extras,
         sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
       })
       .select("id")
@@ -2364,6 +2395,7 @@ export async function createField(
     if (inserted.error?.code === "23505") {
       throw new InputError("This project already has a section-bound field");
     }
+    if (inserted.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
     check(inserted);
     fieldId = inserted.data?.id;
   });
@@ -2372,16 +2404,37 @@ export async function createField(
 
 export async function updateField(
   fieldId: string,
-  patch: { name?: string; options?: FieldOption[]; showInViews?: boolean },
+  patch: {
+    name?: string;
+    options?: FieldOption[];
+    showInViews?: boolean;
+    description?: string | null;
+    inLibrary?: boolean;
+    notifyOnChange?: boolean;
+  },
 ): Promise<ActionResult> {
   return run(async () => {
-    const update: { name?: string; options?: Json; show_in_views?: boolean } = {};
+    const update: TablesUpdate<"custom_fields"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
     if (patch.options !== undefined) update.options = fieldOptions(patch.options);
     if (patch.showInViews !== undefined) update.show_in_views = Boolean(patch.showInViews);
+    // The database refuses library / notify on the section-bound Status (CHECKs); say so plainly.
+    Object.assign(update, fieldExtras(patch, false));
     const supabase = await createClient();
-    check(await supabase.from("custom_fields").update(update).eq("id", id(fieldId)));
+    const result = await supabase.from("custom_fields").update(update).eq("id", id(fieldId)).select("id");
+    if (result.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
+    if (result.error?.code === "23514" && (update.in_library || update.notify_on_change)) {
+      throw new InputError("The Status field follows the sections, so it can’t notify or join the field library");
+    }
+    // Editor+ (custom_fields_update_editor): RLS turns anything below into zero rows.
+    checkUpdated(result, "Only Editors and above can change fields");
   });
+}
+
+// The workspace field library for the Add field dialog (name, type, description, options; never the
+// projects they come from). Null on a database without this release's migration.
+export async function loadFieldLibrary(): Promise<LibraryField[] | null> {
+  return listFieldLibrary();
 }
 
 export async function deleteField(fieldId: string): Promise<ActionResult> {
@@ -3279,6 +3332,11 @@ function cleanQuestions(value: unknown): FormQuestion[] {
     } else {
       delete question.options;
     }
+    // A heading only shows text (validate_form refuses a required or mapped one).
+    if (q.type === "heading") {
+      delete question.required;
+      delete question.maps_to;
+    }
     if (!parentIsEarlier || question.show_if?.option_ids.length === 0) delete question.show_if;
     return question;
   });
@@ -3418,6 +3476,8 @@ type RuleInput = {
   triggerConfig: Record<string, Json>;
   conditions: RuleCondition[];
   actions: RuleAction[];
+  // The canvas's Active toggle (absent = unchanged; a new rule without it starts off).
+  enabled?: boolean;
 };
 
 // Same checks the database makes (integration_url_ok / integration_header_ok), for a clearer message.
@@ -3465,6 +3525,19 @@ function prepareSigningSecret(action: RuleAction, index: number, revealed: Revea
   return { ...rest, signing_secret: secret };
 }
 
+// Else if / Otherwise branches (Asana parity, batch 4) need the database that runs them: a database
+// without 20261011040000_asana_parity_4.sql would AND every condition and run every action.
+async function checkBranches(input: RuleInput) {
+  const conditions = input.conditions ?? [];
+  const actions = input.actions ?? [];
+  if (![...conditions, ...actions].some((item) => item && typeof item === "object" && "branch" in item)) return;
+  if (!(await hasBatch4Schema())) {
+    throw new InputError("Else if branches need this release’s database update, which isn’t applied yet");
+  }
+  const problem = branchProblem(splitBranches({ conditions, actions }));
+  if (problem) throw new InputError(problem);
+}
+
 function ruleRow(input: RuleInput, revealed: RevealedSigningSecret[] = []) {
   if (!isTriggerType(input.triggerType)) throw new InputError("Choose a trigger");
   if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
@@ -3476,14 +3549,17 @@ function ruleRow(input: RuleInput, revealed: RevealedSigningSecret[] = []) {
     trigger_config: (input.triggerConfig ?? {}) as Json,
     conditions: (input.conditions ?? []) as Json,
     actions: actions as Json,
+    ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
   };
 }
 
-export type RuleSaveResult = ActionResult & { signingSecrets?: RevealedSigningSecret[] };
+export type RuleSaveResult = ActionResult & { signingSecrets?: RevealedSigningSecret[]; ruleId?: string };
 
 export async function createRule(projectId: string, input: RuleInput): Promise<RuleSaveResult> {
   const revealed: RevealedSigningSecret[] = [];
+  let ruleId: string | undefined;
   const result = await run(async () => {
+    await checkBranches(input);
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("rules")
@@ -3493,18 +3569,22 @@ export async function createRule(projectId: string, input: RuleInput): Promise<R
       .order("sort_order", { ascending: false })
       .limit(1)
       .maybeSingle();
-    check(
-      await supabase
-        .from("rules")
-        .insert({ project_id: projectId, ...ruleRow(input, revealed), sort_order: (last?.sort_order ?? 0) + ORDER_STEP }),
-    );
+    const inserted = await supabase
+      .from("rules")
+      .insert({ project_id: projectId, ...ruleRow(input, revealed), sort_order: (last?.sort_order ?? 0) + ORDER_STEP })
+      .select("id")
+      .single();
+    check(inserted);
+    ruleId = inserted.data?.id;
   });
-  return result.error || revealed.length === 0 ? result : { signingSecrets: revealed };
+  if (result.error) return result;
+  return revealed.length === 0 ? { ruleId } : { ruleId, signingSecrets: revealed };
 }
 
 export async function updateRule(ruleId: string, input: RuleInput): Promise<RuleSaveResult> {
   const revealed: RevealedSigningSecret[] = [];
   const result = await run(async () => {
+    await checkBranches(input);
     const supabase = await createClient();
     checkUpdated(await supabase.from("rules").update(ruleRow(input, revealed)).eq("id", id(ruleId)).select("id"));
   });

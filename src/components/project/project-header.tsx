@@ -16,6 +16,7 @@ import {
   ClipboardList,
   Copy,
   CopyPlus,
+  FileInput,
   FolderClosed,
   Gauge,
   LayoutTemplate,
@@ -30,6 +31,7 @@ import {
   Settings,
   SquareKanban,
   Star,
+  Trash,
   Trash2,
   Users,
 } from "lucide-react";
@@ -262,6 +264,24 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
               }}
             >
               <Users className="size-4 text-zinc-500" /> Members
+            </MenuItem>
+            {canEditProject ? (
+              <MenuItem
+                onClick={() => {
+                  close();
+                  router.push(`${base}/settings/import`);
+                }}
+              >
+                <FileInput className="size-4 text-zinc-500" /> Import from Asana
+              </MenuItem>
+            ) : null}
+            <MenuItem
+              onClick={() => {
+                close();
+                router.push(`${base}/settings/trash`);
+              }}
+            >
+              <Trash className="size-4 text-zinc-500" /> Trash
             </MenuItem>
             <MenuItem
               onClick={async () => {
