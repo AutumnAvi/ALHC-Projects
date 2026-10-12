@@ -15,10 +15,13 @@ import {
   listMyProjectRoles,
   listProfiles,
   listProjects,
+  listProjectTemplates,
   listReadableProjects,
   listTeams,
   type MySettings,
 } from "@/lib/data";
+import { fieldTypeLabel, isFieldType } from "@/lib/fields";
+import type { GalleryTemplate, TemplatePreview } from "@/lib/templates";
 import { isUuid } from "@/lib/ids";
 import { hasRole } from "@/lib/roles";
 import {
@@ -204,5 +207,67 @@ export async function loadGoalDialog() {
     teams: teams.map((t) => ({ id: t.id, name: t.name })),
     goals,
     today: todayIn(timeZone),
+  };
+}
+
+// The New project gallery (Asana parity, batch 4): every workspace template (templates are readable by
+// everyone allowlisted), with "mine" for the ones the person saved.
+export async function loadProjectGallery(): Promise<GalleryTemplate[] | null> {
+  const { user, allowlisted } = await getViewer();
+  if (!user || !allowlisted) return null;
+  const templates = await listProjectTemplates();
+  return templates.map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    summary: t.summary,
+    isExample: t.isExample,
+    mine: t.createdBy === user.id,
+    createdByName: t.createdByName,
+    sourceProjectName: t.sourceProject?.name ?? null,
+  }));
+}
+
+const PREVIEW_TASKS = 4;
+
+function textOf(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+// What a template holds, for the gallery's preview: its sections with their first few task titles, and
+// its fields. Read with the person's own client (templates are workspace-level).
+export async function loadTemplatePreview(templateId: string): Promise<TemplatePreview | null> {
+  if (!isUuid(templateId) || !(await signedIn())) return null;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("project_templates")
+    .select("sections:content->sections, tasks:content->tasks, fields:content->fields")
+    .eq("id", templateId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!data) return null;
+  const list = (value: unknown) =>
+    (Array.isArray(value) ? value : []).filter((v): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v));
+  const sections = list(data.sections).map((s) => ({ id: textOf(s.id), name: textOf(s.name) ?? "Untitled section" }));
+  const bySection = new Map<string | null, string[]>();
+  for (const task of list(data.tasks)) {
+    const title = textOf(task.title);
+    if (!title) continue;
+    const key = textOf(task.section_id);
+    const titles = bySection.get(key) ?? [];
+    titles.push(title);
+    bySection.set(key, titles);
+  }
+  const group = (titles: string[] = []) => ({ tasks: titles.slice(0, PREVIEW_TASKS), more: Math.max(titles.length - PREVIEW_TASKS, 0) });
+  const known = new Set(sections.map((s) => s.id));
+  const loose = [...bySection.entries()].filter(([key]) => !key || !known.has(key)).flatMap(([, titles]) => titles);
+  return {
+    sections: sections.map((s) => ({ name: s.name, ...group(s.id ? bySection.get(s.id) : []) })),
+    unsectioned: loose.length ? group(loose) : null,
+    fields: list(data.fields).flatMap((f) => {
+      const name = textOf(f.name);
+      if (!name || !isFieldType(f.field_type)) return [];
+      return [{ name, type: fieldTypeLabel({ fieldType: f.field_type, boundToSections: f.bound_to_sections === true }) }];
+    }),
   };
 }

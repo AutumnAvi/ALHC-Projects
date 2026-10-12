@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Briefcase } from "lucide-react";
+import { Briefcase, Plus } from "lucide-react";
 import { ProgressBar } from "@/components/portfolio/progress-bar";
-import { NewPortfolioForm } from "@/components/shell/new-portfolio-form";
+import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { listPortfolioProgress, listPortfolios } from "@/lib/data";
 import { formatProgress, progressPercent } from "@/lib/portfolios";
@@ -14,28 +14,37 @@ export default async function PortfoliosPage() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
-      <PageHeader icon={Briefcase} title="Portfolios" description="Follow the progress of several projects together" />
+      <PageHeader
+        icon={Briefcase}
+        title="Portfolios"
+        description="Follow the progress of several projects together"
+        actions={
+          <OpenDialogButton dialog={{ kind: "portfolio" }} className="btn-primary h-8 px-3">
+            <Plus className="size-4" aria-hidden />
+            New portfolio
+          </OpenDialogButton>
+        }
+      />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-gutter py-6">
-          <section aria-labelledby="new-portfolio-heading" className="max-w-md">
-            <h2 id="new-portfolio-heading" className="text-sm font-semibold text-zinc-900">
-              Start a portfolio
-            </h2>
-            <p className="mt-0.5 text-xs text-zinc-500">
-              Anyone can start one and becomes its owner. You only see portfolios you’re a member of, and inside them
-              only the projects you’re a member of.
-            </p>
-            <div className="mt-2">
-              <NewPortfolioForm />
-            </div>
-          </section>
-
-          <h2 className="mt-8 text-sm font-semibold text-zinc-900">Your portfolios</h2>
+          <h2 className="text-sm font-semibold text-zinc-900">Your portfolios</h2>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            Anyone can start a portfolio and becomes its owner. You only see portfolios you’re a member of, and inside
+            them only the projects you’re a member of.
+          </p>
           {portfolios.length === 0 ? (
             <div className="mt-3">
-              <EmptyState icon={Briefcase} title="No portfolios yet">
-                Create one above, then add the projects you want to follow, or ask a portfolio’s owner or admin to invite
-                you.
+              <EmptyState
+                icon={Briefcase}
+                title="No portfolios yet"
+                action={
+                  <OpenDialogButton dialog={{ kind: "portfolio" }} className="btn-primary h-8 px-3">
+                    <Plus className="size-4" aria-hidden />
+                    New portfolio
+                  </OpenDialogButton>
+                }
+              >
+                Create one, then add the projects you want to follow, or ask a portfolio’s owner or admin to invite you.
               </EmptyState>
             </div>
           ) : (

@@ -112,7 +112,7 @@ export function PublicForm({ form }: { form: PublicFormDef }) {
       {form.questions
         .filter((q) => visible.has(q.id))
         .map((question) => (
-          <Question
+          <FormQuestionField
             key={question.id}
             question={question}
             value={answers[question.id]}
@@ -149,18 +149,22 @@ export function PublicForm({ form }: { form: PublicFormDef }) {
   );
 }
 
-function Question({
+// One question as people see it (the public form and the form editor's live preview).
+export function FormQuestionField({
   question,
   value,
   error,
   onChange,
+  idPrefix = "q",
 }: {
   question: FormQuestion;
   value: FormAnswers[string] | undefined;
   error?: string;
   onChange: (value: FormAnswers[string]) => void;
+  // The editor's preview renders next to its own inputs, so its ids get another prefix.
+  idPrefix?: string;
 }) {
-  const id = `q-${question.id}`;
+  const id = `${idPrefix}-${question.id}`;
   const describedBy = [question.help ? `${id}-help` : null, error ? `${id}-error` : null]
     .filter(Boolean)
     .join(" ") || undefined;
@@ -175,6 +179,15 @@ function Question({
       {error}
     </p>
   ) : null;
+
+  if (question.type === "heading") {
+    return (
+      <div className="flex flex-col gap-1 border-b border-zinc-200 pb-2 pt-2">
+        <h2 className="text-base font-semibold text-zinc-900">{question.label}</h2>
+        {question.help ? <p className="whitespace-pre-wrap text-sm text-zinc-600">{question.help}</p> : null}
+      </div>
+    );
+  }
 
   if (question.type === "single_select" || question.type === "multi_select") {
     const multi = question.type === "multi_select";
@@ -249,9 +262,10 @@ function Question({
       ) : (
         <input
           {...common}
-          type={question.type === "date" ? "date" : question.type === "number" ? "number" : "text"}
+          type={question.type === "date" ? "date" : question.type === "number" ? "number" : question.type === "email" ? "email" : "text"}
           inputMode={question.type === "number" ? "decimal" : undefined}
-          maxLength={question.type === "short_text" ? 500 : undefined}
+          autoComplete={question.type === "email" ? "off" : undefined}
+          maxLength={question.type === "short_text" ? 500 : question.type === "email" ? 320 : undefined}
           onChange={(e) => onChange(e.currentTarget.value)}
         />
       )}

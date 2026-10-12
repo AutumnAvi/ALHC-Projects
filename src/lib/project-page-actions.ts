@@ -9,16 +9,20 @@
 import { getViewer } from "@/lib/auth";
 import {
   getProject,
+  getProjectIntegrations,
   getProjectRole,
   listActivePeople,
+  listEmailDeliveries,
+  listInboundEndpoints,
+  listIntegrationDeliveries,
   listPendingInvites,
   listProjectMembers,
   listProjectTeamAccess,
   listTeams,
 } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
-import { compareMembers } from "@/lib/roles";
-import type { ShareData } from "@/lib/project-page";
+import { compareMembers, hasRole } from "@/lib/roles";
+import type { CustomizeDetails, ShareData } from "@/lib/project-page";
 import { isProjectVisibility } from "@/lib/workspace";
 
 export async function loadProjectShare(projectId: string): Promise<ShareData | null> {
@@ -51,5 +55,34 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     })),
     people,
     teams: [...teamsById.values()],
+  };
+}
+
+// Customize → Emails and Apps (Asana parity, batch 4): the project's Slack / webhook defaults (hints
+// only), its inbound webhooks, and how many deliveries failed or wait. Admin+ by the person's own role
+// (every loader below checks it again and returns null otherwise); everyone else gets admin: false.
+export async function loadCustomizeDetails(projectId: string): Promise<CustomizeDetails | null> {
+  if (!isUuid(projectId)) return null;
+  const { user, allowlisted } = await getViewer();
+  if (!user || !allowlisted) return null;
+  const role = await getProjectRole(projectId);
+  if (!role) return null;
+  if (!hasRole(role, "admin")) return { admin: false, integrations: null, inbound: null, deliveries: null };
+  const [integrations, inbound, outbound, emails] = await Promise.all([
+    getProjectIntegrations(projectId),
+    listInboundEndpoints(projectId),
+    listIntegrationDeliveries(projectId),
+    listEmailDeliveries(projectId),
+  ]);
+  const all = [...(outbound ?? []), ...(emails ?? [])];
+  return {
+    admin: true,
+    integrations,
+    inbound: (inbound ?? []).map((e) => ({ id: e.id, name: e.name, enabled: e.enabled })),
+    deliveries: {
+      failed: all.filter((d) => d.status === "failed").length,
+      waiting: all.filter((d) => d.status === "pending" || d.status === "sending").length,
+      emailsSent: (emails ?? []).filter((d) => d.status === "sent" || d.status === "mocked").length,
+    },
   };
 }

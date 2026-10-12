@@ -11,15 +11,21 @@ import type { ProjectStatus } from "@/lib/portfolios";
 type ProjectPage = {
   openShare: () => void;
   openStatusUpdate: (status: ProjectStatus) => void;
+  // Asana parity, batch 4's database features (field descriptions, the field library, field
+  // notifications, rule branches, Heading / Email form questions): false on a preview deployed before
+  // 20261011040000_asana_parity_4.sql is applied, so those controls stay hidden there.
+  batch4: boolean;
 };
 
 const ProjectPageContext = createContext<ProjectPage | null>(null);
 
 export function ProjectPageProvider({
   project,
+  batch4,
   children,
 }: {
   project: { id: string; name: string };
+  batch4: boolean;
   children: ReactNode;
 }) {
   const [sharing, setSharing] = useState(false);
@@ -28,8 +34,9 @@ export function ProjectPageProvider({
     () => ({
       openShare: () => setSharing(true),
       openStatusUpdate: (status) => setStatusUpdate(status),
+      batch4,
     }),
-    [],
+    [batch4],
   );
 
   return (

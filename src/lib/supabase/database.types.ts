@@ -257,6 +257,10 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          // Asana parity, batch 4 (20261011040000_asana_parity_4.sql): absent on a database without it.
+          description?: string | null;
+          notify_on_change?: boolean;
+          in_library?: boolean;
         };
         Insert: {
           id?: string;
@@ -270,6 +274,9 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          description?: string | null;
+          notify_on_change?: boolean;
+          in_library?: boolean;
         };
         Update: {
           id?: string;
@@ -279,6 +286,9 @@ export type Database = {
           options?: Json;
           bound_to_sections?: boolean;
           show_in_views?: boolean;
+          description?: string | null;
+          notify_on_change?: boolean;
+          in_library?: boolean;
           sort_order?: number;
           created_at?: string;
           updated_at?: string;
@@ -3860,6 +3870,14 @@ export type Database = {
       import_lookup: {
         Args: { import_source: string; external_ids: string[] };
         Returns: { project_id: string; kind: string; external_id: string }[];
+      };
+      list_field_library: {
+        Args: Record<PropertyKey, never>;
+        Returns: { field_id: string; name: string; field_type: string; description: string | null; options: Json }[];
+      };
+      browse_project_people: {
+        Args: { target_team?: string | null };
+        Returns: { project_id: string; owner_ids: string[]; member_ids: string[]; modified_at: string | null }[];
       };
       list_email_deliveries: {
         Args: { target_project: string; max_results?: number };

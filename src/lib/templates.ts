@@ -44,6 +44,50 @@ export function describeSummary(summary: TemplateSummary): string {
   return parts.join(" · ");
 }
 
+// The New project gallery (Asana parity, batch 4): a workspace template as the gallery shows it.
+export type GalleryTemplate = {
+  id: string;
+  name: string;
+  description: string | null;
+  summary: TemplateSummary;
+  isExample: boolean;
+  // Saved by the person looking at the gallery ("Your templates").
+  mine: boolean;
+  createdByName: string | null;
+  // Only when the person can still read the source project.
+  sourceProjectName: string | null;
+};
+
+// The gallery's category pills (derived: templates have no category column).
+export const GALLERY_CATEGORIES = [
+  { key: "all", label: "All templates" },
+  { key: "mine", label: "Your templates" },
+  { key: "workspace", label: "Shared by your team" },
+  { key: "examples", label: "Examples" },
+] as const;
+export type GalleryCategory = (typeof GALLERY_CATEGORIES)[number]["key"];
+
+export function inGalleryCategory(template: GalleryTemplate, category: GalleryCategory): boolean {
+  switch (category) {
+    case "all":
+      return true;
+    case "mine":
+      return template.mine;
+    case "workspace":
+      return !template.mine && !template.isExample;
+    case "examples":
+      return template.isExample;
+  }
+}
+
+// What a template holds, for the gallery's preview (loadTemplatePreview).
+export type TemplatePreview = {
+  sections: { name: string; tasks: string[]; more: number }[];
+  // Tasks with no section.
+  unsectioned: { tasks: string[]; more: number } | null;
+  fields: { name: string; type: string }[];
+};
+
 // Options of Duplicate project (mirrors duplicate_project()).
 export type DuplicateOptions = {
   tasks: boolean;

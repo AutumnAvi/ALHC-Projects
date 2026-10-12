@@ -374,7 +374,7 @@ export function BulkBar({
               {(close) =>
                 fields.length === 0 ? (
                   <p className="text-xs text-zinc-500">
-                    This project has no custom fields to set. Add one under the Fields tab. (A Status field that
+                    This project has no custom fields to set. Add one in Customize → Fields. (A Status field that
                     follows the sections is changed with Move.)
                   </p>
                 ) : (

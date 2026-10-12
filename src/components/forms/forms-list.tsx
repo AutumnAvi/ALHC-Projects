@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import { ExternalLink, FileInput, Plus } from "lucide-react";
+import { useCan } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { createForm } from "@/lib/actions";
 import type { FormSummary } from "@/lib/data";
 import { EmptyState } from "@/components/ui";
 
+// The project's forms. A row opens the form editor (a large modal over this list); Add form creates one
+// and opens it. New forms start closed, so they can be built and previewed before the link is shared.
 export function FormsList({
   projectId,
   forms,
@@ -19,32 +21,49 @@ export function FormsList({
   origin: string;
 }) {
   const [pending, run] = useServerAction();
-  const [title, setTitle] = useState("");
+  const canEdit = useCan("admin");
+  const add = () => run(() => createForm(projectId, "New form"));
 
   return (
     <div className="mx-auto max-w-3xl px-gutter py-5">
-      <p className="text-sm text-zinc-600">
-        Forms turn requests from anyone, signed in or not, into tasks in this project. Answers can fill the task
-        name, description, due date, section, and custom fields, and questions can show or hide based on earlier
-        answers.
-      </p>
+      <div className="flex flex-wrap items-start gap-3">
+        <p className="min-w-0 flex-1 text-sm text-zinc-600">
+          Forms turn requests from anyone, signed in or not, into tasks in this project. Answers can fill in the task
+          name, description, due date, section, and fields, and questions can show or hide based on earlier answers.
+        </p>
+        {canEdit ? (
+          <button type="button" onClick={add} disabled={pending} className="btn-primary h-8 px-3">
+            <Plus className="size-4" aria-hidden />
+            {pending ? "Creating…" : "Add form"}
+          </button>
+        ) : null}
+      </div>
 
       {forms.length === 0 ? (
         <div className="mt-6">
-          <EmptyState icon={FileInput} title="No forms yet">
+          <EmptyState
+            icon={FileInput}
+            title="No forms yet"
+            action={
+              canEdit ? (
+                <button type="button" onClick={add} disabled={pending} className="btn-primary h-8 px-3">
+                  <Plus className="size-4" aria-hidden />
+                  Add form
+                </button>
+              ) : undefined
+            }
+          >
             A form turns each submission into a task in this project. New forms start closed, so you can build and
             preview before sharing the link.
           </EmptyState>
         </div>
       ) : (
-        <ul className="mt-6 divide-y divide-zinc-100 rounded-lg border border-zinc-200" aria-label="Forms">
+        <ul className="mt-5 divide-y divide-zinc-100 rounded-lg border border-zinc-200" aria-label="Forms">
           {forms.map((form) => (
             <li key={form.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <FileInput className="size-4 shrink-0 text-zinc-500" aria-hidden />
               <div className="min-w-0 flex-1">
-                <Link
-                  href={`/projects/${projectId}/forms/${form.id}`}
-                  className="text-sm font-medium text-zinc-900 hover:underline"
-                >
+                <Link href={`/projects/${projectId}/forms/${form.id}`} className="text-sm font-medium text-zinc-900 hover:underline">
                   {form.title}
                 </Link>
                 <p className="mt-0.5 text-xs text-zinc-500">
@@ -59,8 +78,8 @@ export function FormsList({
                 </p>
               </div>
               <span
-                className={`rounded px-1.5 py-0.5 text-2xs font-medium ${
-                  form.acceptingResponses ? "bg-green-100 text-green-800" : "bg-zinc-100 text-zinc-600"
+                className={`rounded-full px-2 py-0.5 text-2xs font-medium ${
+                  form.acceptingResponses ? "bg-green-50 text-green-800" : "bg-zinc-100 text-zinc-600"
                 }`}
               >
                 {form.acceptingResponses ? "Accepting responses" : "Closed"}
@@ -69,46 +88,15 @@ export function FormsList({
                 href={`${origin}/forms/${form.id}`}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                className="btn-ghost h-7 text-xs"
               >
                 <ExternalLink className="size-3.5" aria-hidden />
-                Open public form
+                View form
               </a>
             </li>
           ))}
         </ul>
       )}
-
-      <form
-        className="mt-6 flex flex-wrap items-end gap-2 rounded-lg border border-zinc-200 p-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!title.trim()) return;
-          run(() => createForm(projectId, title));
-        }}
-      >
-        <div className="flex min-w-48 flex-1 flex-col gap-1">
-          <label htmlFor="new-form-title" className="text-xs font-medium text-zinc-600">
-            New form name
-          </label>
-          <input
-            id="new-form-title"
-            value={title}
-            onChange={(e) => setTitle(e.currentTarget.value)}
-            maxLength={200}
-            placeholder="e.g. Design request"
-            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm focus:border-zinc-400 focus:outline-none"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={pending || !title.trim()}
-          className="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
-        >
-          <Plus className="size-4" />
-          Create form
-        </button>
-      </form>
     </div>
   );
 }

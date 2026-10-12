@@ -10,6 +10,7 @@ import {
   PERSON_ROLES,
   TRIGGERS,
   labelOf,
+  splitBranches,
   type RuleAction,
   type RuleCondition,
   type RuleDef,
@@ -152,6 +153,24 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
     default:
       return labelOf(ACTIONS, a.type).toLowerCase();
   }
+}
+
+// A branch's name on the canvas and in summaries: Check if, Else if, Otherwise.
+export function branchLabel(index: number, count: number, hasConditions: boolean) {
+  if (index === 0) return "Check if";
+  if (index === count - 1 && !hasConditions) return "Otherwise";
+  return "Else if";
+}
+
+// "If A and B, then x, then y" per branch (one line for a rule without branches).
+export function describeBranches(rule: Pick<RuleDef, "conditions" | "actions">, ctx: RuleContext) {
+  const branches = splitBranches(rule);
+  return branches.map((branch, index) => {
+    const conditions = branch.conditions.map((c) => describeCondition(c, ctx)).join(" and ");
+    const actions = branch.actions.map((a) => describeAction(a, ctx)).join(", then ");
+    const label = branches.length === 1 ? (conditions ? "If" : "") : branchLabel(index, branches.length, branch.conditions.length > 0);
+    return { label, conditions, actions };
+  });
 }
 
 export function SectionSelect({

@@ -5,7 +5,7 @@ import { DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { listProjectTeamChoices } from "@/lib/actions";
 import { PROJECT_VISIBILITIES, VISIBILITY_DESCRIPTIONS, VISIBILITY_LABELS, type ProjectVisibility } from "@/lib/workspace";
 
-type TeamChoice = Awaited<ReturnType<typeof listProjectTeamChoices>>[number];
+export type TeamChoice = Awaited<ReturnType<typeof listProjectTeamChoices>>[number];
 export type Placement = { teamId: string; visibility: ProjectVisibility };
 
 // Team + privacy for a new project, like Asana's New project form: the default team is preselected,
@@ -15,10 +15,13 @@ export function ProjectPlacementFields({
   value,
   onChange,
   idPrefix,
+  onTeams,
 }: {
   value: Placement;
   onChange: (next: Placement) => void;
   idPrefix: string;
+  // The team choices once loaded (the New project preview shows the team's name).
+  onTeams?: (teams: TeamChoice[]) => void;
 }) {
   const [teams, setTeams] = useState<TeamChoice[] | null>(null);
   const [, startTransition] = useTransition();
@@ -28,6 +31,7 @@ export function ProjectPlacementFields({
       try {
         const choices = await listProjectTeamChoices();
         setTeams(choices);
+        onTeams?.(choices);
         if (!value.teamId && choices[0]) onChange({ ...value, teamId: choices[0].id });
       } catch {
         setTeams([]);

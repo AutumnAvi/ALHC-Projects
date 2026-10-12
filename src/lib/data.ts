@@ -6,7 +6,7 @@ import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
-import { parseOptions, type FieldDef, type FieldOption, type FieldType } from "@/lib/fields";
+import { isFieldType, parseOptions, type FieldDef, type FieldOption, type FieldType, type LibraryField } from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
 import {
   parsePresetInputs,
@@ -1279,8 +1279,34 @@ function toFieldDef(row: Tables<"custom_fields">): FieldDef {
     boundToSections: row.bound_to_sections,
     showInViews: row.show_in_views,
     sortOrder: row.sort_order,
+    description: row.description ?? null,
+    notifyOnChange: row.notify_on_change ?? false,
+    inLibrary: row.in_library ?? false,
   };
 }
+
+// Asana parity, batch 4 (20261011040000_asana_parity_4.sql): field descriptions, the field library,
+// field notifications, rule branches, and Heading / Email form questions. A preview deployed before the
+// migration is applied hides them. The migration adds custom_fields.description last, so its presence
+// means the whole batch is there.
+export const hasBatch4Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.from("custom_fields").select("description").limit(1);
+  return !isMissingColumn(result.error);
+});
+
+// The workspace field library (list_field_library: name, type, description, and options of library
+// fields, never their projects). Null without the migration.
+export const listFieldLibrary = cache(async (): Promise<LibraryField[] | null> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("list_field_library");
+  if (result.error?.code === "PGRST202") return null;
+  return rows(result, "field library").flatMap((r) =>
+    isFieldType(r.field_type)
+      ? [{ fieldId: r.field_id, name: r.name, fieldType: r.field_type, description: r.description, options: parseOptions(r.options) }]
+      : [],
+  );
+});
 
 async function listFieldsForProjects(projectIds: string[]): Promise<FieldDef[]> {
   const supabase = await createClient();
@@ -2757,6 +2783,8 @@ export type ProjectTemplate = {
   // Only set when the viewer can still read the source project.
   sourceProject: { id: string; name: string } | null;
   createdByName: string | null;
+  // Who saved it (the gallery's "Your templates").
+  createdBy: string | null;
   updatedAt: string;
   // Admin+ of the live source project, or a workspace admin: rename, replace, delete.
   canManage: boolean;
@@ -2767,7 +2795,7 @@ export const listProjectTemplates = cache(async (): Promise<ProjectTemplate[]> =
   const supabase = await createClient();
   const result = await supabase
     .from("project_templates")
-    .select("id, name, description, summary, is_example, source_project_id, updated_at, creator:profiles(email, full_name)")
+    .select("id, name, description, summary, is_example, source_project_id, created_by, updated_at, creator:profiles(email, full_name)")
     .is("deleted_at", null)
     .order("is_example", { ascending: false })
     .order("name");
@@ -2795,6 +2823,7 @@ export const listProjectTemplates = cache(async (): Promise<ProjectTemplate[]> =
         ? { id: t.source_project_id, name: sourceNames.get(t.source_project_id)! }
         : null,
     createdByName: t.creator ? (t.creator.full_name ?? t.creator.email) : null,
+    createdBy: t.created_by,
     updatedAt: t.updated_at,
     canManage: manage[index] === true,
   }));
@@ -3209,6 +3238,25 @@ export const browseProjects = cache(async (teamId?: string | null): Promise<Brow
     myRole: r.my_role,
   }));
 });
+
+// The Browse projects table's people and last-modified time (Asana parity, batch 4), for exactly the
+// rows browse_projects returns, keyed by project. Null on a database without
+// 20261011040000_asana_parity_4.sql (the table then shows member counts only).
+export type BrowseProjectPeople = { ownerIds: string[]; memberIds: string[]; modifiedAt: string | null };
+
+export const browseProjectPeople = cache(
+  async (teamId?: string | null): Promise<Map<string, BrowseProjectPeople> | null> => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("browse_project_people", { target_team: teamId ?? null });
+    if (result.error?.code === "PGRST202") return null;
+    return new Map(
+      rows(result, "project people").map((r) => [
+        r.project_id,
+        { ownerIds: r.owner_ids ?? [], memberIds: r.member_ids ?? [], modifiedAt: r.modified_at },
+      ]),
+    );
+  },
+);
 
 // Teams the viewer is in (active), for the New project team picker; the default team is always
 // offered too (anyone may put a project there).

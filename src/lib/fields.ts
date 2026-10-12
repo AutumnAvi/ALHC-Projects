@@ -75,7 +75,29 @@ export type FieldDef = {
   boundToSections: boolean;
   showInViews: boolean;
   sortOrder: number;
+  // Asana parity, batch 4 (empty / false on a database without 20261011040000_asana_parity_4.sql).
+  description: string | null;
+  // Followers get an Inbox notification when a value changes.
+  notifyOnChange: boolean;
+  // Listed in the workspace field library (name, type, description, and options only).
+  inLibrary: boolean;
 };
+
+// A field from the workspace library (list_field_library): a definition other projects can copy.
+export type LibraryField = {
+  fieldId: string;
+  name: string;
+  fieldType: FieldType;
+  description: string | null;
+  options: FieldOption[];
+};
+
+export const MAX_FIELD_DESCRIPTION = 2000;
+
+// Field types with options (the section-bound Status's options are the sections, not stored here).
+export function hasOptions(field: Pick<FieldDef, "fieldType" | "boundToSections">) {
+  return !field.boundToSections && (field.fieldType === "single_select" || field.fieldType === "multi_select");
+}
 
 export function isFieldType(value: unknown): value is FieldType {
   return FIELD_TYPES.some((t) => t.value === value);

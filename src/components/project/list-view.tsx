@@ -636,6 +636,7 @@ export function ListView({
       {addingField ? (
         <NewFieldDialog
           projectId={projectId}
+          existingFieldIds={fields.map((f) => f.id)}
           onClose={() => setAddingField(false)}
           onCreated={(fieldId) => {
             // Pinned fields show in views with the default columns; a view with its own columns gets it
