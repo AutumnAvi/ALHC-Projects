@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
@@ -10,6 +11,7 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { addTeamMember, changeTeamMemberRole, removeTeamMember } from "@/lib/actions";
 import type { TeamPerson } from "@/lib/data";
+import { personHref } from "@/lib/people";
 import { TEAM_ROLES, TEAM_ROLE_LABELS, isTeamRole, type TeamRole } from "@/lib/teams";
 import { describePendingInvite, inviteHelp, type PendingInvite } from "@/lib/workspace";
 
@@ -136,7 +138,9 @@ export function TeamMembers({
                   <Avatar name={m.name} size="md" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-zinc-900">
-                      {m.name}
+                      <Link href={personHref(m.profileId)} className="hover:underline">
+                        {m.name}
+                      </Link>
                       {self ? <span className="font-normal text-zinc-500"> (you)</span> : null}
                     </p>
                     <p className="truncate text-xs text-zinc-500">

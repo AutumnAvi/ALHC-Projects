@@ -5,7 +5,11 @@ import { useState, type KeyboardEvent } from "react";
 import { ArrowUpRight, Reply, Webhook } from "lucide-react";
 import { Segmented } from "@/components/project/view-chrome";
 import { EmailForwardingSection } from "@/components/settings/email-forwarding";
-import { InboxNotifications, NotificationSettings } from "@/components/settings/notification-settings";
+import {
+  InboxNotifications,
+  NotificationMatrix,
+  NotificationSettings,
+} from "@/components/settings/notification-settings";
 import { useShell } from "@/components/shell/shell-context";
 import { setPaneExpanded, usePaneExpanded } from "@/components/task/pane-size";
 import { Skeleton } from "@/components/ui";
@@ -99,16 +103,29 @@ export function SettingsPanel({
         ) : tab === "profile" ? (
           <ProfileTab data={data.me} />
         ) : tab === "notifications" ? (
-          <div className="flex flex-col gap-6">
-            <NotificationSettings
+          data.me.notifications ? (
+            <NotificationMatrix
               email={data.me.email}
-              enabled={commentEmails ?? data.me.emailComments}
-              onEnabledChange={setCommentEmails}
+              settings={{
+                ...data.me.notifications,
+                comment: { ...data.me.notifications.comment, email: commentEmails ?? data.me.emailComments },
+              }}
+              onCommentEmailChange={setCommentEmails}
               sending={data.email.sending}
               replyByEmail={data.email.replyByEmail}
             />
-            <InboxNotifications />
-          </div>
+          ) : (
+            <div className="flex flex-col gap-6">
+              <NotificationSettings
+                email={data.me.email}
+                enabled={commentEmails ?? data.me.emailComments}
+                onEnabledChange={setCommentEmails}
+                sending={data.email.sending}
+                replyByEmail={data.email.replyByEmail}
+              />
+              <InboxNotifications />
+            </div>
+          )
         ) : tab === "email_forwarding" ? (
           <EmailForwardingTab
             email={data.email}

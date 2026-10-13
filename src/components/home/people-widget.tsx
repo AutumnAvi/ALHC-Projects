@@ -9,8 +9,8 @@ import { plural } from "@/lib/home";
 import { quickPersonHref } from "@/lib/shell";
 
 // Home → People (Asana parity, batch 5): the people who share the most projects with the viewer
-// (listFrequentCollaborators: only projects the viewer can open), plus an Invite tile. People have no
-// profile page yet, so a tile opens Reports filtered to that person's tasks, like the search palette.
+// (listFrequentCollaborators: only projects the viewer can open), plus an Invite tile. A tile opens the
+// person's profile page (Real features 2), like the search palette.
 export function PeopleWidget({ collaborators }: { collaborators: Collaborator[] }) {
   return (
     <Widget
@@ -63,7 +63,7 @@ export function PeopleWidget({ collaborators }: { collaborators: Collaborator[] 
             <li key={person.id} className="min-w-0">
               <Link
                 href={quickPersonHref(person)}
-                data-tooltip={`${person.name}’s tasks in Reports`}
+                data-tooltip={`${person.name}’s profile`}
                 className="flex h-full flex-col items-center gap-2 rounded-lg px-2 py-3 text-center hover:bg-zinc-50 focus-visible:bg-zinc-50"
               >
                 <Avatar name={person.name || person.email} size="lg" />

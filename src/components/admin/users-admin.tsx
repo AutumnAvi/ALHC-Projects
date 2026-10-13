@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Ellipsis, RotateCcw, Search, Send, UserMinus, UserPlus, Users } from "lucide-react";
@@ -18,6 +19,8 @@ import {
   resendWorkspaceInvite,
 } from "@/lib/actions";
 import { MEMBER_STATUS_LABELS, USER_TABS, isUserTab, type UserTab } from "@/lib/admin";
+import type { MemberActivity } from "@/lib/data";
+import { personHref } from "@/lib/people";
 import {
   WORKSPACE_ROLE_LABELS,
   describeInviteEmail,
@@ -34,6 +37,9 @@ const STATUS_DOT: Record<MemberStatus, string> = {
 
 const LAST_ADMIN_NOTE = "A workspace needs at least one admin. Make someone else an admin first.";
 const NO_ACTIVITY_NOTE = "Last activity shows once this release’s database update is applied";
+const SIGN_IN_ONLY_NOTE = "Only sign-ins are known until this release’s database update is applied";
+const ACTIVITY_HELP =
+  "The last time they changed a task, commented, posted a message or a status update — anything that shows in an activity feed. Signing in alone doesn’t count.";
 
 const EMPTY: Record<UserTab, { title: string; body: string }> = {
   all: { title: "No one here yet", body: "Invite people with Invite users. Only people listed here can sign in." },
@@ -52,21 +58,23 @@ function shortDate(iso: string, timeZone: string) {
 }
 
 // Admin console → Users (like Asana's): everyone on the workspace's allowlist in one table with tabs
-// All / Members / Invited / Removed, a search box, and per-person role, status, last sign-in, and who
-// invited them. Admins invite (an email goes out through the outbox), resend, cancel invites, remove
+// All / Members / Invited / Removed, a search box, and per-person role, status, last activity (Real
+// features 2: the last thing they did that shows in an activity feed, with the last sign-in under it),
+// and who invited them. Admins invite (an email goes out through the outbox), resend, cancel invites, remove
 // people (sign-in stops; their work stays), add them back, and make people admins — the same RPCs and
 // rules as Settings → Workspace → Members always had.
 export function UsersAdmin({
   members,
-  lastSignIn,
+  activity,
   viewerId,
   timeZone,
   emailConfigured,
   signupUrl,
 }: {
   members: WorkspaceMember[];
-  // Last sign-in per lowercased address (null = never signed in); null when the database can't tell.
-  lastSignIn: Record<string, string | null> | null;
+  // Last sign-in and last activity per lowercased address; null when the database can't tell at all.
+  // activityTracked = false: only sign-ins are known (a database without Real features 2).
+  activity: { byEmail: Record<string, MemberActivity>; activityTracked: boolean } | null;
   viewerId: string;
   timeZone: string;
   emailConfigured: boolean;
@@ -230,7 +238,9 @@ export function UsersAdmin({
                       Status
                     </th>
                     <th scope="col" className="w-32 px-3 py-2 font-medium">
-                      <span data-tooltip="When they last signed in">Last activity</span>
+                      <span tabIndex={0} data-tooltip={ACTIVITY_HELP}>
+                        Last activity<span className="sr-only">: {ACTIVITY_HELP}</span>
+                      </span>
                     </th>
                     <th scope="col" className="w-36 px-3 py-2 font-medium">
                       Invited by
@@ -250,7 +260,7 @@ export function UsersAdmin({
                       member={m}
                       self={m.profileId === viewerId}
                       lastAdmin={m.role === "admin" && adminCount <= 1}
-                      lastSignIn={lastSignIn}
+                      activity={activity}
                       timeZone={timeZone}
                       pending={pending}
                       onRole={(next, revert) => changeRole(m, next, revert)}
@@ -282,7 +292,7 @@ function UserRow({
   member: m,
   self,
   lastAdmin,
-  lastSignIn,
+  activity,
   timeZone,
   pending,
   onRole,
@@ -293,7 +303,7 @@ function UserRow({
   member: WorkspaceMember;
   self: boolean;
   lastAdmin: boolean;
-  lastSignIn: Record<string, string | null> | null;
+  activity: { byEmail: Record<string, MemberActivity>; activityTracked: boolean } | null;
   timeZone: string;
   pending: boolean;
   onRole: (role: WorkspaceRole, revert: () => void) => void;
@@ -302,7 +312,9 @@ function UserRow({
   onAddBack: () => void;
 }) {
   const inviteEmail = m.status === "invited" ? describeInviteEmail(m.inviteEmail) : null;
-  const signedInAt = lastSignIn?.[m.email.toLowerCase()] ?? null;
+  const known = activity?.byEmail[m.email.toLowerCase()];
+  const signedInAt = known?.signedInAt ?? null;
+  const activeAt = known?.activeAt ?? null;
   const invitedOn = m.invitedAt ?? m.addedAt;
 
   return (
@@ -312,7 +324,13 @@ function UserRow({
           <Avatar name={m.name} size="md" />
           <div className="min-w-0">
             <p className="truncate font-medium text-zinc-900">
-              {m.name}
+              {m.profileId ? (
+                <Link href={personHref(m.profileId)} className="hover:underline">
+                  {m.name}
+                </Link>
+              ) : (
+                m.name
+              )}
               {self ? <span className="font-normal text-zinc-500"> (you)</span> : null}
             </p>
             {m.name !== m.email ? <p className="truncate text-xs text-zinc-500">{m.email}</p> : null}
@@ -340,15 +358,32 @@ function UserRow({
       </td>
 
       <td className="px-3 py-2 text-xs text-zinc-600">
-        {lastSignIn === null ? (
+        {activity === null ? (
           // tabIndex: keyboard users get the tooltip too.
           <span tabIndex={0} data-tooltip={NO_ACTIVITY_NOTE} className="text-zinc-400">
             —<span className="sr-only">{NO_ACTIVITY_NOTE}</span>
           </span>
-        ) : signedInAt ? (
-          <Timestamp iso={signedInAt} />
         ) : (
-          <span className="text-zinc-500">Never signed in</span>
+          <>
+            {!activity.activityTracked ? (
+              <span tabIndex={0} data-tooltip={SIGN_IN_ONLY_NOTE} className="block text-zinc-400">
+                —<span className="sr-only">{SIGN_IN_ONLY_NOTE}</span>
+              </span>
+            ) : activeAt ? (
+              <Timestamp iso={activeAt} className="block text-zinc-800" />
+            ) : (
+              <span className="block text-zinc-500">No activity yet</span>
+            )}
+            <span className="block text-zinc-400">
+              {signedInAt ? (
+                <>
+                  Signed in <Timestamp iso={signedInAt} />
+                </>
+              ) : (
+                "Never signed in"
+              )}
+            </span>
+          </>
         )}
       </td>
 

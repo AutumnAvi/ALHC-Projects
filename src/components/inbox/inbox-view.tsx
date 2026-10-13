@@ -321,14 +321,16 @@ function TabEmptyState({ tab, bookmarks }: { tab: InboxTab; bookmarks: boolean }
     case "mentioned":
       return (
         <EmptyState icon={AtSign} title="No @mentions yet">
-          When someone @mentions you in a task comment or a project message, it shows up here, archived or not.
+          When someone @mentions you in a task comment, a project message, or a team message, it shows up here,
+          archived or not.
         </EmptyState>
       );
     default:
       return (
         <EmptyState icon={Inbox} title="You’re all caught up">
-          You’ll hear about tasks assigned to you, @mentions, approvals, rule notifications, and comments,
-          completions, and field changes on tasks you follow. Archived notifications are in Archive.
+          You’ll hear about tasks assigned to you, @mentions, approvals, messages, status updates, rule
+          notifications, and comments, completions, and field changes on tasks you follow (choose which in Manage
+          notifications). Archived notifications are in Archive.
         </EmptyState>
       );
   }

@@ -545,10 +545,12 @@ begin
   -- and options; never their project).
   -- Asana parity, batch 5 added list_workspace_member_activity (workspace admins only: each allowlisted
   -- address's last sign-in time for the Admin console; nothing about projects or tasks).
+  -- Real features 2 added list_member_last_activity (workspace admins: every allowlisted person's last
+  -- sign-in and last activity time; anyone else: only their own row; timestamps only, never what or where).
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
     'assign_request_number,browse_project_people,browse_projects,can_manage_project_template,cancel_approval,cancel_integration_delivery,create_project_from_template,custom_field_project,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,format_request_label,'
-    'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_batch,invite_to_workspace,is_allowlisted,is_workspace_admin,join_project,list_email_deliveries,list_field_library,list_integration_deliveries,list_workspace_member_activity,move_portfolio_project,'
+    'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_batch,invite_to_workspace,is_allowlisted,is_workspace_admin,join_project,list_email_deliveries,list_field_library,list_integration_deliveries,list_member_last_activity,list_workspace_member_activity,move_portfolio_project,'
     'open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_role,'
     'receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,remove_workspace_member,'
     'request_approval,resend_workspace_invite,restore_task,resubmit_approval,retry_email_delivery,retry_integration_delivery,rule_project,save_project_as_template,set_project_archived,set_project_integration,set_project_status,set_task_dependency,start_import_run,submit_form,'

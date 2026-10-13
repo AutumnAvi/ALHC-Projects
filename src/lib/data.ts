@@ -61,6 +61,8 @@ import {
   type TeamRole,
 } from "@/lib/teams";
 import { INBOX_LIMIT, type InboxTab } from "@/lib/inbox";
+import { resolveNotificationSettings, type NotificationSettings } from "@/lib/notifications";
+import { PROFILE_ACTIVITY_LIMIT, PROFILE_TASK_LIMIT } from "@/lib/people";
 import {
   WORKSPACE_ASSETS_BUCKET,
   isProjectVisibility,
@@ -1455,7 +1457,8 @@ export type InboxItem = {
     | "approval_requested"
     | "approval_decided"
     | "rule"
-    | "message";
+    | "message"
+    | "status_update";
   data: Json;
   actorId: string | null;
   readAt: string | null;
@@ -1464,14 +1467,18 @@ export type InboxItem = {
   // 20261012050000_asana_parity_5.sql (hasBatch5Schema()).
   bookmarkedAt: string | null;
   createdAt: string;
-  // Task items: the task. Message items (Messages tab): null, and `message` is set; taskTitle then
-  // holds the thread's title.
+  // Task items: the task. Message items (Messages tab): null, and `message` (project) or `teamMessage`
+  // (team, Real features 2) is set; taskTitle then holds the thread's title. Status update items
+  // (Real features 2): null, `statusUpdate` is set, taskTitle is the project's name and commentBody the
+  // update's summary.
   taskId: string | null;
   taskTitle: string;
   // Subtasks: the parent task's title.
   parentTitle: string | null;
   commentBody: string | null;
   message: { id: string; threadId: string; projectId: string; projectName: string } | null;
+  teamMessage: { id: string; threadId: string; teamId: string; teamName: string } | null;
+  statusUpdate: { id: string; projectId: string; projectName: string; status: string; title: string | null } | null;
   // approval_requested items: the request now (its approver decides it from the Inbox while pending).
   approval: { id: string; status: TaskApproval["status"]; approverId: string } | null;
 };
@@ -1495,6 +1502,16 @@ export const hasReal1Schema = cache(async (): Promise<boolean> => {
   return !result.error;
 });
 
+// Is 20261013020000_real_2.sql applied? Its last statement before the tail makes notification_settings
+// readable, so a preview without it keeps the old Notifications tab, says team messages need the update,
+// and shows last sign-ins only. (Its tail, applied by hand, only lets team message and status update
+// notifications into the Inbox.)
+export const hasReal2Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.from("notification_settings").select("kind").limit(1);
+  return !result.error;
+});
+
 type InboxRowBase = {
   id: string;
   kind: string;
@@ -1508,6 +1525,27 @@ type InboxRowBase = {
 type InboxTaskRow = InboxRowBase & {
   task: { id: string; title: string; parent_task_id: string | null };
   comment: { body: string; deleted_at: string | null } | null;
+};
+type InboxTeamMessageRow = InboxRowBase & {
+  team_message: {
+    id: string;
+    team_id: string;
+    thread_id: string | null;
+    title: string | null;
+    body: string;
+    deleted_at: string | null;
+    team: { name: string };
+  };
+};
+type InboxStatusRow = InboxRowBase & {
+  status_update: {
+    id: string;
+    project_id: string;
+    status: string;
+    title: string | null;
+    note: string | null;
+    project: { name: string };
+  };
 };
 type InboxMessageRow = InboxRowBase & {
   message: {
@@ -1528,7 +1566,7 @@ type InboxMessageRow = InboxRowBase & {
 // bookmarkedAt is null.
 export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<InboxItem[]> => {
   const supabase = await createClient();
-  const bookmarks = await hasBatch5Schema();
+  const [bookmarks, real2] = await Promise.all([hasBatch5Schema(), hasReal2Schema()]);
   if (tab === "bookmarks" && !bookmarks) return [];
 
   // The tab as a PostgREST filter: [column, operator, value].
@@ -1547,7 +1585,10 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
   const messageColumns = bookmarks
     ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))"
     : "id, kind, data, actor_id, read_at, archived_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))";
-  const [taskResult, messageResult] = await Promise.all([
+  const base = bookmarks
+    ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at"
+    : "id, kind, data, actor_id, read_at, archived_at, created_at";
+  const [taskResult, messageResult, teamResult, statusResult] = await Promise.all([
     supabase
       .from("inbox_items")
       .select(taskColumns)
@@ -1566,9 +1607,39 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
       .order("created_at", { ascending: false })
       .limit(INBOX_LIMIT)
       .overrideTypes<InboxMessageRow[], { merge: false }>(),
+    // Real features 2: team messages and status updates (none on a database without its migration).
+    real2
+      ? supabase
+          .from("inbox_items")
+          .select(
+            `${base}, team_message:team_messages!inner(id, team_id, thread_id, title, body, deleted_at, team:teams!inner(name, deleted_at))`,
+          )
+          .is("task_id", null)
+          .is("team_message.deleted_at", null)
+          .is("team_message.team.deleted_at", null)
+          .filter(column, operator, value)
+          .order("created_at", { ascending: false })
+          .limit(INBOX_LIMIT)
+          .overrideTypes<InboxTeamMessageRow[], { merge: false }>()
+      : Promise.resolve({ data: [] as InboxTeamMessageRow[], error: null }),
+    real2
+      ? supabase
+          .from("inbox_items")
+          .select(
+            `${base}, status_update:project_status_updates!inner(id, project_id, status, title, note, project:projects!inner(name, deleted_at))`,
+          )
+          .is("task_id", null)
+          .is("status_update.project.deleted_at", null)
+          .filter(column, operator, value)
+          .order("created_at", { ascending: false })
+          .limit(INBOX_LIMIT)
+          .overrideTypes<InboxStatusRow[], { merge: false }>()
+      : Promise.resolve({ data: [] as InboxStatusRow[], error: null }),
   ]);
   const items = rows(taskResult, "inbox");
   const messageItems = rows(messageResult, "inbox messages");
+  const teamItems = rows(teamResult, "inbox team messages");
+  const statusItems = rows(statusResult, "inbox status updates");
 
   const approvalIds = [
     ...new Set(
@@ -1601,6 +1672,17 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
         ).map((t) => [t.id, t] as const),
       )
     : new Map<string, { id: string; title: string | null; deleted_at: string | null }>();
+  const teamThreadIds = [
+    ...new Set(teamItems.map((m) => m.team_message.thread_id).filter((t): t is string => t !== null)),
+  ];
+  const teamThreads = teamThreadIds.length
+    ? new Map(
+        rows(
+          await supabase.from("team_messages").select("id, title, deleted_at").in("id", teamThreadIds),
+          "team message threads",
+        ).map((t) => [t.id, t] as const),
+      )
+    : new Map<string, { id: string; title: string | null; deleted_at: string | null }>();
 
   const taskItems: InboxItem[] = items
     .filter((item) => !item.comment?.deleted_at)
@@ -1618,6 +1700,8 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
       parentTitle: item.task.parent_task_id ? (parentTitle.get(item.task.parent_task_id) ?? null) : null,
       commentBody: item.comment?.body ?? null,
       message: null,
+      teamMessage: null,
+      statusUpdate: null,
       approval: (() => {
         const d = item.data;
         const approvalId =
@@ -1647,12 +1731,60 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
         parentTitle: null,
         commentBody: m.body,
         message: { id: m.id, threadId: m.thread_id ?? m.id, projectId: m.project_id, projectName: m.project.name },
+        teamMessage: null,
+        statusUpdate: null,
         approval: null,
       },
     ];
   });
+  const teamMessages: InboxItem[] = teamItems.flatMap((item) => {
+    const m = item.team_message;
+    const thread = m.thread_id ? teamThreads.get(m.thread_id) : null;
+    if (m.thread_id && (!thread || thread.deleted_at)) return [];
+    return [
+      {
+        id: item.id,
+        kind: item.kind as InboxItem["kind"],
+        data: item.data,
+        actorId: item.actor_id,
+        readAt: item.read_at,
+        archivedAt: item.archived_at,
+        bookmarkedAt: item.bookmarked_at ?? null,
+        createdAt: item.created_at,
+        taskId: null,
+        taskTitle: (thread ? thread.title : m.title) ?? "Message",
+        parentTitle: null,
+        commentBody: m.body,
+        message: null,
+        teamMessage: { id: m.id, threadId: m.thread_id ?? m.id, teamId: m.team_id, teamName: m.team.name },
+        statusUpdate: null,
+        approval: null,
+      },
+    ];
+  });
+  const statusUpdates: InboxItem[] = statusItems.map((item) => {
+    const u = item.status_update;
+    return {
+      id: item.id,
+      kind: item.kind as InboxItem["kind"],
+      data: item.data,
+      actorId: item.actor_id,
+      readAt: item.read_at,
+      archivedAt: item.archived_at,
+      bookmarkedAt: item.bookmarked_at ?? null,
+      createdAt: item.created_at,
+      taskId: null,
+      taskTitle: u.project.name,
+      parentTitle: null,
+      commentBody: u.note,
+      message: null,
+      teamMessage: null,
+      statusUpdate: { id: u.id, projectId: u.project_id, projectName: u.project.name, status: u.status, title: u.title },
+      approval: null,
+    };
+  });
   // Newest first; items made in the same transaction keep a stable order.
-  return [...taskItems, ...messages]
+  return [...taskItems, ...messages, ...teamMessages, ...statusUpdates]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     .slice(0, INBOX_LIMIT);
 });
@@ -1704,16 +1836,23 @@ type MessageRow = {
 };
 
 function toProjectMessage(row: MessageRow): ProjectMessage {
-  const active = row.project_message_reactions
-    .filter((r) => !r.deleted_at)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return toMessage(row, row.project_message_mentions, row.project_message_reactions);
+}
+
+// A project or team message (same shape; the mention / reaction tables differ).
+function toMessage(
+  row: { id: string; body: string; author_id: string; created_at: string; edited_at: string | null },
+  mentions: { profile_id: string }[],
+  reactions: { emoji: string; profile_id: string; deleted_at: string | null; created_at: string }[],
+): ProjectMessage {
+  const active = reactions.filter((r) => !r.deleted_at).sort((a, b) => a.created_at.localeCompare(b.created_at));
   return {
     id: row.id,
     authorId: row.author_id,
     body: row.body,
     createdAt: row.created_at,
     editedAt: row.edited_at,
-    mentionIds: row.project_message_mentions.map((m) => m.profile_id),
+    mentionIds: mentions.map((m) => m.profile_id),
     reactions: REACTIONS.flatMap(({ key }) => {
       const profileIds = active.filter((r) => r.emoji === key).map((r) => r.profile_id);
       return profileIds.length ? [{ emoji: key, profileIds }] : [];
@@ -1790,6 +1929,136 @@ export const getMessageThread = cache(async (threadId: string): Promise<MessageT
     lastActivityAt: thread.last_activity_at,
     replies: replies.map(toProjectMessage),
   };
+});
+
+// ---------------------------------------------------------------------------------------------
+// Team Messages (Real features 2: threads + replies; RLS: whoever can see the team reads)
+// ---------------------------------------------------------------------------------------------
+
+export type TeamThreadSummary = MessageThreadSummary & { following: boolean };
+
+export type TeamMessageThread = ProjectMessage & {
+  teamId: string;
+  title: string;
+  lastActivityAt: string;
+  replies: ProjectMessage[];
+  // Who follows the thread (gets its replies in the Inbox), in the order they started.
+  followerIds: string[];
+};
+
+const TEAM_MESSAGE_COLUMNS =
+  "id, team_id, thread_id, title, body, author_id, created_at, edited_at, last_activity_at, team_message_mentions(profile_id), team_message_reactions(emoji, profile_id, deleted_at, created_at)";
+
+type TeamMessageRow = {
+  id: string;
+  team_id: string;
+  title: string | null;
+  body: string;
+  author_id: string;
+  created_at: string;
+  edited_at: string | null;
+  last_activity_at: string;
+  team_message_mentions: { profile_id: string }[];
+  team_message_reactions: { emoji: string; profile_id: string; deleted_at: string | null; created_at: string }[];
+};
+
+const toTeamMessage = (row: TeamMessageRow) => toMessage(row, row.team_message_mentions, row.team_message_reactions);
+
+// A team's threads, most recently active first, with whether the viewer follows each. Null on a
+// database without 20261013020000_real_2.sql.
+export const listTeamMessageThreads = cache(async (teamId: string): Promise<TeamThreadSummary[] | null> => {
+  if (!(await hasReal2Schema())) return null;
+  const { user } = await getViewer();
+  const supabase = await createClient();
+  const threads = rows(
+    await supabase
+      .from("team_messages")
+      .select("id, title, body, author_id, created_at, last_activity_at")
+      .eq("team_id", teamId)
+      .is("thread_id", null)
+      .is("deleted_at", null)
+      .order("last_activity_at", { ascending: false })
+      .limit(200),
+    "team messages",
+  );
+  if (threads.length === 0) return [];
+  const ids = threads.map((t) => t.id);
+  const [replies, follows] = await Promise.all([
+    supabase.from("team_messages").select("thread_id").in("thread_id", ids).is("deleted_at", null),
+    user
+      ? supabase
+          .from("team_message_followers")
+          .select("thread_id")
+          .in("thread_id", ids)
+          .eq("profile_id", user.id)
+          .is("deleted_at", null)
+      : Promise.resolve({ data: [] as { thread_id: string }[], error: null }),
+  ]);
+  const counts = new Map<string, number>();
+  for (const r of rows(replies, "team message replies")) {
+    if (r.thread_id) counts.set(r.thread_id, (counts.get(r.thread_id) ?? 0) + 1);
+  }
+  const following = new Set(rows(follows, "team message follows").map((f) => f.thread_id));
+  return threads.map((t) => ({
+    id: t.id,
+    title: t.title ?? "Untitled",
+    body: t.body,
+    authorId: t.author_id,
+    createdAt: t.created_at,
+    lastActivityAt: t.last_activity_at,
+    replyCount: counts.get(t.id) ?? 0,
+    following: following.has(t.id),
+  }));
+});
+
+// One team thread with its replies (oldest first) and followers; null when missing, removed,
+// unreadable, or on a database without this release's migration.
+export const getTeamMessageThread = cache(async (threadId: string): Promise<TeamMessageThread | null> => {
+  if (!(await hasReal2Schema())) return null;
+  const supabase = await createClient();
+  const thread = maybe(
+    await supabase
+      .from("team_messages")
+      .select(TEAM_MESSAGE_COLUMNS)
+      .eq("id", threadId)
+      .is("thread_id", null)
+      .is("deleted_at", null)
+      .maybeSingle()
+      .overrideTypes<TeamMessageRow | null, { merge: false }>(),
+    "team message",
+  );
+  if (!thread) return null;
+  const [replies, followers] = await Promise.all([
+    supabase
+      .from("team_messages")
+      .select(TEAM_MESSAGE_COLUMNS)
+      .eq("thread_id", threadId)
+      .is("deleted_at", null)
+      .order("created_at")
+      .overrideTypes<TeamMessageRow[], { merge: false }>(),
+    supabase
+      .from("team_message_followers")
+      .select("profile_id")
+      .eq("thread_id", threadId)
+      .is("deleted_at", null)
+      .order("created_at"),
+  ]);
+  return {
+    ...toTeamMessage(thread),
+    teamId: thread.team_id,
+    title: thread.title ?? "Untitled",
+    lastActivityAt: thread.last_activity_at,
+    replies: rows(replies, "team message replies").map(toTeamMessage),
+    followerIds: rows(followers, "team message followers").map((f) => f.profile_id),
+  };
+});
+
+// Can the viewer post in this team's Messages (its members, leads, and workspace admins)?
+export const canPostTeamMessage = cache(async (teamId: string): Promise<boolean> => {
+  if (!(await hasReal2Schema())) return false;
+  const supabase = await createClient();
+  const result = await supabase.rpc("can_post_team_message", { target_team: teamId });
+  return !result.error && result.data === true;
 });
 
 export const countUnreadInbox = cache(async () => {
@@ -2122,6 +2391,8 @@ export type MySettings = {
   workspaceName: string;
   teams: { id: string; name: string; lead: boolean }[];
   emailComments: boolean;
+  // Real features 2: the Inbox / Email switch per kind (null on a database without its migration).
+  notifications: NotificationSettings | null;
   joinedAt: string | null;
   signInMethod: "google" | "password";
   // How My tasks opens (the my_tasks_layout cookie), for Settings → Display.
@@ -2171,12 +2442,13 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
   const supabase = await createClient();
-  const [profile, admin, teams, workspace, cookieStore] = await Promise.all([
+  const [profile, admin, teams, workspace, cookieStore, notificationRows] = await Promise.all([
     supabase.from("profiles").select("full_name, email_comments, joined_at").eq("id", user.id).maybeSingle(),
     isWorkspaceAdmin(),
     listTeams(),
     getWorkspace(),
     cookies(),
+    supabase.from("notification_settings").select("kind, inbox, email"),
   ]);
   const layout = cookieStore.get(MY_TASKS_LAYOUT_COOKIE)?.value;
   const row = maybe(profile, "profile");
@@ -2195,6 +2467,9 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
       return me ? [{ id: team.id, name: team.name, lead: me.role === "lead" }] : [];
     }),
     emailComments: row?.email_comments ?? true,
+    notifications: notificationRows.error
+      ? null
+      : resolveNotificationSettings(notificationRows.data ?? [], row?.email_comments ?? true),
     joinedAt: row?.joined_at ?? null,
     signInMethod: providers.includes("google") ? "google" : "password",
     myTasksLayout: isMyTasksLayout(layout) ? layout : "sections",
@@ -3974,6 +4249,36 @@ export const listWorkspaceMemberActivity = cache(async (): Promise<Map<string, s
   return new Map(rows(result, "member activity").map((r) => [r.email.toLowerCase(), r.last_sign_in_at] as const));
 });
 
+export type MemberActivity = { signedInAt: string | null; activeAt: string | null };
+
+// Each allowlisted person's last sign-in and last activity (Admin console → Users), by lowercased
+// address: list_member_last_activity (Real features 2) — workspace admins get everyone. Falls back to
+// sign-ins only (activeAt undefined → the UI says so) on a database without it; null when the viewer
+// isn't a workspace admin or neither function exists.
+export const listMemberLastActivity = cache(
+  async (): Promise<{ byEmail: Map<string, MemberActivity>; activityTracked: boolean } | null> => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("list_member_last_activity", {});
+    if (!result.error) {
+      return {
+        byEmail: new Map(
+          (result.data ?? []).map((r) => [r.email.toLowerCase(), { signedInAt: r.last_sign_in_at, activeAt: r.last_active_at }] as const),
+        ),
+        activityTracked: true,
+      };
+    }
+    if (!["PGRST202", "42883"].includes(result.error.code ?? "")) {
+      throw new Error(`Failed to load member activity: ${result.error.message}`);
+    }
+    const signIns = await listWorkspaceMemberActivity();
+    if (!signIns) return null;
+    return {
+      byEmail: new Map([...signIns].map(([email, at]) => [email, { signedInAt: at, activeAt: null }] as const)),
+      activityTracked: false,
+    };
+  },
+);
+
 export type InviteDelivery = {
   id: string;
   email: string;
@@ -4006,4 +4311,226 @@ export const listInviteDeliveries = cache(async (limit = 50): Promise<InviteDeli
     sentAt: r.sent_at,
     createdAt: r.created_at,
   }));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Person profile pages (Real features 2): /people/<id>. Everything reads with the viewer's own client,
+// so the open tasks, activity, and projects shown are only ones RLS lets the viewer read; the
+// workspace-wide last activity time comes from list_member_last_activity only for workspace admins and
+// the person themselves.
+// ---------------------------------------------------------------------------------------------
+
+export type PersonTask = {
+  id: string;
+  title: string;
+  dueOn: string | null;
+  completedAt: string | null;
+  kind: string;
+  // The project to name: the home project when the viewer can read it, else another readable one;
+  // null for a private task.
+  projectName: string | null;
+  isSubtask: boolean;
+};
+
+export type PersonActivity = {
+  id: string;
+  at: string;
+  kind: "story" | "comment";
+  // Stories: the story kind (activityVerb()); comments: "comment".
+  verb: string;
+  taskId: string;
+  taskTitle: string;
+  // Comments: the first line of the comment.
+  excerpt: string | null;
+  // Back-to-back story lines of the same kind on the same task are folded into one (at = the newest).
+  times: number;
+};
+
+export type PersonProfile = {
+  id: string;
+  name: string;
+  email: string;
+  joinedAt: string | null;
+  status: "active" | "invited" | "removed" | "not_in_workspace";
+  isWorkspaceAdmin: boolean;
+  teams: { id: string; name: string; role: TeamRole }[];
+  // Projects both can open: the person's memberships RLS shows the viewer (projects the viewer is in).
+  projects: { id: string; name: string; role: string; archived: boolean }[];
+  openTasks: PersonTask[];
+  // How many open tasks assigned to them the viewer can read (openTasks shows the first PROFILE_TASK_LIMIT).
+  openTaskCount: number;
+  recentlyCompleted: PersonTask[];
+  activity: PersonActivity[];
+  // "workspace": from list_member_last_activity (workspace admins, or the person themselves);
+  // "visible": the newest activity the viewer can read; null when there's none.
+  lastActivity: { at: string | null; signedInAt: string | null; scope: "workspace" | "visible" };
+};
+
+const PERSON_TASK_COLUMNS = "id, title, due_on, completed_at, kind, home_project_id, parent_task_id, root_task_id";
+
+export const getPersonProfile = cache(async (profileId: string): Promise<PersonProfile | null> => {
+  if (!isUuid(profileId)) return null;
+  const { user } = await getViewer();
+  if (!user) return null;
+  const supabase = await createClient();
+  const profile = maybe(
+    await supabase.from("profiles").select("id, email, full_name, joined_at").eq("id", profileId).maybeSingle(),
+    "person",
+  );
+  if (!profile) return null;
+  const email = profile.email.toLowerCase();
+  const self = profileId === user.id;
+  const [allowed, admin, viewerIsAdmin, teamRows, memberRows, openResult, doneResult, stories, comments, readable] =
+    await Promise.all([
+      supabase.from("allowed_emails").select("removed_at").eq("email", email).maybeSingle(),
+      supabase.from("workspace_admins").select("id").eq("profile_id", profileId).is("deleted_at", null).limit(1),
+      isWorkspaceAdmin(),
+      supabase
+        .from("team_members")
+        .select("role, team:teams!team_members_team_id_fkey!inner(id, name, deleted_at)")
+        .eq("profile_id", profileId)
+        .is("deleted_at", null)
+        .is("team.deleted_at", null),
+      supabase
+        .from("project_members")
+        .select("role, project:projects!inner(id, name, archived_at, deleted_at)")
+        .eq("profile_id", profileId)
+        .is("deleted_at", null)
+        .is("project.deleted_at", null),
+      supabase
+        .from("tasks")
+        .select(PERSON_TASK_COLUMNS, { count: "exact" })
+        .eq("assignee_id", profileId)
+        .is("completed_at", null)
+        .is("deleted_at", null)
+        .order("due_on", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(PROFILE_TASK_LIMIT),
+      supabase
+        .from("tasks")
+        .select(PERSON_TASK_COLUMNS)
+        .eq("assignee_id", profileId)
+        .not("completed_at", "is", null)
+        .is("deleted_at", null)
+        .order("completed_at", { ascending: false })
+        .limit(10),
+      supabase
+        .from("task_stories")
+        .select("id, kind, created_at, task:tasks!inner(id, title, deleted_at, source, created_at)")
+        .eq("actor_id", profileId)
+        .is("task.deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(PROFILE_ACTIVITY_LIMIT * 2),
+      supabase
+        .from("comments")
+        .select("id, body, created_at, task:tasks!inner(id, title, deleted_at)")
+        .eq("author_id", profileId)
+        .is("deleted_at", null)
+        .is("task.deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(PROFILE_ACTIVITY_LIMIT),
+      listReadableProjects(),
+    ]);
+
+  const projectNames = new Map(readable.map((p) => [p.id, p.name] as const));
+  const openRows = rows(openResult, "their open tasks");
+  const doneRows = rows(doneResult, "their completed tasks");
+  // Tasks whose home project the viewer can't open (multi-homed into one they can): name a readable one.
+  const unnamed = [...openRows, ...doneRows]
+    .filter((t) => t.home_project_id && !projectNames.has(t.home_project_id))
+    .map((t) => t.root_task_id ?? t.id);
+  const otherProject = new Map<string, string>();
+  if (unnamed.length) {
+    for (const m of rows(
+      await supabase.from("task_projects").select("task_id, project_id").in("task_id", [...new Set(unnamed)]).is("deleted_at", null),
+      "task projects",
+    )) {
+      const name = projectNames.get(m.project_id);
+      if (name && !otherProject.has(m.task_id)) otherProject.set(m.task_id, name);
+    }
+  }
+  const toTask = (t: (typeof openRows)[number]): PersonTask => ({
+    id: t.id,
+    title: t.title,
+    dueOn: t.due_on,
+    completedAt: t.completed_at,
+    kind: t.kind,
+    projectName: t.home_project_id
+      ? (projectNames.get(t.home_project_id) ?? otherProject.get(t.root_task_id ?? t.id) ?? null)
+      : null,
+    isSubtask: t.parent_task_id !== null,
+  });
+
+  // Activity the viewer can read: task stories they caused (not the ones an inbound webhook wrote in
+  // their name while creating a task) and their comments, newest first.
+  const activity: PersonActivity[] = [
+    ...rows(stories, "their activity")
+      .filter((s) => !(s.task.source === "inbound" && s.created_at === s.task.created_at))
+      .map((s) => ({
+        id: `story-${s.id}`,
+        at: s.created_at,
+        kind: "story" as const,
+        verb: s.kind,
+        taskId: s.task.id,
+        taskTitle: s.task.title,
+        excerpt: null,
+        times: 1,
+      })),
+    ...rows(comments, "their comments").map((c) => ({
+      id: `comment-${c.id}`,
+      at: c.created_at,
+      kind: "comment" as const,
+      verb: "comment",
+      taskId: c.task.id,
+      taskTitle: c.task.title,
+      excerpt: c.body.split("\n").find((line) => line.trim())?.trim().slice(0, 200) ?? null,
+      times: 1,
+    })),
+  ]
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .reduce<PersonActivity[]>((list, item) => {
+      const last = list[list.length - 1];
+      if (last && item.kind === "story" && last.kind === "story" && last.verb === item.verb && last.taskId === item.taskId) {
+        last.times += 1;
+      } else {
+        list.push(item);
+      }
+      return list;
+    }, [])
+    .slice(0, PROFILE_ACTIVITY_LIMIT);
+
+  let lastActivity: PersonProfile["lastActivity"] = { at: activity[0]?.at ?? null, signedInAt: null, scope: "visible" };
+  if (self || viewerIsAdmin) {
+    const result = await supabase.rpc("list_member_last_activity", { target_profile: profileId });
+    const row = result.error ? null : (result.data?.[0] ?? null);
+    if (row) lastActivity = { at: row.last_active_at, signedInAt: row.last_sign_in_at, scope: "workspace" };
+  }
+
+  const allowedRow = maybe(allowed, "allowlist entry");
+  return {
+    id: profile.id,
+    name: displayName(profile),
+    email: profile.email,
+    joinedAt: profile.joined_at,
+    status: !allowedRow
+      ? "not_in_workspace"
+      : allowedRow.removed_at
+        ? "removed"
+        : profile.joined_at
+          ? "active"
+          : "invited",
+    isWorkspaceAdmin: rows(admin, "workspace admins").length > 0,
+    teams: rows(teamRows, "their teams")
+      .filter((m) => isTeamRole(m.role))
+      .map((m) => ({ id: m.team.id, name: m.team.name, role: m.role as TeamRole }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    projects: rows(memberRows, "their projects")
+      .map((m) => ({ id: m.project.id, name: m.project.name, role: m.role, archived: m.project.archived_at !== null }))
+      .sort((a, b) => Number(a.archived) - Number(b.archived) || a.name.localeCompare(b.name)),
+    openTasks: openRows.map(toTask),
+    openTaskCount: openResult.count ?? openRows.length,
+    recentlyCompleted: doneRows.map(toTask),
+    activity,
+    lastActivity,
+  };
 });
