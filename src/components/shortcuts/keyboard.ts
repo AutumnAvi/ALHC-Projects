@@ -29,7 +29,8 @@ export type ListKeyHandlers = {
   assignToMe: () => void;
 };
 
-const CHORD_MS = 1000;
+// How long after Tab the second key of a chord (Tab→Q, Tab→M) still counts.
+export const CHORD_MS = 1000;
 
 // List shortcuts: ↑/↓ (moves the cursor), Enter, Esc, ⌘/Ctrl+Enter, and the Tab chords Tab→Q (quick add)
 // and Tab→M (assign to me). Tab keeps its normal focus behaviour; Q or M within a second afterwards,
@@ -83,6 +84,38 @@ export function useListKeys(handlers: ListKeyHandlers) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+}
+
+// One Tab chord for a page without list keys (Home's My tasks widget takes Tab→Q for its inline add):
+// Tab, then `key` within a second, with focus outside a text field and no dialog open. Taking the chord
+// prevents the event's default, so the global Create → Task stands down (keyboard-shortcuts.tsx).
+export function useTabChord(key: string, handler: () => void) {
+  const ref = useRef(handler);
+  useEffect(() => {
+    ref.current = handler;
+  });
+
+  useEffect(() => {
+    let tabAt = 0;
+    function onKey(e: KeyboardEvent) {
+      if (e.defaultPrevented) return;
+      if (isTypingTarget(e.target)) {
+        tabAt = 0;
+        return;
+      }
+      if (e.key === "Tab" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        tabAt = Date.now();
+        return;
+      }
+      const chord = Date.now() - tabAt < CHORD_MS;
+      tabAt = 0;
+      if (!chord || e.metaKey || e.ctrlKey || e.altKey || e.key.toLowerCase() !== key || dialogOpen()) return;
+      e.preventDefault();
+      ref.current();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [key]);
 }
 
 // Enter on a focused button or link keeps activating it; only rows and the page itself open the pane.

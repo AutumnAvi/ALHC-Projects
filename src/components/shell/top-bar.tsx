@@ -59,7 +59,8 @@ export function TopBar() {
 }
 
 // shortcut: the keys shown at the end of the item (Tab then Q opens the task dialog anywhere but a List
-// view or My tasks, where it adds a task inline).
+// view, where it adds a task in the current section, and Home, where it opens the My tasks widget's new
+// row; the menu item itself always opens the dialog).
 const CREATE_ITEMS: { kind: ShellDialog["kind"]; label: string; icon: LucideIcon; shortcut?: string[] }[] = [
   { kind: "task", label: "Task", icon: CircleCheck, shortcut: ["Tab", "Q"] },
   { kind: "project", label: "Project", icon: FolderKanban },

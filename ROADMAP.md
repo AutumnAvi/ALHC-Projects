@@ -1,6 +1,6 @@
 # ALHC-Projects roadmap (everything not built yet)
 
-Updated: 2026-10-12 (Asana parity batch 5 honesty gaps added to Group 0). App: https://alhc-projects.vercel.app · repo AutumnAvi/ALHC-Projects (main after PR #36 + `6dedf9f`).
+Updated: 2026-10-13 (real-1 made the top five of Group 0 real; PR open, migration not applied yet). App: https://alhc-projects.vercel.app · repo AutumnAvi/ALHC-Projects (main after PR #36 + `6dedf9f`).
 Sources: SHIP-STATUS.md, END-OF-BUILD-CHECKLIST.md, ai-actions-proposal.md, AGENTS.md "Follow-ups" + "Phases" on main, research/asana-feature-map-v1-2026-10-05.md, plus general Asana knowledge (marked "Asana").
 
 **Size:** S = a small paste or part of a phase · M = about one Claude phase · L = several phases or outside setup.
@@ -24,13 +24,14 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - [x] Reply-by-email: form submitters auto-follow their task, comments email them (with a per-form toggle), and their replies come back as comments.
 - [x] Workspace invites send a real invite email.
 - [x] CSV export tells you on screen when it hit the 10,000-row cap.
+- [x] **Add someone by email on a project, portfolio or team** (real-1): invites anyone in the workspace who hasn't signed in yet, and a workspace admin can invite a brand-new address (it joins the workspace too). The invitee gets an email with a Sign up link that lands on that project, portfolio or team, and joins with the chosen role on their first sign-in. Members lists and Share show them as Invited, with the email's status, Resend and Cancel. Someone who isn't a workspace admin still can't bring a new address into the workspace (the message says to ask an admin) — on purpose, since only admins manage who can sign in.
+- [x] **Forward emails to create tasks** (real-1): Settings → Email forwarding gives everyone their own address on the reply domain (rotatable) and a project picker. An email sent or forwarded from their own address becomes a task assigned to them (subject = name, body = description, attachments copied into private storage), in that project while they can still add tasks there, else in My tasks. Mail from anyone else, or to an old address, is ignored and shown in the tab's "Recently forwarded".
+- [x] **Attachment questions on forms** (real-1): public submitters attach up to 5 files per question (10 per response, 25 MB each, common file types); they land on the task the form creates.
+- [x] **Create project / Create goal from a team page** preselect that team (real-1). A project falls back to the default team when you aren't on that team, because only members can put projects in a team.
+- [x] **Home → Create task** is an inline row at the top of My tasks (real-1): Enter saves and keeps the row open, Esc cancels; Tab then Q does the same on Home.
 
 ### Still simulated or missing (to build)
-- [ ] **Add someone by email on a project, portfolio or team** only works if they're already in the workspace and have signed in once. Otherwise it errors. Should create a pending invite, email them, and add them on first sign-in.
-- [ ] **Forward emails to create tasks** (Settings): "Coming later" placeholder.
-- [ ] **Attachment questions on forms**: "Coming later" in the form editor.
-- [ ] **Create project / Create goal from a team page** don't preselect the team.
-- [ ] **Home → Create task** opens the private Create task dialog, not an inline row in My tasks.
+- [ ] **real-1 is not live until its migration is applied:** `20261013010000_real_1.sql` (no tail) goes in through the migration-applier before the PR merges. Until then the preview hides Resend, Attachment questions and forwarding and says they need the database update.
 - [ ] **Team Messages**: placeholder that links to project Messages.
 - [ ] **Inbox notification settings**: no per-kind on/off switches (in-app or email).
 - [ ] **Last activity** in Admin/Members is only the last sign-in.
@@ -42,7 +43,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - [ ] **No code yet:** Inbox email digest, iCal feed, scheduled report emails, email bounce/complaint tracking, push notifications.
 
 ### Batches (by value)
-1. **real-1, invites and email-in:** pending invites for project/portfolio/team "add by email" (email + auto-join on first sign-in), Forward emails to create tasks, form attachment questions, team preselect on create, Home inline Create task.
+1. ~~**real-1, invites and email-in**~~ built (PR open; apply the migration, then merge): pending invites for project/portfolio/team "add by email" (email + auto-join on first sign-in), Forward emails to create tasks, form attachment questions, team preselect on create, Home inline Create task.
 2. **real-2, team and people:** real Team Messages, per-kind notification settings (respected by Inbox and email), real last activity, person profile pages.
 3. **real-3, email extras:** Inbox email digest, scheduled report emails, bounce/complaint tracking from Resend webhooks.
 4. **real-4, data and calendar:** draggable Team Calendar, iCal feed (token route), unlimited streaming CSV, Status templates, importer attachment copy (once Avi decides).
@@ -52,7 +53,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - **Leaked-password protection:** Supabase → Authentication → Attack Protection (Passwords) → turn on "Prevent use of leaked passwords".
 - **Google sign-in:** Google Cloud Console → APIs & Services → Credentials → OAuth client (Web), redirect URI `https://xsgmawawwstbrbukgsax.supabase.co/auth/v1/callback`. Paste the client ID/secret in Supabase → Authentication → Providers → Google. Then add `AUTH_GOOGLE_ENABLED=true` in Vercel Production and redeploy.
 - **Importer attachments:** decide whether the importer may download files from Asana at import time.
-- **Email forwarding (after real-1):** add an MX/inbound route in Resend for the forwarding address if real-1's report asks for one.
+- **Email forwarding (after real-1):** no new DNS or Resend route. Forwarding addresses (`f-…@reply.mail.autumnlakemarketing.com`) use the same reply domain, MX record, Resend webhook and `RESEND_WEBHOOK_SECRET` as reply-by-email. One check: forwards are accepted only when Resend reports **DMARC pass** for the sender, so `autumnlakemarketing.com` needs a DMARC record (a `TXT` at `_dmarc.autumnlakemarketing.com`, e.g. `v=DMARC1; p=none; rua=mailto:…` to start). If forwarding says "didn't pass the sender checks", that record is missing. Before merging real-1, have its migration applied (the migration-applier does it).
 
 ---
 
@@ -153,7 +154,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 | Inbound payloads: create unknown tags or sections, `section` key, attachments, subtasks | M | — |
 | Inbound: per-endpoint and workspace rate limits, edge limit for unknown tokens, test-send button, prune old call logs | S | — |
 | Signing-secret rotation with an overlap window (outbound and inbound) | S | — |
-| Inbound email address per project (email → task) | M | Key: inbound email provider + DNS |
+| Inbound email address per project (email → task). real-1 built a personal forwarding address (tasks go to your chosen project) | M | — (same reply domain) |
 | Encrypt webhook/signing secrets at rest (they're plaintext today, behind RLS) | M | — |
 | Workspace-wide delivery log, bulk retry, per-project retry limits; `{task_link}` in comments/emails; webhook payload options | S–M | — |
 | Zapier-specific adapters | M | Decision |
@@ -162,11 +163,11 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 | Item | Size | Needs Avi |
 |------|------|-----------|
 | Workspace admin screen for the allowlist (today it's managed in SQL) | S | — |
-| Pending invites for people who haven't signed in yet, plus an invite email | M | Needs 1.2 key |
+| ~~Pending invites for people who haven't signed in yet, plus an invite email~~ (built in real-1) | — | — |
 | Audit log of admin and membership changes | M | — |
 | Per-task guest sharing; guest polish (badge, limited sidebar) | M | Decision |
 | Membership-aware people pickers in Board/List/rules; mention autocomplete for more fields | S | — |
-| Form file-upload questions and per-form submitter accounts; rule edit history and dry-run | M | — |
+| ~~Form file-upload questions~~ (built in real-1); per-form submitter accounts; rule edit history and dry-run | M | — |
 | Workspace-level custom field library and field reordering | M | — |
 | Storage cleanup of removed attachment files | S | — |
 | Turn Creative Requests and other Autumn Lake workflows into ready project templates | M | Decision (which workflows) |

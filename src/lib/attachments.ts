@@ -1,5 +1,7 @@
 export const ATTACHMENTS_BUCKET = "task-attachments";
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+// The limit in words ("25 MB"), for help text.
+export const MAX_ATTACHMENT_LABEL = `${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`;
 
 export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;

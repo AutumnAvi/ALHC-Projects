@@ -43,7 +43,9 @@ create table storage.objects (
   bucket_id text references storage.buckets (id),
   name text,
   owner uuid default auth.uid(),
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  -- Hosted Storage keeps the size and type here once an upload finishes (form attachments read them).
+  metadata jsonb
 );
 
 alter table storage.objects enable row level security;

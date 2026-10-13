@@ -1,7 +1,10 @@
 import { after } from "next/server";
 import { drainOutbox } from "@/lib/email";
+import { copyForwardedAttachments } from "@/lib/email-forward";
 import {
   bareAddress,
+  forwardTokenFrom,
+  forwardedText,
   htmlToText,
   isInboundEmailConfigured,
   replyTokenFrom,
@@ -19,8 +22,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // database posts the comment only when the sender is the token's person, who must still be allowlisted
 // and a Commenter+ on the task. Without RESEND_WEBHOOK_SECRET the route answers 503 (and comment emails
 // carry no Reply-To). Nothing logs a body, an address, or a secret.
+//
+// Forwarding (Real features 1) uses the same verified webhook: mail to f-<token>@<reply domain> (a
+// person's forwarding address, Settings → Email forwarding) becomes a task through post_email_forward()
+// — only when the sender is the token's person and Resend reports DMARC passing for it; the token is the
+// secret, never the From header alone. Unknown and rotated tokens are logged (email_forwards) and
+// dropped. The email's attachments are copied into the task after the response.
 
 export const dynamic = "force-dynamic";
+// Copying a forwarded email's attachments (up to 10 × 25 MB) runs after the response.
+export const maxDuration = 60;
 
 const MAX_WEBHOOK_BYTES = 256 * 1024;
 
@@ -30,8 +41,10 @@ function json(body: unknown, status: number) {
 
 type Received = {
   from?: unknown;
+  subject?: unknown;
   text?: unknown;
   html?: unknown;
+  attachments?: unknown;
   authentication?: { spf?: unknown; dkim?: unknown; dmarc?: unknown } | null;
 };
 
@@ -43,6 +56,14 @@ function senderAuthenticated(message: Received): boolean {
   if (auth.dmarc === "fail") return false;
   if (auth.spf === undefined && auth.dkim === undefined) return true;
   return auth.spf === "pass" || auth.dkim === "pass";
+}
+
+// A forward creates a task as the person, so its From must be proven theirs: Resend must report DMARC
+// passing (SPF or DKIM aligned with the From domain). No report, or anything else, is refused and logged
+// for the person ("didn't pass sender checks").
+function forwardSenderVerified(message: Received): boolean {
+  const auth = message.authentication;
+  return Boolean(auth && typeof auth === "object" && auth.dmarc === "pass");
 }
 
 export async function POST(request: Request) {
@@ -81,8 +102,11 @@ export async function POST(request: Request) {
     ...(Array.isArray(event.data.received_for) ? event.data.received_for : []),
   ];
   const token = replyTokenFrom(recipients);
+  const forwardToken = token ? null : forwardTokenFrom(recipients);
   const emailId = typeof event.data.email_id === "string" ? event.data.email_id : null;
-  if (!token || !emailId || !/^[\w-]{1,100}$/.test(emailId)) return json({ ok: true, ignored: true }, 200);
+  if ((!token && !forwardToken) || !emailId || !/^[\w-]{1,100}$/.test(emailId)) {
+    return json({ ok: true, ignored: true }, 200);
+  }
 
   const admin = createAdminClient();
   const apiKey = process.env.RESEND_API_KEY;
@@ -108,10 +132,18 @@ export async function POST(request: Request) {
   }
 
   const sender = bareAddress(message.from);
+  if (forwardToken) {
+    if (!sender) {
+      console.info("Forwarded email: rejected (no sender address)");
+      return json({ ok: true, status: "rejected" }, 200);
+    }
+    return forwardedEmail(admin, apiKey, { forwardToken, sender, verified: forwardSenderVerified(message), emailId, message });
+  }
   if (!sender || !senderAuthenticated(message)) {
     console.info("Reply by email: rejected (sender not authenticated)");
     return json({ ok: true, status: "rejected" }, 200);
   }
+  if (!token) return json({ ok: true, ignored: true }, 200);
   const text =
     typeof message.text === "string" && message.text.trim()
       ? message.text
@@ -150,6 +182,55 @@ export async function POST(request: Request) {
     }
   });
   return json({ ok: true, status: "posted" }, 200);
+}
+
+// A forwarded email becomes the person's task (post_email_forward decides where, or refuses); its
+// attachments and the queued emails follow after the response.
+async function forwardedEmail(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  apiKey: string,
+  input: { forwardToken: string; sender: string; verified: boolean; emailId: string; message: Received },
+) {
+  const { data, error } = await admin.rpc("post_email_forward", {
+    forward_token: input.forwardToken,
+    sender_email: input.sender,
+    sender_verified: input.verified,
+    email_subject: typeof input.message.subject === "string" ? input.message.subject.slice(0, 2000) : "",
+    email_body: forwardedText(input.message.text, input.message.html),
+    provider_email_id: input.emailId,
+  });
+  if (error) {
+    console.error("Forwarded email failed", error.code);
+    return json({ ok: false, error: "Something went wrong" }, 500);
+  }
+  const result = (data ?? {}) as { status?: string; reason?: string; task_id?: string; forward_id?: string };
+  if (result.status !== "created" || !result.task_id || !result.forward_id) {
+    console.info(`Forwarded email: ${result.status ?? "rejected"}${result.reason ? ` (${result.reason})` : ""}`);
+    return json({ ok: true, status: result.status ?? "rejected" }, 200);
+  }
+  const { task_id: taskId, forward_id: forwardId } = result;
+  const hasAttachments = Array.isArray(input.message.attachments) && input.message.attachments.length > 0;
+  after(async () => {
+    if (hasAttachments) {
+      try {
+        const copied = await copyForwardedAttachments(admin, apiKey, { emailId: input.emailId, forwardId, taskId });
+        console.info(`Forwarded email: ${copied.added} attachment(s) added, ${copied.skipped} skipped`);
+      } catch (e) {
+        console.error("Forwarded email: attachments failed", e instanceof Error ? e.name : "error");
+      }
+    }
+    try {
+      await drainOutbox();
+    } catch (e) {
+      console.error("Email delivery failed", e instanceof Error ? e.name : "error");
+    }
+    try {
+      await drainIntegrationOutbox({ max: 10 });
+    } catch (e) {
+      console.error("Integration delivery failed", e instanceof Error ? e.name : "error");
+    }
+  });
+  return json({ ok: true, status: "created" }, 200);
 }
 
 export async function GET() {

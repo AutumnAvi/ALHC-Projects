@@ -33,10 +33,13 @@ import { FieldTypeIcon } from "@/components/project/field-editor";
 import { Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteForm, updateForm } from "@/lib/actions";
+import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
 import type { FieldDef } from "@/lib/fields";
 import {
   BATCH4_QUESTION_TYPES,
+  MAX_FILES_PER_QUESTION,
   QUESTION_TYPES,
+  REAL1_QUESTION_TYPES,
   branchOptions,
   fieldAccepts,
   isAnswerable,
@@ -66,7 +69,14 @@ const TYPE_ICONS: Record<QuestionType, LucideIcon> = {
   number: Hash,
   email: AtSign,
   heading: Heading,
+  attachment: Paperclip,
 };
+
+// Question types this database supports: Email / Heading need Asana parity, batch 4's update, Attachment
+// Real features 1's (a type a form already uses always stays listed).
+function typeAvailable(type: QuestionType, batch4: boolean, real1: boolean) {
+  return (batch4 || !BATCH4_QUESTION_TYPES.includes(type)) && (real1 || !REAL1_QUESTION_TYPES.includes(type));
+}
 
 const LABEL = "block text-xs font-medium text-zinc-600";
 const INPUT = "field h-8 w-full";
@@ -87,6 +97,7 @@ export function FormEditor({
   fields,
   origin,
   batch4,
+  real1,
   canEdit,
   closeHref,
 }: {
@@ -94,8 +105,10 @@ export function FormEditor({
   sections: SectionRef[];
   fields: FieldDef[];
   origin: string;
-  // This release's database update: Email and Heading questions.
+  // Asana parity, batch 4's database update: Email and Heading questions.
   batch4: boolean;
+  // Real features 1's database update: Attachment questions.
+  real1: boolean;
   // Admin+ (forms are managed by project admins); everyone else gets a read-only editor.
   canEdit: boolean;
   closeHref: string;
@@ -379,6 +392,7 @@ export function FormEditor({
                     sections={sections}
                     questions={questions}
                     batch4={batch4}
+                    real1={real1}
                     onAdd={insertQuestion}
                   />
                   {questions.length === 0 ? (
@@ -397,6 +411,7 @@ export function FormEditor({
                           sections={sections}
                           fields={fields}
                           batch4={batch4}
+                          real1={real1}
                           open={selectedId === question.id}
                           onToggle={() => setSelectedId(selectedId === question.id ? null : question.id)}
                           onChange={(next) => updateQuestion(question.id, next)}
@@ -562,12 +577,14 @@ function NewQuestionMenu({
   sections,
   questions,
   batch4,
+  real1,
   onAdd,
 }: {
   fields: FieldDef[];
   sections: SectionRef[];
   questions: FormQuestion[];
   batch4: boolean;
+  real1: boolean;
   onAdd: (question: FormQuestion) => void;
 }) {
   const asked = new Set(questions.flatMap((q) => (q.maps_to?.target === "field" && q.maps_to.field_id ? [q.maps_to.field_id] : [])));
@@ -576,7 +593,7 @@ function NewQuestionMenu({
     const question = questionForField(field, sectionOptions, newId);
     return question ? [{ field, question }] : [];
   });
-  const types = QUESTION_TYPES.filter((t) => batch4 || !BATCH4_QUESTION_TYPES.includes(t.value));
+  const types = QUESTION_TYPES.filter((t) => typeAvailable(t.value, batch4, real1));
   return (
     <Popover
       label="New question"
@@ -628,7 +645,7 @@ function NewQuestionMenu({
                   onAdd({
                     id: newId(),
                     type: t.value,
-                    label: t.value === "heading" ? "Section heading" : "",
+                    label: t.value === "heading" ? "Section heading" : t.value === "attachment" ? "Attach files" : "",
                     ...(isChoice(t.value) ? { options: [{ id: newId(), label: "Option 1" }, { id: newId(), label: "Option 2" }] } : {}),
                   });
                 }}
@@ -639,16 +656,10 @@ function NewQuestionMenu({
               </button>
             );
           })}
-          <span
-            className="flex w-full cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-400"
-            data-tooltip="File uploads on forms aren’t available yet"
-          >
-            <Paperclip className="size-4" aria-hidden />
-            Attachment
-            <span className="ml-auto text-2xs">Coming later</span>
-          </span>
           {!batch4 ? (
             <p className="px-2 pb-1 pt-1.5 text-2xs text-zinc-400">Email and Heading questions arrive with this release’s database update.</p>
+          ) : !real1 ? (
+            <p className="px-2 pb-1 pt-1.5 text-2xs text-zinc-400">Attachment questions arrive with this release’s database update.</p>
           ) : null}
         </div>
       )}
@@ -664,6 +675,7 @@ function QuestionCard({
   sections,
   fields,
   batch4,
+  real1,
   open,
   onToggle,
   onChange,
@@ -679,6 +691,7 @@ function QuestionCard({
   sections: SectionRef[];
   fields: FieldDef[];
   batch4: boolean;
+  real1: boolean;
   open: boolean;
   onToggle: () => void;
   onChange: (next: FormQuestion) => void;
@@ -763,7 +776,7 @@ function QuestionCard({
                 }}
                 className={`${INPUT} mt-1`}
               >
-                {QUESTION_TYPES.filter((t) => batch4 || !BATCH4_QUESTION_TYPES.includes(t.value) || t.value === question.type).map((t) => (
+                {QUESTION_TYPES.filter((t) => typeAvailable(t.value, batch4, real1) || t.value === question.type).map((t) => (
                   <option key={t.value} value={t.value}>
                     {t.label}
                   </option>
@@ -790,7 +803,15 @@ function QuestionCard({
 
           {isChoice(question.type) ? <OptionsEditor question={question} sections={sections} fields={fields} onChange={onChange} /> : null}
 
-          {isAnswerable(question) ? <MappingSelect question={question} fields={fields} onChange={onChange} prefix={prefix} /> : null}
+          {question.type === "attachment" ? (
+            <p className="text-xs text-zinc-500">
+              Submitters can attach up to {MAX_FILES_PER_QUESTION} files here ({MAX_ATTACHMENT_LABEL} each:
+              documents, spreadsheets, slides, images, audio, video, design files, or a zip). The files are added to the
+              new task, where everyone who can open the task can open them (the submitter can’t see them afterwards).
+            </p>
+          ) : isAnswerable(question) ? (
+            <MappingSelect question={question} fields={fields} onChange={onChange} prefix={prefix} />
+          ) : null}
 
           {isBranchSource(question) ? <BranchEditor question={question} questions={questions} onChangeAll={onChangeAll} /> : null}
 

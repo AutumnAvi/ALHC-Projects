@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Crown, LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { PendingInvites } from "@/components/people/pending-invites";
+import { useShell } from "@/components/shell/shell-context";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
   addTeamToProject,
@@ -26,7 +27,7 @@ import {
   type ProjectRole,
 } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
-import type { PendingInvite } from "@/lib/workspace";
+import { describePendingInvite, inviteHelp, type PendingInvite } from "@/lib/workspace";
 
 export type TeamChoice = { id: string; name: string; memberCount: number };
 
@@ -40,6 +41,7 @@ export function MembersManager({
   viewerRole,
   teams,
   invites,
+  resendable,
 }: {
   projectId: string;
   members: ProjectMember[];
@@ -48,9 +50,12 @@ export function MembersManager({
   teams: TeamChoice[];
   // People invited before their first sign-in.
   invites: PendingInvite[];
+  // Invite emails can be sent again (this release's database update is applied).
+  resendable: boolean;
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
+  const { isWorkspaceAdmin } = useShell();
   const [teamId, setTeamId] = useState("");
   const [teamRole, setTeamRole] = useState<ProjectRole>("editor");
   const emailRef = useRef<HTMLInputElement>(null);
@@ -69,8 +74,8 @@ export function MembersManager({
             Invite people
           </h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Anyone in the workspace can be added; people who haven’t signed in yet join on their first sign-in. Guests
-            are just people invited with a lower role, such as Viewer or Commenter.
+            {inviteHelp(isWorkspaceAdmin, resendable)} Guests are just people invited with a lower role, such as Viewer or
+            Commenter.
           </p>
           <form
             className="mt-4 flex flex-wrap items-end gap-3"
@@ -83,7 +88,7 @@ export function MembersManager({
                 const result = await inviteProjectMember(projectId, email, inviteRole);
                 if (!result.error) {
                   input.value = "";
-                  if (result.pending) notify(`${email} hasn’t signed in yet. They’ll join this project on their first sign-in.`);
+                  if (result.pending) notify(describePendingInvite(email, "this project", result));
                 }
                 return result;
               });
@@ -344,6 +349,7 @@ export function MembersManager({
         <PendingInvites
           invites={invites}
           canManage={canManage}
+          resendable={resendable}
           roleLabel={(role) => (isProjectRole(role) ? ROLE_LABELS[role] : role)}
         />
       </section>

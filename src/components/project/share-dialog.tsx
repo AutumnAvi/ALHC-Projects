@@ -5,7 +5,9 @@ import { useEffect, useId, useState, useTransition } from "react";
 import { Clock, Globe, Link2, Lock, Mail, UserMinus, Users, X } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Dialog } from "@/components/dialog";
+import { ResendInviteButton } from "@/components/people/pending-invites";
 import { copyProjectLink } from "@/components/project/project-page-context";
+import { useShell } from "@/components/shell/shell-context";
 import { useNotify } from "@/components/toast";
 import {
   addTeamToProject,
@@ -20,7 +22,13 @@ import type { ShareData, ShareMember, SharePerson, ShareTeam } from "@/lib/proje
 import { loadProjectShare } from "@/lib/project-page-actions";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS, assignableRoles, hasRole, isProjectRole } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
-import { EMAIL_PATTERN, VISIBILITY_DESCRIPTIONS, type ProjectVisibility } from "@/lib/workspace";
+import {
+  EMAIL_PATTERN,
+  VISIBILITY_DESCRIPTIONS,
+  describeInviteEmail,
+  inviteHelp,
+  type ProjectVisibility,
+} from "@/lib/workspace";
 
 type InviteTarget =
   | { kind: "person"; person: SharePerson }
@@ -152,6 +160,7 @@ function InviteForm({
   notify: (message: string) => void;
 }) {
   const listId = useId();
+  const { isWorkspaceAdmin } = useShell();
   const [query, setQuery] = useState("");
   const [targets, setTargets] = useState<InviteTarget[]>([]);
   const [active, setActive] = useState(0);
@@ -214,6 +223,8 @@ function InviteForm({
       const done = new Set<string>();
       let added = 0;
       let waiting = 0;
+      let emailed = 0;
+      let joinedWorkspace = 0;
       for (const target of all) {
         if (target.kind === "team") {
           if (!isTeamProjectRole(role)) continue;
@@ -234,12 +245,21 @@ function InviteForm({
         done.add(keyOf(target));
         if (result.pending) waiting += 1;
         else added += 1;
+        if (result.pending && result.emailed) emailed += 1;
+        if (result.joinedWorkspace) joinedWorkspace += 1;
       }
       // Whatever went through leaves the box; what failed stays so it can be fixed and sent again.
       setTargets((current) => current.filter((t) => !done.has(keyOf(t))));
       if (typed.length && done.has(keyOf(typed[0]))) setQuery("");
       if (added) notes.unshift(`Added ${people(added)}`);
-      if (waiting) notes.push(`${people(waiting)} will join on their first sign-in`);
+      if (waiting) {
+        notes.push(
+          emailed === waiting
+            ? `Emailed ${people(waiting)} an invite; they’ll join when they sign up`
+            : `${people(waiting)} will join on their first sign-in (no invite email could be sent from here, so let them know)`,
+        );
+      }
+      if (joinedWorkspace) notes.push(`${people(joinedWorkspace)} added to the workspace`);
       if (notes.length) notify(notes.join(" · "));
       return problems.length ? { error: problems.join(" ") } : {};
     });
@@ -402,8 +422,7 @@ function InviteForm({
         </p>
       ) : (
         <p className="mt-1 text-xs text-zinc-500">
-          Anyone in the workspace can be added. People who haven’t signed in yet join on their first sign-in; a team adds
-          everyone on it who isn’t here yet.
+          {inviteHelp(isWorkspaceAdmin, data.resendable)} A team adds everyone on it who isn’t here yet.
         </p>
       )}
     </form>
@@ -572,9 +591,15 @@ function WhoHasAccess({
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm text-zinc-900">{invite.email}</p>
-              <p className="truncate text-xs text-zinc-500">Invited · joins on first sign-in</p>
+              <p className="truncate text-xs text-zinc-500">
+                Invited · joins when they sign up
+                {canManage && invite.inviteEmail ? ` · ${describeInviteEmail(invite.inviteEmail)}` : ""}
+              </p>
             </div>
             <span className="w-28 shrink-0 text-xs text-zinc-600">{isProjectRole(invite.role) ? ROLE_LABELS[invite.role] : invite.role}</span>
+            {canManage && data.resendable ? (
+              <ResendInviteButton invite={invite} compact disabled={pending} onResend={(action) => change(action)} />
+            ) : null}
             {canManage ? (
               <button
                 type="button"

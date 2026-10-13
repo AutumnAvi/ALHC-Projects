@@ -105,6 +105,8 @@ export function TaskActivity({
     const ruleName = str(story.data, "rule_name");
     if (ruleName) return `Rule “${ruleName}”`;
     if (!story.actorId && story.kind === "form_submitted") return str(story.data, "submitter_email") ?? "Someone";
+    // Files a form's (anonymous) submitter attached (Real features 1).
+    if (!story.actorId && story.kind === "attachment_added" && str(story.data, "source") === "form") return "The form’s submitter";
     return nameOf(story.actorId);
   }
 
@@ -113,9 +115,11 @@ export function TaskActivity({
     switch (story.kind) {
       case "created": {
         const source = d && typeof d === "object" && !Array.isArray(d) ? d.import : null;
-        return source && typeof source === "object" && !Array.isArray(source) && source.source === "asana"
-          ? "imported this task from Asana"
-          : "created this task";
+        if (source && typeof source === "object" && !Array.isArray(source) && source.source === "asana") {
+          return "imported this task from Asana";
+        }
+        // A forwarded email (Real features 1).
+        return str(d, "via") === "email" ? "created this task by forwarding an email" : "created this task";
       }
       case "completed":
         return "marked this task complete";
@@ -147,8 +151,15 @@ export function TaskActivity({
         return <>added this to {str(d, "project_name")}</>;
       case "project_removed":
         return <>removed this from {str(d, "project_name")}</>;
-      case "attachment_added":
-        return <>attached {str(d, "file_name")}</>;
+      case "attachment_added": {
+        const source = str(d, "source");
+        return (
+          <>
+            attached {str(d, "file_name")}
+            {source === "form" ? " with the form" : source === "email" ? " from the forwarded email" : ""}
+          </>
+        );
+      }
       case "approval_requested":
         return <>requested approval from {nameOf(str(d, "approver_id"))}</>;
       case "approval_decided": {

@@ -8,8 +8,9 @@ import { loadGoalDialog } from "@/lib/shell-actions";
 type GoalDialogData = NonNullable<Awaited<ReturnType<typeof loadGoalDialog>>>;
 
 // Create → Goal: loads what the Goals page's New goal dialog needs (people, teams, goals, today), then
-// shows that same dialog. Creating opens the new goal.
-export function NewGoalLauncher({ onClose }: { onClose: () => void }) {
+// shows that same dialog. Creating opens the new goal. Opened from a team page, `teamId` preselects that
+// team (any active team can be a goal's team; one that's gone is ignored).
+export function NewGoalLauncher({ onClose, teamId }: { onClose: () => void; teamId?: string }) {
   const [data, setData] = useState<GoalDialogData | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -27,7 +28,7 @@ export function NewGoalLauncher({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  if (data) return <NewGoalDialog {...data} onClose={onClose} />;
+  if (data) return <NewGoalDialog {...data} defaultTeamId={teamId} onClose={onClose} />;
   return (
     <Dialog title="New goal" onClose={onClose}>
       {failed ? (

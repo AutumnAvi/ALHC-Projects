@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Crown, LogOut, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { PendingInvites } from "@/components/people/pending-invites";
+import { useShell } from "@/components/shell/shell-context";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
   changePortfolioMemberRole,
@@ -23,7 +24,7 @@ import {
   isPortfolioRole,
   type PortfolioRole,
 } from "@/lib/roles";
-import type { PendingInvite } from "@/lib/workspace";
+import { describePendingInvite, inviteHelp, type PendingInvite } from "@/lib/workspace";
 
 const inputClass = "field";
 
@@ -39,15 +40,19 @@ export function PortfolioMembersManager({
   viewerId,
   viewerRole,
   invites,
+  resendable,
 }: {
   portfolio: Portfolio;
   members: PortfolioMember[];
   viewerId: string;
   viewerRole: PortfolioRole;
   invites: PendingInvite[];
+  // Invite emails can be sent again (this release's database update is applied).
+  resendable: boolean;
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
+  const { isWorkspaceAdmin } = useShell();
   const emailRef = useRef<HTMLInputElement>(null);
   const [inviteRole, setInviteRole] = useState<PortfolioRole>("viewer");
   const portfolioId = portfolio.id;
@@ -69,8 +74,8 @@ export function PortfolioMembersManager({
             Invite people
           </h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Anyone in the workspace can be added; people who haven’t signed in yet join on their first sign-in. Joining a portfolio
-            doesn’t give access to its projects: people only see the projects they’re already members of.
+            {inviteHelp(isWorkspaceAdmin, resendable)} Joining a portfolio doesn’t give access to its projects: people only see the
+            projects they’re already members of.
           </p>
           <form
             className="mt-4 flex flex-wrap items-end gap-3"
@@ -83,7 +88,7 @@ export function PortfolioMembersManager({
                 const result = await invitePortfolioMember(portfolioId, email, inviteRole);
                 if (!result.error) {
                   input.value = "";
-                  if (result.pending) notify(`${email} hasn’t signed in yet. They’ll join this portfolio on their first sign-in.`);
+                  if (result.pending) notify(describePendingInvite(email, "this portfolio", result));
                 }
                 return result;
               });
@@ -260,6 +265,7 @@ export function PortfolioMembersManager({
         <PendingInvites
           invites={invites}
           canManage={canManage}
+          resendable={resendable}
           roleLabel={(role) => (isPortfolioRole(role) ? PORTFOLIO_ROLE_LABELS[role] : role)}
         />
       </section>

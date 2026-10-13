@@ -112,7 +112,41 @@ export type PendingInvite = {
   role: string;
   invitedAt: string;
   invitedByName: string | null;
+  // The latest invite email for it (Real features 1; only the people who manage the invite read it) and
+  // when it was queued — Resend waits 10 minutes after that (RESEND_INVITE_MINUTES).
+  inviteEmail: InviteEmailStatus | null;
+  lastEmailAt: string | null;
 };
+
+// How long Resend waits after an invite email (mirrors guard_pending_membership()).
+export const RESEND_INVITE_MINUTES = 10;
+
+// Who can be added by email (projects, portfolios, teams, Share): anyone in the workspace; a workspace
+// admin can also add an address that isn't in it yet (Real features 1: it joins the workspace too).
+// `invitesEmailed` is false before Real features 1's database update (no invite emails, no new addresses).
+export function inviteHelp(isWorkspaceAdmin: boolean, invitesEmailed: boolean): string {
+  if (!invitesEmailed) {
+    return "Anyone in the workspace can be added; people who haven’t signed in yet join on their first sign-in.";
+  }
+  return isWorkspaceAdmin
+    ? "Anyone in the workspace can be added. You’re a workspace admin, so a new email address works too: it joins the workspace. People who haven’t signed in yet get an invite email and join when they sign up."
+    : "Anyone in the workspace can be added. People who haven’t signed in yet get an invite email and join when they sign up. To add someone new to the workspace, ask a workspace admin.";
+}
+
+// The note after inviting someone who hasn't signed in yet. `where` reads like "this project".
+export function describePendingInvite(
+  address: string,
+  where: string,
+  outcome: { emailed?: boolean; alreadyInvited?: boolean; joinedWorkspace?: boolean },
+): string {
+  if (outcome.alreadyInvited) {
+    return `${address} already has an invite to ${where}; it now has the role you picked.`;
+  }
+  const joined = outcome.joinedWorkspace ? " and added them to the workspace" : "";
+  return outcome.emailed
+    ? `Invited ${address}${joined}. We emailed them a sign-up link; they’ll join ${where} when they sign up.`
+    : `Invited ${address}${joined}. They’ll join ${where} on their first sign-in. No invite email went out this time, so let them know.`;
+}
 
 export type BrowseProject = {
   projectId: string;

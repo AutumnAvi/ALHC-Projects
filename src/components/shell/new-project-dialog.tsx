@@ -43,8 +43,9 @@ const DEFAULT_SECTIONS = ["To do", "In progress", "Done"];
 // Asana's New project flow (Asana parity, batch 4): a full-screen Template gallery with Import and Blank
 // project at the top right, category pills, "Your templates", and template cards. Blank project and
 // Import show a form on the left (name, team, privacy) next to a live preview; a template shows its
-// form next to what it holds. Escape goes back a step, then closes; creating a project opens it.
-export function NewProjectDialog({ onClose }: { onClose: () => void }) {
+// form next to what it holds. Escape goes back a step, then closes; creating a project opens it. Opened
+// from a team page, `teamId` preselects that team (the default team when you can't put projects there).
+export function NewProjectDialog({ onClose, teamId }: { onClose: () => void; teamId?: string }) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState<Step>({ kind: "gallery" });
@@ -137,9 +138,9 @@ export function NewProjectDialog({ onClose }: { onClose: () => void }) {
             onPick={(template) => setStep({ kind: "template", template })}
           />
         ) : step.kind === "template" ? (
-          <TemplateStep template={step.template} onBack={back} />
+          <TemplateStep template={step.template} defaultTeamId={teamId} onBack={back} />
         ) : (
-          <NameStep then={step.kind === "import" ? "import" : "list"} onBack={back} />
+          <NameStep then={step.kind === "import" ? "import" : "list"} defaultTeamId={teamId} onBack={back} />
         )}
       </main>
     </div>
@@ -324,9 +325,17 @@ function TemplateCard({ template, onPick }: { template: GalleryTemplate; onPick:
 }
 
 // Blank project and Import: name, team, and privacy next to a live preview of the new project.
-function NameStep({ then, onBack }: { then: "list" | "import"; onBack: () => void }) {
+function NameStep({
+  then,
+  defaultTeamId,
+  onBack,
+}: {
+  then: "list" | "import";
+  defaultTeamId?: string;
+  onBack: () => void;
+}) {
   const [name, setName] = useState("");
-  const [placement, setPlacement] = useState<Placement>({ teamId: "", visibility: "team" });
+  const [placement, setPlacement] = useState<Placement>({ teamId: defaultTeamId ?? "", visibility: "team" });
   const [teams, setTeams] = useState<TeamChoice[]>([]);
   const [state, formAction, pending] = useActionState(async (_: ActionResult, formData: FormData) => {
     // A successful create redirects to the new project, so the result may be undefined.
@@ -489,7 +498,15 @@ function ImportPreview({ name }: { name: string }) {
 }
 
 // A template: its form (name, start date, team, privacy) next to what it holds.
-function TemplateStep({ template, onBack }: { template: GalleryTemplate; onBack: () => void }) {
+function TemplateStep({
+  template,
+  defaultTeamId,
+  onBack,
+}: {
+  template: GalleryTemplate;
+  defaultTeamId?: string;
+  onBack: () => void;
+}) {
   const [preview, setPreview] = useState<TemplatePreview | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -520,7 +537,7 @@ function TemplateStep({ template, onBack }: { template: GalleryTemplate; onBack:
             {template.sourceProjectName ? ` from ${template.sourceProjectName}` : ""}.
           </p>
         </div>
-        <UseTemplateForm template={template} onCancel={onBack} cancelLabel="Back" />
+        <UseTemplateForm template={template} defaultTeamId={defaultTeamId} onCancel={onBack} cancelLabel="Back" />
       </div>
       <div className="hidden lg:block">
         <figure aria-label={`What “${template.name}” holds`} className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 shadow-sm">

@@ -250,6 +250,8 @@ export function GoalsView({
           teams={teams}
           goals={goals}
           today={today}
+          // Filtered to one team: a new goal starts in it.
+          defaultTeamId={filters.team && filters.team !== "none" ? filters.team : undefined}
           onClose={() => setCreating(false)}
         />
       ) : null}

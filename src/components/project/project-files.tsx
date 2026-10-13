@@ -110,7 +110,8 @@ export function ProjectFiles({
                     </Link>
                   </td>
                   <td className="hidden truncate py-2 pr-3 text-zinc-600 md:table-cell">
-                    {uploaderNames[file.uploadedBy] ?? "Someone"}
+                    {file.source === "form" ? "Form submission" : (uploaderNames[file.uploadedBy] ?? "Someone")}
+                    {file.source === "email" ? <span className="text-zinc-400"> · by email</span> : null}
                   </td>
                   <td className="hidden whitespace-nowrap py-2 pr-3 text-xs text-zinc-500 sm:table-cell">
                     <Timestamp iso={file.createdAt} />

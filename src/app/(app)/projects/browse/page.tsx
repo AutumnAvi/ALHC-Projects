@@ -12,7 +12,8 @@ export const metadata: Metadata = { title: "Browse projects" };
 
 // Every project the viewer is allowed to see: their own, plus projects shared with their teams (Join
 // makes them an Editor). Private projects stay hidden from everyone who isn't a member, workspace
-// admins included. ?team=<id> starts with the Teams filter set to that team.
+// admins included. ?team=<id> starts with the Teams filter set to that team, and Create project with that
+// team preselected (the default team when the viewer can't put projects there).
 export default async function BrowseProjectsPage({ searchParams }: PageProps<"/projects/browse">) {
   const params = await searchParams;
   const teamId = typeof params.team === "string" && isUuid(params.team) ? params.team : null;
@@ -23,6 +24,7 @@ export default async function BrowseProjectsPage({ searchParams }: PageProps<"/p
     listTeams(),
     listProfiles(),
   ]);
+  const knownTeamId = teamId && teams.some((t) => t.id === teamId) ? teamId : null;
   const joinable = projects.filter((p) => p.myRole === null && !p.archived).length;
   const rows = projects.map((p) => {
     const extra = people?.get(p.projectId);
@@ -45,7 +47,10 @@ export default async function BrowseProjectsPage({ searchParams }: PageProps<"/p
             : "Your projects and the ones shared with your teams"
         }
         actions={
-          <OpenDialogButton dialog={{ kind: "project" }} className="btn-primary h-8 px-3">
+          <OpenDialogButton
+            dialog={knownTeamId ? { kind: "project", teamId: knownTeamId } : { kind: "project" }}
+            className="btn-primary h-8 px-3"
+          >
             <Plus className="size-4" aria-hidden />
             Create project
           </OpenDialogButton>
@@ -58,7 +63,7 @@ export default async function BrowseProjectsPage({ searchParams }: PageProps<"/p
             people={profiles.map((p) => ({ id: p.id, name: displayName(p) }))}
             teams={teams.map((t) => ({ id: t.id, name: t.name }))}
             meId={member.id}
-            initialTeamId={teamId && teams.some((t) => t.id === teamId) ? teamId : null}
+            initialTeamId={knownTeamId}
             peopleKnown={people !== null}
           />
           <p className="mt-6 text-xs text-zinc-500">

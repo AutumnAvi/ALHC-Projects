@@ -113,10 +113,57 @@ function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
   };
 }
 
+const INVITE_TARGET_PATH = /^\/(projects|portfolios|teams)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const INVITE_KINDS = { project: "project", portfolio: "portfolio", team: "team" } as const;
+
+// "with Editor access" / "as a team lead" for the role a pending invite carries.
+function inviteRolePhrase(kind: keyof typeof INVITE_KINDS, role: string | null): string {
+  if (!role) return "";
+  if (kind === "team") return role === "lead" ? " as a team lead" : " as a member";
+  return ` with ${role.charAt(0).toUpperCase()}${role.slice(1)} access`;
+}
+
+// A project, portfolio, or team invite for someone who hasn't signed in yet (Real features 1): who
+// invited them (a name), to what, and a sign-up link for their own address that lands on it once they've
+// confirmed their email (the invite becomes a membership on that first sign-in).
+function renderTargetInviteEmail(row: OutboxRow, kind: keyof typeof INVITE_KINDS, path: string): Rendered {
+  const p = payloadOf(row);
+  const inviter = str(p.inviter_name) ?? "A teammate";
+  const workspace = str(p.workspace_name) ?? "ALHC Projects";
+  const target = str(p.target_name) ?? `a ${kind}`;
+  const origin = backgroundOrigin();
+  const next = encodeURIComponent(path);
+  const signUp = origin ? `${origin}/signup?email=${encodeURIComponent(row.to_email)}&next=${next}` : null;
+  return {
+    subject: row.subject ?? `${inviter} invited you to ${target}`,
+    ...layout(
+      `${inviter} invited you to ${target}`,
+      [
+        `${inviter} added you to the ${INVITE_KINDS[kind]} “${target}”${inviteRolePhrase(kind, str(p.role))} in ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
+        `Create your account with this email address. Once you confirm it, you’ll land on the ${INVITE_KINDS[kind]}.`,
+      ],
+      [],
+      {
+        action: signUp ? { label: "Sign up", href: signUp } : null,
+        footer: [
+          // The path is /projects|portfolios|teams/<uuid> (checked above), fine unencoded in a query string.
+          origin ? `Already have an account? Sign in at ${origin}/login?next=${path}` : "Already have an account? Sign in with this address.",
+          "If you weren’t expecting this, you can ignore this email.",
+        ],
+      },
+    ),
+  };
+}
+
 // A workspace invite (Settings → Workspace → Members): who invited them (a name, never an address) and a
-// sign-up link for the recipient's own address.
+// sign-up link for the recipient's own address. A project / portfolio / team invite carries its target.
 function renderInviteEmail(row: OutboxRow): Rendered {
   const p = payloadOf(row);
+  const kind = str(p.target_kind);
+  const path = str(p.target_path);
+  if (kind && kind in INVITE_KINDS && path && INVITE_TARGET_PATH.test(path)) {
+    return renderTargetInviteEmail(row, kind as keyof typeof INVITE_KINDS, path);
+  }
   const inviter = str(p.inviter_name) ?? "A workspace admin";
   const workspace = str(p.workspace_name) ?? "ALHC Projects";
   const origin = backgroundOrigin();

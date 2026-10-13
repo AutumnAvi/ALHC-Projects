@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState, type KeyboardEvent } from "react";
-import { ArrowUpRight, Forward, Reply, Webhook } from "lucide-react";
+import { ArrowUpRight, Reply, Webhook } from "lucide-react";
 import { Segmented } from "@/components/project/view-chrome";
+import { EmailForwardingSection } from "@/components/settings/email-forwarding";
 import { InboxNotifications, NotificationSettings } from "@/components/settings/notification-settings";
 import { useShell } from "@/components/shell/shell-context";
 import { setPaneExpanded, usePaneExpanded } from "@/components/task/pane-size";
@@ -111,6 +112,7 @@ export function SettingsPanel({
         ) : tab === "email_forwarding" ? (
           <EmailForwardingTab
             email={data.email}
+            myEmail={data.me.email}
             commentEmails={commentEmails ?? data.me.emailComments}
             onTabChange={onTabChange}
           />
@@ -200,36 +202,26 @@ function ProfileTab({ data }: { data: MySettings }) {
   );
 }
 
-// Forwarding emails into tasks isn't built: say so, and point at the two email-ish ways in that work
-// today (replying to a comment email, and a project's inbound webhooks).
+// Email forwarding (Real features 1): the person's forwarding address, then the other email-ish ways in
+// (replying to a comment email, and a project's inbound webhooks).
 function EmailForwardingTab({
   email,
+  myEmail,
   commentEmails,
   onTabChange,
 }: {
   email: EmailSetup;
+  myEmail: string;
   commentEmails: boolean;
   onTabChange: (tab: SettingsTab) => void;
 }) {
   return (
     <div className="flex flex-col gap-6">
-      <section aria-labelledby="forwarding-heading">
-        <div className="flex items-center gap-2">
-          <Forward aria-hidden className="size-4 text-zinc-400" />
-          <h3 id="forwarding-heading" className={HEADING}>
-            Forward emails to create tasks
-          </h3>
-          <span className="chip">Coming later</span>
-        </div>
-        <p className="mt-1 text-sm text-zinc-600">
-          Turning an email into a task by forwarding it to a special address isn’t built yet, so there’s no
-          forwarding address to copy here.
-        </p>
-      </section>
+      <EmailForwardingSection forwarding={email.forwarding} myEmail={myEmail} />
 
       <section aria-labelledby="works-today-heading">
         <h3 id="works-today-heading" className={HEADING}>
-          What works today
+          More ways in by email
         </h3>
         <div className="mt-2 flex flex-col gap-3">
           <div className={`${CARD} flex items-start gap-3`}>

@@ -16,12 +16,60 @@ export const QUESTION_TYPES = [
   // only shows text between questions (never answered, required, or mapped).
   { value: "email", label: "Email" },
   { value: "heading", label: "Heading" },
+  // Real features 1 (20261013010000_real_1.sql): files the submitter attaches to the new task.
+  { value: "attachment", label: "Attachment" },
 ] as const;
 
 export type QuestionType = (typeof QUESTION_TYPES)[number]["value"];
 
-// The question types that need this release's database update.
+// The question types that need Asana parity, batch 4's database update.
 export const BATCH4_QUESTION_TYPES: readonly QuestionType[] = ["email", "heading"];
+// The question types that need Real features 1's database update.
+export const REAL1_QUESTION_TYPES: readonly QuestionType[] = ["attachment"];
+
+// ---------------------------------------------------------------------------------------------
+// Attachment questions (mirror form_upload_allowed() / normalize_form_answer() / submit_form()): the
+// browser uploads each file to the private task-attachments bucket at <key>/<form id>/<uuid>-<name>,
+// where <key> is one random id per response that becomes the new task's id, and answers with
+// { path, name } objects.
+// ---------------------------------------------------------------------------------------------
+
+export type FormFile = { path: string; name: string };
+
+export const MAX_FILES_PER_QUESTION = 5;
+export const MAX_FILES_PER_RESPONSE = 10;
+// File types a form accepts (form_upload_extension_ok()).
+export const FORM_UPLOAD_EXTENSIONS = [
+  "pdf", "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "svg", "tif", "tiff",
+  "txt", "csv", "rtf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
+  "key", "pages", "numbers", "zip", "mp3", "wav", "m4a", "mp4", "mov", "ai", "eps", "psd", "indd",
+] as const;
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const FORM_FILE_PATH = new RegExp(`^${UUID}/${UUID}/${UUID}-[A-Za-z0-9._-]{1,100}$`);
+
+export function formFileExtensionOk(fileName: string): boolean {
+  const ext = fileName.match(/\.([A-Za-z0-9]{1,8})$/)?.[1]?.toLowerCase();
+  return Boolean(ext && (FORM_UPLOAD_EXTENSIONS as readonly string[]).includes(ext));
+}
+
+// The object path for one file of a response (the same safe name as task attachments).
+export function formUploadPath(key: string, formId: string, fileName: string, uniqueId: string): string {
+  const safe = fileName.replace(/[^A-Za-z0-9._-]+/g, "_").slice(-100) || "file";
+  return `${key}/${formId}/${uniqueId}-${safe}`;
+}
+
+export function isFormFile(value: unknown): value is FormFile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.path === "string" &&
+    FORM_FILE_PATH.test(v.path) &&
+    typeof v.name === "string" &&
+    v.name.trim().length > 0 &&
+    v.name.trim().length <= 255
+  );
+}
 
 export type MapTarget = "title" | "notes" | "due_on" | "section" | "field";
 
@@ -38,7 +86,7 @@ export type FormQuestion = {
   show_if?: { question_id: string; option_ids: string[] };
 };
 
-export type FormAnswers = Record<string, string | string[] | boolean | number | null>;
+export type FormAnswers = Record<string, string | string[] | boolean | number | FormFile[] | null>;
 
 export type FormDef = {
   id: string;
@@ -141,7 +189,13 @@ export function visibleQuestionIds(questions: FormQuestion[], answers: FormAnswe
       if (!visible.has(rule.question_id)) continue;
       const parent = answers[rule.question_id];
       const chosen =
-        parent === true ? [CHECKBOX_OPTION_ID] : Array.isArray(parent) ? parent : typeof parent === "string" ? [parent] : [];
+        parent === true
+          ? [CHECKBOX_OPTION_ID]
+          : Array.isArray(parent)
+            ? parent.filter((v): v is string => typeof v === "string")
+            : typeof parent === "string"
+              ? [parent]
+              : [];
       if (!chosen.some((id) => rule.option_ids.includes(id))) continue;
     }
     visible.add(question.id);
@@ -202,6 +256,10 @@ export function validateSubmission(
           errors[question.id] = "Enter a valid email address";
         }
         break;
+      case "attachment":
+        if (!Array.isArray(value) || !value.every(isFormFile)) errors[question.id] = "Upload the files again";
+        else if (value.length > MAX_FILES_PER_QUESTION) errors[question.id] = `Attach up to ${MAX_FILES_PER_QUESTION} files`;
+        break;
     }
     if (!errors[question.id]) {
       clean[question.id] =
@@ -236,7 +294,7 @@ export function mapTargetLabel(target: MapTarget | undefined, fieldName?: string
 
 // Mirrors the conversions submit_form performs when writing a mapped answer into a field.
 export function fieldAccepts(field: Pick<FieldDef, "fieldType" | "boundToSections">, type: QuestionType) {
-  if (type === "heading") return false;
+  if (type === "heading" || type === "attachment") return false;
   if (field.boundToSections) return type === "single_select";
   switch (field.fieldType) {
     case "text":
@@ -258,7 +316,7 @@ export function fieldAccepts(field: Pick<FieldDef, "fieldType" | "boundToSection
 export function mappingAllowed(question: FormQuestion, fields: FieldDef[]) {
   const target = question.maps_to?.target;
   if (!target) return true;
-  if (question.type === "heading") return false;
+  if (question.type === "heading" || question.type === "attachment") return false;
   if (target === "due_on") return question.type === "date";
   if (target === "section") return question.type === "single_select";
   if (target === "field") {

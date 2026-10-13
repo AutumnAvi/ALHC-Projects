@@ -19,7 +19,7 @@ export function ShellDialogs() {
     case "task":
       return <NewTaskDialog onClose={closeDialog} />;
     case "project":
-      return <NewProjectDialog onClose={closeDialog} />;
+      return <NewProjectDialog teamId={dialog.teamId} onClose={closeDialog} />;
     case "message":
       return <NewMessageDialog onClose={closeDialog} />;
     case "team":
@@ -27,7 +27,7 @@ export function ShellDialogs() {
     case "portfolio":
       return <NewPortfolioDialog onClose={closeDialog} />;
     case "goal":
-      return <NewGoalLauncher onClose={closeDialog} />;
+      return <NewGoalLauncher teamId={dialog.teamId} onClose={closeDialog} />;
     case "invite":
       return <InviteDialog onClose={closeDialog} />;
     case "settings":

@@ -3,9 +3,17 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { getWorkspace, hasBatch4Schema, listFieldLibrary, listMyTeamIds, listProjectTemplates, listTeams } from "@/lib/data";
+import {
+  getWorkspace,
+  hasBatch4Schema,
+  listFieldLibrary,
+  listMyTeamIds,
+  listProjectTemplates,
+  listTeams,
+} from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
-import { drainOutbox } from "@/lib/email";
+import { drainOutbox, isEmailConfigured } from "@/lib/email";
+import { forwardingAddress } from "@/lib/email-reply";
 import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
 import { ImportParseError, buildImportPlan, importSteps, planExternalIds, type ImportPlan } from "@/lib/asana-import";
 import {
@@ -524,28 +532,78 @@ function role(value: unknown): string {
   return value;
 }
 
-// pending: they haven't signed in yet — the membership waits for their first sign-in.
-export type InviteActionResult = ActionResult & { pending?: boolean };
+// pending: they haven't signed in yet — the membership waits for their first sign-in. emailed: this call
+// queued an invite email with a sign-up link and an email provider is set up (Real features 1; never
+// before this release's database update, for a re-invite, or past the per-address cap). alreadyInvited:
+// they had an invite here already (only its role changed). joinedWorkspace: a workspace admin's invite
+// also added the address to the workspace.
+export type InviteOutcome = { pending?: boolean; emailed?: boolean; alreadyInvited?: boolean; joinedWorkspace?: boolean };
+export type InviteActionResult = ActionResult & InviteOutcome;
+
+// One add-by-email call (add_project_member / add_portfolio_member / add_team_member): the database
+// decides (a pending invite and its email for someone who hasn't signed in; a new address only from a
+// workspace admin); this reports what happened.
+async function inviteByEmail(
+  address: string,
+  target: { column: "project_id" | "portfolio_id" | "team_id"; id: string },
+  call: (supabase: Awaited<ReturnType<typeof createClient>>) => PromiseLike<DbResult & { data: unknown }>,
+  notAllowed?: string,
+): Promise<InviteOutcome> {
+  const supabase = await createClient();
+  // The invite emails to this address the caller can see (RLS: the ones for invites they manage).
+  const inviteEmails = async () => {
+    const { count } = await supabase
+      .from("email_outbox")
+      .select("id", { count: "exact", head: true })
+      .eq("to_email", address)
+      .is("task_id", null)
+      .eq("payload->>kind", "invite");
+    return count ?? 0;
+  };
+  const [allowed, invited, emailsBefore] = await Promise.all([
+    supabase.from("allowed_emails").select("email").eq("email", address).is("removed_at", null).maybeSingle(),
+    supabase
+      .from("pending_memberships")
+      .select("id")
+      .eq(target.column, target.id)
+      .eq("email", address)
+      .is("applied_at", null)
+      .is("deleted_at", null)
+      .maybeSingle(),
+    inviteEmails(),
+  ]);
+  const added = await call(supabase);
+  check(added, notAllowed);
+  const pending = added.data === null;
+  return {
+    pending,
+    emailed: pending && isEmailConfigured() && (await inviteEmails()) > emailsBefore,
+    alreadyInvited: pending && Boolean(invited.data),
+    joinedWorkspace: !allowed.error && !allowed.data,
+  };
+}
+
+function inviteAddress(value: unknown): string {
+  const address = text(value, "Email", { max: 320 }).toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
+  return address;
+}
 
 export async function inviteProjectMember(
   projectId: string,
   email: string,
   memberRole: string,
 ): Promise<InviteActionResult> {
-  let pending = false;
+  let outcome: InviteOutcome = {};
   const result = await run(async () => {
-    const address = text(email, "Email", { max: 320 }).toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
-    const supabase = await createClient();
-    const added = await supabase.rpc("add_project_member", {
-      target_project: id(projectId),
-      member_email: address,
-      member_role: role(memberRole),
-    });
-    check(added);
-    pending = added.data === null;
+    const address = inviteAddress(email);
+    const project = id(projectId);
+    const memberRoleValue = role(memberRole);
+    outcome = await inviteByEmail(address, { column: "project_id", id: project }, (supabase) =>
+      supabase.rpc("add_project_member", { target_project: project, member_email: address, member_role: memberRoleValue }),
+    );
   });
-  return { ...result, pending };
+  return { ...result, ...outcome };
 }
 
 // Cancels a pending invite (project / portfolio Admin+, team leads and workspace admins; RLS decides).
@@ -556,6 +614,22 @@ export async function cancelPendingInvite(inviteId: string): Promise<ActionResul
       await supabase.from("pending_memberships").update({ deleted_at: now() }).eq("id", id(inviteId, "invite")).select("id"),
       "Only the people who manage this can cancel the invite",
     );
+  });
+}
+
+// Sends a pending invite's email again (Real features 1): setting resent_at queues it — the same people
+// who can cancel it (RLS), at most every 10 minutes (the database says when it's too soon). The email
+// goes out right after the response like every queued email.
+export async function resendPendingInvite(inviteId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("pending_memberships")
+      .update({ resent_at: now() })
+      .eq("id", id(inviteId, "invite"))
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") throw new DbError(REAL1_SCHEMA_MISSING);
+    checkUpdated(result, "Only the people who manage this can resend the invite");
   });
 }
 
@@ -824,20 +898,16 @@ export async function invitePortfolioMember(
   email: string,
   memberRole: string,
 ): Promise<InviteActionResult> {
-  let pending = false;
+  let outcome: InviteOutcome = {};
   const result = await run(async () => {
-    const address = text(email, "Email", { max: 320 }).toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new InputError("Enter a valid email address");
-    const supabase = await createClient();
-    const added = await supabase.rpc("add_portfolio_member", {
-      target_portfolio: id(portfolioId),
-      member_email: address,
-      member_role: portfolioRole(memberRole),
-    });
-    check(added);
-    pending = added.data === null;
+    const address = inviteAddress(email);
+    const portfolio = id(portfolioId);
+    const memberRoleValue = portfolioRole(memberRole);
+    outcome = await inviteByEmail(address, { column: "portfolio_id", id: portfolio }, (supabase) =>
+      supabase.rpc("add_portfolio_member", { target_portfolio: portfolio, member_email: address, member_role: memberRoleValue }),
+    );
   });
-  return { ...result, pending };
+  return { ...result, ...outcome };
 }
 
 export async function changePortfolioMemberRole(
@@ -2554,6 +2624,7 @@ export async function setInboxBookmark(itemId: string, bookmarked: boolean): Pro
 }
 
 const BATCH5_SCHEMA_MISSING = "This needs this release’s database update, which isn’t applied yet";
+const REAL1_SCHEMA_MISSING = BATCH5_SCHEMA_MISSING;
 
 // ---------------------------------------------------------------------------------------------
 // Workspace admins (Settings → Workspace). Admins add and remove admins; the last one stays.
@@ -2789,18 +2860,19 @@ export async function deleteTeam(teamId: string): Promise<ActionResult> {
 }
 
 export async function addTeamMember(teamId: string, address: string, memberRole: string): Promise<InviteActionResult> {
-  let pending = false;
+  let outcome: InviteOutcome = {};
   const result = await run(async () => {
-    const supabase = await createClient();
-    const added = await supabase.rpc("add_team_member", {
-      target_team: id(teamId),
-      member_email: email(address),
-      member_role: teamRole(memberRole),
-    });
-    check(added, TEAM_NOT_ALLOWED);
-    pending = added.data === null;
+    const team = id(teamId);
+    const memberEmail = email(address);
+    const memberRoleValue = teamRole(memberRole);
+    outcome = await inviteByEmail(
+      memberEmail,
+      { column: "team_id", id: team },
+      (supabase) => supabase.rpc("add_team_member", { target_team: team, member_email: memberEmail, member_role: memberRoleValue }),
+      TEAM_NOT_ALLOWED,
+    );
   });
-  return { ...result, pending };
+  return { ...result, ...outcome };
 }
 
 export async function changeTeamMemberRole(teamId: string, profileId: string, memberRole: string): Promise<ActionResult> {
@@ -3308,6 +3380,36 @@ export async function setEmailComments(enabled: boolean): Promise<ActionResult> 
   });
 }
 
+// Settings → Email forwarding (Real features 1): where tasks from the person's forwarding address go — a
+// project they can add tasks to (the database checks Editor+ now and again on every email), or null for
+// their private My tasks.
+export async function setForwardingProject(projectId: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("email_forwarding_addresses")
+      .update({ default_project_id: projectId === null ? null : id(projectId, "project") })
+      .is("revoked_at", null)
+      .select("id");
+    if (result.error?.code === "42P01" || result.error?.code === "PGRST205") throw new DbError(REAL1_SCHEMA_MISSING);
+    checkUpdated(result, "Choose a project you can add tasks to");
+  });
+}
+
+// A new forwarding address; the old one stops working at once (mail to it is ignored and logged).
+export async function rotateForwardingAddress(): Promise<ActionResult & { address?: string }> {
+  let address: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const rotated = await supabase.rpc("rotate_forwarding_address");
+    if (rotated.error?.code === "PGRST202") throw new DbError(REAL1_SCHEMA_MISSING);
+    check(rotated);
+    if (!rotated.data?.token) throw new DbError("Couldn’t make a new address");
+    address = forwardingAddress(rotated.data.token);
+  });
+  return { ...result, address };
+}
+
 export async function cancelIntegrationDelivery(deliveryId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
@@ -3412,6 +3514,8 @@ function cleanQuestions(value: unknown): FormQuestion[] {
       delete question.required;
       delete question.maps_to;
     }
+    // An attachment question adds files to the task; it never fills in a detail (validate_form).
+    if (q.type === "attachment") delete question.maps_to;
     if (!parentIsEarlier || question.show_if?.option_ids.length === 0) delete question.show_if;
     return question;
   });

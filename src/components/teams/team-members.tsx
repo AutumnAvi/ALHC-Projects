@@ -4,13 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { PendingInvites } from "@/components/people/pending-invites";
+import { useShell } from "@/components/shell/shell-context";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { addTeamMember, changeTeamMemberRole, removeTeamMember } from "@/lib/actions";
 import type { TeamPerson } from "@/lib/data";
 import { TEAM_ROLES, TEAM_ROLE_LABELS, isTeamRole, type TeamRole } from "@/lib/teams";
-import type { PendingInvite } from "@/lib/workspace";
+import { describePendingInvite, inviteHelp, type PendingInvite } from "@/lib/workspace";
 
 const CARD = "rounded-lg border border-zinc-200 bg-white";
 
@@ -25,6 +26,7 @@ export function TeamMembers({
   canManage,
   isDefault,
   invites,
+  resendable,
 }: {
   teamId: string;
   teamName: string;
@@ -33,9 +35,12 @@ export function TeamMembers({
   canManage: boolean;
   isDefault: boolean;
   invites: PendingInvite[];
+  // Invite emails can be sent again (this release's database update is applied).
+  resendable: boolean;
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
+  const { isWorkspaceAdmin } = useShell();
   const emailRef = useRef<HTMLInputElement>(null);
   const [inviteRole, setInviteRole] = useState<TeamRole>("member");
   const leadCount = members.filter((m) => m.role === "lead").length;
@@ -71,7 +76,7 @@ export function TeamMembers({
                 const result = await addTeamMember(teamId, email, inviteRole);
                 if (!result.error) {
                   input.value = "";
-                  if (result.pending) notify(`${email} hasn’t signed in yet. They’ll join the team on their first sign-in.`);
+                  if (result.pending) notify(describePendingInvite(email, "the team", result));
                 }
                 return result;
               });
@@ -113,7 +118,7 @@ export function TeamMembers({
               Add
             </button>
             <p className="basis-full text-xs text-zinc-500">
-              Anyone in the workspace. People who haven’t signed in yet join on their first sign-in.
+              {inviteHelp(isWorkspaceAdmin, resendable)}
             </p>
           </form>
         ) : null}
@@ -208,6 +213,7 @@ export function TeamMembers({
         <PendingInvites
           invites={invites}
           canManage={canManage}
+          resendable={resendable}
           roleLabel={(role) => (isTeamRole(role) ? TEAM_ROLE_LABELS[role] : role)}
         />
       </section>
