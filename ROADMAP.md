@@ -12,41 +12,47 @@ Sources: SHIP-STATUS.md, END-OF-BUILD-CHECKLIST.md, ai-actions-proposal.md, AGEN
 
 ## 0. Simulated or not live yet
 
-Read-only audit of `main` at `f95700e`, 2026-10-07. The Vercel project `alhc-projects` has only **2 env vars**: `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (names checked, values not read). So `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`, `NEXT_PUBLIC_APP_URL`, `AUTH_GOOGLE_ENABLED` and `INTEGRATIONS_MOCK` are all unset.
+Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only). Vercel Production now has `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_DOMAIN` and `RESEND_WEBHOOK_SECRET` (names checked, values never read). Not set: `NEXT_PUBLIC_APP_URL` (optional, Vercel's production URL is used), `AUTH_GOOGLE_ENABLED`, `INTEGRATIONS_MOCK` (unset means real sends). pg_cron jobs active: `alhc-delivery-kick` (every minute), `alhc-workflow-tick` (every 5 minutes), `alhc-log-purge` (daily). `email_outbox`: every row is `sent`, none stuck pending.
 
-**The big one:** without `SUPABASE_SERVICE_ROLE_KEY`, nothing queued ever leaves the app. That covers emails, Slack messages and webhooks. They aren't even marked "mocked"; they sit as **pending** in `email_outbox` / `integration_outbox` forever. Adding a Resend key alone won't fix email.
+### Done (now real)
+- [x] Background delivery of emails, Slack messages and webhooks (service key + every-minute `alhc-delivery-kick`), live since 2026-10-08.
+- [x] Daily Vercel cron (`CRON_SECRET` set).
+- [x] Due-date triggers and "Wait, then continue" delays (`alhc-workflow-tick` confirmed in `cron.job`).
+- [x] Form confirmation emails and the rule action "Send email" go out through Resend.
+- [x] Task activity shows the real email status (queued, sent or failed), not just "emailed".
+- [x] Slack and "Call webhook" actions, plus Deliveries Send now / Retry, really send.
+- [x] Reply-by-email: form submitters auto-follow their task, comments email them (with a per-form toggle), and their replies come back as comments.
+- [x] Workspace invites send a real invite email.
+- [x] CSV export tells you on screen when it hit the 10,000-row cap.
 
-| Feature | What the UI suggests | What actually happens today | Where in code | What makes it real | Size |
-|---------|----------------------|-----------------------------|---------------|--------------------|------|
-| **Background delivery (root cause)** | Emails, Slack messages and webhooks go out "within moments of the next change in the app, or by the scheduled job". | Every drain needs the service-role client, which returns null without the key. Nothing gets claimed, and every row stays `pending`. | `src/lib/supabase/admin.ts`, `drainOutbox()` in `src/lib/email.ts`, `drainIntegrationOutbox()` in `src/lib/integrations.ts`, `deliverQueuedEmail()` in `src/lib/actions.ts` | Env var: `SUPABASE_SERVICE_ROLE_KEY` in Vercel (Production, server-only, never `NEXT_PUBLIC_`), then redeploy. Before adding it, check which rules are enabled: queued Slack/webhook rows will then really send, since `INTEGRATIONS_MOCK` is unset. | S |
-| Daily scheduled job | `vercel.json` cron calls `/api/cron/workflows` daily at 13:00 UTC (16:00 IDT) to run rules and drain the outboxes. | `CRON_SECRET` is unset, so the route answers **401 to every call**. It does nothing, even after the service key is added. | `src/app/api/cron/workflows/route.ts`, `vercel.json` | Env vars: `CRON_SECRET` + `SUPABASE_SERVICE_ROLE_KEY`. Hobby only allows a daily schedule. For faster runs, use a free external scheduler or Vercel Pro (see Operations). | S |
-| "Due date is approaching" trigger and "Wait, then continue" delays (incl. the due-tomorrow and 24-hour-nudge templates) | Rules fire on time. | Only `workflow_tick()` in the database runs these. `pg_cron` is installed on the project, and the workflows migration schedules `alhc-workflow-tick` every 5 minutes *if* pg_cron existed when it ran. **Not verified** that the job exists. If it doesn't, these never fire, because the Vercel cron is refused (row above). Any email/Slack they queue still waits on the service key. | `workflow_tick()` and `cron.schedule` in `supabase/migrations/20261005020000_workflows.sql` | Cron: confirm `alhc-workflow-tick` exists in `cron.job` (read-only check), or fix the Vercel cron (row above). | S |
-| Form confirmation email | Form builder: "Email a confirmation to the submitter". The thank-you text is "shown after submitting and in the confirmation email". | `submit_form` queues a `form_confirmation` row and nothing is sent. With only the service key it would be marked `mocked` and logged, not sent. | `src/components/forms/form-builder.tsx`, `submit_form` / `enqueue_email` in `supabase/migrations/20261005020000_workflows.sql`, `src/lib/email.ts` | Env vars: `SUPABASE_SERVICE_ROLE_KEY` + `RESEND_API_KEY` + `EMAIL_FROM` (a sender on a domain verified in Resend). | S |
-| Rule action "Send email" (requester update, due tomorrow, custom; to form submitter, assignee, an email field or a fixed address), incl. the "requester update" and "tracking/shipping email" templates | Rule runs show as succeeded, and the requester gets updates. | The row is queued and stays `pending` (it would be `mocked` without Resend). | `src/lib/rules.ts`, `src/components/rules/rule-editor.tsx`, `run_rule` in `supabase/migrations/20261005020000_workflows.sql` and `20261005080000_integrations.sql` | Same three env vars as above. | S |
-| "emailed {address}" in task activity | The email was sent. | The story is written when the email is **queued**, so it shows "emailed" even though nothing went out. | `email_queued` in `src/components/task/task-activity.tsx`, `enqueue_email` | Env vars above, plus a small build change to say "queued" and show sent/failed status. | S |
-| Slack message and "Call webhook" rule actions, plus Deliveries "Send now" / "Retry" | Activity says "queued a Slack message / webhook call". The Integrations page says they're sent within moments. Send now / Retry pushes one out right away. | Never POSTed. Rows stay `pending` in Settings → Deliveries, and Send now / Retry re-queues with no visible effect. | `src/lib/integrations.ts`, `src/components/project/integrations-settings.tsx`, `src/components/project/delivery-log.tsx`, `retryIntegrationDelivery` in `src/lib/actions.ts` | Env var: `SUPABASE_SERVICE_ROLE_KEY`. Optional `NEXT_PUBLIC_APP_URL` keeps `{task_link}` / Open-task buttons on the right domain (otherwise Vercel's production URL is used). | S |
-| Replying to an app email | Confirmation text says "We'll follow up by email as it moves along". | No reply path exists. Replies go to the sender address (or `EMAIL_REPLY_TO`, unset), never back into the task, and comments never email the submitter. | `src/lib/email.ts` | Build phase: **Form submitter conversation** (1.0), plus inbound email on the sending domain. | M–L |
-| Invite / "Add someone by email" (project, portfolio, team) | Inviting someone. | No email is sent. The person must already be on the allowlist (added in SQL) **and** have signed in once, otherwise the action errors ("allowlisted but has not signed in yet"). | `src/components/project/members-manager.tsx`, `src/components/portfolio/portfolio-members.tsx`, `src/components/teams/team-detail.tsx`, `add_project_member` in `supabase/migrations/20261005050000_teams_permissions.sql` | Build phase: pending invites + invite email + an allowlist admin screen. Needs the Resend setup. | M |
-| Sign-up confirmation email (Supabase Auth, "Confirm email" on) | New teammates get a confirm link. | **Not verified for this project.** Supabase's built-in sender is for testing only: it is heavily rate-limited and only delivers to the Supabase org's own team members unless custom SMTP is set. New teammates may never get the link. | Supabase → Authentication settings (not in the repo) | Service account: custom SMTP in Supabase Auth (e.g. Resend's SMTP, same verified domain). Avi makes this Auth change himself. | S |
-| Asana importer attachments | The import preview counts attachments. | Tasks get **links back to Asana**; no files are copied. They break once Asana access ends. | `src/lib/asana-import.ts`, `src/components/project/import-settings.tsx` | Build phase: download each file at import time and store it in Supabase Storage. AGENTS.md says never call the Asana API, so the approach needs a quick decision. | M |
-| CSV export | You download the whole view or report. | Silently capped at 10,000 rows. Only an `X-Export-Truncated` header is set, with no notice in the UI. | `src/lib/csv.ts`, `/export/[kind]` route | Build: S for an on-screen notice, M for unlimited (streaming) exports. | S–M |
-| Google sign-in | Hidden, so nothing pretends. | Off until `AUTH_GOOGLE_ENABLED=true`. | `src/lib/env.ts`, `src/app/login/page.tsx` | Service account: Google Cloud OAuth client + Supabase Google provider, then the env var (see 1.6). | S |
+### Still simulated or missing (to build)
+- [ ] **Add someone by email on a project, portfolio or team** only works if they're already in the workspace and have signed in once. Otherwise it errors. Should create a pending invite, email them, and add them on first sign-in.
+- [ ] **Forward emails to create tasks** (Settings): "Coming later" placeholder.
+- [ ] **Attachment questions on forms**: "Coming later" in the form editor.
+- [ ] **Create project / Create goal from a team page** don't preselect the team.
+- [ ] **Home → Create task** opens the private Create task dialog, not an inline row in My tasks.
+- [ ] **Team Messages**: placeholder that links to project Messages.
+- [ ] **Inbox notification settings**: no per-kind on/off switches (in-app or email).
+- [ ] **Last activity** in Admin/Members is only the last sign-in.
+- [ ] **People**: clicking a person opens Reports filtered to them; there's no profile page.
+- [ ] **Team Calendar** is read-only (no drag to reschedule).
+- [ ] **Asana importer attachments** become links back to Asana, not copied files (they break when Asana access ends). Needs a decision, since AGENTS.md says never call the Asana API.
+- [ ] **CSV export** is still capped at 10,000 rows (notice only).
+- [ ] **Status templates** card in Customize: not built (no data behind it).
+- [ ] **No code yet:** Inbox email digest, iCal feed, scheduled report emails, email bounce/complaint tracking, push notifications.
 
-**Checked and real today:** in-app Inbox notifications, @mentions, approvals, file attachments (private Supabase Storage with 60-second signed links), live updates, public forms creating tasks, and inbound webhooks creating tasks (anon RPC `receive_inbound_webhook`; any email/Slack their rules queue still waits on the service key).
-**No code at all, so nothing pretends:** push notifications, the Inbox email digest, the iCal feed, scheduled report emails, and email open/bounce tracking (see Groups 1–2).
+### Batches (by value)
+1. **real-1, invites and email-in:** pending invites for project/portfolio/team "add by email" (email + auto-join on first sign-in), Forward emails to create tasks, form attachment questions, team preselect on create, Home inline Create task.
+2. **real-2, team and people:** real Team Messages, per-kind notification settings (respected by Inbox and email), real last activity, person profile pages.
+3. **real-3, email extras:** Inbox email digest, scheduled report emails, bounce/complaint tracking from Resend webhooks.
+4. **real-4, data and calendar:** draggable Team Calendar, iCal feed (token route), unlimited streaming CSV, Status templates, importer attachment copy (once Avi decides).
 
-**Asana parity, batch 5 (honest gaps on main):**
-- Team Messages: coming later (links to project Messages)
-- Settings → Email forwarding: coming later
-- Inbox notification settings: no per-kind switches yet
-- Last activity = last sign-in only (not general activity)
-- People widget / search people open Reports filtered to the person (no profile page)
-- Invite emails only when Resend is configured
-- Team Calendar is read-only
-- Create project / Create goal from a team page don't preselect the team
-- Home → Create task opens Create → Task (private) rather than an inline widget row
-
-**Quickest path to "email + Slack actually work":** add `SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET` in Vercel (Slack and webhooks go live right away). Set up Resend with a verified domain, then add `RESEND_API_KEY` + `EMAIL_FROM`. Set custom SMTP in Supabase Auth for sign-up emails. Redeploy. Avi enters every value himself, never in chat.
+### Needs Avi (only you can do these)
+- **Sign-up emails (Supabase Auth custom SMTP):** Supabase → Authentication → Emails → SMTP Settings → enable custom SMTP. Host `smtp.resend.com`, port `465`, username `resend`, password = a Resend API key, sender = the same verified address as `EMAIL_FROM`. Save.
+- **Leaked-password protection:** Supabase → Authentication → Attack Protection (Passwords) → turn on "Prevent use of leaked passwords".
+- **Google sign-in:** Google Cloud Console → APIs & Services → Credentials → OAuth client (Web), redirect URI `https://xsgmawawwstbrbukgsax.supabase.co/auth/v1/callback`. Paste the client ID/secret in Supabase → Authentication → Providers → Google. Then add `AUTH_GOOGLE_ENABLED=true` in Vercel Production and redeploy.
+- **Importer attachments:** decide whether the importer may download files from Asana at import time.
+- **Email forwarding (after real-1):** add an MX/inbound route in Resend for the forwarding address if real-1's report asks for one.
 
 ---
 
