@@ -408,8 +408,12 @@ reset role;
 
 do $$
 begin
-  assert (select status from public.email_outbox where to_email = 'af2-later@example.com') = 'failed'
-    and (select last_error from public.email_outbox where to_email = 'af2-later@example.com') = 'Not sent: the invite was withdrawn',
+  -- Since Real features 1 the pending project invite emails too: every invite to the address fails.
+  assert (select count(*) from public.email_outbox where to_email = 'af2-later@example.com') = 2
+    and not exists (
+      select 1 from public.email_outbox where to_email = 'af2-later@example.com'
+        and (status <> 'failed' or last_error <> 'Not sent: the invite was withdrawn')
+    ),
     'a withdrawn invite email fails at claim instead of going out';
 end $$;
 
@@ -419,7 +423,8 @@ select set_config('request.jwt.claim.sub', 'fafafafa-0000-4000-8000-000000000001
 do $$
 begin
   assert public.invite_to_workspace('af2-new@example.com') ->> 'status' = 'restored', 're-adding a removed email restores it';
-  assert (select count(*) from public.email_outbox where to_email = 'af2-new@example.com') = 1,
+  -- (Their project / portfolio / team invites emailed them too since Real features 1: count workspace invites.)
+  assert (select count(*) from public.email_outbox where to_email = 'af2-new@example.com' and not payload ? 'pending_id') = 1,
     'someone added back who already has an account gets no sign-up email';
 end $$;
 select set_config('request.jwt.claim.sub', 'fafafafa-0000-4000-8000-000000000004', false) is not null as ok \gset

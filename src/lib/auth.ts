@@ -10,12 +10,20 @@ export type Member = {
   avatarUrl: string | null;
 };
 
-// Only relative, same-origin paths are accepted as post-login destinations.
+// Only relative, same-origin paths are accepted as post-login destinations. Control characters and
+// backslashes are refused outright (URL parsing drops a tab or newline, so "/\t/evil.com" would become
+// "//evil.com"), and whatever is left must resolve to this origin.
 export function safeNextPath(value: string | null | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || /[\u0000-\u001f\u007f\\]/.test(value)) {
     return "/";
   }
-  return value;
+  try {
+    const url = new URL(value, "https://same-origin.invalid");
+    if (url.origin !== "https://same-origin.invalid") return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
 }
 
 export const getViewer = cache(async () => {

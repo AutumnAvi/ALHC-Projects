@@ -61,9 +61,61 @@ export type EmailSetup = {
   sending: boolean;
   replyByEmail: boolean;
   inboundProjects: { id: string; name: string }[];
+  forwarding: ForwardingSetup;
 };
 
-// What the Create menu (and the sidebar's "+" and Invite) can open.
+// Settings → Email forwarding (Real features 1): the person's own forwarding address and where its tasks
+// go — or why there isn't one here: inbound email isn't set up on this deployment (no Resend webhook
+// secret), or this release's database update isn't applied yet.
+export type ForwardingSetup =
+  | { state: "not_configured" }
+  | { state: "needs_update" }
+  | {
+      state: "ready";
+      address: string;
+      defaultProjectId: string | null;
+      // Active projects the person can add tasks to (Editor+).
+      projects: { id: string; name: string }[];
+      recent: ForwardedEmail[];
+    };
+
+// One forwarded email the inbound route handled for this person (never its body or sender).
+export type ForwardedEmail = {
+  id: string;
+  status: "created" | "rejected";
+  reason: string | null;
+  taskId: string | null;
+  // Null when the person can't open the task anymore.
+  taskTitle: string | null;
+  // The project it went to (null = their private My tasks).
+  projectId: string | null;
+  projectName: string | null;
+  attachments: number;
+  createdAt: string;
+};
+
+// Why a forwarded email didn't become a task, in plain words (email_forwards.reason).
+export function forwardRejectionLabel(reason: string | null): string {
+  switch (reason) {
+    case "sender_mismatch":
+      return "Not from your email address, so it was ignored";
+    case "not_authenticated":
+      return "From your address, but it didn’t pass the sender checks (DMARC), so it was ignored";
+    case "rotated":
+      return "Sent to your old address, which no longer works";
+    case "no_access":
+      return "You weren’t in the workspace at the time";
+    case "failed":
+      return "Couldn’t create the task";
+    default:
+      return "Ignored";
+  }
+}
+
+// What the Create menu (and the sidebar's "+" and Invite) can open. A team page opens New project and
+// New goal with its team preselected (`teamId`; New project falls back to the default team when the
+// viewer can't put projects in that one).
 export type ShellDialog =
-  | { kind: "task" | "project" | "message" | "team" | "portfolio" | "goal" | "invite" }
+  | { kind: "task" | "message" | "team" | "portfolio" | "invite" }
+  | { kind: "project" | "goal"; teamId?: string }
   | { kind: "settings"; tab: SettingsTab };

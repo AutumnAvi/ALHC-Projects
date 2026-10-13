@@ -19,6 +19,8 @@ export type PersonOption = { id: string; name: string };
 export type TeamOption = { id: string; name: string };
 
 // New goal (from the Goals page, opens the new goal) or new sub-goal (from a goal, stays there).
+// `defaultTeamId` preselects a team (a team page, or the Goals page filtered to one); a sub-goal takes
+// its parent's team instead.
 export function NewGoalDialog({
   viewer,
   people,
@@ -26,6 +28,7 @@ export function NewGoalDialog({
   goals,
   today,
   parent,
+  defaultTeamId,
   onClose,
 }: {
   viewer: GoalViewer;
@@ -34,6 +37,7 @@ export function NewGoalDialog({
   goals: Goal[];
   today: string;
   parent?: Goal;
+  defaultTeamId?: string;
   onClose: () => void;
 }) {
   const formId = useId();
@@ -41,7 +45,10 @@ export function NewGoalDialog({
   const presets = periodPresets(today);
   const [title, setTitle] = useState("");
   const [ownerId, setOwnerId] = useState(viewer.id);
-  const [teamId, setTeamId] = useState(parent?.teamId ?? "");
+  const [teamId, setTeamId] = useState(() => {
+    if (parent) return parent.teamId ?? "";
+    return defaultTeamId && teams.some((t) => t.id === defaultTeamId) ? defaultTeamId : "";
+  });
   const [parentId, setParentId] = useState(parent?.id ?? "");
   const [period, setPeriod] = useState(() => {
     if (parent) return parent.periodStart || parent.periodEnd ? "custom" : "";

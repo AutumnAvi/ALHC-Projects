@@ -3,7 +3,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 // Reply by email: comment emails carry Reply-To r-<token>@<reply domain>; Resend receives the reply,
 // POSTs an `email.received` webhook (signed the Svix way) to /api/inbound/email, and the route posts
-// the reply as a comment through post_email_reply(). Nothing here logs bodies, addresses, or secrets.
+// the reply as a comment through post_email_reply(). Forwarding (Real features 1): mail to a person's
+// f-<token>@<reply domain> address becomes a task through post_email_forward(). Nothing here logs bodies,
+// addresses, or secrets.
 
 export const DEFAULT_REPLY_DOMAIN = "reply.mail.autumnlakemarketing.com";
 const TOKEN = /^[0-9a-f]{40}$/;
@@ -24,26 +26,48 @@ export function replyAddress(token: string): string {
   return `r-${token}@${replyDomain()}`;
 }
 
-// The bare address from `Name <a@b>` or `a@b`, lowercased; null when there isn't one.
-export function bareAddress(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const angle = value.match(/<([^<>\s]+@[^<>\s]+)>/);
-  const candidate = (angle ? angle[1] : value).trim().toLowerCase();
-  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(candidate) ? candidate : null;
+// A person's forwarding address (Settings → Email forwarding): f-<their token>@<reply domain>.
+export function forwardingAddress(token: string): string {
+  return `f-${token}@${replyDomain()}`;
 }
 
-// The reply token from any recipient address on our reply domain.
-export function replyTokenFrom(addresses: unknown[]): string | null {
+// The bare address from `Name <a@b>` or `a@b`, lowercased; null when there isn't exactly one. A quoted
+// display name can hold anything (`"<victim@x>" <attacker@y>`), so quoted parts are dropped first and the
+// one <addr-spec> must end the value.
+export function bareAddress(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const unquoted = value.replace(/"(?:[^"\\]|\\.)*"/g, " ").trim();
+  const angles = unquoted.match(/<[^<>]*>/g) ?? [];
+  let candidate: string;
+  if (angles.length === 1 && /<[^<>]*>$/.test(unquoted)) candidate = angles[0].slice(1, -1);
+  else if (angles.length === 0 && !/[<>]/.test(unquoted)) candidate = unquoted;
+  else return null;
+  candidate = candidate.trim().toLowerCase();
+  return /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(candidate) ? candidate : null;
+}
+
+// The token after `prefix` in any recipient address on our reply domain.
+function tokenFrom(addresses: unknown[], prefix: "r-" | "f-"): string | null {
   const domain = replyDomain();
   for (const value of addresses) {
     const address = bareAddress(value);
     if (!address) continue;
     const [local, host] = address.split("@");
-    if (host !== domain || !local.startsWith("r-")) continue;
+    if (host !== domain || !local.startsWith(prefix)) continue;
     const token = local.slice(2);
     if (TOKEN.test(token)) return token;
   }
   return null;
+}
+
+// The reply token from any recipient address on our reply domain.
+export function replyTokenFrom(addresses: unknown[]): string | null {
+  return tokenFrom(addresses, "r-");
+}
+
+// The forwarding token from any recipient address on our reply domain (f-<token>@…).
+export function forwardTokenFrom(addresses: unknown[]): string | null {
+  return tokenFrom(addresses, "f-");
 }
 
 // Svix signature check (what Resend signs webhooks with): base64 HMAC-SHA256 with the base64 key after
@@ -71,13 +95,18 @@ export function verifyResendWebhook(
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
-// Plain text from an HTML body: quoted blocks out, line breaks kept, tags and entities resolved.
-export function htmlToText(html: string): string {
-  return html
-    .replace(/<(head|style|script)[\s\S]*?<\/\1>/gi, "")
-    .replace(/<blockquote[\s\S]*?<\/blockquote>/gi, "\n")
-    .replace(/<div[^>]*class="[^"]*gmail_quote[\s\S]*$/i, "")
-    .replace(/<div[^>]*id="(?:divRplyFwdMsg|appendonsend)"[\s\S]*$/i, "")
+// Plain text from an HTML body: quoted blocks out (unless `keepQuoted`, for forwarded emails whose
+// point is the quoted message), line breaks kept, tags and entities resolved.
+export function htmlToText(html: string, { keepQuoted = false } = {}): string {
+  const body = html.replace(/<(head|style|script)[\s\S]*?<\/\1>/gi, "");
+  return (
+    keepQuoted
+      ? body
+      : body
+          .replace(/<blockquote[\s\S]*?<\/blockquote>/gi, "\n")
+          .replace(/<div[^>]*class="[^"]*gmail_quote[\s\S]*$/i, "")
+          .replace(/<div[^>]*id="(?:divRplyFwdMsg|appendonsend)"[\s\S]*$/i, "")
+  )
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
     .replace(/<[^>]+>/g, "")
@@ -124,4 +153,23 @@ export function stripQuotedReply(text: string): string {
     kept.push(line);
   }
   return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 10_000);
+}
+
+// A forwarded email's description: all of it (the forwarded message is the point), as plain text, with
+// runs of blank lines squeezed and capped at the task description limit (20,000 characters).
+export function forwardedText(text: unknown, html: unknown): string {
+  const raw =
+    typeof text === "string" && text.trim()
+      ? text
+      : typeof html === "string"
+        ? htmlToText(html, { keepQuoted: true })
+        : "";
+  return raw
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 20_000);
 }

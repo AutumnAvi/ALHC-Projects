@@ -256,6 +256,14 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 - **Rules** open on a full-page canvas: name, an **Active** switch, Cancel and Save, and **Build / Activity** tabs. The flow reads top to bottom — the scope, **When**, **Check if** with its actions, then **+ Add branch** for **Else if** and **Otherwise** (the first branch that matches runs). Existing rules run exactly as before.
 - **Fields** are a list with type icons and option pills; clicking one opens **Edit field** (title, type, description, options with colors, **Add to field library**, **Notify collaborators when changed**). **Add field → Choose from library** copies a field another project shared.
 
+## What's here (Real features 1: invites and email-in)
+
+- **Invite by email for real.** Adding someone by email on a project, portfolio, or team (Members pages and Share) now emails them an invite with a **Sign up** link that lands on that project, portfolio, or team once they've confirmed their address; they join with the role you picked on their first sign-in. A **workspace admin** can invite an address that isn't in the workspace yet (it's added to the workspace too, with one email); anyone else is told to ask a workspace admin. Someone removed from the workspace comes back only through Admin console → Add back. No address gets more than 3 invite emails an hour. Invited people show as **Invited** with the invite email's status and **Resend** (once every 10 minutes) and **Cancel**.
+- **Forward emails to create tasks** (Settings → Email forwarding): your own forwarding address on the reply domain. Send or forward an email to it from your own address and it becomes a task assigned to you — the subject is the name, the body the description, the attachments its files (up to 10, 25 MB each) — in the project you pick (while you can add tasks to it), else your private My tasks. **Get a new address** retires the old one at once. The tab lists your recently forwarded emails, including ones that were ignored and why.
+- **Attachment questions on forms:** public submitters attach up to 5 files per question (10 per response, 25 MB each, common document / image / media / design types) straight to private storage; the files land on the new task (Files says “Form submission”). Uploads nobody submitted are removed by the cron route a day later, and per-form / daily caps keep anonymous uploads from filling storage.
+- **Team pages preselect the team** in Create project and Create goal (projects fall back to the default team when you aren't on that team).
+- **Home → Create task** opens an inline row at the top of My tasks (Enter saves and keeps the row open, Esc cancels); Tab then Q does the same on Home.
+
 ## Setup: Supabase
 
 1. **Create a project** at [supabase.com/dashboard](https://supabase.com/dashboard). Note the project ref (the `xxxx` in `https://xxxx.supabase.co`).
@@ -311,9 +319,9 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 
 Emails are also delivered right after any action in the app, so the kick covers emails queued by scheduled rules, delayed steps, and anything that failed and is due for a retry. Leave the Resend variables empty to mock email. To inspect what would have been sent, run `select to_email, template, subject, status from public.email_outbox order by created_at desc;`.
 
-## Setup: reply by email
+## Setup: reply by email (and email forwarding)
 
-Comment emails get a per-person, per-task **Reply-To** address (`r-<token>@reply.mail.autumnlakemarketing.com`) only when `RESEND_WEBHOOK_SECRET` is set. Without it, `/api/inbound/email` answers 503 and emails carry no Reply-To.
+Comment emails get a per-person, per-task **Reply-To** address (`r-<token>@reply.mail.autumnlakemarketing.com`) only when `RESEND_WEBHOOK_SECRET` is set. Without it, `/api/inbound/email` answers 503 and emails carry no Reply-To. **Forwarding addresses** (`f-<token>@reply.mail.autumnlakemarketing.com`, Settings → Email forwarding) use the same domain, MX record, Resend webhook, and secret — nothing extra to set up; without the secret the Settings tab says forwarding isn't set up.
 
 1. **DNS:** add one MX record at the DNS host for `autumnlakemarketing.com`:
 
@@ -328,6 +336,8 @@ Comment emails get a per-person, per-task **Reply-To** address (`r-<token>@reply
 5. Test it: comment on a task someone else follows, have them reply to the email, and the reply shows up as their comment. If it doesn't, the Resend webhook's delivery log shows the route's answer. The route also logs `Reply by email: rejected (sender_mismatch | no_access | unknown_token | empty)` without the body or address.
 
 A reply is posted only when the token matches, the sender's address is that person's ALHC address, Resend didn't report a failed DMARC check, and the person can still comment on the task.
+
+A forwarded email becomes a task only when the forwarding token is current (a replaced address is ignored), the sender is that person's own ALHC address and Resend reports **DMARC pass** for it (so the sending domain needs a DMARC record — `autumnlakemarketing.com` should publish one; otherwise forwards are ignored and Settings → Email forwarding says they didn't pass the sender checks), and they're still in the workspace; it goes to their chosen project while they can still add tasks there, else to their private My tasks. Its attachments are copied from Resend's Receiving API into the task's private storage folder right after the webhook is answered (up to 10, 25 MB each; inline images such as signature logos are skipped). The route logs `Forwarded email: rejected (sender_mismatch | not_authenticated | rotated | unknown_token | no_access)` and `Forwarded email: N attachment(s) added, M skipped`, never an address, subject, or file name; each person sees their own recent forwards in Settings.
 
 ## Setup: Slack and webhooks
 
@@ -432,7 +442,7 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | Optional. Email via Resend; mocked when unset |
    | `INTEGRATIONS_MOCK` | Optional. `true` logs Slack/webhook deliveries instead of sending them |
    | `CRON_SECRET` | Secret for `/api/cron/workflows` (also stored in Supabase Vault as `alhc_cron_secret` for the every-minute delivery kick) |
-   | `RESEND_WEBHOOK_SECRET` | Optional. Resend webhook signing secret (`whsec_…`) for reply by email; without it replies are off |
+   | `RESEND_WEBHOOK_SECRET` | Optional. Resend webhook signing secret (`whsec_…`) for reply by email and email forwarding; without it both are off |
    | `EMAIL_REPLY_DOMAIN` | Optional. Receiving domain for reply addresses (default `reply.mail.autumnlakemarketing.com`) |
    | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links, webhook `task.url` links, and Slack task links |
    | `AUTH_GOOGLE_ENABLED` | Optional. `true` shows "Continue with Google" once the Google provider is configured |

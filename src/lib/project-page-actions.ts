@@ -11,6 +11,7 @@ import {
   getProject,
   getProjectIntegrations,
   getProjectRole,
+  hasReal1Schema,
   listActivePeople,
   listEmailDeliveries,
   listInboundEndpoints,
@@ -20,6 +21,7 @@ import {
   listProjectTeamAccess,
   listTeams,
 } from "@/lib/data";
+import { isEmailConfigured } from "@/lib/email";
 import { isUuid } from "@/lib/ids";
 import { compareMembers, hasRole } from "@/lib/roles";
 import type { CustomizeDetails, ShareData } from "@/lib/project-page";
@@ -29,7 +31,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
   if (!isUuid(projectId)) return null;
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
-  const [project, role, members, invites, teamAccess, teams, people] = await Promise.all([
+  const [project, role, members, invites, teamAccess, teams, people, resendable] = await Promise.all([
     getProject(projectId),
     getProjectRole(projectId),
     listProjectMembers(projectId),
@@ -37,6 +39,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     listProjectTeamAccess(projectId),
     listTeams(),
     listActivePeople(),
+    hasReal1Schema(),
   ]);
   if (!project || !role) return null;
   const teamsById = new Map(teams.map((t) => [t.id, { id: t.id, name: t.name, memberCount: t.members.length }] as const));
@@ -47,6 +50,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     visibility: isProjectVisibility(project.visibility) ? project.visibility : "private",
     members: members.map(({ profileId, name, email, role }) => ({ profileId, name, email, role })).sort(compareMembers),
     invites,
+    resendable: resendable && isEmailConfigured(),
     addedTeams: teamAccess.map((t) => ({
       id: t.teamId,
       name: t.name,

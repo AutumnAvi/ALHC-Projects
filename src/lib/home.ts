@@ -55,6 +55,17 @@ export function splitHomeTasks<T extends DatedTask>(open: T[], completed: T[], t
   return { upcoming, overdue, completed };
 }
 
+// A new task has no due date, so splitHomeTasks puts it with the undated tasks at the end of Upcoming.
+// The tasks someone just created in the My tasks widget (ids newest first) go first instead, right under
+// the row they were typed in.
+export function createdFirst<T extends { id: string }>(tasks: T[], createdIds: string[]): T[] {
+  if (createdIds.length === 0) return tasks;
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const created = createdIds.map((id) => byId.get(id)).filter((t): t is T => t !== undefined);
+  const pinned = new Set(createdIds);
+  return [...created, ...tasks.filter((t) => !pinned.has(t.id))];
+}
+
 // Tasks completed this week (Sunday through today, local days), for the "My week" summary.
 export function completedThisWeek<T extends DatedTask>(completed: T[], today: string, timeZone: string): number {
   const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();

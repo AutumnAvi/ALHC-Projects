@@ -10,20 +10,23 @@ import { describeSummary, localIsoDate, type TemplateSummary } from "@/lib/templ
 type UsableTemplate = { id: string; name: string; summary: TemplateSummary };
 
 // "Use template": name the new project and pick its start date; task dates resolve from it. The
-// Templates page shows it as a dialog; the New project gallery shows the same form next to a preview.
+// Templates page shows it as a dialog; the New project gallery shows the same form next to a preview
+// (with the team it was opened from preselected, when there is one).
 export function UseTemplateForm({
   template,
   onCancel,
   cancelLabel = "Cancel",
+  defaultTeamId,
 }: {
   template: UsableTemplate;
   onCancel: () => void;
   cancelLabel?: string;
+  defaultTeamId?: string;
 }) {
   const [pending, run] = useServerAction();
   const [name, setName] = useState(template.name);
   const [startOn, setStartOn] = useState(() => localIsoDate());
-  const [placement, setPlacement] = useState<Placement>({ teamId: "", visibility: "team" });
+  const [placement, setPlacement] = useState<Placement>({ teamId: defaultTeamId ?? "", visibility: "team" });
   const { summary } = template;
 
   return (

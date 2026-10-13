@@ -5,7 +5,7 @@ import { BrowseProjectsTable } from "@/components/projects/browse-projects-table
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { browseProjectPeople, browseProjects, getTeam, listProfiles } from "@/lib/data";
+import { browseProjectPeople, browseProjects, getTeam, getWorkspace, listProfiles } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
 import { teamTitle } from "../team-title";
 
@@ -16,18 +16,21 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/wo
 
 // All work: the team's projects the viewer may see, in the Browse projects table — their own, plus the
 // team's public projects they can join (as an Editor). Private projects of others never show, workspace
-// admins included.
+// admins included. Create project starts in this team when the viewer can put projects in it (its
+// members; anyone for the default team) — otherwise the dialog falls back to the default team.
 export default async function TeamWorkPage({ params }: PageProps<"/teams/[teamId]/work">) {
   const { teamId } = await params;
   if (!isUuid(teamId)) notFound();
-  const [member, team, projects, people, profiles] = await Promise.all([
+  const [member, team, projects, people, profiles, workspace] = await Promise.all([
     requireMember(),
     getTeam(teamId),
     browseProjects(teamId),
     browseProjectPeople(teamId),
     listProfiles(),
+    getWorkspace(),
   ]);
   if (!team) notFound();
+  const canPlace = workspace?.defaultTeamId === team.id || team.members.some((m) => m.profileId === member.id);
   const rows = projects.map((p) => {
     const extra = people?.get(p.projectId);
     return {
@@ -39,7 +42,7 @@ export default async function TeamWorkPage({ params }: PageProps<"/teams/[teamId
   });
   const joinable = projects.filter((p) => p.myRole === null && !p.archived).length;
   const create = (
-    <OpenDialogButton dialog={{ kind: "project" }} className="btn-primary h-8 px-3">
+    <OpenDialogButton dialog={{ kind: "project", teamId: team.id }} className="btn-primary h-8 px-3">
       <Plus className="size-4" aria-hidden />
       Create project
     </OpenDialogButton>
@@ -61,7 +64,10 @@ export default async function TeamWorkPage({ params }: PageProps<"/teams/[teamId
       {rows.length === 0 ? (
         <EmptyState icon={FolderKanban} title="No projects to show" action={create}>
           {team.name}’s projects you’re in show up here, and so do its projects shared as “Public to team” once
-          you’re on the team. Pick this team when you create a project.
+          you’re on the team.{" "}
+          {canPlace
+            ? `Projects you create here start in ${team.name}.`
+            : "Only its members can put projects in it, so one you create here goes in the default team."}
         </EmptyState>
       ) : (
         <BrowseProjectsTable

@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import { TeamMembers } from "@/components/teams/team-members";
 import { requireMember } from "@/lib/auth";
-import { canManageTeam, getTeam, getWorkspace, listPendingInvites } from "@/lib/data";
+import { isEmailConfigured } from "@/lib/email";
+import { canManageTeam, getTeam, getWorkspace, hasReal1Schema, listPendingInvites } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
 import { teamTitle } from "../team-title";
 
@@ -15,12 +16,13 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/me
 export default async function TeamMembersPage({ params }: PageProps<"/teams/[teamId]/members">) {
   const { teamId } = await params;
   if (!isUuid(teamId)) notFound();
-  const [member, team, canManage, invites, workspace] = await Promise.all([
+  const [member, team, canManage, invites, workspace, resendable] = await Promise.all([
     requireMember(),
     getTeam(teamId),
     canManageTeam(teamId),
     listPendingInvites("team", teamId),
     getWorkspace(),
+    hasReal1Schema(),
   ]);
   if (!team) notFound();
 
@@ -35,6 +37,7 @@ export default async function TeamMembersPage({ params }: PageProps<"/teams/[tea
         canManage={canManage}
         isDefault={workspace?.defaultTeamId === team.id}
         invites={invites}
+        resendable={resendable && isEmailConfigured()}
       />
     </div>
   );

@@ -65,6 +65,7 @@ import {
   WORKSPACE_ASSETS_BUCKET,
   isProjectVisibility,
   type BrowseProject,
+  type InviteEmailStatus,
   type PendingInvite,
   type WorkspaceMember,
 } from "@/lib/workspace";
@@ -1486,6 +1487,14 @@ export const hasBatch5Schema = cache(async (): Promise<boolean> => {
   return !isMissingColumn(result.error);
 });
 
+// Is 20261013010000_real_1.sql applied? Its last statement makes email_forwarding_addresses readable, so
+// a preview without it hides Resend on pending invites, form file questions, and email forwarding.
+export const hasReal1Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.from("email_forwarding_addresses").select("id").limit(1);
+  return !result.error;
+});
+
 type InboxRowBase = {
   id: string;
   kind: string;
@@ -2118,6 +2127,45 @@ export type MySettings = {
   // How My tasks opens (the my_tasks_layout cookie), for Settings → Display.
   myTasksLayout: MyTasksLayout;
 };
+
+// The person's forwarding address row (made on first use) and their latest forwarded emails (Real
+// features 1). Null when this release's database update isn't applied.
+export const getMyForwarding = cache(
+  async (): Promise<{
+    token: string;
+    defaultProjectId: string | null;
+    recent: { id: string; status: string; reason: string | null; taskId: string | null; projectId: string | null; attachments: number; createdAt: string }[];
+    taskTitles: Map<string, string>;
+  } | null> => {
+    const supabase = await createClient();
+    const address = await supabase.rpc("my_forwarding_address");
+    if (address.error || !address.data) return null;
+    const recent = await supabase
+      .from("email_forwards")
+      .select("id, status, reason, task_id, project_id, attachments, created_at")
+      .order("created_at", { ascending: false })
+      .limit(5);
+    const forwards = recent.data ?? [];
+    const taskIds = forwards.flatMap((f) => (f.task_id ? [f.task_id] : []));
+    const titles = taskIds.length
+      ? await supabase.from("tasks").select("id, title").in("id", taskIds).is("deleted_at", null)
+      : { data: [] };
+    return {
+      token: address.data.token,
+      defaultProjectId: address.data.default_project_id,
+      recent: forwards.map((f) => ({
+        id: f.id,
+        status: f.status,
+        reason: f.reason,
+        taskId: f.task_id,
+        projectId: f.project_id,
+        attachments: f.attachments,
+        createdAt: f.created_at,
+      })),
+      taskTitles: new Map((titles.data ?? []).map((t) => [t.id, t.title] as const)),
+    };
+  },
+);
 
 export const getMySettings = cache(async (): Promise<MySettings | null> => {
   const { user, allowlisted } = await getViewer();
@@ -3288,12 +3336,36 @@ export const listPendingInvites = cache(
       .is("applied_at", null)
       .is("deleted_at", null)
       .order("created_at");
-    return rows(result, "pending invites").map((r) => ({
+    const invites = rows(result, "pending invites");
+    // Their invite emails (Real features 1; the outbox policy shows them only to the people who manage
+    // the invite, so everyone else just sees "Invited").
+    const emails = invites.length
+      ? await supabase
+          .from("email_outbox")
+          .select("payload, status, last_error, sent_at, created_at")
+          .is("task_id", null)
+          .eq("payload->>kind", "invite")
+          .in(
+            "payload->>pending_id",
+            invites.map((r) => r.id),
+          )
+          .order("created_at", { ascending: false })
+      : { data: [], error: null };
+    const latest = new Map<string, InviteEmailStatus>();
+    for (const o of emails.data ?? []) {
+      const pendingId = o.payload && typeof o.payload === "object" && !Array.isArray(o.payload) ? o.payload.pending_id : null;
+      if (typeof pendingId === "string" && !latest.has(pendingId)) {
+        latest.set(pendingId, { status: o.status, lastError: o.last_error, sentAt: o.sent_at, createdAt: o.created_at });
+      }
+    }
+    return invites.map((r) => ({
       id: r.id,
       email: r.email,
       role: r.role,
       invitedAt: r.created_at,
       invitedByName: r.inviter?.full_name?.trim() || null,
+      inviteEmail: latest.get(r.id) ?? null,
+      lastEmailAt: latest.get(r.id)?.createdAt ?? null,
     }));
   },
 );
@@ -3683,6 +3755,9 @@ export type ProjectFile = {
   contentType: string | null;
   sizeBytes: number;
   uploadedBy: string;
+  // Where it came from (Real features 1): uploaded in the app, a form submitter's file, or a forwarded
+  // email's attachment. A form file's uploadedBy is a stand-in (the form's creator), so Files says "Form".
+  source: "upload" | "form" | "email";
   createdAt: string;
   taskId: string;
   taskTitle: string;
@@ -3702,8 +3777,11 @@ export const listProjectFiles = cache(async (projectId: string): Promise<Project
     uploaded_by: string;
     created_at: string;
     deleted_at: string | null;
+    // With Real features 1's database update: upload | form | email.
+    source?: string;
   };
   type TaskRow = { id: string; title: string; deleted_at: string | null; task_attachments: FileRow[] };
+  const columns = (await hasReal1Schema()) ? `${FILE_COLUMNS}, source` : FILE_COLUMNS;
   const files: ProjectFile[] = [];
   const add = (task: TaskRow) => {
     if (task.deleted_at) return;
@@ -3715,6 +3793,7 @@ export const listProjectFiles = cache(async (projectId: string): Promise<Project
         contentType: f.content_type,
         sizeBytes: f.size_bytes,
         uploadedBy: f.uploaded_by,
+        source: f.source === "form" || f.source === "email" ? f.source : "upload",
         createdAt: f.created_at,
         taskId: task.id,
         taskTitle: task.title,
@@ -3724,7 +3803,7 @@ export const listProjectFiles = cache(async (projectId: string): Promise<Project
 
   const memberships = await supabase
     .from("task_projects")
-    .select(`task_id, tasks!inner(id, title, deleted_at, task_attachments(${FILE_COLUMNS}))`)
+    .select(`task_id, tasks!inner(id, title, deleted_at, task_attachments(${columns}))`)
     .eq("project_id", projectId)
     .is("deleted_at", null)
     .limit(5000);
@@ -3738,7 +3817,7 @@ export const listProjectFiles = cache(async (projectId: string): Promise<Project
   for (let i = 0; i < taskIds.length; i += 200) {
     const subtasks = await supabase
       .from("tasks")
-      .select(`id, title, deleted_at, task_attachments(${FILE_COLUMNS})`)
+      .select(`id, title, deleted_at, task_attachments(${columns})`)
       .in("root_task_id", taskIds.slice(i, i + 200))
       .is("deleted_at", null);
     for (const task of rows(subtasks, "subtask files")) add(task as unknown as TaskRow);

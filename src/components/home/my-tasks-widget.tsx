@@ -2,22 +2,28 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useOptimistic, useState, type KeyboardEvent } from "react";
+import { startTransition, useEffect, useOptimistic, useRef, useState, type KeyboardEvent } from "react";
 import { CalendarCheck, CircleCheck, CircleCheckBig, Lock, Plus } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { DueDate } from "@/components/project/task-meta";
 import { useShell } from "@/components/shell/shell-context";
+import { useTabChord } from "@/components/shortcuts/keyboard";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { Widget, WidgetTitle } from "@/components/home/widget";
-import { setTaskCompleted } from "@/lib/actions";
+import { createPrivateTask, setTaskCompleted } from "@/lib/actions";
 import type { MyTask } from "@/lib/data";
-import { HOME_TASK_TABS, RECENT_COMPLETED_LIMIT, type HomeTaskTab } from "@/lib/home";
+import { HOME_TASK_TABS, RECENT_COMPLETED_LIMIT, createdFirst, type HomeTaskTab } from "@/lib/home";
 import { projectColorClass } from "@/lib/project-colors";
 
+// A task being saved from the add row: its title shows where it was typed until the page refreshes.
+type SavingTask = { key: number; title: string };
+const NONE_SAVING: SavingTask[] = [];
+
 // Home → My tasks (Asana parity, batch 5): the tasks assigned to you in three tabs. A row opens the task
-// in the pane next to Home (`/?task=<id>`); the circle completes it right here.
+// in the pane next to Home (`/?task=<id>`); the circle completes it right here. Create task (or Tab then
+// Q) opens Asana's inline new-task row at the top of Upcoming.
 export function MyTasksWidget({
   tasks,
   openTaskId,
@@ -27,8 +33,9 @@ export function MyTasksWidget({
   openTaskId: string | null;
 }) {
   const router = useRouter();
-  const { member, openDialog } = useShell();
+  const { member } = useShell();
   const [, run] = useServerAction();
+  const [creating, create] = useServerAction();
   // Start on the tab that holds the open task, so a reload with ?task= shows its row.
   const [tab, setTab] = useState<HomeTaskTab>(
     () => HOME_TASK_TABS.find((t) => tasks[t.key].some((task) => task.id === openTaskId))?.key ?? "upcoming",
@@ -37,6 +44,53 @@ export function MyTasksWidget({
     new Map<string, boolean>(),
     (current, change: { id: string; completed: boolean }) => new Map(current).set(change.id, change.completed),
   );
+
+  // The add row: whether it's open, and a counter that asks it for focus again (Create task or Tab→Q
+  // while it's already open).
+  const [adding, setAdding] = useState(false);
+  const [focusRequest, setFocusRequest] = useState(0);
+  // Tasks created here during this visit (newest first) stay at the top of Upcoming, right under the add
+  // row, instead of joining the undated tasks at the end; while one is saving its title shows there.
+  const [createdIds, setCreatedIds] = useState<string[]>([]);
+  const [saving, addSaving] = useOptimistic(NONE_SAVING, (current, task: SavingTask) => [task, ...current]);
+  const savingKey = useRef(0);
+  const createButton = useRef<HTMLButtonElement>(null);
+
+  // New tasks have no due date, so they land in Upcoming: the add row lives there.
+  const startAdding = () => {
+    setTab("upcoming");
+    setAdding(true);
+    setFocusRequest((n) => n + 1);
+  };
+  // Tab then Q on Home opens the row instead of Create → Task (whose menu item still opens the dialog).
+  useTabChord("q", startAdding);
+
+  const addTask = (title: string, restore: (title: string) => void) => {
+    const key = ++savingKey.current;
+    create(
+      async () => {
+        const result = await createPrivateTask(title);
+        const taskId = result.taskId;
+        // An update after an await needs its own transition to land with the refreshed tasks.
+        if (taskId) startTransition(() => setCreatedIds((ids) => [taskId, ...ids]));
+        // Not saved: give the typed name back (the error toasts).
+        else if (result.error) restore(title);
+        return result;
+      },
+      () => addSaving({ key, title }),
+    );
+  };
+
+  const stopAdding = (returnFocus: boolean) => {
+    setAdding(false);
+    if (returnFocus) createButton.current?.focus();
+  };
+
+  // The add row belongs to Upcoming: another tab closes it.
+  const selectTab = (key: HomeTaskTab) => {
+    setTab(key);
+    if (key !== "upcoming") setAdding(false);
+  };
 
   const isDone = (task: MyTask) => toggled.get(task.id) ?? Boolean(task.completedAt);
   const toggle = (task: MyTask) => {
@@ -58,12 +112,14 @@ export function MyTasksWidget({
       : null;
     if (next === null) return;
     e.preventDefault();
-    setTab(HOME_TASK_TABS[next].key);
+    selectTab(HOME_TASK_TABS[next].key);
     document.getElementById(`home-tasks-tab-${HOME_TASK_TABS[next].key}`)?.focus();
   }
 
-  const shown = tasks[tab];
+  const shown = tab === "upcoming" ? createdFirst(tasks.upcoming, createdIds) : tasks[tab];
   const overdueCount = tasks.overdue.length;
+  // With the add row open (or a task saving), the list starts there instead of with the empty state.
+  const composing = tab === "upcoming" && (adding || saving.length > 0);
 
   return (
     <Widget
@@ -96,7 +152,7 @@ export function MyTasksWidget({
                 aria-selected={tab === t.key}
                 aria-controls="home-tasks-panel"
                 tabIndex={tab === t.key ? 0 : -1}
-                onClick={() => setTab(t.key)}
+                onClick={() => selectTab(t.key)}
                 className="inline-flex h-9 shrink-0 items-center gap-1 border-b-2 border-transparent text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
               >
                 {t.label}
@@ -108,22 +164,41 @@ export function MyTasksWidget({
       }
     >
       <div id="home-tasks-panel" role="tabpanel" aria-labelledby={`home-tasks-tab-${tab}`}>
-        {/* New tasks have no due date, so they land in Upcoming: the row lives there. */}
         {tab === "upcoming" ? (
           <button
+            ref={createButton}
             type="button"
-            aria-haspopup="dialog"
-            onClick={() => openDialog({ kind: "task" })}
+            onClick={startAdding}
             className="flex h-10 w-full items-center gap-2.5 border-b border-zinc-100 px-5 text-left text-sm text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
           >
             <Plus className="size-4" aria-hidden />
             Create task
           </button>
         ) : null}
-        {shown.length === 0 ? (
+        {shown.length === 0 && !composing ? (
           <EmptyTab tab={tab} />
         ) : (
           <ul aria-label={HOME_TASK_TABS.find((t) => t.key === tab)?.label}>
+            {tab === "upcoming" && adding ? (
+              <AddTaskRow focusRequest={focusRequest} pending={creating} onAdd={addTask} onClose={stopAdding} />
+            ) : null}
+            {tab === "upcoming"
+              ? saving.map((task) => (
+                  <li
+                    key={`saving-${task.key}`}
+                    aria-busy="true"
+                    className="flex min-h-10 items-center gap-2.5 border-b border-zinc-100 px-5 py-1.5"
+                  >
+                    <EmptyCircle />
+                    <span className="min-w-0 flex-1 truncate text-sm text-zinc-900">
+                      {task.title}
+                      <span className="sr-only"> (saving)</span>
+                    </span>
+                    <PrivateChip />
+                    <span aria-hidden className="min-w-16 shrink-0" />
+                  </li>
+                ))
+              : null}
             {shown.map((task) => {
               const done = isDone(task);
               const open = task.id === openTaskId;
@@ -182,20 +257,89 @@ export function MyTasksWidget({
   );
 }
 
+// Asana's inline new-task row at the top of Upcoming. Enter saves a private task (assigned to you, in no
+// project, like My tasks' add row) and leaves the box open and empty for the next one; Escape cancels and
+// closes it, and so does leaving it empty.
+function AddTaskRow({
+  focusRequest,
+  pending,
+  onAdd,
+  onClose,
+}: {
+  focusRequest: number;
+  pending: boolean;
+  onAdd: (title: string, restore: (title: string) => void) => void;
+  onClose: (returnFocus: boolean) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  // On opening, and again whenever Create task or Tab→Q asks while it's open.
+  useEffect(() => {
+    input.current?.focus();
+  }, [focusRequest]);
+
+  return (
+    <li>
+      <form
+        className="flex min-h-10 items-center gap-2.5 border-b border-zinc-100 px-5 py-1.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const value = title.trim();
+          if (!value) return;
+          setTitle("");
+          onAdd(value, (failed) => setTitle((current) => current || failed));
+        }}
+      >
+        <EmptyCircle />
+        <label htmlFor="home-add-task" className="sr-only">
+          New private task name
+        </label>
+        <input
+          ref={input}
+          id="home-add-task"
+          value={title}
+          maxLength={1000}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={(e) => {
+            if (!e.currentTarget.value.trim()) onClose(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") onClose(true);
+          }}
+          placeholder={pending ? "Adding…" : "Task name, then Enter"}
+          aria-describedby="home-add-task-hint"
+          className="control min-w-0 flex-1"
+        />
+        <span id="home-add-task-hint" className="hidden shrink-0 items-center gap-1 text-xs text-zinc-500 @md:inline-flex">
+          <Lock className="size-3" aria-hidden />
+          Private to you
+        </span>
+      </form>
+    </li>
+  );
+}
+
+// The completion circle's place on a row that can't be completed yet (the add row, a task saving).
+function EmptyCircle() {
+  return <span aria-hidden className="size-[18px] shrink-0 rounded-full border border-zinc-300" />;
+}
+
+function PrivateChip() {
+  return (
+    <span
+      className="chip hidden shrink-0 @md:inline-flex"
+      title="Private: only you and its assignee can see it, until it’s added to a project"
+    >
+      <Lock className="size-3 shrink-0" aria-hidden />
+      Private
+    </span>
+  );
+}
+
 // The task's project (its home project when the viewer can read it), or "Private" for a task that is
 // in no project yet.
 function ProjectChip({ task }: { task: MyTask }) {
-  if (!task.projectId) {
-    return (
-      <span
-        className="chip hidden shrink-0 @md:inline-flex"
-        title="Private: only you and its assignee can see it, until it’s added to a project"
-      >
-        <Lock className="size-3 shrink-0" aria-hidden />
-        Private
-      </span>
-    );
-  }
+  if (!task.projectId) return <PrivateChip />;
   return (
     <Link
       href={`/projects/${task.projectId}`}

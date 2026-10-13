@@ -93,7 +93,7 @@ export function TeamGoalsCard({
           Goals {goals.length ? <span className="font-normal tabular-nums text-zinc-500">· {goals.length}</span> : null}
         </h2>
         {goals.length ? (
-          <OpenDialogButton dialog={{ kind: "goal" }} className="btn-ghost h-7 text-xs">
+          <OpenDialogButton dialog={{ kind: "goal", teamId }} className="btn-ghost h-7 text-xs">
             <Plus className="size-3.5" aria-hidden />
             Create goal
           </OpenDialogButton>
@@ -105,13 +105,13 @@ export function TeamGoalsCard({
           title="No team goals yet"
           size="inline"
           action={
-            <OpenDialogButton dialog={{ kind: "goal" }} className="btn-secondary">
+            <OpenDialogButton dialog={{ kind: "goal", teamId }} className="btn-secondary">
               <Plus className="size-3.5" aria-hidden />
               Create goal
             </OpenDialogButton>
           }
         >
-          Create a goal and pick this team as its team. Team leads can edit every goal of their team.
+          Goals you create here start with this team as their team. Team leads can edit every goal of their team.
         </EmptyState>
       ) : (
         <ul className="divide-y divide-zinc-100">

@@ -8,9 +8,10 @@ import { PROJECT_VISIBILITIES, VISIBILITY_DESCRIPTIONS, VISIBILITY_LABELS, type 
 export type TeamChoice = Awaited<ReturnType<typeof listProjectTeamChoices>>[number];
 export type Placement = { teamId: string; visibility: ProjectVisibility };
 
-// Team + privacy for a new project, like Asana's New project form: the default team is preselected,
-// and the project is public to its team unless made private. Also posts as form fields "team" and
-// "visibility" when used inside a <form>.
+// Team + privacy for a new project, like Asana's New project form: the default team is preselected
+// (or the team page it was opened from, when you can put projects there), and the project is public to
+// its team unless made private. Also posts as form fields "team" and "visibility" when used inside a
+// <form>.
 export function ProjectPlacementFields({
   value,
   onChange,
@@ -32,7 +33,12 @@ export function ProjectPlacementFields({
         const choices = await listProjectTeamChoices();
         setTeams(choices);
         onTeams?.(choices);
-        if (!value.teamId && choices[0]) onChange({ ...value, teamId: choices[0].id });
+        // The default team (listed first) unless the opener's team is one you can put projects in; a
+        // team page you aren't on falls back to it rather than leaving a team no option matches.
+        const fallback = choices[0]?.id ?? "";
+        if (!choices.some((c) => c.id === value.teamId) && value.teamId !== fallback) {
+          onChange({ ...value, teamId: fallback });
+        }
       } catch {
         setTeams([]);
       }

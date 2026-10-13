@@ -475,6 +475,75 @@ export type Database = {
         };
         Relationships: [];
       };
+      email_forwarding_addresses: {
+        Row: {
+          id: string;
+          profile_id: string;
+          token: string;
+          default_project_id: string | null;
+          created_at: string;
+          updated_at: string;
+          revoked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          token?: string;
+          default_project_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          revoked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          token?: string;
+          default_project_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
+      email_forwards: {
+        Row: {
+          id: string;
+          provider_id: string | null;
+          address_id: string | null;
+          profile_id: string | null;
+          task_id: string | null;
+          project_id: string | null;
+          status: string;
+          reason: string | null;
+          attachments: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          provider_id?: string | null;
+          address_id?: string | null;
+          profile_id?: string | null;
+          task_id?: string | null;
+          project_id?: string | null;
+          status: string;
+          reason?: string | null;
+          attachments?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          provider_id?: string | null;
+          address_id?: string | null;
+          profile_id?: string | null;
+          task_id?: string | null;
+          project_id?: string | null;
+          status?: string;
+          reason?: string | null;
+          attachments?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       form_submissions: {
         Row: {
           id: string;
@@ -2084,6 +2153,7 @@ export type Database = {
           uploaded_by: string;
           created_at: string;
           deleted_at: string | null;
+          source: string;
         };
         Insert: {
           id?: string;
@@ -2095,6 +2165,7 @@ export type Database = {
           uploaded_by?: string;
           created_at?: string;
           deleted_at?: string | null;
+          source?: string;
         };
         Update: {
           id?: string;
@@ -2106,6 +2177,7 @@ export type Database = {
           uploaded_by?: string;
           created_at?: string;
           deleted_at?: string | null;
+          source?: string;
         };
         Relationships: [
           {
@@ -3719,6 +3791,7 @@ export type Database = {
           applied_at: string | null;
           applied_profile_id: string | null;
           deleted_at: string | null;
+          resent_at: string | null;
         };
         Insert: {
           id?: string;
@@ -3734,6 +3807,7 @@ export type Database = {
           applied_at?: string | null;
           applied_profile_id?: string | null;
           deleted_at?: string | null;
+          resent_at?: string | null;
         };
         Update: {
           id?: string;
@@ -3749,6 +3823,7 @@ export type Database = {
           applied_at?: string | null;
           applied_profile_id?: string | null;
           deleted_at?: string | null;
+          resent_at?: string | null;
         };
         Relationships: [
           {
@@ -4128,6 +4203,33 @@ export type Database = {
       post_email_reply: {
         Args: { reply_token: string; sender_email: string; reply_body: string; provider_email_id?: string | null };
         Returns: Json;
+      };
+      post_email_forward: {
+        Args: {
+          forward_token: string;
+          sender_email: string;
+          sender_verified: boolean;
+          email_subject: string;
+          email_body: string;
+          provider_email_id?: string | null;
+        };
+        Returns: Json;
+      };
+      attach_forwarded_file: {
+        Args: { target_forward: string; file_path: string; file_name: string; file_type: string | null; file_size: number };
+        Returns: string;
+      };
+      my_forwarding_address: {
+        Args: Record<PropertyKey, never>;
+        Returns: Database["public"]["Tables"]["email_forwarding_addresses"]["Row"];
+      };
+      rotate_forwarding_address: {
+        Args: Record<PropertyKey, never>;
+        Returns: Database["public"]["Tables"]["email_forwarding_addresses"]["Row"];
+      };
+      list_stale_form_uploads: {
+        Args: { max_items?: number };
+        Returns: string[];
       };
       post_project_status_update: {
         Args: { target_project: string; new_status: string; update_title?: string | null; summary?: string | null };

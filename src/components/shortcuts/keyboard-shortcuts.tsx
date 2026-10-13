@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Keyboard, X } from "lucide-react";
 import { OPEN_SEARCH_EVENT } from "@/components/shell/search-palette";
 import { useShell } from "@/components/shell/shell-context";
-import { isMac, isTypingTarget } from "./keyboard";
+import { CHORD_MS, isMac, isTypingTarget } from "./keyboard";
 
 type Shortcut = { keys: string[]; label: string };
 
@@ -16,7 +16,7 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
         { keys: ["?"], label: "Show or hide these shortcuts" },
         { keys: ["/"], label: "Search tasks, projects, and people" },
         { keys: [mod, "K"], label: "Search (works while typing too)" },
-        { keys: ["Tab", "then", "Q"], label: "Create a task (in a List view: add one in the current section)" },
+        { keys: ["Tab", "then", "Q"], label: "Create a task (on Home: add one in My tasks; in a List view: in the current section)" },
       ],
     },
     {
@@ -35,12 +35,11 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
   ];
 }
 
-const CHORD_MS = 1000;
-
 // Global shortcuts: `?` toggles the help overlay, `/` opens the search palette (⌘/Ctrl+K is handled by
-// the palette itself), and Tab then Q opens Create → Task — unless a List view or My tasks took the chord
-// for its inline add (they prevent the event's default, checked once every listener has run). None fires
-// while typing.
+// the palette itself), and Tab then Q opens Create → Task — unless the page took the chord for an inline
+// add: a List view (the current section's add row) or Home (the My tasks widget's new row). They prevent
+// the event's default, checked once every listener has run. My tasks has no Tab→Q of its own, so it opens
+// the dialog there. None fires while typing.
 export function KeyboardShortcuts() {
   const { openDialog } = useShell();
   const [open, setOpen] = useState(false);

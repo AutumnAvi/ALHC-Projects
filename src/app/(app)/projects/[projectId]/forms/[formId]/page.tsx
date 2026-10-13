@@ -3,7 +3,15 @@ import { notFound } from "next/navigation";
 import { FormEditor } from "@/components/forms/form-editor";
 import { FormsList } from "@/components/forms/forms-list";
 import { RoleGate } from "@/components/project/project-access";
-import { getForm, getProjectRole, hasBatch4Schema, listProjectFields, listProjectForms, listSections } from "@/lib/data";
+import {
+  getForm,
+  getProjectRole,
+  hasBatch4Schema,
+  hasReal1Schema,
+  listProjectFields,
+  listProjectForms,
+  listSections,
+} from "@/lib/data";
 import { isUuid } from "@/lib/ids";
 import { requestOrigin } from "@/lib/origin";
 import { hasRole } from "@/lib/roles";
@@ -21,7 +29,7 @@ export async function generateMetadata({
 export default async function FormEditorPage({ params }: PageProps<"/projects/[projectId]/forms/[formId]">) {
   const { projectId, formId } = await params;
   if (!isUuid(formId)) notFound();
-  const [form, forms, sections, fields, origin, role, batch4] = await Promise.all([
+  const [form, forms, sections, fields, origin, role, batch4, real1] = await Promise.all([
     getForm(formId),
     listProjectForms(projectId),
     listSections(projectId),
@@ -29,6 +37,7 @@ export default async function FormEditorPage({ params }: PageProps<"/projects/[p
     requestOrigin(),
     getProjectRole(projectId),
     hasBatch4Schema(),
+    hasReal1Schema(),
   ]);
   if (!form || form.projectId !== projectId) notFound();
 
@@ -44,6 +53,7 @@ export default async function FormEditorPage({ params }: PageProps<"/projects/[p
         fields={fields}
         origin={origin}
         batch4={batch4}
+        real1={real1}
         canEdit={hasRole(role, "admin")}
         closeHref={`/projects/${projectId}/forms`}
       />

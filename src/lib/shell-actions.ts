@@ -9,7 +9,9 @@ import { displayName } from "@/components/avatar";
 import { getViewer } from "@/lib/auth";
 import {
   getGoalViewer,
+  getMyForwarding,
   getMySettings,
+  hasReal1Schema,
   listActivePeople,
   listGoals,
   listMyProjectRoles,
@@ -21,11 +23,11 @@ import {
   type MySettings,
 } from "@/lib/data";
 import { isEmailConfigured } from "@/lib/email";
-import { isInboundEmailConfigured } from "@/lib/email-reply";
+import { forwardingAddress, isInboundEmailConfigured } from "@/lib/email-reply";
 import { fieldTypeLabel, isFieldType } from "@/lib/fields";
 import type { GalleryTemplate, TemplatePreview } from "@/lib/templates";
 import { isUuid } from "@/lib/ids";
-import { hasRole } from "@/lib/roles";
+import { hasRole, type ProjectRole } from "@/lib/roles";
 import {
   EMPTY_RESULTS,
   MAX_RECENTS,
@@ -35,6 +37,7 @@ import {
   type QuickTask,
   type RecentItem,
   type EmailSetup,
+  type ForwardingSetup,
   type RecentRef,
   type SearchKind,
 } from "@/lib/shell";
@@ -198,7 +201,42 @@ export async function loadSettings(): Promise<{ me: MySettings; email: EmailSetu
       replyByEmail: sending && isInboundEmailConfigured(),
       // listProjects() is active projects only; an archived one caps everyone at Viewer anyway.
       inboundProjects: projects.flatMap((p) => (hasRole(roles.get(p.id), "admin") ? [{ id: p.id, name: p.name }] : [])),
+      forwarding: await loadForwarding(projects, roles),
     },
+  };
+}
+
+// Settings → Email forwarding: the person's address (made the first time they open Settings) once
+// inbound email is set up here — the same Resend webhook as replies, plus what /api/inbound/email needs to
+// read the message and write the task (RESEND_API_KEY, the service-role key) — and the database update is
+// applied.
+async function loadForwarding(
+  projects: { id: string; name: string }[],
+  roles: Map<string, ProjectRole>,
+): Promise<ForwardingSetup> {
+  if (!isInboundEmailConfigured() || !process.env.RESEND_API_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { state: "not_configured" };
+  }
+  if (!(await hasReal1Schema())) return { state: "needs_update" };
+  const forwarding = await getMyForwarding();
+  if (!forwarding) return { state: "needs_update" };
+  const names = new Map(projects.map((p) => [p.id, p.name] as const));
+  return {
+    state: "ready",
+    address: forwardingAddress(forwarding.token),
+    defaultProjectId: forwarding.defaultProjectId,
+    projects: projects.flatMap((p) => (hasRole(roles.get(p.id), "editor") ? [{ id: p.id, name: p.name }] : [])),
+    recent: forwarding.recent.map((f) => ({
+      id: f.id,
+      status: f.status === "created" ? "created" : "rejected",
+      reason: f.reason,
+      taskId: f.taskId,
+      taskTitle: f.taskId ? (forwarding.taskTitles.get(f.taskId) ?? null) : null,
+      projectId: f.projectId,
+      projectName: f.projectId ? (names.get(f.projectId) ?? null) : null,
+      attachments: f.attachments,
+      createdAt: f.createdAt,
+    })),
   };
 }
 

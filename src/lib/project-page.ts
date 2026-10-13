@@ -39,6 +39,9 @@ export type ShareData = {
   members: ShareMember[];
   // Invited before their first sign-in.
   invites: PendingInvite[];
+  // Invite emails go out and can be sent again (Real features 1's database update is applied and an email
+  // provider is set up).
+  resendable: boolean;
   // Teams added with a group invite (a record of the invite; the people are ordinary members).
   addedTeams: (ShareTeam & { role: string })[];
   // The invite search: people in the workspace and every team.

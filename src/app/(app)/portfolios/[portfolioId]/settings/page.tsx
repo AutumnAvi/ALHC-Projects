@@ -3,7 +3,15 @@ import { notFound } from "next/navigation";
 import { PortfolioFieldsManager } from "@/components/portfolio/portfolio-fields-manager";
 import { PortfolioMembersManager } from "@/components/portfolio/portfolio-members";
 import { requireMember } from "@/lib/auth";
-import { getPortfolio, getPortfolioRole, listPendingInvites, listPortfolioFields, listPortfolioMembers } from "@/lib/data";
+import { isEmailConfigured } from "@/lib/email";
+import {
+  getPortfolio,
+  getPortfolioRole,
+  hasReal1Schema,
+  listPendingInvites,
+  listPortfolioFields,
+  listPortfolioMembers,
+} from "@/lib/data";
 import { hasPortfolioRole } from "@/lib/roles";
 
 export async function generateMetadata({ params }: PageProps<"/portfolios/[portfolioId]/settings">): Promise<Metadata> {
@@ -14,20 +22,28 @@ export async function generateMetadata({ params }: PageProps<"/portfolios/[portf
 
 export default async function PortfolioSettingsPage({ params }: PageProps<"/portfolios/[portfolioId]/settings">) {
   const { portfolioId } = await params;
-  const [viewer, portfolio, role, members, fields, invites] = await Promise.all([
+  const [viewer, portfolio, role, members, fields, invites, resendable] = await Promise.all([
     requireMember(),
     getPortfolio(portfolioId),
     getPortfolioRole(portfolioId),
     listPortfolioMembers(portfolioId),
     listPortfolioFields(portfolioId),
     listPendingInvites("portfolio", portfolioId),
+    hasReal1Schema(),
   ]);
   if (!portfolio || !role) notFound();
 
   return (
     <>
       <PortfolioFieldsManager portfolioId={portfolio.id} fields={fields} canEdit={hasPortfolioRole(role, "editor")} />
-      <PortfolioMembersManager portfolio={portfolio} members={members} viewerId={viewer.id} viewerRole={role} invites={invites} />
+      <PortfolioMembersManager
+        portfolio={portfolio}
+        members={members}
+        viewerId={viewer.id}
+        viewerRole={role}
+        invites={invites}
+        resendable={resendable && isEmailConfigured()}
+      />
     </>
   );
 }
