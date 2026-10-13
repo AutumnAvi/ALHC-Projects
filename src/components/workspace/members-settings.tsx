@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { personHref } from "@/lib/people";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { AdminOnlyNote, SettingsCard } from "@/components/workspace/settings-chrome";
@@ -98,7 +99,13 @@ function MemberRow({ member: m, self }: { member: WorkspaceMember; self: boolean
       <Avatar name={m.name} size="md" />
       <div className="min-w-48 flex-1">
         <p className="truncate text-sm font-medium text-zinc-900">
-          {m.name}
+          {m.profileId ? (
+            <Link href={personHref(m.profileId)} className="hover:underline">
+              {m.name}
+            </Link>
+          ) : (
+            m.name
+          )}
           {self ? <span className="font-normal text-zinc-500"> (you)</span> : null}
         </p>
         <p className="truncate text-xs text-zinc-500">

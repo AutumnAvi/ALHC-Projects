@@ -1,6 +1,6 @@
 # ALHC-Projects roadmap (everything not built yet)
 
-Updated: 2026-10-13 (real-1 made the top five of Group 0 real; PR open, migration not applied yet). App: https://alhc-projects.vercel.app · repo AutumnAvi/ALHC-Projects (main after PR #36 + `6dedf9f`).
+Updated: 2026-10-13 (real-1 merged as `9e416ca`; real-2 made the team-and-people group of Group 0 real — PR open, its migration and tail not applied yet). App: https://alhc-projects.vercel.app · repo AutumnAvi/ALHC-Projects (main after PR #36 + `6dedf9f`).
 Sources: SHIP-STATUS.md, END-OF-BUILD-CHECKLIST.md, ai-actions-proposal.md, AGENTS.md "Follow-ups" + "Phases" on main, research/asana-feature-map-v1-2026-10-05.md, plus general Asana knowledge (marked "Asana").
 
 **Size:** S = a small paste or part of a phase · M = about one Claude phase · L = several phases or outside setup.
@@ -29,13 +29,17 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - [x] **Attachment questions on forms** (real-1): public submitters attach up to 5 files per question (10 per response, 25 MB each, common file types); they land on the task the form creates.
 - [x] **Create project / Create goal from a team page** preselect that team (real-1). A project falls back to the default team when you aren't on that team, because only members can put projects in a team.
 - [x] **Home → Create task** is an inline row at the top of My tasks (real-1): Enter saves and keeps the row open, Esc cancels; Tab then Q does the same on Home.
+- [x] **real-1's migration** (`20261013010000_real_1.sql`): done — real-1 merged as `9e416ca`, and the shipping rule applies a phase's migration before its merge, so Resend, attachment questions and forwarding are no longer hidden.
+- [x] **Team Messages** (real-2): every team's Messages tab has real threads. Everyone who can see the team reads them (teams are a workspace directory); the team's members, leads and workspace admins post, reply and react. A new thread notifies everyone on the team; replies notify the thread's followers (its author, people who replied or were @mentioned, and anyone who clicked Follow); @mentions reach anyone in the workspace.
+- [x] **Notification settings per kind** (real-2): Settings → Notifications has an Inbox and an Email switch for task assignments, @mentions, comments on tasks you follow, messages, status updates, approvals, completed tasks, field changes and rule notifications. The Inbox stops storing a kind you turn off, and every kind can now be emailed (checked again just before sending: not sent if you already read it in the Inbox, lost access, or turned it off). Defaults keep what happened before: everything on in the Inbox; email only for comments and @mentions.
+- [x] **Status update notifications** (real-2): a new project status update notifies the project's members (Inbox on by default, email if they turn it on).
+- [x] **Last activity** (real-2): Admin console → Users shows the last time each person changed a task, commented, posted a message or status update, or created a project — derived from the activity feeds, never invented — with their last sign-in under it.
+- [x] **People** (real-2): every person has a profile page (name, email, workspace role, teams, projects you share, their open tasks and recent activity you can see, last activity) with a link to their work in Reports. The search palette, Home → People, every members list, Admin → Users and message authors link to it.
 
 ### Still simulated or missing (to build)
-- [ ] **real-1 is not live until its migration is applied:** `20261013010000_real_1.sql` (no tail) goes in through the migration-applier before the PR merges. Until then the preview hides Resend, Attachment questions and forwarding and says they need the database update.
-- [ ] **Team Messages**: placeholder that links to project Messages.
-- [ ] **Inbox notification settings**: no per-kind on/off switches (in-app or email).
-- [ ] **Last activity** in Admin/Members is only the last sign-in.
-- [ ] **People**: clicking a person opens Reports filtered to them; there's no profile page.
+- [ ] **real-2 is not live until its migration and tail are applied:** `20261013020000_real_2.sql` goes in through the migration-applier, then its `-- TAIL` (four `alter table` lines that swap two CHECK constraints on `inbox_items`) by hand, before the PR merges. Until the migration is in, the preview keeps the old Notifications tab, says team Messages need the database update and shows sign-ins only; until the tail is in, team message and status update notifications don't reach the Inbox (posting works).
+- [ ] **Per-project mute** of notifications: real-2 is per kind only (nothing existed to keep); muting one project or team is a follow-up.
+- [ ] **Members' Settings → Workspace list** still shows no last activity: only workspace admins (and the person themselves, on their profile) see the time, so the members' read-only list leaves it out on purpose.
 - [ ] **Team Calendar** is read-only (no drag to reschedule).
 - [ ] **Asana importer attachments** become links back to Asana, not copied files (they break when Asana access ends). Needs a decision, since AGENTS.md says never call the Asana API.
 - [ ] **CSV export** is still capped at 10,000 rows (notice only).
@@ -43,8 +47,8 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - [ ] **No code yet:** Inbox email digest, iCal feed, scheduled report emails, email bounce/complaint tracking, push notifications.
 
 ### Batches (by value)
-1. ~~**real-1, invites and email-in**~~ built (PR open; apply the migration, then merge): pending invites for project/portfolio/team "add by email" (email + auto-join on first sign-in), Forward emails to create tasks, form attachment questions, team preselect on create, Home inline Create task.
-2. **real-2, team and people:** real Team Messages, per-kind notification settings (respected by Inbox and email), real last activity, person profile pages.
+1. ~~**real-1, invites and email-in**~~ built and merged (`9e416ca`): pending invites for project/portfolio/team "add by email" (email + auto-join on first sign-in), Forward emails to create tasks, form attachment questions, team preselect on create, Home inline Create task.
+2. ~~**real-2, team and people**~~ built (PR open; apply the migration and its tail, then merge): real Team Messages, per-kind notification settings (respected by Inbox and email, with notification emails), status update notifications, real last activity, person profile pages.
 3. **real-3, email extras:** Inbox email digest, scheduled report emails, bounce/complaint tracking from Resend webhooks.
 4. **real-4, data and calendar:** draggable Team Calendar, iCal feed (token route), unlimited streaming CSV, Status templates, importer attachment copy (once Avi decides).
 
@@ -53,7 +57,8 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - **Leaked-password protection:** Supabase → Authentication → Attack Protection (Passwords) → turn on "Prevent use of leaked passwords".
 - **Google sign-in:** Google Cloud Console → APIs & Services → Credentials → OAuth client (Web), redirect URI `https://xsgmawawwstbrbukgsax.supabase.co/auth/v1/callback`. Paste the client ID/secret in Supabase → Authentication → Providers → Google. Then add `AUTH_GOOGLE_ENABLED=true` in Vercel Production and redeploy.
 - **Importer attachments:** decide whether the importer may download files from Asana at import time.
-- **Email forwarding (after real-1):** no new DNS or Resend route. Forwarding addresses (`f-…@reply.mail.autumnlakemarketing.com`) use the same reply domain, MX record, Resend webhook and `RESEND_WEBHOOK_SECRET` as reply-by-email. One check: forwards are accepted only when Resend reports **DMARC pass** for the sender, so `autumnlakemarketing.com` needs a DMARC record (a `TXT` at `_dmarc.autumnlakemarketing.com`, e.g. `v=DMARC1; p=none; rua=mailto:…` to start). If forwarding says "didn't pass the sender checks", that record is missing. Before merging real-1, have its migration applied (the migration-applier does it).
+- **Email forwarding (after real-1):** no new DNS or Resend route. Forwarding addresses (`f-…@reply.mail.autumnlakemarketing.com`) use the same reply domain, MX record, Resend webhook and `RESEND_WEBHOOK_SECRET` as reply-by-email. One check: forwards are accepted only when Resend reports **DMARC pass** for the sender, so `autumnlakemarketing.com` needs a DMARC record (a `TXT` at `_dmarc.autumnlakemarketing.com`, e.g. `v=DMARC1; p=none; rua=mailto:…` to start). If forwarding says "didn't pass the sender checks", that record is missing.
+- **Before merging real-2:** have `20261013020000_real_2.sql` applied (the migration-applier does everything above `-- TAIL`), then run its tail by hand (Supabase SQL editor; four lines: drop and rename two CHECK constraints on `inbox_items`). Nothing else to set up: notification emails use the same Resend setup as comment emails, and they stay off until each person turns them on in Settings → Notifications.
 
 ---
 
@@ -108,7 +113,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 ### Collaboration: comments, messages, tags, Inbox
 | Item | Size | Needs Avi |
 |------|------|-----------|
-| Message threads: follow, pin/resolve, attachments, rich text, link to tasks, search | M | — |
+| Message threads: pin/resolve, attachments, rich text, link to tasks, search; follow for project threads (team threads have Follow since real-2) | M | — |
 | Notify all project members of a new thread | S | Decision |
 | Tag merge/delete, private or per-team tags, tag-based rules, a tag page, tags on more views and reports | M | — |
 | Comment edit history, custom reactions, likes on comments and messages, like notifications | S | — |
@@ -197,7 +202,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 | Project Files tab (all attachments in one place) | Not built | S | — |
 | Saved searches / advanced search across projects | **Partly.** Search + per-project saved views; no saved cross-project searches | M | — |
 | Favorites / starred projects in the sidebar | Not built | S | — |
-| Notification settings (per-project mute, per-event email choices) | Not built | M | — |
+| Notification settings (per-project mute, per-event email choices) | **Partly.** Per-kind Inbox / Email switches (real-2); no per-project mute | S–M | — |
 | Public API / personal access tokens | Not built (inbound + outbound webhooks exist) | M | Decision |
 | Dark mode | Not built | S | — |
 | AI (summaries, smart status, AI Studio, AI Teammates) | Not built (see 1.1) | M–L | $ + Decision |

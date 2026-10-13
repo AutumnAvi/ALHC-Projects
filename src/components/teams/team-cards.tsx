@@ -6,6 +6,7 @@ import { ProgressBar } from "@/components/portfolio/progress-bar";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState } from "@/components/ui";
 import type { TeamPerson } from "@/lib/data";
+import { personHref } from "@/lib/people";
 import { NO_PROGRESS, type Goal, type GoalProgress } from "@/lib/goals";
 import { formatProgress } from "@/lib/portfolios";
 import { TEAM_ROLE_LABELS } from "@/lib/teams";
@@ -53,15 +54,20 @@ export function TeamMembersCard({
       ) : (
         <ul className="grid grid-cols-1 gap-1 p-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
           {shown.map((m) => (
-            <li key={m.profileId} className="flex min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5">
-              <Avatar name={m.name} size="md" />
-              <span className="min-w-0">
-                <span className="block truncate text-sm text-zinc-900">
-                  {m.name}
-                  {m.profileId === viewerId ? <span className="text-zinc-500"> (you)</span> : null}
+            <li key={m.profileId} className="min-w-0">
+              <Link
+                href={personHref(m.profileId)}
+                className="flex min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-zinc-50"
+              >
+                <Avatar name={m.name} size="md" />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm text-zinc-900">
+                    {m.name}
+                    {m.profileId === viewerId ? <span className="text-zinc-500"> (you)</span> : null}
+                  </span>
+                  <span className="block truncate text-xs text-zinc-500">{TEAM_ROLE_LABELS[m.role]}</span>
                 </span>
-                <span className="block truncate text-xs text-zinc-500">{TEAM_ROLE_LABELS[m.role]}</span>
-              </span>
+              </Link>
             </li>
           ))}
         </ul>

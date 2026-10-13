@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 import { Crown, LogOut, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { personHref } from "@/lib/people";
 import { PendingInvites } from "@/components/people/pending-invites";
 import { useShell } from "@/components/shell/shell-context";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -164,7 +166,9 @@ export function PortfolioMembersManager({
                 <Avatar name={name} size="md" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-zinc-900">
-                    {name}
+                    <Link href={personHref(member.profileId)} className="hover:underline">
+                      {name}
+                    </Link>
                     {self ? <span className="ml-1.5 text-xs font-normal text-zinc-500">(you)</span> : null}
                   </p>
                   {member.fullName ? <p className="truncate text-xs text-zinc-500">{member.email}</p> : null}

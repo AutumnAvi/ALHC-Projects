@@ -872,6 +872,8 @@ export type Database = {
           actor_id: string | null;
           task_id: string | null;
           message_id: string | null;
+          team_message_id: string | null;
+          status_update_id: string | null;
           comment_id: string | null;
           kind: string;
           read_at: string | null;
@@ -886,6 +888,8 @@ export type Database = {
           actor_id?: string | null;
           task_id?: string | null;
           message_id?: string | null;
+          team_message_id?: string | null;
+          status_update_id?: string | null;
           comment_id?: string | null;
           kind: string;
           read_at?: string | null;
@@ -900,6 +904,8 @@ export type Database = {
           actor_id?: string | null;
           task_id?: string | null;
           message_id?: string | null;
+          team_message_id?: string | null;
+          status_update_id?: string | null;
           comment_id?: string | null;
           kind?: string;
           read_at?: string | null;
@@ -914,6 +920,20 @@ export type Database = {
             columns: ["message_id"];
             isOneToOne: false;
             referencedRelation: "project_messages";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inbox_items_team_message_id_fkey";
+            columns: ["team_message_id"];
+            isOneToOne: false;
+            referencedRelation: "team_messages";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inbox_items_status_update_id_fkey";
+            columns: ["status_update_id"];
+            isOneToOne: false;
+            referencedRelation: "project_status_updates";
             referencedColumns: ["id"];
           },
           {
@@ -3856,6 +3876,204 @@ export type Database = {
           },
         ];
       };
+      team_messages: {
+        Row: {
+          id: string;
+          team_id: string;
+          thread_id: string | null;
+          title: string | null;
+          body: string;
+          author_id: string;
+          edited_at: string | null;
+          last_activity_at: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          team_id: string;
+          thread_id?: string | null;
+          title?: string | null;
+          body: string;
+          author_id?: string;
+          edited_at?: string | null;
+          last_activity_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          team_id?: string;
+          thread_id?: string | null;
+          title?: string | null;
+          body?: string;
+          author_id?: string;
+          edited_at?: string | null;
+          last_activity_at?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "team_messages_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_messages_thread_id_fkey";
+            columns: ["thread_id"];
+            isOneToOne: false;
+            referencedRelation: "team_messages";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_messages_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      team_message_mentions: {
+        Row: { message_id: string; profile_id: string; created_at: string };
+        Insert: { message_id: string; profile_id: string; created_at?: string };
+        Update: { message_id?: string; profile_id?: string; created_at?: string };
+        Relationships: [
+          {
+            foreignKeyName: "team_message_mentions_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "team_messages";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_message_mentions_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      team_message_reactions: {
+        Row: {
+          id: string;
+          message_id: string;
+          team_id: string;
+          profile_id: string;
+          emoji: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          message_id: string;
+          team_id?: string;
+          profile_id?: string;
+          emoji: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          message_id?: string;
+          team_id?: string;
+          profile_id?: string;
+          emoji?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "team_message_reactions_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "team_messages";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      team_message_followers: {
+        Row: {
+          id: string;
+          thread_id: string;
+          team_id: string;
+          profile_id: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          thread_id: string;
+          team_id?: string;
+          profile_id?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          thread_id?: string;
+          team_id?: string;
+          profile_id?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "team_message_followers_thread_id_fkey";
+            columns: ["thread_id"];
+            isOneToOne: false;
+            referencedRelation: "team_messages";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_message_followers_profile_id_fkey";
+            columns: ["profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      notification_settings: {
+        Row: {
+          profile_id: string;
+          kind: string;
+          inbox: boolean | null;
+          email: boolean | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          profile_id?: string;
+          kind: string;
+          inbox?: boolean | null;
+          email?: boolean | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          profile_id?: string;
+          kind?: string;
+          inbox?: boolean | null;
+          email?: boolean | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -4017,6 +4235,22 @@ export type Database = {
       list_field_library: {
         Args: Record<PropertyKey, never>;
         Returns: { field_id: string; name: string; field_type: string; description: string | null; options: Json }[];
+      };
+      list_member_last_activity: {
+        Args: { target_profile?: string | null };
+        Returns: { profile_id: string; email: string; last_sign_in_at: string | null; last_active_at: string | null }[];
+      };
+      set_notification_setting: {
+        Args: { category: string; channel: string; enabled: boolean };
+        Returns: undefined;
+      };
+      can_post_team_message: {
+        Args: { target_team: string };
+        Returns: boolean;
+      };
+      claim_notification_emails: {
+        Args: { max_items?: number; only_id?: string | null };
+        Returns: Database["public"]["Tables"]["email_outbox"]["Row"][];
       };
       list_workspace_member_activity: {
         Args: Record<PropertyKey, never>;

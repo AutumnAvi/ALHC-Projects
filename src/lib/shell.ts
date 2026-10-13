@@ -34,8 +34,8 @@ export type RecentItem = ({ kind: "task" } & QuickTask) | ({ kind: "project" } &
 export const MAX_RECENTS = 20;
 
 export const quickProjectHref = (project: Pick<QuickProject, "id">) => `/projects/${project.id}`;
-// People have no profile page yet: Reports filtered to their tasks (in projects the viewer can read).
-export const quickPersonHref = (person: Pick<QuickPerson, "id">) => `/reports?a=${person.id}`;
+// A person opens their profile page (Real features 2), which links on to their work in Reports.
+export const quickPersonHref = (person: Pick<QuickPerson, "id">) => `/people/${person.id}`;
 
 export const SETTINGS_TABS = [
   { key: "profile", label: "Profile" },

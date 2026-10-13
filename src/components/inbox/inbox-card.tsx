@@ -12,6 +12,7 @@ import {
   MailOpen,
   MessageSquare,
   MessagesSquare,
+  Megaphone,
   ShieldCheck,
   UserPlus,
   Workflow,
@@ -34,7 +35,16 @@ const KIND = {
   approval_decided: { icon: ShieldCheck, verb: "decided an approval on" },
   rule: { icon: Workflow, verb: "notified you about" },
   message: { icon: MessagesSquare, verb: "replied in" },
+  status_update: { icon: Megaphone, verb: "posted a status update on" },
 } as const;
+
+const STATUS_LABELS: Record<string, string> = {
+  on_track: "On track",
+  at_risk: "At risk",
+  off_track: "Off track",
+  on_hold: "On hold",
+  complete: "Complete",
+};
 
 const APPROVAL_STATE: Record<string, string> = {
   pending: "Waiting for your decision",
@@ -68,7 +78,9 @@ function describe(item: InboxItem) {
   if (item.kind === "approval_requested" && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.resubmitted) {
     verb = "resubmitted for your approval";
   }
-  if (item.message && item.kind === "mention") verb = "mentioned you in";
+  if ((item.message || item.teamMessage) && item.kind === "mention") verb = "mentioned you in";
+  // A new team thread (Real features 2) tells every team member: "posted".
+  if (item.teamMessage && item.kind === "message" && isNewThread(item)) verb = "posted";
   // A field set to "Notify collaborators when changed" (Asana parity, batch 4): kind rule with
   // data.field_change, so the release before it still shows it as a notification.
   const fieldName = isFieldChange(item) ? dataText(item.data, "field_name") : null;
@@ -76,16 +88,32 @@ function describe(item: InboxItem) {
     const value = dataText(item.data, "value_text");
     return { ruleName, verb: `changed ${fieldName} on`, detail: value ? `${fieldName}: ${value}` : `${fieldName} was cleared` };
   }
+  if (item.statusUpdate) {
+    const status = STATUS_LABELS[item.statusUpdate.status] ?? item.statusUpdate.status;
+    const lines = [item.statusUpdate.title ? `${status} · ${item.statusUpdate.title}` : status, item.commentBody];
+    return { ruleName, verb, detail: lines.filter(Boolean).join("\n") };
+  }
   const detail =
     item.commentBody ?? dataText(item.data, "message") ?? dataText(item.data, "note") ?? null;
   return { ruleName, verb, detail };
 }
 
-// Where a card's link goes: a task opens in the pane next to the list, a message in its thread.
+function isNewThread(item: InboxItem): boolean {
+  const d = item.data;
+  return !!d && typeof d === "object" && !Array.isArray(d) && d.new_thread === true;
+}
+
+// Where a card's link goes: a task opens in the pane next to the list, a message in its thread (a
+// project's or a team's), a status update on its project's Overview.
 export function inboxItemHref(item: InboxItem, taskHref: (taskId: string) => string) {
-  return item.message
-    ? `/projects/${item.message.projectId}/messages/${item.message.threadId}#message-${item.message.id}`
-    : taskHref(item.taskId ?? "");
+  if (item.message) {
+    return `/projects/${item.message.projectId}/messages/${item.message.threadId}#message-${item.message.id}`;
+  }
+  if (item.teamMessage) {
+    return `/teams/${item.teamMessage.teamId}/messages/${item.teamMessage.threadId}#message-${item.teamMessage.id}`;
+  }
+  if (item.statusUpdate) return `/projects/${item.statusUpdate.projectId}/overview`;
+  return taskHref(item.taskId ?? "");
 }
 
 // Hidden until the card is hovered or something in it has focus; part of the row on touch screens.
@@ -158,7 +186,7 @@ export function InboxCard({
         <div className="min-w-0 flex-1">
           <Link
             href={href}
-            scroll={item.message ? undefined : false}
+            scroll={item.taskId ? false : undefined}
             onClick={onOpen}
             className={`block text-sm text-zinc-700 outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-accent-400 ${
               compact ? "truncate" : ""
@@ -167,6 +195,7 @@ export function InboxCard({
             <span className={strong}>{actorName}</span> {verb} <span className={strong}>{item.taskTitle}</span>
             {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
             {item.message ? <span className="text-zinc-500"> · Messages in {item.message.projectName}</span> : null}
+            {item.teamMessage ? <span className="text-zinc-500"> · {item.teamMessage.teamName} team messages</span> : null}
             {read ? null : <span className="sr-only"> (unread)</span>}
             {bookmarked ? <span className="sr-only"> (bookmarked)</span> : null}
           </Link>

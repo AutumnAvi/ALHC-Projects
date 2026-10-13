@@ -1,6 +1,7 @@
 // The Inbox's vocabulary (Asana parity, batch 5): tabs, filter categories, sort, density, and the day
 // groups. Browser + server. The items themselves come from listInbox() in data.ts.
 
+import { notificationKindOf, type NotificationKind } from "@/lib/notifications";
 import type { Json } from "@/lib/supabase/database.types";
 
 export const INBOX_TABS = [
@@ -31,21 +32,26 @@ export const INBOX_KINDS = [
   "approval_decided",
   "rule",
   "message",
+  // Real features 2: a project status update (inbox_items.status_update_id).
+  "status_update",
 ] as const;
 export type InboxKind = (typeof INBOX_KINDS)[number];
 
-// The Filter menu's categories. A field set to "Notify collaborators when changed" (Asana parity,
+// The Filter menu's categories: the notification kinds of Settings → Notifications
+// (src/lib/notifications.ts). A field set to "Notify collaborators when changed" (Asana parity,
 // batch 4) sends kind "rule" items with data.field_change, so field changes and rule notifications are
 // told apart by that flag.
 export const INBOX_CATEGORIES = [
   { key: "assigned", label: "Assigned to me" },
   { key: "mention", label: "@Mentions" },
-  { key: "comment", label: "Comments and replies" },
+  { key: "comment", label: "Comments" },
+  { key: "message", label: "Messages" },
+  { key: "status_update", label: "Status updates" },
   { key: "approval", label: "Approvals" },
   { key: "completed", label: "Completed tasks" },
-  { key: "field", label: "Field changes" },
+  { key: "field_change", label: "Field changes" },
   { key: "rule", label: "Rule notifications" },
-] as const;
+] as const satisfies readonly { key: NotificationKind; label: string }[];
 export type InboxCategory = (typeof INBOX_CATEGORIES)[number]["key"];
 
 export function isFieldChange(item: { kind: string; data: Json }): boolean {
@@ -53,24 +59,7 @@ export function isFieldChange(item: { kind: string; data: Json }): boolean {
   return item.kind === "rule" && !!d && typeof d === "object" && !Array.isArray(d) && Boolean(d.field_change);
 }
 
-export function inboxCategory(item: { kind: string; data: Json }): InboxCategory {
-  switch (item.kind) {
-    case "assigned":
-      return "assigned";
-    case "mention":
-      return "mention";
-    case "comment":
-    case "message":
-      return "comment";
-    case "approval_requested":
-    case "approval_decided":
-      return "approval";
-    case "completed":
-      return "completed";
-    default:
-      return isFieldChange(item) ? "field" : "rule";
-  }
-}
+export const inboxCategory = (item: { kind: string; data: Json }): InboxCategory => notificationKindOf(item);
 
 // The Filter menu's state: no categories = every kind. Kept in the page (not the URL) while the
 // person moves between tabs.

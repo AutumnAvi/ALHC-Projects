@@ -85,6 +85,7 @@ import {
   type ProjectVisibility,
 } from "@/lib/workspace";
 import { isGoalStatus, isProgressMode } from "@/lib/goals";
+import { isNotificationChannel, isNotificationKind } from "@/lib/notifications";
 import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
 import { MAX_PORTFOLIO_FIELD_TEXT, isPortfolioFieldType, isProjectStatus } from "@/lib/portfolios";
 import { STATUS_TITLE_MAX } from "@/lib/project-page";
@@ -2354,6 +2355,159 @@ export async function toggleMessageReaction(messageId: string, emoji: string): P
   });
 }
 
+// ---------------------------------------------------------------------------------------------
+// Team Messages (Real features 2): the database decides who may post (team members, leads, workspace
+// admins), who is told, and who follows.
+// ---------------------------------------------------------------------------------------------
+
+const TEAM_POST_ONLY = "Only members of this team can post in its Messages";
+const TEAM_MESSAGES_UPDATE = "Team messages need this release’s database update";
+
+function teamMessagesMissing(result: DbResult): boolean {
+  return ["PGRST205", "42P01"].includes(result.error?.code ?? "");
+}
+
+export async function createTeamMessageThread(teamId: string, title: string, body: string): Promise<ActionResult> {
+  let threadId: string | undefined;
+  const outcome = await run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("team_messages")
+      .insert({
+        team_id: id(teamId, "team"),
+        title: text(title, "Title", { max: 200 }),
+        body: text(body, "Message", { max: MAX_MESSAGE }),
+      })
+      .select("id")
+      .single();
+    if (teamMessagesMissing(result)) throw new InputError(TEAM_MESSAGES_UPDATE);
+    check(result, TEAM_POST_ONLY);
+    threadId = result.data?.id;
+  });
+  if (outcome.error || !threadId) return outcome;
+  redirect(`/teams/${teamId}/messages/${threadId}`);
+}
+
+export async function replyToTeamThread(threadId: string, body: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const thread = await supabase
+      .from("team_messages")
+      .select("team_id")
+      .eq("id", id(threadId, "thread"))
+      .is("thread_id", null)
+      .is("deleted_at", null)
+      .maybeSingle();
+    check(thread);
+    if (!thread.data) throw new InputError("This thread was deleted");
+    check(
+      await supabase
+        .from("team_messages")
+        .insert({ team_id: thread.data.team_id, thread_id: threadId, body: text(body, "Reply", { max: MAX_MESSAGE }) }),
+      TEAM_POST_ONLY,
+    );
+  });
+}
+
+export async function editTeamMessage(messageId: string, patch: { title?: string; body: string }): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const update: TablesUpdate<"team_messages"> = { body: text(patch.body, "Message", { max: MAX_MESSAGE }) };
+    if (patch.title !== undefined) update.title = text(patch.title, "Title", { max: 200 });
+    const result = await supabase
+      .from("team_messages")
+      .update(update)
+      .eq("id", id(messageId, "message"))
+      .is("deleted_at", null)
+      .select("id");
+    check(result);
+    if (!result.data?.length) throw new InputError("You can only edit your own messages");
+  });
+}
+
+export async function deleteTeamMessage(messageId: string, teamId?: string): Promise<ActionResult> {
+  const outcome = await run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("team_messages")
+      .update({ deleted_at: now() })
+      .eq("id", id(messageId, "message"))
+      .select("id");
+    check(result);
+    if (!result.data?.length) throw new InputError("You can only delete your own messages");
+  });
+  // Deleting a thread leaves its page; go back to the list.
+  if (!outcome.error && teamId) redirect(`/teams/${id(teamId, "team")}/messages`);
+  return outcome;
+}
+
+export async function toggleTeamMessageReaction(messageId: string, emoji: string): Promise<ActionResult> {
+  return run(async () => {
+    if (!isReactionKey(emoji)) throw new InputError("Unknown reaction");
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to react");
+    const existing = await supabase
+      .from("team_message_reactions")
+      .select("id")
+      .eq("message_id", id(messageId, "message"))
+      .eq("profile_id", user.id)
+      .eq("emoji", emoji)
+      .is("deleted_at", null);
+    check(existing);
+    if (existing.data?.length) {
+      checkUpdated(
+        await supabase
+          .from("team_message_reactions")
+          .update({ deleted_at: now() })
+          .in("id", existing.data.map((r) => r.id))
+          .select("id"),
+      );
+      return;
+    }
+    const inserted = await supabase.from("team_message_reactions").insert({ message_id: messageId, emoji });
+    if (inserted.error?.code === "23505") return;
+    check(inserted, "Only members of this team can react to its messages");
+  });
+}
+
+// Follow or unfollow a team thread yourself (anyone who can read it). Following means its replies
+// reach your Inbox.
+export async function setTeamThreadFollowing(threadId: string, following: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to follow this thread");
+    const existing = await supabase
+      .from("team_message_followers")
+      .select("id, deleted_at")
+      .eq("thread_id", id(threadId, "thread"))
+      .eq("profile_id", user.id)
+      .maybeSingle();
+    check(existing);
+    if (existing.data) {
+      checkUpdated(
+        await supabase
+          .from("team_message_followers")
+          .update({ deleted_at: following ? null : now() })
+          .eq("id", existing.data.id)
+          .select("id"),
+        "Couldn’t change following",
+      );
+      return;
+    }
+    if (!following) return;
+    check(
+      await supabase.from("team_message_followers").insert({ thread_id: threadId, profile_id: user.id }),
+      "Couldn’t follow this thread",
+    );
+  });
+}
+
 export async function setFollowing(
   taskId: string,
   profileId: string,
@@ -3377,6 +3531,23 @@ export async function setEmailComments(enabled: boolean): Promise<ActionResult> 
       await supabase.from("profiles").update({ email_comments: enabled === true }).eq("id", user.id).select("id"),
       "Couldn’t save your notification setting",
     );
+  });
+}
+
+// Settings → Notifications (Real features 2): one Inbox or Email switch for one kind of notification.
+// The comment email switch is profiles.email_comments; the database keeps every row the person's own.
+export async function setNotificationSetting(kind: string, channel: string, enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    if (!isNotificationKind(kind)) throw new InputError("Unknown notification kind");
+    if (!isNotificationChannel(channel)) throw new InputError("Unknown notification channel");
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_notification_setting", {
+      category: kind,
+      channel,
+      enabled: enabled === true,
+    });
+    if (result.error?.code === "PGRST202") throw new InputError("Notification settings need this release’s database update");
+    check(result, "Couldn’t save your notification setting");
   });
 }
 

@@ -6,7 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 
 // Email delivery for the outbox the database fills (form confirmations, rule emails, comment emails to
-// followers). Uses Resend's HTTP API when RESEND_API_KEY and EMAIL_FROM are set; otherwise rows are
+// followers, invites, and since Real features 2 the notification emails people turn on per kind in
+// Settings → Notifications). Uses Resend's HTTP API when RESEND_API_KEY and EMAIL_FROM are set; otherwise rows are
 // marked "mocked" and logged (id and template only — never an address, subject, or body).
 
 type OutboxRow = Tables<"email_outbox">;
@@ -90,10 +91,12 @@ function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
   const label = str(p.request_label);
   const link = taskLink(row, str(p.project_id));
   const origin = backgroundOrigin();
+  // Real features 2: a follower who is @mentioned in the comment (and wants mention emails).
+  const verb = p.mentioned === true ? "mentioned you on" : "commented on";
   return {
-    subject: row.subject ?? `${author} commented on “${taskTitle}”`,
+    subject: row.subject ?? `${author} ${verb} “${taskTitle}”`,
     ...layout(
-      `${author} commented on “${taskTitle}”`,
+      `${author} ${verb} “${taskTitle}”`,
       [str(p.comment_body) ?? ""],
       [
         { label: "Task", value: label ? `${label} · ${taskTitle}` : taskTitle },
@@ -106,7 +109,9 @@ function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
           canReply
             ? "Reply to this email to add a comment as you. Only the text above the quoted message is posted."
             : "Open the task to reply.",
-          `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
+          p.mentioned === true
+            ? `You were @mentioned. Choose which emails you get in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`
+            : `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
         ],
       },
     ),
@@ -192,9 +197,101 @@ function isInvite(row: OutboxRow) {
   return !row.task_id && payloadOf(row).kind === "invite";
 }
 
+function isNotification(row: OutboxRow) {
+  return !row.task_id && payloadOf(row).kind === "notification";
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  on_track: "On track",
+  at_risk: "At risk",
+  off_track: "Off track",
+  on_hold: "On hold",
+  complete: "Complete",
+};
+
+const DECISIONS: Record<string, string> = {
+  approved: "approved",
+  changes_requested: "requested changes on",
+  rejected: "rejected",
+};
+
+// An Inbox notification the recipient asked to get by email too (Settings → Notifications, Real
+// features 2): who did what where, the comment / message / note, and a link to it. The database stored
+// the parts (payload) and checks again at send time that the recipient still wants it and can open it.
+function renderNotificationEmail(row: OutboxRow): Rendered {
+  const p = payloadOf(row);
+  const data = p.data && typeof p.data === "object" && !Array.isArray(p.data) ? p.data : {};
+  const actor = str(p.actor_name) ?? "Someone";
+  const title = str(p.title) ?? "a task";
+  const context = str(p.context);
+  const detail = str(p.detail);
+  const quoted = `“${title}”`;
+  const rows: { label: string; value: string }[] = [];
+  let heading: string;
+  let action = "Open task";
+  switch (str(p.item_kind)) {
+    case "assigned":
+      heading = `${actor} assigned you ${quoted}`;
+      rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
+      break;
+    case "completed":
+      heading = `${actor} completed ${quoted}`;
+      rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
+      break;
+    case "approval_requested":
+      heading = data.resubmitted ? `${actor} resubmitted ${quoted} for your approval` : `${actor} asked for your approval on ${quoted}`;
+      rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
+      break;
+    case "approval_decided":
+      heading = `${actor} ${DECISIONS[str(data.status) ?? ""] ?? "decided an approval on"} ${quoted}`;
+      rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
+      break;
+    case "mention":
+      heading = `${actor} mentioned you in ${quoted}`;
+      action = "Open message";
+      if (context) rows.push({ label: p.team_message_id ? "Team" : "Project", value: context });
+      break;
+    case "message":
+      heading = data.new_thread === true ? `${actor} posted ${quoted}${context ? ` in ${context}` : ""}` : `${actor} replied in ${quoted}`;
+      action = "Open message";
+      if (context && data.new_thread !== true) rows.push({ label: p.team_message_id ? "Team" : "Project", value: context });
+      break;
+    case "status_update": {
+      heading = `${actor} posted a status update on ${title}`;
+      action = "Open project";
+      const status = STATUS_LABELS[str(data.status) ?? ""];
+      if (status) rows.push({ label: "Status", value: status });
+      if (context) rows.push({ label: "Update", value: context });
+      break;
+    }
+    default: {
+      const field = str(data.field_name);
+      heading = field ? `${actor} changed ${field} on ${quoted}` : `${actor} notified you about ${quoted}`;
+      if (context) rows.push({ label: "Project", value: context });
+      break;
+    }
+  }
+  const origin = backgroundOrigin();
+  const path = str(p.path);
+  const href = origin && path && path.startsWith("/") ? `${origin}${path}` : null;
+  const field = str(data.field_name);
+  const body =
+    str(p.item_kind) === "rule" && field ? (detail ? `${field}: ${detail}` : `${field} was cleared`) : detail;
+  return {
+    subject: (row.subject ?? heading).slice(0, 300),
+    ...layout(heading, body ? [body] : [], rows, {
+      action: href ? { label: action, href } : null,
+      footer: [
+        `You get this email because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Your Inbox has it too unless you turned that off.`,
+      ],
+    }),
+  };
+}
+
 export function renderEmail(row: OutboxRow, options: { canReply?: boolean } = {}): Rendered {
   if (row.comment_id) return renderCommentEmail(row, Boolean(options.canReply));
   if (isInvite(row)) return renderInviteEmail(row);
+  if (isNotification(row)) return renderNotificationEmail(row);
   const p = payloadOf(row);
   const label = str(p.request_label);
   const taskTitle = str(p.task_title) ?? "your request";
@@ -284,7 +381,8 @@ async function deliver(
   const reply = await replyTo(row, admin);
   const email = renderEmail(row, { canReply: Boolean(reply && row.comment_id) });
   if (!isEmailConfigured()) {
-    console.info(`[email:mocked] id=${row.id} template=${row.comment_id ? "comment" : isInvite(row) ? "invite" : row.template}`);
+    const template = row.comment_id ? "comment" : isInvite(row) ? "invite" : isNotification(row) ? "notification" : row.template;
+    console.info(`[email:mocked] id=${row.id} template=${template}`);
     return { outcome: "mocked" };
   }
   const response = await fetch("https://api.resend.com/emails", {
@@ -322,9 +420,19 @@ export async function drainOutbox(options: { onlyId?: string | null; max?: numbe
     only_id: options.onlyId ?? null,
   });
   if (error) throw new Error(`Failed to claim emails: ${error.message}`);
-  const counts = { claimed: data?.length ?? 0, sent: 0, mocked: 0, failed: 0 };
-  const senderName = data?.length ? await workspaceSenderName(admin) : null;
-  for (const row of data ?? []) {
+  // Notification emails (Real features 2) have their own claim, so the release before them never takes
+  // one; a database without the migration doesn't have it yet (PGRST202 → none).
+  const notifications = await admin.rpc("claim_notification_emails", {
+    max_items: options.max ?? 20,
+    only_id: options.onlyId ?? null,
+  });
+  if (notifications.error && notifications.error.code !== "PGRST202") {
+    throw new Error(`Failed to claim notification emails: ${notifications.error.message}`);
+  }
+  const claimed = [...(data ?? []), ...(notifications.data ?? [])];
+  const counts = { claimed: claimed.length, sent: 0, mocked: 0, failed: 0 };
+  const senderName = claimed.length ? await workspaceSenderName(admin) : null;
+  for (const row of claimed) {
     let result: Awaited<ReturnType<typeof deliver>>;
     try {
       result = await deliver(row, admin, senderName);
