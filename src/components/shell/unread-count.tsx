@@ -17,7 +17,16 @@ export function useUnreadCount(initial: number, memberId: string, scope: string)
     const ticket = ++request.current;
     // Same rows as countUnreadInbox: unread and still in the inbox. Counting archived
     // items made the badge jump when the server render landed.
-    const { count, error } = await createClient()
+    const supabase = createClient();
+    const counted = await supabase.rpc("inbox_unread_count");
+    if (ticket !== request.current) return;
+    if (!counted.error && typeof counted.data === "number") {
+      setState((current) => ({ ...current, count: counted.data ?? 0 }));
+      return;
+    }
+    // A database without inbox_unread_count still counts through the table.
+    if (counted.error && counted.error.code !== "PGRST202" && counted.error.code !== "42883") return;
+    const { count, error } = await supabase
       .from("inbox_items")
       .select("id", { count: "exact", head: true })
       .is("read_at", null)

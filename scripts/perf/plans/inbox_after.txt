@@ -1,0 +1,26 @@
+Seed member, warm cache.
+inbox_page('activity'): newest 100. The RLS join was 82 ms (inbox_list_before.txt).
+inbox_unread_count(): 2,000 unread. The RLS count was 1,315 ms (inbox_unread_before.txt).
+
+SET
+              set_config              
+--------------------------------------
+ a1000000-0000-4000-8000-000000000001
+(1 row)
+
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
+ Result  (cost=0.00..0.26 rows=1 width=32) (actual time=15.169..15.170 rows=1 loops=1)
+   Buffers: shared hit=3386
+ Planning Time: 0.007 ms
+ Execution Time: 15.178 ms
+(4 rows)
+
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Result  (cost=0.00..0.26 rows=1 width=4) (actual time=69.959..69.959 rows=1 loops=1)
+   Buffers: shared hit=12109
+ Planning Time: 0.010 ms
+ Execution Time: 69.967 ms
+(4 rows)
+

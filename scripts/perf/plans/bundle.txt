@@ -1,0 +1,21 @@
+Production `next build` (Next.js 16.3.8, Turbopack) of the stage 1 code, before the stage 2
+My Tasks / Inbox changes. Next.js 16 does not print route-level First Load JS.
+
+Total client JS: every `.js` file under `.next/static` — 115 files, 3,425,774 bytes
+(3.27 MB). The number in the stage 1 audit, before any perf edit, was about 2.78 MB
+for the same kind of total. The total grew; code-splitting moves bytes into chunks
+that are not on the first paint.
+
+Project view first load (`/projects/[projectId]/views/[viewId]`): the route's
+`entryJSFiles` plus the build manifest's `rootMainFiles` and polyfill, each file
+once — 22 files, 1,309,469 bytes (1.31 MB). The task pane, Create / Settings
+dialogs, and Share dialog are `next/dynamic` chunks on that route (9 files,
+149,628 bytes) and are not in that first-load set.
+
+Largest first-load files:
+  243,383  static/chunks/40rrqxoi7ojb2.js
+  229,156  static/chunks/1rj7ns8rte9vc.js
+  129,001  static/chunks/0_rdcjzk_wsnm.js
+  112,594  static/chunks/0cz1d0mv5g_q7.js   (polyfill)
+   89,792  static/chunks/12o2vlsb1ad8c.js
+   77,985  static/chunks/32gi6-rrbja0l.js

@@ -1641,10 +1641,49 @@ export type MyTask = {
   parentTitle: string | null;
 };
 
-// Tasks come back only when RLS lets the viewer read them (membership in one of their projects, or a
+function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
+  const empty = { open: [] as MyTask[], completed: [] as MyTask[] };
+  if (!data || typeof data !== "object" || Array.isArray(data)) return empty;
+  const page = data as { open?: Json; completed?: Json };
+  const mapList = (value: Json | undefined): MyTask[] => {
+    if (!Array.isArray(value)) return [];
+    const tasks: MyTask[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const row = item as Record<string, Json | undefined>;
+      if (typeof row.id !== "string") continue;
+      tasks.push({
+        id: row.id,
+        title: typeof row.title === "string" ? row.title : "",
+        completedAt: typeof row.completed_at === "string" ? row.completed_at : null,
+        dueOn: typeof row.due_on === "string" ? row.due_on : null,
+        projectId: typeof row.project_id === "string" ? row.project_id : null,
+        projectName: typeof row.project_name === "string" ? row.project_name : null,
+        kind: parseTaskKind(row.kind),
+        parentTitle: typeof row.parent_title === "string" ? row.parent_title : null,
+      });
+    }
+    return tasks;
+  };
+  return { open: mapList(page.open), completed: mapList(page.completed) };
+}
+
+// Tasks come back only when the viewer can read them (membership in one of their projects, or a
 // private task they created or are assigned). Each is labelled with its home project when the viewer can
 // see it, else another visible project; private tasks (and their subtasks) have no project.
+// my_task_cards does that in one read. A database without the function uses the row queries.
 export const listMyTasks = cache(async (profileId: string) => {
+  const { user } = await getViewer();
+  if (user?.id === profileId) {
+    const supabase = await createClient();
+    const cards = await supabase.rpc("my_task_cards");
+    if (!cards.error) return myTasksFromCards(cards.data);
+    if (!rpcMissing(cards.error)) throw new Error(`Failed to load my tasks: ${cards.error.message}`);
+  }
+  return listMyTasksFromRows(profileId);
+});
+
+async function listMyTasksFromRows(profileId: string) {
   const supabase = await createClient();
   const select =
     "id, title, completed_at, due_on, home_project_id, kind, root_task_id, parent_task_id";
@@ -1709,7 +1748,7 @@ export const listMyTasks = cache(async (profileId: string) => {
     open: openRows.map(toMyTask).filter(present),
     completed: doneRows.map(toMyTask).filter(present),
   };
-});
+}
 
 // The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()
 // seeds the sections on first use and puts newly assigned tasks at the top of Recently assigned.
@@ -1925,12 +1964,96 @@ type InboxMessageRow = InboxRowBase & {
   };
 };
 
-// One Inbox tab, newest first, INBOX_LIMIT task items and INBOX_LIMIT message items at most:
+function inboxString(value: Json | undefined): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function inboxItemsFromPage(data: Json): InboxItem[] {
+  if (!Array.isArray(data)) return [];
+  const items: InboxItem[] = [];
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const row = entry as Record<string, Json | undefined>;
+    if (typeof row.id !== "string" || typeof row.kind !== "string" || typeof row.created_at !== "string") continue;
+    const message = objectOrNull(row.message);
+    const teamMessage = objectOrNull(row.team_message);
+    const statusUpdate = objectOrNull(row.status_update);
+    const approval = objectOrNull(row.approval);
+    items.push({
+      id: row.id,
+      kind: row.kind as InboxItem["kind"],
+      data: row.data ?? {},
+      actorId: inboxString(row.actor_id),
+      readAt: inboxString(row.read_at),
+      archivedAt: inboxString(row.archived_at),
+      bookmarkedAt: inboxString(row.bookmarked_at),
+      createdAt: row.created_at,
+      taskId: inboxString(row.task_id),
+      taskTitle: typeof row.task_title === "string" ? row.task_title : "",
+      parentTitle: inboxString(row.parent_title),
+      commentBody: inboxString(row.comment_body),
+      emailFrom: inboxString(row.email_from),
+      message:
+        message && typeof message.id === "string" && typeof message.project_id === "string"
+          ? {
+              id: message.id,
+              threadId: typeof message.thread_id === "string" ? message.thread_id : message.id,
+              projectId: message.project_id,
+              projectName: typeof message.project_name === "string" ? message.project_name : "",
+            }
+          : null,
+      teamMessage:
+        teamMessage && typeof teamMessage.id === "string" && typeof teamMessage.team_id === "string"
+          ? {
+              id: teamMessage.id,
+              threadId: typeof teamMessage.thread_id === "string" ? teamMessage.thread_id : teamMessage.id,
+              teamId: teamMessage.team_id,
+              teamName: typeof teamMessage.team_name === "string" ? teamMessage.team_name : "",
+            }
+          : null,
+      statusUpdate:
+        statusUpdate && typeof statusUpdate.id === "string" && typeof statusUpdate.project_id === "string"
+          ? {
+              id: statusUpdate.id,
+              projectId: statusUpdate.project_id,
+              projectName: typeof statusUpdate.project_name === "string" ? statusUpdate.project_name : "",
+              status: typeof statusUpdate.status === "string" ? statusUpdate.status : "",
+              title: inboxString(statusUpdate.title),
+            }
+          : null,
+      approval:
+        approval && typeof approval.id === "string" && typeof approval.approver_id === "string"
+          ? {
+              id: approval.id,
+              status: approval.status as NonNullable<InboxItem["approval"]>["status"],
+              approverId: approval.approver_id,
+            }
+          : null,
+    });
+  }
+  return items;
+}
+
+function objectOrNull(value: Json | undefined): Record<string, Json | undefined> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, Json | undefined>;
+}
+
+// One Inbox tab, newest first, INBOX_LIMIT items. inbox_page does the four reads in one call.
+// A database without that function uses the row queries.
+export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<InboxItem[]> => {
+  const supabase = await createClient();
+  const page = await supabase.rpc("inbox_page", { inbox_tab: tab });
+  if (!page.error) return inboxItemsFromPage(page.data);
+  if (!rpcMissing(page.error)) throw new Error(`Failed to load inbox: ${page.error.message}`);
+  return listInboxFromRows(tab);
+});
+
 //   activity = not archived, archive = archived, bookmarks = bookmarked (archived or not),
 //   mentioned = @mentions (archived or not).
 // Without this release's migration there are no bookmarks: that tab is empty and every item's
 // bookmarkedAt is null.
-export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<InboxItem[]> => {
+async function listInboxFromRows(tab: InboxTab = "activity"): Promise<InboxItem[]> {
   const supabase = await createClient();
   const [bookmarks, real2] = await Promise.all([hasBatch5Schema(), hasReal2Schema()]);
   if (tab === "bookmarks" && !bookmarks) return [];
@@ -2170,7 +2293,7 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
   return [...taskItems, ...messages, ...teamMessages, ...statusUpdates]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     .slice(0, INBOX_LIMIT);
-});
+}
 
 // ---------------------------------------------------------------------------------------------
 // Project Messages (threads + replies; RLS: project Viewer+ reads)
@@ -2446,6 +2569,9 @@ export const canPostTeamMessage = cache(async (teamId: string): Promise<boolean>
 
 export const countUnreadInbox = cache(async () => {
   const supabase = await createClient();
+  const counted = await supabase.rpc("inbox_unread_count");
+  if (!counted.error) return counted.data ?? 0;
+  if (!rpcMissing(counted.error)) throw new Error(`Failed to load inbox count: ${counted.error.message}`);
   const { count, error } = await supabase
     .from("inbox_items")
     .select("id", { count: "exact", head: true })
