@@ -264,13 +264,14 @@ begin
              when public.has_project_role(r.project_id, 'viewer') then r.name
              else null
            end as rule_name,
-           c.body, c.created_at, c.edited_at, c.deleted_at,
-           coalesce((
+           case when c.deleted_at is null then c.body else '' end as body,
+           c.created_at, c.edited_at, c.deleted_at,
+           case when c.deleted_at is null then coalesce((
              select jsonb_agg(m.profile_id)
              from public.comment_mentions m
              where m.comment_id = c.id
-           ), '[]'::jsonb) as mention_ids,
-           coalesce((
+           ), '[]'::jsonb) else '[]'::jsonb end as mention_ids,
+           case when c.deleted_at is null then coalesce((
              select jsonb_agg(jsonb_build_object(
                'emoji', rx.emoji,
                'profile_id', rx.profile_id,
@@ -279,7 +280,7 @@ begin
              from public.comment_reactions rx
              where rx.comment_id = c.id
                and rx.deleted_at is null
-           ), '[]'::jsonb) as reactions,
+           ), '[]'::jsonb) else '[]'::jsonb end as reactions,
            c.email_direction, c.email_address, c.email_subject
     from picked p
     join public.comments c on c.id = p.id

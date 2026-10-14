@@ -193,6 +193,15 @@ begin
   assert older->'comments'->0->>'body' = 'one';
   first_body := page->'comments'->0->>'body';
   assert first_body = 'two';
+
+  update public.comments set deleted_at = now()
+  where task_id = visible and body = 'one';
+  older := public.task_comment_page(visible, cursor_at, cursor_id, 2);
+  assert (older->>'total')::int = 2, 'a removed comment drops out of the total';
+  assert older->'comments'->0->>'body' = '', 'a removed comment keeps its place with an empty body';
+  assert older->'comments'->0->>'deleted_at' is not null;
+  assert older->'comments'->0->'mention_ids' = '[]'::jsonb;
+  assert older->'comments'->0->'reactions' = '[]'::jsonb;
 end $$;
 
 select 'perf audit smoke: all assertions passed' as result;
