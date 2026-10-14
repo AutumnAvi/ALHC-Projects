@@ -79,6 +79,26 @@ export function shiftMonth(month: string, delta: number) {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}`;
 }
 
+// Days the project Calendar shows. Month: Sunday on or before the 1st through Saturday on or
+// after the last day. Week: the Sunday-to-Saturday week that contains the anchor. Same rules as
+// the grid, so the server can load only that window.
+export type CalendarMode = "month" | "week";
+
+export function calendarVisibleDays(anchor: string, mode: CalendarMode): string[] {
+  if (mode === "week") {
+    const start = shiftDays(anchor, -weekdayOf(anchor));
+    return Array.from({ length: 7 }, (_, index) => shiftDays(start, index));
+  }
+  const month = anchor.slice(0, 7);
+  const first = `${month}-01`;
+  const last = shiftDays(`${shiftMonth(month, 1)}-01`, -1);
+  const start = shiftDays(first, -weekdayOf(first));
+  const end = shiftDays(last, 6 - weekdayOf(last));
+  const days: string[] = [];
+  for (let day = start; day <= end; day = shiftDays(day, 1)) days.push(day);
+  return days;
+}
+
 // The six weeks shown for a month: from the Sunday on or before the 1st, 42 days.
 export function monthGrid(month: string): string[] {
   const first = `${month}-01`;

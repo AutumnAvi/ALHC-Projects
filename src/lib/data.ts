@@ -561,6 +561,31 @@ function projectTasksFromCards(data: Json): ProjectTask[] {
   return tasks;
 }
 
+// Calendar and Timeline tasks for one date window (project_schedule_cards). Null when that
+// function is not there yet: the caller keeps the full project_task_cards list.
+export const listProjectSchedule = cache(
+  async (
+    projectId: string,
+    filters: ViewFilters,
+    timeZone: string,
+    range: { start: string; end: string } | null,
+    schedule: "calendar" | "timeline",
+  ): Promise<ProjectTask[] | null> => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("project_schedule_cards", {
+      target_project: projectId,
+      filters: toJson(filters),
+      tz: timeZone,
+      range_start: range?.start ?? null,
+      range_end: range?.end ?? null,
+      schedule,
+    });
+    if (rpcMissing(result.error)) return null;
+    if (result.error) throw new Error(`Failed to load tasks: ${result.error.message}`);
+    return projectTasksFromCards(result.data);
+  },
+);
+
 // One read for the cards a project view draws (project_task_cards). A database without that
 // function falls back to the row queries.
 export const listProjectTasks = cache(async (projectId: string): Promise<ProjectTask[]> => {

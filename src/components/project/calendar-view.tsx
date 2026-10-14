@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { useState, type DragEvent } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useState, useTransition, type DragEvent } from "react";
 import { Inbox } from "lucide-react";
 import { CALENDAR_DRAG_TYPE, CalendarGrid, type CalendarDrag, type CalendarItem } from "@/components/calendar/calendar-grid";
 import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { useCan } from "@/components/project/project-access";
 import { useDependencyShift } from "@/components/task/dependency-shift";
+import { calendarVisibleDays, type CalendarMode } from "@/lib/date-input";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
 import { isIsoDate } from "@/lib/views";
@@ -28,31 +29,10 @@ const CAL_MODES = [
 const pad = (n: number) => String(n).padStart(2, "0");
 const weekday = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
 
-function monthStart(date: string) {
-  return `${date.slice(0, 7)}-01`;
-}
-
 function shiftMonth(date: string, delta: number) {
   const [y, m] = date.split("-").map(Number);
   const total = y * 12 + (m - 1) + delta;
   return `${Math.floor(total / 12)}-${pad((total % 12) + 1)}-01`;
-}
-
-function range(start: string, end: string) {
-  const days: string[] = [];
-  for (let d = start; d <= end; d = addDays(d, 1)) days.push(d);
-  return days;
-}
-
-// Calendar days for the visible period, starting on Sunday.
-function visibleDays(anchor: string, mode: "month" | "week") {
-  if (mode === "week") {
-    const start = addDays(anchor, -weekday(anchor));
-    return range(start, addDays(start, 6));
-  }
-  const first = monthStart(anchor);
-  const last = addDays(shiftMonth(anchor, 1), -1);
-  return range(addDays(first, -weekday(first)), addDays(last, 6 - weekday(last)));
 }
 
 function periodLabel(anchor: string, mode: "month" | "week") {
@@ -69,15 +49,29 @@ export function CalendarView({
   tasks,
   profiles,
   openTaskId,
+  windowed = false,
+  today: todayFromServer = null,
+  anchor: anchorFromServer = null,
+  mode: modeFromServer = "month",
+  days: daysFromServer = null,
 }: {
   projectId: string;
   tasks: ProjectTask[];
   profiles: Profile[];
   openTaskId: string | null;
+  // The server already loaded this window. Changing month or week asks it for the next one.
+  // Without the schedule function, the full list is here and the window stays in the browser.
+  windowed?: boolean;
+  today?: string | null;
+  anchor?: string | null;
+  mode?: CalendarMode;
+  days?: string[] | null;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const today = useToday();
+  const [navigating, startTransition] = useTransition();
+  const clientToday = useToday();
   const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const shift = useDependencyShift();
@@ -86,8 +80,9 @@ export function CalendarView({
   const [overTray, setOverTray] = useState(false);
 
   const requested = searchParams.get("d");
-  const mode = searchParams.get("cal") === "week" ? "week" : "month";
-  const anchor = isIsoDate(requested) ? requested : today;
+  const mode: CalendarMode = windowed ? modeFromServer : searchParams.get("cal") === "week" ? "week" : "month";
+  const anchor = windowed ? anchorFromServer : isIsoDate(requested) ? requested : clientToday;
+  const today = windowed ? (todayFromServer ?? anchor) : clientToday;
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
 
   function navigate(next: { d?: string | null; cal?: "month" | "week" }) {
@@ -101,7 +96,14 @@ export function CalendarView({
       else params.delete("cal");
     }
     const query = params.toString();
-    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
+    const url = query ? `${pathname}?${query}` : pathname;
+    // A windowed calendar only has this month or week's tasks, so the next range is loaded
+    // on the server. The full-list fallback keeps the change in the address bar.
+    if (windowed && (next.d !== undefined || next.cal !== undefined)) {
+      startTransition(() => router.replace(url, { scroll: false }));
+    } else {
+      window.history.replaceState(null, "", url);
+    }
   }
 
   // The task pane's path: a later date can push dependent tasks, so useDependencyShift asks first (and
@@ -139,18 +141,19 @@ export function CalendarView({
   });
   const tray = optimisticTasks.filter((t) => !t.dueOn && !t.completedAt);
 
-  if (!anchor) {
+  const days = windowed ? daysFromServer : anchor ? calendarVisibleDays(anchor, mode) : null;
+
+  if (!anchor || !days || days.length === 0) {
     return <ViewLoading label="Loading calendar…" />;
   }
 
-  const days = visibleDays(anchor, mode);
   const step = (delta: number) =>
     navigate({ d: mode === "week" ? addDays(anchor, delta * 7) : shiftMonth(anchor, delta) });
 
   return (
-    <div className={VIEW_BODY}>
+    <div className={VIEW_BODY} aria-busy={navigating}>
       {shift.dialog}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className={`flex min-w-0 flex-1 flex-col ${navigating ? "opacity-60 transition-opacity" : ""}`}>
         <PeriodNav
           label={periodLabel(anchor, mode)}
           prevLabel={mode === "week" ? "Previous week" : "Previous month"}

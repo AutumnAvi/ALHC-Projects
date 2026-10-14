@@ -7,11 +7,13 @@ import { ViewToolbar } from "@/components/project/view-toolbar";
 import { ViewConfigProvider } from "@/components/project/view-config";
 import { TaskPaneBoundary } from "@/components/task/task-pane";
 import { listBulkContext } from "@/components/bulk/bulk-context";
+import { calendarVisibleDays } from "@/lib/date-input";
 import {
   filterProjectTaskIds,
   listProfiles,
   listProjectDependencies,
   listProjectFields,
+  listProjectSchedule,
   projectCriticalPath,
   listProjectTaskPage,
   listProjectTasks,
@@ -23,11 +25,13 @@ import {
   listTags,
   getListColumnWidths,
 } from "@/lib/data";
+import { todayIn } from "@/lib/workload";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";
 import {
   decodeConfig,
   groupOf,
+  isIsoDate,
   parsePageLimits,
   pruneConfig,
   ROW_PAGE,
@@ -79,11 +83,13 @@ export async function ProjectViewPage({
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
   const paging = layout === "list" || layout === "board";
+  // Calendar loads the visible month or week. Timeline still reads every card until its own path.
+  const scheduling = layout === "calendar";
 
   const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths, sectionCounts] =
     await Promise.all([
     listSections(projectId),
-    paging ? Promise.resolve(null) : listProjectTasks(projectId),
+    paging || scheduling ? Promise.resolve(null) : listProjectTasks(projectId),
     listProfiles(),
     listProjectFields(projectId),
     getViewerTimeZone(),
@@ -106,22 +112,39 @@ export async function ProjectViewPage({
   // Older links carry ?sub=1: show it as an unsaved draft of the view's Show subtasks setting.
   if (layout === "list" && searchParams.sub === "1" && !showsSubtasks(config)) config = { ...config, show_subtasks: true };
   const limits = parsePageLimits(typeof searchParams.n === "string" ? searchParams.n : undefined);
-  // List and Board paint one page per group. Calendar and Timeline still read every matching task.
-  // A database without the page function falls back to the full card list.
-  let taskPage = paging
-    ? await listProjectTaskPage(
-        projectId,
-        config.filters ?? {},
-        timeZone,
-        groupOf(config),
-        sortOf(config),
-        ROW_PAGE,
-        limits,
-      )
-    : null;
+  const today = todayIn(timeZone);
+  const calendarMode = searchParams.cal === "week" ? "week" : "month";
+  const requestedDay = typeof searchParams.d === "string" && isIsoDate(searchParams.d) ? searchParams.d : today;
+  const calendarDays = layout === "calendar" ? calendarVisibleDays(requestedDay, calendarMode) : null;
+  // List and Board paint one page per group. Calendar loads the visible weeks (and the undated
+  // tray). Timeline still reads every matching task. A missing function falls back to the full list.
+  let [taskPage, scheduleTasks] = await Promise.all([
+    paging
+      ? listProjectTaskPage(
+          projectId,
+          config.filters ?? {},
+          timeZone,
+          groupOf(config),
+          sortOf(config),
+          ROW_PAGE,
+          limits,
+        )
+      : Promise.resolve(null),
+    calendarDays
+      ? listProjectSchedule(
+          projectId,
+          config.filters ?? {},
+          timeZone,
+          { start: calendarDays[0], end: calendarDays[calendarDays.length - 1] },
+          "calendar",
+        )
+      : Promise.resolve(null),
+  ]);
   let everyTask = fullTasks;
   let visible: ProjectTask[];
-  if (taskPage) {
+  if (scheduleTasks) {
+    visible = scheduleTasks;
+  } else if (taskPage) {
     const seen = new Set<string>();
     visible = [];
     for (const group of taskPage) {
@@ -176,7 +199,19 @@ export async function ProjectViewPage({
             sectionTaskCounts={sectionTaskCounts}
           />
         ) : null}
-        {layout === "calendar" ? <CalendarView projectId={projectId} tasks={visible} profiles={profiles} openTaskId={openTaskId} /> : null}
+        {layout === "calendar" ? (
+          <CalendarView
+            projectId={projectId}
+            tasks={visible}
+            profiles={profiles}
+            openTaskId={openTaskId}
+            windowed={scheduleTasks !== null}
+            today={today}
+            anchor={requestedDay}
+            mode={calendarMode}
+            days={calendarDays}
+          />
+        ) : null}
         {layout === "timeline" ? (
           <TimelineView
             key={`timeline-${view?.id ?? "default"}`}
