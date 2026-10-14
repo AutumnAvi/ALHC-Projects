@@ -39,6 +39,8 @@ export function ViewConfigProvider({
       const params = new URLSearchParams(searchParams.toString());
       // ?sub=1 (older links) is folded into the config as show_subtasks.
       params.delete("sub");
+      // A new filter, sort, or group starts again at the first page of cards.
+      params.delete("n");
       if (next === null || sameConfig(next, baseConfig)) params.delete("f");
       else params.set("f", encodeConfig(next));
       const query = params.toString();

@@ -113,6 +113,7 @@ import {
   type DashboardWidget,
   type ProjectView,
   type ViewFilters,
+  type ViewSort,
 } from "@/lib/views";
 
 // Every read in the app goes through this module, and every query here filters deleted_at IS NULL —
@@ -569,6 +570,58 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
   if (rpcMissing(cards.error)) return listProjectTasksFromRows(projectId);
   throw new Error(`Failed to load tasks: ${cards.error.message}`);
 });
+
+// One page of cards per group (project_task_card_page). Null when that function is not
+// there yet: the caller keeps the full project_task_cards list.
+export type ProjectTaskGroupPage = {
+  key: string;
+  total: number;
+  nextId: string | null;
+  nextSortOrder: number | null;
+  tasks: ProjectTask[];
+};
+
+export const listProjectTaskPage = cache(
+  async (
+    projectId: string,
+    filters: ViewFilters,
+    timeZone: string,
+    groupBy: string,
+    sorts: ViewSort[],
+    pageSize: number,
+    limits: Record<string, number>,
+  ): Promise<ProjectTaskGroupPage[] | null> => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("project_task_card_page", {
+      target_project: projectId,
+      filters: toJson(filters),
+      tz: timeZone,
+      group_by: groupBy,
+      sorts: sorts as Json,
+      page_size: pageSize,
+      limits: limits as Json,
+    });
+    if (rpcMissing(result.error)) return null;
+    if (result.error) throw new Error(`Failed to load tasks: ${result.error.message}`);
+    if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) return [];
+    const groups = (result.data as { groups?: Json }).groups;
+    if (!Array.isArray(groups)) return [];
+    const pages: ProjectTaskGroupPage[] = [];
+    for (const item of groups) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const group = item as Record<string, Json | undefined>;
+      if (typeof group.key !== "string") continue;
+      pages.push({
+        key: group.key,
+        total: typeof group.total === "number" ? group.total : 0,
+        nextId: typeof group.next_id === "string" ? group.next_id : null,
+        nextSortOrder: typeof group.next_sort_order === "number" ? group.next_sort_order : null,
+        tasks: projectTasksFromCards(group.cards ?? []),
+      });
+    }
+    return pages;
+  },
+);
 
 // Active tasks per section, including ones the current view hides (delete-section checks).
 // Null when the function is not there yet; the page then counts the tasks it already loaded.

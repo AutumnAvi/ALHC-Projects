@@ -358,6 +358,26 @@ export function toJson(config: ViewConfig | ViewFilters): Json {
 // Effective settings
 // ---------------------------------------------------------------------------------------------
 
+// First paint of a long List or Board group. The page function uses the same size.
+export const ROW_PAGE = 80;
+
+export function parsePageLimits(param: string | null | undefined): Record<string, number> {
+  if (!param || param.length > 8000) return {};
+  try {
+    const value = JSON.parse(param) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const limits: Record<string, number> = {};
+    for (const [key, count] of Object.entries(value)) {
+      if (key.length > 80 || key.length === 0) continue;
+      if (typeof count !== "number" || !Number.isInteger(count) || count < 1 || count > 20000) continue;
+      limits[key] = count;
+    }
+    return limits;
+  } catch {
+    return {};
+  }
+}
+
 export const completionOf = (filters: ViewFilters | undefined): Completion => filters?.completion ?? "incomplete";
 export const groupOf = (config: ViewConfig): GroupBy => config.group_by ?? "section";
 export const sortOf = (config: ViewConfig): ViewSort[] => config.sort ?? [{ key: "manual", dir: "asc" }];

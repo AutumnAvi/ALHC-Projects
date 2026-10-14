@@ -22,7 +22,7 @@ import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
-import { ShowMoreRows, useGroupPages } from "@/components/show-more";
+import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
 import { useCan } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
 import { useViewConfig } from "@/components/project/view-config";
@@ -37,7 +37,7 @@ import {
   type ColumnWidthKey,
   type ColumnWidths,
 } from "@/lib/column-widths";
-import type { Profile, ProjectTask, Section, SubtaskItem } from "@/lib/data";
+import type { Profile, ProjectTask, ProjectTaskGroupPage, Section, SubtaskItem } from "@/lib/data";
 import { subtasksByParent } from "@/lib/subtasks";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import {
@@ -46,6 +46,7 @@ import {
   groupOf,
   hasActiveFilters,
   refFieldId,
+  sameConfig,
   sortOf,
   type ColumnKey,
   type SortKey,
@@ -55,7 +56,7 @@ import { FieldValueChips, type FieldContext } from "./field-chips";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf, useTaskHref } from "./shared";
 import { Assignee, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
-import { groupTasks, type TaskGroup } from "./view-groups";
+import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
 
@@ -67,6 +68,8 @@ type Props = {
   fields: FieldDef[];
   config: ViewConfig;
   openTaskId: string | null;
+  // Server page of cards. Null means every matching task is already in `tasks`.
+  taskPage?: ProjectTaskGroupPage[] | null;
   bulk?: Omit<BulkContext, "project">;
   // “Show subtasks” on: every listed task's subtask tree (null = off).
   subtasks?: SubtaskItem[] | null;
@@ -120,6 +123,7 @@ export function ListView({
   fields,
   config: configProp,
   openTaskId,
+  taskPage = null,
   bulk,
   subtasks = null,
   tags,
@@ -141,6 +145,7 @@ export function ListView({
   const who = canEdit ? "editor" : "viewer";
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const pages = useGroupPages();
+  const showMorePage = usePagedShowMore();
   const [quickAdd, setQuickAdd] = useState<{ groupKey: string; nonce: number } | null>(null);
   const [draggingTask, setDraggingTask] = useState<string | null>(null);
   const [taskDrop, setTaskDrop] = useState<TaskDrop | null>(null);
@@ -184,7 +189,16 @@ export function ListView({
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
-  const groups = groupTasks(optimisticTasks, config, { sections: optimisticSections, profilesById, fields, tags });
+  const groupContext = { sections: optimisticSections, profilesById, fields, tags };
+  // A paged list keeps the server's groups until the loaded cards change (a drag) or the
+  // saved config is what the page was built from. Sorting the partial page here would hide tasks.
+  const groups =
+    taskPage && optimisticTasks === tasks && sameConfig(config, configProp)
+      ? groupsFromPage(taskPage, configProp, groupContext)
+      : withPageCursors(
+          groupTasks(optimisticTasks, taskPage ? configProp : config, groupContext),
+          taskPage ?? [],
+        );
   const tagsById = new Map(tags.map((t) => [t.id, t] as const));
   const bySection = groupOf(config) === "section";
   // Precise drop positions only make sense in manual (sort_order) order, like Board.
@@ -193,9 +207,11 @@ export function ListView({
   const canDragSections = canEdit && bySection && !config.filters?.sections;
   const filtered = hasActiveFilters(config.filters);
 
-  const shownIds = (key: string, list: { id: string }[]) => list.slice(0, pages.limit(key)).map((task) => task.id);
-  const allIds = groups.flatMap((g) => shownIds(g.key, g.tasks));
-  const navIds = groups.filter((g) => !collapsed.has(g.key)).flatMap((g) => shownIds(g.key, g.tasks));
+  const visibleTasks = (group: TaskGroup) =>
+    group.total != null ? group.tasks : group.tasks.slice(0, pages.limit(group.key));
+  const shownIds = (group: TaskGroup) => visibleTasks(group).map((task) => task.id);
+  const allIds = groups.flatMap((group) => shownIds(group));
+  const navIds = groups.filter((group) => !collapsed.has(group.key)).flatMap((group) => shownIds(group));
   const selection = useTaskSelection(allIds, navIds);
   const tasksById = new Map(optimisticTasks.map((t) => [t.id, t]));
 
@@ -280,7 +296,14 @@ export function ListView({
     setTaskDrop(null);
     if (!task || !group || group.target.kind !== "section" || beforeId === task.id) return;
     const sectionId = group.target.sectionId;
-    const sortOrder = sortOrderFor(group.tasks, beforeId, task.id);
+    const sortOrder = sortOrderFor(
+      group.tasks,
+      beforeId,
+      task.id,
+      group.nextId != null && group.nextSortOrder != null
+        ? { id: group.nextId, sortOrder: group.nextSortOrder }
+        : null,
+    );
     run(
       () => placeTask(task.id, projectId, sectionId, beforeId),
       () => applyChange({ type: "move", taskId: task.id, sectionId, sortOrder }),
@@ -539,7 +562,7 @@ export function ListView({
                 />
               </div>
             ) : null}
-            {group.tasks.slice(0, pages.limit(group.key)).map((task, index) => (
+            {visibleTasks(group).map((task, index) => (
               <div
                 key={task.id}
                 onDragOver={(e) => {
@@ -548,7 +571,10 @@ export function ListView({
                   e.stopPropagation();
                   const rect = e.currentTarget.getBoundingClientRect();
                   const after = e.clientY > rect.top + rect.height / 2;
-                  setTaskDrop({ groupKey: group.key, beforeId: after ? (group.tasks[index + 1]?.id ?? null) : task.id });
+                  setTaskDrop({
+                    groupKey: group.key,
+                    beforeId: after ? (group.tasks[index + 1]?.id ?? group.nextId ?? null) : task.id,
+                  });
                 }}
               >
                 {isTaskTarget && taskDrop?.beforeId === task.id ? <DropLine /> : null}
@@ -582,11 +608,15 @@ export function ListView({
                 ) : null}
               </div>
             ))}
-            {group.tasks.length > pages.limit(group.key) ? (
+            {(group.total ?? group.tasks.length) > visibleTasks(group).length ? (
               <div className="sticky left-0 w-[min(100%,48rem)]">
                 <ShowMoreRows
-                  hidden={group.tasks.length - pages.limit(group.key)}
-                  onClick={() => pages.showMore(group.key)}
+                  hidden={(group.total ?? group.tasks.length) - visibleTasks(group).length}
+                  onClick={() =>
+                    group.total != null
+                      ? showMorePage(group.key, visibleTasks(group).length)
+                      : pages.showMore(group.key)
+                  }
                   className={TITLE_INDENT[who]}
                 />
               </div>

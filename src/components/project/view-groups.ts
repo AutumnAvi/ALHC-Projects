@@ -18,6 +18,19 @@ export type TaskGroup = {
     | { kind: "tag"; tagId: string | null }
     | { kind: "none" };
   tasks: ProjectTask[];
+  // Set when the server already paged this group. Absent means the full list is in `tasks`.
+  total?: number;
+  nextId?: string | null;
+  nextSortOrder?: number | null;
+};
+
+// One group from project_task_card_page. Cards are already in view order.
+export type TaskPageGroup = {
+  key: string;
+  total: number;
+  nextId: string | null;
+  nextSortOrder: number | null;
+  tasks: ProjectTask[];
 };
 
 type Context = {
@@ -220,4 +233,134 @@ export function groupTasks(
         tasks: bySection.get(section.id) ?? [],
       })),
   ];
+}
+
+function fillPage(byKey: Map<string, TaskPageGroup>, key: string) {
+  const src = byKey.get(key);
+  return {
+    tasks: src?.tasks ?? [],
+    total: src?.total ?? 0,
+    nextId: src?.nextId ?? null,
+    nextSortOrder: src?.nextSortOrder ?? null,
+  };
+}
+
+// Shells match groupTasks (empty sections, every option, Unassigned). Tasks stay in the
+// server's order instead of being sorted again.
+export function groupsFromPage(page: TaskPageGroup[], config: ViewConfig, context: Context): TaskGroup[] {
+  const byKey = new Map(page.map((group) => [group.key, group]));
+  const groupBy = groupOf(config);
+  const sectionFilter = config.filters?.sections;
+
+  if (groupBy === "none") {
+    return [{ key: "all", label: "All tasks", target: { kind: "none" }, ...fillPage(byKey, "all") }];
+  }
+
+  if (groupBy === "assignee") {
+    const people = [...byKey.keys()]
+      .filter((key) => key.startsWith("assignee-") && key !== "assignee-none")
+      .map((key) => {
+        const assigneeId = key.slice("assignee-".length);
+        return { assigneeId, profile: context.profilesById.get(assigneeId) };
+      })
+      .sort((a, b) =>
+        (a.profile ? displayName(a.profile) : "").localeCompare(b.profile ? displayName(b.profile) : ""),
+      );
+    return [
+      ...people.map(({ assigneeId, profile }) => ({
+        key: `assignee-${assigneeId}`,
+        label: profile ? displayName(profile) : "Former member",
+        target: { kind: "assignee" as const, assigneeId },
+        ...fillPage(byKey, `assignee-${assigneeId}`),
+      })),
+      {
+        key: "assignee-none",
+        label: "Unassigned",
+        target: { kind: "assignee" as const, assigneeId: null },
+        ...fillPage(byKey, "assignee-none"),
+      },
+    ];
+  }
+
+  if (groupBy === "tag") {
+    const known = new Map((context.tags ?? []).map((tag) => [tag.id, tag] as const));
+    const wanted = new Set([
+      ...[...byKey.keys()].filter((key) => key.startsWith("tag-") && key !== "tag-none").map((key) => key.slice(4)),
+      ...(config.filters?.tags ?? []).filter((id): id is string => id !== null),
+    ]);
+    const tags = [...known.values()]
+      .filter((tag) => wanted.has(tag.id))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return [
+      ...tags.map((tag) => ({
+        key: `tag-${tag.id}`,
+        label: tag.name,
+        color: tag.color,
+        target: { kind: "tag" as const, tagId: tag.id },
+        ...fillPage(byKey, `tag-${tag.id}`),
+      })),
+      {
+        key: "tag-none",
+        label: "No tag",
+        target: { kind: "tag" as const, tagId: null },
+        ...fillPage(byKey, "tag-none"),
+      },
+    ];
+  }
+
+  const field = groupBy.startsWith("field:")
+    ? context.fields.find((item) => item.id === refFieldId(groupBy) && item.fieldType === "single_select")
+    : undefined;
+  if (field && !field.boundToSections) {
+    return [
+      ...field.options.map((option) => ({
+        key: `option-${option.id}`,
+        label: option.name,
+        color: option.color,
+        target: { kind: "field" as const, fieldId: field.id, optionId: option.id },
+        ...fillPage(byKey, `option-${option.id}`),
+      })),
+      {
+        key: "option-none",
+        label: `No ${field.name}`,
+        target: { kind: "field" as const, fieldId: field.id, optionId: null },
+        ...fillPage(byKey, "option-none"),
+      },
+    ];
+  }
+
+  const visible = (sectionId: string | null) => !sectionFilter || sectionFilter.includes(sectionId);
+  const unsectioned = byKey.get("section-none");
+  return [
+    ...(visible(null) && (unsectioned || context.sections.length === 0 || sectionFilter?.includes(null))
+      ? [
+          {
+            key: "section-none",
+            label: "No section",
+            target: { kind: "section" as const, sectionId: null },
+            ...fillPage(byKey, "section-none"),
+          },
+        ]
+      : []),
+    ...context.sections
+      .filter((section) => visible(section.id))
+      .map((section) => ({
+        key: `section-${section.id}`,
+        label: section.name,
+        section,
+        target: { kind: "section" as const, sectionId: section.id },
+        ...fillPage(byKey, `section-${section.id}`),
+      })),
+  ];
+}
+
+// Keep each group's total and the unloaded next row when an optimistic edit regroups the loaded cards.
+export function withPageCursors(groups: TaskGroup[], page: TaskPageGroup[]): TaskGroup[] {
+  if (page.length === 0) return groups;
+  const byKey = new Map(page.map((group) => [group.key, group]));
+  return groups.map((group) => {
+    const src = byKey.get(group.key);
+    if (!src) return group;
+    return { ...group, total: src.total, nextId: src.nextId, nextSortOrder: src.nextSortOrder };
+  });
 }

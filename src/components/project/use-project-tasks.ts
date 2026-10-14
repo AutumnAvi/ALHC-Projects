@@ -153,11 +153,23 @@ export function useProjectTasks(tasks: ProjectTask[]) {
 }
 
 // Fractional ordering: place a task before `beforeId` within `column`, or at the end.
-export function sortOrderFor(column: ProjectTask[], beforeId: string | null, movingId: string) {
+export function sortOrderFor(
+  column: ProjectTask[],
+  beforeId: string | null,
+  movingId: string,
+  next?: { id: string; sortOrder: number } | null,
+) {
   const others = column.filter((t) => t.id !== movingId);
   if (!beforeId) return (others.at(-1)?.sortOrder ?? 0) + 1024;
   const index = others.findIndex((t) => t.id === beforeId);
-  if (index === -1) return (others.at(-1)?.sortOrder ?? 0) + 1024;
+  if (index === -1) {
+    // The next row was not loaded. Place this task just before it, not at the end of the section.
+    if (next && beforeId === next.id) {
+      const prev = others.at(-1)?.sortOrder ?? next.sortOrder - 2048;
+      return (prev + next.sortOrder) / 2;
+    }
+    return (others.at(-1)?.sortOrder ?? 0) + 1024;
+  }
   const next = others[index].sortOrder;
   const prev = index > 0 ? others[index - 1].sortOrder : next - 2048;
   return (prev + next) / 2;
