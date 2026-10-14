@@ -315,5 +315,352 @@ select public.alhc_revoke_anon_execute(array[
   'sync_my_task_placements()'
 ]);
 
+-- ---------------------------------------------------------------------------
+-- Inbox: one page, and the unread badge
+-- ---------------------------------------------------------------------------
+-- inbox_page matches listInbox: 100 task rows, 100 project messages, 100 team messages, and 100
+-- status updates, then the same drops (a removed comment, a reply whose thread is gone), then the
+-- newest 100 overall. inbox_unread_count matches the badge: unread, not archived, still readable,
+-- including rows the page itself hides (a task in the Trash, a removed message).
+
+create or replace function public.inbox_page(inbox_tab text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  me uuid := auth.uid();
+  result jsonb;
+begin
+  if me is null or not public.is_allowlisted()
+     or inbox_tab not in ('activity', 'archive', 'bookmarks', 'mentioned') then
+    return '[]'::jsonb;
+  end if;
+
+  with readable as materialized (
+    select m.project_id
+    from public.project_members m
+    where m.profile_id = me
+      and m.deleted_at is null
+  ),
+  task_raw as materialized (
+    select i.id, i.kind, i.data, i.actor_id, i.read_at, i.archived_at, i.bookmarked_at, i.created_at,
+           t.id as task_id, t.title as task_title, t.parent_task_id,
+           c.body as comment_body, c.deleted_at as comment_removed_at,
+           c.email_address, c.email_direction
+    from public.inbox_items i
+    join public.tasks t on t.id = i.task_id and t.deleted_at is null
+    left join public.comments c
+      on c.id = i.comment_id
+     and exists (
+       select 1
+       from public.tasks ct
+       join public.tasks root on root.id = coalesce(ct.root_task_id, ct.id)
+       where ct.id = c.task_id
+         and (
+           (root.home_project_id is null and me in (root.created_by, root.assignee_id))
+           or root.home_project_id in (select project_id from readable)
+           or exists (
+             select 1 from public.task_projects tp
+             where tp.task_id = root.id and tp.deleted_at is null
+               and tp.project_id in (select project_id from readable)
+           )
+         )
+     )
+    where i.recipient_id = me
+      and case inbox_tab
+        when 'archive' then i.archived_at is not null
+        when 'bookmarks' then i.bookmarked_at is not null
+        when 'mentioned' then i.kind = 'mention'
+        else i.archived_at is null
+      end
+      and exists (
+        select 1
+        from public.tasks root
+        where root.id = coalesce(t.root_task_id, t.id)
+          and (
+            (root.home_project_id is null and me in (root.created_by, root.assignee_id))
+            or root.home_project_id in (select project_id from readable)
+            or exists (
+              select 1 from public.task_projects tp
+              where tp.task_id = root.id and tp.deleted_at is null
+                and tp.project_id in (select project_id from readable)
+            )
+          )
+      )
+    order by i.created_at desc, i.id desc
+    limit 100
+  ),
+  task_kept as (
+    select r.*,
+           (
+             select p.title
+             from public.tasks p
+             where p.id = r.parent_task_id
+               and p.deleted_at is null
+               and exists (
+                 select 1
+                 from public.tasks root
+                 where root.id = coalesce(p.root_task_id, p.id)
+                   and (
+                     (root.home_project_id is null and me in (root.created_by, root.assignee_id))
+                     or root.home_project_id in (select project_id from readable)
+                     or exists (
+                       select 1 from public.task_projects tp
+                       where tp.task_id = root.id and tp.deleted_at is null
+                         and tp.project_id in (select project_id from readable)
+                     )
+                   )
+               )
+           ) as parent_title,
+           ap.id as approval_id, ap.status as approval_status, ap.approver_id
+    from task_raw r
+    left join lateral (
+      select a.id, a.status, a.approver_id
+      from public.approval_requests a
+      where r.kind = 'approval_requested'
+        and jsonb_typeof(r.data) = 'object'
+        and r.data ? 'approval_id'
+        and a.id::text = r.data->>'approval_id'
+        and a.deleted_at is null
+      limit 1
+    ) ap on true
+    where r.comment_removed_at is null
+  ),
+  message_raw as materialized (
+    select i.id, i.kind, i.data, i.actor_id, i.read_at, i.archived_at, i.bookmarked_at, i.created_at,
+           m.id as message_id, m.thread_id, m.project_id, m.title, m.body, p.name as project_name
+    from public.inbox_items i
+    join public.project_messages m on m.id = i.message_id and m.deleted_at is null
+    join public.projects p on p.id = m.project_id and p.deleted_at is null
+    where i.task_id is null
+      and i.recipient_id = me
+      and m.project_id in (select project_id from readable)
+      and case inbox_tab
+        when 'archive' then i.archived_at is not null
+        when 'bookmarks' then i.bookmarked_at is not null
+        when 'mentioned' then i.kind = 'mention'
+        else i.archived_at is null
+      end
+    order by i.created_at desc, i.id desc
+    limit 100
+  ),
+  message_kept as (
+    select r.*, coalesce(th.title, r.title, 'Message') as display_title
+    from message_raw r
+    left join public.project_messages th on th.id = r.thread_id
+    where r.thread_id is null or (th.id is not null and th.deleted_at is null)
+  ),
+  team_raw as materialized (
+    select i.id, i.kind, i.data, i.actor_id, i.read_at, i.archived_at, i.bookmarked_at, i.created_at,
+           m.id as message_id, m.thread_id, m.team_id, m.title, m.body, tm.name as team_name
+    from public.inbox_items i
+    join public.team_messages m on m.id = i.team_message_id and m.deleted_at is null
+    join public.teams tm on tm.id = m.team_id and tm.deleted_at is null
+    where i.task_id is null
+      and i.recipient_id = me
+      and case inbox_tab
+        when 'archive' then i.archived_at is not null
+        when 'bookmarks' then i.bookmarked_at is not null
+        when 'mentioned' then i.kind = 'mention'
+        else i.archived_at is null
+      end
+    order by i.created_at desc, i.id desc
+    limit 100
+  ),
+  team_kept as (
+    select r.*, coalesce(th.title, r.title, 'Message') as display_title
+    from team_raw r
+    left join public.team_messages th on th.id = r.thread_id
+    where r.thread_id is null or (th.id is not null and th.deleted_at is null)
+  ),
+  status_raw as materialized (
+    select i.id, i.kind, i.data, i.actor_id, i.read_at, i.archived_at, i.bookmarked_at, i.created_at,
+           u.id as update_id, u.project_id, u.status, u.title, u.note, p.name as project_name
+    from public.inbox_items i
+    join public.project_status_updates u on u.id = i.status_update_id
+    join public.projects p on p.id = u.project_id and p.deleted_at is null
+    where i.task_id is null
+      and i.recipient_id = me
+      and u.project_id in (select project_id from readable)
+      and case inbox_tab
+        when 'archive' then i.archived_at is not null
+        when 'bookmarks' then i.bookmarked_at is not null
+        when 'mentioned' then i.kind = 'mention'
+        else i.archived_at is null
+      end
+    order by i.created_at desc, i.id desc
+    limit 100
+  ),
+  merged as (
+    select k.created_at, k.id, jsonb_build_object(
+      'id', k.id,
+      'kind', k.kind,
+      'data', k.data,
+      'actor_id', k.actor_id,
+      'read_at', k.read_at,
+      'archived_at', k.archived_at,
+      'bookmarked_at', k.bookmarked_at,
+      'created_at', k.created_at,
+      'task_id', k.task_id,
+      'task_title', k.task_title,
+      'parent_title', k.parent_title,
+      'comment_body', k.comment_body,
+      'email_from', case
+        when k.actor_id is null and k.email_direction = 'received' then k.email_address
+        else null
+      end,
+      'message', null,
+      'team_message', null,
+      'status_update', null,
+      'approval', case when k.approval_id is null then null else jsonb_build_object(
+        'id', k.approval_id, 'status', k.approval_status, 'approver_id', k.approver_id
+      ) end
+    ) as item
+    from task_kept k
+    union all
+    select m.created_at, m.id, jsonb_build_object(
+      'id', m.id, 'kind', m.kind, 'data', m.data, 'actor_id', m.actor_id,
+      'read_at', m.read_at, 'archived_at', m.archived_at, 'bookmarked_at', m.bookmarked_at,
+      'created_at', m.created_at, 'task_id', null, 'task_title', m.display_title,
+      'parent_title', null, 'comment_body', m.body, 'email_from', null,
+      'message', jsonb_build_object(
+        'id', m.message_id, 'thread_id', coalesce(m.thread_id, m.message_id),
+        'project_id', m.project_id, 'project_name', m.project_name
+      ),
+      'team_message', null, 'status_update', null, 'approval', null
+    )
+    from message_kept m
+    union all
+    select t.created_at, t.id, jsonb_build_object(
+      'id', t.id, 'kind', t.kind, 'data', t.data, 'actor_id', t.actor_id,
+      'read_at', t.read_at, 'archived_at', t.archived_at, 'bookmarked_at', t.bookmarked_at,
+      'created_at', t.created_at, 'task_id', null, 'task_title', t.display_title,
+      'parent_title', null, 'comment_body', t.body, 'email_from', null,
+      'message', null,
+      'team_message', jsonb_build_object(
+        'id', t.message_id, 'thread_id', coalesce(t.thread_id, t.message_id),
+        'team_id', t.team_id, 'team_name', t.team_name
+      ),
+      'status_update', null, 'approval', null
+    )
+    from team_kept t
+    union all
+    select s.created_at, s.id, jsonb_build_object(
+      'id', s.id, 'kind', s.kind, 'data', s.data, 'actor_id', s.actor_id,
+      'read_at', s.read_at, 'archived_at', s.archived_at, 'bookmarked_at', s.bookmarked_at,
+      'created_at', s.created_at, 'task_id', null, 'task_title', s.project_name,
+      'parent_title', null, 'comment_body', s.note, 'email_from', null,
+      'message', null, 'team_message', null,
+      'status_update', jsonb_build_object(
+        'id', s.update_id, 'project_id', s.project_id, 'project_name', s.project_name,
+        'status', s.status, 'title', s.title
+      ),
+      'approval', null
+    )
+    from status_raw s
+  )
+  select coalesce(jsonb_agg(page.item order by page.created_at desc, page.id desc), '[]'::jsonb)
+  into result
+  from (
+    select merged.created_at, merged.id, merged.item
+    from merged
+    order by merged.created_at desc, merged.id desc
+    limit 100
+  ) page;
+
+  return result;
+end;
+$$;
+
+revoke all on function public.inbox_page(text) from public, anon;
+grant execute on function public.inbox_page(text) to authenticated;
+
+create or replace function public.inbox_unread_count()
+returns integer
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  me uuid := auth.uid();
+  n integer;
+begin
+  if me is null or not public.is_allowlisted() then
+    return 0;
+  end if;
+
+  with readable as materialized (
+    select m.project_id
+    from public.project_members m
+    where m.profile_id = me
+      and m.deleted_at is null
+  )
+  select count(*)::integer into n
+  from public.inbox_items i
+  where i.recipient_id = me
+    and i.read_at is null
+    and i.archived_at is null
+    and (
+      (
+        i.task_id is not null
+        and exists (
+          select 1
+          from public.tasks t
+          join public.tasks root on root.id = coalesce(t.root_task_id, t.id)
+          where t.id = i.task_id
+            and (
+              (root.home_project_id is null and me in (root.created_by, root.assignee_id))
+              or root.home_project_id in (select project_id from readable)
+              or exists (
+                select 1 from public.task_projects tp
+                where tp.task_id = root.id and tp.deleted_at is null
+                  and tp.project_id in (select project_id from readable)
+              )
+            )
+        )
+      )
+      or (
+        i.task_id is null
+        and exists (
+          select 1 from public.project_messages m
+          where m.id = i.message_id
+            and m.project_id in (select project_id from readable)
+        )
+      )
+      or (
+        i.task_id is null
+        and exists (
+          select 1
+          from public.team_messages m
+          join public.teams tm on tm.id = m.team_id and tm.deleted_at is null
+          where m.id = i.team_message_id
+        )
+      )
+      or (
+        i.task_id is null
+        and exists (
+          select 1 from public.project_status_updates u
+          where u.id = i.status_update_id
+            and u.project_id in (select project_id from readable)
+        )
+      )
+    );
+
+  return coalesce(n, 0);
+end;
+$$;
+
+revoke all on function public.inbox_unread_count() from public, anon;
+grant execute on function public.inbox_unread_count() to authenticated;
+
+select public.alhc_revoke_anon_execute(array[
+  'inbox_page(text)',
+  'inbox_unread_count()'
+]);
+
 -- TAIL
 -- Nothing to remove.

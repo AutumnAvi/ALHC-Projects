@@ -4900,6 +4900,14 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: Json;
       };
+      inbox_page: {
+        Args: { inbox_tab: string };
+        Returns: Json;
+      };
+      inbox_unread_count: {
+        Args: Record<PropertyKey, never>;
+        Returns: number;
+      };
       project_section_task_counts: {
         Args: { target_project: string };
         Returns: Json;
