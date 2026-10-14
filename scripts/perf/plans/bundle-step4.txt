@@ -1,0 +1,30 @@
+Stage 4 client JS. Production next build, Next.js 16.3.8, Turbopack.
+Same measurement as scripts/perf/plans/bundle-step3.txt: every .js file under
+.next/static, and the project view first load (entryJSFiles for
+/projects/[projectId]/views/[viewId], including the layouts, plus rootMainFiles
+and the polyfill, each file once).
+
+Before this trim (this branch, calendar and timeline windows already in):
+
+  total client JS     115 files    3,163,106 bytes    3.02 MB
+  project first load   22 files    1,315,392 bytes    1.25 MB
+
+Stage 3 was 115 files / 3,153,789 bytes (3.01 MB) and 22 files / 1,314,609 bytes
+(1.25 MB). About 2.78 MB was the total before any perf edit.
+
+Dynamic imports of Calendar and Timeline did not shrink that first load (the
+page still lists their chunks) and added extra copies, so those imports stay
+direct. Recharts was already gone from the client build; the unused dependency
+is removed from package.json.
+
+The date-shift dialog, project access, and the inline add-task row were copied
+into several route bundles (eight copies of the same module). Importing them
+once from the shell leaves a single copy.
+
+After:
+
+  total client JS     115 files    2,951,590 bytes    2.81 MB
+  project first load   21 files    1,315,293 bytes    1.25 MB
+
+The project view already had one copy, so its first load stays about 1.25 MB.
+The total drops by the extra copies.

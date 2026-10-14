@@ -7,7 +7,10 @@ import { SettingsFromUrl } from "@/components/shell/settings-from-url";
 import { ShellDialogs } from "@/components/shell/shell-dialogs";
 import { useShell } from "@/components/shell/shell-context";
 import { SidebarContent, type SidebarProject } from "@/components/shell/sidebar";
+import { sharedClientModules } from "@/components/shell/shared-chunks";
 import { TopBar } from "@/components/shell/top-bar";
+
+void sharedClientModules;
 
 // The app frame (Asana parity, batch 1): a dark top bar across the full width, the dark sidebar under it
 // (hidden with the top bar's ☰ on wide screens, a drawer on narrow ones), and the white content area.
