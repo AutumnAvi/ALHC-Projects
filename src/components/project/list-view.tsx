@@ -22,6 +22,7 @@ import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
+import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useCan } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
 import { useViewConfig } from "@/components/project/view-config";
@@ -139,6 +140,7 @@ export function ListView({
   const canEdit = useCan("editor");
   const who = canEdit ? "editor" : "viewer";
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const pages = useGroupPages();
   const [quickAdd, setQuickAdd] = useState<{ groupKey: string; nonce: number } | null>(null);
   const [draggingTask, setDraggingTask] = useState<string | null>(null);
   const [taskDrop, setTaskDrop] = useState<TaskDrop | null>(null);
@@ -191,8 +193,9 @@ export function ListView({
   const canDragSections = canEdit && bySection && !config.filters?.sections;
   const filtered = hasActiveFilters(config.filters);
 
-  const allIds = groups.flatMap((g) => g.tasks.map((t) => t.id));
-  const navIds = groups.filter((g) => !collapsed.has(g.key)).flatMap((g) => g.tasks.map((t) => t.id));
+  const shownIds = (key: string, list: { id: string }[]) => list.slice(0, pages.limit(key)).map((task) => task.id);
+  const allIds = groups.flatMap((g) => shownIds(g.key, g.tasks));
+  const navIds = groups.filter((g) => !collapsed.has(g.key)).flatMap((g) => shownIds(g.key, g.tasks));
   const selection = useTaskSelection(allIds, navIds);
   const tasksById = new Map(optimisticTasks.map((t) => [t.id, t]));
 
@@ -536,7 +539,7 @@ export function ListView({
                 />
               </div>
             ) : null}
-            {group.tasks.map((task, index) => (
+            {group.tasks.slice(0, pages.limit(group.key)).map((task, index) => (
               <div
                 key={task.id}
                 onDragOver={(e) => {
@@ -579,6 +582,15 @@ export function ListView({
                 ) : null}
               </div>
             ))}
+            {group.tasks.length > pages.limit(group.key) ? (
+              <div className="sticky left-0 w-[min(100%,48rem)]">
+                <ShowMoreRows
+                  hidden={group.tasks.length - pages.limit(group.key)}
+                  onClick={() => pages.showMore(group.key)}
+                  className={TITLE_INDENT[who]}
+                />
+              </div>
+            ) : null}
             {isTaskTarget && taskDrop?.beforeId === null && group.tasks.length > 0 ? <DropLine /> : null}
             {group.section && group.tasks.length === 0 && (draggingTask || filtered || !canEdit) ? (
               <p className={`sticky left-0 flex min-h-row items-center border-b border-zinc-100 text-xs text-zinc-400 ${TITLE_INDENT[who]}`}>

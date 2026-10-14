@@ -15,6 +15,7 @@ import {
   projectCriticalPath,
   listProjectTasks,
   listProjectViews,
+  listSectionTaskCounts,
   listSections,
   listSubtaskTrees,
   listTags,
@@ -66,7 +67,8 @@ export async function ProjectViewPage({
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
 
-  const [sections, tasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths] = await Promise.all([
+  const [sections, tasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths, sectionCounts] =
+    await Promise.all([
     listSections(projectId),
     listProjectTasks(projectId),
     listProfiles(),
@@ -77,6 +79,7 @@ export async function ProjectViewPage({
     layout === "list" ? listBulkContext(projectId) : Promise.resolve(undefined),
     listTags(),
     layout === "list" ? getListColumnWidths(projectId) : Promise.resolve({}),
+    listSectionTaskCounts(projectId),
   ]);
 
   const context = {
@@ -97,9 +100,11 @@ export async function ProjectViewPage({
   const showSubtasks = layout === "list" && showsSubtasks(config);
   const subtasks = showSubtasks ? await listSubtaskTrees(visible.map((t) => t.id)) : [];
   // Every task per section, whatever the view shows: a section can be deleted only when it's empty.
-  const sectionTaskCounts: Record<string, number> = {};
-  for (const task of tasks) {
-    if (task.sectionId) sectionTaskCounts[task.sectionId] = (sectionTaskCounts[task.sectionId] ?? 0) + 1;
+  const sectionTaskCounts: Record<string, number> = sectionCounts ?? {};
+  if (!sectionCounts) {
+    for (const task of tasks) {
+      if (task.sectionId) sectionTaskCounts[task.sectionId] = (sectionTaskCounts[task.sectionId] ?? 0) + 1;
+    }
   }
 
   return (

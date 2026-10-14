@@ -6,9 +6,17 @@ import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { Popover } from "@/components/popover";
 import { Timestamp } from "@/components/timestamp";
-import { useServerAction } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
 import { MentionTextarea } from "@/components/task/mention-textarea";
-import { addComment, deleteComment, editComment, sendSubmitterResponse, setFollowing, toggleReaction } from "@/lib/actions";
+import {
+  addComment,
+  deleteComment,
+  editComment,
+  loadOlderComments,
+  sendSubmitterResponse,
+  setFollowing,
+  toggleReaction,
+} from "@/lib/actions";
 import { canRespondToSubmitter, submitterResponseSubject } from "@/lib/comment-email";
 import { mentionSegments } from "@/lib/mentions";
 import { mergePendingComments, type PendingComment } from "@/lib/pending-comments";
@@ -142,8 +150,14 @@ export function TaskActivity({
 
   // Optimistic comments: the server's rows, plus the ones still on their way at the end (in the order
   // they were sent), each keeping its React key when the real row replaces it.
+  const notify = useNotify();
   const pending = usePendingComments(task.id);
-  const merged = mergePendingComments(task.comments, pending, rememberedCommentKeys());
+  const [earlier, setEarlier] = useState<TaskComment[]>([]);
+  const [olderCursor, setOlderCursor] = useState(task.olderComments);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const seen = new Set(task.comments.map((comment) => comment.id));
+  const commentsOnTask = [...earlier.filter((comment) => !seen.has(comment.id)), ...task.comments];
+  const merged = mergePendingComments(commentsOnTask, pending, rememberedCommentKeys());
   const arrivedKey = merged.arrived.map((a) => a.tempId).join(",");
   useEffect(() => {
     if (arrivedKey) forgetArrivedComments(merged.arrived);
@@ -158,7 +172,7 @@ export function TaskActivity({
 
   const entries: Entry[] = [
     ...[
-      ...task.comments.map((comment) => ({
+      ...commentsOnTask.map((comment) => ({
         type: "comment" as const,
         at: comment.createdAt,
         comment,
@@ -381,7 +395,7 @@ export function TaskActivity({
 
   const comments = entries.filter((entry) => entry.type === "comment");
   const shown = tab === "comments" ? comments : entries;
-  const commentCount = task.comments.filter((c) => !c.deleted).length + merged.waiting.length;
+  const commentCount = task.commentTotal + merged.waiting.length;
 
   return (
     <section className="mt-8 border-t border-zinc-200 pt-1" aria-label="Comments and activity">
@@ -411,6 +425,28 @@ export function TaskActivity({
         <p id="activity-panel" role="tabpanel" aria-labelledby={`activity-tab-${tab}`} className="py-4 text-sm text-zinc-500">
           {canComment ? "No comments yet. Ask a question or share an update below." : "No comments yet."}
         </p>
+      ) : null}
+      {olderCursor ? (
+        <button
+          type="button"
+          className="btn-ghost mt-3 text-zinc-500"
+          disabled={loadingEarlier}
+          onClick={() => {
+            const cursor = olderCursor;
+            setLoadingEarlier(true);
+            void loadOlderComments(task.id, cursor.beforeAt, cursor.beforeId).then((result) => {
+              setLoadingEarlier(false);
+              if (result.error || !result.comments) {
+                notify(result.error ?? "Couldn’t load earlier comments");
+                return;
+              }
+              setEarlier((current) => [...result.comments!, ...current]);
+              setOlderCursor(result.older ?? null);
+            });
+          }}
+        >
+          {loadingEarlier ? "Loading…" : "Show earlier comments"}
+        </button>
       ) : null}
       <ol
         id={shown.length ? "activity-panel" : undefined}

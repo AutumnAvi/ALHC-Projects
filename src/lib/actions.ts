@@ -10,6 +10,8 @@ import {
   listMyTeamIds,
   listProjectTemplates,
   listTeams,
+  loadTaskCommentPage,
+  type TaskComment,
 } from "@/lib/data";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { drainOutbox, isEmailConfigured } from "@/lib/email";
@@ -2065,6 +2067,25 @@ export async function deleteSubtask(subtaskId: string): Promise<ActionResult> {
 // ---------------------------------------------------------------------------------------------
 // Comments + followers
 // ---------------------------------------------------------------------------------------------
+
+// The next older page of comments (task_comment_page). The pane draws the newest page first.
+export async function loadOlderComments(
+  taskId: string,
+  beforeAt: string,
+  beforeId: string,
+): Promise<ActionResult & { comments?: TaskComment[]; older?: { beforeAt: string; beforeId: string } | null }> {
+  try {
+    const page = await loadTaskCommentPage(id(taskId), { at: beforeAt, id: beforeId });
+    if (!page) return { error: "Earlier comments need this release’s database update" };
+    const oldest = page.hasMore ? page.comments[0] : undefined;
+    return {
+      comments: page.comments,
+      older: oldest ? { beforeAt: oldest.createdAt, beforeId: oldest.id } : null,
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Couldn’t load earlier comments" };
+  }
+}
 
 // Returns the new comment's id, so the pane can swap its optimistic row for the real one.
 export async function addComment(taskId: string, body: string): Promise<ActionResult & { commentId?: string }> {

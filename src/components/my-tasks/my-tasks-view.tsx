@@ -25,6 +25,7 @@ import { MenuItem, Popover } from "@/components/popover";
 import { useTaskHref } from "@/components/project/shared";
 import { Segmented } from "@/components/project/view-chrome";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
+import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import {
@@ -131,6 +132,7 @@ export function MyTasksView({
   const [, run] = useServerAction();
   const bulkEdit = useBulkEdit();
   const [layout, setLayout] = useState<MyTasksLayout>(initialLayout);
+  const pages = useGroupPages();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set(["completed"]));
   const [draggingTask, setDraggingTask] = useState<string | null>(null);
   const [taskDrop, setTaskDrop] = useState<{ sectionId: string; beforeId: string | null } | null>(null);
@@ -180,9 +182,10 @@ export function MyTasksView({
     ...(completed.length > 0 ? [{ key: "completed", title: "Recently completed", tasks: completed }] : []),
   ];
   const tasksById = new Map([...open, ...completed].map((t) => [t.id, t]));
+  const shownIds = (key: string, list: { id: string }[]) => list.slice(0, pages.limit(key)).map((task) => task.id);
   const selection = useTaskSelection(
-    groups.flatMap((g) => g.tasks.map((t) => t.id)),
-    groups.filter((g) => !collapsed.has(g.key)).flatMap((g) => g.tasks.map((t) => t.id)),
+    groups.flatMap((g) => shownIds(g.key, g.tasks)),
+    groups.filter((g) => !collapsed.has(g.key)).flatMap((g) => shownIds(g.key, g.tasks)),
   );
   const targets = () => {
     if (selection.selected.length) return selection.selected;
@@ -378,7 +381,7 @@ export function MyTasksView({
                     onClose={() => setTopAdd(null)}
                   />
                 ) : null}
-                {group.tasks.map((task, i) => (
+                {group.tasks.slice(0, pages.limit(section.id)).map((task, i) => (
                   <MyTaskRow
                     key={task.id}
                     task={task}
@@ -403,6 +406,14 @@ export function MyTasksView({
                     }}
                   />
                 ))}
+                {group.tasks.length > pages.limit(section.id) ? (
+                  <li>
+                    <ShowMoreRows
+                      hidden={group.tasks.length - pages.limit(section.id)}
+                      onClick={() => pages.showMore(section.id)}
+                    />
+                  </li>
+                ) : null}
                 {isTarget && taskDrop?.beforeId === null && group.tasks.length > 0 ? (
                   <li aria-hidden>
                     <DropLine />
@@ -431,9 +442,12 @@ export function MyTasksView({
       ) : (
         openGroups.map((group) => (
           <TaskGroup key={group.key} id={group.key} title={group.title} count={group.tasks.length} {...collapseProps(group.key)}>
-            {group.tasks.map((task) => (
+            {group.tasks.slice(0, pages.limit(group.key)).map((task) => (
               <MyTaskRow key={task.id} task={task} {...rowProps} />
             ))}
+            {group.tasks.length > pages.limit(group.key) ? (
+              <ShowMoreRows hidden={group.tasks.length - pages.limit(group.key)} onClick={() => pages.showMore(group.key)} />
+            ) : null}
           </TaskGroup>
         ))
       )}

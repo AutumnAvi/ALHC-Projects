@@ -4892,6 +4892,23 @@ export type Database = {
         Args: { task_ids: string[] };
         Returns: { task_id: string; comment_count: number }[];
       };
+      project_task_cards: {
+        Args: { target_project: string; only_ids?: string[] | null };
+        Returns: Json;
+      };
+      project_section_task_counts: {
+        Args: { target_project: string };
+        Returns: Json;
+      };
+      task_comment_page: {
+        Args: {
+          target_task: string;
+          before_at?: string | null;
+          before_id?: string | null;
+          max_results?: number;
+        };
+        Returns: Json;
+      };
       retry_integration_delivery: {
         Args: { target_delivery: string };
         Returns: Json;

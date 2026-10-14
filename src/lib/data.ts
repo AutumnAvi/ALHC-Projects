@@ -16,7 +16,7 @@ import {
   type RuleRun,
 } from "@/lib/rules";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
-import { REACTIONS, type ReactionKey } from "@/lib/reactions";
+import { isReactionKey, REACTIONS, type ReactionKey } from "@/lib/reactions";
 import { commentEmailStatus, parseCommentEmail, type CommentEmail } from "@/lib/comment-email";
 import {
   isDeliveryStatus,
@@ -228,6 +228,10 @@ export type TaskDetail = {
   // Attachments that stayed in Asana (imported as name + link, no file copy).
   attachmentLinks: TaskAttachmentLink[];
   comments: TaskComment[];
+  // Non-deleted comments on the task (the Comments tab). `comments` is the newest page.
+  commentTotal: number;
+  // Set when an older page exists. The pane passes it to loadOlderComments.
+  olderComments: { beforeAt: string; beforeId: string } | null;
   stories: TaskStory[];
   // The viewer's highest role across the task's projects (null: read access through nothing).
   viewerRole: ProjectRole | null;
@@ -515,7 +519,73 @@ export const listSections = cache(async (projectId: string): Promise<Section[]> 
   return rows(result, "sections");
 });
 
+function rpcMissing(error: { code?: string } | null | undefined) {
+  return error?.code === "PGRST202" || error?.code === "42883";
+}
+
+function projectTasksFromCards(data: Json): ProjectTask[] {
+  if (!Array.isArray(data)) return [];
+  const tasks: ProjectTask[] = [];
+  for (const item of data) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const card = item as Record<string, Json | undefined>;
+    if (typeof card.id !== "string") continue;
+    const fieldValues =
+      card.field_values && typeof card.field_values === "object" && !Array.isArray(card.field_values)
+        ? (card.field_values as Record<string, Json>)
+        : {};
+    tasks.push({
+      id: card.id,
+      title: typeof card.title === "string" ? card.title : "",
+      completedAt: typeof card.completed_at === "string" ? card.completed_at : null,
+      startOn: typeof card.start_on === "string" ? card.start_on : null,
+      dueOn: typeof card.due_on === "string" ? card.due_on : null,
+      assigneeId: typeof card.assignee_id === "string" ? card.assignee_id : null,
+      homeProjectId: typeof card.home_project_id === "string" ? card.home_project_id : "",
+      createdAt: typeof card.created_at === "string" ? card.created_at : "",
+      sectionId: typeof card.section_id === "string" ? card.section_id : null,
+      sortOrder: typeof card.sort_order === "number" ? card.sort_order : 0,
+      subtaskCount: typeof card.subtask_count === "number" ? card.subtask_count : 0,
+      subtaskDoneCount: typeof card.subtask_done_count === "number" ? card.subtask_done_count : 0,
+      projectCount: typeof card.project_count === "number" ? card.project_count : 1,
+      fieldValues,
+      recurring: card.recurring === true,
+      blockedBy: typeof card.blocked_by === "number" ? card.blocked_by : 0,
+      kind: parseTaskKind(card.kind),
+      approvalStatus: parseApprovalTaskStatus(card.approval_status),
+      tagIds: Array.isArray(card.tag_ids) ? card.tag_ids.filter((tagId): tagId is string => typeof tagId === "string") : [],
+      commentCount: typeof card.comment_count === "number" ? card.comment_count : 0,
+    });
+  }
+  return tasks;
+}
+
+// One read for the cards a project view draws (project_task_cards). A database without that
+// function falls back to the row queries.
 export const listProjectTasks = cache(async (projectId: string): Promise<ProjectTask[]> => {
+  const supabase = await createClient();
+  const cards = await supabase.rpc("project_task_cards", { target_project: projectId });
+  if (!cards.error) return projectTasksFromCards(cards.data);
+  if (rpcMissing(cards.error)) return listProjectTasksFromRows(projectId);
+  throw new Error(`Failed to load tasks: ${cards.error.message}`);
+});
+
+// Active tasks per section, including ones the current view hides (delete-section checks).
+// Null when the function is not there yet; the page then counts the tasks it already loaded.
+export const listSectionTaskCounts = cache(async (projectId: string): Promise<Record<string, number> | null> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("project_section_task_counts", { target_project: projectId });
+  if (rpcMissing(result.error)) return null;
+  if (result.error) throw new Error(`Failed to load section counts: ${result.error.message}`);
+  if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) return {};
+  const counts: Record<string, number> = {};
+  for (const [sectionId, count] of Object.entries(result.data)) {
+    if (typeof count === "number") counts[sectionId] = count;
+  }
+  return counts;
+});
+
+async function listProjectTasksFromRows(projectId: string): Promise<ProjectTask[]> {
   const supabase = await createClient();
   const memberships = rows(
     await supabase
@@ -631,7 +701,7 @@ export const listProjectTasks = cache(async (projectId: string): Promise<Project
     tagIds: tagIds.get(m.task.id) ?? [],
     commentCount: commentCounts.get(m.task.id) ?? 0,
   }));
-});
+}
 
 // Comments per task the viewer can read, not deleted: one grouped count in SQL (task_comment_counts,
 // invoker, so comments RLS decides). A preview deployed before 20261011020000_asana_parity_2.sql shows no
@@ -647,6 +717,128 @@ export async function listCommentCounts(taskIds: string[]): Promise<Map<string, 
   }
   for (const row of result.data ?? []) counts.set(row.task_id, Number(row.comment_count));
   return counts;
+}
+
+const COMMENT_PAGE_SIZE = 100;
+
+export type CommentPage = {
+  comments: TaskComment[];
+  hasMore: boolean;
+  total: number;
+};
+
+function commentFromPageRow(
+  row: Record<string, Json | undefined>,
+  outbox: Map<string, { status: CommentEmail["status"]; error: string | null }>,
+): TaskComment | null {
+  if (typeof row.id !== "string" || typeof row.created_at !== "string") return null;
+  const deleted = row.deleted_at != null;
+  const byEmoji = new Map<ReactionKey, string[]>();
+  if (!deleted && Array.isArray(row.reactions)) {
+    const reactions = row.reactions.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const reaction = item as Record<string, Json | undefined>;
+      return [
+        {
+          emoji: reaction.emoji,
+          profileId: reaction.profile_id,
+          at: typeof reaction.created_at === "string" ? reaction.created_at : "",
+        },
+      ];
+    });
+    reactions.sort((a, b) => a.at.localeCompare(b.at));
+    for (const reaction of reactions) {
+      if (!isReactionKey(reaction.emoji) || typeof reaction.profileId !== "string") continue;
+      const ids = byEmoji.get(reaction.emoji) ?? [];
+      ids.push(reaction.profileId);
+      byEmoji.set(reaction.emoji, ids);
+    }
+  }
+  const emailBase = deleted
+    ? null
+    : parseCommentEmail({
+        email_direction: typeof row.email_direction === "string" ? row.email_direction : null,
+        email_address: typeof row.email_address === "string" ? row.email_address : null,
+        email_subject: typeof row.email_subject === "string" ? row.email_subject : null,
+      });
+  const sent = emailBase?.direction === "sent" ? outbox.get(row.id) : undefined;
+  const ruleId = typeof row.rule_id === "string" ? row.rule_id : null;
+  return {
+    id: row.id,
+    authorId: typeof row.author_id === "string" ? row.author_id : null,
+    ruleName: ruleId ? (typeof row.rule_name === "string" ? row.rule_name : "Rule") : null,
+    body: deleted ? "" : typeof row.body === "string" ? row.body : "",
+    createdAt: row.created_at,
+    editedAt: deleted || typeof row.edited_at !== "string" ? null : row.edited_at,
+    deleted,
+    mentionIds:
+      deleted || !Array.isArray(row.mention_ids)
+        ? []
+        : row.mention_ids.filter((profileId): profileId is string => typeof profileId === "string"),
+    reactions: REACTIONS.map(({ key }) => ({ emoji: key, profileIds: byEmoji.get(key) ?? [] })).filter(
+      (reaction) => reaction.profileIds.length > 0,
+    ),
+    email: emailBase ? { ...emailBase, status: sent?.status ?? null, error: sent?.error ?? null } : null,
+  };
+}
+
+function parseCommentPage(
+  data: Json,
+  outbox: Map<string, { status: CommentEmail["status"]; error: string | null }>,
+): CommentPage {
+  const root = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, Json | undefined>) : {};
+  const raw = Array.isArray(root.comments) ? root.comments : [];
+  const comments = raw.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const comment = commentFromPageRow(item as Record<string, Json | undefined>, outbox);
+    return comment ? [comment] : [];
+  });
+  return {
+    comments,
+    hasMore: root.has_more === true,
+    total: typeof root.total === "number" ? root.total : comments.filter((comment) => !comment.deleted).length,
+  };
+}
+
+function olderCursor(page: CommentPage): { beforeAt: string; beforeId: string } | null {
+  const oldest = page.comments[0];
+  if (!page.hasMore || !oldest) return null;
+  return { beforeAt: oldest.createdAt, beforeId: oldest.id };
+}
+
+// Newest page of a task's comments (task_comment_page), with sent-response status filled from the outbox.
+// Null when that function is not on the database yet.
+export async function loadTaskCommentPage(
+  taskId: string,
+  before?: { at: string; id: string } | null,
+): Promise<CommentPage | null> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("task_comment_page", {
+    target_task: taskId,
+    before_at: before?.at ?? null,
+    before_id: before?.id ?? null,
+    max_results: COMMENT_PAGE_SIZE,
+  });
+  if (result.error) {
+    if (rpcMissing(result.error)) return null;
+    throw new Error(`Failed to load comments: ${result.error.message}`);
+  }
+  const responseEmails = await supabase
+    .from("email_outbox")
+    .select("status, delivery_status, last_error, comment_id:payload->>comment_id")
+    .eq("task_id", taskId)
+    .eq("payload->>kind", "submitter_response")
+    .order("created_at");
+  const outbox = new Map(
+    (responseEmails.error ? [] : (responseEmails.data ?? [])).map((row) => [
+      String(row.comment_id),
+      {
+        status: commentEmailStatus(row),
+        error: row.status === "failed" ? (typeof row.last_error === "string" ? row.last_error.slice(0, 200) : null) : null,
+      },
+    ]),
+  );
+  return parseCommentPage(result.data, outbox);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -897,13 +1089,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("task_id", taskId)
       .is("deleted_at", null)
       .order("created_at"),
-    supabase
-      .from("comments")
-      .select(
-        "id, author_id, rule_id, body, created_at, edited_at, deleted_at, comment_mentions(profile_id), comment_reactions(emoji, profile_id, deleted_at, created_at)",
-      )
-      .eq("task_id", taskId)
-      .order("created_at"),
+    supabase.rpc("task_comment_page", { target_task: taskId, max_results: COMMENT_PAGE_SIZE }),
     supabase
       .from("task_stories")
       .select("id, actor_id, kind, data, created_at")
@@ -980,7 +1166,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .order("created_at"),
   ]);
 
-  const submitterResponses = !commentEmails.error;
+  let submitterResponses = !commentEmails.error;
   if (commentEmails.error && !isMissingColumn(commentEmails.error)) {
     console.error(`[comments] couldn't read email comments: ${commentEmails.error.message}`);
   }
@@ -1058,12 +1244,30 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       : Promise.resolve(null),
   ]);
 
-  const commentRows = rows(comments, "comments");
+  let commentPage: CommentPage | null = null;
+  if (!comments.error) {
+    commentPage = parseCommentPage(comments.data, responseStatus);
+    submitterResponses = true;
+  } else if (!rpcMissing(comments.error)) {
+    throw new Error(`Failed to load comments: ${comments.error.message}`);
+  }
+  const legacyComments = commentPage
+    ? []
+    : rows(
+        await supabase
+          .from("comments")
+          .select(
+            "id, author_id, rule_id, body, created_at, edited_at, deleted_at, comment_mentions(profile_id), comment_reactions(emoji, profile_id, deleted_at, created_at)",
+          )
+          .eq("task_id", taskId)
+          .order("created_at"),
+        "comments",
+      );
   const approvalRows = rows(approvals, "approvals");
   const submission = rows(submissions, "form submission")[0] ?? null;
   const ruleIds = [
     ...new Set(
-      [...commentRows.map((c) => c.rule_id), ...approvalRows.map((a) => a.rule_id)].filter(
+      [...legacyComments.map((c) => c.rule_id), ...approvalRows.map((a) => a.rule_id)].filter(
         (ruleId): ruleId is string => Boolean(ruleId),
       ),
     ),
@@ -1078,6 +1282,33 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   ]);
   const ruleName = new Map(rows(ruleNames, "rules").map((r) => [r.id, r.name] as const));
   const emailStatus = await storyEmailStatuses(storyRows);
+  const taskComments = commentPage
+    ? commentPage.comments
+    : legacyComments.map((c) => {
+        const deleted = c.deleted_at !== null;
+        const active = deleted
+          ? []
+          : c.comment_reactions
+              .filter((r) => r.deleted_at === null)
+              .sort((a, b) => a.created_at.localeCompare(b.created_at));
+        return {
+          id: c.id,
+          authorId: c.author_id,
+          ruleName: c.rule_id ? (ruleName.get(c.rule_id) ?? "Rule") : null,
+          body: deleted ? "" : c.body,
+          createdAt: c.created_at,
+          editedAt: deleted ? null : c.edited_at,
+          deleted,
+          mentionIds: deleted ? [] : c.comment_mentions.map((m) => m.profile_id),
+          reactions: REACTIONS.map(({ key }) => ({
+            emoji: key,
+            profileIds: active.filter((r) => r.emoji === key).map((r) => r.profile_id),
+          })).filter((r) => r.profileIds.length > 0),
+          email: emailOf.get(c.id) ?? null,
+        };
+      });
+  const commentTotal = commentPage ? commentPage.total : taskComments.filter((c) => !c.deleted).length;
+  const olderComments = commentPage ? olderCursor(commentPage) : null;
 
   return {
     fields,
@@ -1100,29 +1331,9 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       url: a.url,
       attachmentId: a.attachment_id,
     })),
-    comments: commentRows.map((c) => {
-      const deleted = c.deleted_at !== null;
-      const active = deleted
-        ? []
-        : c.comment_reactions
-            .filter((r) => r.deleted_at === null)
-            .sort((a, b) => a.created_at.localeCompare(b.created_at));
-      return {
-        id: c.id,
-        authorId: c.author_id,
-        ruleName: c.rule_id ? (ruleName.get(c.rule_id) ?? "Rule") : null,
-        body: deleted ? "" : c.body,
-        createdAt: c.created_at,
-        editedAt: deleted ? null : c.edited_at,
-        deleted,
-        mentionIds: deleted ? [] : c.comment_mentions.map((m) => m.profile_id),
-        reactions: REACTIONS.map(({ key }) => ({
-          emoji: key,
-          profileIds: active.filter((r) => r.emoji === key).map((r) => r.profile_id),
-        })).filter((r) => r.profileIds.length > 0),
-        email: emailOf.get(c.id) ?? null,
-      };
-    }),
+    comments: taskComments,
+    commentTotal,
+    olderComments,
     stories: storyRows.map((st) => ({
       id: st.id,
       actorId: st.actor_id,
