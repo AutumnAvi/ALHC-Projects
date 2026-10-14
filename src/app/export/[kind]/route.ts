@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getViewer } from "@/lib/auth";
-import { csvResponse } from "@/lib/csv";
+import { csvStreamResponse } from "@/lib/csv";
 import {
   exportList,
   exportPortfolioReport,
@@ -15,13 +15,17 @@ import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@/lib/workload";
 
 // CSV export. Every kind reads with the signed-in user's Supabase client (cookies), never the service
-// role, so only rows RLS lets them read are exported. Max 10,000 rows; UTF-8 with a BOM; cells that
-// look like formulas are prefixed with an apostrophe (src/lib/csv.ts).
+// role, so only rows RLS lets them read are exported. No row cap since Real features 4: the file streams
+// a page at a time (src/lib/exports.ts); UTF-8 with a BOM; cells that look like formulas are prefixed
+// with an apostrophe (src/lib/csv.ts).
 //   /export/list?project=<id>&view=<id>&f=<draft>     List: current filters, order, and columns
 //   /export/search?q=<query>                          search results
 //   /export/dashboard?project=<id>                    project dashboard widgets
 //   /export/report?table=breakdown|series|overdue|projects&<report filters>&int=day|week
 //   /export/portfolio?portfolio=<id>                  portfolio report
+// A big List export reads and writes for a while; the stream keeps the download going meanwhile.
+export const maxDuration = 300;
+
 export async function GET(request: NextRequest, ctx: RouteContext<"/export/[kind]">) {
   const { kind } = await ctx.params;
   const { user, allowlisted } = await getViewer();
@@ -57,5 +61,5 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/export/[kind
   }
 
   if (!result) return new NextResponse("Not found", { status: 404 });
-  return csvResponse(result.table, result.title, todayIn(timeZone));
+  return csvStreamResponse(result, todayIn(timeZone));
 }

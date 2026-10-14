@@ -7,6 +7,7 @@ import {
   Archive,
   ArchiveRestore,
   CalendarDays,
+  CalendarSync,
   ChartColumn,
   ChartGantt,
   Check,
@@ -40,6 +41,7 @@ import { MenuItem, Popover } from "@/components/popover";
 import { PROJECT_STATUS_CLASS, PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
 import { projectColorClass } from "@/lib/project-colors";
+import { SyncCalendarDialog } from "@/components/calendar/sync-calendar-dialog";
 import { DuplicateProjectDialog } from "@/components/project/duplicate-project-dialog";
 import { CustomizePanel, type CustomizeSummary } from "@/components/project/customize-panel";
 import { useCan } from "@/components/project/project-access";
@@ -237,6 +239,7 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
   const canEditProject = useCan("admin");
   const canDeleteProject = useCan("owner");
   const [duplicating, setDuplicating] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const base = `/projects/${project.id}`;
 
   return (
@@ -290,6 +293,14 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
               }}
             >
               <Link2 className="size-4 text-zinc-500" /> Copy project link
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                close();
+                setSyncing(true);
+              }}
+            >
+              <CalendarSync className="size-4 text-zinc-500" /> Sync to calendar
             </MenuItem>
             {canEditViews || canEditProject || canArchive || canDeleteProject ? (
               <div role="separator" className="my-1 border-t border-zinc-100" />
@@ -359,6 +370,7 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
         )}
       </Popover>
       {duplicating ? <DuplicateProjectDialog project={project} onClose={() => setDuplicating(false)} /> : null}
+      {syncing ? <SyncCalendarDialog scope="project" targetId={project.id} onClose={() => setSyncing(false)} /> : null}
     </>
   );
 }

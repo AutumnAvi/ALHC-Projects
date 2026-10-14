@@ -213,7 +213,8 @@ begin
   where n.nspname = 'public' and p.prosecdef and has_function_privilege('anon', p.oid, 'execute');
   -- Inbound integrations added receive_inbound_webhook (the inbound webhook receiver, like submit_form).
   -- Real features 3 added email_unsubscribe (the one-click "Turn off" links in digest and report emails).
-  assert exposed = 'email_unsubscribe,get_public_form,receive_inbound_webhook,submit_form',
+  -- Real features 4 added calendar_feed (the iCal subscribe links: a token in, that feed's events out).
+  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,submit_form',
     format('anon may only execute the public form RPCs and the inbound receiver among SECURITY DEFINER functions, got %s', exposed);
 
   assert not exists (

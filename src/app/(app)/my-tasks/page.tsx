@@ -4,6 +4,7 @@ import { CircleCheck } from "lucide-react";
 import { listBulkContext } from "@/components/bulk/bulk-context";
 import { MyTasksView } from "@/components/my-tasks/my-tasks-view";
 import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
 import { listMyTaskLayout, listMyTasks } from "@/lib/data";
@@ -27,6 +28,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
         icon={CircleCheck}
         title="My tasks"
         description="Everything assigned to you, across every project, in your own sections or by due date"
+        actions={<SyncCalendarButton scope="my_tasks" className="btn-secondary" />}
       />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="px-gutter pb-8 pt-2">

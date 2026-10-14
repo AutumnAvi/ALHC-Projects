@@ -99,6 +99,9 @@ import {
 } from "@/lib/email-schedules";
 import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
 import { MAX_PORTFOLIO_FIELD_TEXT, isPortfolioFieldType, isProjectStatus } from "@/lib/portfolios";
+import { CALENDAR_FEED_TOKEN, calendarFeedUrls, isCalendarFeedScope } from "@/lib/calendar-feeds";
+import { requestOrigin } from "@/lib/origin";
+import { statusTemplateProblem, type StatusTemplateSection } from "@/lib/status-templates";
 import { STATUS_TITLE_MAX } from "@/lib/project-page";
 import { MAX_TEMPLATE_SUBTASKS, parseCopyResult, type DuplicateOptions } from "@/lib/templates";
 import {
@@ -4761,5 +4764,140 @@ export async function movePersonalWidget(widgetId: string, direction: -1 | 1): P
         check(await supabase.from("personal_dashboard_widgets").update({ sort_order: order }).eq("id", item.id));
       }
     }
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Real features 4: calendar subscribe links and status templates
+// ---------------------------------------------------------------------------------------------
+
+const REAL4_SCHEMA_MISSING = BATCH5_SCHEMA_MISSING;
+
+function missingReal4(code: string | undefined) {
+  return code === "PGRST202" || code === "PGRST205" || code === "42P01" || code === "42883";
+}
+
+export type CalendarLinkResult = ActionResult & { feedId?: string; urls?: ReturnType<typeof calendarFeedUrls> };
+
+// A subscribe link for My tasks, a project, or a team (replacing the person's current one for it). The
+// token comes back once, as the link; the database keeps only its hash.
+export async function createCalendarFeed(scope: string, targetId: string | null): Promise<CalendarLinkResult> {
+  let feedId: string | undefined;
+  let urls: CalendarLinkResult["urls"];
+  const result = await run(async () => {
+    if (!isCalendarFeedScope(scope)) throw new InputError("Choose My tasks, a project, or a team");
+    const target = scope === "my_tasks" ? null : id(targetId, scope);
+    const supabase = await createClient();
+    const created = await supabase.rpc("create_calendar_feed", { feed_scope: scope, target });
+    if (missingReal4(created.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
+    if (created.error?.code === "P0002") throw new DbError(scope === "team" ? "Team not found" : "Project not found");
+    check(created);
+    const data = created.data as { id?: string; token?: string } | null;
+    if (!data?.token || !CALENDAR_FEED_TOKEN.test(data.token)) throw new DbError("Couldn’t make a calendar link");
+    feedId = data.id;
+    urls = calendarFeedUrls(await requestOrigin(), data.token);
+  });
+  return { ...result, feedId, urls };
+}
+
+// A new link for one of the person's calendars; the old one stops working at once.
+export async function rotateCalendarFeed(feedId: string): Promise<CalendarLinkResult> {
+  let urls: CalendarLinkResult["urls"];
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const rotated = await supabase.rpc("rotate_calendar_feed", { target_feed: id(feedId, "calendar link") });
+    if (missingReal4(rotated.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
+    if (rotated.error?.code === "P0002") throw new DbError("This calendar link was turned off");
+    check(rotated);
+    const token = (rotated.data as { token?: string } | null)?.token;
+    if (!token || !CALENDAR_FEED_TOKEN.test(token)) throw new DbError("Couldn’t make a new calendar link");
+    urls = calendarFeedUrls(await requestOrigin(), token);
+  });
+  return { ...result, feedId, urls };
+}
+
+// Turns a link off for good: calendars subscribed to it get an empty calendar from then on.
+export async function revokeCalendarFeed(feedId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("calendar_feeds")
+      .update({ revoked_at: now() })
+      .eq("id", id(feedId, "calendar link"))
+      .is("revoked_at", null)
+      .select("id");
+    if (missingReal4(result.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
+    checkUpdated(result, "This calendar link was already turned off");
+  });
+}
+
+export type StatusTemplateInput = {
+  name: string;
+  status: string | null;
+  title: string | null;
+  sections: StatusTemplateSection[];
+};
+
+function statusTemplateRow(input: StatusTemplateInput) {
+  const sections = (Array.isArray(input.sections) ? input.sections : []).map((s) => ({
+    heading: typeof s?.heading === "string" ? s.heading.trim() : "",
+    body: typeof s?.body === "string" ? s.body.replace(/\s+$/, "") : "",
+  }));
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  const title = typeof input.title === "string" && input.title.trim() ? input.title.trim() : null;
+  const problem = statusTemplateProblem({ name, title, sections });
+  if (problem) throw new InputError(problem);
+  if (input.status !== null && !isProjectStatus(input.status)) throw new InputError("Choose a status");
+  return { name, status: input.status, title, sections: sections as unknown as Json };
+}
+
+// Customize → Status templates (Editors and above, by RLS).
+export async function createStatusTemplate(projectId: string, input: StatusTemplateInput): Promise<ActionResult> {
+  return run(async () => {
+    const row = statusTemplateRow(input);
+    const supabase = await createClient();
+    const project = id(projectId, "project");
+    const { data: last } = await supabase
+      .from("project_status_templates")
+      .select("sort_order")
+      .eq("project_id", project)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const result = await supabase
+      .from("project_status_templates")
+      .insert({ project_id: project, ...row, sort_order: (last?.sort_order ?? 0) + ORDER_STEP });
+    if (missingReal4(result.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
+    check(result, "Only project editors and above can add status templates");
+  });
+}
+
+export async function updateStatusTemplate(templateId: string, input: StatusTemplateInput): Promise<ActionResult> {
+  return run(async () => {
+    const row = statusTemplateRow(input);
+    const supabase = await createClient();
+    const result = await supabase
+      .from("project_status_templates")
+      .update(row)
+      .eq("id", id(templateId, "status template"))
+      .is("deleted_at", null)
+      .select("id");
+    if (missingReal4(result.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
+    checkUpdated(result, "Only project editors and above can change status templates");
+  });
+}
+
+export async function deleteStatusTemplate(templateId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("project_status_templates")
+      .update({ deleted_at: now() })
+      .eq("id", id(templateId, "status template"))
+      .is("deleted_at", null)
+      .select("id");
+    if (missingReal4(result.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
+    checkUpdated(result, "Only project editors and above can remove status templates");
   });
 }

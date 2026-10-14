@@ -99,12 +99,16 @@ export const CURATED_ORDER_STEP = 1024;
 export type TeamCalendarTask = {
   id: string;
   title: string;
+  // Real features 4: the start date (on or before the due date), so a task spans its days on the
+  // Calendar, and whether the viewer may drag it (Editor+ by their own role in its project).
+  startOn: string | null;
   dueOn: string;
   completedAt: string | null;
   assigneeId: string | null;
   kind: string;
   projectId: string;
   projectName: string;
+  canEdit: boolean;
 };
 
 // The most tasks the team Calendar loads for one period.

@@ -432,7 +432,7 @@ function OptionsMenu({
       ) : null}
       {layout === "list" ? (
         // CSV of what the List shows: the current (or draft) filters, order, and columns.
-        <div className="[&>span]:flex [&>span]:w-full">
+        <div className="flex">
           <ExportLink
             href={`/export/list?${new URLSearchParams({
               project: projectId,

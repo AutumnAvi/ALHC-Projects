@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition, type MouseEvent } from "react";
+import { useTransition } from "react";
 import { useNotify } from "@/components/toast";
-import { MAX_EXPORT_ROWS, TRUNCATED_HEADER, TRUNCATED_NOTICE } from "@/lib/csv";
-import { ChartColumn, Download, LayoutDashboard, Mail, Printer, Table2, TriangleAlert } from "lucide-react";
+import { ChartColumn, Download, LayoutDashboard, Mail, Printer, Table2 } from "lucide-react";
 import { Segmented } from "@/components/project/view-chrome";
 import { HEADER_TAB } from "@/components/ui";
 import type { SeriesInterval } from "@/lib/reports";
@@ -42,21 +41,8 @@ export function PrintButton({ label = "Print" }: { label?: string }) {
   );
 }
 
-function fileNameOf(disposition: string | null): string {
-  const encoded = disposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-  if (encoded) {
-    try {
-      return decodeURIComponent(encoded);
-    } catch {
-      // fall through to the plain name
-    }
-  }
-  return disposition?.match(/filename="([^"]+)"/i)?.[1] ?? "export.csv";
-}
-
-// Download link to an /export route. It fetches the file (same session cookie), saves it, and when the
-// 10,000-row cap cut the file short (X-Export-Truncated) says so: a toast plus a note next to the
-// button. Without JavaScript, or if anything unexpected comes back, it falls back to the plain link.
+// Download link to an /export route. The file streams (no row cap since Real features 4), so the browser
+// saves it as it arrives and shows its own download progress; nothing is held in the page.
 export function ExportLink({
   href,
   label = "Export CSV",
@@ -69,62 +55,17 @@ export function ExportLink({
   className?: string;
 }) {
   const notify = useNotify();
-  const [busy, setBusy] = useState(false);
-  const [truncated, setTruncated] = useState(false);
-
-  async function download(event: MouseEvent<HTMLAnchorElement>) {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
-    if (busy) return;
-    setBusy(true);
-    try {
-      const response = await fetch(href, { credentials: "same-origin" });
-      if (!response.ok || !(response.headers.get("Content-Type") ?? "").includes("text/csv")) {
-        window.location.assign(href);
-        return;
-      }
-      const url = URL.createObjectURL(await response.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileNameOf(response.headers.get("Content-Disposition"));
-      document.body.append(a);
-      a.click();
-      a.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      const cut = response.headers.has(TRUNCATED_HEADER);
-      setTruncated(cut);
-      if (cut) notify(TRUNCATED_NOTICE);
-    } catch {
-      window.location.assign(href);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
-    <span className="inline-flex items-center gap-2 print:hidden">
-      <a
-        href={href}
-        download
-        onClick={download}
-        aria-busy={busy}
-        className={className ?? (variant === "ghost" ? "btn-ghost" : "btn-secondary")}
-      >
-        <Download className={className ? "size-3.5" : "size-4"} aria-hidden /> {busy ? "Exporting…" : label}
-      </a>
-      {truncated ? (
-        <span
-          role="status"
-          className="inline-flex max-w-xs items-start gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800"
-        >
-          <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-          <span>
-            <span className="font-medium">Cut at {MAX_EXPORT_ROWS.toLocaleString("en-US")} rows.</span> Narrow the
-            filters to export the rest.
-          </span>
-        </span>
-      ) : null}
-    </span>
+    <a
+      href={href}
+      download
+      onClick={(event) => {
+        if (!(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) notify("Exporting: your browser is downloading the CSV");
+      }}
+      className={`print:hidden ${className ?? (variant === "ghost" ? "btn-ghost" : "btn-secondary")}`}
+    >
+      <Download className={className ? "size-3.5" : "size-4"} aria-hidden /> {label}
+    </a>
   );
 }
 

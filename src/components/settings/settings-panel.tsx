@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, type KeyboardEvent } from "react";
 import { ArrowUpRight, Reply, Webhook } from "lucide-react";
 import { Segmented } from "@/components/project/view-chrome";
+import { CalendarSyncSettings } from "@/components/settings/calendar-sync";
 import { EmailDigestSettings } from "@/components/settings/email-digest-settings";
 import { EmailForwardingSection } from "@/components/settings/email-forwarding";
 import {
@@ -22,8 +23,8 @@ import { WORKSPACE_ROLE_LABELS } from "@/lib/workspace";
 
 export type SettingsData = { me: MySettings; email: EmailSetup };
 
-// The Settings modal's tabs (Asana's "My settings"): Profile, Notifications, Email forwarding, Account,
-// Display, across the top. ←/→, Home, and End move between tabs (ARIA tabs); the modal focuses the open
+// The Settings modal's tabs (Asana's "My settings"): Profile, Notifications, Email forwarding, Calendar
+// sync, Account, Display, across the top. ←/→, Home, and End move between tabs (ARIA tabs); the modal focuses the open
 // tab first (Dialog looks for data-autofocus).
 export function SettingsPanel({
   data,
@@ -147,6 +148,8 @@ export function SettingsPanel({
             commentEmails={commentEmails ?? data.me.emailComments}
             onTabChange={onTabChange}
           />
+        ) : tab === "calendar" ? (
+          <CalendarSyncSettings />
         ) : tab === "account" ? (
           <AccountTab data={data.me} />
         ) : (

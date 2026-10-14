@@ -17,9 +17,10 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/ca
   return teamTitle(teamId, "Calendar");
 }
 
-// The team Calendar: one month (?d= picks it, default this month in the viewer's time zone) of tasks due
-// in the team's projects the viewer is a member of. Projects they could only join, and private projects
-// of others, are never read. ?task= opens the task pane here.
+// The team Calendar: one month (?d= picks it, default this month in the viewer's time zone) of tasks
+// scheduled in the team's projects the viewer is a member of (a task spans its start to its due date).
+// Projects they could only join, and private projects of others, are never read. People who can edit a
+// task drag it (Real features 4). ?task= opens the task pane here.
 export default async function TeamCalendarPage({ params, searchParams }: PageProps<"/teams/[teamId]/calendar">) {
   const [{ teamId }, query] = await Promise.all([params, searchParams]);
   if (!isUuid(teamId)) notFound();
@@ -54,6 +55,7 @@ export default async function TeamCalendarPage({ params, searchParams }: PagePro
       ) : (
         <TeamCalendar
           key={month}
+          teamId={team.id}
           month={month}
           today={today}
           days={days}

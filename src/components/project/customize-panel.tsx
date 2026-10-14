@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Diamond,
   FileInput,
+  FileText,
   GitBranch,
   LayoutTemplate,
   ListChecks,
@@ -21,12 +22,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { FieldEditorDialog, FieldList } from "@/components/project/field-editor";
+import { StatusTemplatesView } from "@/components/project/status-templates";
 import { useCan } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useServerAction } from "@/components/toast";
 import { createForm, setRuleEnabled } from "@/lib/actions";
 import type { FieldDef } from "@/lib/fields";
 import type { CustomizeDetails } from "@/lib/project-page";
+import type { StatusTemplate } from "@/lib/status-templates";
 import { loadCustomizeDetails } from "@/lib/project-page-actions";
 
 export type CustomizeRule = {
@@ -45,9 +48,12 @@ export type CustomizeSummary = {
   forms: { id: string; title: string; open: boolean; sendsConfirmation: boolean }[];
   rules: CustomizeRule[];
   taskTemplates: { id: string; name: string; title: string }[];
+  // Real features 4: the project's status templates (false = the database update isn't applied yet).
+  statusTemplates: StatusTemplate[];
+  statusTemplatesAvailable: boolean;
 };
 
-type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types";
+type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types" | "status";
 
 const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   rules: "Automations",
@@ -56,10 +62,12 @@ const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   emails: "Emails",
   apps: "Apps",
   types: "Task types and templates",
+  status: "Status templates",
 };
 
 // Asana's Customize panel (Asana parity, batch 4): a ~320px panel on the right with a card row per
-// thing that shapes the project — Automations, Fields, Forms, Emails, Apps, Task types and templates —
+// thing that shapes the project — Automations, Fields, Forms, Emails, Apps, Task types and templates,
+// and (Real features 4) Status templates —
 // each opening its own view in the panel (back arrow to return). It sits next to the page, so new
 // fields show up in the List while it's open. The pages it links to keep their own role checks.
 export function CustomizePanel({ projectId, summary }: { projectId: string; summary: CustomizeSummary }) {
@@ -161,6 +169,12 @@ export function CustomizePanel({ projectId, summary }: { projectId: string; summ
               <EmailsView projectId={projectId} base={base} back={pathname} summary={summary} />
             ) : view === "apps" ? (
               <AppsView projectId={projectId} base={base} />
+            ) : view === "status" ? (
+              <StatusTemplatesView
+                projectId={projectId}
+                templates={summary.statusTemplates}
+                available={summary.statusTemplatesAvailable}
+              />
             ) : (
               <TypesView base={base} templates={summary.taskTemplates} />
             )}
@@ -220,6 +234,17 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         count={summary.taskTemplates.length}
         meta="Milestones, approvals, and task templates"
         onClick={() => onOpen("types")}
+      />
+      <CardRow
+        icon={FileText}
+        label="Status templates"
+        count={summary.statusTemplatesAvailable ? summary.statusTemplates.length : undefined}
+        meta={
+          summary.statusTemplates.length
+            ? summary.statusTemplates.slice(0, 3).map((t) => t.name).join(", ")
+            : "Saved layouts for status updates"
+        }
+        onClick={() => onOpen("status")}
       />
     </ul>
   );

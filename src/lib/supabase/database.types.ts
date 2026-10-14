@@ -4233,11 +4233,126 @@ export type Database = {
         };
         Relationships: [];
       };
+      project_status_templates: {
+        Row: {
+          id: string;
+          project_id: string;
+          name: string;
+          status: string | null;
+          title: string | null;
+          sections: Json;
+          sort_order: number;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          name: string;
+          status?: string | null;
+          title?: string | null;
+          sections?: Json;
+          sort_order?: number;
+          created_by?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          name?: string;
+          status?: string | null;
+          title?: string | null;
+          sections?: Json;
+          sort_order?: number;
+          created_by?: string;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      calendar_feeds: {
+        Row: {
+          id: string;
+          profile_id: string;
+          scope: string;
+          project_id: string | null;
+          team_id: string | null;
+          token_hint: string;
+          token_rotated_at: string;
+          last_fetched_at: string | null;
+          created_at: string;
+          updated_at: string;
+          revoked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          scope: string;
+          project_id?: string | null;
+          team_id?: string | null;
+          token_hint?: string;
+          token_rotated_at?: string;
+          last_fetched_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          revoked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          scope?: string;
+          project_id?: string | null;
+          team_id?: string | null;
+          token_hint?: string;
+          token_rotated_at?: string;
+          last_fetched_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      create_calendar_feed: {
+        Args: { feed_scope: string; target?: string | null };
+        Returns: Json;
+      };
+      rotate_calendar_feed: {
+        Args: { target_feed: string };
+        Returns: Json;
+      };
+      calendar_feed: {
+        Args: { feed_token: string };
+        Returns: Json;
+      };
+      status_template_summary: {
+        Args: { sections: Json };
+        Returns: string;
+      };
+      filter_project_task_ids: {
+        Args: { target_project: string; filters?: Json; tz?: string };
+        Returns: string[];
+      };
+      report_overdue_tasks_after: {
+        Args: {
+          filters?: Json;
+          tz?: string;
+          after_due?: string | null;
+          after_title?: string | null;
+          after_task?: string | null;
+          max_results?: number;
+        };
+        Returns: Json;
+      };
       list_workspace_email_deliveries: {
         Args: { max_results?: number };
         Returns: {

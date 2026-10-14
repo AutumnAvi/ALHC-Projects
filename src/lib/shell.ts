@@ -41,6 +41,7 @@ export const SETTINGS_TABS = [
   { key: "profile", label: "Profile" },
   { key: "notifications", label: "Notifications" },
   { key: "email_forwarding", label: "Email forwarding" },
+  { key: "calendar", label: "Calendar sync" },
   { key: "account", label: "Account" },
   { key: "display", label: "Display" },
 ] as const;
