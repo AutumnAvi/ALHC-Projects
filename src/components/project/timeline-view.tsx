@@ -3,7 +3,7 @@
 import type { Tag } from "@/lib/tags";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useId, useRef, useState, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { Inbox, Route } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useCan } from "@/components/project/project-access";
@@ -80,6 +80,8 @@ export function TimelineView({
   const [dropDay, setDropDay] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState({ top: 0, height: 720 });
+  const [draggedId, setDraggedId] = useState<string | null>(null);
   const trayDrag = useRef<{ taskId: string; originX: number; originY: number; moved: boolean } | null>(null);
   const suppressTrayClick = useRef(false);
 
@@ -117,6 +119,20 @@ export function TimelineView({
     });
   }
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => setViewport({ top: el.scrollTop, height: el.clientHeight });
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, [anchor, zoom, today]);
+
   if (!anchor || !today) {
     return <ViewLoading label="Loading timeline…" />;
   }
@@ -133,16 +149,30 @@ export function TimelineView({
   const groups = groupTasks(scheduled, config, { sections, profilesById, fields, tags }).filter((g) => g.tasks.length > 0);
   const showGroups = groupOf(config) !== "none";
 
-  // Vertical centre of each visible row, in content coordinates (below the sticky header).
+  // Vertical centre of every row, in content coordinates (below the sticky header). Arrows use
+  // these positions even when the row itself is outside the painted window.
   const rowCenter = new Map<string, number>();
+  const slots: { key: string; top: number; height: number; group?: (typeof groups)[number]; task?: ProjectTask }[] = [];
   let contentHeight = HEADER_HEIGHT;
   for (const group of groups) {
-    if (showGroups) contentHeight += GROUP_HEIGHT;
+    if (showGroups) {
+      slots.push({ key: `group-${group.key}`, top: contentHeight, height: GROUP_HEIGHT, group });
+      contentHeight += GROUP_HEIGHT;
+    }
     for (const task of group.tasks) {
       rowCenter.set(task.id, contentHeight + ROW_HEIGHT / 2);
+      slots.push({ key: task.id, top: contentHeight, height: ROW_HEIGHT, task });
       contentHeight += ROW_HEIGHT;
     }
   }
+  const viewTop = viewport.top - ROW_HEIGHT * 12;
+  const viewBottom = viewport.top + viewport.height + ROW_HEIGHT * 12;
+  const shownSlots = slots.filter(
+    (slot) =>
+      slot.task?.id === draggedId ||
+      slot.task?.id === openTaskId ||
+      (slot.top + slot.height >= viewTop && slot.top <= viewBottom),
+  );
   const tasksById = new Map(optimisticTasks.map((t) => [t.id, t] as const));
   const arrows = dependencies.flatMap((dep) => {
     const pred = tasksById.get(dep.predecessorId);
@@ -270,7 +300,7 @@ export function TimelineView({
           ref={scrollRef}
           className="relative min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 bg-white"
         >
-          <div className="relative min-h-full" style={{ width: LABEL_WIDTH + width }}>
+          <div className="relative min-h-full" style={{ width: LABEL_WIDTH + width, minHeight: contentHeight }}>
             <div
               ref={gridRef}
               aria-hidden
@@ -340,82 +370,46 @@ export function TimelineView({
               </p>
             ) : null}
 
-            {groups.map((group) => (
-              <section key={group.key} aria-label={showGroups ? group.label : "Tasks"}>
-                {showGroups ? (
-                  <div className="relative flex h-8 items-end border-b border-zinc-200 bg-zinc-50/80">
-                    <div className="sticky left-0 z-10 flex items-center gap-2 px-3 pb-1.5" style={labelCell}>
-                      {group.color ? (
-                        <span className={`truncate rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[group.color]}`}>
-                          {group.label}
-                        </span>
-                      ) : (
-                        <span className="truncate text-xs font-semibold text-zinc-700">{group.label}</span>
-                      )}
-                      <span className="text-xs tabular-nums text-zinc-400">{group.tasks.length}</span>
-                    </div>
+            {shownSlots.map((slot) =>
+              slot.group ? (
+                <div
+                  key={slot.key}
+                  className="absolute right-0 left-0 flex h-8 items-end border-b border-zinc-200 bg-zinc-50/80"
+                  style={{ top: slot.top }}
+                >
+                  <div className="sticky left-0 z-10 flex items-center gap-2 px-3 pb-1.5" style={labelCell}>
+                    {slot.group.color ? (
+                      <span className={`truncate rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[slot.group.color]}`}>
+                        {slot.group.label}
+                      </span>
+                    ) : (
+                      <span className="truncate text-xs font-semibold text-zinc-700">{slot.group.label}</span>
+                    )}
+                    <span className="text-xs tabular-nums text-zinc-400">{slot.group.tasks.length}</span>
                   </div>
-                ) : null}
-                <ul>
-                  {group.tasks.map((task) => {
-                    const open = openTaskId === task.id;
-                    const completed = Boolean(task.completedAt);
-                    const overdue = isOverdue(task.dueOn, today, completed);
-                    const span = spanOf(task)!;
-                    const assignee = task.assigneeId ? profilesById.get(task.assigneeId) : undefined;
-                    const schedule = criticalPath.tasks[task.id];
-                    return (
-                      <li key={task.id} className="relative flex h-9 border-b border-zinc-100">
-                        <div
-                          className={`sticky left-0 z-10 flex items-center gap-2 border-r border-zinc-200 px-3 ${
-                            open ? "bg-accent-50" : "bg-white"
-                          }`}
-                          style={labelCell}
-                        >
-                          <Link
-                            href={taskHref(task.id)}
-                            scroll={false}
-                            aria-current={open ? "true" : undefined}
-                            className={`min-w-0 flex-1 truncate text-sm hover:underline ${
-                              completed ? "text-zinc-400 line-through" : "text-zinc-900"
-                            }`}
-                          >
-                            {task.title}
-                            <span className="sr-only">
-                              {task.kind === "milestone" ? ", milestone" : ""}, {spanLabel(span)}
-                              {overdue ? ", overdue" : ""}
-                              {completed ? ", completed" : ""}
-                              {task.blockedBy > 0 && !completed ? `, blocked by ${task.blockedBy}` : ""}
-                              {assignee ? `, assigned to ${displayName(assignee)}` : ""}
-                              {schedule ? `, ${slackLabel(schedule)}` : ""}
-                            </span>
-                          </Link>
-                          <span aria-hidden>
-                            <Assignee profile={assignee} />
-                          </span>
-                        </div>
-                        <div className="relative" style={{ width }}>
-                          <TimelineBar
-                            task={task}
-                            href={taskHref(task.id)}
-                            open={open}
-                            overdue={overdue}
-                            windowStart={start}
-                            days={days}
-                            dayWidth={dayWidth}
-                            canEdit={canEdit}
-                            schedule={schedule}
-                            highlight={showCritical ? (schedule?.critical ? "critical" : "dim") : null}
-                            onCommit={(dates) => reschedule(task, dates)}
-                            onReveal={(date) => navigate({ d: date })}
-                          />
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            ))}
+                </div>
+              ) : slot.task ? (
+                <TimelineRow
+                  key={slot.key}
+                  top={slot.top}
+                  task={slot.task}
+                  open={openTaskId === slot.task.id}
+                  today={today}
+                  width={width}
+                  start={start}
+                  days={days}
+                  dayWidth={dayWidth}
+                  canEdit={canEdit}
+                  showCritical={showCritical}
+                  schedule={criticalPath.tasks[slot.task.id]}
+                  assignee={slot.task.assigneeId ? profilesById.get(slot.task.assigneeId) : undefined}
+                  href={taskHref(slot.task.id)}
+                  onCommit={(dates) => reschedule(slot.task!, dates)}
+                  onReveal={(date) => navigate({ d: date })}
+                  onDragging={setDraggedId}
+                />
+              ) : null,
+            )}
 
             {arrows.length > 0 ? (
               <DependencyArrows arrows={arrows} width={width} height={contentHeight} />
@@ -527,6 +521,95 @@ function DependencyArrows({
   );
 }
 
+function TimelineRow({
+  top,
+  task,
+  open,
+  today,
+  width,
+  start,
+  days,
+  dayWidth,
+  canEdit,
+  showCritical,
+  schedule,
+  assignee,
+  href,
+  onCommit,
+  onReveal,
+  onDragging,
+}: {
+  top: number;
+  task: ProjectTask;
+  open: boolean;
+  today: string;
+  width: number;
+  start: string;
+  days: number;
+  dayWidth: number;
+  canEdit: boolean;
+  showCritical: boolean;
+  schedule: TaskSchedule | undefined;
+  assignee: Profile | undefined;
+  href: string;
+  onCommit: (dates: Dates) => void;
+  onReveal: (date: string) => void;
+  onDragging: (taskId: string | null) => void;
+}) {
+  const completed = Boolean(task.completedAt);
+  const overdue = isOverdue(task.dueOn, today, completed);
+  const span = spanOf(task)!;
+  return (
+    <div className="absolute right-0 left-0 flex h-9 border-b border-zinc-100" style={{ top }}>
+      <div
+        className={`sticky left-0 z-10 flex items-center gap-2 border-r border-zinc-200 px-3 ${
+          open ? "bg-accent-50" : "bg-white"
+        }`}
+        style={labelCell}
+      >
+        <Link
+          href={href}
+          scroll={false}
+          aria-current={open ? "true" : undefined}
+          className={`min-w-0 flex-1 truncate text-sm hover:underline ${
+            completed ? "text-zinc-400 line-through" : "text-zinc-900"
+          }`}
+        >
+          {task.title}
+          <span className="sr-only">
+            {task.kind === "milestone" ? ", milestone" : ""}, {spanLabel(span)}
+            {overdue ? ", overdue" : ""}
+            {completed ? ", completed" : ""}
+            {task.blockedBy > 0 && !completed ? `, blocked by ${task.blockedBy}` : ""}
+            {assignee ? `, assigned to ${displayName(assignee)}` : ""}
+            {schedule ? `, ${slackLabel(schedule)}` : ""}
+          </span>
+        </Link>
+        <span aria-hidden>
+          <Assignee profile={assignee} />
+        </span>
+      </div>
+      <div className="relative" style={{ width }}>
+        <TimelineBar
+          task={task}
+          href={href}
+          open={open}
+          overdue={overdue}
+          windowStart={start}
+          days={days}
+          dayWidth={dayWidth}
+          canEdit={canEdit}
+          schedule={schedule}
+          highlight={showCritical ? (schedule?.critical ? "critical" : "dim") : null}
+          onCommit={onCommit}
+          onReveal={onReveal}
+          onDragging={(active) => onDragging(active ? task.id : null)}
+        />
+      </div>
+    </div>
+  );
+}
+
 type Drag = { mode: DragMode; delta: number; moved: boolean };
 
 function TimelineBar({
@@ -542,6 +625,7 @@ function TimelineBar({
   highlight,
   onCommit,
   onReveal,
+  onDragging,
 }: {
   task: ProjectTask;
   href: string;
@@ -555,6 +639,7 @@ function TimelineBar({
   highlight: "critical" | "dim" | null;
   onCommit: (dates: Dates) => void;
   onReveal: (date: string) => void;
+  onDragging?: (active: boolean) => void;
 }) {
   const [drag, setDrag] = useState<Drag | null>(null);
   // Pointer-up can arrive before React renders the last move, so the gesture is tracked outside state.
@@ -605,6 +690,7 @@ function TimelineBar({
     e.currentTarget.setPointerCapture(e.pointerId);
     gesture.current = { mode, originX: e.clientX, moved: false };
     setDrag({ mode, delta: 0, moved: false });
+    onDragging?.(true);
   }
 
   function track(clientX: number) {
@@ -627,11 +713,13 @@ function TimelineBar({
     if (moved) suppressClick.current = true;
     if (delta !== 0) onCommit(draggedDates(task, mode, delta));
     setDrag(null);
+    onDragging?.(false);
   }
 
   const cancel = () => {
     gesture.current = null;
     setDrag(null);
+    onDragging?.(false);
   };
   const suppress = (e: MouseEvent) => {
     if (suppressClick.current) {

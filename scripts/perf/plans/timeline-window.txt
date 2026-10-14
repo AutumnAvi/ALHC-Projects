@@ -1,0 +1,9 @@
+Stage 3 timeline window. No database query changes.
+
+The timeline still places every row (fixed 36px) and still draws every dependency
+arrow from those positions. Only rows inside the scrollport, plus 12 rows of
+overscan, are mounted. The open task and the bar being dragged stay mounted so
+the drag and the arrows to off-screen tasks keep their coordinates.
+
+Seed timings are unchanged: project_task_card_page about 41 ms warm for the first
+80 cards. Calendar and Timeline still load the full project_task_cards list.
