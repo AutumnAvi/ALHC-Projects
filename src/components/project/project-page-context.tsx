@@ -1,8 +1,11 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-import { ShareDialog } from "@/components/project/share-dialog";
 import { StatusUpdatePanel } from "@/components/project/status-update-panel";
+
+// Share is a large dialog opened from the header. Leave it out of the project page chunk until then.
+const ShareDialog = dynamic(() => import("@/components/project/share-dialog").then((m) => m.ShareDialog));
 import type { ProjectStatus } from "@/lib/portfolios";
 import type { StatusTemplate } from "@/lib/status-templates";
 

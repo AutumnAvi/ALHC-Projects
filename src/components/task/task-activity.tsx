@@ -1,14 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useOptimistic, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
 import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { Popover } from "@/components/popover";
 import { Timestamp } from "@/components/timestamp";
-import { useServerAction } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
 import { MentionTextarea } from "@/components/task/mention-textarea";
-import { addComment, deleteComment, editComment, sendSubmitterResponse, setFollowing, toggleReaction } from "@/lib/actions";
+import {
+  addComment,
+  deleteComment,
+  editComment,
+  loadOlderComments,
+  sendSubmitterResponse,
+  setFollowing,
+  toggleReaction,
+} from "@/lib/actions";
 import { canRespondToSubmitter, submitterResponseSubject } from "@/lib/comment-email";
 import { mentionSegments } from "@/lib/mentions";
 import { mergePendingComments, type PendingComment } from "@/lib/pending-comments";
@@ -142,8 +150,16 @@ export function TaskActivity({
 
   // Optimistic comments: the server's rows, plus the ones still on their way at the end (in the order
   // they were sent), each keeping its React key when the real row replaces it.
+  const notify = useNotify();
   const pending = usePendingComments(task.id);
-  const merged = mergePendingComments(task.comments, pending, rememberedCommentKeys());
+  const [earlier, setEarlier] = useState<TaskComment[]>([]);
+  const [olderCursor, setOlderCursor] = useState(task.olderComments);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const commentsOnTask = useMemo(() => {
+    const seen = new Set(task.comments.map((comment) => comment.id));
+    return [...earlier.filter((comment) => !seen.has(comment.id)), ...task.comments];
+  }, [earlier, task.comments]);
+  const merged = mergePendingComments(commentsOnTask, pending, rememberedCommentKeys());
   const arrivedKey = merged.arrived.map((a) => a.tempId).join(",");
   useEffect(() => {
     if (arrivedKey) forgetArrivedComments(merged.arrived);
@@ -156,17 +172,23 @@ export function TaskActivity({
     return task.isPrivate && task.privateReaderIds.includes(profileId) ? "Can open this private task" : null;
   };
 
-  const entries: Entry[] = [
-    ...[
-      ...task.comments.map((comment) => ({
+  const history = useMemo(() => {
+    return [
+      ...commentsOnTask.map((comment) => ({
         type: "comment" as const,
         at: comment.createdAt,
         comment,
         key: merged.keys.get(comment.id) ?? comment.id,
-        pending: false,
+        pending: false as const,
       })),
       ...task.stories.map((story) => ({ type: "story" as const, at: story.createdAt, story })),
-    ].sort((a, b) => a.at.localeCompare(b.at)),
+    ].sort((a, b) => a.at.localeCompare(b.at));
+    // arrivedKey changes when a pending comment becomes a server row (its React key moves with it).
+    // Pending-only updates leave it alone, so the feed isn't re-sorted on send.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- merged.keys is current whenever arrivedKey changes
+  }, [commentsOnTask, task.stories, arrivedKey]);
+  const entries: Entry[] = [
+    ...history,
     ...merged.waiting.map((p) => ({
       type: "comment" as const,
       at: p.createdAt,
@@ -381,7 +403,7 @@ export function TaskActivity({
 
   const comments = entries.filter((entry) => entry.type === "comment");
   const shown = tab === "comments" ? comments : entries;
-  const commentCount = task.comments.filter((c) => !c.deleted).length + merged.waiting.length;
+  const commentCount = task.commentTotal + merged.waiting.length;
 
   return (
     <section className="mt-8 border-t border-zinc-200 pt-1" aria-label="Comments and activity">
@@ -411,6 +433,28 @@ export function TaskActivity({
         <p id="activity-panel" role="tabpanel" aria-labelledby={`activity-tab-${tab}`} className="py-4 text-sm text-zinc-500">
           {canComment ? "No comments yet. Ask a question or share an update below." : "No comments yet."}
         </p>
+      ) : null}
+      {olderCursor ? (
+        <button
+          type="button"
+          className="btn-ghost mt-3 text-zinc-500"
+          disabled={loadingEarlier}
+          onClick={() => {
+            const cursor = olderCursor;
+            setLoadingEarlier(true);
+            void loadOlderComments(task.id, cursor.beforeAt, cursor.beforeId).then((result) => {
+              setLoadingEarlier(false);
+              if (result.error || !result.comments) {
+                notify(result.error ?? "Couldn’t load earlier comments");
+                return;
+              }
+              setEarlier((current) => [...result.comments!, ...current]);
+              setOlderCursor(result.older ?? null);
+            });
+          }}
+        >
+          {loadingEarlier ? "Loading…" : "Show earlier comments"}
+        </button>
       ) : null}
       <ol
         id={shown.length ? "activity-panel" : undefined}

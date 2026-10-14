@@ -7,6 +7,7 @@ import { InboxCard, inboxItemHref, type CardState, type Decision } from "@/compo
 import { useInboxDensity } from "@/components/inbox/inbox-density";
 import { InboxToolbar } from "@/components/inbox/inbox-toolbar";
 import { useTaskHref } from "@/components/project/shared";
+import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, HEADER_TAB } from "@/components/ui";
 import {
@@ -66,6 +67,7 @@ export function InboxView({
     { table: "inbox_items", filter: `recipient_id=eq.${memberId}` },
   ]);
   const taskHref = useTaskHref();
+  const pages = useGroupPages();
   const density = useInboxDensity();
   const [, run] = useServerAction();
   const [filter, setFilter] = useState<InboxFilter>(NO_INBOX_FILTER);
@@ -247,13 +249,14 @@ export function InboxView({
                   {groupByDay(block.items, timeZone, today).map((group) => {
                     const DayHeading = block.label ? "h3" : "h2";
                     const headingId = `inbox-day-${block.key}-${group.day}`;
+                    const pageKey = `${block.key}-${group.day}`;
                     return (
                       <section key={group.day} aria-labelledby={headingId} className="mt-5 first:mt-0">
                         <DayHeading id={headingId} className="mb-2 px-1 text-xs font-medium text-zinc-500">
                           {group.label}
                         </DayHeading>
                         <ul className="space-y-2" aria-label={`Notifications from ${group.label}`}>
-                          {group.items.map((item) => (
+                          {group.items.slice(0, pages.limit(pageKey)).map((item) => (
                             <InboxCard
                               key={item.id}
                               item={item}
@@ -278,6 +281,14 @@ export function InboxView({
                               onDecide={(decision) => decide(item, decision)}
                             />
                           ))}
+                          {group.items.length > pages.limit(pageKey) ? (
+                            <li>
+                              <ShowMoreRows
+                                hidden={group.items.length - pages.limit(pageKey)}
+                                onClick={() => pages.showMore(pageKey)}
+                              />
+                            </li>
+                          ) : null}
                         </ul>
                       </section>
                     );

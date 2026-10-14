@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, type DragEvent } from "react";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
+import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
@@ -54,6 +55,7 @@ export function BoardView({
   sectionTaskCounts = {},
 }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
+  const pages = useGroupPages();
   const [, run] = useServerAction();
   const canEdit = useCan("editor");
   const [dragging, setDragging] = useState<string | null>(null);
@@ -215,7 +217,7 @@ export function BoardView({
             ) : null}
 
             <ol className="flex min-h-8 flex-col gap-2 overflow-y-auto p-0.5">
-              {group.tasks.map((task, index) => (
+              {group.tasks.slice(0, pages.limit(group.key)).map((task, index) => (
                 <li
                   key={task.id}
                   onDragOver={(e) => {
@@ -268,6 +270,15 @@ export function BoardView({
                 </li>
               ))}
               {isTarget && dropTarget?.beforeId === null ? <DropIndicator /> : null}
+              {group.tasks.length > pages.limit(group.key) ? (
+                <li>
+                  <ShowMoreRows
+                    hidden={group.tasks.length - pages.limit(group.key)}
+                    onClick={() => pages.showMore(group.key)}
+                    className="w-full"
+                  />
+                </li>
+              ) : null}
             </ol>
 
             {group.tasks.length === 0 && !isTarget ? (

@@ -17,6 +17,7 @@ import {
 import { MenuItem, Popover } from "@/components/popover";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { useNotify } from "@/components/toast";
+import { beginLocalMutation, dropTokenTasks, endLocalMutation, failMutation } from "@/lib/optimistic-session";
 import { addProjectMemberByProfile, bulkEditTasks } from "@/lib/actions";
 import { Dialog } from "@/components/dialog";
 import { MAX_BULK_TASKS, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
@@ -60,18 +61,33 @@ export function useBulkEdit() {
       notify(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
       return;
     }
+    const token = beginLocalMutation();
     startTransition(async () => {
-      optimistic?.();
-      const response = await bulkEditTasks(taskIds, operation);
-      if (response.error) {
-        notify(response.error);
-        return;
+      try {
+        optimistic?.();
+        const response = await bulkEditTasks(taskIds, operation);
+        if (response.error) {
+          notify(response.error);
+          failMutation(token);
+          return;
+        }
+        const result = response.result;
+        if (!result) {
+          failMutation(token);
+          return;
+        }
+        // Skipped tasks never changed; drop only those overlays. The ones that saved stay
+        // until the server list shows them.
+        if (result.skipped.length > 0) dropTokenTasks(token, result.skipped.map((skip) => skip.taskId));
+        if (result.skipped.length > 0) setSummary({ operation, total: taskIds.length, result });
+        else if (result.updated.length === 0) notify(`No changes: ${taskCount(result.unchanged.length)} already set`);
+        else notify(`${bulkVerb(operation.action)} ${taskCount(result.updated.length)}`);
+      } catch (error) {
+        failMutation(token);
+        throw error;
+      } finally {
+        endLocalMutation(token);
       }
-      const result = response.result;
-      if (!result) return;
-      if (result.skipped.length > 0) setSummary({ operation, total: taskIds.length, result });
-      else if (result.updated.length === 0) notify(`No changes: ${taskCount(result.unchanged.length)} already set`);
-      else notify(`${bulkVerb(operation.action)} ${taskCount(result.updated.length)}`);
     });
   }
 
