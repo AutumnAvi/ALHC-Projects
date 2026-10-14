@@ -1,9 +1,13 @@
+import dynamic from "next/dynamic";
 import { Suspense } from "react";
 import { requireMember } from "@/lib/auth";
 import { getTaskDetail, listMyProjectRoles, listProfiles, listProjects, listTags } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 import { isUuid } from "@/lib/ids";
-import { TaskDetailPanel, TaskNotFoundPanel, TaskPaneLoading } from "./task-detail-panel";
+import { TaskNotFoundPanel, TaskPaneLoading } from "./task-pane-frame";
+
+// The detail panel pulls in comments, dates, and attachments. Load that chunk only once a task opens.
+const TaskDetailPanel = dynamic(() => import("./task-detail-panel").then((mod) => mod.TaskDetailPanel));
 
 // Streams the pane: the page underneath renders without waiting for the task, and the pane shows a
 // skeleton right away. Keyed by task so switching tasks shows the skeleton again instead of the old task.
