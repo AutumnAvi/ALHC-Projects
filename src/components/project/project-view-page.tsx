@@ -125,7 +125,7 @@ export async function ProjectViewPage({
       : null;
   // List and Board paint one page per group. Calendar and Timeline load the visible dates (and the
   // undated tray). A missing function falls back to the full card list.
-  let [taskPage, scheduleTasks] = await Promise.all([
+  const [taskPageResult, scheduleTasks] = await Promise.all([
     paging
       ? listProjectTaskPage(
           projectId,
@@ -147,6 +147,7 @@ export async function ProjectViewPage({
         )
       : Promise.resolve(null),
   ]);
+  let taskPage = taskPageResult;
   let everyTask = fullTasks;
   let visible: ProjectTask[];
   if (scheduleTasks) {

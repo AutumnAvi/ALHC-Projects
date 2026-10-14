@@ -128,7 +128,7 @@ Client JS, production `next build` (Next.js 16.3.8, Turbopack), same method as s
 
 The project view already had one copy of that code, so its first load stays put. The total drops by the extra copies that other routes were carrying. Recharts was already absent from the client build; the unused package is removed. Splitting Calendar and Timeline into dynamic imports still does not shrink the first load, so those imports stay direct. Detail is `scripts/perf/plans/bundle-step4.txt`.
 
-`TZ=UTC npm run db:test` passed, including `zz23`.
+`TZ=UTC npm run db:test` passed, including `zz23`. `npm run typecheck`, `npm run lint`, unit tests (21 passed), and `npm run build` passed.
 
 ## Deferred
 
