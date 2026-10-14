@@ -1,0 +1,44 @@
+Seed: scripts/perf/seed.sql on local Postgres 17 (socket /tmp/alhc-perf-pg, port 5433).
+Role: authenticated. request.jwt.claim.sub = a1000000-0000-4000-8000-000000000001 (perf-seed@example.com, owner).
+EXPLAIN (ANALYZE, BUFFERS). Buffers are shared hits (warm).
+
+inbox unread count RLS
+
+QUERY PLAN                                                                                                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=52690.52..52690.53 rows=1 width=8) (actual time=1315.083..1315.088 rows=1 loops=1)
+   Buffers: shared hit=89489
+   InitPlan 1
+     ->  Result  (cost=0.00..0.02 rows=1 width=16) (actual time=0.004..0.005 rows=1 loops=1)
+   ->  Seq Scan on inbox_items  (cost=0.00..52688.00 rows=1000 width=0) (actual time=0.930..1314.066 rows=2000 loops=1)
+         Filter: ((read_at IS NULL) AND (archived_at IS NULL) AND (recipient_id = (InitPlan 1).col1) AND (((task_id IS NOT NULL) AND (SubPlan 2)) OR ((task_id IS NULL) AND (ANY (message_id = (hashed SubPlan 8).col1))) OR ((task_id IS NULL) AND (ANY (team_message_id = (hashed SubPlan 14).col1))) OR ((task_id IS NULL) AND (ANY (status_update_id = (hashed SubPlan 20).col1)))))
+         Buffers: shared hit=89489
+         SubPlan 2
+           ->  Result  (cost=0.00..0.26 rows=1 width=1) (actual time=0.655..0.655 rows=1 loops=2000)
+                 Buffers: shared hit=89456
+         SubPlan 8
+           ->  Seq Scan on project_messages m  (cost=0.00..227.30 rows=102 width=16) (never executed)
+                 Filter: ((SubPlan 7) AND (SubPlan 6))
+                 SubPlan 7
+                   ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+                 SubPlan 6
+                   ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+         SubPlan 14
+           ->  Seq Scan on team_messages m_1  (cost=0.00..227.30 rows=102 width=16) (never executed)
+                 Filter: ((SubPlan 13) AND (SubPlan 12))
+                 SubPlan 13
+                   ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+                 SubPlan 12
+                   ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+         SubPlan 20
+           ->  Seq Scan on project_status_updates u  (cost=0.00..248.50 rows=112 width=16) (never executed)
+                 Filter: ((SubPlan 19) AND (SubPlan 18))
+                 SubPlan 19
+                   ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+                 SubPlan 18
+                   ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+ Planning:
+   Buffers: shared hit=26
+ Planning Time: 0.407 ms
+ Execution Time: 1315.159 ms
+(35 rows)

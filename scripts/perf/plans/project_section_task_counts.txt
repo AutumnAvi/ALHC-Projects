@@ -1,0 +1,13 @@
+Seed: scripts/perf/seed.sql on local Postgres 17 (socket /tmp/alhc-perf-pg, port 5433).
+Role: authenticated. request.jwt.claim.sub = a1000000-0000-4000-8000-000000000001 (perf-seed@example.com, owner).
+EXPLAIN (ANALYZE, BUFFERS). Buffers are shared hits (warm).
+
+project_section_task_counts
+
+QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Result  (cost=0.00..0.26 rows=1 width=32) (actual time=8.158..8.158 rows=1 loops=1)
+   Buffers: shared hit=474
+ Planning Time: 0.035 ms
+ Execution Time: 8.171 ms
+(4 rows)

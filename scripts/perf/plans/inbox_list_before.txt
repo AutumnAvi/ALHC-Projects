@@ -1,0 +1,68 @@
+Seed: scripts/perf/seed.sql on local Postgres 17 (socket /tmp/alhc-perf-pg, port 5433).
+Role: authenticated. request.jwt.claim.sub = a1000000-0000-4000-8000-000000000001 (perf-seed@example.com, owner).
+EXPLAIN (ANALYZE, BUFFERS). Buffers are shared hits (warm).
+
+inbox newest 100 RLS
+
+QUERY PLAN                                                                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.88..11087.73 rows=100 width=119) (actual time=1.128..81.626 rows=100 loops=1)
+   Buffers: shared hit=5504
+   InitPlan 1
+     ->  Result  (cost=0.00..0.02 rows=1 width=16) (actual time=0.003..0.004 rows=1 loops=1)
+   InitPlan 22
+     ->  Result  (cost=0.00..0.02 rows=1 width=16) (never executed)
+   InitPlan 23
+     ->  Result  (cost=0.00..0.02 rows=1 width=16) (never executed)
+   InitPlan 24
+     ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+   ->  Nested Loop  (cost=0.56..55434.78 rows=500 width=119) (actual time=1.127..81.596 rows=100 loops=1)
+         Buffers: shared hit=5504
+         ->  Index Scan using inbox_items_active_idx on inbox_items i  (cost=0.28..52823.28 rows=1000 width=94) (actual time=0.808..55.741 rows=100 loops=1)
+               Index Cond: (recipient_id = (InitPlan 1).col1)
+               Filter: (((task_id IS NOT NULL) AND (SubPlan 2)) OR ((task_id IS NULL) AND (ANY (message_id = (hashed SubPlan 8).col1))) OR ((task_id IS NULL) AND (ANY (team_message_id = (hashed SubPlan 14).col1))) OR ((task_id IS NULL) AND (ANY (status_update_id = (hashed SubPlan 20).col1))))
+               Buffers: shared hit=4504
+               SubPlan 2
+                 ->  Result  (cost=0.00..0.26 rows=1 width=1) (actual time=0.555..0.555 rows=1 loops=100)
+                       Buffers: shared hit=4500
+               SubPlan 8
+                 ->  Seq Scan on project_messages m  (cost=0.00..227.30 rows=102 width=16) (never executed)
+                       Filter: ((SubPlan 7) AND (SubPlan 6))
+                       SubPlan 7
+                         ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+                       SubPlan 6
+                         ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+               SubPlan 14
+                 ->  Seq Scan on team_messages m_1  (cost=0.00..227.30 rows=102 width=16) (never executed)
+                       Filter: ((SubPlan 13) AND (SubPlan 12))
+                       SubPlan 13
+                         ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+                       SubPlan 12
+                         ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+               SubPlan 20
+                 ->  Seq Scan on project_status_updates u  (cost=0.00..248.50 rows=112 width=16) (never executed)
+                       Filter: ((SubPlan 19) AND (SubPlan 18))
+                       SubPlan 19
+                         ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+                       SubPlan 18
+                         ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+         ->  Index Scan using tasks_pkey on tasks t  (cost=0.29..2.61 rows=1 width=41) (actual time=0.257..0.257 rows=1 loops=100)
+               Index Cond: (id = i.task_id)
+               Filter: ((deleted_at IS NULL) AND CASE WHEN (root_task_id IS NOT NULL) THEN (SubPlan 21) WHEN (home_project_id IS NULL) THEN ((((InitPlan 22).col1 = created_by) OR ((InitPlan 23).col1 = assignee_id)) AND (InitPlan 24).col1) WHEN (deleted_at IS NULL) THEN ((SubPlan 25) OR (SubPlan 26)) ELSE ((SubPlan 27) OR (SubPlan 28)) END)
+               Buffers: shared hit=1000
+               SubPlan 21
+                 ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+               SubPlan 25
+                 ->  Result  (cost=0.00..0.26 rows=1 width=1) (actual time=0.254..0.254 rows=1 loops=100)
+                       Buffers: shared hit=700
+               SubPlan 26
+                 ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+               SubPlan 27
+                 ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+               SubPlan 28
+                 ->  Result  (cost=0.00..0.26 rows=1 width=1) (never executed)
+ Planning:
+   Buffers: shared hit=485 read=11
+ Planning Time: 1.960 ms
+ Execution Time: 81.728 ms
+(59 rows)

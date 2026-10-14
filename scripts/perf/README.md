@@ -32,4 +32,4 @@ for f in supabase/migrations/*.sql; do "${PSQL[@]}" -f "$f"; done
 "${PSQL[@]}" -f scripts/perf/seed.sql
 ```
 
-Plans in `scripts/perf/plans/` were taken on this seed as `perf-seed@example.com` (`set role authenticated` and `request.jwt.claim.sub` set to that id), with `EXPLAIN (ANALYZE, BUFFERS)`.
+Plans in `scripts/perf/plans/` were taken on this seed as `perf-seed@example.com` (`set role authenticated` and `request.jwt.claim.sub` set to that id), with `EXPLAIN (ANALYZE, BUFFERS)`. `bundle.txt` is the production client JS from `next build` on the same commit as the stage 1 plans.
