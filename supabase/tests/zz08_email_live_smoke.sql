@@ -448,62 +448,24 @@ begin
       where cm.body = 'Second round' and o.to_profile_id = (select id from el_ids where name = 'viewer')),
     'the viewer who left the project is no longer emailed';
 
+  -- Since Comments and reply by email (20261014030000) follower emails are no-reply: no token is handed
+  -- out, and post_email_reply refuses every reply (zz19 covers the form submitter's reply thread).
   set local role service_role;
   tok := public.email_reply_token(member_email);
-  assert tok ~ '^[0-9a-f]{40}$', 'a reply token is 40 hex characters';
-  assert public.email_reply_token(member_email) = tok, 'one token per task and follower';
+  assert tok is null, 'comment emails to followers get no reply token';
   assert public.email_reply_token((select id from el_ids where name = 'sent_email')) is null,
-    'only comment emails get a token';
+    'nor does any other email';
 
   before_count := (select count(*) from public.comments where task_id = t);
-
   result := public.post_email_reply(repeat('0', 40), 'el-member@example.com', 'Looks good', 'em_1');
-  assert result ->> 'status' = 'rejected' and result ->> 'reason' = 'unknown_token', 'an unknown token is refused';
+  assert result ->> 'status' = 'rejected' and result ->> 'reason' = 'follower_replies_off', 'a follower reply is refused';
   result := public.post_email_reply('not-a-token', 'el-member@example.com', 'Looks good', 'em_2');
-  assert result ->> 'reason' = 'unknown_token', 'a malformed token is refused';
-  result := public.post_email_reply(tok, 'el-owner@example.com', 'Looks good', 'em_3');
-  assert result ->> 'status' = 'rejected' and result ->> 'reason' = 'sender_mismatch',
-    'another person''s address is refused, even for a real token';
-  result := public.post_email_reply(tok, 'el-member@example.com', '   ', 'em_4');
-  assert result ->> 'reason' = 'empty', 'an empty reply is refused';
+  assert result ->> 'reason' = 'follower_replies_off', 'so is a malformed token';
   assert (select count(*) from public.comments where task_id = t) = before_count, 'nothing was posted';
-
-  result := public.post_email_reply(tok, ' EL-Member@example.com ', 'Looks good — ship it', 'em_5');
-  assert result ->> 'status' = 'posted', 'the right person replying from their own address posts';
-  select * into c from public.comments where id = (result ->> 'comment_id')::uuid;
-  assert c.author_id = (select id from el_ids where name = 'member') and c.task_id = t and c.body = 'Looks good — ship it',
-    'the reply is a comment by that person';
-  assert current_setting('request.jwt.claim.sub', true) is distinct from (select id::text from el_ids where name = 'member'),
-    'the impersonation is undone';
-  assert exists (select 1 from public.email_outbox where comment_id = c.id and to_profile_id = (select id from el_ids where name = 'owner')),
-    'the other followers are emailed about the reply';
-  assert not exists (select 1 from public.email_outbox where comment_id = c.id and to_profile_id = (select id from el_ids where name = 'member')),
-    'but not its author';
-
-  result := public.post_email_reply(tok, 'el-member@example.com', 'Looks good — ship it', 'em_5');
-  assert result ->> 'status' = 'duplicate' and (result ->> 'comment_id')::uuid = c.id, 'a redelivered webhook posts once';
-  assert (select count(*) from public.comments where task_id = t) = before_count + 1, 'still one new comment';
-  assert (select count(*) from public.email_replies where status = 'rejected' and provider_id in ('em_1', 'em_2', 'em_3', 'em_4')) = 4,
+  assert (select count(*) from public.email_replies where status = 'rejected' and provider_id in ('em_1', 'em_2')) = 2,
     'rejections are logged';
+  assert not exists (select 1 from public.email_reply_tokens where revoked_at is null), 'no follower token is live';
   reset role;
-
-  -- The member loses access: their token stops working.
-  update public.project_members set role = 'viewer'
-  where project_id = (select id from el_ids where name = 'p') and profile_id = (select id from el_ids where name = 'member') and deleted_at is null;
-  set local role service_role;
-  result := public.post_email_reply(tok, 'el-member@example.com', 'One more thing', 'em_6');
-  assert result ->> 'status' = 'rejected' and result ->> 'reason' = 'no_access', 'a Viewer can''t reply by email';
-  reset role;
-  update public.project_members set role = 'editor'
-  where project_id = (select id from el_ids where name = 'p') and profile_id = (select id from el_ids where name = 'member') and deleted_at is null;
-
-  -- De-allowlisted people can't either.
-  delete from public.allowed_emails where email = 'el-member@example.com';
-  set local role service_role;
-  result := public.post_email_reply(tok, 'el-member@example.com', 'Still here?', 'em_7');
-  assert result ->> 'reason' = 'no_access', 'someone no longer allowlisted can''t reply by email';
-  reset role;
-  insert into public.allowed_emails (email, note) values ('el-member@example.com', 'email live suite');
 end $$;
 
 select 'zz08 email live smoke: ok' as result;

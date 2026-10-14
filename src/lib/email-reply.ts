@@ -1,9 +1,10 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-// Reply by email: comment emails carry Reply-To r-<token>@<reply domain>; Resend receives the reply,
-// POSTs an `email.received` webhook (signed the Svix way) to /api/inbound/email, and the route posts
-// the reply as a comment through post_email_reply(). Forwarding (Real features 1): mail to a person's
+// Reply by email (since Comments and reply by email, only for form submitters): a response sent to a
+// form task's submitter carries Reply-To r-<token>@<reply domain>; Resend receives the reply, POSTs an
+// `email.received` webhook (signed the Svix way) to /api/inbound/email, and the route posts the reply as
+// a comment through post_submitter_reply(). Every other email the app sends is no-reply. Forwarding (Real features 1): mail to a person's
 // f-<token>@<reply domain> address becomes a task through post_email_forward(). Nothing here logs bodies,
 // addresses, or secrets.
 
@@ -17,7 +18,7 @@ export function replyDomain(): string {
 }
 
 // Inbound replies are on only when the Resend webhook secret is set; without it the route answers 503
-// and comment emails carry no Reply-To.
+// and responses to submitters carry no Reply-To.
 export function isInboundEmailConfigured(): boolean {
   return Boolean(process.env.RESEND_WEBHOOK_SECRET?.trim());
 }
@@ -119,8 +120,10 @@ export function htmlToText(html: string, { keepQuoted = false } = {}): string {
     });
 }
 
-// The marker comment emails print above the quoted part; anything from it down is ours.
-export const REPLY_MARKER = "—— Reply above this line to comment ——";
+// The marker a response to a form's submitter prints above the quoted part; anything from it down is
+// ours. (Comment emails to followers printed "—— Reply above this line to comment ——" before they became
+// no-reply; the cut below still matches both.)
+export const SUBMITTER_REPLY_MARKER = "—— Reply above this line ——";
 
 const CUTS = [
   /^-{2,}\s*Reply above this line/i,

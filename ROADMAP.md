@@ -1,12 +1,12 @@
 # ALHC-Projects roadmap (everything not built yet)
 
-Updated: 2026-10-14 (real-1 merged as `9e416ca`, real-2 as `8f72b44`, real-3 as `e03b2a4`, all with their migrations applied; real-4 makes data and calendar real — PR open, its migration not applied yet). App: https://alhc-projects.vercel.app · repo AutumnAvi/ALHC-Projects (main after PR #36 + `6dedf9f`).
+Updated: 2026-10-14 (real-1 merged as `9e416ca`, real-2 as `8f72b44`, real-3 as `e03b2a4`, real-4 as `1d8dada`, all with their migrations applied; the comments and reply-by-email redesign is a PR, its migration and tail not applied yet). App: https://alhc-projects.vercel.app · repo AutumnAvi/ALHC-Projects (main after PR #36 + `6dedf9f`).
 Sources: SHIP-STATUS.md, END-OF-BUILD-CHECKLIST.md, ai-actions-proposal.md, AGENTS.md "Follow-ups" + "Phases" on main, research/asana-feature-map-v1-2026-10-05.md, plus general Asana knowledge (marked "Asana").
 
 **Size:** S = a small paste or part of a phase · M = about one Claude phase · L = several phases or outside setup.
 **Needs Avi:** — = nothing · Decision · Key (an account, API key or DNS record) · $ (money).
 
-**Plan right now:** stop building, run the end-of-build review and Avi's click-through (END-OF-BUILD-CHECKLIST.md), and start using the app. **The first feature after testing is 1.0, Form submitter conversation.** Then pick from this list.
+**Plan right now:** stop building, run the end-of-build review and Avi's click-through (END-OF-BUILD-CHECKLIST.md), and start using the app. 1.0, Form submitter conversation, is built (comments-email PR, waiting on its migration and tail). Then pick from this list.
 
 ---
 
@@ -21,7 +21,10 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - [x] Form confirmation emails and the rule action "Send email" go out through Resend.
 - [x] Task activity shows the real email status (queued, sent or failed), not just "emailed".
 - [x] Slack and "Call webhook" actions, plus Deliveries Send now / Retry, really send.
-- [x] Reply-by-email: form submitters auto-follow their task, comments email them (with a per-form toggle), and their replies come back as comments.
+- [x] **Reply by email, redesigned (Avi-confirmed; comments-email PR):** every email the app sends is **no-reply** (comment emails to followers, assignments, @mentions, approvals, status updates, due-date and rule emails, digests, reports, invites) — no Reply-To, and a reply to one posts nothing (it's logged and ignored). The old "any follower replies to a comment email" path is switched off in the database (tokens revoked, the function refuses). **Only a form's submitter gets a replyable email, and only when a worker chooses to:** on a task a form created, the comment box has **Send response to submitter <email>** (unchecked by default, hidden on every other task); a comment sent that way is emailed to the submitter (subject `Re: "<form name>" submission received`, Reply-To `r-<token>@<reply domain>` for that task's submitter thread), and their reply comes back on the task as a comment. Followers still hear about it like any comment. Forwarding addresses and delivery events work as before.
+- [x] **Email comments look like Asana's** (comments-email PR): a response sent to the submitter shows "Sent to <email>" and a bordered card with the subject in a gray header bar, the message, and its time and delivery state; the submitter's reply shows a mail icon, their address as the name, "Replied via <email>", and the same card.
+- [x] **Instant comments** (comments-email PR): a comment appears in the feed the moment you press Comment or ⌘/Ctrl+Enter, is replaced by the saved one without moving or flickering, and disappears again (text back in the box, a message saying why) if saving fails.
+- [x] **@mention pills** (comments-email PR): mentions in comments and messages show as a light blue pill with the person's real name (even when typed as `@emailname`); hovering one shows their card (avatar, name, email, role in the task's projects). Clicking does nothing.
 - [x] Workspace invites send a real invite email.
 - [x] CSV export has no row cap any more (real-4): files stream, so the old "cut at 10,000 rows" notice is gone.
 - [x] **Add someone by email on a project, portfolio or team** (real-1): invites anyone in the workspace who hasn't signed in yet, and a workspace admin can invite a brand-new address (it joins the workspace too). The invitee gets an email with a Sign up link that lands on that project, portfolio or team, and joins with the chosen role on their first sign-in. Members lists and Share show them as Invited, with the email's status, Resend and Cancel. Someone who isn't a workspace admin still can't bring a new address into the workspace (the message says to ask an admin) — on purpose, since only admins manage who can sign in.
@@ -46,7 +49,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - [x] **People** (real-2): every person has a profile page (name, email, workspace role, teams, projects you share, their open tasks and recent activity you can see, last activity) with a link to their work in Reports. The search palette, Home → People, every members list, Admin → Users and message authors link to it.
 
 ### Still simulated or missing (to build)
-- [ ] **real-4 is not live until its migration is applied:** `20261014020000_real_4.sql` (no tail) goes in through the migration-applier before the PR merges. Until then the preview says Status templates and Sync to calendar need the database update; the calendar drag and the uncapped export already work (the export falls back to the old 10,000-row overdue report for that one table).
+- [ ] **The comments-email redesign is not live until its migration and tail are applied:** `20261014030000_comments_email.sql` goes in through the migration-applier before the PR merges, then its tail (two `ALTER TABLE … CONSTRAINT` lines that let a comment have no author when it's a submitter's emailed reply) is applied by hand. Until the migration is in, the preview hides "Send response to submitter"; between the migration and the tail, responses go out but a submitter's reply is logged as "not ready" instead of posted.
 - [ ] **Bounce / complaint tracking waits for the Resend webhook events** (real-3 is live): until the five delivery event types are ticked on the existing Resend webhook (see Needs Avi), emails stay at "Sent" and nothing gets suppressed.
 - [ ] **Per-project mute** of notifications: real-2 is per kind only (nothing existed to keep); muting one project or team is a follow-up.
 - [ ] **Members' Settings → Workspace list** still shows no last activity: only workspace admins (and the person themselves, on their profile) see the time, so the members' read-only list leaves it out on purpose.
@@ -59,7 +62,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 1. ~~**real-1, invites and email-in**~~ built and merged (`9e416ca`): pending invites for project/portfolio/team "add by email" (email + auto-join on first sign-in), Forward emails to create tasks, form attachment questions, team preselect on create, Home inline Create task.
 2. ~~**real-2, team and people**~~ built and merged (`8f72b44`): real Team Messages, per-kind notification settings (respected by Inbox and email, with notification emails), status update notifications, real last activity, person profile pages.
 3. ~~**real-3, email extras**~~ built and merged (`e03b2a4`): Inbox email digest, scheduled report emails, bounce/complaint tracking from Resend webhooks with a suppression list.
-4. ~~**real-4, data and calendar**~~ built (PR open; apply its migration, then merge): draggable Calendar (team and project), iCal feed (token route), unlimited streaming CSV, Status templates. Not built: the importer attachment copy (waits for Avi's decision; the importer is unchanged).
+4. ~~**real-4, data and calendar**~~ built and merged (`1d8dada`): draggable Calendar (team and project), iCal feed (token route), unlimited streaming CSV, Status templates. Not built: the importer attachment copy (waits for Avi's decision; the importer is unchanged).
 
 ### Needs Avi (only you can do these)
 - **Sign-up emails (Supabase Auth custom SMTP):** Supabase → Authentication → Emails → SMTP Settings → enable custom SMTP. Host `smtp.resend.com`, port `465`, username `resend`, password = a Resend API key, sender = the same verified address as `EMAIL_FROM`. Save.
@@ -67,7 +70,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 - **Google sign-in:** Google Cloud Console → APIs & Services → Credentials → OAuth client (Web), redirect URI `https://xsgmawawwstbrbukgsax.supabase.co/auth/v1/callback`. Paste the client ID/secret in Supabase → Authentication → Providers → Google. Then add `AUTH_GOOGLE_ENABLED=true` in Vercel Production and redeploy.
 - **Importer attachments:** decide whether the importer may download files from Asana at import time.
 - **Email forwarding (after real-1):** no new DNS or Resend route. Forwarding addresses (`f-…@reply.mail.autumnlakemarketing.com`) use the same reply domain, MX record, Resend webhook and `RESEND_WEBHOOK_SECRET` as reply-by-email. One check: forwards are accepted only when Resend reports **DMARC pass** for the sender, so `autumnlakemarketing.com` needs a DMARC record (a `TXT` at `_dmarc.autumnlakemarketing.com`, e.g. `v=DMARC1; p=none; rua=mailto:…` to start). If forwarding says "didn't pass the sender checks", that record is missing.
-- **Before merging real-4:** have `20261014020000_real_4.sql` applied (the migration-applier; there is no tail). Nothing else to set up: calendar links need no new environment variable (they use the anon key, like public forms), and links point at `NEXT_PUBLIC_APP_URL` when it's set, else the address the calendar app used.
+- **Before merging the comments-email PR:** have `20261014030000_comments_email.sql` applied (the migration-applier), then apply its **tail** by hand (the two lines after `-- TAIL`: retire `comments_author_or_rule`, rename `comments_author_or_rule_v2`). No new environment variable: responses use the existing reply domain (`EMAIL_REPLY_DOMAIN`), Resend webhook, and `RESEND_WEBHOOK_SECRET`. `EMAIL_REPLY_TO` is no longer read (every other email is no-reply); remove it from Vercel if it was ever set.
 - **Resend webhook events (real-3, for bounce / complaint tracking):** Resend → Webhooks → open the existing webhook (endpoint `https://<production domain>/api/inbound/email`) → Events → keep `email.received` and also tick `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, and `email.suppressed` → Save. Same endpoint, same signing secret (`RESEND_WEBHOOK_SECRET`), no new environment variable. Without it, digests and scheduled reports still work; emails just stay at "Sent" and nothing gets suppressed.
 
 ---
@@ -76,7 +79,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 
 | # | Item | What it is | Size | Needs Avi |
 |---|------|------------|------|-----------|
-| **1.0 ⭐ TOP PRIORITY** | **Form submitter conversation (Asana-style)** | **Avi: very important, and the first feature to build after his testing.** The person who submits a form is automatically added as a follower and collaborator on the task it creates. Each new comment emails them with a link back to the task. A reply to that email posts back on the task as a comment, so the back-and-forth works even if they never open the app. It builds on what exists: the app already records the submitter's email, and the "requester update" email template is there but not live (see Group 0). | M–L (1–2 phases + email setup) | Key: a Resend account and API key, a verified sending domain (e.g. a subdomain of autumnlakemarketing.com, via DNS records), and inbound email on that domain for replies. Also `SUPABASE_SERVICE_ROLE_KEY` in Vercel (see Group 0). Decision: what an outside submitter (not a workspace member) can see from the email link. |
+| ~~**1.0**~~ | ~~**Form submitter conversation (Asana-style)**~~ | **Built (comments-email PR), in Avi's confirmed shape:** a worker ticks “Send response to submitter” under the comment box on a form task; that comment is emailed to the submitter (Asana's `Re: "<form>" submission received` subject) and their reply posts back on the task as a “Replied via” email card. Other comments aren't emailed to the submitter, and no email links an outsider into the app. Left for later: attachments in replies, a reply-thread revoke button. | — | Apply the migration and its tail (Group 0) |
 | 1.1 | AI assistant | ai-actions-proposal.md has 5 buttons: summarize task, draft a project status, draft or improve a comment, suggest triage for form requests, and an "AI: classify into field" rule action. Settings → Workspace gets an on/off switch and a monthly cap. | M–L (2 packs) | Decision + $. "Free only" clashes with the proposal (about $10/month via Vercel AI Gateway, $25 cap). Free model tiers usually allow training on our data, which is a problem for a healthcare company. Also needs a "no patient info" rule. Design talk first. |
 | 1.2 | ~~Inbox email digest~~ | **Built in real-3** (see Group 0): daily or weekly at a chosen hour, per person. Resend, the service-role key, and the sender domain are all live now. | — | — (only the Resend webhook events in Group 0 → Needs Avi, for bounce tracking) |
 | 1.3 | ~~iCal calendar feed~~ | **Built in real-4** (see Group 0): a secret subscribe link per person for My tasks, each project, and each team, shown once, rotatable and revocable, built with that person's own access at every refresh; private tasks appear only in their own My tasks feed (they're the only ones who can open them). | — | — |
@@ -194,7 +197,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 | Universal reporting depth (cross-project charts, line/burn-up, saved reports, shared dashboards) | **Partly.** Reports page, All projects, personal dashboards, CSV | M | — |
 | Proofing (pin comments on images/PDFs → subtasks) | Not built (image lightbox and PDF preview exist) | L | Decision |
 | Time tracking (estimated vs actual time, timesheets) | Not built | M | Decision |
-| Form branching | **Built**; missing file-upload questions, reply-by-email request tracking, CAPTCHA | S–M | — |
+| Form branching | **Built**; file-upload questions and submitter responses by email are built too; missing CAPTCHA | S–M | — |
 | Project brief / Overview page / Notes | Not built (Messages tab exists) | M | — |
 | Status-update cadence reminders ("post your weekly status") | Not built (status history exists) | S | — |
 | Goals auto-progress | **Partly.** Progress from sub-goals/projects; no metric targets or auto-status | S–M | — |
@@ -206,7 +209,7 @@ Re-audited 2026-10-13 against `main` at `4c10798` and the live setup (read-only)
 | Full data export / backup | **Partly.** CSV per view and report; no whole-workspace export | M | — |
 | Gmail / Outlook add-ons | Not built | L | Key + Decision (Google/Microsoft add-in publishing) |
 | Email-to-task project addresses | Not built (inbound webhooks exist) | M | Key (email provider + DNS) |
-| Rich text in task notes and comments (bold, lists, mention pills) | Not found in the build docs | M | — |
+| Rich text in task notes and comments (bold, lists) | Mention pills with a hover card are built (comments-email PR); bold and lists aren't | M | — |
 | Formula fields | Not built (native Req # IDs exist) | M | — |
 | Custom task types with their own statuses | **Partly.** Task / milestone / approval; section-bound Status field | M | — |
 | Project Files tab (all attachments in one place) | Not built | S | — |

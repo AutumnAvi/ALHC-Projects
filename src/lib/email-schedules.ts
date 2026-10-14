@@ -167,6 +167,7 @@ export const EMAIL_KIND_LABELS: Record<string, string> = {
   notification: "Notification",
   digest: "Inbox digest",
   report: "Scheduled report",
+  submitter_response: "Response to submitter",
   form_confirmation: "Form confirmation",
   requester_update: "Requester update",
   due_tomorrow: "Due tomorrow",

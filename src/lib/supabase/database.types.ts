@@ -204,6 +204,9 @@ export type Database = {
           deleted_at: string | null;
           edited_at: string | null;
           rule_id: string | null;
+          email_direction: string | null;
+          email_address: string | null;
+          email_subject: string | null;
         };
         Insert: {
           id?: string;
@@ -215,6 +218,9 @@ export type Database = {
           deleted_at?: string | null;
           edited_at?: string | null;
           rule_id?: string | null;
+          email_direction?: string | null;
+          email_address?: string | null;
+          email_subject?: string | null;
         };
         Update: {
           id?: string;
@@ -226,6 +232,9 @@ export type Database = {
           deleted_at?: string | null;
           edited_at?: string | null;
           rule_id?: string | null;
+          email_direction?: string | null;
+          email_address?: string | null;
+          email_subject?: string | null;
         };
         Relationships: [
           {
@@ -423,6 +432,7 @@ export type Database = {
           id: string;
           provider_id: string | null;
           token_id: string | null;
+          thread_id: string | null;
           task_id: string | null;
           profile_id: string | null;
           comment_id: string | null;
@@ -434,6 +444,7 @@ export type Database = {
           id?: string;
           provider_id?: string | null;
           token_id?: string | null;
+          thread_id?: string | null;
           task_id?: string | null;
           profile_id?: string | null;
           comment_id?: string | null;
@@ -445,12 +456,52 @@ export type Database = {
           id?: string;
           provider_id?: string | null;
           token_id?: string | null;
+          thread_id?: string | null;
           task_id?: string | null;
           profile_id?: string | null;
           comment_id?: string | null;
           status?: string;
           reason?: string | null;
           created_at?: string;
+        };
+        Relationships: [];
+      };
+      submitter_reply_threads: {
+        Row: {
+          id: string;
+          task_id: string;
+          submission_id: string | null;
+          submitter_email: string;
+          subject: string;
+          token: string;
+          created_by: string | null;
+          created_at: string;
+          last_used_at: string | null;
+          revoked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          submission_id?: string | null;
+          submitter_email: string;
+          subject: string;
+          token: string;
+          created_by?: string | null;
+          created_at?: string;
+          last_used_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          submission_id?: string | null;
+          submitter_email?: string;
+          subject?: string;
+          token?: string;
+          created_by?: string | null;
+          created_at?: string;
+          last_used_at?: string | null;
+          revoked_at?: string | null;
         };
         Relationships: [];
       };
@@ -4787,6 +4838,18 @@ export type Database = {
         Returns: string;
       };
       email_reply_token: {
+        Args: { target_email: string };
+        Returns: string | null;
+      };
+      post_submitter_reply: {
+        Args: { reply_token: string; sender_email: string; reply_body: string; provider_email_id?: string | null };
+        Returns: Json;
+      };
+      send_submitter_response: {
+        Args: { target_task: string; response_body: string };
+        Returns: string;
+      };
+      submitter_reply_token: {
         Args: { target_email: string };
         Returns: string | null;
       };

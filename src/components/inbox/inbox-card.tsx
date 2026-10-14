@@ -156,7 +156,8 @@ export function InboxCard({
   const { read, archived, bookmarked } = state;
   const compact = density === "compact";
   const { ruleName, verb, detail } = describe(item);
-  const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : "Someone";
+  // A form submitter's emailed reply has no actor: name the address it came from.
+  const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? "Someone");
   const { icon: Icon } = KIND[item.kind];
   const strong = read ? "font-medium text-zinc-800" : "font-semibold text-zinc-900";
   const decides = item.approval !== null && item.approval.approverId === memberId;

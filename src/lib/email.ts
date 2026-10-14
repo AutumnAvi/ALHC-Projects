@@ -1,13 +1,13 @@
 import "server-only";
 import { layout, payloadOf, str, type OutboxRow, type Rendered } from "@/lib/email-layout";
-import { isInboundEmailConfigured, replyAddress, REPLY_MARKER } from "@/lib/email-reply";
+import { isInboundEmailConfigured, replyAddress, SUBMITTER_REPLY_MARKER } from "@/lib/email-reply";
 import { renderDigestEmail, renderReportEmail, unsubscribeLinks } from "@/lib/email-scheduled";
 import { backgroundOrigin } from "@/lib/origin";
 import { settingsHref } from "@/lib/shell";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // Email delivery for the outbox the database fills (form confirmations, rule emails, comment emails to
-// followers, invites, since Real features 2 the notification emails people turn on per kind in
+// followers, responses to form submitters (the only emails with a Reply-To), invites, since Real features 2 the notification emails people turn on per kind in
 // Settings → Notifications, and since Real features 3 Inbox digests and scheduled reports —
 // email-scheduled.ts renders those). Uses Resend's HTTP API when RESEND_API_KEY and EMAIL_FROM are set; otherwise rows are
 // marked "mocked" and logged (id and template only — never an address, subject, or body).
@@ -20,10 +20,10 @@ function taskLink(row: OutboxRow, projectId: string | null): string | null {
   return projectId ? `${origin}/projects/${projectId}?task=${row.task_id}` : `${origin}/my-tasks?task=${row.task_id}`;
 }
 
-// A follower's comment email: task, project, who commented, the comment, and an Open task link. With
-// inbound replies on, a marker line tells the reader where to type (the inbound route cuts everything
-// below it).
-function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
+// A follower's comment email: task, project, who commented, the comment, and an Open task link. No-reply
+// (Comments and reply by email): workspace people answer in the app; only a form submitter's response
+// email can be answered by email (renderSubmitterResponseEmail).
+function renderCommentEmail(row: OutboxRow): Rendered {
   const p = payloadOf(row);
   const taskTitle = str(p.task_title) ?? "a task";
   const author = str(p.author_name) ?? "Someone";
@@ -44,14 +44,45 @@ function renderCommentEmail(row: OutboxRow, canReply: boolean): Rendered {
       ],
       {
         action: link ? { label: "Open task", href: link } : null,
-        preface: canReply ? REPLY_MARKER : null,
         footer: [
-          canReply
-            ? "Reply to this email to add a comment as you. Only the text above the quoted message is posted."
-            : "Open the task to reply.",
+          "Open the task to reply. Replies to this email aren’t read.",
           p.mentioned === true
             ? `You were @mentioned. Choose which emails you get in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`
             : `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
+        ],
+      },
+    ),
+  };
+}
+
+export function isSubmitterResponse(row: OutboxRow): boolean {
+  return Boolean(row.task_id) && !row.comment_id && payloadOf(row).kind === "submitter_response";
+}
+
+// A response to a form's submitter ("Send response to submitter" under the comment box): Asana's subject
+// (Re: "<form>" submission received), the comment as written, and — when replies by email are on — a line
+// to reply above. Someone outside the workspace reads it, so no app links, no names of other people.
+export function renderSubmitterResponseEmail(row: OutboxRow, canReply: boolean): Rendered {
+  const p = payloadOf(row);
+  const author = str(p.author_name) ?? "The team";
+  const label = str(p.request_label);
+  const taskTitle = str(p.task_title);
+  const subject = row.subject ?? "Re: your request";
+  return {
+    subject,
+    ...layout(
+      subject,
+      [str(p.message) ?? ""],
+      [
+        { label: "From", value: author },
+        ...(taskTitle ? [{ label: "Request", value: label ? `${label} · ${taskTitle}` : taskTitle }] : []),
+      ],
+      {
+        preface: canReply ? SUBMITTER_REPLY_MARKER : null,
+        footer: [
+          canReply
+            ? "Reply to this email to answer. Your reply is added to your request; only the text above the quoted message is kept."
+            : "Replies to this email aren’t read.",
         ],
       },
     ),
@@ -229,7 +260,8 @@ function renderNotificationEmail(row: OutboxRow): Rendered {
 }
 
 export function renderEmail(row: OutboxRow, options: { canReply?: boolean } = {}): Rendered {
-  if (row.comment_id) return renderCommentEmail(row, Boolean(options.canReply));
+  if (row.comment_id) return renderCommentEmail(row);
+  if (isSubmitterResponse(row)) return renderSubmitterResponseEmail(row, Boolean(options.canReply));
   if (isInvite(row)) return renderInviteEmail(row);
   if (isNotification(row)) return renderNotificationEmail(row);
   const p = payloadOf(row);
@@ -303,14 +335,23 @@ async function workspaceSenderName(admin: NonNullable<ReturnType<typeof createAd
   return data?.email_sender_name ?? null;
 }
 
-// Reply-To for comment emails: the follower's per-task reply address, only when inbound replies are
-// configured (RESEND_WEBHOOK_SECRET). Other emails keep the optional EMAIL_REPLY_TO.
+// Reply-To (Comments and reply by email): only a response to a form's submitter gets one — its thread's
+// r-<token>@<reply domain> address, while inbound replies are configured (RESEND_WEBHOOK_SECRET). Every
+// other email is no-reply. `token` is the database lookup (submitter_reply_token, service role).
+export async function replyToFor(
+  row: OutboxRow,
+  token: (emailId: string) => Promise<string | null>,
+): Promise<string | null> {
+  if (!isSubmitterResponse(row) || !isInboundEmailConfigured()) return null;
+  const found = await token(row.id);
+  return found && /^[0-9a-f]{40}$/.test(found) ? replyAddress(found) : null;
+}
+
 async function replyTo(row: OutboxRow, admin: NonNullable<ReturnType<typeof createAdminClient>>): Promise<string | null> {
-  if (!row.comment_id) return process.env.EMAIL_REPLY_TO?.trim() || null;
-  if (!isInboundEmailConfigured()) return null;
-  const { data, error } = await admin.rpc("email_reply_token", { target_email: row.id });
-  if (error || typeof data !== "string") return null;
-  return replyAddress(data);
+  return replyToFor(row, async (emailId) => {
+    const { data, error } = await admin.rpc("submitter_reply_token", { target_email: emailId });
+    return error || typeof data !== "string" ? null : data;
+  });
 }
 
 function scheduledKind(row: OutboxRow): "digest" | "report" | null {
@@ -363,11 +404,20 @@ async function deliver(
     headers = rendered.headers;
   } else {
     reply = await replyTo(row, admin);
-    email = renderEmail(row, { canReply: Boolean(reply && row.comment_id) });
+    email = renderEmail(row, { canReply: Boolean(reply) });
   }
   if (!isEmailConfigured()) {
     const template =
-      scheduled ?? (row.comment_id ? "comment" : isInvite(row) ? "invite" : isNotification(row) ? "notification" : row.template);
+      scheduled ??
+      (row.comment_id
+        ? "comment"
+        : isSubmitterResponse(row)
+          ? "submitter_response"
+          : isInvite(row)
+            ? "invite"
+            : isNotification(row)
+              ? "notification"
+              : row.template);
     console.info(`[email:mocked] id=${row.id} template=${template}`);
     return { outcome: "mocked" };
   }

@@ -216,8 +216,8 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 - **Email goes out within a minute.** Server actions still send right after they finish. On top of that, a database job (`alhc-delivery-kick`, every minute) asks the app to deliver anything due: email, Slack, and webhooks. It only calls the app when something is waiting. Set it up once in “Setup: email (Resend) and the workflows cron”.
 - **Honest status.** A task's activity says “queued an email to …”, then **Sent**, **Retrying (attempt n of 5 failed: reason)**, or **Failed: reason**. **Settings → Deliveries** (Admins and above) lists the project's emails next to Slack and webhooks, with **Retry** / **Send now**.
 - **Form submitters follow their request.** When someone with an ALHC account submits a form, and can open the project the form feeds, they follow the new task. Requesters without access keep getting the requester emails only.
-- **Comment emails.** A new comment emails every follower except its author: task, project, the comment, and an **Open task** link. Each email is checked again just before sending, so someone who lost access gets nothing. Everyone can turn this off in **Settings → Profile → Email me about comments** (on by default).
-- **Reply by email.** With inbound replies set up (“Setup: reply by email”), replying to a comment email posts the reply as a comment by you. Only the text above the quoted message is posted, and only from the address the email was sent to.
+- **Comment emails.** A new comment emails every follower except its author: task, project, the comment, and an **Open task** link. They are no-reply (since the comments-email redesign): people answer in the app. Each email is checked again just before sending, so someone who lost access gets nothing. Everyone can turn this off in **Settings → Profile → Email me about comments** (on by default).
+- **Reply by email (form submitters only).** Since the comments-email redesign, only a form's submitter gets a replyable email: on a task a form created, tick **Send response to submitter** under the comment box and that comment is emailed to them (`Re: "<form>" submission received`); with inbound replies set up (“Setup: reply by email”), their reply comes back as a “Replied via <email>” comment. Every other email is no-reply.
 
 ## What's here (Asana feel, batch 2)
 
@@ -319,7 +319,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 ## Setup: email (Resend) and the workflows cron
 
 1. In [Resend](https://resend.com), verify a sending domain and create an API key.
-2. Set `RESEND_API_KEY`, `EMAIL_FROM` (e.g. `ALHC Projects <requests@yourdomain.com>`), and optionally `EMAIL_REPLY_TO`.
+2. Set `RESEND_API_KEY` and `EMAIL_FROM` (e.g. `ALHC Projects <requests@yourdomain.com>`). Emails are no-reply except responses to form submitters (see “Setup: reply by email”); `EMAIL_REPLY_TO` is no longer read.
 3. Set `SUPABASE_SERVICE_ROLE_KEY` (server-only). The app uses it only to claim and deliver queued emails and for the cron route.
 4. Set `CRON_SECRET` to a long random string. `vercel.json` calls `/api/cron/workflows` daily, and Vercel sends the secret automatically. On a Pro plan you can make it more frequent (e.g. `*/15 * * * *`), or call it from any scheduler with `Authorization: Bearer <CRON_SECRET>`.
 
@@ -336,7 +336,7 @@ Emails are also delivered right after any action in the app, so the kick covers 
 
 ## Setup: reply by email (and email forwarding)
 
-Comment emails get a per-person, per-task **Reply-To** address (`r-<token>@reply.mail.autumnlakemarketing.com`) only when `RESEND_WEBHOOK_SECRET` is set. Without it, `/api/inbound/email` answers 503 and emails carry no Reply-To. **Forwarding addresses** (`f-<token>@reply.mail.autumnlakemarketing.com`, Settings → Email forwarding) use the same domain, MX record, Resend webhook, and secret — nothing extra to set up; without the secret the Settings tab says forwarding isn't set up.
+Only **responses to a form's submitter** (the comment box's “Send response to submitter” on a form task) get a **Reply-To** address — `r-<token>@reply.mail.autumnlakemarketing.com`, one token per task and submitter — and only when `RESEND_WEBHOOK_SECRET` is set. Every other email is no-reply. Without the secret, `/api/inbound/email` answers 503 and responses carry no Reply-To. **Forwarding addresses** (`f-<token>@reply.mail.autumnlakemarketing.com`, Settings → Email forwarding) use the same domain, MX record, Resend webhook, and secret — nothing extra to set up; without the secret the Settings tab says forwarding isn't set up.
 
 1. **DNS:** add one MX record at the DNS host for `autumnlakemarketing.com`:
 
@@ -348,11 +348,11 @@ Comment emails get a per-person, per-task **Reply-To** address (`r-<token>@reply
 2. **Resend → Domains:** add `reply.mail.autumnlakemarketing.com` (or turn on **Receiving** for an existing domain that covers it), add the MX record it shows, click **I've added the record**, and wait for Receiving to show **Verified**.
 3. **Resend → Webhooks → Add webhook:** endpoint `https://<your production domain>/api/inbound/email`, event **`email.received`**, plus (since Real features 3, for bounce and complaint tracking) **`email.delivered`**, **`email.delivery_delayed`**, **`email.bounced`**, **`email.complained`**, and **`email.suppressed`**. Copy its **signing secret** (`whsec_…`). If the webhook already exists, edit it and tick the five delivery events — same endpoint, same secret.
 4. **Vercel → Environment Variables (Production):** `RESEND_WEBHOOK_SECRET` = that signing secret. Optional `EMAIL_REPLY_DOMAIN` if you use another receiving domain. Redeploy.
-5. Test it: comment on a task someone else follows, have them reply to the email, and the reply shows up as their comment. If it doesn't, the Resend webhook's delivery log shows the route's answer. The route also logs `Reply by email: rejected (sender_mismatch | no_access | unknown_token | empty)` without the body or address.
+5. Test it: submit a form from an outside address, tick **Send response to submitter** on the new task's comment, reply to the email from that address, and the reply shows up as a “Replied via” comment. If it doesn't, the Resend webhook's delivery log shows the route's answer. The route also logs `Reply by email: rejected (sender_mismatch | unknown_token | task_unavailable | rate_limited | empty | not_ready)` without the body, address, or token.
 
 **Bounce and complaint tracking** uses the same webhook and secret: each delivery event is matched to the email it's about by Resend's email id (events for emails this app didn't send are ignored) and shown in Admin console → Email. A permanent bounce, a spam complaint, or Resend's own suppression puts the address on the suppression list there; a workspace admin can clear it. Addresses Resend itself suppressed also need removing in Resend → Suppressions. The route logs `Email event: email.bounced → bounced`, never an address.
 
-A reply is posted only when the token matches, the sender's address is that person's ALHC address, Resend didn't report a failed DMARC check, and the person can still comment on the task.
+A reply is posted only when the token is a live submitter thread, the sender's address is that thread's submitter, Resend didn't report a failed DMARC check (and SPF or DKIM passed when reported), the task isn't in the Trash, and the thread has had fewer than 20 replies in the last hour. It's posted with no author (the address is shown instead), @mentions nobody, and notifies the task's followers like any comment. Replies to anything else — including old comment emails from before the redesign — are logged and ignored.
 
 A forwarded email becomes a task only when the forwarding token is current (a replaced address is ignored), the sender is that person's own ALHC address and Resend reports **DMARC pass** for it (so the sending domain needs a DMARC record — `autumnlakemarketing.com` should publish one; otherwise forwards are ignored and Settings → Email forwarding says they didn't pass the sender checks), and they're still in the workspace; it goes to their chosen project while they can still add tasks there, else to their private My tasks. Its attachments are copied from Resend's Receiving API into the task's private storage folder right after the webhook is answered (up to 10, 25 MB each; inline images such as signature logos are skipped). The route logs `Forwarded email: rejected (sender_mismatch | not_authenticated | rotated | unknown_token | no_access)` and `Forwarded email: N attachment(s) added, M skipped`, never an address, subject, or file name; each person sees their own recent forwards in Settings.
 
@@ -456,7 +456,7 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | `NEXT_PUBLIC_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon (or publishable) key |
    | `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Needed to deliver email, Slack messages, and webhooks, and to run the cron route |
-   | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | Optional. Email via Resend; mocked when unset |
+   | `RESEND_API_KEY`, `EMAIL_FROM` | Optional. Email via Resend; mocked when unset |
    | `INTEGRATIONS_MOCK` | Optional. `true` logs Slack/webhook deliveries instead of sending them |
    | `CRON_SECRET` | Secret for `/api/cron/workflows` (also stored in Supabase Vault as `alhc_cron_secret` for the every-minute delivery kick) |
    | `RESEND_WEBHOOK_SECRET` | Optional. Resend webhook signing secret (`whsec_…`) for reply by email, email forwarding, and bounce / complaint tracking; without it all three are off |
