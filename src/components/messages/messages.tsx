@@ -90,12 +90,9 @@ function useNames(profiles: Profile[]) {
   };
 }
 
-function mentionNamesOf(message: ProjectMessage, profiles: Profile[]) {
-  return message.mentionIds.flatMap((pid) => {
-    const p = profiles.find((x) => x.id === pid);
-    if (!p) return [];
-    return [p.full_name?.trim(), p.email.split("@")[0]].filter((n): n is string => Boolean(n));
-  });
+// The people a message @mentions (the database recorded them), for the mention pills.
+function mentionedPeople(message: ProjectMessage, profiles: Profile[]) {
+  return message.mentionIds.flatMap((pid) => profiles.find((x) => x.id === pid) ?? []);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -612,7 +609,7 @@ function MessageItem({
           </div>
         ) : (
           <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
-            <MentionText body={message.body} names={mentionNamesOf(message, profiles)} />
+            <MentionText body={message.body} people={mentionedPeople(message, profiles)} />
           </p>
         )}
         <ReactionBar

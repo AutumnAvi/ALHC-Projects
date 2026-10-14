@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
+    "test": "node --import ./tests/unit/register.mjs --test tests/unit/*.test.ts tests/unit/*.test.tsx",
     "db:test": "bash supabase/tests/run.sh",
     "db:types": "supabase gen types typescript --linked --schema public > src/lib/supabase/database.types.ts"
   },

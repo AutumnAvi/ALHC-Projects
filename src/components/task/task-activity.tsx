@@ -1,14 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useOptimistic, useState, type ReactNode } from "react";
+import { useEffect, useOptimistic, useState, type ReactNode } from "react";
 import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { Popover } from "@/components/popover";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { MentionTextarea } from "@/components/task/mention-textarea";
-import { addComment, deleteComment, editComment, setFollowing, toggleReaction } from "@/lib/actions";
+import { addComment, deleteComment, editComment, sendSubmitterResponse, setFollowing, toggleReaction } from "@/lib/actions";
+import { canRespondToSubmitter, submitterResponseSubject } from "@/lib/comment-email";
+import { mentionSegments } from "@/lib/mentions";
+import { mergePendingComments, type PendingComment } from "@/lib/pending-comments";
+import { ROLE_LABELS } from "@/lib/roles";
+import { EmailCard, EmailCommentHeader, MailAvatar, MentionText, type DescribePerson } from "./comment-parts";
+import {
+  addPendingComment,
+  dropPendingComment,
+  forgetArrivedComments,
+  rememberedCommentKeys,
+  settlePendingComment,
+  usePendingComments,
+} from "./pending-comments-store";
 import { REACTIONS, reactionOf, type ReactionKey } from "@/lib/reactions";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile, TaskComment, TaskDetail, TaskStory } from "@/lib/data";
@@ -67,8 +80,26 @@ function EmailStatusNote({ email }: { email: TaskStory["email"] }) {
 }
 
 type Entry =
-  | { type: "comment"; at: string; comment: TaskComment }
+  | { type: "comment"; at: string; comment: TaskComment; key: string; pending: boolean }
   | { type: "story"; at: string; story: TaskStory };
+
+export { MentionText };
+
+// A comment still on its way to the server, drawn like the real one (Comments and reply by email).
+function pendingAsComment(p: PendingComment, mentionIds: string[]): TaskComment {
+  return {
+    id: p.tempId,
+    authorId: p.authorId,
+    ruleName: null,
+    body: p.body,
+    createdAt: p.createdAt,
+    editedAt: null,
+    deleted: false,
+    mentionIds,
+    reactions: [],
+    email: p.email ? { ...p.email, status: "sending", error: null } : null,
+  };
+}
 
 function num(data: Json, key: string): number | null {
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -109,10 +140,41 @@ export function TaskActivity({
     return profile ? displayName(profile) : "Someone";
   };
 
+  // Optimistic comments: the server's rows, plus the ones still on their way at the end (in the order
+  // they were sent), each keeping its React key when the real row replaces it.
+  const pending = usePendingComments(task.id);
+  const merged = mergePendingComments(task.comments, pending, rememberedCommentKeys());
+  const arrivedKey = merged.arrived.map((a) => a.tempId).join(",");
+  useEffect(() => {
+    if (arrivedKey) forgetArrivedComments(merged.arrived);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- arrivedKey stands for merged.arrived
+  }, [arrivedKey]);
+  const profileById = (profileId: string) => profilesById.get(profileId);
+  const describe: DescribePerson = (profileId) => {
+    const role = task.memberRoles[profileId];
+    if (role) return `${ROLE_LABELS[role]} in this task’s ${task.memberships.length === 1 ? "project" : "projects"}`;
+    return task.isPrivate && task.privateReaderIds.includes(profileId) ? "Can open this private task" : null;
+  };
+
   const entries: Entry[] = [
-    ...task.comments.map((comment) => ({ type: "comment" as const, at: comment.createdAt, comment })),
-    ...task.stories.map((story) => ({ type: "story" as const, at: story.createdAt, story })),
-  ].sort((a, b) => a.at.localeCompare(b.at));
+    ...[
+      ...task.comments.map((comment) => ({
+        type: "comment" as const,
+        at: comment.createdAt,
+        comment,
+        key: merged.keys.get(comment.id) ?? comment.id,
+        pending: false,
+      })),
+      ...task.stories.map((story) => ({ type: "story" as const, at: story.createdAt, story })),
+    ].sort((a, b) => a.at.localeCompare(b.at)),
+    ...merged.waiting.map((p) => ({
+      type: "comment" as const,
+      at: p.createdAt,
+      comment: pendingAsComment(p, pendingMentionIds(p.body, candidates)),
+      key: p.tempId,
+      pending: true,
+    })),
+  ];
 
   function storyActor(story: TaskStory): string {
     const ruleName = str(story.data, "rule_name");
@@ -319,7 +381,7 @@ export function TaskActivity({
 
   const comments = entries.filter((entry) => entry.type === "comment");
   const shown = tab === "comments" ? comments : entries;
-  const commentCount = task.comments.filter((c) => !c.deleted).length;
+  const commentCount = task.comments.filter((c) => !c.deleted).length + merged.waiting.length;
 
   return (
     <section className="mt-8 border-t border-zinc-200 pt-1" aria-label="Comments and activity">
@@ -367,21 +429,33 @@ export function TaskActivity({
             </li>
           ) : (
             <CommentItem
-              key={entry.comment.id}
+              key={entry.key}
               comment={entry.comment}
+              pending={entry.pending}
               authorName={entry.comment.ruleName ? `Rule “${entry.comment.ruleName}”` : nameOf(entry.comment.authorId)}
               mine={entry.comment.authorId !== null && entry.comment.authorId === memberId}
               canComment={canComment}
               memberId={memberId}
               nameOf={nameOf}
               candidates={candidates}
-              mentionNames={entry.comment.mentionIds.map((mentionId) => nameOf(mentionId))}
+              mentioned={entry.comment.mentionIds.flatMap((mentionId) => profileById(mentionId) ?? [])}
+              describe={describe}
             />
           ),
         )}
       </ol>
     </section>
   );
+}
+
+// Who a comment that isn't saved yet mentions (the database decides for real once it is): the people the
+// autocomplete offers whose @name or @emailname is in the text.
+function pendingMentionIds(body: string, candidates: Profile[]): string[] {
+  return [
+    ...new Set(
+      mentionSegments(body, candidates).flatMap((s) => (s.type === "mention" ? [s.profileId] : [])),
+    ),
+  ];
 }
 
 // People who can read the task (members of its projects), for @mention autocomplete; not the viewer.
@@ -396,27 +470,34 @@ export const COMMENT_INPUT =
 
 function CommentItem({
   comment,
+  pending: sending,
   authorName,
   mine,
   canComment,
   memberId,
   nameOf,
   candidates,
-  mentionNames,
+  mentioned,
+  describe,
 }: {
   comment: TaskComment;
+  // Still on its way to the server (optimistic): no edit, delete, or reactions yet.
+  pending: boolean;
   authorName: string;
   mine: boolean;
   canComment: boolean;
   memberId: string;
   nameOf: (profileId: string | null) => string;
   candidates: Profile[];
-  mentionNames: string[];
+  mentioned: Profile[];
+  describe: DescribePerson;
 }) {
   const [pending, run] = useServerAction();
   const [draft, setDraft] = useState<string | null>(null);
   const editing = draft !== null;
-  const editable = mine && canComment && !comment.deleted;
+  // An emailed comment went out as written: it can be removed, not edited.
+  const editable = mine && canComment && !comment.deleted && !sending && !comment.email;
+  const removable = mine && canComment && !comment.deleted && !sending;
 
   function save() {
     const body = draft?.trim();
@@ -444,8 +525,55 @@ function CommentItem({
     );
   }
 
+  const controls =
+    (editable || removable) && !editing ? (
+      <span className="ml-auto flex items-center opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+        {editable ? (
+          <button
+            type="button"
+            aria-label="Edit comment"
+            data-tooltip="Edit"
+            onClick={() => setDraft(comment.body)}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+          >
+            <Pencil className="size-3.5" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          aria-label="Delete comment"
+          data-tooltip="Delete"
+          onClick={() => {
+            if (window.confirm(comment.email ? "Delete this comment? The email was already sent." : "Delete this comment?")) {
+              run(() => deleteComment(comment.id));
+            }
+          }}
+          className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-red-600"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      </span>
+    ) : null;
+
+  // Asana's email cards: a response sent to the form's submitter, or the submitter's emailed reply.
+  if (comment.email) {
+    const received = comment.email.direction === "received";
+    return (
+      <li className="group flex gap-2.5" data-comment-id={sending ? undefined : comment.id} aria-busy={sending || undefined}>
+        {received ? <MailAvatar /> : <Avatar name={authorName} size="md" />}
+        <div className="min-w-0 flex-1">
+          <EmailCommentHeader email={comment.email} authorName={authorName} createdAt={comment.createdAt} actions={controls} />
+          <EmailCard email={comment.email} createdAt={comment.createdAt}>
+            {received ? comment.body : <MentionText body={comment.body} people={mentioned} describe={describe} />}
+          </EmailCard>
+          {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
+        </div>
+      </li>
+    );
+  }
+
   return (
-    <li className="group flex gap-2.5">
+    <li className="group flex gap-2.5" data-comment-id={sending ? undefined : comment.id} aria-busy={sending || undefined}>
       <Avatar name={authorName} size="md" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
@@ -460,30 +588,8 @@ function CommentItem({
               )
             </span>
           ) : null}
-          {editable && !editing ? (
-            <span className="ml-auto flex items-center opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
-              <button
-                type="button"
-                aria-label="Edit comment"
-                title="Edit"
-                onClick={() => setDraft(comment.body)}
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
-              >
-                <Pencil className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                aria-label="Delete comment"
-                title="Delete"
-                onClick={() => {
-                  if (window.confirm("Delete this comment?")) run(() => deleteComment(comment.id));
-                }}
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-red-600"
-              >
-                <Trash2 className="size-3.5" />
-              </button>
-            </span>
-          ) : null}
+          {sending ? <span className="text-xs text-zinc-400">Sending…</span> : null}
+          {controls}
         </div>
         {editing ? (
           <div className="mt-1">
@@ -513,10 +619,10 @@ function CommentItem({
           </div>
         ) : (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
-            <MentionText body={comment.body} names={mentionNames} />
+            <MentionText body={comment.body} people={mentioned} describe={describe} />
           </p>
         )}
-        <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />
+        {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
       </div>
     </li>
   );
@@ -618,27 +724,6 @@ export function ReactionBar({
   );
 }
 
-export function MentionText({ body, names }: { body: string; names: string[] }) {
-  if (names.length === 0) return <>{body}</>;
-  const escaped = [...names]
-    .sort((a, b) => b.length - a.length)
-    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const parts = body.split(new RegExp(`(@(?:${escaped.join("|")}))`, "gi"));
-  return (
-    <>
-      {parts.map((part, index) =>
-        index % 2 === 1 ? (
-          <span key={index} className="rounded bg-accent-50 px-0.5 font-medium text-accent-700">
-            {part}
-          </span>
-        ) : (
-          part
-        ),
-      )}
-    </>
-  );
-}
-
 // People who can read the task: who can be added as a collaborator (followers must be able to read it).
 function readers(task: TaskDetail, profiles: Profile[]) {
   return task.isPrivate
@@ -657,9 +742,11 @@ export function TaskPaneFooter({
   profiles: Profile[];
   memberId: string;
 }) {
-  const [pending, run] = useServerAction();
+  const [, run] = useServerAction();
   const [draft, setDraft] = useState("");
   const [focused, setFocused] = useState(false);
+  // "Send response to submitter" (form tasks only; unchecked by default and after each send).
+  const [toSubmitter, setToSubmitter] = useState(false);
   const [followerIds, setFollowerIds] = useOptimistic(task.followerIds);
   const me = profiles.find((p) => p.id === memberId);
   const following = followerIds.includes(memberId);
@@ -667,15 +754,41 @@ export function TaskPaneFooter({
     .map((followerId) => profiles.find((p) => p.id === followerId))
     .filter((p): p is Profile => Boolean(p));
   const canComment = hasRole(task.viewerRole, "commenter");
-  const open = focused || draft.trim() !== "";
+  const submitterEmail = canRespondToSubmitter(task) ? (task.submission?.email ?? null) : null;
+  const open = focused || draft.trim() !== "" || toSubmitter;
 
+  // ⌘/Ctrl+Enter and the Comment button: the comment shows in the feed at once (a pending row), the
+  // server saves it, and the real row takes its place; a failure takes the row away, puts the text back,
+  // and the toast says why.
   function submit() {
     const body = draft.trim();
     if (!body) return;
+    const emailed = Boolean(submitterEmail && toSubmitter);
+    const tempId = `pending-${crypto.randomUUID()}`;
+    addPendingComment({
+      tempId,
+      taskId: task.id,
+      authorId: memberId,
+      body,
+      createdAt: new Date().toISOString(),
+      email:
+        emailed && submitterEmail
+          ? { direction: "sent", address: submitterEmail.toLowerCase(), subject: submitterResponseSubject(task.submission?.formTitle) }
+          : null,
+      serverId: null,
+      knownIds: task.comments.map((c) => c.id),
+    });
     setDraft("");
+    setToSubmitter(false);
     run(async () => {
-      const result = await addComment(task.id, body);
-      if (result.error) setDraft(body);
+      const result = emailed ? await sendSubmitterResponse(task.id, body) : await addComment(task.id, body);
+      if (result.error || !result.commentId) {
+        dropPendingComment(tempId);
+        setDraft((current) => (current.trim() ? current : body));
+        if (emailed) setToSubmitter(true);
+      } else {
+        settlePendingComment(tempId, result.commentId);
+      }
       return result;
     });
   }
@@ -716,11 +829,35 @@ export function TaskPaneFooter({
                 open ? "min-h-16 py-2" : "h-8 min-h-8 py-1.5"
               }`}
             />
+            {open && submitterEmail ? (
+              <div className="flex items-center gap-2 px-3 pb-1.5 pt-0.5 text-sm text-zinc-600">
+                <input
+                  id="send-to-submitter"
+                  type="checkbox"
+                  checked={toSubmitter}
+                  onChange={(e) => setToSubmitter(e.target.checked)}
+                  className="size-4 shrink-0 rounded border-zinc-300 accent-accent-600"
+                />
+                <label htmlFor="send-to-submitter" className="min-w-0">
+                  Send response to submitter{" "}
+                  <a
+                    href={`mailto:${submitterEmail}`}
+                    className="break-all text-accent-700 hover:underline"
+                  >
+                    {submitterEmail}
+                  </a>
+                </label>
+              </div>
+            ) : null}
             {open ? (
               <div className="flex items-center gap-2 px-2 pb-1.5">
-                <span className="mr-auto text-2xs text-zinc-500">Type @ to mention someone · ⌘/Ctrl+Enter to send</span>
-                <button type="button" onClick={submit} disabled={pending || !draft.trim()} className="btn-primary h-7 px-3">
-                  Comment
+                <span className="mr-auto text-2xs text-zinc-500">
+                  {toSubmitter && submitterEmail
+                    ? "This comment is emailed to the submitter; their reply comes back here"
+                    : "Type @ to mention someone · ⌘/Ctrl+Enter to send"}
+                </span>
+                <button type="button" onClick={submit} disabled={!draft.trim()} className="btn-primary h-7 px-3">
+                  {toSubmitter && submitterEmail ? "Send" : "Comment"}
                 </button>
               </div>
             ) : null}

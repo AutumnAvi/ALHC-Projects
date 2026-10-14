@@ -2066,15 +2066,43 @@ export async function deleteSubtask(subtaskId: string): Promise<ActionResult> {
 // Comments + followers
 // ---------------------------------------------------------------------------------------------
 
-export async function addComment(taskId: string, body: string): Promise<ActionResult> {
-  return run(async () => {
+// Returns the new comment's id, so the pane can swap its optimistic row for the real one.
+export async function addComment(taskId: string, body: string): Promise<ActionResult & { commentId?: string }> {
+  let commentId: string | undefined;
+  const result = await run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase
-        .from("comments")
-        .insert({ task_id: id(taskId), body: text(body, "Comment", { max: 10000 }) }),
-    );
+    const inserted = await supabase
+      .from("comments")
+      .insert({ task_id: id(taskId), body: text(body, "Comment", { max: 10000 }) })
+      .select("id")
+      .single();
+    check(inserted);
+    commentId = inserted.data?.id;
   });
+  return { ...result, commentId: result.error ? undefined : commentId };
+}
+
+// "Send response to submitter" (Comments and reply by email): the comment is posted as the viewer and
+// emailed to the form task's submitter, with a Reply-To that brings their answer back as a comment. The
+// database fills in the address and subject and refuses a task without a submitter.
+export async function sendSubmitterResponse(
+  taskId: string,
+  body: string,
+): Promise<ActionResult & { commentId?: string }> {
+  let commentId: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const sent = await supabase.rpc("send_submitter_response", {
+      target_task: id(taskId),
+      response_body: text(body, "Comment", { max: 10000 }),
+    });
+    if (sent.error?.code === "PGRST202") {
+      throw new InputError("Sending responses to submitters needs this release’s database update");
+    }
+    check(sent);
+    commentId = sent.data ?? undefined;
+  });
+  return { ...result, commentId: result.error ? undefined : commentId };
 }
 
 // Authors edit only the text; the database stamps edited_at and notifies people the edit newly mentions.

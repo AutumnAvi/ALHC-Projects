@@ -17,6 +17,7 @@ import {
 } from "@/lib/rules";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import { REACTIONS, type ReactionKey } from "@/lib/reactions";
+import { commentEmailStatus, parseCommentEmail, type CommentEmail } from "@/lib/comment-email";
 import {
   isDeliveryStatus,
   toProjectIntegrations,
@@ -208,6 +209,9 @@ export type TaskDetail = {
   requestLabel: string | null;
   canAssignRequestNumber: boolean;
   submission: { email: string; formId: string; formTitle: string | null; createdAt: string } | null;
+  // The database has Comments and reply by email (20261014030000): responses to a form's submitter can
+  // be sent (see canRespondToSubmitter()).
+  submitterResponses: boolean;
   approvals: TaskApproval[];
   // Direct subtasks, in order.
   subtasks: SubtaskItem[];
@@ -291,6 +295,8 @@ export type TaskComment = {
   mentionIds: string[];
   // Active reactions, in the fixed REACTIONS order; only emoji someone used.
   reactions: { emoji: ReactionKey; profileIds: string[] }[];
+  // A response emailed to the form's submitter, or the submitter's emailed reply (no author).
+  email: CommentEmail | null;
 };
 
 export type TaskStory = {
@@ -874,6 +880,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     dependencies,
     nextOccurrence,
     attachmentLinks,
+    commentEmails,
+    responseEmails,
   ] = await Promise.all([
     projectIds.length ? listFieldsForProjects(projectIds) : Promise.resolve([]),
     supabase.from("task_field_values").select("field_id, value").eq("task_id", taskId),
@@ -956,7 +964,43 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("task_id", taskId)
       .is("deleted_at", null)
       .order("created_at"),
+    // Comments and reply by email (20261014030000): which comments were emailed to the form's submitter or
+    // came back from them. A database without that update has no such columns (42703 → none, and no
+    // "Send response to submitter").
+    supabase
+      .from("comments")
+      .select("id, email_direction, email_address, email_subject")
+      .eq("task_id", taskId)
+      .not("email_direction", "is", null),
+    supabase
+      .from("email_outbox")
+      .select("status, delivery_status, last_error, comment_id:payload->>comment_id")
+      .eq("task_id", taskId)
+      .eq("payload->>kind", "submitter_response")
+      .order("created_at"),
   ]);
+
+  const submitterResponses = !commentEmails.error;
+  if (commentEmails.error && !isMissingColumn(commentEmails.error)) {
+    console.error(`[comments] couldn't read email comments: ${commentEmails.error.message}`);
+  }
+  const responseStatus = new Map(
+    (responseEmails.error ? [] : (responseEmails.data ?? [])).map((o) => [
+      String(o.comment_id),
+      {
+        status: commentEmailStatus(o),
+        error: o.status === "failed" ? (typeof o.last_error === "string" ? o.last_error.slice(0, 200) : null) : null,
+      },
+    ]),
+  );
+  const emailOf = new Map(
+    (commentEmails.error ? [] : (commentEmails.data ?? [])).flatMap((c) => {
+      const email = parseCommentEmail(c);
+      if (!email) return [];
+      const outbox = email.direction === "sent" ? responseStatus.get(c.id) : undefined;
+      return [[c.id, { ...email, status: outbox?.status ?? null, error: outbox?.error ?? null }] as const];
+    }),
+  );
 
   const memberRoles: Record<string, ProjectRole> = {};
   for (const m of rows(projectMembers, "task members")) {
@@ -1076,6 +1120,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
           emoji: key,
           profileIds: active.filter((r) => r.emoji === key).map((r) => r.profile_id),
         })).filter((r) => r.profileIds.length > 0),
+        email: emailOf.get(c.id) ?? null,
       };
     }),
     stories: storyRows.map((st) => ({
@@ -1132,6 +1177,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
           createdAt: submission.created_at,
         }
       : null,
+    submitterResponses,
     approvals: approvalRows.map((a) => ({
       id: a.id,
       subtaskId: a.subtask_id,
@@ -1509,6 +1555,8 @@ export type InboxItem = {
   statusUpdate: { id: string; projectId: string; projectName: string; status: string; title: string | null } | null;
   // approval_requested items: the request now (its approver decides it from the Inbox while pending).
   approval: { id: string; status: TaskApproval["status"]; approverId: string } | null;
+  // A form submitter's emailed reply (Comments and reply by email): who sent it (no actor).
+  emailFrom: string | null;
 };
 
 export type { InboxTab } from "@/lib/inbox";
@@ -1631,7 +1679,7 @@ type InboxRowBase = {
 };
 type InboxTaskRow = InboxRowBase & {
   task: { id: string; title: string; parent_task_id: string | null };
-  comment: { body: string; deleted_at: string | null } | null;
+  comment: { id: string; body: string; deleted_at: string | null } | null;
 };
 type InboxTeamMessageRow = InboxRowBase & {
   team_message: {
@@ -1687,8 +1735,8 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
           : ["archived_at", "is", null];
 
   const taskColumns = bookmarks
-    ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(body, deleted_at)"
-    : "id, kind, data, actor_id, read_at, archived_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(body, deleted_at)";
+    ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(id, body, deleted_at)"
+    : "id, kind, data, actor_id, read_at, archived_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(id, body, deleted_at)";
   const messageColumns = bookmarks
     ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))"
     : "id, kind, data, actor_id, read_at, archived_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))";
@@ -1757,7 +1805,11 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
       }),
     ),
   ];
-  const [parentTitle, approvalRows] = await Promise.all([
+  // Comments with no actor and no rule may be a form submitter's emailed reply: name the address.
+  const replyCommentIds = items
+    .filter((item) => item.actor_id === null && item.comment && !item.comment.deleted_at)
+    .map((item) => item.comment!.id);
+  const [parentTitle, approvalRows, replySenders] = await Promise.all([
     taskTitles(items.map((item) => item.task.parent_task_id)),
     approvalIds.length
       ? supabase
@@ -1767,6 +1819,15 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
           .is("deleted_at", null)
           .then((r) => rows(r, "approvals"))
       : Promise.resolve([]),
+    replyCommentIds.length
+      ? supabase
+          .from("comments")
+          .select("id, email_address")
+          .in("id", replyCommentIds)
+          .eq("email_direction", "received")
+          // A database without 20261014030000_comments_email.sql has no such columns: no senders.
+          .then((r) => new Map((r.error ? [] : (r.data ?? [])).map((c) => [c.id, c.email_address] as const)))
+      : Promise.resolve(new Map<string, string | null>()),
   ]);
   const approvals = new Map(approvalRows.map((a) => [a.id, a] as const));
   // A reply's thread may be deleted (its replies are hidden then) and needs its title.
@@ -1806,6 +1867,7 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
       taskTitle: item.task.title,
       parentTitle: item.task.parent_task_id ? (parentTitle.get(item.task.parent_task_id) ?? null) : null,
       commentBody: item.comment?.body ?? null,
+      emailFrom: item.comment ? (replySenders.get(item.comment.id) ?? null) : null,
       message: null,
       teamMessage: null,
       statusUpdate: null,
@@ -1841,6 +1903,7 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
         teamMessage: null,
         statusUpdate: null,
         approval: null,
+      emailFrom: null,
       },
     ];
   });
@@ -1866,6 +1929,7 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
         teamMessage: { id: m.id, threadId: m.thread_id ?? m.id, teamId: m.team_id, teamName: m.team.name },
         statusUpdate: null,
         approval: null,
+      emailFrom: null,
       },
     ];
   });
@@ -1888,6 +1952,7 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
       teamMessage: null,
       statusUpdate: { id: u.id, projectId: u.project_id, projectName: u.project.name, status: u.status, title: u.title },
       approval: null,
+      emailFrom: null,
     };
   });
   // Newest first; items made in the same transaction keep a stable order.

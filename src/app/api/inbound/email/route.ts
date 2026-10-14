@@ -15,14 +15,18 @@ import { isResendDeliveryEvent, RESEND_DELIVERY_EVENTS } from "@/lib/email-sched
 import { drainIntegrationOutbox } from "@/lib/integrations";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Reply by email. Resend receives mail for r-<token>@<reply domain> and POSTs an `email.received`
-// webhook here. This is a machine-to-machine background route, not a user's request: it does nothing
-// until the Resend webhook signature (RESEND_WEBHOOK_SECRET, Svix scheme) checks out, then fetches the
-// message from Resend's Receiving API (the webhook carries no body), keeps only the text above the
-// quoted part, and calls post_email_reply() with the service role — the only role that can run it. The
-// database posts the comment only when the sender is the token's person, who must still be allowlisted
-// and a Commenter+ on the task. Without RESEND_WEBHOOK_SECRET the route answers 503 (and comment emails
-// carry no Reply-To). Nothing logs a body, an address, or a secret.
+// Reply by email — since Comments and reply by email, only for form submitters. A response someone sends
+// to a form task's submitter ("Send response to submitter") carries Reply-To r-<token>@<reply domain>;
+// Resend receives the submitter's reply and POSTs an `email.received` webhook here. This is a
+// machine-to-machine background route, not a user's request: it does nothing until the Resend webhook
+// signature (RESEND_WEBHOOK_SECRET, Svix scheme) checks out, then fetches the message from Resend's
+// Receiving API (the webhook carries no body), keeps only the text above the quoted part, and calls
+// post_submitter_reply() with the service role — the only role that can run it. The database posts the
+// reply as an authorless "Replied via <email>" comment only when the token is a live submitter thread
+// and the sender is that thread's submitter; anything else (an unknown or revoked token, an old follower
+// token from before the redesign, another sender) is refused and logged, never posted. Follower emails are
+// no-reply. Without RESEND_WEBHOOK_SECRET the route answers 503 (and responses carry no Reply-To).
+// Nothing logs a body, an address, a token, or a secret.
 //
 // Forwarding (Real features 1) uses the same verified webhook: mail to f-<token>@<reply domain> (a
 // person's forwarding address, Settings → Email forwarding) becomes a task through post_email_forward()
@@ -173,13 +177,15 @@ export async function POST(request: Request) {
         : "";
   const body = stripQuotedReply(text);
 
-  const { data, error } = await admin.rpc("post_email_reply", {
+  const { data, error } = await admin.rpc("post_submitter_reply", {
     reply_token: token,
     sender_email: sender,
     reply_body: body,
     provider_email_id: emailId,
   });
   if (error) {
+    // A database without 20261014030000_comments_email.sql has no submitter threads: nothing to post.
+    if (error.code === "PGRST202") return json({ ok: true, ignored: true }, 200);
     console.error("Reply by email failed", error.code);
     return json({ ok: false, error: "Something went wrong" }, 500);
   }
