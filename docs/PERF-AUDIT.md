@@ -53,10 +53,31 @@ Logs: `/tmp/alhc-perf-step5/`.
 
 `npm run db:test` was not re-run this turn. The earlier local run in `/tmp/alhc-perf-step1/db-test.log` reached `zz20` and passed.
 
+## Stage 2
+
+Local Postgres 17 again (`/tmp/alhc-perf-pg`, port 5433), rebuilt from `scripts/perf/seed.sql`: 10,000 tasks in one project, 50,000 comments with 5,005 on task 1, 1,700 open tasks assigned to `perf-seed@example.com`, 2,000 unread inbox rows for that person. Plans are `EXPLAIN (ANALYZE, BUFFERS)` as that member, warm cache, saved under `scripts/perf/plans/`. The migration is **not** applied to the hosted project. `20261015010000_perf_step2.sql` has an empty **TAIL**.
+
+| Query | Stage 1 before | Stage 1 after | Stage 2 |
+| --- | ---: | ---: | ---: |
+| List memberships + the card follow-ups (10,000 tasks) | ~34 s (first capture) | `project_task_cards` **339 ms** | same RPC, not changed |
+| Section task counts | (folded into the list reads) | `project_section_task_counts` **8 ms** | same RPC |
+| All 5,005 comments on the heavy task | 3.0–3.1 s | — | — |
+| Newest comment page (80 before, 100 now) | 41 ms (80 active) | `task_comment_page` **6.6 ms** | same RPC |
+| My open tasks (1,700–1,734) | 741–777 ms | 424 ms on this seed, still per-row `has_project_role` | `my_task_cards` **24 ms** |
+| My Tasks section layout (1,700 placements) | — | 926 ms once placements existed | `my_tasks_layout` **21 ms** |
+| Inbox, newest 100 | 289–294 ms | 82 ms on this seed, role check per row | `inbox_page` **15 ms** |
+| Inbox unread count (2,000) | — | **1,315 ms** | `inbox_unread_count` **70 ms** |
+
+`my_task_cards` returns the same open and completed rows the page already drew (home project when the viewer can see it, otherwise another visible project, private tasks with no project, parent title on a subtask). A task assigned in a project the person cannot open is left out. `my_tasks_layout` and `sync_my_task_placements` are security definer for the same reason: the layout was a second pass over those rows. What they return is unchanged.
+
+`inbox_page` keeps the old shape: 100 task rows, 100 project messages, 100 team messages, and 100 status updates, then the same drops (a removed comment, a reply whose thread is gone), then the newest 100. `inbox_unread_count` is the badge: unread, not archived, still readable, including a trashed task or a removed message the page itself hides. Both fall back to the old queries when the function is missing. The browser badge calls `inbox_unread_count` the same way.
+
+Production `next build` (Next.js 16.3.8, Turbopack) still does not print route-level First Load JS. Total client JS under `.next/static` is **3.27 MB** (115 files, 3,425,774 bytes), against about **2.78 MB** before any perf edit. The project view's first load (`entryJSFiles` plus the root and polyfill chunks, each file once) is **1.31 MB** (22 files, 1,309,469 bytes). The task pane, Create / Settings dialogs, and Share dialog are separate dynamic chunks on that route (9 files, 0.15 MB) and are not in that first load. Detail is `scripts/perf/plans/bundle.txt`.
+
+`npm run db:test` passed in UTC (the first local run failed the due-tomorrow rule because the machine was past midnight in UTC+3 and still on the previous UTC day). `npm run typecheck`, `npm run lint`, unit tests (21 passed), and `npm run build` passed.
+
 ## Deferred
 
-- Re-`EXPLAIN` `project_task_cards` and `task_comment_page` on the 10k seed. The port 5433 cluster is gone, so there is no after wall-clock for the list RPC.
-- The card RPC still returns every task in the project. The browser paints 80; the database still builds the full jsonb.
-- My Tasks (~0.7 s) and Inbox (~0.3 s) are still per-row RLS. The assignee index is already used; a new one would not move the My Tasks plan.
+- `project_task_cards` still returns every task in the project. The browser paints 80; the database still builds the full jsonb.
 - No `content-visibility` on long rows. Timeline is not windowed.
-- Do not apply `20261014120000_perf_audit.sql` from this PR. Use the usual migration-applier path after review.
+- Do not apply `20261014120000_perf_audit.sql` or `20261015010000_perf_step2.sql` to the hosted project from this branch. Use the usual migration-applier path after review.
