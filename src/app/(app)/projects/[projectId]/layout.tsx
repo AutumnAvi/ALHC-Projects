@@ -9,6 +9,7 @@ import {
   getProject,
   getProjectRole,
   hasBatch4Schema,
+  hasReal4Schema,
   listOwnProjectRoles,
   listProjectFields,
   listProjectForms,
@@ -17,6 +18,7 @@ import {
   listProjectViews,
   listSections,
   listStarredProjectIds,
+  listStatusTemplates,
   listTaskTemplates,
 } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
@@ -30,8 +32,22 @@ export default async function ProjectLayout({
 }: LayoutProps<"/projects/[projectId]">) {
   const { projectId } = await params;
   if (!isUuid(projectId)) notFound();
-  const [project, views, role, taskTemplates, ownRoles, fields, forms, rules, starredIds, members, sections, batch4] =
-    await Promise.all([
+  const [
+    project,
+    views,
+    role,
+    taskTemplates,
+    ownRoles,
+    fields,
+    forms,
+    rules,
+    starredIds,
+    members,
+    sections,
+    batch4,
+    real4,
+    statusTemplates,
+  ] = await Promise.all([
       getProject(projectId),
       listProjectViews(projectId),
       getProjectRole(projectId),
@@ -44,6 +60,8 @@ export default async function ProjectLayout({
       listProjectMembers(projectId),
       listSections(projectId),
       hasBatch4Schema(),
+      hasReal4Schema(),
+      listStatusTemplates(projectId),
     ]);
   if (!project || !role) notFound();
   // An archived project caps every role at Viewer (role); archiving is decided by the member's own role.
@@ -62,6 +80,8 @@ export default async function ProjectLayout({
       branches: ruleBranchCount(r),
     })),
     taskTemplates: taskTemplates.map(({ id, name, title }) => ({ id, name, title })),
+    statusTemplates,
+    statusTemplatesAvailable: real4,
   };
   // The header's avatars (owners first, then by role and name); Share lists everyone.
   const headerMembers = members.map(({ profileId, name, role }) => ({ profileId, name, role })).sort(compareMembers);
@@ -69,7 +89,7 @@ export default async function ProjectLayout({
   return (
     <ProjectAccessProvider role={role}>
       <TaskTemplatesProvider templates={taskTemplates.map(({ id, name, title }) => ({ id, name, title }))}>
-        <ProjectPageProvider project={{ id: project.id, name: project.name }} batch4={batch4}>
+        <ProjectPageProvider project={{ id: project.id, name: project.name }} batch4={batch4} statusTemplates={statusTemplates}>
           <div className="flex min-h-0 flex-1 flex-col">
             <RecordRecent kind="project" id={project.id} />
             <ProjectHeader

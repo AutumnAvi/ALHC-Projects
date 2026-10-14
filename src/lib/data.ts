@@ -82,6 +82,8 @@ import {
   type WorkspaceMember,
 } from "@/lib/workspace";
 import { toTag, type Tag } from "@/lib/tags";
+import { isCalendarFeedScope, type CalendarFeed } from "@/lib/calendar-feeds";
+import { toStatusTemplate, type StatusTemplate } from "@/lib/status-templates";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import { isInboundCallStatus, type InboundCall, type InboundEndpoint } from "@/lib/inbound-shared";
 import {
@@ -1545,6 +1547,76 @@ export const hasReal3Schema = cache(async (): Promise<boolean> => {
   const supabase = await createClient();
   const result = await supabase.from("email_preferences").select("profile_id").limit(1);
   return !result.error;
+});
+
+// Is 20261014020000_real_4.sql applied? Its last statement makes project_status_templates readable, so a
+// preview without it hides Status templates and calendar links (each says it needs the database update).
+// The calendar drag and the streamed CSV export need nothing new from the database.
+export const hasReal4Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.from("project_status_templates").select("id").limit(1);
+  return !result.error;
+});
+
+// A project's status templates (Customize → Status templates, and the status update panel's picker):
+// RLS shows them to the project's Viewers+. Empty on a database without Real features 4.
+export const listStatusTemplates = cache(async (projectId: string): Promise<StatusTemplate[]> => {
+  if (!(await hasReal4Schema())) return [];
+  const supabase = await createClient();
+  const result = await supabase
+    .from("project_status_templates")
+    .select("id, name, status, title, sections, sort_order, created_by")
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "status templates").map(toStatusTemplate);
+});
+
+// The signed-in person's live calendar links (own rows by RLS), with what each covers named through RLS
+// too: a project or team they can no longer open reads as null. Null on a database without Real
+// features 4.
+export const listMyCalendarFeeds = cache(async (): Promise<CalendarFeed[] | null> => {
+  if (!(await hasReal4Schema())) return null;
+  const supabase = await createClient();
+  const result = await supabase
+    .from("calendar_feeds")
+    .select("id, scope, project_id, team_id, token_hint, token_rotated_at, last_fetched_at, created_at")
+    .is("revoked_at", null)
+    .order("created_at");
+  if (result.error) return null;
+  const feeds = result.data ?? [];
+  const projectIds = [...new Set(feeds.flatMap((f) => (f.project_id ? [f.project_id] : [])))];
+  const teamIds = [...new Set(feeds.flatMap((f) => (f.team_id ? [f.team_id] : [])))];
+  const [projects, teams] = await Promise.all([
+    projectIds.length
+      ? supabase.from("projects").select("id, name").in("id", projectIds).is("deleted_at", null)
+      : Promise.resolve({ data: [], error: null }),
+    teamIds.length
+      ? supabase.from("teams").select("id, name").in("id", teamIds).is("deleted_at", null)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  const names = new Map<string, string>([
+    ...(projects.data ?? []).map((p) => [p.id, p.name] as const),
+    ...(teams.data ?? []).map((t) => [t.id, t.name] as const),
+  ]);
+  return feeds.flatMap((f) =>
+    isCalendarFeedScope(f.scope)
+      ? [
+          {
+            id: f.id,
+            scope: f.scope,
+            projectId: f.project_id,
+            teamId: f.team_id,
+            targetName: f.scope === "my_tasks" ? "My tasks" : (names.get(f.project_id ?? f.team_id ?? "") ?? null),
+            hint: f.token_hint,
+            createdAt: f.created_at,
+            rotatedAt: f.token_rotated_at,
+            lastFetchedAt: f.last_fetched_at,
+          },
+        ]
+      : [],
+  );
 });
 
 type InboxRowBase = {
@@ -4248,38 +4320,50 @@ export async function listTeamCalendarTasks(
 ): Promise<{ tasks: TeamCalendarTask[]; projectCount: number; capped: boolean }> {
   const projects = (await browseProjects(teamId)).filter((p) => p.myRole !== null);
   if (projects.length === 0) return { tasks: [], projectCount: 0, capped: false };
-  const names = new Map(projects.map((p) => [p.projectId, p.name] as const));
+  const byId = new Map(projects.map((p) => [p.projectId, p] as const));
   const supabase = await createClient();
+  // Tasks whose span (start date, else due date, through the due date) touches the visible weeks.
   const result = await supabase
     .from("task_projects")
-    .select("project_id, task:tasks!inner(id, title, due_on, completed_at, assignee_id, kind, deleted_at)")
-    .in("project_id", [...names.keys()])
+    .select("project_id, task:tasks!inner(id, title, start_on, due_on, completed_at, assignee_id, kind, deleted_at)")
+    .in("project_id", [...byId.keys()])
     .is("deleted_at", null)
     .is("task.deleted_at", null)
     .gte("task.due_on", from)
-    .lte("task.due_on", to)
+    .or(`start_on.lte.${to},due_on.lte.${to}`, { referencedTable: "task" })
     .order("project_id")
     .limit(TEAM_CALENDAR_LIMIT);
-  const seen = new Set<string>();
-  const tasks: TeamCalendarTask[] = [];
+  const tasks = new Map<string, TeamCalendarTask>();
   const list = rows(result, "team calendar");
   for (const row of list) {
     const t = row.task;
-    if (!t.due_on || seen.has(t.id)) continue;
-    seen.add(t.id);
-    tasks.push({
+    if (!t.due_on) continue;
+    const project = byId.get(row.project_id);
+    // The viewer's own role in the project (an archived project caps everyone at Viewer); a task in
+    // several of the team's projects is editable through any of them. The database decides on save.
+    const canEdit = Boolean(project && !project.archived && hasRole(isProjectRole(project.myRole) ? project.myRole : null, "editor"));
+    const seen = tasks.get(t.id);
+    if (seen) {
+      if (canEdit) seen.canEdit = true;
+      continue;
+    }
+    tasks.set(t.id, {
       id: t.id,
       title: t.title,
+      startOn: t.start_on && t.start_on <= t.due_on ? t.start_on : null,
       dueOn: t.due_on,
       completedAt: t.completed_at,
       assigneeId: t.assignee_id,
       kind: t.kind,
       projectId: row.project_id,
-      projectName: names.get(row.project_id) ?? "Project",
+      projectName: project?.name ?? "Project",
+      canEdit,
     });
   }
-  tasks.sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.title.localeCompare(b.title));
-  return { tasks, projectCount: projects.length, capped: list.length >= TEAM_CALENDAR_LIMIT };
+  const sorted = [...tasks.values()].sort(
+    (a, b) => (a.startOn ?? a.dueOn).localeCompare(b.startOn ?? b.dueOn) || a.dueOn.localeCompare(b.dueOn) || a.title.localeCompare(b.title),
+  );
+  return { tasks: sorted, projectCount: projects.length, capped: list.length >= TEAM_CALENDAR_LIMIT };
 }
 
 // When each allowlisted address last signed in (Admin console → Users). Null when the viewer isn't a

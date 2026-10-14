@@ -1,20 +1,26 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useOptimistic, useState, useTransition } from "react";
+import { CalendarGrid, type CalendarDates, type CalendarDrag, type CalendarItem } from "@/components/calendar/calendar-grid";
+import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { PeriodNav } from "@/components/project/view-chrome";
-import { longDate, monthLabel, shiftMonth } from "@/lib/date-input";
+import { useDependencyShift } from "@/components/task/dependency-shift";
+import { monthLabel, shiftMonth } from "@/lib/date-input";
 import { projectColorClass } from "@/lib/project-colors";
 import { TEAM_CALENDAR_LIMIT, type TeamCalendarTask } from "@/lib/teams";
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const CELL_LIMIT = 3;
+type Move = { taskId: string } & CalendarDates;
 
-// The team Calendar: a read-only month of tasks due in the team's projects the viewer is a member of.
-// The month comes from ?d= (the server loads exactly the visible weeks); a task opens in the pane on
-// this page (?task=). Rescheduling happens in the task or its project's Calendar.
+// The team Calendar: a month of tasks in the team's projects the viewer is a member of, each a bar from its
+// start date to its due date. Since Real features 4 people who can edit a task (Editor+ in its project by
+// their own role) drag it to another day, drag its ends, or use its calendar button; others see it
+// read-only. Changes go through the task pane's path (useDependencyShift → updateTask / the shift RPCs),
+// so activity, notifications, rules, and due-date triggers follow as for any edit; the move shows at once
+// and rolls back with the error when the database refuses it. The month comes from ?d= (the server loads
+// exactly the visible weeks); a task opens in the pane on this page (?task=).
 export function TeamCalendar({
+  teamId,
   month,
   today,
   days,
@@ -23,6 +29,7 @@ export function TeamCalendar({
   capped,
   openTaskId,
 }: {
+  teamId: string;
   // "YYYY-MM"
   month: string;
   // The viewer's local day (tz cookie), so server and browser agree on "today" and "overdue".
@@ -38,7 +45,17 @@ export function TeamCalendar({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [navigating, startTransition] = useTransition();
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [drag, setDrag] = useState<CalendarDrag | null>(null);
+  const shift = useDependencyShift();
+  const [shown, applyMoves] = useOptimistic(tasks, (current, moves: Move[]) =>
+    current.flatMap((t) => {
+      const move = moves.find((m) => m.taskId === t.id);
+      if (!move) return [t];
+      // A task whose due date was cleared leaves the calendar until the page refreshes.
+      if (!move.dueOn) return [];
+      return [{ ...t, startOn: move.startOn && move.startOn < move.dueOn ? move.startOn : null, dueOn: move.dueOn }];
+    }),
+  );
 
   function hrefWith(changes: Record<string, string | null>) {
     const params = new URLSearchParams(searchParams.toString());
@@ -54,17 +71,33 @@ export function TeamCalendar({
     startTransition(() => router.push(hrefWith({ d }), { scroll: false }));
   }
 
-  const byDate = new Map<string, TeamCalendarTask[]>();
-  for (const task of tasks) {
-    const list = byDate.get(task.dueOn) ?? [];
-    list.push(task);
-    byDate.set(task.dueOn, list);
-  }
+  const items: CalendarItem[] = shown.map((task) => {
+    const completed = Boolean(task.completedAt);
+    const overdue = !completed && task.dueOn < today;
+    const milestone = task.kind === "milestone";
+    return {
+      id: task.id,
+      title: task.title,
+      startOn: milestone ? null : task.startOn,
+      dueOn: task.dueOn,
+      completed,
+      milestone,
+      overdue,
+      canEdit: task.canEdit,
+      open: openTaskId === task.id,
+      href: hrefWith({ task: task.id }),
+      dotClass: projectColorClass(task.projectId),
+      srDetail: ` in ${task.projectName}`,
+      tooltip: `${task.title} · ${task.projectName}`,
+    };
+  });
   const label = monthLabel(month);
-  const inMonth = tasks.filter((t) => t.dueOn.startsWith(month)).length;
+  const inMonth = shown.filter((t) => t.dueOn.startsWith(month) || (t.startOn ?? t.dueOn).startsWith(month)).length;
+  const editable = shown.some((t) => t.canEdit);
 
   return (
-    <div className="px-gutter py-3">
+    <div className="flex min-h-0 flex-1 flex-col px-gutter py-3">
+      {shift.dialog}
       <PeriodNav
         label={label}
         prevLabel="Previous month"
@@ -72,129 +105,36 @@ export function TeamCalendar({
         onPrev={() => goTo(`${shiftMonth(month, -1)}-01`)}
         onNext={() => goTo(`${shiftMonth(month, 1)}-01`)}
         onToday={() => goTo(null)}
-      />
+      >
+        <SyncCalendarButton scope="team" targetId={teamId} />
+      </PeriodNav>
       <p className="mb-2 text-xs text-zinc-500">
-        Tasks due in this team’s {projectCount === 1 ? "project" : `${projectCount} projects`} you’re a member of
-        {inMonth === 0 ? ` · Nothing is due in ${label}` : ""}
+        Tasks in this team’s {projectCount === 1 ? "project" : `${projectCount} projects`} you’re a member of
+        {inMonth === 0 ? ` · Nothing is scheduled in ${label}` : ""}
         {capped ? ` · Showing the first ${TEAM_CALENDAR_LIMIT.toLocaleString("en-US")} tasks` : ""}
       </p>
 
-      <div aria-busy={navigating} className={navigating ? "opacity-60 transition-opacity" : undefined}>
-        <div
-          aria-hidden
-          className="grid grid-cols-7 rounded-t-lg border border-b-0 border-zinc-200 bg-zinc-50 py-1 text-xs font-medium text-zinc-500"
-        >
-          {WEEKDAYS.map((d) => (
-            <span key={d} className="px-2">
-              {d}
-            </span>
-          ))}
-        </div>
-        <ol
-          aria-label={`Tasks due, ${label}`}
-          className="grid auto-rows-[minmax(7rem,auto)] grid-cols-7 border-l border-zinc-200"
-        >
-          {days.map((date) => {
-            const dayTasks = byDate.get(date) ?? [];
-            const open = expanded.has(date);
-            const shown = open ? dayTasks : dayTasks.slice(0, CELL_LIMIT);
-            const outside = !date.startsWith(month);
-            const isToday = date === today;
-            return (
-              <li
-                key={date}
-                aria-label={`${longDate(date)}${isToday ? " (today)" : ""}: ${dayTasks.length} ${dayTasks.length === 1 ? "task" : "tasks"} due`}
-                className={`flex min-w-0 flex-col gap-1 border-r border-b border-zinc-200 p-1.5 ${outside ? "bg-zinc-50/70" : "bg-white"}`}
-              >
-                <span
-                  aria-hidden
-                  className={`flex size-6 items-center justify-center self-start rounded-full text-xs tabular-nums ${
-                    isToday ? "bg-accent-600 font-semibold text-white" : outside ? "text-zinc-400" : "text-zinc-600"
-                  }`}
-                >
-                  {Number(date.slice(8))}
-                </span>
-                {shown.map((task) => (
-                  <TaskChip
-                    key={task.id}
-                    task={task}
-                    href={hrefWith({ task: task.id })}
-                    open={openTaskId === task.id}
-                    overdue={!task.completedAt && task.dueOn < today}
-                  />
-                ))}
-                {dayTasks.length > CELL_LIMIT ? (
-                  <button
-                    type="button"
-                    aria-expanded={open}
-                    aria-label={
-                      open
-                        ? `Show fewer tasks on ${longDate(date)}`
-                        : `Show ${dayTasks.length - CELL_LIMIT} more tasks on ${longDate(date)}`
-                    }
-                    onClick={() =>
-                      setExpanded((current) => {
-                        const next = new Set(current);
-                        if (open) next.delete(date);
-                        else next.add(date);
-                        return next;
-                      })
-                    }
-                    className="self-start rounded px-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-                  >
-                    {open ? "Show less" : `+${dayTasks.length - CELL_LIMIT} more`}
-                  </button>
-                ) : null}
-              </li>
-            );
-          })}
-        </ol>
+      <div aria-busy={navigating} className={`flex min-h-0 flex-1 flex-col ${navigating ? "opacity-60 transition-opacity" : ""}`}>
+        <CalendarGrid
+          days={days}
+          month={month}
+          today={today}
+          items={items}
+          drag={drag}
+          onDragChange={setDrag}
+          onChange={(item, dates) => {
+            const task = shown.find((t) => t.id === item.id);
+            if (!task) return;
+            shift.changeDates(task, dates, { onOptimistic: (moves) => applyMoves(moves) });
+          }}
+          label={`Tasks, ${label}`}
+        />
       </div>
       <p className="mt-2 text-xs text-zinc-500">
-        Read-only: tasks are placed by due date. Open a task to change its date, or use its project’s Calendar to drag
-        tasks between days.
+        {editable
+          ? "Drag a task to another day to move it (its start date moves too), drag its left or right end to change its start or due date, or use its calendar button. Tasks you can only view can’t be moved."
+          : "Tasks run from their start date to their due date. Your role in these projects lets you view them, not move them."}
       </p>
     </div>
-  );
-}
-
-function TaskChip({
-  task,
-  href,
-  open,
-  overdue,
-}: {
-  task: TeamCalendarTask;
-  href: string;
-  open: boolean;
-  overdue: boolean;
-}) {
-  const completed = Boolean(task.completedAt);
-  return (
-    <Link
-      href={href}
-      scroll={false}
-      aria-current={open ? "true" : undefined}
-      data-tooltip={`${task.title} · ${task.projectName}`}
-      className={`flex min-w-0 items-center gap-1.5 rounded-md border bg-white px-1.5 py-0.5 text-xs shadow-xs hover:border-zinc-300 ${
-        open ? "border-accent-500 ring-2 ring-accent-100" : overdue ? "border-red-200" : "border-zinc-200"
-      }`}
-    >
-      <span
-        aria-hidden
-        className={`size-2 shrink-0 ${task.kind === "milestone" ? "rotate-45 rounded-[1px]" : "rounded-full"} ${projectColorClass(task.projectId)}`}
-      />
-      <span
-        className={`min-w-0 flex-1 truncate ${completed ? "text-zinc-400 line-through" : overdue ? "text-red-700" : "text-zinc-800"}`}
-      >
-        {task.title}
-        <span className="sr-only">
-          {` in ${task.projectName}`}
-          {task.kind === "milestone" ? " (milestone)" : ""}
-          {completed ? " (completed)" : ""}
-          {overdue ? " (overdue)" : ""}
-        </span>
-      </span>
-    </Link>
   );
 }

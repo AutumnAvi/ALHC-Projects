@@ -4,6 +4,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 import { ShareDialog } from "@/components/project/share-dialog";
 import { StatusUpdatePanel } from "@/components/project/status-update-panel";
 import type { ProjectStatus } from "@/lib/portfolios";
+import type { StatusTemplate } from "@/lib/status-templates";
 
 // The project page's two overlays (Asana parity, batch 2): the Share dialog and the status update panel.
 // The header (Share button, member avatars, status menu) and the Overview tab (Add member, What's the
@@ -22,10 +23,13 @@ const ProjectPageContext = createContext<ProjectPage | null>(null);
 export function ProjectPageProvider({
   project,
   batch4,
+  statusTemplates = [],
   children,
 }: {
   project: { id: string; name: string };
   batch4: boolean;
+  // Real features 4: Customize → Status templates, offered in the status update panel.
+  statusTemplates?: StatusTemplate[];
   children: ReactNode;
 }) {
   const [sharing, setSharing] = useState(false);
@@ -49,6 +53,7 @@ export function ProjectPageProvider({
           projectId={project.id}
           projectName={project.name}
           initialStatus={statusUpdate}
+          templates={statusTemplates}
           onClose={() => setStatusUpdate(null)}
         />
       ) : null}

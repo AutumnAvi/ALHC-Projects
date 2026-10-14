@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useState, type DragEvent } from "react";
 import { Inbox } from "lucide-react";
+import { CALENDAR_DRAG_TYPE, CalendarGrid, type CalendarDrag, type CalendarItem } from "@/components/calendar/calendar-grid";
+import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { useCan } from "@/components/project/project-access";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { addDays, useToday } from "@/lib/dates";
@@ -18,13 +20,10 @@ const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const CAL_MODES = [
   { value: "month", label: "Month" },
   { value: "week", label: "Week" },
 ] as const;
-const DRAG_TYPE = "application/x-alhc-task";
-const MONTH_CELL_LIMIT = 3;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const weekday = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
@@ -66,10 +65,12 @@ function periodLabel(anchor: string, mode: "month" | "week") {
 }
 
 export function CalendarView({
+  projectId,
   tasks,
   profiles,
   openTaskId,
 }: {
+  projectId: string;
   tasks: ProjectTask[];
   profiles: Profile[];
   openTaskId: string | null;
@@ -77,12 +78,12 @@ export function CalendarView({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const today = useToday();
+  const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const shift = useDependencyShift();
   const canEdit = useCan("editor");
-  const [dragging, setDragging] = useState<string | null>(null);
-  const [dropDate, setDropDate] = useState<string | null | undefined>(undefined);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [drag, setDrag] = useState<CalendarDrag | null>(null);
+  const [overTray, setOverTray] = useState(false);
 
   const requested = searchParams.get("d");
   const mode = searchParams.get("cal") === "week" ? "week" : "month";
@@ -103,56 +104,39 @@ export function CalendarView({
     window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
   }
 
-  // A later due date can push dependent tasks; useDependencyShift asks first (and offers Undo).
-  function reschedule(taskId: string, dueOn: string | null) {
+  // The task pane's path: a later date can push dependent tasks, so useDependencyShift asks first (and
+  // offers Undo); the move shows at once and rolls back if the database refuses it.
+  function changeDates(taskId: string, dates: { startOn: string | null; dueOn: string | null }) {
     const task = optimisticTasks.find((t) => t.id === taskId);
-    if (!task || task.dueOn === dueOn) return;
-    shift.changeDates(task, { startOn: task.startOn, dueOn }, {
-      onOptimistic: (moves) => moves.forEach((m) => applyChange({ type: "due", taskId: m.taskId, dueOn: m.dueOn })),
+    if (!task || (task.startOn === dates.startOn && task.dueOn === dates.dueOn)) return;
+    shift.changeDates(task, dates, {
+      onOptimistic: (moves) =>
+        moves.forEach((m) => applyChange({ type: "dates", taskId: m.taskId, startOn: m.startOn, dueOn: m.dueOn })),
     });
   }
 
-  const dropProps = (date: string | null) => ({
-    onDragOver: (e: DragEvent) => {
-      if (!dragging) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      if (dropDate !== date) setDropDate(date);
-    },
-    onDrop: (e: DragEvent) => {
-      e.preventDefault();
-      const taskId = e.dataTransfer.getData(DRAG_TYPE);
-      if (taskId) reschedule(taskId, date);
-      setDragging(null);
-      setDropDate(undefined);
-    },
+  const items: CalendarItem[] = optimisticTasks.flatMap((task) => {
+    if (!task.dueOn) return [];
+    const completed = Boolean(task.completedAt);
+    const overdue = Boolean(today && !completed && task.dueOn < today);
+    const milestone = task.kind === "milestone";
+    return [
+      {
+        id: task.id,
+        title: task.title,
+        startOn: task.startOn && task.startOn < task.dueOn && !milestone ? task.startOn : null,
+        dueOn: task.dueOn,
+        completed,
+        milestone,
+        overdue,
+        canEdit,
+        open: openTaskId === task.id,
+        href: taskHref(task.id),
+        dotClass: completed ? "bg-green-500" : overdue ? "bg-red-500" : milestone ? "bg-accent-600" : "bg-zinc-300",
+        tooltip: task.title,
+      },
+    ];
   });
-
-  const chipProps = (task: ProjectTask) => ({
-    task,
-    assignee: task.assigneeId ? profilesById.get(task.assigneeId) : undefined,
-    open: openTaskId === task.id,
-    overdue: Boolean(today && task.dueOn && !task.completedAt && task.dueOn < today),
-    dragging: dragging === task.id,
-    draggable: canEdit,
-    onDragStart: (e: DragEvent) => {
-      e.dataTransfer.setData(DRAG_TYPE, task.id);
-      e.dataTransfer.effectAllowed = "move";
-      setDragging(task.id);
-    },
-    onDragEnd: () => {
-      setDragging(null);
-      setDropDate(undefined);
-    },
-  });
-
-  const byDate = new Map<string, ProjectTask[]>();
-  for (const task of optimisticTasks) {
-    if (!task.dueOn) continue;
-    const list = byDate.get(task.dueOn) ?? [];
-    list.push(task);
-    byDate.set(task.dueOn, list);
-  }
   const tray = optimisticTasks.filter((t) => !t.dueOn && !t.completedAt);
 
   if (!anchor) {
@@ -160,7 +144,6 @@ export function CalendarView({
   }
 
   const days = visibleDays(anchor, mode);
-  const currentMonth = anchor.slice(0, 7);
   const step = (delta: number) =>
     navigate({ d: mode === "week" ? addDays(anchor, delta * 7) : shiftMonth(anchor, delta) });
 
@@ -176,73 +159,59 @@ export function CalendarView({
           onNext={() => step(1)}
           onToday={() => navigate({ d: null })}
         >
-          <Segmented
-            label="Calendar range"
-            options={CAL_MODES}
-            value={mode}
-            onChange={(m) => navigate({ cal: m })}
-          />
+          <div className="flex items-center gap-1">
+            <SyncCalendarButton scope="project" targetId={projectId} />
+            <Segmented
+              label="Calendar range"
+              options={CAL_MODES}
+              value={mode}
+              onChange={(m) => navigate({ cal: m })}
+            />
+          </div>
         </PeriodNav>
 
-        <div className="grid grid-cols-7 rounded-t-lg border border-b-0 border-zinc-200 bg-zinc-50 py-1 text-xs font-medium text-zinc-500" aria-hidden>
-          {WEEKDAYS.map((d) => (
-            <span key={d} className="px-2">
-              {d}
-            </span>
-          ))}
-        </div>
-        <ol
-          className={`grid min-h-0 flex-1 grid-cols-7 border-l border-zinc-200 ${mode === "week" ? "auto-rows-[minmax(16rem,1fr)]" : "auto-rows-[minmax(7rem,1fr)]"}`}
-          aria-label={`Tasks due, ${periodLabel(anchor, mode)}`}
-        >
-          {days.map((date) => {
-            const dayTasks = byDate.get(date) ?? [];
-            const isOpen = mode === "week" || expanded.has(date);
-            const shown = isOpen ? dayTasks : dayTasks.slice(0, MONTH_CELL_LIMIT);
-            const outside = mode === "month" && date.slice(0, 7) !== currentMonth;
-            const isToday = date === today;
-            const target = dragging && dropDate === date;
-            return (
-              <li
-                key={date}
-                {...dropProps(date)}
-                aria-label={`${date}: ${dayTasks.length} task${dayTasks.length === 1 ? "" : "s"}`}
-                className={`flex min-w-0 flex-col gap-1 border-r border-b border-zinc-200 p-1.5 ${
-                  target ? "bg-accent-50" : outside ? "bg-zinc-50/70" : "bg-white"
-                }`}
-              >
-                <span
-                  className={`self-start rounded-full px-1.5 text-xs tabular-nums ${
-                    isToday ? "bg-accent-600 font-semibold text-white" : outside ? "text-zinc-400" : "text-zinc-600"
-                  }`}
-                >
-                  {Number(date.slice(8))}
-                </span>
-                {shown.map((task) => (
-                  <CalendarChip key={task.id} {...chipProps(task)} />
-                ))}
-                {!isOpen && dayTasks.length > MONTH_CELL_LIMIT ? (
-                  <button
-                    type="button"
-                    onClick={() => setExpanded((s) => new Set(s).add(date))}
-                    className="self-start rounded px-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-                  >
-                    +{dayTasks.length - MONTH_CELL_LIMIT} more
-                  </button>
-                ) : null}
-              </li>
-            );
-          })}
-        </ol>
+        <CalendarGrid
+          key={`${mode}-${days[0]}`}
+          days={days}
+          month={mode === "month" ? anchor.slice(0, 7) : null}
+          today={today}
+          items={items}
+          drag={drag}
+          onDragChange={setDrag}
+          onChange={(item, dates) => changeDates(item.id, dates)}
+          onDropExternal={(taskId, day) => {
+            const task = optimisticTasks.find((t) => t.id === taskId);
+            if (task) changeDates(taskId, { startOn: task.startOn && task.startOn <= day ? task.startOn : null, dueOn: day });
+          }}
+          label={`Tasks, ${periodLabel(anchor, mode)}`}
+          tall={mode === "week"}
+        />
         <p className={VIEW_HINT}>
-          Tasks are placed by due date. Drag a task to another day to reschedule it, or onto “No due date” to clear it.
+          {canEdit
+            ? "Drag a task to another day to move it (its start date moves too), drag its left or right end to change its start or due date, or use its calendar button. Drop it on “No due date” to clear it."
+            : "Tasks run from their start date to their due date. Your role in this project lets you view them, not move them."}
         </p>
       </div>
 
       <aside
-        {...dropProps(null)}
+        onDragOver={(e: DragEvent) => {
+          if (!drag || drag.mode === "external") return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          if (!overTray) setOverTray(true);
+        }}
+        onDragLeave={() => setOverTray(false)}
+        onDrop={(e: DragEvent) => {
+          e.preventDefault();
+          const current = drag;
+          setDrag(null);
+          setOverTray(false);
+          if (!current || current.mode === "external") return;
+          const task = optimisticTasks.find((t) => t.id === current.id);
+          if (task) changeDates(task.id, { startOn: task.startOn, dueOn: null });
+        }}
         aria-label="Tasks without a due date"
-        className={trayClass(Boolean(dragging) && dropDate === null)}
+        className={trayClass(overTray)}
       >
         <h3 className={TRAY_HEADING}>
           <Inbox className="size-4 text-zinc-500" aria-hidden />
@@ -251,7 +220,20 @@ export function CalendarView({
         </h3>
         <div className="flex min-h-0 flex-col gap-1.5 overflow-y-auto">
           {tray.map((task) => (
-            <CalendarChip key={task.id} {...chipProps(task)} roomy />
+            <CalendarChip
+              key={task.id}
+              task={task}
+              assignee={task.assigneeId ? profilesById.get(task.assigneeId) : undefined}
+              open={openTaskId === task.id}
+              dragging={drag?.id === task.id}
+              draggable={canEdit}
+              onDragStart={(e: DragEvent) => {
+                e.dataTransfer.setData(CALENDAR_DRAG_TYPE, task.id);
+                e.dataTransfer.effectAllowed = "move";
+                setDrag({ id: task.id, mode: "external" });
+              }}
+              onDragEnd={() => setDrag(null)}
+            />
           ))}
           {tray.length === 0 ? (
             <p className={TRAY_EMPTY}>Every incomplete task in this view has a due date.</p>
@@ -266,9 +248,7 @@ function CalendarChip({
   task,
   assignee,
   open,
-  overdue,
   dragging,
-  roomy = false,
   draggable,
   onDragStart,
   onDragEnd,
@@ -276,43 +256,34 @@ function CalendarChip({
   task: ProjectTask;
   assignee: Profile | undefined;
   open: boolean;
-  overdue: boolean;
   dragging: boolean;
-  roomy?: boolean;
   draggable: boolean;
   onDragStart: (e: DragEvent) => void;
   onDragEnd: () => void;
 }) {
   const taskHref = useTaskHref();
-  const completed = Boolean(task.completedAt);
   return (
     <Link
       href={taskHref(task.id)}
       scroll={false}
       draggable={draggable}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      onDragStart={draggable ? onDragStart : undefined}
+      onDragEnd={draggable ? onDragEnd : undefined}
       aria-current={open ? "true" : undefined}
       title={task.title}
-      className={`flex min-w-0 items-center gap-1.5 rounded-md border bg-white px-1.5 text-xs shadow-xs hover:border-zinc-300 ${
-        roomy ? "py-1.5" : "py-0.5"
-      } ${open ? "border-accent-500 ring-2 ring-accent-100" : overdue ? "border-red-200" : "border-zinc-200"} ${
-        dragging ? "opacity-40" : ""
-      }`}
+      className={`flex min-w-0 items-center gap-1.5 rounded-md border bg-white px-1.5 py-1.5 text-xs shadow-xs hover:border-zinc-300 ${
+        open ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200"
+      } ${dragging ? "opacity-40" : ""} ${draggable ? "cursor-grab" : ""}`}
     >
       <span
         aria-hidden
-        className={`size-2 shrink-0 ${task.kind === "milestone" ? "rotate-45 rounded-[1px]" : "rounded-full"} ${
-          completed ? "bg-green-500" : overdue ? "bg-red-500" : task.kind === "milestone" ? "bg-accent-600" : "bg-zinc-300"
-        }`}
+        className={`size-2 shrink-0 ${task.kind === "milestone" ? "rotate-45 rounded-[1px] bg-accent-600" : "rounded-full bg-zinc-300"}`}
       />
-      <span className={`min-w-0 flex-1 truncate ${completed ? "text-zinc-400 line-through" : "text-zinc-800"}`}>
+      <span className="min-w-0 flex-1 truncate text-zinc-800">
         {task.title}
         {task.kind === "milestone" ? <span className="sr-only"> (milestone)</span> : null}
-        {completed ? <span className="sr-only"> (completed)</span> : null}
-        {overdue ? <span className="sr-only"> (overdue)</span> : null}
       </span>
-      {roomy ? <Assignee profile={assignee} /> : null}
+      <Assignee profile={assignee} />
     </Link>
   );
 }

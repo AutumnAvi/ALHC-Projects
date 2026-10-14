@@ -122,7 +122,7 @@ export async function ProjectViewPage({
         {layout === "board" ? (
           <BoardView key={`board-${view?.id ?? "default"}`} {...props} sectionTaskCounts={sectionTaskCounts} />
         ) : null}
-        {layout === "calendar" ? <CalendarView tasks={visible} profiles={profiles} openTaskId={openTaskId} /> : null}
+        {layout === "calendar" ? <CalendarView projectId={projectId} tasks={visible} profiles={profiles} openTaskId={openTaskId} /> : null}
         {layout === "timeline" ? (
           <TimelineView
             key={`timeline-${view?.id ?? "default"}`}

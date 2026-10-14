@@ -746,7 +746,8 @@ begin
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.prosecdef and has_function_privilege('anon', p.oid, 'execute');
   -- Real features 3 added email_unsubscribe (the one-click "Turn off" links in digest and report emails).
-  assert exposed = 'email_unsubscribe,get_public_form,receive_inbound_webhook,submit_form', format('anon SECURITY DEFINER surface: %s', exposed);
+  -- Real features 4 added calendar_feed (the iCal subscribe links).
+  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,submit_form', format('anon SECURITY DEFINER surface: %s', exposed);
 
   assert not has_function_privilege('anon', 'public.create_inbound_endpoint(uuid, text, uuid, uuid, uuid[], boolean)', 'execute')
     and not has_function_privilege('anon', 'public.rotate_inbound_token(uuid)', 'execute')

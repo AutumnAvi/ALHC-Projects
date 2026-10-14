@@ -503,7 +503,9 @@ begin
   -- limit, and Idempotency-Key, then writes the task as the endpoint's creator — the submit_form pattern).
   -- Real features 3 added email_unsubscribe (the one-click "Turn off" links in digest and report emails:
   -- a token in, one switch off, nothing returned about anyone; anon only).
-  assert exposed = 'email_unsubscribe,get_public_form,receive_inbound_webhook,submit_form', format('anon SECURITY DEFINER surface changed: %s', exposed);
+  -- Real features 4 added calendar_feed (the iCal subscribe links: a hashed token in, that feed's events
+  -- out, built with the token owner's own access at every fetch; anon only).
+  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,submit_form', format('anon SECURITY DEFINER surface changed: %s', exposed);
 
   select string_agg(p.proname, ',' order by p.proname) into exposed
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace

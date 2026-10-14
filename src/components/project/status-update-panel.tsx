@@ -7,20 +7,24 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { setProjectStatus } from "@/lib/actions";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, type ProjectStatus } from "@/lib/portfolios";
 import { STATUS_SUMMARY_MAX, STATUS_TITLE_MAX, defaultStatusTitle } from "@/lib/project-page";
+import { renderStatusTemplate, type StatusTemplate } from "@/lib/status-templates";
 
 // Asana's status update: picking a status in the header or on the Overview opens this panel on the right
 // with a title, the status, and a summary. Publishing goes through set_project_status (Editors and
 // above; post_project_status_update adds the title), so the project's status, its history, portfolio
-// cards, and reports all follow.
+// cards, and reports all follow. Since Real features 4 a status template (Customize → Status templates)
+// fills in the status, title, and summary headings; everything stays editable before publishing.
 export function StatusUpdatePanel({
   projectId,
   projectName,
   initialStatus,
+  templates = [],
   onClose,
 }: {
   projectId: string;
   projectName: string;
   initialStatus: ProjectStatus;
+  templates?: StatusTemplate[];
   onClose: () => void;
 }) {
   const titleId = useId();
@@ -29,6 +33,9 @@ export function StatusUpdatePanel({
   const [title, setTitle] = useState(() => defaultStatusTitle());
   const [status, setStatus] = useState<ProjectStatus>(initialStatus);
   const [summary, setSummary] = useState("");
+  const [templateId, setTemplateId] = useState("");
+  // What the last template filled in, so picking another one only asks when the summary was edited.
+  const [prefilled, setPrefilled] = useState("");
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef(onClose);
 
@@ -51,6 +58,17 @@ export function StatusUpdatePanel({
       returnFocus?.focus?.();
     };
   }, []);
+
+  function applyTemplate(id: string) {
+    const template = templates.find((t) => t.id === id);
+    const next = template ? renderStatusTemplate(template.sections) : "";
+    if (summary.trim() && summary !== prefilled && !window.confirm("Replace the summary you wrote with this template?")) return;
+    setTemplateId(id);
+    setSummary(next);
+    setPrefilled(next);
+    if (template?.status) setStatus(template.status);
+    setTitle(template?.title ?? defaultStatusTitle());
+  }
 
   function publish() {
     run(async () => {
@@ -90,6 +108,26 @@ export function StatusUpdatePanel({
           }}
         >
           <fieldset disabled={pending} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+            {templates.length ? (
+              <div>
+                <label htmlFor="status-update-template" className="block text-xs font-medium text-zinc-600">
+                  Template
+                </label>
+                <select
+                  id="status-update-template"
+                  value={templateId}
+                  onChange={(e) => applyTemplate(e.currentTarget.value)}
+                  className="field mt-1 w-full"
+                >
+                  <option value="">No template</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div>
               <label htmlFor="status-update-title" className="block text-xs font-medium text-zinc-600">
                 Title

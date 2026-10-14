@@ -16,6 +16,8 @@ const PUBLIC_PATHS = [
   // The one-click "Turn off" links in digest and report emails (Real features 3): a token, no sign-in.
   "/email/off",
   "/api/email/unsubscribe",
+  // Calendar subscribe links (Real features 4): a token in the URL, no sign-in.
+  "/api/calendar",
 ];
 
 function isPublicPath(pathname: string) {

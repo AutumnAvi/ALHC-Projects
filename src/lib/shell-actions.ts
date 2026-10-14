@@ -19,9 +19,11 @@ import {
   listProjects,
   listProjectTemplates,
   listReadableProjects,
+  listMyCalendarFeeds,
   listTeams,
   type MySettings,
 } from "@/lib/data";
+import { isCalendarFeedScope, type CalendarFeed } from "@/lib/calendar-feeds";
 import { isEmailConfigured } from "@/lib/email";
 import { forwardingAddress, isInboundEmailConfigured } from "@/lib/email-reply";
 import { fieldTypeLabel, isFieldType } from "@/lib/fields";
@@ -327,4 +329,35 @@ export async function loadTemplatePreview(templateId: string): Promise<TemplateP
       return [{ name, type: fieldTypeLabel({ fieldType: f.field_type, boundToSections: f.bound_to_sections === true }) }];
     }),
   };
+}
+
+// The "Sync to calendar" dialog (Real features 4): the person's live link for My tasks, a project, or a
+// team (never the token: only its hint), and the name of what it covers, read with their own client.
+// available = false on a database without the update.
+export async function loadCalendarFeed(
+  scope: string,
+  targetId: string | null,
+): Promise<{ available: boolean; feed: CalendarFeed | null; targetName: string | null } | null> {
+  if (!(await signedIn()) || !isCalendarFeedScope(scope)) return null;
+  if (scope !== "my_tasks" && !isUuid(targetId)) return null;
+  const feeds = await listMyCalendarFeeds();
+  if (!feeds) return { available: false, feed: null, targetName: null };
+  const feed =
+    feeds.find((f) => f.scope === scope && (scope === "my_tasks" || f.projectId === targetId || f.teamId === targetId)) ?? null;
+  let targetName: string | null = scope === "my_tasks" ? "My tasks" : (feed?.targetName ?? null);
+  if (!targetName && targetId) {
+    const supabase = await createClient();
+    const row =
+      scope === "project"
+        ? (await supabase.from("projects").select("name").eq("id", targetId).is("deleted_at", null).maybeSingle()).data
+        : (await supabase.from("teams").select("name").eq("id", targetId).is("deleted_at", null).maybeSingle()).data;
+    targetName = row?.name ?? null;
+  }
+  return { available: true, feed, targetName };
+}
+
+// Settings → Calendar sync: every live link of the person's. Null on a database without the update.
+export async function loadCalendarFeeds(): Promise<CalendarFeed[] | null> {
+  if (!(await signedIn())) return null;
+  return listMyCalendarFeeds();
 }
