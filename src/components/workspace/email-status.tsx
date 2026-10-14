@@ -27,6 +27,12 @@ export function EmailDeliveryCard({ isAdmin, invitesHref }: { isAdmin: boolean; 
         </dd>
         <dt className="text-zinc-500">Reply by email</dt>
         <dd className="text-zinc-900">{isInboundEmailConfigured() ? "On — replies to comment emails become comments" : "Off"}</dd>
+        <dt className="text-zinc-500">Bounces and complaints</dt>
+        <dd className="text-zinc-900">
+          {isInboundEmailConfigured()
+            ? "Tracked from the Resend webhook’s delivery events; bounced and spam-reporting addresses stop getting email"
+            : "Off — needs the Resend webhook (the same one reply by email uses)"}
+        </dd>
         <dt className="text-zinc-500">Invites</dt>
         <dd className="text-zinc-900">
           {isAdmin ? (

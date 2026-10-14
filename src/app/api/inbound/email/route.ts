@@ -11,6 +11,7 @@ import {
   stripQuotedReply,
   verifyResendWebhook,
 } from "@/lib/email-reply";
+import { isResendDeliveryEvent, RESEND_DELIVERY_EVENTS } from "@/lib/email-schedules";
 import { drainIntegrationOutbox } from "@/lib/integrations";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -28,12 +29,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // — only when the sender is the token's person and Resend reports DMARC passing for it; the token is the
 // secret, never the From header alone. Unknown and rotated tokens are logged (email_forwards) and
 // dropped. The email's attachments are copied into the task after the response.
+//
+// Delivery tracking (Real features 3) uses the same verified webhook too: email.delivered,
+// email.delivery_delayed, email.bounced, email.complained, and email.suppressed events are stored on the
+// outbox row they belong to (record_email_event, service role), and a permanent bounce, a spam complaint,
+// or Resend's own suppression puts the address on the suppression list (Admin console → Email).
 
 export const dynamic = "force-dynamic";
 // Copying a forwarded email's attachments (up to 10 × 25 MB) runs after the response.
 export const maxDuration = 60;
 
 const MAX_WEBHOOK_BYTES = 256 * 1024;
+// How long a delivery event for an email id we don't know yet is worth a retry (see deliveryEvent).
+const RETRY_UNKNOWN_FOR_MS = 90_000;
 
 function json(body: unknown, status: number) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -89,12 +97,25 @@ export async function POST(request: Request) {
   );
   if (!verified) return json({ ok: false, error: "Unauthorized" }, 401);
 
-  let event: { type?: unknown; data?: { email_id?: unknown; to?: unknown; received_for?: unknown } };
+  let event: {
+    type?: unknown;
+    created_at?: unknown;
+    data?: {
+      email_id?: unknown;
+      to?: unknown;
+      received_for?: unknown;
+      bounce?: { type?: unknown; subType?: unknown } | null;
+      suppressed?: { type?: unknown } | null;
+    };
+  };
   try {
     event = JSON.parse(raw);
   } catch {
     return json({ ok: false, error: "Invalid JSON" }, 400);
   }
+  // Delivery events for emails we sent (Real features 3): delivered, delayed, bounced, complained, or
+  // suppressed by Resend, stored on the outbox row; permanent bounces and complaints stop further email.
+  if (isResendDeliveryEvent(event.type) && event.data) return deliveryEvent(event.type, event.created_at, event.data);
   // Acknowledge anything that isn't a received email (or isn't for a reply address) so Resend stops.
   if (event.type !== "email.received" || !event.data) return json({ ok: true, ignored: true }, 200);
   const recipients = [
@@ -231,6 +252,56 @@ async function forwardedEmail(
     }
   });
   return json({ ok: true, status: "created" }, 200);
+}
+
+// Text fields of a bounce or suppression report, trimmed (never the free-text message: it can hold the
+// address or the receiving server's details).
+function shortText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 60) : null;
+}
+
+function eventTime(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? null : new Date(time).toISOString();
+}
+
+// A delivery event for one of our emails, recorded with the service role (record_email_event is
+// service_role only). Events for emails we never sent (another app on the same Resend account, or rows
+// the log purge removed) are acknowledged and ignored. 5xx lets Resend retry; a retry is harmless.
+async function deliveryEvent(
+  type: (typeof RESEND_DELIVERY_EVENTS)[number],
+  createdAt: unknown,
+  data: { email_id?: unknown; bounce?: { type?: unknown; subType?: unknown } | null; suppressed?: { type?: unknown } | null },
+) {
+  const emailId = typeof data.email_id === "string" ? data.email_id : null;
+  if (!emailId || !/^[\w-]{1,100}$/.test(emailId)) return json({ ok: true, ignored: true }, 200);
+  const admin = createAdminClient();
+  if (!admin) return json({ ok: false, error: "Service unavailable" }, 503);
+  const bounce = data.bounce && typeof data.bounce === "object" ? data.bounce : null;
+  const suppressed = data.suppressed && typeof data.suppressed === "object" ? data.suppressed : null;
+  const { data: result, error } = await admin.rpc("record_email_event", {
+    provider_email_id: emailId,
+    event_type: type,
+    event_time: eventTime(createdAt),
+    bounce_type: shortText(bounce?.type ?? suppressed?.type),
+    bounce_subtype: shortText(bounce?.subType),
+  });
+  if (error) {
+    // A database without this release's update can't store it; acknowledge so Resend doesn't retry forever.
+    if (error.code === "PGRST202") return json({ ok: true, ignored: true }, 200);
+    console.error("Email event failed", error.code);
+    return json({ ok: false, error: "Something went wrong" }, 500);
+  }
+  const status = (result as { status?: string } | null)?.status ?? "ignored";
+  console.info(`Email event: ${type} → ${status}`);
+  // A very fresh event can beat the drain recording Resend's id on the email (the send and the event race);
+  // a 503 makes Resend try again shortly. Older unknown ids (not our email) are acknowledged.
+  const happened = eventTime(createdAt);
+  if (status === "unknown" && happened && Date.now() - Date.parse(happened) < RETRY_UNKNOWN_FOR_MS) {
+    return json({ ok: false, error: "Not recorded yet" }, 503);
+  }
+  return json({ ok: true, status }, 200);
 }
 
 export async function GET() {

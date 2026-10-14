@@ -7,6 +7,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { cancelIntegrationDelivery, retryEmailDelivery, retryIntegrationDelivery } from "@/lib/actions";
+import { emailStatusBadge } from "@/lib/email-schedules";
 import {
   DELIVERY_STATUS_LABELS,
   MAX_AUTO_ATTEMPTS,
@@ -185,6 +186,12 @@ function StatusBadge({ status }: { status: DeliveryStatus }) {
   );
 }
 
+// What Resend reported after sending (Real features 3): Delivered, Delayed, Bounced, Complained.
+function DeliveryEventBadge({ status }: { status: string }) {
+  const badge = emailStatusBadge("sent", status);
+  return <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${badge.className}`}>{badge.label}</span>;
+}
+
 function EmailRow({ projectId, email: e }: { projectId: string; email: EmailDelivery }) {
   const [pending, run] = useServerAction();
   const kind = emailKindLabel(e.kind);
@@ -194,6 +201,7 @@ function EmailRow({ projectId, email: e }: { projectId: string; email: EmailDeli
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <StatusBadge status={e.status} />
+          {e.status === "sent" && e.deliveryStatus ? <DeliveryEventBadge status={e.deliveryStatus} /> : null}
           <span className="font-medium text-zinc-900">{kind}</span>
           <span className="text-zinc-500">to</span>
           <span className="min-w-0 break-all text-zinc-700">{e.recipient}</span>

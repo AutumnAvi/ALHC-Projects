@@ -264,6 +264,12 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 - **Team pages preselect the team** in Create project and Create goal (projects fall back to the default team when you aren't on that team).
 - **Home → Create task** opens an inline row at the top of My tasks (Enter saves and keeps the row open, Esc cancels); Tab then Q does the same on Home.
 
+## What's here (Real features 3: email extras)
+
+- **Inbox email digest** (Settings → Notifications): Off, Daily, or Weekly (pick the day), at an hour in your own time zone. One email lists your unread, unarchived Inbox notifications since the last digest, grouped by project (or team), each linking to the task, message, or project. It's skipped when there's nothing new, it re-checks just before sending that you can still open everything in it (and drops what you've read since), and nothing is ever in two digests. Every digest has a **Turn off digest** link that works without signing in (and mail apps' own one-click Unsubscribe).
+- **Scheduled report emails** (Reports → **Schedule email**, on Overview with its current filters or on All projects): pick people in the workspace, daily / weekly on a weekday / monthly on a day (1–28), and an hour. Each recipient's copy — the key numbers, a by-project table, and the oldest overdue tasks — is built with **their own** access: projects they can't open are left out, and anyone who can open none of the report's projects is skipped. **Reports → Scheduled emails** lists yours with Last sent and the next run; Pause / Resume, Edit, and Remove. Recipients can turn off all report emails in Settings → Notifications or from the email.
+- **Bounce and complaint tracking:** the Resend webhook now also records delivered, delayed, bounced, complained (marked as spam), and suppressed-by-Resend events on each email. **Admin console → Email** shows the last 30 days (Sent / Delivered / Bounced / Marked as spam / …), the latest emails of every kind with their real status (addresses outside the workspace partly hidden; never what an email was about), and a **suppression list**: after a permanent bounce, a spam complaint, or Resend's own suppression, no more email goes to that address (the Inbox keeps working) until a workspace admin clears it. Task activity and project Deliveries show Delivered / Bounced too.
+
 ## Setup: Supabase
 
 1. **Create a project** at [supabase.com/dashboard](https://supabase.com/dashboard). Note the project ref (the `xxxx` in `https://xxxx.supabase.co`).
@@ -301,6 +307,8 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 
    Without `pg_cron`, the Vercel cron below runs `workflow_tick()` once a day instead.
 
+   Since Real features 3 the migration also schedules **`alhc-scheduled-emails`** every 5 minutes (`select public.alhc_queue_scheduled_emails()`), which queues due Inbox digests and scheduled report emails; the every-minute delivery kick then sends them. Without `pg_cron` the cron route queues them too, but only as often as it runs.
+
 ## Setup: email (Resend) and the workflows cron
 
 1. In [Resend](https://resend.com), verify a sending domain and create an API key.
@@ -331,9 +339,11 @@ Comment emails get a per-person, per-task **Reply-To** address (`r-<token>@reply
 
    It's a new subdomain, so the root domain's Google Workspace mail is unaffected. It must be the only (lowest-priority) MX for that subdomain.
 2. **Resend → Domains:** add `reply.mail.autumnlakemarketing.com` (or turn on **Receiving** for an existing domain that covers it), add the MX record it shows, click **I've added the record**, and wait for Receiving to show **Verified**.
-3. **Resend → Webhooks → Add webhook:** endpoint `https://<your production domain>/api/inbound/email`, event **`email.received`** only. Copy its **signing secret** (`whsec_…`).
+3. **Resend → Webhooks → Add webhook:** endpoint `https://<your production domain>/api/inbound/email`, event **`email.received`**, plus (since Real features 3, for bounce and complaint tracking) **`email.delivered`**, **`email.delivery_delayed`**, **`email.bounced`**, **`email.complained`**, and **`email.suppressed`**. Copy its **signing secret** (`whsec_…`). If the webhook already exists, edit it and tick the five delivery events — same endpoint, same secret.
 4. **Vercel → Environment Variables (Production):** `RESEND_WEBHOOK_SECRET` = that signing secret. Optional `EMAIL_REPLY_DOMAIN` if you use another receiving domain. Redeploy.
 5. Test it: comment on a task someone else follows, have them reply to the email, and the reply shows up as their comment. If it doesn't, the Resend webhook's delivery log shows the route's answer. The route also logs `Reply by email: rejected (sender_mismatch | no_access | unknown_token | empty)` without the body or address.
+
+**Bounce and complaint tracking** uses the same webhook and secret: each delivery event is matched to the email it's about by Resend's email id (events for emails this app didn't send are ignored) and shown in Admin console → Email. A permanent bounce, a spam complaint, or Resend's own suppression puts the address on the suppression list there; a workspace admin can clear it. Addresses Resend itself suppressed also need removing in Resend → Suppressions. The route logs `Email event: email.bounced → bounced`, never an address.
 
 A reply is posted only when the token matches, the sender's address is that person's ALHC address, Resend didn't report a failed DMARC check, and the person can still comment on the task.
 
@@ -442,7 +452,7 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | Optional. Email via Resend; mocked when unset |
    | `INTEGRATIONS_MOCK` | Optional. `true` logs Slack/webhook deliveries instead of sending them |
    | `CRON_SECRET` | Secret for `/api/cron/workflows` (also stored in Supabase Vault as `alhc_cron_secret` for the every-minute delivery kick) |
-   | `RESEND_WEBHOOK_SECRET` | Optional. Resend webhook signing secret (`whsec_…`) for reply by email and email forwarding; without it both are off |
+   | `RESEND_WEBHOOK_SECRET` | Optional. Resend webhook signing secret (`whsec_…`) for reply by email, email forwarding, and bounce / complaint tracking; without it all three are off |
    | `EMAIL_REPLY_DOMAIN` | Optional. Receiving domain for reply addresses (default `reply.mail.autumnlakemarketing.com`) |
    | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links, webhook `task.url` links, and Slack task links |
    | `AUTH_GOOGLE_ENABLED` | Optional. `true` shows "Continue with Google" once the Google provider is configured |

@@ -7,8 +7,19 @@ import { EmptyState } from "@/components/ui";
 import { SenderNameSettings } from "@/components/workspace/email-settings";
 import { EmailDeliveryCard, fromAddress } from "@/components/workspace/email-status";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
+import { RecentEmails, SuppressionList } from "@/components/admin/email-deliveries";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
-import { getWorkspace, listInviteDeliveries, listOwnProjectRoles, listProjects, type InviteDelivery } from "@/lib/data";
+import {
+  getWorkspace,
+  listEmailSuppressions,
+  listInviteDeliveries,
+  listOwnProjectRoles,
+  listProjects,
+  listWorkspaceEmailDeliveries,
+  workspaceEmailSummary,
+  type InviteDelivery,
+} from "@/lib/data";
+import { emailStatusBadge } from "@/lib/email-schedules";
 import { projectColorClass } from "@/lib/project-colors";
 import { hasRole } from "@/lib/roles";
 
@@ -16,18 +27,12 @@ export const metadata: Metadata = { title: "Email · Admin console" };
 
 const INVITE_LIMIT = 50;
 
-const INVITE_STATUS: Record<string, { label: string; className: string }> = {
-  pending: { label: "Queued", className: "bg-amber-50 text-amber-800" },
-  sending: { label: "Sending", className: "bg-accent-50 text-accent-700" },
-  sent: { label: "Sent", className: "bg-green-50 text-green-800" },
-  mocked: { label: "Not sent (no email provider)", className: "bg-zinc-100 text-zinc-600" },
-  failed: { label: "Failed", className: "bg-red-50 text-red-700" },
-  cancelled: { label: "Cancelled", className: "bg-zinc-100 text-zinc-600" },
-};
+const RECENT_LIMIT = 100;
+const SUMMARY_DAYS = 30;
 
+// Sent / Delivered / Bounced / Complained once Resend reported it (Real features 3).
 function inviteStatus(d: InviteDelivery) {
-  if (d.status === "pending" && d.attempts > 0) return { label: "Retrying", className: "bg-amber-50 text-amber-800" };
-  return INVITE_STATUS[d.status] ?? { label: d.status, className: "bg-zinc-100 text-zinc-600" };
+  return emailStatusBadge(d.status, d.deliveryStatus, d.attempts);
 }
 
 // Admin console → Email: the sender name, whether email goes out at all, the latest workspace invite
@@ -35,11 +40,14 @@ function inviteStatus(d: InviteDelivery) {
 // administers by their own role — being a workspace admin never opens one.
 export default async function AdminEmailPage() {
   await requireWorkspaceAdmin();
-  const [workspace, invites, roles, projects] = await Promise.all([
+  const [workspace, invites, roles, projects, summary, recent, suppressions] = await Promise.all([
     getWorkspace(),
     listInviteDeliveries(INVITE_LIMIT),
     listOwnProjectRoles(),
     listProjects(),
+    workspaceEmailSummary(SUMMARY_DAYS),
+    listWorkspaceEmailDeliveries(RECENT_LIMIT),
+    listEmailSuppressions(),
   ]);
   const administered = projects.filter((p) => {
     const role = roles.get(p.id);
@@ -50,6 +58,73 @@ export default async function AdminEmailPage() {
     <AdminPage title="Email" description="How the workspace’s emails look and whether they went out.">
       <SenderNameSettings senderName={workspace?.emailSenderName ?? null} fromAddress={fromAddress()} isAdmin />
       <EmailDeliveryCard isAdmin invitesHref="/admin/users?tab=invited" />
+
+      {summary && recent && suppressions ? (
+        <>
+          <SettingsCard
+            id="admin-email-tracking"
+            title={`Last ${SUMMARY_DAYS} days`}
+            description="Every email the workspace sent, and what Resend reported back about it: delivered, delayed, bounced, or marked as spam."
+            isAdmin
+          >
+            <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                { label: "Sent", value: summary.sent },
+                { label: "Delivered", value: summary.delivered },
+                { label: "Bounced", value: summary.bounced, bad: true },
+                { label: "Marked as spam", value: summary.complained, bad: true },
+                { label: "Delayed", value: summary.delayed },
+                { label: "Failed before sending", value: summary.failed, bad: true },
+                { label: "Waiting to send", value: summary.waiting },
+                { label: "Suppressed addresses", value: summary.suppressedAddresses, bad: true },
+              ].map((tile) => (
+                <div key={tile.label} className="rounded-md bg-zinc-50 px-3 py-2">
+                  <dt className="text-xs text-zinc-500">{tile.label}</dt>
+                  <dd className={`text-lg font-semibold tabular-nums ${tile.bad && tile.value > 0 ? "text-red-700" : "text-zinc-900"}`}>
+                    {tile.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-3 text-xs text-zinc-500">
+              Delivered, bounced, and spam reports arrive through the Resend webhook. Until its delivery events are turned on
+              in Resend, emails stay at Sent. “Failed before sending” includes emails the app held back on purpose (for
+              example, to a suppressed address, or a notification already read in the Inbox).
+            </p>
+          </SettingsCard>
+
+          <SettingsCard
+            id="admin-email-suppressions"
+            title={
+              <>
+                Suppression list <span className="font-normal text-zinc-500">· {suppressions.length}</span>
+              </>
+            }
+            description="No email goes to these addresses (their Inbox still works). An address lands here after a permanent bounce, a spam complaint, or when Resend itself suppresses it."
+            isAdmin
+            flush
+          >
+            <SuppressionList suppressions={suppressions} />
+          </SettingsCard>
+
+          <SettingsCard
+            id="admin-recent-emails"
+            title="Recent emails"
+            description={`The latest ${RECENT_LIMIT} emails of every kind, with their status. Addresses outside the workspace are partly hidden, and nothing here says what an email was about.`}
+            isAdmin
+            flush
+          >
+            <RecentEmails deliveries={recent} />
+          </SettingsCard>
+        </>
+      ) : (
+        <SettingsCard
+          id="admin-email-tracking"
+          title="Delivery tracking"
+          description="Delivered, bounced, and spam reports from Resend, and the suppression list, need this release’s database update."
+          isAdmin
+        />
+      )}
 
       <SettingsCard
         id="admin-invite-emails"

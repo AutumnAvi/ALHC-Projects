@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, type MouseEvent } from "react";
 import { useNotify } from "@/components/toast";
 import { MAX_EXPORT_ROWS, TRUNCATED_HEADER, TRUNCATED_NOTICE } from "@/lib/csv";
-import { ChartColumn, Download, LayoutDashboard, Printer, Table2, TriangleAlert } from "lucide-react";
+import { ChartColumn, Download, LayoutDashboard, Mail, Printer, Table2, TriangleAlert } from "lucide-react";
 import { Segmented } from "@/components/project/view-chrome";
 import { HEADER_TAB } from "@/components/ui";
 import type { SeriesInterval } from "@/lib/reports";
@@ -16,6 +16,7 @@ export function ReportsTabs() {
     { href: "/reports", label: "Overview", icon: ChartColumn, exact: true },
     { href: "/reports/projects", label: "All projects", icon: Table2, exact: false },
     { href: "/reports/dashboards", label: "My dashboards", icon: LayoutDashboard, exact: false },
+    { href: "/reports/schedules", label: "Scheduled emails", icon: Mail, exact: false },
   ];
   return (
     <nav aria-label="Reports" className="tab-strip items-center gap-0.5 px-gutter print:hidden">
