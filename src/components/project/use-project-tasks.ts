@@ -170,9 +170,9 @@ export function sortOrderFor(
     }
     return (others.at(-1)?.sortOrder ?? 0) + 1024;
   }
-  const next = others[index].sortOrder;
-  const prev = index > 0 ? others[index - 1].sortOrder : next - 2048;
-  return (prev + next) / 2;
+  const nextOrder = others[index].sortOrder;
+  const prev = index > 0 ? others[index - 1].sortOrder : nextOrder - 2048;
+  return (prev + nextOrder) / 2;
 }
 
 function pendingChanges(changes: TaggedChange[], tasks: ProjectTask[], revision: number) {
