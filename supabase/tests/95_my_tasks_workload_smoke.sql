@@ -491,12 +491,19 @@ begin
     select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.prosecdef and p.proname in (
       'stamp_task_assigned_at', 'guard_my_task_section', 'guard_my_task_placement', 'my_task_placement_valid',
-      'on_my_task_section_deleted', 'ensure_my_task_sections', 'sync_my_task_placements', 'my_tasks_layout',
+      'on_my_task_section_deleted', 'ensure_my_task_sections',
       'reindex_my_task_section', 'reindex_my_task_sections', 'place_my_task', 'place_my_task_section',
       'move_my_tasks', 'project_workload', 'portfolio_workload', 'guard_workload_capacity', 'set_workload_capacity'
     )
   ), 'every new function runs as the caller';
-  assert not has_function_privilege('anon', 'public.my_tasks_layout()', 'execute'), 'anon gets nothing';
+  -- Performance stage 2: the layout read and the placement sync check access once, then read the
+  -- viewer's tasks as a set. They stay revoked from anon.
+  assert (select prosecdef from pg_proc where oid = 'public.my_tasks_layout()'::regprocedure)
+    and (select prosecdef from pg_proc where oid = 'public.sync_my_task_placements()'::regprocedure),
+    'the My Tasks layout runs as definer so it does not check the role once per task';
+  assert not has_function_privilege('anon', 'public.my_tasks_layout()', 'execute')
+    and not has_function_privilege('anon', 'public.sync_my_task_placements()', 'execute'),
+    'anon gets nothing';
   assert not has_function_privilege('anon', 'public.portfolio_workload(uuid, date, date, text)', 'execute'), 'anon gets nothing';
 end $$;
 

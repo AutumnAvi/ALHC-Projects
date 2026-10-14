@@ -4896,6 +4896,10 @@ export type Database = {
         Args: { target_project: string; only_ids?: string[] | null };
         Returns: Json;
       };
+      my_task_cards: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
       project_section_task_counts: {
         Args: { target_project: string };
         Returns: Json;

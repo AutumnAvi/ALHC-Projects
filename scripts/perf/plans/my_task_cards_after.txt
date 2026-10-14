@@ -1,0 +1,28 @@
+Seed member, warm cache. Was 424 ms as a per-row RLS index scan (my_open_tasks_before.txt).
+
+SET
+              set_config              
+--------------------------------------
+ a1000000-0000-4000-8000-000000000001
+(1 row)
+
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
+ Result  (cost=0.00..0.26 rows=1 width=32) (actual time=23.782..23.783 rows=1 loops=1)
+   Buffers: shared hit=6866 dirtied=1
+ Planning Time: 0.009 ms
+ Execution Time: 23.793 ms
+(4 rows)
+
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=12.75..12.76 rows=1 width=8) (actual time=21.262..21.263 rows=1 loops=1)
+   Buffers: shared hit=16242
+   ->  Function Scan on my_tasks_layout  (cost=0.25..10.25 rows=1000 width=0) (actual time=21.111..21.183 rows=1700 loops=1)
+         Buffers: shared hit=16242
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.040 ms
+ Execution Time: 21.286 ms
+(8 rows)
+

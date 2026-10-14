@@ -1641,10 +1641,49 @@ export type MyTask = {
   parentTitle: string | null;
 };
 
-// Tasks come back only when RLS lets the viewer read them (membership in one of their projects, or a
+function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
+  const empty = { open: [] as MyTask[], completed: [] as MyTask[] };
+  if (!data || typeof data !== "object" || Array.isArray(data)) return empty;
+  const page = data as { open?: Json; completed?: Json };
+  const mapList = (value: Json | undefined): MyTask[] => {
+    if (!Array.isArray(value)) return [];
+    const tasks: MyTask[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const row = item as Record<string, Json | undefined>;
+      if (typeof row.id !== "string") continue;
+      tasks.push({
+        id: row.id,
+        title: typeof row.title === "string" ? row.title : "",
+        completedAt: typeof row.completed_at === "string" ? row.completed_at : null,
+        dueOn: typeof row.due_on === "string" ? row.due_on : null,
+        projectId: typeof row.project_id === "string" ? row.project_id : null,
+        projectName: typeof row.project_name === "string" ? row.project_name : null,
+        kind: parseTaskKind(row.kind),
+        parentTitle: typeof row.parent_title === "string" ? row.parent_title : null,
+      });
+    }
+    return tasks;
+  };
+  return { open: mapList(page.open), completed: mapList(page.completed) };
+}
+
+// Tasks come back only when the viewer can read them (membership in one of their projects, or a
 // private task they created or are assigned). Each is labelled with its home project when the viewer can
 // see it, else another visible project; private tasks (and their subtasks) have no project.
+// my_task_cards does that in one read. A database without the function uses the row queries.
 export const listMyTasks = cache(async (profileId: string) => {
+  const { user } = await getViewer();
+  if (user?.id === profileId) {
+    const supabase = await createClient();
+    const cards = await supabase.rpc("my_task_cards");
+    if (!cards.error) return myTasksFromCards(cards.data);
+    if (!rpcMissing(cards.error)) throw new Error(`Failed to load my tasks: ${cards.error.message}`);
+  }
+  return listMyTasksFromRows(profileId);
+});
+
+async function listMyTasksFromRows(profileId: string) {
   const supabase = await createClient();
   const select =
     "id, title, completed_at, due_on, home_project_id, kind, root_task_id, parent_task_id";
