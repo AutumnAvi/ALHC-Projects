@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useOptimistic, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
 import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { Popover } from "@/components/popover";
@@ -155,8 +155,10 @@ export function TaskActivity({
   const [earlier, setEarlier] = useState<TaskComment[]>([]);
   const [olderCursor, setOlderCursor] = useState(task.olderComments);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const seen = new Set(task.comments.map((comment) => comment.id));
-  const commentsOnTask = [...earlier.filter((comment) => !seen.has(comment.id)), ...task.comments];
+  const commentsOnTask = useMemo(() => {
+    const seen = new Set(task.comments.map((comment) => comment.id));
+    return [...earlier.filter((comment) => !seen.has(comment.id)), ...task.comments];
+  }, [earlier, task.comments]);
   const merged = mergePendingComments(commentsOnTask, pending, rememberedCommentKeys());
   const arrivedKey = merged.arrived.map((a) => a.tempId).join(",");
   useEffect(() => {
@@ -170,17 +172,23 @@ export function TaskActivity({
     return task.isPrivate && task.privateReaderIds.includes(profileId) ? "Can open this private task" : null;
   };
 
-  const entries: Entry[] = [
-    ...[
+  const history = useMemo(() => {
+    return [
       ...commentsOnTask.map((comment) => ({
         type: "comment" as const,
         at: comment.createdAt,
         comment,
         key: merged.keys.get(comment.id) ?? comment.id,
-        pending: false,
+        pending: false as const,
       })),
       ...task.stories.map((story) => ({ type: "story" as const, at: story.createdAt, story })),
-    ].sort((a, b) => a.at.localeCompare(b.at)),
+    ].sort((a, b) => a.at.localeCompare(b.at));
+    // arrivedKey changes when a pending comment becomes a server row (its React key moves with it).
+    // Pending-only updates leave it alone, so the feed isn't re-sorted on send.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- merged.keys is current whenever arrivedKey changes
+  }, [commentsOnTask, task.stories, arrivedKey]);
+  const entries: Entry[] = [
+    ...history,
     ...merged.waiting.map((p) => ({
       type: "comment" as const,
       at: p.createdAt,

@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useState, useTransition, type ReactNode } from "react";
 import { X } from "lucide-react";
 import type { ActionResult } from "@/lib/actions";
+import { beginLocalMutation, endLocalMutation, failMutation } from "@/lib/optimistic-session";
 
 // An optional button on the toast (e.g. Undo); clicking it runs the action and dismisses the toast.
 export type ToastAction = { label: string; onClick: () => void };
@@ -78,10 +79,21 @@ export function useServerAction() {
 
   const run = useCallback(
     (action: () => Promise<ActionResult | void>, optimistic?: () => void) => {
+      const token = beginLocalMutation();
       startTransition(async () => {
-        optimistic?.();
-        const result = await action();
-        if (result?.error) notify(result.error);
+        try {
+          optimistic?.();
+          const result = await action();
+          if (result?.error) {
+            notify(result.error);
+            failMutation(token);
+          }
+        } catch (error) {
+          failMutation(token);
+          throw error;
+        } finally {
+          endLocalMutation(token);
+        }
       });
     },
     [notify],

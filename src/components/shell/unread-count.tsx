@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { openRealtimeChannel } from "@/lib/realtime";
 import { createClient } from "@/lib/supabase/client";
 
 const POLL_MS = 60_000;
@@ -11,31 +12,44 @@ export function useUnreadCount(initial: number, memberId: string, scope: string)
   const [state, setState] = useState({ initial, count: initial });
   if (state.initial !== initial) setState({ initial, count: initial });
 
+  const request = useRef(0);
   const refetch = useCallback(async () => {
+    const ticket = ++request.current;
+    // Same rows as countUnreadInbox: unread and still in the inbox. Counting archived
+    // items made the badge jump when the server render landed.
     const { count, error } = await createClient()
       .from("inbox_items")
       .select("id", { count: "exact", head: true })
-      .is("read_at", null);
-    if (!error && count !== null) setState((current) => ({ ...current, count }));
+      .is("read_at", null)
+      .is("archived_at", null);
+    if (!error && count !== null && ticket === request.current) setState((current) => ({ ...current, count }));
   }, []);
 
   useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel(`inbox-count-${scope}-${memberId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "inbox_items", filter: `recipient_id=eq.${memberId}` },
-        () => void refetch(),
-      )
-      .subscribe();
-    const interval = window.setInterval(() => void refetch(), POLL_MS);
-    const onFocus = () => void refetch();
+    let timer: number | undefined;
+    let stopped = false;
+    const refetchSoon = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (!stopped) void refetch();
+      }, 300);
+    };
+    const stopChannel = openRealtimeChannel(
+      `inbox-count-${scope}-${memberId}`,
+      [{ table: "inbox_items", filter: `recipient_id=eq.${memberId}` }],
+      refetchSoon,
+    );
+    const interval = window.setInterval(refetchSoon, POLL_MS);
+    const onFocus = () => {
+      if (document.visibilityState === "visible") refetchSoon();
+    };
     window.addEventListener("focus", onFocus);
     return () => {
+      stopped = true;
+      window.clearTimeout(timer);
       window.clearInterval(interval);
       window.removeEventListener("focus", onFocus);
-      void supabase.removeChannel(channel);
+      stopChannel();
     };
   }, [memberId, scope, refetch]);
 

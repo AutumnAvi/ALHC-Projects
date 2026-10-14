@@ -5,6 +5,7 @@ import { ArrowRight } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
 import { applyDependencyShifts, previewDependencyShifts, undoDependencyShift, updateTask } from "@/lib/actions";
+import { currentMutationToken, dropTokenTasks, holdTaskChanges } from "@/lib/optimistic-session";
 import { shiftLabel, type ShiftChange, type ShiftMove, type ShiftPlanRow } from "@/lib/dependencies";
 
 export type DateChange = { startOn: string | null; dueOn: string | null };
@@ -91,13 +92,14 @@ export function useDependencyShift(): {
       if (push.error) {
         notify(push.error);
         options.onRevert?.();
-        return;
+        return false;
       }
       const pushPlan = push.data ?? [];
       const pullPlan = pull.data ?? [];
       if (movesOf(pushPlan).length === 0 && !pullAdds(pullPlan)) {
-        if (!(await plain())) options.onRevert?.();
-        return;
+        const ok = await plain();
+        if (!ok) options.onRevert?.();
+        return ok;
       }
 
       // Keep the transition (and the optimistic position) while the person decides.
@@ -114,11 +116,12 @@ export function useDependencyShift(): {
       setPrompt(null);
       if (choice === "cancel") {
         options.onRevert?.();
-        return;
+        return false;
       }
       if (choice === "only" || choice.confirmed.length === 0) {
-        if (!(await plain())) options.onRevert?.();
-        return;
+        const ok = await plain();
+        if (!ok) options.onRevert?.();
+        return ok;
       }
       const confirmed = new Set(choice.confirmed);
       const planned = movesOf(choice.pull ? pullPlan : pushPlan);
@@ -133,18 +136,20 @@ export function useDependencyShift(): {
       if (result.error) {
         notify(result.error);
         options.onRevert?.();
-        return;
+        return false;
       }
       const changes = result.result?.changes ?? [];
       const given = new Set(moves.map((m) => m.taskId));
+      const skipped = result.result?.skipped ?? [];
+      if (skipped.length > 0) dropTokenTasks(currentMutationToken(), skipped.map((skip) => skip.taskId));
       const moved = changes.filter((c) => !given.has(c.task_id)).length;
-      const skipped = result.result?.skipped.length ?? 0;
       notify(
         `Moved ${subject} and ${moved === 1 ? "1 dependent task" : `${moved} dependent tasks`}${
-          skipped ? ` (${skipped} left as ${skipped === 1 ? "it was" : "they were"})` : ""
+          skipped.length ? ` (${skipped.length} left as ${skipped.length === 1 ? "it was" : "they were"})` : ""
         }`,
         changes.length ? { label: "Undo", onClick: () => undo(changes) } : undefined,
       );
+      return true;
     },
     [notify, undo],
   );
@@ -152,12 +157,21 @@ export function useDependencyShift(): {
   const changeDates = useCallback(
     (task: { id: string; title: string }, dates: DateChange, options: Options = {}) => {
       startShift(async () => {
-        options.onOptimistic?.([{ taskId: task.id, ...dates }]);
-        await shift([{ taskId: task.id, ...dates }], `“${task.title}”`, async () => {
-          const result = await updateTask(task.id, dates);
-          if (result.error) notify(result.error);
-          return !result.error;
-        }, options);
+        // The confirm dialog outlives one transition. Hold the optimistic dates until the
+        // save lands, and drop them if the person cancels or the database refuses.
+        const held = holdTaskChanges();
+        let ok = false;
+        try {
+          options.onOptimistic?.([{ taskId: task.id, ...dates }]);
+          ok = await shift([{ taskId: task.id, ...dates }], `“${task.title}”`, async () => {
+            const result = await updateTask(task.id, dates);
+            if (result.error) notify(result.error);
+            return !result.error;
+          }, options);
+        } finally {
+          if (ok) held.ok();
+          else held.cancel();
+        }
       });
     },
     [notify, shift],
@@ -166,10 +180,17 @@ export function useDependencyShift(): {
   const changeMany = useCallback(
     (moves: ShiftMove[], subject: string, plain: () => void, options: Options = {}) => {
       startShift(async () => {
-        await shift(moves, subject, async () => {
-          plain();
-          return true;
-        }, options);
+        const held = holdTaskChanges();
+        let ok = false;
+        try {
+          ok = await shift(moves, subject, async () => {
+            plain();
+            return true;
+          }, options);
+        } finally {
+          if (ok) held.ok();
+          else held.cancel();
+        }
       });
     },
     [shift],
