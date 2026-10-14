@@ -1748,7 +1748,7 @@ async function listMyTasksFromRows(profileId: string) {
     open: openRows.map(toMyTask).filter(present),
     completed: doneRows.map(toMyTask).filter(present),
   };
-});
+}
 
 // The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()
 // seeds the sections on first use and puts newly assigned tasks at the top of Recently assigned.
