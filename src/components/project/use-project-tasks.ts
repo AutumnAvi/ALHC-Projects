@@ -152,6 +152,17 @@ export function useProjectTasks(tasks: ProjectTask[]) {
   return [overlayProjectTasks(tasks, pending.map((item) => item.change)), applyChange] as const;
 }
 
+// Fractional ordering: place a task before `beforeId` within `column`, or at the end.
+export function sortOrderFor(column: ProjectTask[], beforeId: string | null, movingId: string) {
+  const others = column.filter((t) => t.id !== movingId);
+  if (!beforeId) return (others.at(-1)?.sortOrder ?? 0) + 1024;
+  const index = others.findIndex((t) => t.id === beforeId);
+  if (index === -1) return (others.at(-1)?.sortOrder ?? 0) + 1024;
+  const next = others[index].sortOrder;
+  const prev = index > 0 ? others[index - 1].sortOrder : next - 2048;
+  return (prev + next) / 2;
+}
+
 function pendingChanges(changes: TaggedChange[], tasks: ProjectTask[], revision: number) {
   void revision;
   const live = changes.filter((item) => !mutationFailed(item.token) && !tokenTaskDropped(item.token, item.change.taskId));
