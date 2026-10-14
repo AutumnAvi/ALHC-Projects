@@ -1,3 +1,4 @@
+import { timelineWindow } from "@/lib/date-input";
 import { addDays, formatDueDate } from "@/lib/dates";
 import type { ProjectTask } from "@/lib/data";
 
@@ -33,19 +34,12 @@ function shiftMonth(date: string, delta: number) {
   return `${Math.floor(total / 12)}-${pad((total % 12) + 1)}-01`;
 }
 
-const monthStart = (date: string) => `${date.slice(0, 7)}-01`;
-function quarterStart(date: string) {
-  const m = Number(date.slice(5, 7));
-  return `${date.slice(0, 4)}-${pad(m - ((m - 1) % 3))}-01`;
-}
-
 // Visible window for a zoom level around an anchor date: week = 6 weeks starting the Sunday before
 // the anchor's week, month = 4 months from the anchor's month, quarter = 4 quarters.
+// The inclusive dates match timelineWindow(), which the server uses to load rows.
 export function visibleWindow(anchor: string, zoom: Zoom): { start: string; days: number } {
-  if (zoom === "week") return { start: addDays(anchor, -weekday(anchor) - 7), days: 42 };
-  const start = zoom === "month" ? monthStart(anchor) : quarterStart(anchor);
-  const end = shiftMonth(start, zoom === "month" ? 4 : 12);
-  return { start, days: daysBetween(start, end) };
+  const { start, end } = timelineWindow(anchor, zoom);
+  return { start, days: daysBetween(start, end) + 1 };
 }
 
 export function stepAnchor(anchor: string, zoom: Zoom, delta: number) {

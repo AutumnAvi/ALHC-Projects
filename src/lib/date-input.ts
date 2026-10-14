@@ -84,6 +84,32 @@ export function shiftMonth(month: string, delta: number) {
 // the grid, so the server can load only that window.
 export type CalendarMode = "month" | "week";
 
+// The Timeline's visible scale. Week: 6 weeks from the Sunday before the anchor's week.
+// Month: 4 months from the anchor's month. Quarter: 4 quarters. End is inclusive.
+// timeline-scale.ts visibleWindow uses this so the page loads the same days the grid draws.
+export type TimelineZoom = "week" | "month" | "quarter";
+
+export function timelineWindow(anchor: string, zoom: TimelineZoom): { start: string; end: string } {
+  if (zoom === "week") {
+    const start = shiftDays(anchor, -weekdayOf(anchor) - 7);
+    return { start, end: shiftDays(start, 41) };
+  }
+  const start = zoom === "month" ? `${anchor.slice(0, 7)}-01` : quarterStart(anchor);
+  const endExclusive = shiftDateByMonths(start, zoom === "month" ? 4 : 12);
+  return { start, end: shiftDays(endExclusive, -1) };
+}
+
+function quarterStart(date: string) {
+  const month = Number(date.slice(5, 7));
+  return `${date.slice(0, 4)}-${pad(month - ((month - 1) % 3))}-01`;
+}
+
+function shiftDateByMonths(date: string, delta: number) {
+  const [year, month] = date.split("-").map(Number);
+  const total = year * 12 + (month - 1) + delta;
+  return `${Math.floor(total / 12)}-${pad((total % 12) + 1)}-01`;
+}
+
 export function calendarVisibleDays(anchor: string, mode: CalendarMode): string[] {
   if (mode === "week") {
     const start = shiftDays(anchor, -weekdayOf(anchor));

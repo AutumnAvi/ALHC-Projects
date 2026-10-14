@@ -7,7 +7,7 @@ import { ViewToolbar } from "@/components/project/view-toolbar";
 import { ViewConfigProvider } from "@/components/project/view-config";
 import { TaskPaneBoundary } from "@/components/task/task-pane";
 import { listBulkContext } from "@/components/bulk/bulk-context";
-import { calendarVisibleDays } from "@/lib/date-input";
+import { calendarVisibleDays, timelineWindow, type TimelineZoom } from "@/lib/date-input";
 import {
   filterProjectTaskIds,
   listProfiles,
@@ -83,8 +83,8 @@ export async function ProjectViewPage({
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
   const paging = layout === "list" || layout === "board";
-  // Calendar loads the visible month or week. Timeline still reads every card until its own path.
-  const scheduling = layout === "calendar";
+  // Calendar and Timeline load the visible date window instead of every card.
+  const scheduling = layout === "calendar" || layout === "timeline";
 
   const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths, sectionCounts] =
     await Promise.all([
@@ -114,10 +114,17 @@ export async function ProjectViewPage({
   const limits = parsePageLimits(typeof searchParams.n === "string" ? searchParams.n : undefined);
   const today = todayIn(timeZone);
   const calendarMode = searchParams.cal === "week" ? "week" : "month";
+  const timelineZoom: TimelineZoom =
+    searchParams.tl === "month" || searchParams.tl === "quarter" ? searchParams.tl : "week";
   const requestedDay = typeof searchParams.d === "string" && isIsoDate(searchParams.d) ? searchParams.d : today;
   const calendarDays = layout === "calendar" ? calendarVisibleDays(requestedDay, calendarMode) : null;
-  // List and Board paint one page per group. Calendar loads the visible weeks (and the undated
-  // tray). Timeline still reads every matching task. A missing function falls back to the full list.
+  const scheduleRange = calendarDays
+    ? { start: calendarDays[0], end: calendarDays[calendarDays.length - 1] }
+    : layout === "timeline"
+      ? timelineWindow(requestedDay, timelineZoom)
+      : null;
+  // List and Board paint one page per group. Calendar and Timeline load the visible dates (and the
+  // undated tray). A missing function falls back to the full card list.
   let [taskPage, scheduleTasks] = await Promise.all([
     paging
       ? listProjectTaskPage(
@@ -130,13 +137,13 @@ export async function ProjectViewPage({
           limits,
         )
       : Promise.resolve(null),
-    calendarDays
+    scheduleRange
       ? listProjectSchedule(
           projectId,
           config.filters ?? {},
           timeZone,
-          { start: calendarDays[0], end: calendarDays[calendarDays.length - 1] },
-          "calendar",
+          scheduleRange,
+          layout === "calendar" ? "calendar" : "timeline",
         )
       : Promise.resolve(null),
   ]);
@@ -218,6 +225,10 @@ export async function ProjectViewPage({
             {...props}
             dependencies={dependencies}
             criticalPath={criticalPath}
+            windowed={scheduleTasks !== null}
+            today={today}
+            anchor={requestedDay}
+            zoom={timelineZoom}
           />
         ) : null}
       </ViewConfigProvider>
