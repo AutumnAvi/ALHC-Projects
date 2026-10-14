@@ -116,6 +116,19 @@
   @apply inline-flex max-w-full items-center gap-1 rounded bg-zinc-100 px-1.5 py-px text-xs text-zinc-600;
 }
 
+/* Skip layout and paint for off-screen rows. The elements stay in the document, so keyboard
+   navigation, drag-and-drop, and multi-select still find them. `auto` remembers the last
+   real size; the length is the fallback before a row has been on screen. */
+@utility cv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2.25rem;
+}
+
+@utility cv-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 5.5rem;
+}
+
 /* A row of underlined tabs (project and portfolio headers, Reports, Settings → Workspace, the Settings
    modal). It scrolls sideways when the tabs don't fit but never vertically — a 1px overflow there made
    Windows draw a stray stacked up/down scrollbar at the end of the row — and draws its hairline inside,

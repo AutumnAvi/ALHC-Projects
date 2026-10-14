@@ -384,7 +384,7 @@ function TaskCard({
       draggable={moveOptions.length > 0}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className={`group relative rounded-lg border bg-white px-3 py-2.5 shadow-[0_1px_2px_rgb(0_0_0/0.06)] transition-[border-color,box-shadow] ${
+      className={`cv-card group relative rounded-lg border bg-white px-3 py-2.5 shadow-[0_1px_2px_rgb(0_0_0/0.06)] transition-[border-color,box-shadow] ${
         open ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200/80 hover:border-zinc-300 hover:shadow-[0_2px_6px_rgb(0_0_0/0.08)]"
       } ${dragging ? "opacity-40" : ""} ${moveOptions.length > 0 ? "cursor-grab active:cursor-grabbing" : ""}`}
     >

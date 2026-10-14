@@ -166,7 +166,7 @@ export function InboxCard({
     <li>
       <div
         data-unread={read ? undefined : "true"}
-        className={`group relative flex gap-2.5 rounded-lg border transition-shadow hover:shadow-md ${
+        className={`cv-card group relative flex gap-2.5 rounded-lg border transition-shadow hover:shadow-md ${
           compact ? "items-center px-3 py-2" : "px-3 py-3"
         } ${active ? "border-accent-400 bg-accent-50 ring-1 ring-accent-400" : "border-zinc-200 bg-white"}`}
       >

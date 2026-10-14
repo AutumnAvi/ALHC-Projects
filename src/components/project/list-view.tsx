@@ -1066,7 +1066,7 @@ function TaskRow({
         selection.setActive(task.id);
         if (!open) router.push(taskHref(task.id), { scroll: false });
       }}
-      className={`group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${
+      className={`cv-row group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${
         selected || open ? "bg-accent-50" : "hover:bg-zinc-50"
       } ${dragging ? "opacity-40" : ""} ${draggable ? "active:cursor-grabbing" : ""}`}
       style={gridStyle}
@@ -1224,7 +1224,7 @@ function SubtaskRows({
                 if ((e.target as HTMLElement).closest("a, button, input, select, textarea, label")) return;
                 if (!open) router.push(taskHref(subtask.id), { scroll: false });
               }}
-              className={`group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
+              className={`cv-row group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
               style={gridStyle}
             >
               <div

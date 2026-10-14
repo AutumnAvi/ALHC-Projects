@@ -1,0 +1,9 @@
+Stage 3 long lists. No database query changes, so the seed timings are unchanged
+(project_task_card_page stays about 41 ms warm for the first 80 cards).
+
+Off-screen rows skip layout and paint via content-visibility: auto. The nodes stay
+in the document, so keyboard navigation, drag-and-drop, and multi-select still
+reach them. contain-intrinsic-size uses the last measured height, or 2.25rem for
+a list / My tasks row and 5.5rem for a Board or Inbox card before it has been shown.
+
+Applied to List task and subtask rows, Board cards, My tasks rows, and Inbox cards.
