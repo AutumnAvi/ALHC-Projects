@@ -1,76 +1,16 @@
 import "server-only";
+import { layout, payloadOf, str, type OutboxRow, type Rendered } from "@/lib/email-layout";
 import { isInboundEmailConfigured, replyAddress, REPLY_MARKER } from "@/lib/email-reply";
+import { renderDigestEmail, renderReportEmail, unsubscribeLinks } from "@/lib/email-scheduled";
 import { backgroundOrigin } from "@/lib/origin";
 import { settingsHref } from "@/lib/shell";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { Json, Tables } from "@/lib/supabase/database.types";
 
 // Email delivery for the outbox the database fills (form confirmations, rule emails, comment emails to
-// followers, invites, and since Real features 2 the notification emails people turn on per kind in
-// Settings → Notifications). Uses Resend's HTTP API when RESEND_API_KEY and EMAIL_FROM are set; otherwise rows are
+// followers, invites, since Real features 2 the notification emails people turn on per kind in
+// Settings → Notifications, and since Real features 3 Inbox digests and scheduled reports —
+// email-scheduled.ts renders those). Uses Resend's HTTP API when RESEND_API_KEY and EMAIL_FROM are set; otherwise rows are
 // marked "mocked" and logged (id and template only — never an address, subject, or body).
-
-type OutboxRow = Tables<"email_outbox">;
-type Rendered = { subject: string; text: string; html: string };
-
-function payloadOf(row: OutboxRow): Record<string, Json | undefined> {
-  const p = row.payload;
-  return p && typeof p === "object" && !Array.isArray(p) ? p : {};
-}
-
-function str(value: Json | undefined): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-}
-
-type Action = { label: string; href: string };
-
-function layout(
-  heading: string,
-  paragraphs: string[],
-  rows: { label: string; value: string }[],
-  options: { action?: Action | null; preface?: string | null; footer?: string[] } = {},
-) {
-  const { action, preface, footer = [] } = options;
-  const text = [
-    ...(preface ? [preface, ""] : []),
-    heading,
-    "",
-    ...paragraphs,
-    ...(rows.length ? ["", ...rows.map((r) => `${r.label}: ${r.value}`)] : []),
-    ...(action ? ["", `${action.label}: ${action.href}`] : []),
-    ...(footer.length ? ["", ...footer] : []),
-  ].join("\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f4f5;font-family:ui-sans-serif,system-ui,sans-serif;color:#18181b">
-<div style="max-width:560px;margin:0 auto;padding:32px 16px">
-${preface ? `<p style="margin:0 0 12px;font-size:12px;color:#a1a1aa">${escapeHtml(preface)}</p>` : ""}
-<div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:24px">
-<h1 style="margin:0 0 12px;font-size:18px">${escapeHtml(heading)}</h1>
-${paragraphs.map((p) => `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;white-space:pre-wrap">${escapeHtml(p)}</p>`).join("")}
-${
-  rows.length
-    ? `<table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px">${rows
-        .map(
-          (r) =>
-            `<tr><td style="padding:6px 8px 6px 0;color:#71717a;vertical-align:top;white-space:nowrap">${escapeHtml(r.label)}</td><td style="padding:6px 0;white-space:pre-wrap">${escapeHtml(r.value)}</td></tr>`,
-        )
-        .join("")}</table>`
-    : ""
-}
-${
-  action
-    ? `<p style="margin:20px 0 0"><a href="${escapeHtml(action.href)}" style="display:inline-block;background:#18181b;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:8px 14px;border-radius:8px">${escapeHtml(action.label)}</a></p>`
-    : ""
-}
-</div>
-${footer.map((line) => `<p style="font-size:12px;color:#a1a1aa;margin:12px 0 0;text-align:center">${escapeHtml(line)}</p>`).join("")}
-<p style="font-size:12px;color:#a1a1aa;margin:16px 0 0;text-align:center">Sent by ALHC Projects</p>
-</div></body></html>`;
-  return { text, html };
-}
 
 // The signed-in task link (never public or tokenized): the recipient's project, else My Tasks for a
 // private task. Null without a known app origin.
@@ -373,15 +313,61 @@ async function replyTo(row: OutboxRow, admin: NonNullable<ReturnType<typeof crea
   return replyAddress(data);
 }
 
+function scheduledKind(row: OutboxRow): "digest" | "report" | null {
+  const kind = row.task_id ? null : payloadOf(row).kind;
+  return kind === "digest" || kind === "report" ? kind : null;
+}
+
+type Admin = NonNullable<ReturnType<typeof createAdminClient>>;
+
+// Digests and reports (Real features 3): a digest's items are read now, with the recipient's own access
+// (digest_email_items); a report's numbers were built as the recipient when it was queued. Both carry
+// List-Unsubscribe headers, so mail apps offer their own one-click "Unsubscribe" (it posts to the same
+// narrow endpoint as the email's "Turn off" link).
+async function renderScheduled(
+  row: OutboxRow,
+  kind: "digest" | "report",
+  admin: Admin,
+): Promise<{ email: Rendered; headers: Record<string, string> } | { error: string }> {
+  let email: Rendered;
+  if (kind === "digest") {
+    const items = await admin.rpc("digest_email_items", { target_email: row.id });
+    if (items.error) return { error: "Couldn’t read the digest’s items" };
+    if (!items.data?.length) return { error: "Not sent: everything in it was read, archived, or can no longer be opened" };
+    email = renderDigestEmail(row, items.data);
+  } else {
+    email = renderReportEmail(row);
+  }
+  const links = unsubscribeLinks(row, kind === "digest" ? "digest" : "reports");
+  return {
+    email,
+    headers: links
+      ? { "List-Unsubscribe": `<${links.oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
+      : {},
+  };
+}
+
 async function deliver(
   row: OutboxRow,
-  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  admin: Admin,
   senderName: string | null,
 ): Promise<{ outcome: "sent" | "mocked" | "error"; id?: string; error?: string }> {
-  const reply = await replyTo(row, admin);
-  const email = renderEmail(row, { canReply: Boolean(reply && row.comment_id) });
+  const scheduled = scheduledKind(row);
+  let email: Rendered;
+  let headers: Record<string, string> = {};
+  let reply: string | null = null;
+  if (scheduled) {
+    const rendered = await renderScheduled(row, scheduled, admin);
+    if ("error" in rendered) return { outcome: "error", error: rendered.error };
+    email = rendered.email;
+    headers = rendered.headers;
+  } else {
+    reply = await replyTo(row, admin);
+    email = renderEmail(row, { canReply: Boolean(reply && row.comment_id) });
+  }
   if (!isEmailConfigured()) {
-    const template = row.comment_id ? "comment" : isInvite(row) ? "invite" : isNotification(row) ? "notification" : row.template;
+    const template =
+      scheduled ?? (row.comment_id ? "comment" : isInvite(row) ? "invite" : isNotification(row) ? "notification" : row.template);
     console.info(`[email:mocked] id=${row.id} template=${template}`);
     return { outcome: "mocked" };
   }
@@ -399,6 +385,7 @@ async function deliver(
       text: email.text,
       html: email.html,
       ...(reply ? { reply_to: reply } : {}),
+      ...(Object.keys(headers).length ? { headers } : {}),
     }),
     signal: AbortSignal.timeout(15_000),
   });
@@ -421,15 +408,28 @@ export async function drainOutbox(options: { onlyId?: string | null; max?: numbe
   });
   if (error) throw new Error(`Failed to claim emails: ${error.message}`);
   // Notification emails (Real features 2) have their own claim, so the release before them never takes
-  // one; a database without the migration doesn't have it yet (PGRST202 → none).
+  // one; a database without the migration doesn't have it yet (PGRST202 → none). Digests and scheduled
+  // reports (Real features 3) likewise. These two only log a failure: the rows the claims before them
+  // already marked "sending" must still go out now, not wait out the 10-minute reclaim.
   const notifications = await admin.rpc("claim_notification_emails", {
     max_items: options.max ?? 20,
     only_id: options.onlyId ?? null,
   });
   if (notifications.error && notifications.error.code !== "PGRST202") {
-    throw new Error(`Failed to claim notification emails: ${notifications.error.message}`);
+    console.error("Failed to claim notification emails", notifications.error.code);
   }
-  const claimed = [...(data ?? []), ...(notifications.data ?? [])];
+  const scheduled = await admin.rpc("claim_scheduled_emails", {
+    max_items: options.max ?? 20,
+    only_id: options.onlyId ?? null,
+  });
+  if (scheduled.error && scheduled.error.code !== "PGRST202") {
+    console.error("Failed to claim digest and report emails", scheduled.error.code);
+  }
+  const claimed = [
+    ...(data ?? []),
+    ...(notifications.error ? [] : (notifications.data ?? [])),
+    ...(scheduled.error ? [] : (scheduled.data ?? [])),
+  ];
   const counts = { claimed: claimed.length, sent: 0, mocked: 0, failed: 0 };
   const senderName = claimed.length ? await workspaceSenderName(admin) : null;
   for (const row of claimed) {

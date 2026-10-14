@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, type KeyboardEvent } from "react";
 import { ArrowUpRight, Reply, Webhook } from "lucide-react";
 import { Segmented } from "@/components/project/view-chrome";
+import { EmailDigestSettings } from "@/components/settings/email-digest-settings";
 import { EmailForwardingSection } from "@/components/settings/email-forwarding";
 import {
   InboxNotifications,
@@ -104,16 +105,29 @@ export function SettingsPanel({
           <ProfileTab data={data.me} />
         ) : tab === "notifications" ? (
           data.me.notifications ? (
-            <NotificationMatrix
-              email={data.me.email}
-              settings={{
-                ...data.me.notifications,
-                comment: { ...data.me.notifications.comment, email: commentEmails ?? data.me.emailComments },
-              }}
-              onCommentEmailChange={setCommentEmails}
-              sending={data.email.sending}
-              replyByEmail={data.email.replyByEmail}
-            />
+            <div className="flex flex-col gap-8">
+              <NotificationMatrix
+                email={data.me.email}
+                settings={{
+                  ...data.me.notifications,
+                  comment: { ...data.me.notifications.comment, email: commentEmails ?? data.me.emailComments },
+                }}
+                onCommentEmailChange={setCommentEmails}
+                sending={data.email.sending}
+                replyByEmail={data.email.replyByEmail}
+              />
+              {data.me.emailPreferences ? (
+                <EmailDigestSettings
+                  email={data.me.email}
+                  preferences={data.me.emailPreferences}
+                  sending={data.email.sending}
+                />
+              ) : (
+                <p className="text-xs text-zinc-500">
+                  An Inbox email digest and scheduled report emails need this release’s database update.
+                </p>
+              )}
+            </div>
           ) : (
             <div className="flex flex-col gap-6">
               <NotificationSettings

@@ -29,7 +29,20 @@ function EmailStatusNote({ email }: { email: TaskStory["email"] }) {
   if (!email) return null;
   switch (email.status) {
     case "sent":
-      return <span className="text-emerald-700"> · Sent</span>;
+      // Real features 3: what Resend reported after sending, once it has.
+      switch (email.delivery) {
+        case "delivered":
+          return <span className="text-emerald-700"> · Delivered</span>;
+        case "delayed":
+          return <span className="text-amber-700"> · Sent (delivery delayed)</span>;
+        case "bounced":
+        case "suppressed":
+          return <span className="text-red-700"> · Bounced</span>;
+        case "complained":
+          return <span className="text-red-700"> · Delivered, then marked as spam</span>;
+        default:
+          return <span className="text-emerald-700"> · Sent</span>;
+      }
     case "mocked":
       return <span className="text-zinc-500"> · Not sent (no email provider is set up)</span>;
     case "sending":

@@ -17,8 +17,16 @@ import {
   projectBars,
   sectionBars,
 } from "@/components/reports/load-report";
+import { ScheduleEmailButton } from "@/components/reports/schedule-email";
 import { SeriesChart } from "@/components/reports/series-chart";
-import { countHiddenWorkspaceProjects, reportCompletedSeries, workspaceReport } from "@/lib/data";
+import { requireMember } from "@/lib/auth";
+import {
+  countHiddenWorkspaceProjects,
+  hasReal3Schema,
+  listActivePeople,
+  reportCompletedSeries,
+  workspaceReport,
+} from "@/lib/data";
 import { EMPTY_COUNTS, RECENT_DAYS } from "@/lib/portfolios";
 import { describeReportFilters, filtersFromParams, filtersToParams, isSeriesInterval } from "@/lib/reports";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -36,7 +44,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const interval = isSeriesInterval(params.int) ? params.int : "week";
   const timeZone = await getViewerTimeZone();
 
-  const [context, totals, byProject, byAssignee, bySection, series, hidden] = await Promise.all([
+  const [context, totals, byProject, byAssignee, bySection, series, hidden, member, real3, people] = await Promise.all([
     loadReportContext(timeZone),
     workspaceReport(filters, "none", timeZone),
     workspaceReport(filters, "project", timeZone),
@@ -44,6 +52,9 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     workspaceReport(filters, "section", timeZone),
     reportCompletedSeries(filters, interval, timeZone),
     countHiddenWorkspaceProjects(),
+    requireMember(),
+    hasReal3Schema(),
+    listActivePeople(),
   ]);
   const [sections, overdue] = await Promise.all([
     sectionBars(bySection, context),
@@ -64,6 +75,14 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       <div className="flex flex-wrap items-end justify-between gap-3">
         <ReportFiltersBar filters={filters} projects={context.projects} people={context.people} tags={context.tags} />
         <div className="flex items-center gap-2">
+          <ScheduleEmailButton
+            available={real3}
+            report="overview"
+            filters={filters}
+            filterSummary={summary}
+            people={people}
+            meId={member.id}
+          />
           <ExportLink href={exportHref("breakdown")} />
           <PrintButton />
         </div>

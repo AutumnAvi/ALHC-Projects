@@ -62,6 +62,16 @@ import {
 } from "@/lib/teams";
 import { INBOX_LIMIT, type InboxTab } from "@/lib/inbox";
 import { resolveNotificationSettings, type NotificationSettings } from "@/lib/notifications";
+import {
+  DEFAULT_EMAIL_PREFERENCES,
+  isDeliveryEvent,
+  isDigestFrequency,
+  isReportKind,
+  isScheduleFrequency,
+  type DeliveryStatus,
+  type EmailPreferences,
+  type ReportSchedule,
+} from "@/lib/email-schedules";
 import { PROFILE_ACTIVITY_LIMIT, PROFILE_TASK_LIMIT } from "@/lib/people";
 import {
   WORKSPACE_ASSETS_BUCKET,
@@ -296,6 +306,8 @@ export type StoryEmailStatus = {
   error: string | null;
   attempts: number;
   maxAttempts: number;
+  // What Resend reported after sending (Real features 3; null before anything was reported).
+  delivery?: DeliveryStatus | null;
 };
 
 const EMAIL_STATUSES = ["pending", "sending", "sent", "mocked", "failed"] as const;
@@ -1240,6 +1252,7 @@ async function storyEmailStatuses(stories: { kind: string; data: Json }[]): Prom
     .from("email_outbox")
     .select("id, status, last_error, attempts, max_attempts")
     .in("id", ids.slice(0, 200));
+  const delivery = await deliveryStatuses(ids.slice(0, 200));
   return new Map(
     rows(result, "email status").map((e) => [
       e.id,
@@ -1248,8 +1261,21 @@ async function storyEmailStatuses(stories: { kind: string; data: Json }[]): Prom
         error: e.status === "failed" || e.status === "pending" ? e.last_error : null,
         attempts: e.attempts,
         maxAttempts: e.max_attempts,
+        delivery: delivery.get(e.id) ?? null,
       },
     ]),
+  );
+}
+
+// What Resend reported for these emails (Real features 3), read through email_outbox's RLS like the rest
+// of the row. Empty on a database without the migration (the column doesn't exist there).
+async function deliveryStatuses(ids: string[]): Promise<Map<string, DeliveryStatus>> {
+  if (ids.length === 0 || !(await hasReal3Schema())) return new Map();
+  const supabase = await createClient();
+  const result = await supabase.from("email_outbox").select("id, delivery_status").in("id", ids).not("delivery_status", "is", null);
+  if (result.error) return new Map();
+  return new Map(
+    (result.data ?? []).flatMap((e) => (isDeliveryEvent(e.delivery_status) ? [[e.id, e.delivery_status] as const] : [])),
   );
 }
 
@@ -1509,6 +1535,15 @@ export const hasReal1Schema = cache(async (): Promise<boolean> => {
 export const hasReal2Schema = cache(async (): Promise<boolean> => {
   const supabase = await createClient();
   const result = await supabase.from("notification_settings").select("kind").limit(1);
+  return !result.error;
+});
+
+// Is 20261014010000_real_3.sql applied? Its last statement makes email_preferences readable, so a
+// preview without it hides the digest and report-email settings, Schedule email on Reports, and the Admin
+// console's delivery tracking and suppression list (each says it needs the database update).
+export const hasReal3Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.from("email_preferences").select("profile_id").limit(1);
   return !result.error;
 });
 
@@ -2393,6 +2428,8 @@ export type MySettings = {
   emailComments: boolean;
   // Real features 2: the Inbox / Email switch per kind (null on a database without its migration).
   notifications: NotificationSettings | null;
+  // Real features 3: the Inbox digest and report email switches (null on a database without its migration).
+  emailPreferences: EmailPreferences | null;
   joinedAt: string | null;
   signInMethod: "google" | "password";
   // How My tasks opens (the my_tasks_layout cookie), for Settings → Display.
@@ -2442,13 +2479,14 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
   const supabase = await createClient();
-  const [profile, admin, teams, workspace, cookieStore, notificationRows] = await Promise.all([
+  const [profile, admin, teams, workspace, cookieStore, notificationRows, emailPreferences] = await Promise.all([
     supabase.from("profiles").select("full_name, email_comments, joined_at").eq("id", user.id).maybeSingle(),
     isWorkspaceAdmin(),
     listTeams(),
     getWorkspace(),
     cookies(),
     supabase.from("notification_settings").select("kind, inbox, email"),
+    getMyEmailPreferences(),
   ]);
   const layout = cookieStore.get(MY_TASKS_LAYOUT_COOKIE)?.value;
   const row = maybe(profile, "profile");
@@ -2470,6 +2508,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     notifications: notificationRows.error
       ? null
       : resolveNotificationSettings(notificationRows.data ?? [], row?.email_comments ?? true),
+    emailPreferences,
     joinedAt: row?.joined_at ?? null,
     signInMethod: providers.includes("google") ? "google" : "password",
     myTasksLayout: isMyTasksLayout(layout) ? layout : "sections",
@@ -2481,7 +2520,9 @@ export const listEmailDeliveries = cache(async (projectId: string): Promise<Emai
   if (!hasRole(await getProjectRole(projectId), "admin")) return null;
   const supabase = await createClient();
   const result = await supabase.rpc("list_email_deliveries", { target_project: projectId, max_results: 200 });
-  return rows(result, "email log").map((row) => ({
+  const emails = rows(result, "email log");
+  const delivery = await deliveryStatuses(emails.map((row) => row.id));
+  return emails.map((row) => ({
     id: row.id,
     kind: row.kind,
     recipient: row.recipient,
@@ -2496,6 +2537,7 @@ export const listEmailDeliveries = cache(async (projectId: string): Promise<Emai
     sentAt: row.sent_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    deliveryStatus: delivery.get(row.id) ?? null,
   }));
 });
 
@@ -4288,6 +4330,8 @@ export type InviteDelivery = {
   lastError: string | null;
   sentAt: string | null;
   createdAt: string;
+  // What Resend reported after sending (Real features 3).
+  deliveryStatus: DeliveryStatus | null;
 };
 
 // The latest workspace invite emails (Admin console → Email). RLS: workspace admins read invite rows;
@@ -4301,7 +4345,9 @@ export const listInviteDeliveries = cache(async (limit = 50): Promise<InviteDeli
     .eq("payload->>kind", "invite")
     .order("created_at", { ascending: false })
     .limit(limit);
-  return rows(result, "invite emails").map((r) => ({
+  const invites = rows(result, "invite emails");
+  const delivery = await deliveryStatuses(invites.map((r) => r.id));
+  return invites.map((r) => ({
     id: r.id,
     email: r.to_email,
     status: r.status,
@@ -4309,6 +4355,167 @@ export const listInviteDeliveries = cache(async (limit = 50): Promise<InviteDeli
     maxAttempts: r.max_attempts,
     lastError: r.last_error,
     sentAt: r.sent_at,
+    createdAt: r.created_at,
+    deliveryStatus: delivery.get(r.id) ?? null,
+  }));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Email extras (Real features 3): the person's digest / report email switches, their scheduled report
+// emails, and the Admin console's delivery overview and suppression list. Every read uses the viewer's
+// own client: email_preferences and report_schedules are own rows only; the overview and the list are
+// workspace admins only (and never carry a subject, body, task, or project).
+// ---------------------------------------------------------------------------------------------
+
+// Null on a database without the migration; the defaults when the person never changed anything.
+export const getMyEmailPreferences = cache(async (): Promise<EmailPreferences | null> => {
+  if (!(await hasReal3Schema())) return null;
+  const supabase = await createClient();
+  const result = await supabase
+    .from("email_preferences")
+    .select("digest, digest_hour, digest_weekday, time_zone, report_emails, digest_next_at, digest_last_sent_at")
+    .maybeSingle();
+  if (result.error) return null;
+  const r = result.data;
+  if (!r) return DEFAULT_EMAIL_PREFERENCES;
+  return {
+    digest: isDigestFrequency(r.digest) ? r.digest : "off",
+    hour: r.digest_hour,
+    weekday: r.digest_weekday,
+    timeZone: r.time_zone,
+    reportEmails: r.report_emails,
+    nextDigestAt: r.digest_next_at,
+    lastDigestAt: r.digest_last_sent_at,
+  };
+});
+
+// The viewer's own scheduled report emails (owner-only RLS), newest first; removed ones left out. Null on
+// a database without the migration.
+export const listReportSchedules = cache(async (): Promise<ReportSchedule[] | null> => {
+  if (!(await hasReal3Schema())) return null;
+  const supabase = await createClient();
+  const result = await supabase
+    .from("report_schedules")
+    .select(
+      "id, name, report, filters, frequency, weekday, month_day, send_hour, time_zone, recipients, paused_at, next_run_at, last_run_at, last_sent_at, last_sent_count, created_at",
+    )
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+  return rows(result, "scheduled report emails").map((r) => ({
+    id: r.id,
+    name: r.name,
+    report: isReportKind(r.report) ? r.report : "overview",
+    filters: parseReportFilters(r.filters),
+    frequency: isScheduleFrequency(r.frequency) ? r.frequency : "weekly",
+    weekday: r.weekday,
+    monthDay: r.month_day,
+    hour: r.send_hour,
+    timeZone: r.time_zone,
+    recipients: r.recipients,
+    pausedAt: r.paused_at,
+    nextRunAt: r.next_run_at,
+    lastRunAt: r.last_run_at,
+    lastSentAt: r.last_sent_at,
+    lastSentCount: r.last_sent_count,
+    createdAt: r.created_at,
+  }));
+});
+
+export type WorkspaceEmailDelivery = {
+  id: string;
+  kind: string;
+  recipient: string;
+  inWorkspace: boolean;
+  status: string;
+  deliveryStatus: DeliveryStatus | null;
+  deliveryDetail: string | null;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  deliveryEventAt: string | null;
+  suppressed: boolean;
+};
+
+// Admin console → Email: the latest emails of every kind (workspace admins; null for anyone else or on a
+// database without the migration).
+export const listWorkspaceEmailDeliveries = cache(async (limit = 100): Promise<WorkspaceEmailDelivery[] | null> => {
+  if (!(await hasReal3Schema())) return null;
+  const supabase = await createClient();
+  const result = await supabase.rpc("list_workspace_email_deliveries", { max_results: limit });
+  if (result.error) return null;
+  return (result.data ?? []).map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    recipient: r.recipient,
+    inWorkspace: r.in_workspace,
+    status: r.status,
+    deliveryStatus: isDeliveryEvent(r.delivery_status) ? r.delivery_status : null,
+    deliveryDetail: r.delivery_detail,
+    attempts: r.attempts,
+    maxAttempts: r.max_attempts,
+    lastError: r.last_error,
+    createdAt: r.created_at,
+    sentAt: r.sent_at,
+    deliveryEventAt: r.delivery_event_at,
+    suppressed: r.suppressed,
+  }));
+});
+
+export type WorkspaceEmailSummary = {
+  sent: number;
+  delivered: number;
+  delayed: number;
+  bounced: number;
+  complained: number;
+  failed: number;
+  waiting: number;
+  suppressedAddresses: number;
+};
+
+export const workspaceEmailSummary = cache(async (days = 30): Promise<WorkspaceEmailSummary | null> => {
+  if (!(await hasReal3Schema())) return null;
+  const supabase = await createClient();
+  const result = await supabase.rpc("workspace_email_summary", { window_days: days });
+  const r = result.error ? null : result.data?.[0];
+  if (!r) return null;
+  return {
+    sent: Number(r.sent),
+    delivered: Number(r.delivered),
+    delayed: Number(r.delayed),
+    bounced: Number(r.bounced),
+    complained: Number(r.complained),
+    failed: Number(r.failed),
+    waiting: Number(r.waiting),
+    suppressedAddresses: Number(r.suppressed_addresses),
+  };
+});
+
+export type EmailSuppression = {
+  id: string;
+  email: string;
+  inWorkspace: boolean;
+  reason: string;
+  detail: string | null;
+  emailKind: string | null;
+  createdAt: string;
+};
+
+// The active suppression list (workspace admins only, through list_email_suppressions: addresses outside
+// the workspace masked). Null for anyone else or on a database without the migration.
+export const listEmailSuppressions = cache(async (): Promise<EmailSuppression[] | null> => {
+  if (!(await hasReal3Schema())) return null;
+  const supabase = await createClient();
+  const result = await supabase.rpc("list_email_suppressions");
+  if (result.error) return null;
+  return (result.data ?? []).map((r) => ({
+    id: r.id,
+    email: r.email,
+    inWorkspace: r.in_workspace,
+    reason: r.reason,
+    detail: r.detail,
+    emailKind: r.email_kind,
     createdAt: r.created_at,
   }));
 });

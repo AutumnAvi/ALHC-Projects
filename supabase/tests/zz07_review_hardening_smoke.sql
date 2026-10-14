@@ -29,8 +29,10 @@ begin
   where n.nspname = 'public'
     and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
     and has_function_privilege('anon', p.oid, 'execute');
-  assert exposed = 'get_public_form(uuid), receive_inbound_webhook(text,text,text,text,text), submit_form(uuid,text,jsonb)',
-    format('anon may execute exactly the three public entry points, got: %s', exposed);
+  -- Real features 3 added email_unsubscribe(text,text): the one-click "Turn off" links in digest and
+  -- report emails (a token in, one switch off, nothing returned about anyone).
+  assert exposed = 'email_unsubscribe(text,text), get_public_form(uuid), receive_inbound_webhook(text,text,text,text,text), submit_form(uuid,text,jsonb)',
+    format('anon may execute exactly the four public entry points, got: %s', exposed);
 
   -- Trigger functions that anon reached through PUBLIC keep their authenticated / service_role grants.
   assert has_function_privilege('authenticated', 'public.set_updated_at()', 'execute')

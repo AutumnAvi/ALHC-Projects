@@ -86,6 +86,17 @@ import {
 } from "@/lib/workspace";
 import { isGoalStatus, isProgressMode } from "@/lib/goals";
 import { isNotificationChannel, isNotificationKind } from "@/lib/notifications";
+import {
+  MAX_RECIPIENTS,
+  MAX_SCHEDULE_NAME,
+  isDigestFrequency,
+  isHour,
+  isMonthDay,
+  isReportKind,
+  isScheduleFrequency,
+  isWeekday,
+  type ReportScheduleInput,
+} from "@/lib/email-schedules";
 import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
 import { MAX_PORTFOLIO_FIELD_TEXT, isPortfolioFieldType, isProjectStatus } from "@/lib/portfolios";
 import { STATUS_TITLE_MAX } from "@/lib/project-page";
@@ -3548,6 +3559,162 @@ export async function setNotificationSetting(kind: string, channel: string, enab
     });
     if (result.error?.code === "PGRST202") throw new InputError("Notification settings need this release’s database update");
     check(result, "Couldn’t save your notification setting");
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Email extras (Real features 3): the Inbox digest, report email switch, scheduled report emails, and
+// the Admin console's suppression list. Everything goes through the person's own client: their own rows
+// (email_preferences, report_schedules) and, for clearing a suppressed address, workspace admins by RLS.
+// ---------------------------------------------------------------------------------------------
+
+const NEEDS_REAL3 = "Email digests and scheduled reports need this release’s database update";
+
+function missingReal3(error: { code?: string } | null): boolean {
+  // PGRST202 = no such function, PGRST205 = no such table, 42P01 = undefined table.
+  return Boolean(error && (error.code === "PGRST202" || error.code === "PGRST205" || error.code === "42P01"));
+}
+
+// Settings → Notifications → Email digest: off, daily, or weekly at an hour (and weekday) in the
+// person's time zone. Returns when the next digest is due.
+export async function setEmailDigest(input: {
+  frequency: string;
+  hour: number;
+  weekday: number;
+  timeZone: string;
+}): Promise<ActionResult & { nextAt?: string | null }> {
+  let nextAt: string | null = null;
+  const result = await run(async () => {
+    if (!isDigestFrequency(input.frequency)) throw new InputError("Choose Off, Daily, or Weekly");
+    if (!isHour(input.hour)) throw new InputError("Choose an hour of the day");
+    if (!isWeekday(input.weekday)) throw new InputError("Choose a day of the week");
+    const zone = typeof input.timeZone === "string" ? input.timeZone.trim().slice(0, 100) : "UTC";
+    const supabase = await createClient();
+    const saved = await supabase.rpc("set_email_digest", {
+      frequency: input.frequency,
+      send_hour: input.hour,
+      send_weekday: input.weekday,
+      zone: zone || "UTC",
+    });
+    if (missingReal3(saved.error)) throw new InputError(NEEDS_REAL3);
+    check(saved, "Couldn’t save your email digest");
+    nextAt = typeof saved.data === "string" ? saved.data : null;
+  });
+  return result.error ? result : { nextAt };
+}
+
+// Settings → Notifications: whether scheduled report emails that people send you reach you at all.
+export async function setReportEmails(enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const saved = await supabase.rpc("set_report_emails", { enabled: enabled === true });
+    if (missingReal3(saved.error)) throw new InputError(NEEDS_REAL3);
+    check(saved, "Couldn’t save your report email setting");
+  });
+}
+
+function scheduleFields(input: ReportScheduleInput) {
+  const name = text(input.name, "Name", { max: MAX_SCHEDULE_NAME });
+  if (!isReportKind(input.report)) throw new InputError("Choose a report");
+  if (!isScheduleFrequency(input.frequency)) throw new InputError("Choose daily, weekly, or monthly");
+  if (!isHour(input.hour)) throw new InputError("Choose an hour of the day");
+  if (!isWeekday(input.weekday)) throw new InputError("Choose a day of the week");
+  if (!isMonthDay(input.monthDay)) throw new InputError("Choose a day of the month (1–28)");
+  // Sorted like the database stores them, so an edit that keeps the same people doesn't re-check them.
+  const recipients = [
+    ...new Set((Array.isArray(input.recipients) ? input.recipients : []).map((r) => id(r, "recipient").toLowerCase())),
+  ].sort();
+  if (recipients.length === 0) throw new InputError("Add at least one recipient");
+  if (recipients.length > MAX_RECIPIENTS) throw new InputError(`Up to ${MAX_RECIPIENTS} recipients`);
+  const zone = typeof input.timeZone === "string" && input.timeZone.trim() ? input.timeZone.trim().slice(0, 100) : "UTC";
+  return {
+    name,
+    report: input.report,
+    filters: input.report === "projects" ? {} : reportFiltersJson(input.filters ?? {}),
+    frequency: input.frequency,
+    weekday: input.weekday,
+    month_day: input.monthDay,
+    send_hour: input.hour,
+    time_zone: zone,
+    recipients,
+  };
+}
+
+function scheduleError(error: { code?: string; message: string } | null): never | void {
+  if (!error) return;
+  if (missingReal3(error)) throw new InputError(NEEDS_REAL3);
+  if (error.code === "23514" && error.message.includes("workspace")) {
+    throw new InputError("Recipients must be people in this workspace");
+  }
+}
+
+// Reports → Schedule email: the Reports page's current filters (or the All projects report), sent to
+// people in the workspace on a schedule. Each recipient's copy is built with their own access.
+export async function createReportSchedule(input: ReportScheduleInput): Promise<ActionResult & { id?: string }> {
+  let createdId: string | undefined;
+  const result = await run(async () => {
+    const fields = scheduleFields(input);
+    const supabase = await createClient();
+    const saved = await supabase.from("report_schedules").insert(fields).select("id").single();
+    scheduleError(saved.error);
+    check(saved, "Couldn’t schedule the report");
+    createdId = saved.data?.id;
+  });
+  return result.error ? result : { id: createdId };
+}
+
+export async function updateReportSchedule(scheduleId: string, input: ReportScheduleInput): Promise<ActionResult> {
+  return run(async () => {
+    const fields = scheduleFields(input);
+    const supabase = await createClient();
+    const saved = await supabase
+      .from("report_schedules")
+      .update(fields)
+      .eq("id", id(scheduleId, "schedule"))
+      .is("deleted_at", null)
+      .select("id");
+    scheduleError(saved.error);
+    checkUpdated(saved, "Only the person who scheduled this report can change it");
+  });
+}
+
+export async function setReportSchedulePaused(scheduleId: string, paused: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const saved = await supabase
+      .from("report_schedules")
+      .update({ paused_at: paused ? now() : null })
+      .eq("id", id(scheduleId, "schedule"))
+      .is("deleted_at", null)
+      .select("id");
+    scheduleError(saved.error);
+    checkUpdated(saved, "Only the person who scheduled this report can change it");
+  });
+}
+
+export async function deleteReportSchedule(scheduleId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const saved = await supabase
+      .from("report_schedules")
+      .update({ deleted_at: now() })
+      .eq("id", id(scheduleId, "schedule"))
+      .is("deleted_at", null)
+      .select("id");
+    scheduleError(saved.error);
+    checkUpdated(saved, "Only the person who scheduled this report can remove it");
+  });
+}
+
+// Admin console → Email: let email go to a suppressed address again (workspace admins; the function
+// checks). Resend
+// keeps its own list for addresses it suppressed; the page says so.
+export async function clearEmailSuppression(suppressionId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const saved = await supabase.rpc("clear_email_suppression", { target_suppression: id(suppressionId, "address") });
+    if (missingReal3(saved.error)) throw new InputError(NEEDS_REAL3);
+    check(saved, "Only workspace admins can clear an address");
   });
 }
 

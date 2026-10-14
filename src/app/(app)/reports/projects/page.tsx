@@ -3,8 +3,17 @@ import Link from "next/link";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { HiddenProjectsNote } from "@/components/reports/report-blocks";
 import { ExportLink, PrintButton } from "@/components/reports/report-chrome";
+import { ScheduleEmailButton } from "@/components/reports/schedule-email";
 import { Timestamp } from "@/components/timestamp";
-import { allProjectsReport, countHiddenWorkspaceProjects, listLatestStatusUpdates, workspaceTotals } from "@/lib/data";
+import { requireMember } from "@/lib/auth";
+import {
+  allProjectsReport,
+  countHiddenWorkspaceProjects,
+  hasReal3Schema,
+  listActivePeople,
+  listLatestStatusUpdates,
+  workspaceTotals,
+} from "@/lib/data";
 import { RECENT_DAYS, formatProgress, progressPercent } from "@/lib/portfolios";
 import { getViewerTimeZone } from "@/lib/timezone";
 
@@ -19,10 +28,13 @@ const TD_NUM = "px-3 py-2 text-right text-sm tabular-nums text-zinc-800";
 // counts in each of its projects; the total row counts it once.
 export default async function AllProjectsReportPage() {
   const timeZone = await getViewerTimeZone();
-  const [projects, hidden, totals] = await Promise.all([
+  const [projects, hidden, totals, member, real3, people] = await Promise.all([
     allProjectsReport(timeZone),
     countHiddenWorkspaceProjects(),
     workspaceTotals({}, timeZone),
+    requireMember(),
+    hasReal3Schema(),
+    listActivePeople(),
   ]);
   const latest = await listLatestStatusUpdates(projects.map((p) => p.id));
 
@@ -34,6 +46,14 @@ export default async function AllProjectsReportPage() {
           {RECENT_DAYS} days in your time zone.
         </p>
         <div className="flex items-center gap-2">
+          <ScheduleEmailButton
+            available={real3}
+            report="projects"
+            filters={{}}
+            filterSummary={[]}
+            people={people}
+            meId={member.id}
+          />
           <ExportLink href="/export/report?table=projects" />
           <PrintButton />
         </div>

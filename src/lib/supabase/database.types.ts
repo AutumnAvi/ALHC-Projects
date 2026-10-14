@@ -364,6 +364,9 @@ export type Database = {
           to_profile_id: string | null;
           comment_id: string | null;
           max_attempts: number;
+          delivery_status: string | null;
+          delivery_event_at: string | null;
+          delivery_detail: string | null;
         };
         Insert: {
           id?: string;
@@ -385,6 +388,9 @@ export type Database = {
           to_profile_id?: string | null;
           comment_id?: string | null;
           max_attempts?: number;
+          delivery_status?: string | null;
+          delivery_event_at?: string | null;
+          delivery_detail?: string | null;
         };
         Update: {
           id?: string;
@@ -406,6 +412,9 @@ export type Database = {
           to_profile_id?: string | null;
           comment_id?: string | null;
           max_attempts?: number;
+          delivery_status?: string | null;
+          delivery_event_at?: string | null;
+          delivery_detail?: string | null;
         };
         Relationships: [];
       };
@@ -4074,11 +4083,243 @@ export type Database = {
         };
         Relationships: [];
       };
+      email_suppressions: {
+        Row: {
+          id: string;
+          email: string;
+          reason: string;
+          detail: string | null;
+          email_kind: string | null;
+          outbox_id: string | null;
+          created_at: string;
+          updated_at: string;
+          cleared_at: string | null;
+          cleared_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          email: string;
+          reason: string;
+          detail?: string | null;
+          email_kind?: string | null;
+          outbox_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          cleared_at?: string | null;
+          cleared_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          email?: string;
+          reason?: string;
+          detail?: string | null;
+          email_kind?: string | null;
+          outbox_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          cleared_at?: string | null;
+          cleared_by?: string | null;
+        };
+        Relationships: [];
+      };
+      email_preferences: {
+        Row: {
+          profile_id: string;
+          digest: string;
+          digest_hour: number;
+          digest_weekday: number;
+          time_zone: string;
+          report_emails: boolean;
+          unsubscribe_token: string;
+          digest_next_at: string | null;
+          digest_last_sent_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          profile_id?: string;
+          digest?: string;
+          digest_hour?: number;
+          digest_weekday?: number;
+          time_zone?: string;
+          report_emails?: boolean;
+          unsubscribe_token?: string;
+          digest_next_at?: string | null;
+          digest_last_sent_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          profile_id?: string;
+          digest?: string;
+          digest_hour?: number;
+          digest_weekday?: number;
+          time_zone?: string;
+          report_emails?: boolean;
+          unsubscribe_token?: string;
+          digest_next_at?: string | null;
+          digest_last_sent_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      report_schedules: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          owner_id: string;
+          name: string;
+          report: string;
+          filters: Json;
+          frequency: string;
+          weekday: number;
+          month_day: number;
+          send_hour: number;
+          time_zone: string;
+          recipients: string[];
+          paused_at: string | null;
+          next_run_at: string | null;
+          last_run_at: string | null;
+          last_sent_at: string | null;
+          last_sent_count: number | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id?: string;
+          owner_id?: string;
+          name: string;
+          report?: string;
+          filters?: Json;
+          frequency: string;
+          weekday?: number;
+          month_day?: number;
+          send_hour?: number;
+          time_zone?: string;
+          recipients: string[];
+          paused_at?: string | null;
+          next_run_at?: string | null;
+          last_run_at?: string | null;
+          last_sent_at?: string | null;
+          last_sent_count?: number | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          owner_id?: string;
+          name?: string;
+          report?: string;
+          filters?: Json;
+          frequency?: string;
+          weekday?: number;
+          month_day?: number;
+          send_hour?: number;
+          time_zone?: string;
+          recipients?: string[];
+          paused_at?: string | null;
+          next_run_at?: string | null;
+          last_run_at?: string | null;
+          last_sent_at?: string | null;
+          last_sent_count?: number | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      list_workspace_email_deliveries: {
+        Args: { max_results?: number };
+        Returns: {
+          id: string;
+          kind: string;
+          recipient: string;
+          in_workspace: boolean;
+          status: string;
+          delivery_status: string | null;
+          delivery_detail: string | null;
+          attempts: number;
+          max_attempts: number;
+          last_error: string | null;
+          created_at: string;
+          sent_at: string | null;
+          delivery_event_at: string | null;
+          suppressed: boolean;
+        }[];
+      };
+      workspace_email_summary: {
+        Args: { window_days?: number };
+        Returns: {
+          sent: number;
+          delivered: number;
+          delayed: number;
+          bounced: number;
+          complained: number;
+          failed: number;
+          waiting: number;
+          suppressed_addresses: number;
+        }[];
+      };
+      list_email_suppressions: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          id: string;
+          email: string;
+          in_workspace: boolean;
+          reason: string;
+          detail: string | null;
+          email_kind: string | null;
+          created_at: string;
+        }[];
+      };
+      clear_email_suppression: {
+        Args: { target_suppression: string };
+        Returns: undefined;
+      };
+      set_email_digest: {
+        Args: { frequency: string; send_hour: number; send_weekday: number; zone: string };
+        Returns: string | null;
+      };
+      set_report_emails: {
+        Args: { enabled: boolean };
+        Returns: undefined;
+      };
+      email_unsubscribe: {
+        Args: { unsubscribe_token: string; what: string };
+        Returns: Json;
+      };
+      record_email_event: {
+        Args: {
+          provider_email_id: string;
+          event_type: string;
+          event_time?: string | null;
+          bounce_type?: string | null;
+          bounce_subtype?: string | null;
+        };
+        Returns: Json;
+      };
+      digest_email_items: {
+        Args: { target_email: string };
+        Returns: { item_id: string; kind: string; data: Json; created_at: string; parts: Json }[];
+      };
+      claim_scheduled_emails: {
+        Args: { max_items?: number; only_id?: string | null };
+        Returns: Database["public"]["Tables"]["email_outbox"]["Row"][];
+      };
+      alhc_queue_scheduled_emails: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
       add_portfolio_member: {
         Args: { target_portfolio: string; member_email: string; member_role?: string };
         Returns: string | null;

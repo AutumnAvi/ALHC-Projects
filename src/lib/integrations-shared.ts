@@ -178,6 +178,9 @@ export type EmailDelivery = {
   sentAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // What Resend reported after sending (Real features 3): delivered, delayed, bounced, complained, or
+  // suppressed; null when nothing was reported (or before that release's database update).
+  deliveryStatus?: string | null;
 };
 
 export const EMAIL_KIND_LABELS: Record<string, string> = {
