@@ -824,7 +824,7 @@ function MyTaskRow({
         selection.setActive(task.id);
         if (!open) router.push(taskHref(task.id), { scroll: false });
       }}
-      className={`group flex min-h-row cursor-pointer items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
+      className={`cv-row group flex min-h-row cursor-pointer items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
         dropBefore ? "shadow-[inset_0_2px_0_var(--color-accent-500)]" : ""
       } ${
         selected ? "bg-accent-50" : open ? "bg-accent-50/60" : "hover:bg-zinc-50"

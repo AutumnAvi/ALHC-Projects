@@ -4,21 +4,22 @@ import Link from "next/link";
 import { useEffect, useState, type DragEvent } from "react";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
-import { ShowMoreRows, useGroupPages } from "@/components/show-more";
+import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
 import { useCan } from "@/components/project/project-access";
+import { useViewConfig } from "@/components/project/view-config";
 import { useServerAction } from "@/components/toast";
 import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
-import type { Profile, ProjectTask, Section } from "@/lib/data";
+import type { Profile, ProjectTask, ProjectTaskGroupPage, Section } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
-import { columnsOf, groupOf, refFieldId, sortOf, type ViewConfig } from "@/lib/views";
+import { columnsOf, groupOf, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { GroupTitle } from "./list-view";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, addTaskKindOf, useTaskHref } from "./shared";
 import { Assignee, CommentCount, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
-import { groupTasks, type TaskGroup } from "./view-groups";
+import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
 
 type Props = {
   projectId: string;
@@ -28,6 +29,7 @@ type Props = {
   fields: FieldDef[];
   config: ViewConfig;
   openTaskId: string | null;
+  taskPage?: ProjectTaskGroupPage[] | null;
   tags: Tag[];
   // Every task per section, whatever the view shows (a section can be deleted only when empty).
   sectionTaskCounts?: Record<string, number>;
@@ -49,13 +51,17 @@ export function BoardView({
   tasks,
   profiles,
   fields,
-  config,
+  config: configProp,
   openTaskId,
+  taskPage = null,
   tags,
   sectionTaskCounts = {},
 }: Props) {
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const pages = useGroupPages();
+  const showMorePage = usePagedShowMore();
+  const viewConfig = useViewConfig();
+  const config = viewConfig?.current ?? configProp;
   const [, run] = useServerAction();
   const canEdit = useCan("editor");
   const [dragging, setDragging] = useState<string | null>(null);
@@ -73,7 +79,16 @@ export function BoardView({
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
-  const groups = groupTasks(optimisticTasks, config, { sections, profilesById, fields, tags });
+  const groupContext = { sections, profilesById, fields, tags };
+  const groups =
+    taskPage && optimisticTasks === tasks && sameConfig(config, configProp)
+      ? groupsFromPage(taskPage, configProp, groupContext)
+      : withPageCursors(
+          groupTasks(optimisticTasks, taskPage ? configProp : config, groupContext),
+          taskPage ?? [],
+        );
+  const visibleTasks = (group: TaskGroup) =>
+    group.total != null ? group.tasks : group.tasks.slice(0, pages.limit(group.key));
   const tagsById = new Map(tags.map((t) => [t.id, t] as const));
   const groupBy = groupOf(config);
   const bySection = groupBy === "section";
@@ -103,7 +118,14 @@ export function BoardView({
       if (beforeId === task.id) return;
       if (!manualOrder && task.sectionId === target.sectionId) return;
       const sortOrder = manualOrder
-        ? sortOrderFor(group.tasks, beforeId, task.id)
+        ? sortOrderFor(
+            group.tasks,
+            beforeId,
+            task.id,
+            group.nextId != null && group.nextSortOrder != null
+              ? { id: group.nextId, sortOrder: group.nextSortOrder }
+              : null,
+          )
         : (group.tasks.filter((t) => t.id !== task.id).at(-1)?.sortOrder ?? 0) + 1024;
       // Manual order: the database places it before `beforeId` (reindexing tiny gaps); otherwise append.
       run(
@@ -217,7 +239,7 @@ export function BoardView({
             ) : null}
 
             <ol className="flex min-h-8 flex-col gap-2 overflow-y-auto p-0.5">
-              {group.tasks.slice(0, pages.limit(group.key)).map((task, index) => (
+              {visibleTasks(group).map((task, index) => (
                 <li
                   key={task.id}
                   onDragOver={(e) => {
@@ -230,7 +252,7 @@ export function BoardView({
                     }
                     const rect = e.currentTarget.getBoundingClientRect();
                     const after = e.clientY > rect.top + rect.height / 2;
-                    const beforeId = after ? (group.tasks[index + 1]?.id ?? null) : task.id;
+                    const beforeId = after ? (group.tasks[index + 1]?.id ?? group.nextId ?? null) : task.id;
                     setDropTarget({ groupKey: group.key, beforeId });
                   }}
                 >
@@ -270,11 +292,15 @@ export function BoardView({
                 </li>
               ))}
               {isTarget && dropTarget?.beforeId === null ? <DropIndicator /> : null}
-              {group.tasks.length > pages.limit(group.key) ? (
+              {(group.total ?? group.tasks.length) > visibleTasks(group).length ? (
                 <li>
                   <ShowMoreRows
-                    hidden={group.tasks.length - pages.limit(group.key)}
-                    onClick={() => pages.showMore(group.key)}
+                    hidden={(group.total ?? group.tasks.length) - visibleTasks(group).length}
+                    onClick={() =>
+                      group.total != null
+                        ? showMorePage(group.key, visibleTasks(group).length)
+                        : pages.showMore(group.key)
+                    }
                     className="w-full"
                   />
                 </li>
@@ -358,7 +384,7 @@ function TaskCard({
       draggable={moveOptions.length > 0}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className={`group relative rounded-lg border bg-white px-3 py-2.5 shadow-[0_1px_2px_rgb(0_0_0/0.06)] transition-[border-color,box-shadow] ${
+      className={`cv-card group relative rounded-lg border bg-white px-3 py-2.5 shadow-[0_1px_2px_rgb(0_0_0/0.06)] transition-[border-color,box-shadow] ${
         open ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200/80 hover:border-zinc-300 hover:shadow-[0_2px_6px_rgb(0_0_0/0.08)]"
       } ${dragging ? "opacity-40" : ""} ${moveOptions.length > 0 ? "cursor-grab active:cursor-grabbing" : ""}`}
     >

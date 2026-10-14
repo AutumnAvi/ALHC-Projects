@@ -1,6 +1,6 @@
 # Performance audit
 
-Local pass on `perf/alhc-audit-grok`. The migration is **not** applied to the hosted project. `20261014120000_perf_audit.sql` has **no TAIL**.
+Local pass on `perf/alhc-audit-grok`. `20261014120000_perf_audit.sql` has **no TAIL**. Stage 1 and stage 2 migrations are applied on the hosted project. Stage 3 is not.
 
 Seed for the EXPLAIN runs: one local Postgres 17 cluster (socket `/tmp/alhc-perf-pg`, port 5433 — **down now**), about 10,000 memberships in one project, about 50,000 comments, 5,005 of them on one task. Plans are `EXPLAIN (ANALYZE, BUFFERS)` as an authenticated member. Two captures:
 
@@ -55,7 +55,7 @@ Logs: `/tmp/alhc-perf-step5/`.
 
 ## Stage 2
 
-Local Postgres 17 again (`/tmp/alhc-perf-pg`, port 5433), rebuilt from `scripts/perf/seed.sql`: 10,000 tasks in one project, 50,000 comments with 5,005 on task 1, 1,700 open tasks assigned to `perf-seed@example.com`, 2,000 unread inbox rows for that person. Plans are `EXPLAIN (ANALYZE, BUFFERS)` as that member, warm cache, saved under `scripts/perf/plans/`. The migration is **not** applied to the hosted project. `20261015010000_perf_step2.sql` has an empty **TAIL**.
+Local Postgres 17 again (`/tmp/alhc-perf-pg`, port 5433), rebuilt from `scripts/perf/seed.sql`: 10,000 tasks in one project, 50,000 comments with 5,005 on task 1, 1,700 open tasks assigned to `perf-seed@example.com`, 2,000 unread inbox rows for that person. Plans are `EXPLAIN (ANALYZE, BUFFERS)` as that member, warm cache, saved under `scripts/perf/plans/`. `20261015010000_perf_step2.sql` has an empty **TAIL**. It is applied on the hosted project, with stage 1.
 
 | Query | Stage 1 before | Stage 1 after | Stage 2 |
 | --- | ---: | ---: | ---: |
@@ -76,8 +76,34 @@ Production `next build` (Next.js 16.3.8, Turbopack) still does not print route-l
 
 `npm run db:test` passed in UTC (the first local run failed the due-tomorrow rule because the machine was past midnight in UTC+3 and still on the previous UTC day). `npm run typecheck`, `npm run lint`, unit tests (21 passed), and `npm run build` passed.
 
+## Stage 3
+
+Same seed and role as stage 2. `20261015020000_perf_step3.sql` has an empty **TAIL**. It is **not** applied to the hosted project. List and Board call `project_task_card_page` (80 cards per group, plus the group's total and the id of the next task). Show more, search, filter, and sort ask for that page again. Calendar and Timeline still call `project_task_cards`. A database without the new function keeps the full list.
+
+| Query | Stage 3 before | Stage 3 after |
+| --- | ---: | ---: |
+| `project_task_cards`, all 10,000 cards | 202–277 ms warm (last run 277 ms) | unchanged; List and Board no longer call it for the first paint |
+| `project_task_card_page`, first 80 incomplete cards, total 9,970 | — | **41 ms** warm (76 ms on the first call in a session) |
+
+The 80 cards match `project_task_cards` for the same tasks. A non-member, including a workspace admin who is not a member, gets `{"groups":[]}`. Suite `zz22_perf_step3_smoke.sql`.
+
+Off-screen List, Board, My tasks, and Inbox rows use `content-visibility: auto` (fallback size 2.25rem for a row, 5.5rem for a card). The nodes stay in the document, so keyboard navigation, drag-and-drop, and multi-select still reach them. The Timeline paints rows in the scrollport plus 12 rows of overscan. Arrows still use every row's position, and the bar being dragged stays mounted.
+
+Client JS, production `next build` (Next.js 16.3.8, Turbopack), same method as stage 2:
+
+| | Total under `.next/static` | Project view first load |
+| --- | ---: | ---: |
+| Before any perf edit | about 2.78 MB | — |
+| Stage 2 | 3.27 MB (115 files, 3,425,774 bytes) | 1.31 MB (22 files, 1,309,469 bytes) |
+| This branch before the chart change | 3.35 MB (116 files, 3,512,751 bytes) | 1.31 MB (22 files, 1,314,617 bytes) |
+| After replacing the Recharts bar charts with plain markup | **3.01 MB** (115 files, 3,153,789 bytes) | **1.31 MB** (22 files, 1,314,609 bytes) |
+
+Recharts was one 359 KB chunk. The screen-reader tables are unchanged, and a bar's title still names the count. Splitting the four project layouts into dynamic imports did not shrink the first load, so those imports stay direct. Detail is `scripts/perf/plans/bundle-step3.txt`.
+
+`npm run db:test` passed in UTC, including `zz22`. 
+
 ## Deferred
 
-- `project_task_cards` still returns every task in the project. The browser paints 80; the database still builds the full jsonb.
-- No `content-visibility` on long rows. Timeline is not windowed.
-- Do not apply `20261014120000_perf_audit.sql` or `20261015010000_perf_step2.sql` to the hosted project from this branch. Use the usual migration-applier path after review.
+- Calendar and Timeline still load every task through `project_task_cards`. List and Board use the page.
+- Total client JS is 3.01 MB. That is under stage 2's 3.27 MB and above the 2.78 MB from before the perf work. The project page first load is still 1.31 MB.
+- Do not apply `20261015020000_perf_step3.sql` from this branch. Stage 1 (`20261014120000_perf_audit.sql`) and stage 2 (`20261015010000_perf_step2.sql`) are already on the hosted project.

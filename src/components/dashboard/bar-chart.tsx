@@ -1,37 +1,31 @@
-"use client";
-
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-
 export type BarDatum = { key: string; label: string; count: number };
 
-// Horizontal bars so long section/assignee names stay readable. The visually hidden table carries
-// the same numbers for screen readers.
+function shortLabel(label: string) {
+  return label.length > 18 ? `${label.slice(0, 17)}…` : label;
+}
+
+// Horizontal bars so long section and assignee names stay readable. The visually hidden table
+// carries the same numbers for screen readers. Plain markup, so the reports pages do not ship
+// a chart library.
 export function CountBarChart({ data, caption }: { data: BarDatum[]; caption: string }) {
-  const height = Math.max(140, data.length * 34 + 30);
+  const max = Math.max(1, ...data.map((item) => item.count));
   return (
     <figure>
-      <div aria-hidden style={{ height }} className="text-xs">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, bottom: 4, left: 4 }}>
-            <CartesianGrid horizontal={false} stroke="#e4e4e7" />
-            <XAxis type="number" allowDecimals={false} tick={{ fill: "#71717a", fontSize: 12 }} axisLine={false} tickLine={false} />
-            <YAxis
-              type="category"
-              dataKey="label"
-              width={120}
-              tick={{ fill: "#3f3f46", fontSize: 12 }}
-              axisLine={false}
-              tickLine={false}
-              tickFormatter={(value: string) => (value.length > 18 ? `${value.slice(0, 17)}…` : value)}
-            />
-            <Tooltip
-              cursor={{ fill: "#f4f4f5" }}
-              formatter={(value) => [value, "Tasks"]}
-              contentStyle={{ borderRadius: 8, borderColor: "#e4e4e7", fontSize: 12 }}
-            />
-            <Bar dataKey="count" fill="var(--color-accent-500)" radius={[0, 4, 4, 0]} barSize={18} isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
+      <div aria-hidden className="flex flex-col gap-1.5 text-xs">
+        {data.map((item) => (
+          <div key={item.key} className="grid grid-cols-[7.5rem_minmax(0,1fr)_2.5rem] items-center gap-2" title={`${item.label}: ${item.count} tasks`}>
+            <span className="truncate text-zinc-700" title={item.label}>
+              {shortLabel(item.label)}
+            </span>
+            <span className="h-4 overflow-hidden rounded-r bg-zinc-100">
+              <span
+                className="block h-full rounded-r bg-accent-500"
+                style={{ width: `${Math.max(item.count === 0 ? 0 : 2, (item.count / max) * 100)}%` }}
+              />
+            </span>
+            <span className="text-right tabular-nums text-zinc-500">{item.count}</span>
+          </div>
+        ))}
       </div>
       <table className="sr-only">
         <caption>{caption}</caption>
@@ -42,10 +36,10 @@ export function CountBarChart({ data, caption }: { data: BarDatum[]; caption: st
           </tr>
         </thead>
         <tbody>
-          {data.map((d) => (
-            <tr key={d.key}>
-              <th scope="row">{d.label}</th>
-              <td>{d.count}</td>
+          {data.map((item) => (
+            <tr key={item.key}>
+              <th scope="row">{item.label}</th>
+              <td>{item.count}</td>
             </tr>
           ))}
         </tbody>

@@ -1,0 +1,25 @@
+Stage 3 before. Same seed as stage 2 (scripts/perf/seed.sql): 10,000 tasks in project
+b1000000-0000-4000-8000-000000000001, local Postgres 17 (socket /tmp/alhc-perf-pg, port 5433).
+
+Role: authenticated. request.jwt.claim.sub = a1000000-0000-4000-8000-000000000001
+(perf-seed@example.com, owner). EXPLAIN (ANALYZE, BUFFERS). Buffers are shared hits (warm).
+project_task_cards returns one jsonb array of 10,000 cards.
+
+Three warm runs, back to back:
+
+  252.197 ms   shared hit=4039 dirtied=3
+  201.974 ms   shared hit=4038
+  276.873 ms   shared hit=4038
+
+Stage 2 recorded this same call at 339 ms. The list still builds every card; the browser
+paints 80.
+
+Last run:
+
+QUERY PLAN
+-----------------------------------------------------------------------------------------
+ Result  (cost=0.00..0.26 rows=1 width=32) (actual time=276.856..276.858 rows=1 loops=1)
+   Buffers: shared hit=4038
+ Planning Time: 0.013 ms
+ Execution Time: 276.873 ms
+(4 rows)

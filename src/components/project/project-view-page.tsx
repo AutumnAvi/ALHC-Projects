@@ -13,7 +13,9 @@ import {
   listProjectDependencies,
   listProjectFields,
   projectCriticalPath,
+  listProjectTaskPage,
   listProjectTasks,
+  type ProjectTask,
   listProjectViews,
   listSectionTaskCounts,
   listSections,
@@ -23,7 +25,17 @@ import {
 } from "@/lib/data";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";
-import { decodeConfig, pruneConfig, showsSubtasks, type ProjectView, type ViewLayout } from "@/lib/views";
+import {
+  decodeConfig,
+  groupOf,
+  parsePageLimits,
+  pruneConfig,
+  ROW_PAGE,
+  showsSubtasks,
+  sortOf,
+  type ProjectView,
+  type ViewLayout,
+} from "@/lib/views";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -66,11 +78,12 @@ export async function ProjectViewPage({
   searchParams: SearchParams;
 }) {
   const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
+  const paging = layout === "list" || layout === "board";
 
-  const [sections, tasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths, sectionCounts] =
+  const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths, sectionCounts] =
     await Promise.all([
     listSections(projectId),
-    listProjectTasks(projectId),
+    paging ? Promise.resolve(null) : listProjectTasks(projectId),
     listProfiles(),
     listProjectFields(projectId),
     getViewerTimeZone(),
@@ -92,8 +105,38 @@ export async function ProjectViewPage({
   let config = pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context);
   // Older links carry ?sub=1: show it as an unsaved draft of the view's Show subtasks setting.
   if (layout === "list" && searchParams.sub === "1" && !showsSubtasks(config)) config = { ...config, show_subtasks: true };
-  const matching = await filterProjectTaskIds(projectId, config.filters ?? {}, timeZone);
-  const visible = tasks.filter((t) => matching.has(t.id));
+  const limits = parsePageLimits(typeof searchParams.n === "string" ? searchParams.n : undefined);
+  // List and Board paint one page per group. Calendar and Timeline still read every matching task.
+  // A database without the page function falls back to the full card list.
+  let taskPage = paging
+    ? await listProjectTaskPage(
+        projectId,
+        config.filters ?? {},
+        timeZone,
+        groupOf(config),
+        sortOf(config),
+        ROW_PAGE,
+        limits,
+      )
+    : null;
+  let everyTask = fullTasks;
+  let visible: ProjectTask[];
+  if (taskPage) {
+    const seen = new Set<string>();
+    visible = [];
+    for (const group of taskPage) {
+      for (const task of group.tasks) {
+        if (seen.has(task.id)) continue;
+        seen.add(task.id);
+        visible.push(task);
+      }
+    }
+  } else {
+    everyTask = fullTasks ?? (await listProjectTasks(projectId));
+    const matching = await filterProjectTaskIds(projectId, config.filters ?? {}, timeZone);
+    visible = everyTask.filter((task) => matching.has(task.id));
+    taskPage = null;
+  }
   const props = { projectId, sections, tasks: visible, profiles, fields, config, openTaskId, tags };
   // List's “Show subtasks” (the view's show_subtasks setting, off by default): each task's subtask tree
   // under its row.
@@ -102,7 +145,7 @@ export async function ProjectViewPage({
   // Every task per section, whatever the view shows: a section can be deleted only when it's empty.
   const sectionTaskCounts: Record<string, number> = sectionCounts ?? {};
   if (!sectionCounts) {
-    for (const task of tasks) {
+    for (const task of everyTask ?? visible) {
       if (task.sectionId) sectionTaskCounts[task.sectionId] = (sectionTaskCounts[task.sectionId] ?? 0) + 1;
     }
   }
@@ -117,6 +160,7 @@ export async function ProjectViewPage({
             <ListView
               key={`list-${view?.id ?? "default"}`}
               {...props}
+              taskPage={taskPage}
               bulk={bulk}
               subtasks={showSubtasks ? subtasks : null}
               columnWidths={columnWidths}
@@ -125,7 +169,12 @@ export async function ProjectViewPage({
           </div>
         ) : null}
         {layout === "board" ? (
-          <BoardView key={`board-${view?.id ?? "default"}`} {...props} sectionTaskCounts={sectionTaskCounts} />
+          <BoardView
+            key={`board-${view?.id ?? "default"}`}
+            {...props}
+            taskPage={taskPage}
+            sectionTaskCounts={sectionTaskCounts}
+          />
         ) : null}
         {layout === "calendar" ? <CalendarView projectId={projectId} tasks={visible} profiles={profiles} openTaskId={openTaskId} /> : null}
         {layout === "timeline" ? (

@@ -1,6 +1,3 @@
-"use client";
-
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { seriesLabel, type SeriesInterval } from "@/lib/reports";
 
 export type SeriesDatum = { start: string; count: number };
@@ -18,31 +15,23 @@ export function SeriesChart({
   caption: string;
   height?: number;
 }) {
-  const rows = data.map((d) => ({ ...d, label: seriesLabel(d.start, interval).replace("Week of ", "") }));
+  const max = Math.max(1, ...data.map((item) => item.count));
+  const rows = data.map((item) => ({
+    ...item,
+    label: seriesLabel(item.start, interval).replace("Week of ", ""),
+  }));
   return (
     <figure>
-      <div aria-hidden style={{ height }} className="text-xs">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: -16 }}>
-            <CartesianGrid vertical={false} stroke="#e4e4e7" />
-            <XAxis
-              dataKey="label"
-              tick={{ fill: "#71717a", fontSize: 11 }}
-              axisLine={false}
-              tickLine={false}
-              interval="preserveStartEnd"
-              minTickGap={16}
+      <div aria-hidden className="flex items-end gap-1" style={{ height }}>
+        {rows.map((item) => (
+          <div key={item.start} className="flex h-full min-w-0 flex-1 flex-col justify-end" title={`${interval === "week" ? "Week of " : ""}${item.label}: ${item.count} completed`}>
+            <span
+              className="w-full rounded-t bg-accent-500"
+              style={{ height: `${Math.max(item.count === 0 ? 0 : 2, (item.count / max) * 100)}%` }}
             />
-            <YAxis allowDecimals={false} tick={{ fill: "#71717a", fontSize: 11 }} axisLine={false} tickLine={false} />
-            <Tooltip
-              cursor={{ fill: "#f4f4f5" }}
-              formatter={(value) => [value, "Completed"]}
-              labelFormatter={(label) => (interval === "week" ? `Week of ${label}` : String(label))}
-              contentStyle={{ borderRadius: 8, borderColor: "#e4e4e7", fontSize: 12 }}
-            />
-            <Bar dataKey="count" fill="var(--color-accent-500)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
+            <span className="mt-1 truncate text-center text-[10px] text-zinc-500">{item.label}</span>
+          </div>
+        ))}
       </div>
       <table className="sr-only">
         <caption>{caption}</caption>
@@ -53,10 +42,10 @@ export function SeriesChart({
           </tr>
         </thead>
         <tbody>
-          {data.map((d) => (
-            <tr key={d.start}>
-              <th scope="row">{seriesLabel(d.start, interval)}</th>
-              <td>{d.count}</td>
+          {data.map((item) => (
+            <tr key={item.start}>
+              <th scope="row">{seriesLabel(item.start, interval)}</th>
+              <td>{item.count}</td>
             </tr>
           ))}
         </tbody>
