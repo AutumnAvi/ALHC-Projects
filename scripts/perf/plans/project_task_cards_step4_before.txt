@@ -1,0 +1,32 @@
+Stage 4 before. Same seed as stage 2 (scripts/perf/seed.sql): 10,000 tasks in project
+b1000000-0000-4000-8000-000000000001, 8,000 of them with a due date from 2026-10-02
+through 2026-11-29, local Postgres 17 (socket /tmp/alhc-perf-pg, port 5433).
+
+Role: authenticated. request.jwt.claim.sub = a1000000-0000-4000-8000-000000000001
+(perf-seed@example.com, owner). EXPLAIN (ANALYZE, BUFFERS). Buffers are shared hits (warm).
+project_task_cards returns one jsonb array of 10,000 cards (5,361,560 bytes).
+
+How Calendar and Timeline call it: ProjectViewPage treats only List and Board as paged.
+Calendar and Timeline call listProjectTasks, which calls project_task_cards for every
+task, then filterProjectTaskIds. The calendar grid draws the bars that overlap the
+visible month or week and lists incomplete tasks with no due date in the tray. The
+timeline draws a row for every scheduled task; stage 3 only skips painting rows outside
+the scrollport.
+
+Three warm runs, back to back:
+
+  347.498 ms   shared hit=4034
+  219.861 ms   shared hit=1478
+  219.963 ms   shared hit=1478
+
+Stage 3 recorded this same call at 202–277 ms warm. Steady state here is about 220 ms.
+
+Last run:
+
+QUERY PLAN
+-----------------------------------------------------------------------------------------
+ Result  (cost=0.00..0.26 rows=1 width=32) (actual time=219.940..219.941 rows=1 loops=1)
+   Buffers: shared hit=1478
+ Planning Time: 0.037 ms
+ Execution Time: 219.963 ms
+(4 rows)

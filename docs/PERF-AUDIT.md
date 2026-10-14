@@ -1,6 +1,6 @@
 # Performance audit
 
-Local pass on `perf/alhc-audit-grok`. `20261014120000_perf_audit.sql` has **no TAIL**. Stage 1 and stage 2 migrations are applied on the hosted project. Stage 3 is not.
+Local pass on `perf/alhc-audit-grok`. `20261014120000_perf_audit.sql` has **no TAIL**. Stage 1, stage 2, and stage 3 migrations are applied on the hosted project (`perf_audit_a`, `perf_step2_a`, `perf_step3_a`).
 
 Seed for the EXPLAIN runs: one local Postgres 17 cluster (socket `/tmp/alhc-perf-pg`, port 5433 — **down now**), about 10,000 memberships in one project, about 50,000 comments, 5,005 of them on one task. Plans are `EXPLAIN (ANALYZE, BUFFERS)` as an authenticated member. Two captures:
 
@@ -78,7 +78,7 @@ Production `next build` (Next.js 16.3.8, Turbopack) still does not print route-l
 
 ## Stage 3
 
-Same seed and role as stage 2. `20261015020000_perf_step3.sql` has an empty **TAIL**. It is **not** applied to the hosted project. List and Board call `project_task_card_page` (80 cards per group, plus the group's total and the id of the next task). Show more, search, filter, and sort ask for that page again. Calendar and Timeline still call `project_task_cards`. A database without the new function keeps the full list.
+Same seed and role as stage 2. `20261015020000_perf_step3.sql` has an empty **TAIL**. It is applied on the hosted project, with stage 1 and stage 2. List and Board call `project_task_card_page` (80 cards per group, plus the group's total and the id of the next task). Show more, search, filter, and sort ask for that page again. Calendar and Timeline still call `project_task_cards`. A database without the new function keeps the full list.
 
 | Query | Stage 3 before | Stage 3 after |
 | --- | ---: | ---: |
@@ -106,4 +106,4 @@ Recharts was one 359 KB chunk. The screen-reader tables are unchanged, and a bar
 
 - Calendar and Timeline still load every task through `project_task_cards`. List and Board use the page.
 - Total client JS is 3.01 MB. That is under stage 2's 3.27 MB and above the 2.78 MB from before the perf work. The project page first load is still 1.31 MB.
-- Do not apply `20261015020000_perf_step3.sql` from this branch. Stage 1 (`20261014120000_perf_audit.sql`) and stage 2 (`20261015010000_perf_step2.sql`) are already on the hosted project.
+- Stage 1 (`20261014120000_perf_audit.sql`), stage 2 (`20261015010000_perf_step2.sql`), and stage 3 (`20261015020000_perf_step3.sql`) are on the hosted project.
