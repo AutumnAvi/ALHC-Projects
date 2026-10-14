@@ -1,0 +1,22 @@
+Stage 3 client JS. Production next build, Next.js 16.3.8, Turbopack.
+Same measurement as scripts/perf/plans/bundle.txt: every .js file under .next/static,
+and the project view first load (entryJSFiles for
+/projects/[projectId]/views/[viewId] plus rootMainFiles and the polyfill, each file once).
+
+Before this trim (this branch, charts still on Recharts):
+
+  total client JS     116 files    3,512,751 bytes    3.35 MB
+  project first load   22 files    1,314,617 bytes    1.31 MB
+
+Stage 2, for comparison, was 115 files / 3,425,774 bytes (3.27 MB) and
+22 files / 1,309,469 bytes (1.31 MB). About 2.78 MB was the total before any perf edit.
+
+After replacing the two Recharts bar charts with plain markup (the screen-reader
+tables are unchanged; a bar's title still names the count):
+
+  total client JS     115 files    3,153,789 bytes    3.01 MB
+  project first load   22 files    1,314,609 bytes    1.31 MB
+
+Recharts was one 359 KB chunk and is no longer in the client build. Splitting List,
+Board, Calendar, and Timeline into dynamic imports did not shrink that first load
+(they already share the page's scripts), so those imports stay direct.
