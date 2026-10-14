@@ -1,0 +1,28 @@
+Stage 4 calendar. Same seed and role as project_task_cards_step4_before.txt.
+Anchor 2026-10-15 (a Thursday). Month window is the visible weeks, 2026-09-27 through
+2026-10-31. Week window is 2026-10-11 through 2026-10-17. Both include incomplete
+tasks with no due date (the tray). EXPLAIN (ANALYZE, BUFFERS), warm cache.
+
+project_schedule_cards(..., 'calendar') instead of project_task_cards for every task.
+
+Before (every card, any layout): about 220 ms warm, 10,000 cards, 5,361,560 bytes.
+See project_task_cards_step4_before.txt.
+
+Month, three warm runs:
+
+  134.103 ms   shared hit=3245
+  108.812 ms   shared hit=1016
+  101.831 ms   shared hit=1016
+
+5,994 cards, 1,643,839 bytes.
+
+Week, three warm runs:
+
+   86.827 ms   shared hit=3255
+   69.816 ms   shared hit=1026
+   69.530 ms   shared hit=1026
+
+2,829 cards.
+
+A person who is not a member gets []. Changing month or week loads that window on the
+server. A database without the function still loads project_task_cards.

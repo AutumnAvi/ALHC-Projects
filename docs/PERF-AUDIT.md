@@ -1,6 +1,6 @@
 # Performance audit
 
-Local pass on `perf/alhc-audit-grok`. `20261014120000_perf_audit.sql` has **no TAIL**. Stage 1 and stage 2 migrations are applied on the hosted project. Stage 3 is not.
+Local pass on `perf/alhc-audit-grok`. `20261014120000_perf_audit.sql` has **no TAIL**. Stage 1, stage 2, and stage 3 migrations are applied on the hosted project (`perf_audit_a`, `perf_step2_a`, `perf_step3_a`).
 
 Seed for the EXPLAIN runs: one local Postgres 17 cluster (socket `/tmp/alhc-perf-pg`, port 5433 — **down now**), about 10,000 memberships in one project, about 50,000 comments, 5,005 of them on one task. Plans are `EXPLAIN (ANALYZE, BUFFERS)` as an authenticated member. Two captures:
 
@@ -78,7 +78,7 @@ Production `next build` (Next.js 16.3.8, Turbopack) still does not print route-l
 
 ## Stage 3
 
-Same seed and role as stage 2. `20261015020000_perf_step3.sql` has an empty **TAIL**. It is **not** applied to the hosted project. List and Board call `project_task_card_page` (80 cards per group, plus the group's total and the id of the next task). Show more, search, filter, and sort ask for that page again. Calendar and Timeline still call `project_task_cards`. A database without the new function keeps the full list.
+Same seed and role as stage 2. `20261015020000_perf_step3.sql` has an empty **TAIL**. It is applied on the hosted project, with stage 1 and stage 2. List and Board call `project_task_card_page` (80 cards per group, plus the group's total and the id of the next task). Show more, search, filter, and sort ask for that page again. Calendar and Timeline still call `project_task_cards`. A database without the new function keeps the full list.
 
 | Query | Stage 3 before | Stage 3 after |
 | --- | ---: | ---: |
@@ -100,10 +100,36 @@ Client JS, production `next build` (Next.js 16.3.8, Turbopack), same method as s
 
 Recharts was one 359 KB chunk. The screen-reader tables are unchanged, and a bar's title still names the count. Splitting the four project layouts into dynamic imports did not shrink the first load, so those imports stay direct. Detail is `scripts/perf/plans/bundle-step3.txt`.
 
-`npm run db:test` passed in UTC, including `zz22`. 
+`npm run db:test` passed in UTC, including `zz22`.
+
+## Stage 4
+
+Same seed and role as stage 2. Anchor for the windows below is 2026-10-15. `20261015030000_perf_step4.sql` has an empty **TAIL**. It is not applied to the hosted project. Stages 1–3 are (`perf_audit_a`, `perf_step2_a`, `perf_step3_a`).
+
+Calendar and Timeline call `project_schedule_cards` for the visible dates, plus incomplete tasks with no due date (the tray). List and Board stay on `project_task_card_page`. A database without the new function still uses `project_task_cards`. Changing month, week, or timeline scale loads the next window. Drag, filters, and create are the same paths as before. An arrow is drawn only when both bars are inside the scale, which was already the rule.
+
+| Query | Before | After |
+| --- | ---: | ---: |
+| `project_task_cards`, all 10,000 cards | **220 ms** warm (347 / 220 / 220 ms), 5,361,560 bytes | unchanged; Calendar and Timeline no longer call it |
+| Calendar month, Sep 27–Oct 31, plus the undated tray | (the full list above) | **102 ms** warm (134 / 109 / 102 ms), 5,994 cards, 1,643,839 bytes |
+| Calendar week, Oct 11–17, plus the undated tray | (the full list above) | **70 ms** warm (87 / 70 / 70 ms), 2,829 cards |
+| Timeline week scale, Oct 4–Nov 14, plus the unscheduled tray | (the full list above) | **118 ms** warm (141 / 132 / 118 ms), 7,648 cards, 2,110,357 bytes |
+
+On this seed most due dates already sit in those six timeline weeks, so the timeline window is still most of the open tasks. The saving is the tasks outside it, and not building comment counts. A member's window matches the tasks they would see there. A non-member, including a workspace admin who is not a member, gets `[]`. Suite `zz23_perf_step4_smoke.sql`.
+
+Client JS, production `next build` (Next.js 16.3.8, Turbopack), same method as stage 3. Megabytes below are bytes ÷ 1024². Stage 3's "1.31 MB" label for the project view was 1,314,609 bytes, the same size as the 1.25 MB row here.
+
+| | Total under `.next/static` | Project view first load |
+| --- | ---: | ---: |
+| Before any perf edit | about 2.78 MB | — |
+| Stage 3 | 3.01 MB (115 files, 3,153,789 bytes) | 1.25 MB (22 files, 1,314,609 bytes) |
+| This branch before the trim | 3.02 MB (115 files, 3,163,106 bytes) | 1.25 MB (22 files, 1,315,392 bytes) |
+| After one shared copy of the date-shift dialog and add-task row | **2.81 MB** (115 files, 2,951,590 bytes) | **1.25 MB** (21 files, 1,315,293 bytes) |
+
+The project view already had one copy of that code, so its first load stays put. The total drops by the extra copies that other routes were carrying. Recharts was already absent from the client build; the unused package is removed. Splitting Calendar and Timeline into dynamic imports still does not shrink the first load, so those imports stay direct. Detail is `scripts/perf/plans/bundle-step4.txt`.
+
+`TZ=UTC npm run db:test` passed, including `zz23`. `npm run typecheck`, `npm run lint`, unit tests (21 passed), and `npm run build` passed.
 
 ## Deferred
 
-- Calendar and Timeline still load every task through `project_task_cards`. List and Board use the page.
-- Total client JS is 3.01 MB. That is under stage 2's 3.27 MB and above the 2.78 MB from before the perf work. The project page first load is still 1.31 MB.
-- Do not apply `20261015020000_perf_step3.sql` from this branch. Stage 1 (`20261014120000_perf_audit.sql`) and stage 2 (`20261015010000_perf_step2.sql`) are already on the hosted project.
+Deferred: none.

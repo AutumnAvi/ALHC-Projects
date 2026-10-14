@@ -4896,6 +4896,17 @@ export type Database = {
         Args: { target_project: string; only_ids?: string[] | null };
         Returns: Json;
       };
+      project_schedule_cards: {
+        Args: {
+          target_project: string;
+          filters?: Json;
+          tz?: string;
+          range_start?: string | null;
+          range_end?: string | null;
+          schedule?: string;
+        };
+        Returns: Json;
+      };
       project_task_card_page: {
         Args: {
           target_project: string;

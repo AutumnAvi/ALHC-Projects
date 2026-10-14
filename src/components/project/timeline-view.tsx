@@ -2,8 +2,8 @@
 
 import type { Tag } from "@/lib/tags";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useId, useRef, useState, type MouseEvent, type PointerEvent } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useId, useRef, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
 import { Inbox, Route } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useCan } from "@/components/project/project-access";
@@ -49,6 +49,12 @@ type Props = {
   // Slack per dated task of the whole project (not just this view), from project_critical_path().
   criticalPath?: CriticalPath;
   tags?: Tag[];
+  // The server already loaded this scale. Moving the window asks it for the next one.
+  // Without the schedule function, every scheduled task is here and the window stays in the browser.
+  windowed?: boolean;
+  today?: string | null;
+  anchor?: string | null;
+  zoom?: Zoom;
 };
 
 const LABEL_WIDTH = 256;
@@ -68,10 +74,16 @@ export function TimelineView({
   dependencies = [],
   criticalPath = EMPTY_CRITICAL_PATH,
   tags = [],
+  windowed = false,
+  today: todayFromServer = null,
+  anchor: anchorFromServer = null,
+  zoom: zoomFromServer = "week",
 }: Props) {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const today = useToday();
+  const [navigating, startTransition] = useTransition();
+  const clientToday = useToday();
   const taskHref = useTaskHref();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const shift = useDependencyShift();
@@ -87,8 +99,9 @@ export function TimelineView({
 
   const requested = searchParams.get("d");
   const zoomParam = searchParams.get("tl");
-  const zoom: Zoom = isZoom(zoomParam) ? zoomParam : "week";
-  const anchor = isIsoDate(requested) ? requested : today;
+  const zoom: Zoom = windowed ? zoomFromServer : isZoom(zoomParam) ? zoomParam : "week";
+  const anchor = windowed ? anchorFromServer : isIsoDate(requested) ? requested : clientToday;
+  const today = windowed ? (todayFromServer ?? anchor) : clientToday;
   const showCritical = searchParams.get("cp") === "1";
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
 
@@ -107,7 +120,14 @@ export function TimelineView({
       else params.delete("cp");
     }
     const query = params.toString();
-    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
+    const url = query ? `${pathname}?${query}` : pathname;
+    // A windowed timeline only has tasks in this scale, so the next range is loaded on the server.
+    // Critical path is already here, and the full-list fallback keeps every change in the address bar.
+    if (windowed && (next.d !== undefined || next.tl !== undefined)) {
+      startTransition(() => router.replace(url, { scroll: false }));
+    } else {
+      window.history.replaceState(null, "", url);
+    }
   }
 
   // Moving a task later can push the tasks that depend on it: useDependencyShift previews that and asks
@@ -257,9 +277,9 @@ export function TimelineView({
   }
 
   return (
-    <div className={VIEW_BODY}>
+    <div className={VIEW_BODY} aria-busy={navigating}>
       {shift.dialog}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className={`flex min-w-0 flex-1 flex-col ${navigating ? "opacity-60 transition-opacity" : ""}`}>
         <PeriodNav
           label={label}
           prevLabel={`Earlier (${zoom})`}

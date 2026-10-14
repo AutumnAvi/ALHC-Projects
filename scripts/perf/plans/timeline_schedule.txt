@@ -1,0 +1,24 @@
+Stage 4 timeline. Same seed and role as project_task_cards_step4_before.txt.
+Default scale is week around 2026-10-15: 2026-10-04 through 2026-11-14 (42 days),
+plus incomplete tasks with neither date (the unscheduled tray).
+EXPLAIN (ANALYZE, BUFFERS), warm cache.
+
+project_schedule_cards(..., 'timeline') instead of project_task_cards for every task.
+
+Before (every card): about 220 ms warm, 10,000 cards, 5,361,560 bytes.
+See project_task_cards_step4_before.txt. On this seed most due dates already fall
+in those six weeks, so the window still holds most open tasks. The saving is the
+tasks outside it, and not building comment counts for the rest.
+
+Three warm runs:
+
+  141.344 ms   shared hit=3188
+  131.914 ms   shared hit=959
+  118.466 ms   shared hit=959
+
+7,648 cards, 2,110,357 bytes.
+
+Arrows still draw when both bars are in the scale, which is the same rule as before:
+a bar outside the scale was never an arrow. Dragging a bar and the scroll window
+are unchanged. Moving the scale loads the next window. A database without the
+function still loads project_task_cards.
