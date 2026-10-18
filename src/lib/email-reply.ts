@@ -8,6 +8,26 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 // f-<token>@<reply domain> address becomes a task through post_email_forward(). Nothing here logs bodies,
 // addresses, or secrets.
 
+// What Resend's Receiving API reports about the sender (SPF, DKIM, DMARC results).
+export type SenderAuthentication = { spf?: unknown; dkim?: unknown; dmarc?: unknown } | null | undefined;
+
+// A submitter's reply posts under their address, so the From must be proven: DMARC passing, or (when
+// Resend reports no DMARC verdict) both SPF and DKIM passing. A missing result is unverified and refused
+// (security review pass 2: this used to count as authenticated).
+export function submitterReplyVerified(auth: SenderAuthentication): boolean {
+  if (!auth || typeof auth !== "object") return false;
+  if (auth.dmarc === "pass") return true;
+  if (auth.dmarc !== undefined && auth.dmarc !== null && auth.dmarc !== "none") return false;
+  return auth.spf === "pass" && auth.dkim === "pass";
+}
+
+// A forward creates a task as the person, so its From must be proven theirs: Resend must report DMARC
+// passing (SPF or DKIM aligned with the From domain). No report, or anything else, is refused and logged
+// for the person ("didn't pass sender checks").
+export function forwardSenderVerified(auth: SenderAuthentication): boolean {
+  return Boolean(auth && typeof auth === "object" && auth.dmarc === "pass");
+}
+
 export const DEFAULT_REPLY_DOMAIN = "reply.mail.autumnlakemarketing.com";
 const TOKEN = /^[0-9a-f]{40}$/;
 // Svix: reject timestamps more than five minutes from our clock (replays).
