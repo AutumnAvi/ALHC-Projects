@@ -11,6 +11,7 @@ import { useDependencyShift } from "@/components/task/dependency-shift";
 import { calendarVisibleDays, type CalendarMode } from "@/lib/date-input";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
+import { displayTaskTitle } from "@/lib/request-numbers";
 import { isIsoDate } from "@/lib/views";
 import { useTaskHref } from "./shared";
 import { Assignee } from "./task-meta";
@@ -125,7 +126,7 @@ export function CalendarView({
     return [
       {
         id: task.id,
-        title: task.title,
+        title: displayTaskTitle(task.title, task.requestLabel),
         startOn: task.startOn && task.startOn < task.dueOn && !milestone ? task.startOn : null,
         dueOn: task.dueOn,
         completed,
@@ -135,7 +136,7 @@ export function CalendarView({
         open: openTaskId === task.id,
         href: taskHref(task.id),
         dotClass: completed ? "bg-green-500" : overdue ? "bg-red-500" : milestone ? "bg-accent-600" : "bg-zinc-300",
-        tooltip: task.title,
+        tooltip: displayTaskTitle(task.title, task.requestLabel),
       },
     ];
   });
@@ -273,7 +274,7 @@ function CalendarChip({
       onDragStart={draggable ? onDragStart : undefined}
       onDragEnd={draggable ? onDragEnd : undefined}
       aria-current={open ? "true" : undefined}
-      title={task.title}
+      title={displayTaskTitle(task.title, task.requestLabel)}
       className={`flex min-w-0 items-center gap-1.5 rounded-md border bg-white px-1.5 py-1.5 text-xs shadow-xs hover:border-zinc-300 ${
         open ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200"
       } ${dragging ? "opacity-40" : ""} ${draggable ? "cursor-grab" : ""}`}
@@ -283,7 +284,7 @@ function CalendarChip({
         className={`size-2 shrink-0 ${task.kind === "milestone" ? "rotate-45 rounded-[1px] bg-accent-600" : "rounded-full bg-zinc-300"}`}
       />
       <span className="min-w-0 flex-1 truncate text-zinc-800">
-        {task.title}
+        {displayTaskTitle(task.title, task.requestLabel)}
         {task.kind === "milestone" ? <span className="sr-only"> (milestone)</span> : null}
       </span>
       <Assignee profile={assignee} />

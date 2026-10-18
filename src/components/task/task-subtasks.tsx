@@ -11,6 +11,7 @@ import { useServerAction } from "@/components/toast";
 import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask } from "@/lib/actions";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, SubtaskItem, TaskDetail } from "@/lib/data";
+import { displayTaskTitle } from "@/lib/request-numbers";
 import { hasRole } from "@/lib/roles";
 import { MAX_SUBTASK_DEPTH, subtaskOrderBefore } from "@/lib/subtasks";
 import { DateRangePicker } from "./date-picker";
@@ -203,6 +204,11 @@ export function TaskSubtasks({
                 <label className="sr-only" htmlFor={`subtask-${subtask.id}`}>
                   Subtask name
                 </label>
+                {subtask.requestLabel ? (
+                  <span className="shrink-0 text-xs font-medium text-zinc-500">
+                    {displayTaskTitle("", subtask.requestLabel).trim()}
+                  </span>
+                ) : null}
                 <input
                   id={`subtask-${subtask.id}`}
                   defaultValue={subtask.title}

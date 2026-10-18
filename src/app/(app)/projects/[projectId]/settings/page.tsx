@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { History } from "lucide-react";
 import { RoleGate } from "@/components/project/project-access";
 import { ProjectSettings } from "@/components/project/project-settings";
+import { TaskNumberingForm } from "@/components/project/task-numbering";
 import { ProjectStatusForm } from "@/components/project/project-status-form";
 import { ProjectStatusHistory } from "@/components/project/project-status-history";
 import { ProjectTeamSettings } from "@/components/project/project-team-settings";
@@ -11,6 +12,8 @@ import {
   getProject,
   getProjectOrigin,
   getRequestSequence,
+  listProjectFields,
+  listSections,
   getWorkspace,
   listMyTeamIds,
   listProjectStatusUpdates,
@@ -32,9 +35,11 @@ export default async function ProjectSettingsPage({
   params,
 }: PageProps<"/projects/[projectId]/settings">) {
   const { projectId } = await params;
-  const [project, sequence, origin, timeZone, statusUpdates, workspace, teams, myTeams] = await Promise.all([
+  const [project, sequence, sections, fields, origin, timeZone, statusUpdates, workspace, teams, myTeams] = await Promise.all([
     getProject(projectId),
     getRequestSequence(projectId),
+    listSections(projectId),
+    listProjectFields(projectId),
     getProjectOrigin(projectId),
     getViewerTimeZone(),
     listProjectStatusUpdates(projectId),
@@ -54,6 +59,14 @@ export default async function ProjectSettingsPage({
       {origin ? <OriginNote origin={origin} timeZone={timeZone} /> : null}
       <ProjectStatusForm project={project} />
       <ProjectStatusHistory updates={statusUpdates} />
+      <div className="mx-auto max-w-3xl px-gutter pt-5">
+        <TaskNumberingForm
+          projectId={project.id}
+          sequence={sequence}
+          sections={sections.map((section) => ({ id: section.id, name: section.name }))}
+          fields={fields}
+        />
+      </div>
       <RoleGate need="admin" what="project settings">
         <ProjectTeamSettings
           projectId={project.id}
@@ -61,7 +74,7 @@ export default async function ProjectSettingsPage({
           visibility={isProjectVisibility(project.visibility) ? project.visibility : "private"}
           teams={teamChoices}
         />
-        <ProjectSettings project={project} sequence={sequence} />
+        <ProjectSettings project={project} />
       </RoleGate>
     </>
   );

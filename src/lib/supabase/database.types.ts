@@ -1853,6 +1853,22 @@ export type Database = {
           add_to_title: boolean;
           assign_to: string;
           last_number: number;
+          template: string;
+          wrap_brackets: boolean;
+          number_subtasks: boolean;
+          subtask_separator: string;
+          number_scope: string;
+          section_ids: string[];
+          task_kinds: string[];
+          reuse_deleted: boolean;
+          reuse_since: string | null;
+          fill_gaps: boolean;
+          reset_period: string;
+          counter_field_id: string | null;
+          project_code: string | null;
+          renumber_on_move: boolean;
+          time_zone: string;
+          start_number: number;
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
@@ -2668,6 +2684,11 @@ export type Database = {
           source: string;
           req_project_id: string | null;
           req_number: number | null;
+          req_subindex: number | null;
+          req_path: string | null;
+          req_label: string | null;
+          req_period: string;
+          req_counter_key: string;
           due_at: string | null;
           start_at: string | null;
           time_zone: string | null;
@@ -2698,6 +2719,11 @@ export type Database = {
           source?: string;
           req_project_id?: string | null;
           req_number?: number | null;
+          req_subindex?: number | null;
+          req_path?: string | null;
+          req_label?: string | null;
+          req_period?: string;
+          req_counter_key?: string;
           due_at?: string | null;
           start_at?: string | null;
           time_zone?: string | null;
@@ -2728,6 +2754,11 @@ export type Database = {
           source?: string;
           req_project_id?: string | null;
           req_number?: number | null;
+          req_subindex?: number | null;
+          req_path?: string | null;
+          req_label?: string | null;
+          req_period?: string;
+          req_counter_key?: string;
           due_at?: string | null;
           start_at?: string | null;
           time_zone?: string | null;
@@ -4536,6 +4567,10 @@ export type Database = {
       add_task_dependency: {
         Args: { predecessor: string; successor: string };
         Returns: string;
+      };
+      apply_task_numbering: {
+        Args: { target_project: string; settings?: Json; mode: string };
+        Returns: Json;
       };
       assign_request_number: {
         Args: { target_task: string };

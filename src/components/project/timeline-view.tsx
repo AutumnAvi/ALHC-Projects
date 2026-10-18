@@ -12,6 +12,7 @@ import { EMPTY_CRITICAL_PATH, slackLabel, type CriticalPath, type TaskSchedule }
 import { dependencyConflict } from "@/lib/dependencies";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectDependency, ProjectTask, Section } from "@/lib/data";
+import { displayTaskTitle } from "@/lib/request-numbers";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { groupOf, isIsoDate, type ViewConfig } from "@/lib/views";
 import { useTaskHref } from "./shared";
@@ -466,7 +467,7 @@ export function TimelineView({
                   openTaskId === task.id ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200"
                 } ${trayDragging?.taskId === task.id ? "opacity-40" : ""}`}
               >
-                <span className="min-w-0 flex-1 truncate text-zinc-800">{task.title}</span>
+                <span className="min-w-0 flex-1 truncate text-zinc-800">{displayTaskTitle(task.title, task.requestLabel)}</span>
                 <Assignee profile={task.assigneeId ? profilesById.get(task.assigneeId) : undefined} />
               </Link>
             </li>
@@ -595,7 +596,7 @@ function TimelineRow({
             completed ? "text-zinc-400 line-through" : "text-zinc-900"
           }`}
         >
-          {task.title}
+          {displayTaskTitle(task.title, task.requestLabel)}
           <span className="sr-only">
             {task.kind === "milestone" ? ", milestone" : ""}, {spanLabel(span)}
             {overdue ? ", overdue" : ""}
@@ -679,7 +680,7 @@ function TimelineBar({
         <button
           type="button"
           onClick={() => onReveal(span.start)}
-          aria-label={`Show “${task.title}” (${spanLabel(span)}) on the timeline`}
+          aria-label={`Show “${displayTaskTitle(task.title, task.requestLabel)}” (${spanLabel(span)}) on the timeline`}
           className="sticky mx-1 rounded bg-white/90 px-1.5 py-0.5 text-xs whitespace-nowrap text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
           style={before ? { left: LABEL_WIDTH } : { right: 0 }}
         >
@@ -694,7 +695,7 @@ function TimelineBar({
   const left = Math.max(from, 0) * dayWidth;
   const width = Math.max((Math.min(to + 1, days) - Math.max(from, 0)) * dayWidth, 4);
   const canResize = canEdit && width >= 16;
-  const labelInside = width >= task.title.length * 6.5 + 20;
+  const labelInside = width >= displayTaskTitle(task.title, task.requestLabel).length * 6.5 + 20;
   const tone = completed
     ? "bg-zinc-200 text-zinc-500"
     : span.openEnded
@@ -761,7 +762,7 @@ function TimelineBar({
           draggable={false}
           tabIndex={-1}
           aria-hidden
-          title={`Milestone: ${task.title} · ${formatDueDate(span.end)}${schedule ? ` · ${slackLabel(schedule)}` : ""}`}
+          title={`Milestone: ${displayTaskTitle(task.title, task.requestLabel)} · ${formatDueDate(span.end)}${schedule ? ` · ${slackLabel(schedule)}` : ""}`}
           onClick={suppress}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -786,7 +787,7 @@ function TimelineBar({
           }`}
           style={{ left: center + size, maxWidth: 240 }}
         >
-          {task.title}
+          {displayTaskTitle(task.title, task.requestLabel)}
         </span>
         {drag?.moved ? (
           <span
@@ -809,7 +810,7 @@ function TimelineBar({
         draggable={false}
         tabIndex={-1}
         aria-hidden
-        title={`${task.title} · ${spanLabel(span)}${schedule ? ` · ${slackLabel(schedule)}` : ""}`}
+        title={`${displayTaskTitle(task.title, task.requestLabel)} · ${spanLabel(span)}${schedule ? ` · ${slackLabel(schedule)}` : ""}`}
         onClick={(e) => {
           if (suppressClick.current) {
             e.preventDefault();
@@ -833,7 +834,7 @@ function TimelineBar({
         style={{ left, width }}
       >
         {labelInside ? (
-          <span className={`min-w-0 flex-1 truncate px-2 ${completed ? "line-through" : ""}`}>{task.title}</span>
+          <span className={`min-w-0 flex-1 truncate px-2 ${completed ? "line-through" : ""}`}>{displayTaskTitle(task.title, task.requestLabel)}</span>
         ) : null}
         {canResize && !clippedStart ? (
           <span data-edge="start" className="absolute inset-y-0 left-0 w-2 cursor-ew-resize rounded-l-md group-hover:bg-black/10" />
@@ -850,7 +851,7 @@ function TimelineBar({
           }`}
           style={{ left: left + width, maxWidth: 240 }}
         >
-          {task.title}
+          {displayTaskTitle(task.title, task.requestLabel)}
         </span>
       ) : null}
       {drag?.moved ? (

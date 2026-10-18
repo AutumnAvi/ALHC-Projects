@@ -16,6 +16,7 @@ import {
 import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { drainOutbox, isEmailConfigured } from "@/lib/email";
 import { forwardingAddress } from "@/lib/email-reply";
+import { templateProblem } from "@/lib/request-numbers";
 import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
 import { ImportParseError, buildImportPlan, importSteps, planExternalIds, type ImportPlan } from "@/lib/asana-import";
 import {
@@ -3351,6 +3352,80 @@ export async function saveRequestNumbering(
     }
     const supabase = await createClient();
     check(await supabase.from("request_sequences").upsert(row, { onConflict: "project_id" }));
+  });
+}
+
+export async function saveTaskNumbering(
+  projectId: string,
+  input: {
+    enabled: boolean;
+    template: string;
+    wrapBrackets: boolean;
+    numberScope: "all_tasks" | "form_submissions" | "sections" | "kinds";
+    sectionIds: string[];
+    taskKinds: string[];
+    numberSubtasks: boolean;
+    subtaskSeparator: "." | "-" | "/";
+    reuseDeleted: boolean;
+    fillGaps: boolean;
+    resetPeriod: "never" | "yearly" | "monthly";
+    counterFieldId: string | null;
+    projectCode: string;
+    renumberOnMove: boolean;
+    timeZone: string;
+    nextNumber: number;
+    confirmation?: string;
+  },
+  mode: "save" | "number_missing" | "renumber",
+): Promise<ActionResult> {
+  return run(async () => {
+    if (mode !== "save" && mode !== "number_missing" && mode !== "renumber") {
+      throw new InputError("Unknown numbering action");
+    }
+    const template = input.template.trim();
+    const problem = templateProblem(template, input.resetPeriod);
+    if (problem) throw new InputError(problem);
+    if (!Number.isInteger(input.nextNumber) || input.nextNumber < 1) {
+      throw new InputError("The next number must be a positive whole number");
+    }
+    if (input.numberScope === "sections" && input.sectionIds.length === 0) {
+      throw new InputError("Choose at least one section to number");
+    }
+    if (input.numberScope === "kinds" && input.taskKinds.length === 0) {
+      throw new InputError("Choose at least one task type to number");
+    }
+    if (mode === "renumber" && input.confirmation !== "RENUMBER") {
+      throw new InputError("Type RENUMBER to renumber every task");
+    }
+    const supabase = await createClient();
+    const saved = await supabase.rpc("apply_task_numbering", {
+      target_project: id(projectId),
+      settings: {
+        enabled: Boolean(input.enabled),
+        template,
+        wrap_brackets: Boolean(input.wrapBrackets),
+        add_to_title: false,
+        number_scope: input.numberScope,
+        section_ids: input.sectionIds,
+        task_kinds: input.taskKinds,
+        number_subtasks: Boolean(input.numberSubtasks),
+        subtask_separator: input.subtaskSeparator,
+        reuse_deleted: Boolean(input.reuseDeleted),
+        fill_gaps: Boolean(input.fillGaps),
+        reset_period: input.resetPeriod,
+        counter_field_id: input.counterFieldId,
+        project_code: input.projectCode.trim(),
+        renumber_on_move: Boolean(input.renumberOnMove),
+        time_zone: input.timeZone || "UTC",
+        start_number: input.nextNumber,
+        ...(mode === "renumber" ? { confirmation: "RENUMBER" } : {}),
+      },
+      mode,
+    });
+    if (saved.error?.code === "PGRST202") {
+      throw new InputError("Task numbering needs this release’s database update");
+    }
+    check(saved);
   });
 }
 
