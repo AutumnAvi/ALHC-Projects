@@ -229,8 +229,8 @@ begin
   assert sub.answers ->> 'rush_reason' = 'Launch moved up', 'branch shown by a checkbox keeps its answer';
   assert (select answers ->> 'size' from public.form_submissions where task_id = print_t) = 'A2', 'visible branch kept';
   assert (select array_agg(kind order by kind) from public.task_stories where task_id = t)
-    = array['created', 'email_queued', 'field_changed', 'form_submitted'],
-    'form task history: created, field set, submitted, confirmation queued (no membership noise)';
+    = array['created', 'email_queued', 'field_changed', 'form_submitted', 'request_number_assigned'],
+    'form task history: created, field set, submitted, confirmation queued, number assigned';
   assert exists (
     select 1 from public.email_outbox
     where task_id = t and template = 'form_confirmation' and to_email = 'requester@example.org' and status = 'pending'

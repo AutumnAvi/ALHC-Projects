@@ -6,6 +6,7 @@
 // project the person can't open is ever returned, workspace admins included.
 
 import { displayName } from "@/components/avatar";
+import { displayTaskTitle } from "@/lib/request-numbers";
 import { getViewer } from "@/lib/auth";
 import {
   getGoalViewer,
@@ -16,6 +17,7 @@ import {
   listGoals,
   listMyProjectRoles,
   listProfiles,
+  visibleRequestLabels,
   listProjects,
   listProjectTemplates,
   listReadableProjects,
@@ -78,19 +80,18 @@ export async function quickSearch(query: string, only: SearchKind | null = null)
     !kind || kind === "people" ? listActivePeople() : null,
   ]);
 
-  const tasks: QuickTask[] =
-    taskResult && !taskResult.error
-      ? (taskResult.data ?? []).map((t) => ({
+  const taskRows = taskResult && !taskResult.error ? (taskResult.data ?? []) : [];
+  const taskLabels = await visibleRequestLabels(taskRows.map((task) => task.id));
+  const tasks: QuickTask[] = taskRows.map((t) => ({
           id: t.id,
-          title: t.title,
+          title: displayTaskTitle(t.title, taskLabels.get(t.id) ?? null),
           completed: Boolean(t.completed_at),
           // search_tasks labels every project task with a project the person can read; null = private.
           isPrivate: !t.home_project_id,
           projectId: t.home_project_id,
           projectName: t.home_project_name,
           href: t.home_project_id ? `/projects/${t.home_project_id}?task=${t.id}` : `/my-tasks?task=${t.id}`,
-        }))
-      : [];
+        }));
   const matchedProjects: QuickProject[] = projects
     ? rank(
         projects.filter((p) => p.name.toLowerCase().includes(needle)),

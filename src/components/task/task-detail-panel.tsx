@@ -228,6 +228,11 @@ export function TaskDetailPanel({
           <label htmlFor="task-title" className="sr-only">
             Task name
           </label>
+          {task.requestLabel ? (
+            <p className="mb-1 text-sm font-medium text-zinc-500">
+              {task.requestWrap === false ? task.requestLabel : `[${task.requestLabel}]`}
+            </p>
+          ) : null}
           <textarea
             id="task-title"
             defaultValue={task.title}
@@ -379,15 +384,7 @@ function RequestBadges({ task }: { task: TaskDetail }) {
   if (!task.requestLabel && !task.submission && !task.canAssignRequestNumber) return null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-      {task.requestLabel ? (
-        <span
-          className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-700"
-          title="Request number"
-        >
-          <Hash className="size-3" aria-hidden />
-          {task.requestLabel}
-        </span>
-      ) : task.canAssignRequestNumber ? (
+      {task.canAssignRequestNumber && !task.requestLabel ? (
         <button
           type="button"
           disabled={pending}

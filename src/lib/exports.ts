@@ -1,5 +1,6 @@
 import "server-only";
 import { displayName } from "@/components/avatar";
+import { displayTaskTitle } from "@/lib/request-numbers";
 import { groupTasks } from "@/components/project/view-groups";
 import type { CsvCell, CsvRows } from "@/lib/csv";
 import {
@@ -97,7 +98,7 @@ async function taskKeys(supabase: Supabase, projectId: string): Promise<ProjectT
     let query = supabase
       .from("task_projects")
       .select(
-        "task_id, section_id, sort_order, task:tasks!inner(id, title, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, kind)",
+        "task_id, section_id, sort_order, task:tasks!inner(id, title, req_label, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, kind)",
       )
       .eq("project_id", projectId)
       .is("deleted_at", null)
@@ -111,7 +112,7 @@ async function taskKeys(supabase: Supabase, projectId: string): Promise<ProjectT
     for (const m of list) {
       out.push({
         id: m.task.id,
-        title: m.task.title,
+        title: displayTaskTitle(m.task.title, m.task.req_label),
         completedAt: m.task.completed_at,
         startOn: m.task.start_on,
         dueOn: m.task.due_on,
