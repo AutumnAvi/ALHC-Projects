@@ -153,6 +153,7 @@ export function safePost(
         };
         res.on("end", finish);
         res.on("close", finish);
+        res.on("error", finish);
       },
     );
     const timer = setTimeout(() => {

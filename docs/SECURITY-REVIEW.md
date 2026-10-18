@@ -1,4 +1,24 @@
-# Security review pass 1
+# Security review
+
+## Pass 2 status (branch `security/review-fixes`)
+
+Fixes are in `supabase/migrations/20261018020000_security_review_fixes.sql` (with a TAIL), `src/lib/safe-fetch.ts`, `src/lib/email-reply.ts`, and `setWorkspaceLogo`. `supabase/tests/zz24_security_review_smoke.sql` now asserts each fix; `tests/unit/safe-fetch.test.ts` and `tests/unit/reply-auth.test.ts` cover the app side. Nothing was applied to the hosted project.
+
+| # | Finding | Status |
+| --- | --- | --- |
+| 1 | Webhook / Slack SSRF through DNS names | **Fixed.** The drain posts with `safePost()`: Node's `https.request` with a custom `lookup` that resolves the host and refuses the request when *any* answer is loopback, private, link-local (incl. `169.254.169.254`), shared `100.64.0.0/10`, multicast, reserved, documentation, or the IPv6 equivalents (`::1`, `fc00::/7`, `fe80::/10`, and IPv4 inside mapped, NAT64, and 6to4 addresses). The checked address is the one the socket connects to, so a second lookup can't rebind it. IP literals are checked before connecting. Redirects are never followed (a 3xx is a failed send), and the whole request times out after 10 s; responses are read up to 4 KB. A blocked send is logged as “resolves to a private or local address”. `integration_url_ok` / `isAllowedWebhookUrl` also refuse the shared and reserved literals when a URL is saved (SQL can't resolve names, so names are checked at send time). The guard doesn't depend on whether Vercel blocks link-local addresses. |
+| 2 | Definer helpers without a membership check | **Fixed.** `task_request_label` and `format_request_label` were already SECURITY INVOKER after PR #46 (task numbering); verified (a non-member gets null). `custom_field_project` / `rule_project` were only used by five policies; those now call `custom_field_has_role(field, role)` / `rule_has_role(rule, role)`, which answer only “does the caller have this role in that project”. The old helpers are revoked from clients and answer only for readable projects. Suite 60's definer list was updated on purpose. |
+| 3 | Removed comment text still selectable | **Fixed.** A BEFORE UPDATE trigger (`comments_zz_scrub_removed`) moves the text to `comment_removed_bodies` (RLS on, no policies, no client privileges), sets the body to `[deleted]`, and blanks the copies in `email_outbox` payloads (comment emails and submitter responses, which task viewers can read). Existing removed comments got the same treatment in the migration. The row stays, so the “Comment deleted” placeholder still renders. The suite searches every text / JSON column in `public` for the removed text and finds it only in the private table. A policy that hides removed rows was rejected: the delete action uses `UPDATE … RETURNING`, which a hidden new row would refuse. |
+| 3b | `task_comment_page` returns the submitter address and subject | **Fixed for removed comments** (null now). For live emailed comments the address and subject stay visible to task viewers by design: the “Sent to / Replied via” card shows them, and `form_submissions` already gives task viewers the submitter's address. |
+| 4 | Submitter replies accepted without an authentication result | **Fixed (fails closed).** `submitterReplyVerified()` requires DMARC pass, or SPF and DKIM both passing when Resend gives no DMARC verdict (or `none`). A missing or empty result is unverified: the reply is refused before `post_submitter_reply` runs (logged as `unverified_sender`, no address), so nothing is posted under the submitter's address. Forwards keep requiring DMARC pass. |
+| 5 | `TRUNCATE` for clients | **Fixed.** TRUNCATE, REFERENCES, and TRIGGER revoked from `anon` and `authenticated` on all 89 ALHC tables (the list is ours; the other app's tables are untouched) and on `storage.objects` (anon keeps INSERT for form uploads). New tables call `alhc_revoke_client_truncate`; the suite fails on any ALHC table that keeps those grants. **Deferred:** revoking the unused INSERT / UPDATE / DELETE grants table by table. RLS already refuses them (there are no DELETE policies), and doing it safely needs per-table re-grants plus a tail for the DELETE keyword. |
+| 6 | Logo bucket public, old logos kept | **Fixed (kept public).** Logo files stay public so the sidebar (and later emails) can use a plain URL. Listing the bucket is now limited to that workspace's admins (was everyone allowlisted). The TAIL adds an admin-only delete policy, and replacing or removing a logo removes the previous file. Until the tail is applied the old file simply stays, as before. |
+
+Residual notes below are unchanged (CSP headers, `NEXT_PUBLIC_APP_URL`, form CAPTCHA).
+
+---
+
+# Pass 1 (read-only audit)
 
 Read-only audit of ALHC Projects on this branch (`security/review-pass1`). No application code and no hosted database were changed. Evidence is `supabase/tests/zz24_security_review_smoke.sql`, run against a throwaway local Postgres 17 after every migration in `supabase/migrations/`. Catalog checks (RLS flags, `search_path`, anon `EXECUTE`, grants) were the same database.
 

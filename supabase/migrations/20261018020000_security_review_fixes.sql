@@ -164,9 +164,9 @@ security definer
 set search_path = ''
 as $$
 begin
-  if old.deleted_at is null and new.deleted_at is not null and new.body <> '[deleted]' then
+  if old.deleted_at is null and new.deleted_at is not null and old.body <> '[deleted]' then
     insert into public.comment_removed_bodies (comment_id, body, removed_at)
-    values (new.id, new.body, new.deleted_at)
+    values (new.id, old.body, new.deleted_at)
     on conflict (comment_id) do nothing;
     new.body := '[deleted]';
     -- The emailed copies: comment emails to followers and responses to a form's submitter.
