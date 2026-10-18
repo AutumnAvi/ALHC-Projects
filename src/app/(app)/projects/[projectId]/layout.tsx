@@ -18,6 +18,7 @@ import {
   listProjectViews,
   listSections,
   listStarredProjectIds,
+  getRequestSequence,
   listStatusTemplates,
   listTaskTemplates,
 } from "@/lib/data";
@@ -47,6 +48,7 @@ export default async function ProjectLayout({
     batch4,
     real4,
     statusTemplates,
+    numbering,
   ] = await Promise.all([
       getProject(projectId),
       listProjectViews(projectId),
@@ -62,6 +64,7 @@ export default async function ProjectLayout({
       hasBatch4Schema(),
       hasReal4Schema(),
       listStatusTemplates(projectId),
+      getRequestSequence(projectId),
     ]);
   if (!project || !role) notFound();
   // An archived project caps every role at Viewer (role); archiving is decided by the member's own role.
@@ -82,6 +85,8 @@ export default async function ProjectLayout({
     taskTemplates: taskTemplates.map(({ id, name, title }) => ({ id, name, title })),
     statusTemplates,
     statusTemplatesAvailable: real4,
+    numbering,
+    sections: sections.map((section) => ({ id: section.id, name: section.name })),
   };
   // The header's avatars (owners first, then by role and name); Share lists everyone.
   const headerMembers = members.map(({ profileId, name, role }) => ({ profileId, name, role })).sort(compareMembers);

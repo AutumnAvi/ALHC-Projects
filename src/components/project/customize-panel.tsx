@@ -11,6 +11,7 @@ import {
   FileInput,
   FileText,
   GitBranch,
+  Hash,
   LayoutTemplate,
   ListChecks,
   Mail,
@@ -23,6 +24,7 @@ import {
 } from "lucide-react";
 import { FieldEditorDialog, FieldList } from "@/components/project/field-editor";
 import { StatusTemplatesView } from "@/components/project/status-templates";
+import { TaskNumberingForm } from "@/components/project/task-numbering";
 import { useCan } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useServerAction } from "@/components/toast";
@@ -30,6 +32,7 @@ import { createForm, setRuleEnabled } from "@/lib/actions";
 import type { FieldDef } from "@/lib/fields";
 import type { CustomizeDetails } from "@/lib/project-page";
 import type { StatusTemplate } from "@/lib/status-templates";
+import type { TaskNumbering } from "@/lib/request-numbers";
 import { loadCustomizeDetails } from "@/lib/project-page-actions";
 
 export type CustomizeRule = {
@@ -51,9 +54,11 @@ export type CustomizeSummary = {
   // Real features 4: the project's status templates (false = the database update isn't applied yet).
   statusTemplates: StatusTemplate[];
   statusTemplatesAvailable: boolean;
+  numbering: TaskNumbering | null;
+  sections: { id: string; name: string }[];
 };
 
-type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types" | "status";
+type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types" | "status" | "numbers";
 
 const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   rules: "Automations",
@@ -63,6 +68,7 @@ const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   apps: "Apps",
   types: "Task types and templates",
   status: "Status templates",
+  numbers: "Task numbering",
 };
 
 // Asana's Customize panel (Asana parity, batch 4): a ~320px panel on the right with a card row per
@@ -169,6 +175,13 @@ export function CustomizePanel({ projectId, summary }: { projectId: string; summ
               <EmailsView projectId={projectId} base={base} back={pathname} summary={summary} />
             ) : view === "apps" ? (
               <AppsView projectId={projectId} base={base} />
+            ) : view === "numbers" ? (
+              <TaskNumberingForm
+                projectId={projectId}
+                sequence={summary.numbering}
+                sections={summary.sections}
+                fields={summary.fields}
+              />
             ) : view === "status" ? (
               <StatusTemplatesView
                 projectId={projectId}
@@ -234,6 +247,12 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         count={summary.taskTemplates.length}
         meta="Milestones, approvals, and task templates"
         onClick={() => onOpen("types")}
+      />
+      <CardRow
+        icon={Hash}
+        label="Task numbering"
+        meta={summary.numbering?.enabled ? "On · new tasks get the next number" : "Off · turn on to number tasks"}
+        onClick={() => onOpen("numbers")}
       />
       <CardRow
         icon={FileText}

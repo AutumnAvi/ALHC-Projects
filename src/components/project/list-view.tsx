@@ -38,6 +38,7 @@ import {
   type ColumnWidths,
 } from "@/lib/column-widths";
 import type { Profile, ProjectTask, ProjectTaskGroupPage, Section, SubtaskItem } from "@/lib/data";
+import { displayTaskTitle } from "@/lib/request-numbers";
 import { subtasksByParent } from "@/lib/subtasks";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import {
@@ -953,7 +954,7 @@ function TaskTitle({
         aria-current={open ? "true" : undefined}
         className={`min-w-0 truncate text-sm hover:underline ${tone}`}
       >
-        {task.title}
+        {displayTaskTitle(task.title, task.requestLabel)}
       </Link>
     );
   }
@@ -991,7 +992,7 @@ function TaskTitle({
       aria-label={`Rename “${task.title}”`}
       className={`-mx-1 min-w-0 truncate rounded px-1 text-left text-sm ring-zinc-200 group-hover:ring-1 hover:ring-zinc-300 ${tone}`}
     >
-      {task.title}
+      {displayTaskTitle(task.title, task.requestLabel)}
     </button>
   );
 }
@@ -1246,7 +1247,7 @@ function SubtaskRows({
                   className={`min-w-0 truncate text-sm hover:underline ${completed ? "text-zinc-400 line-through" : "text-zinc-700"}`}
                 >
                   <span className="sr-only">Subtask: </span>
-                  {subtask.title}
+                  {displayTaskTitle(subtask.title, subtask.requestLabel)}
                 </Link>
                 {subtask.subtaskCount > 0 ? (
                   <span

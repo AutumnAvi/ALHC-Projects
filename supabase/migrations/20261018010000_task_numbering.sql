@@ -549,13 +549,13 @@ begin
     update public.request_number_gaps g
     set consumed_at = now()
     where g.id = (
-      select id from public.request_number_gaps
-      where project_id = target_project
-        and period_key = period
-        and counter_key = ckey
-        and consumed_at is null
-        and deleted_at is null
-      order by number
+      select gap.id from public.request_number_gaps gap
+      where gap.project_id = target_project
+        and gap.period_key = period
+        and gap.counter_key = ckey
+        and gap.consumed_at is null
+        and gap.deleted_at is null
+      order by gap.number
       limit 1
       for update
     )
@@ -577,10 +577,10 @@ begin
   values (target_project, period, ckey, greatest(seq.start_number - 1, 0))
   on conflict (project_id, period_key, counter_key) do nothing;
 
-  update public.request_counters
-  set last_number = last_number + 1
-  where project_id = target_project and period_key = period and counter_key = ckey and deleted_at is null
-  returning last_number into n;
+  update public.request_counters c
+  set last_number = c.last_number + 1
+  where c.project_id = target_project and c.period_key = period and c.counter_key = ckey and c.deleted_at is null
+  returning c.last_number into n;
   return n;
 end;
 $$;

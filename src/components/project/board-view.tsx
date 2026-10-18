@@ -12,6 +12,7 @@ import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, upda
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
 import type { Profile, ProjectTask, ProjectTaskGroupPage, Section } from "@/lib/data";
+import { displayTaskTitle } from "@/lib/request-numbers";
 import type { FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
@@ -407,7 +408,7 @@ function TaskCard({
             completed ? "text-zinc-400 line-through" : "text-zinc-900"
           }`}
         >
-          {task.title}
+          {displayTaskTitle(task.title, task.requestLabel)}
         </Link>
       </div>
 

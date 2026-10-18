@@ -16,6 +16,7 @@ import {
   type RuleRun,
 } from "@/lib/rules";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
+import { displayTaskTitle, templateFromPrefix, type TaskNumbering } from "@/lib/request-numbers";
 import { isReactionKey, REACTIONS, type ReactionKey } from "@/lib/reactions";
 import { commentEmailStatus, parseCommentEmail, type CommentEmail } from "@/lib/comment-email";
 import {
@@ -166,6 +167,8 @@ export type ProjectTask = {
   tagIds: string[];
   // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
   commentCount: number;
+  // Shown in front of the name while numbering is on. The stored title stays bare.
+  requestLabel?: string | null;
 };
 
 export type TaskMembership = {
@@ -208,6 +211,8 @@ export type TaskDetail = {
   updatedAt: string;
   source: string;
   requestLabel: string | null;
+  /** When numbering is on, the bracket style follows the project (default on). */
+  requestWrap: boolean;
   canAssignRequestNumber: boolean;
   submission: { email: string; formId: string; formTitle: string | null; createdAt: string } | null;
   // The database has Comments and reply by email (20261014030000): responses to a form's submitter can
@@ -582,7 +587,7 @@ export const listProjectSchedule = cache(
     });
     if (rpcMissing(result.error)) return null;
     if (result.error) throw new Error(`Failed to load tasks: ${result.error.message}`);
-    return projectTasksFromCards(result.data);
+    return withRequestLabels(projectTasksFromCards(result.data));
   },
 );
 
@@ -591,7 +596,7 @@ export const listProjectSchedule = cache(
 export const listProjectTasks = cache(async (projectId: string): Promise<ProjectTask[]> => {
   const supabase = await createClient();
   const cards = await supabase.rpc("project_task_cards", { target_project: projectId });
-  if (!cards.error) return projectTasksFromCards(cards.data);
+  if (!cards.error) return withRequestLabels(projectTasksFromCards(cards.data));
   if (rpcMissing(cards.error)) return listProjectTasksFromRows(projectId);
   throw new Error(`Failed to load tasks: ${cards.error.message}`);
 });
@@ -644,7 +649,11 @@ export const listProjectTaskPage = cache(
         tasks: projectTasksFromCards(group.cards ?? []),
       });
     }
-    return pages;
+    const labels = await visibleRequestLabels(pages.flatMap((page) => page.tasks.map((task) => task.id)));
+    return pages.map((page) => ({
+      ...page,
+      tasks: page.tasks.map((task) => ({ ...task, requestLabel: labels.get(task.id) ?? null })),
+    }));
   },
 );
 
@@ -755,7 +764,7 @@ async function listProjectTasksFromRows(projectId: string): Promise<ProjectTask[
     projectCounts.set(m.task_id, (projectCounts.get(m.task_id) ?? 0) + 1);
   }
 
-  return memberships.map((m) => ({
+  return withRequestLabels(memberships.map((m) => ({
     id: m.task.id,
     title: m.task.title,
     completedAt: m.task.completed_at,
@@ -778,7 +787,12 @@ async function listProjectTasksFromRows(projectId: string): Promise<ProjectTask[
     ),
     tagIds: tagIds.get(m.task.id) ?? [],
     commentCount: commentCounts.get(m.task.id) ?? 0,
-  }));
+  })));
+}
+
+async function withRequestLabels<T extends { id: string }>(tasks: T[]): Promise<Array<T & { requestLabel: string | null }>> {
+  const labels = await visibleRequestLabels(tasks.map((task) => task.id));
+  return tasks.map((task) => ({ ...task, requestLabel: labels.get(task.id) ?? null }));
 }
 
 // Comments per task the viewer can read, not deleted: one grouped count in SQL (task_comment_counts,
@@ -968,6 +982,7 @@ export type SubtaskItem = {
   sortOrder: number;
   subtaskCount: number;
   subtaskDoneCount: number;
+  requestLabel?: string | null;
 };
 
 const SUBTASK_COLUMNS = "id, parent_task_id, title, completed_at, assignee_id, start_on, due_on, kind, subtask_order";
@@ -1021,7 +1036,7 @@ export const listSubtaskTrees = cache(async (rootIds: string[]): Promise<Subtask
     await supabase.from("tasks").select(SUBTASK_COLUMNS).in("root_task_id", rootIds).is("deleted_at", null),
     "subtasks",
   );
-  return toSubtaskItems(list, list);
+  return withRequestLabels(toSubtaskItems(list, list));
 });
 
 // Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).
@@ -1456,7 +1471,10 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     createdAt: task.created_at,
     updatedAt: task.updated_at,
     source: task.source,
-    requestLabel: maybe(label, "request number"),
+    requestLabel:
+      (await visibleRequestLabels([task.id])).get(task.id) ??
+      (maybe(numbering, "request numbering") ? maybe(label, "request number") : null),
+    requestWrap: true,
     canAssignRequestNumber: !task.req_number && !isSubtask && Boolean(maybe(numbering, "request numbering")),
     submission: submission
       ? {
@@ -1487,7 +1505,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     privateReaderIds: [
       ...new Set([privateRoot?.created_by, privateRoot?.assignee_id].filter((p): p is string => Boolean(p))),
     ],
-    subtasks: toSubtaskItems(subtaskRows, grandchildren),
+    subtasks: await withRequestLabels(toSubtaskItems(subtaskRows, grandchildren)),
     parentTaskId: task.parent_task_id,
     ancestors,
     isSubtask,
@@ -1717,6 +1735,7 @@ export type MyTask = {
   kind: TaskKind;
   // Subtasks: the parent task's title ("in <parent>").
   parentTitle: string | null;
+  requestLabel?: string | null;
 };
 
 function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
@@ -1746,6 +1765,15 @@ function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
   return { open: mapList(page.open), completed: mapList(page.completed) };
 }
 
+async function labelMyTasks(page: { open: MyTask[]; completed: MyTask[] }) {
+  const labels = await visibleRequestLabels([...page.open, ...page.completed].map((task) => task.id));
+  const apply = (task: MyTask): MyTask => {
+    const label = labels.get(task.id) ?? null;
+    return { ...task, requestLabel: label, title: displayTaskTitle(task.title, label) };
+  };
+  return { open: page.open.map(apply), completed: page.completed.map(apply) };
+}
+
 // Tasks come back only when the viewer can read them (membership in one of their projects, or a
 // private task they created or are assigned). Each is labelled with its home project when the viewer can
 // see it, else another visible project; private tasks (and their subtasks) have no project.
@@ -1755,7 +1783,7 @@ export const listMyTasks = cache(async (profileId: string) => {
   if (user?.id === profileId) {
     const supabase = await createClient();
     const cards = await supabase.rpc("my_task_cards");
-    if (!cards.error) return myTasksFromCards(cards.data);
+    if (!cards.error) return labelMyTasks(myTasksFromCards(cards.data));
     if (!rpcMissing(cards.error)) throw new Error(`Failed to load my tasks: ${cards.error.message}`);
   }
   return listMyTasksFromRows(profileId);
@@ -1822,10 +1850,10 @@ async function listMyTasksFromRows(profileId: string) {
     };
   };
   const present = (t: MyTask | null): t is MyTask => t !== null;
-  return {
+  return labelMyTasks({
     open: openRows.map(toMyTask).filter(present),
     completed: doneRows.map(toMyTask).filter(present),
-  };
+  });
 }
 
 // The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()
@@ -2122,10 +2150,21 @@ function objectOrNull(value: Json | undefined): Record<string, Json | undefined>
 export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<InboxItem[]> => {
   const supabase = await createClient();
   const page = await supabase.rpc("inbox_page", { inbox_tab: tab });
-  if (!page.error) return inboxItemsFromPage(page.data);
-  if (!rpcMissing(page.error)) throw new Error(`Failed to load inbox: ${page.error.message}`);
-  return listInboxFromRows(tab);
+  if (page.error) {
+    if (!rpcMissing(page.error)) throw new Error(`Failed to load inbox: ${page.error.message}`);
+    return labelInbox(await listInboxFromRows(tab));
+  }
+  return labelInbox(inboxItemsFromPage(page.data));
 });
+
+async function labelInbox(items: InboxItem[]): Promise<InboxItem[]> {
+  const labels = await visibleRequestLabels(items.map((item) => item.taskId).filter((id): id is string => Boolean(id)));
+  if (labels.size === 0) return items;
+  return items.map((item) => {
+    const label = item.taskId ? labels.get(item.taskId) : undefined;
+    return label ? { ...item, taskTitle: displayTaskTitle(item.taskTitle, label) } : item;
+  });
+}
 
 //   activity = not archived, archive = archived, bookmarks = bookmarked (archived or not),
 //   mentioned = @mentions (archived or not).
@@ -2662,7 +2701,12 @@ export const countUnreadInbox = cache(async () => {
 export const searchTasks = cache(async (query: string) => {
   const supabase = await createClient();
   const result = await supabase.rpc("search_tasks", { query, max_results: 50 });
-  return rows(result, "search results");
+  const found = rows(result, "search results");
+  const labels = await visibleRequestLabels(found.map((task) => task.id));
+  return found.map((task) => ({
+    ...task,
+    title: displayTaskTitle(task.title, labels.get(task.id) ?? null),
+  }));
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -2910,21 +2954,114 @@ export const listRulePresets = cache(async (): Promise<RulePreset[]> => {
   }));
 });
 
-export type RequestSequence = Pick<
-  Tables<"request_sequences">,
-  "enabled" | "prefix" | "pad_width" | "add_to_title" | "assign_to" | "last_number"
->;
+const NUMBERING_COLUMNS =
+  "enabled, prefix, pad_width, add_to_title, assign_to, last_number, template, wrap_brackets, number_subtasks, subtask_separator, number_scope, section_ids, task_kinds, reuse_deleted, fill_gaps, reset_period, counter_field_id, project_code, renumber_on_move, time_zone, start_number";
 
-export const getRequestSequence = cache(async (projectId: string): Promise<RequestSequence | null> => {
+function numberingFromRow(row: {
+  enabled: boolean;
+  prefix: string;
+  pad_width: number;
+  add_to_title: boolean;
+  assign_to: string;
+  last_number: number;
+  template?: string;
+  wrap_brackets?: boolean;
+  number_subtasks?: boolean;
+  subtask_separator?: string;
+  number_scope?: string;
+  section_ids?: string[] | null;
+  task_kinds?: string[] | null;
+  reuse_deleted?: boolean;
+  fill_gaps?: boolean;
+  reset_period?: string;
+  counter_field_id?: string | null;
+  project_code?: string | null;
+  renumber_on_move?: boolean;
+  time_zone?: string;
+  start_number?: number;
+  advanced: boolean;
+}): TaskNumbering {
+  const scope = row.number_scope === "sections" || row.number_scope === "kinds" || row.number_scope === "form_submissions" || row.number_scope === "all_tasks"
+    ? row.number_scope
+    : row.assign_to === "form_submissions"
+      ? "form_submissions"
+      : "all_tasks";
+  const separator = row.subtask_separator === "-" || row.subtask_separator === "/" ? row.subtask_separator : ".";
+  const reset = row.reset_period === "yearly" || row.reset_period === "monthly" ? row.reset_period : "never";
+  const kinds = (row.task_kinds ?? []).filter((k): k is "task" | "milestone" | "approval" => k === "task" || k === "milestone" || k === "approval");
+  return {
+    enabled: row.enabled,
+    template: row.template || templateFromPrefix(row.prefix, row.pad_width),
+    wrapBrackets: row.wrap_brackets !== false,
+    addToTitle: row.add_to_title,
+    numberScope: scope,
+    sectionIds: row.section_ids ?? [],
+    taskKinds: kinds.length ? kinds : ["task", "milestone", "approval"],
+    numberSubtasks: row.number_subtasks !== false,
+    subtaskSeparator: separator,
+    reuseDeleted: row.reuse_deleted === true,
+    fillGaps: row.fill_gaps === true,
+    resetPeriod: reset,
+    counterFieldId: row.counter_field_id ?? null,
+    projectCode: row.project_code ?? "",
+    renumberOnMove: row.renumber_on_move === true,
+    timeZone: row.time_zone || "UTC",
+    nextNumber: row.last_number + 1,
+    lastNumber: row.last_number,
+    advanced: row.advanced,
+  };
+}
+
+export const getRequestSequence = cache(async (projectId: string): Promise<TaskNumbering | null> => {
   const supabase = await createClient();
-  const result = await supabase
+  const full = await supabase
     .from("request_sequences")
-    .select("enabled, prefix, pad_width, add_to_title, assign_to, last_number")
+    .select(NUMBERING_COLUMNS)
     .eq("project_id", projectId)
     .is("deleted_at", null)
     .maybeSingle();
-  return maybe(result, "request numbering");
+  if (isMissingColumn(full.error)) {
+    const legacy = await supabase
+      .from("request_sequences")
+      .select("enabled, prefix, pad_width, add_to_title, assign_to, last_number")
+      .eq("project_id", projectId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    const row = maybe(legacy, "request numbering");
+    return row ? numberingFromRow({ ...row, advanced: false }) : null;
+  }
+  const row = maybe(full, "request numbering");
+  return row ? numberingFromRow({ ...row, advanced: true }) : null;
 });
+
+// Labels for tasks whose numbering is turned on. Empty when this database has no req_label yet.
+export async function visibleRequestLabels(ids: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return new Map();
+  const supabase = await createClient();
+  const tasks = await supabase.from("tasks").select("id, req_label, req_project_id, home_project_id").in("id", unique);
+  if (isMissingColumn(tasks.error) || tasks.error) return new Map();
+  const projectIds = [
+    ...new Set(
+      (tasks.data ?? []).flatMap((t) => [t.req_project_id, t.home_project_id].filter((id): id is string => Boolean(id))),
+    ),
+  ];
+  if (projectIds.length === 0) return new Map();
+  const sequences = await supabase
+    .from("request_sequences")
+    .select("project_id")
+    .in("project_id", projectIds)
+    .eq("enabled", true)
+    .is("deleted_at", null);
+  if (sequences.error) return new Map();
+  const on = new Set((sequences.data ?? []).map((s) => s.project_id));
+  const labels = new Map<string, string>();
+  for (const task of tasks.data ?? []) {
+    const projectId = task.req_project_id ?? task.home_project_id;
+    if (task.req_label && projectId && on.has(projectId)) labels.set(task.id, task.req_label);
+  }
+  return labels;
+}
 
 // Redacted Slack / webhook defaults (hosts + last 4 characters, never the URL or secret). Admin+ only:
 // below Admin the RPC refuses, so this returns null without asking.
@@ -4839,6 +4976,10 @@ export async function listTeamCalendarTasks(
       projectName: project?.name ?? "Project",
       canEdit,
     });
+  }
+  const labels = await visibleRequestLabels([...tasks.keys()]);
+  for (const task of tasks.values()) {
+    task.title = displayTaskTitle(task.title, labels.get(task.id) ?? null);
   }
   const sorted = [...tasks.values()].sort(
     (a, b) => (a.startOn ?? a.dueOn).localeCompare(b.startOn ?? b.dueOn) || a.dueOn.localeCompare(b.dueOn) || a.title.localeCompare(b.title),
