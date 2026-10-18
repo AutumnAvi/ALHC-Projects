@@ -1,6 +1,7 @@
 import "server-only";
 import { createHmac, randomBytes } from "node:crypto";
 import { backgroundOrigin } from "@/lib/origin";
+import { BlockedAddressError, safePost, type SafePostResult } from "@/lib/safe-fetch";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
@@ -118,16 +119,19 @@ async function deliver(row: OutboxRow): Promise<Result> {
     return { outcome: "mocked" };
   }
   const rawBody = JSON.stringify(body(row));
-  const response = await fetch(row.target_url, {
-    method: "POST",
-    headers: headers(row, rawBody),
-    body: rawBody,
-    // Never follow redirects: the secret header must only reach the configured host.
-    redirect: "manual",
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-    cache: "no-store",
-  });
-  const text = (await response.text().catch(() => "")).slice(0, 500);
+  let response: SafePostResult;
+  try {
+    // Resolves the host itself and refuses private, loopback, and link-local answers (also on a second
+    // lookup), never follows redirects (the secret header must only reach the configured host), and
+    // gives up after TIMEOUT_MS.
+    response = await safePost(row.target_url, { headers: headers(row, rawBody), body: rawBody, timeoutMs: TIMEOUT_MS });
+  } catch (e) {
+    if (e instanceof BlockedAddressError) {
+      return { outcome: "error", error: `${row.target_hint}: resolves to a private or local address` };
+    }
+    throw e;
+  }
+  const text = response.body.slice(0, 500);
   const summary: Json = { status: response.status, body: text };
   if (!response.ok) {
     return { outcome: "error", response: summary, error: `${row.target_hint} responded ${response.status}` };

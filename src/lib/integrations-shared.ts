@@ -34,7 +34,11 @@ const PRIVATE_HOST = [
   /^(0|10|127)\./,
   /^(169\.254|192\.168)\./,
   /^172\.(1[6-9]|2[0-9]|3[01])\./,
+  // Shared (CGNAT), protocol, documentation, benchmarking, multicast, and reserved ranges.
+  /^(100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])|192\.0\.[02]|192\.88\.99|198\.(1[89]|51\.100)|203\.0\.113|22[4-9]|2[3-5][0-9])\./,
 ];
+// Host names can still resolve to private addresses; the drain checks every DNS answer before it
+// connects (src/lib/safe-fetch.ts).
 // A numeric host must be a canonical dotted quad: integer, hex, and zero-padded (octal) spellings of
 // private addresses would slip past the checks above.
 const NUMERIC_HOST = /^(0x[0-9a-f]+|[0-9]+)(\.(0x[0-9a-f]+|[0-9]+)){0,3}$/;
