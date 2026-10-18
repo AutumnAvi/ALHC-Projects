@@ -36,7 +36,7 @@ begin
   assert not public.integration_url_ok('https://2130706433/hook'), 'integer IPv4 rejected';
   assert not public.integration_url_ok('https://0x7f.0.0.1/hook'), 'hex IPv4 rejected';
   assert not public.integration_url_ok('https://0177.0.0.1/hook'), 'octal IPv4 rejected';
-  assert public.integration_url_ok('https://203.0.113.10/hook'), 'public IPv4 ok';
+  assert public.integration_url_ok('https://93.184.216.34/hook'), 'public IPv4 ok (203.0.113.0/24 is documentation-only and refused since the security review)';
   assert public.integration_url_ok('https://0xford.example.com/hook'), 'host names that start with 0x are fine';
   assert not public.integration_url_ok(null), 'null rejected';
   assert public.integration_url_hint('https://hooks.slack.com/services/T000/B000/abcdSECRET1234')

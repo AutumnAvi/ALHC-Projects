@@ -80,6 +80,7 @@ import { isPortfolioRole, isProjectRole } from "@/lib/roles";
 import {
   EMAIL_PATTERN,
   LOGO_MAX_BYTES,
+  WORKSPACE_ASSETS_BUCKET,
   isProjectVisibility,
   parseInviteResult,
   senderNameProblem,
@@ -2950,10 +2951,16 @@ export async function setWorkspaceLogo(path: string | null, size?: number): Prom
       if (size !== undefined && size > LOGO_MAX_BYTES) throw new InputError("The logo must be 2 MB or smaller");
     }
     const supabase = await createClient();
+    const previous = workspace.logoPath;
     checkUpdated(
       await supabase.from("workspaces").update({ logo_path: path }).eq("id", workspace.id).select("id"),
       WORKSPACE_ADMINS_ONLY,
     );
+    // The bucket is public, so a replaced logo shouldn't stay reachable. Workspace admins may remove
+    // their workspace's files (security review pass 2); a database without that policy leaves the file.
+    if (previous && previous !== path && previous.startsWith(`${workspace.id}/`)) {
+      await supabase.storage.from(WORKSPACE_ASSETS_BUCKET).remove([previous]);
+    }
   });
 }
 
