@@ -54,6 +54,7 @@ import {
   valueOr,
   type RuleContext,
 } from "./rule-shared";
+import { PlaceholderInput } from "./placeholder-input";
 import { vocabOptions } from "./rule-icons";
 
 export function defaultsFor(type: ActionType): RuleAction {
@@ -799,20 +800,19 @@ export function ActionFields({
   const fields = ruleFields(ctx);
   const inline = part !== "block";
   const block = part !== "inline";
-  const text = (key: string, label: string, opts: { multiline?: boolean; placeholder?: string; maxLength?: number } = {}) => {
-    const props = {
-      id: `${prefix}-${key}`,
-      "aria-label": label,
-      placeholder: opts.placeholder ?? label,
-      value: typeof action[key] === "string" ? (action[key] as string) : "",
-      className: `${inputClass} w-full`,
-    };
-    return opts.multiline ? (
-      <textarea {...props} rows={2} maxLength={opts.maxLength ?? 5000} onChange={(e) => onChange({ ...action, [key]: e.currentTarget.value })} />
-    ) : (
-      <input {...props} maxLength={opts.maxLength ?? 1000} onChange={(e) => onChange({ ...action, [key]: e.currentTarget.value })} />
-    );
-  };
+  // Rule text takes {{placeholders}} (Automations V2): an insert picker and a live preview.
+  const text = (key: string, label: string, opts: { multiline?: boolean; placeholder?: string; maxLength?: number } = {}) => (
+    <PlaceholderInput
+      id={`${prefix}-${key}`}
+      label={label}
+      ctx={ctx}
+      multiline={opts.multiline}
+      placeholder={opts.placeholder ?? label}
+      maxLength={opts.maxLength ?? (opts.multiline ? 5000 : 1000)}
+      value={typeof action[key] === "string" ? (action[key] as string) : ""}
+      onChange={(v) => onChange({ ...action, [key]: v })}
+    />
+  );
 
   switch (action.type) {
     case "move_section":
@@ -846,14 +846,14 @@ export function ActionFields({
         <PersonSelect
           id={`${prefix}-assignee`}
           label="Assignee"
-          value={action.assignee ?? ""}
+          value={action.assignee === undefined ? null : action.assignee}
           ctx={ctx}
           allowNone="Nobody (unassign)"
           onChange={(v) => onChange({ ...action, assignee: v || null })}
         />
       );
     case "add_comment":
-      return !block ? null : text("body", "Comment", { multiline: true, placeholder: "@{assignee} this is ready for you" });
+      return !block ? null : text("body", "Comment", { multiline: true, placeholder: "{assignee} “{{task.name}}” is ready for you" });
     case "add_followers":
       return !inline ? null : <PeoplePicker idPrefix={`${prefix}-people`} label="Followers" value={action.people} ctx={ctx} onChange={(v) => onChange({ ...action, people: v })} />;
     case "notify":
@@ -1033,7 +1033,7 @@ export function ActionFields({
       );
     }
     case "set_title":
-      return !block ? null : text("title", "New task name", { placeholder: "[{task}] Review", maxLength: 500 });
+      return !block ? null : text("title", "New task name", { placeholder: "[{{field.Request type}}] {{task.name}}", maxLength: 500 });
     case "create_subtasks":
       return !block ? null : <CreateSubtasksFields prefix={prefix} action={action} ctx={ctx} onChange={onChange} />;
     default:
@@ -1174,13 +1174,15 @@ function CreateSubtasksFields({
             <span aria-hidden className="w-4 text-right text-xs tabular-nums text-zinc-400">
               {i + 1}.
             </span>
-            <input
+            <PlaceholderInput
               id={inputId(i)}
-              aria-label={`Subtask ${i + 1} name`}
-              placeholder={i === 0 ? "Draft the copy for {task}" : "Subtask name"}
+              label={`Subtask ${i + 1} name`}
+              ctx={ctx}
+              placeholder={i === 0 ? "Draft the copy for {{task.name}}" : "Subtask name"}
               value={title}
               maxLength={500}
-              onChange={(e) => setTitles(titles.map((t, j) => (j === i ? e.currentTarget.value : t)))}
+              className="flex-1"
+              onChange={(v) => setTitles(titles.map((t, j) => (j === i ? v : t)))}
               onKeyDown={(e) => {
                 // Enter adds the next row, like a checklist.
                 if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -1188,7 +1190,6 @@ function CreateSubtasksFields({
                   addAfter(i);
                 }
               }}
-              className={`${inputClass} min-w-0 flex-1`}
             />
             <button
               type="button"
@@ -1260,18 +1261,19 @@ function IntegrationFields({
           <label htmlFor={`${prefix}-message`} className={labelClass}>
             Slack message
           </label>
-          <textarea
+          <PlaceholderInput
             id={`${prefix}-message`}
-            rows={2}
+            label="Slack message"
+            ctx={ctx}
+            multiline
             maxLength={4000}
-            placeholder="{task} moved to {section} in {project}"
+            placeholder="{{task.name}} moved to {{task.section}} in {{project.name}}"
             value={typeof action.message === "string" ? action.message : ""}
-            onChange={(e) => onChange({ ...action, message: e.currentTarget.value })}
-            className={`${inputClass} w-full`}
+            onChange={(v) => onChange({ ...action, message: v })}
           />
           <p className="text-xs text-zinc-500">
-            Tokens work here too, plus <span className="font-mono">{"{task_link}"}</span> (the task’s title linked to it
-            in the app; people still sign in to open it). Task details are escaped, so a title can’t ping @channel.
+            Placeholders work here too ({"{{task.url}}"} or <span className="font-mono">{"{task_link}"}</span> link the task’s
+            title in the app; people still sign in to open it). Task details are escaped, so a title can’t ping @channel.
           </p>
           <label htmlFor={`${prefix}-format`} className={`${labelClass} mt-1`}>
             Message style

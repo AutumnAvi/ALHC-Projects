@@ -1,6 +1,7 @@
 import "server-only";
 import type { RuleContext } from "@/components/rules/rule-shared";
 import {
+  getProject,
   getProjectIntegrations,
   getWorkWeek,
   hasAutomationsV2Schema,
@@ -18,7 +19,8 @@ import {
 // webhooks (the Rules page and the rule canvas). Read with the viewer's client: below Admin the
 // integration defaults and inbound webhooks come back empty.
 export async function loadRuleContext(projectId: string): Promise<RuleContext> {
-  const [sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2] = await Promise.all([
+  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2] = await Promise.all([
+    getProject(projectId),
     listSections(projectId),
     listProjectFields(projectId),
     listProfiles(),
@@ -47,6 +49,7 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     otherProjects,
     workWeek,
     v2,
+    projectName: project?.name,
   };
 }
 

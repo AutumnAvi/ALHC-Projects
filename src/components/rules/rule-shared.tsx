@@ -37,6 +37,7 @@ export type RuleContext = {
   // Inbound webhooks of the project (Settings → Inbound); empty below Admin.
   inboundEndpoints: { id: string; name: string }[];
   // Automations V2 (optional so older callers keep compiling).
+  projectName?: string;
   tags?: { id: string; name: string; color: string; archived: boolean }[];
   taskTemplates?: { id: string; name: string }[];
   // Other active projects where the viewer is an Editor+ (Add to another project).
@@ -180,14 +181,14 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
   const cfg = rule.triggerConfig;
   switch (rule.triggerType) {
     case "section_changed":
-      return `Task moves into ${sectionName(ctx, cfg.section_id)}`;
+      return `A task moves into ${sectionName(ctx, cfg.section_id)}`;
     case "field_changed": {
       const base = `${fieldName(ctx, cfg.field_id)} changes`;
       return cfg.option_id ? `${base} to ${fieldValueLabel(ctx, cfg.field_id, cfg.option_id)}` : base;
     }
     case "due_approaching": {
       const days = typeof cfg.days === "number" ? cfg.days : 1;
-      return days === 0 ? "Task is due today" : `Task is due in ${days} day${days === 1 ? "" : "s"}`;
+      return days === 0 ? "A task is due today" : `A task is due in ${days} day${days === 1 ? "" : "s"}`;
     }
     case "approval_decided": {
       const statuses = Array.isArray(cfg.statuses) ? cfg.statuses : [];
@@ -302,7 +303,7 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
     case "set_field":
       return `set ${fieldName(ctx, a.field_id)} to ${fieldValueLabel(ctx, a.field_id, a.value)}`;
     case "set_assignee":
-      return a.assignee ? `assign ${personName(ctx, a.assignee)}` : "unassign";
+      return a.assignee ? `assign ${personName(ctx, a.assignee)}` : a.assignee === "" ? "assign someone (choose a person)" : "unassign";
     case "add_comment":
       return "comment";
     case "add_followers":
@@ -532,19 +533,22 @@ export function PersonSelect({
   onChange: (value: string) => void;
   allowNone?: string;
 } & PickerLook) {
+  // null = "nobody" (when allowed); "" = a slot still to fill (a template's), shown as the placeholder.
   const current = str(value);
+  const options = personOptions(ctx, { none: allowNone });
+  const removed = Boolean(current) && !options.some((o) => o.value === current);
   return (
     <SmartPicker
       id={id}
       label={label}
       value={current || (allowNone && value === null ? "" : null)}
-      options={personOptions(ctx, { none: allowNone })}
+      options={options}
       onChange={onChange}
       variant={look.variant ?? "chip"}
       highlight={look.highlight}
       placeholder={look.placeholder ?? "choose person"}
       // A saved person who's no longer listed isn't "nobody".
-      renderValue={allowNone ? valueOr(current ? "someone removed" : allowNone) : undefined}
+      renderValue={removed ? () => <span>someone removed</span> : undefined}
       searchable
     />
   );

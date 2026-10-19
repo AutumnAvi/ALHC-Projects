@@ -128,7 +128,8 @@ export function SmartPicker(props: SingleProps | MultiProps) {
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
     const margin = 8;
-    const width = Math.min(Math.max(rect.width, panelWidth), window.innerWidth - margin * 2);
+    // At least the button's width (for input-like boxes), but never a sprawling list.
+    const width = Math.min(Math.max(Math.min(rect.width, 480), panelWidth), window.innerWidth - margin * 2);
     const below = window.innerHeight - rect.bottom - margin;
     const above = rect.top - margin;
     const wanted = Math.min(panelRef.current?.scrollHeight ?? 360, 360);
@@ -145,6 +146,9 @@ export function SmartPicker(props: SingleProps | MultiProps) {
     setQuery(initialQuery);
     const nextVisible = flatOptions(filterOptions(options, initialQuery));
     setActive(initialQuery ? initialActive(nextVisible, []) : initialActive(nextVisible, selected));
+    // Placed right away (not hidden for a frame), so the search box can take focus — and the first
+    // typed letters — at once; the layout effect refines it once the list is measured.
+    place();
     setOpen(true);
   }
 

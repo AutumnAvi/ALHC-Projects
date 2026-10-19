@@ -21,6 +21,7 @@ import {
   type RuleContext,
 } from "./rule-shared";
 import { EmptyState } from "@/components/ui";
+import { RuleTemplatesGallery } from "./rule-templates-gallery";
 
 const RUN_STATUS: Record<RuleRun["status"], string> = {
   succeeded: "bg-green-100 text-green-800",
@@ -59,9 +60,9 @@ export function RulesView({
     <div className="mx-auto max-w-3xl px-gutter py-5">
       <div className="flex flex-wrap items-start gap-3">
         <p className="min-w-0 flex-1 text-sm text-zinc-600">
-          Rules react to changes in this project: when something happens, check conditions (with Else if branches),
-          then run actions in order. Rules never trigger themselves, chains stop after five rules, and Status fields
-          always follow the section.
+          Rules react to changes in this project: when something happens, check the conditions (with Or groups and
+          Otherwise branches), then run the actions in order. Rules never trigger themselves, chains stop after three
+          rules, a rule that keeps failing pauses itself, and Status fields always follow the section.
         </p>
         {canEdit ? (
           <Link href={`${base}/rules/new`} className="btn-primary h-8 px-3">
@@ -75,7 +76,7 @@ export function RulesView({
       {optimisticRules.length === 0 ? (
         <div className="mt-3">
           <EmptyState icon={Workflow} title="No rules yet" size="inline">
-            Start from a template below or build one on the rule canvas.
+            Start from a template below, or add a rule and build it as a sentence: when…, if…, then….
           </EmptyState>
         </div>
       ) : (
@@ -172,19 +173,23 @@ export function RulesView({
         </ul>
       )}
 
-      <section aria-labelledby="rule-templates" className="mt-8" id="templates">
-        <h2 id="rule-templates" className="text-sm font-semibold text-zinc-900">
-          Templates
-        </h2>
-        <p className="mt-1 text-xs text-zinc-500">
-          Templates install as ordinary rules in this project. Fill in the blanks; nothing is preset to a specific team.
-        </p>
-        <ul className="mt-3 space-y-3">
-          {presets.map((preset) => (
-            <PresetCard key={preset.key} projectId={projectId} preset={preset} ctx={context} />
-          ))}
-        </ul>
-      </section>
+      <RuleTemplatesGallery projectId={projectId} ctx={context} canEdit={canEdit} />
+
+      {presets.length ? (
+        <details className="group mt-6">
+          <summary className="cursor-pointer text-sm font-semibold text-zinc-900 marker:text-zinc-400">
+            More templates (fill in the blanks)
+          </summary>
+          <p className="mt-1 text-xs text-zinc-500">
+            These install as ordinary rules in this project. Fill in the blanks; nothing is preset to a specific team.
+          </p>
+          <ul className="mt-3 space-y-3">
+            {presets.map((preset) => (
+              <PresetCard key={preset.key} projectId={projectId} preset={preset} ctx={context} />
+            ))}
+          </ul>
+        </details>
+      ) : null}
 
       <section aria-labelledby="rule-runs" className="mt-8">
         <h2 id="rule-runs" className="text-sm font-semibold text-zinc-900">

@@ -31,7 +31,6 @@ import {
   MAX_BRANCH_ACTIONS,
   MAX_BRANCH_CONDITIONS,
   MAX_RULE_BRANCHES,
-  TEXT_TOKENS,
   TRIGGERS,
   branchProblem,
   joinBranches,
@@ -319,6 +318,7 @@ export function RuleCanvas({
             <PickerHighlightContext.Provider value={Boolean(initial)}>
             <section aria-label="Rule" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
               <SentenceRow word="When">
+                <div className="flex flex-wrap items-center gap-1">
                 <SmartPicker
                   id="rule-trigger"
                   label="Trigger"
@@ -343,6 +343,7 @@ export function RuleCanvas({
                     setDirty(true);
                   }}
                 />
+                </div>
               </SentenceRow>
               {branches.map((branch, index) => (
                 <BranchRows
@@ -392,8 +393,8 @@ export function RuleCanvas({
             </section>
             </PickerHighlightContext.Provider>
             <p className="text-center text-xs text-zinc-500">
-              Rules never trigger themselves, chains stop after a few rules, and the Status field always follows the
-              section. Text can use {TEXT_TOKENS}.
+              Rules never trigger themselves, chains stop after three rules, and the Status field always follows the
+              section. Text can use placeholders like {"{{task.name}}"} (the {"{ }"} button lists them all).
             </p>
           </fieldset>
         </div>
