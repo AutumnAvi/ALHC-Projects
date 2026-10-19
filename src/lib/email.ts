@@ -1,10 +1,22 @@
 import "server-only";
+import {
+  applyDesign,
+  defaultAppliedDesign,
+  designFromJson,
+  formatDesignDate,
+  isEmailDesignKind,
+  SAMPLE_VALUES,
+  type AppliedDesign,
+  type EmailDesignKind,
+  type ResolvedDesign,
+} from "@/lib/email-design";
 import { layout, payloadOf, str, type OutboxRow, type Rendered } from "@/lib/email-layout";
 import { isInboundEmailConfigured, replyAddress, SUBMITTER_REPLY_MARKER } from "@/lib/email-reply";
 import { renderDigestEmail, renderReportEmail, unsubscribeLinks } from "@/lib/email-scheduled";
 import { backgroundOrigin } from "@/lib/origin";
 import { settingsHref } from "@/lib/shell";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { WORKSPACE_ASSETS_BUCKET } from "@/lib/workspace";
 
 // Email delivery for the outbox the database fills (form confirmations, rule emails, comment emails to
 // followers, responses to form submitters (the only emails with a Reply-To), invites, since Real features 2 the notification emails people turn on per kind in
@@ -23,7 +35,7 @@ function taskLink(row: OutboxRow, projectId: string | null): string | null {
 // A follower's comment email: task, project, who commented, the comment, and an Open task link. No-reply
 // (Comments and reply by email): workspace people answer in the app; only a form submitter's response
 // email can be answered by email (renderSubmitterResponseEmail).
-function renderCommentEmail(row: OutboxRow): Rendered {
+function renderCommentEmail(row: OutboxRow, design?: AppliedDesign | null): Rendered {
   const p = payloadOf(row);
   const taskTitle = str(p.task_title) ?? "a task";
   const author = str(p.author_name) ?? "Someone";
@@ -50,6 +62,7 @@ function renderCommentEmail(row: OutboxRow): Rendered {
             ? `You were @mentioned. Choose which emails you get in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`
             : `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
         ],
+        design,
       },
     ),
   };
@@ -62,7 +75,7 @@ export function isSubmitterResponse(row: OutboxRow): boolean {
 // A response to a form's submitter ("Send response to submitter" under the comment box): Asana's subject
 // (Re: "<form>" submission received), the comment as written, and — when replies by email are on — a line
 // to reply above. Someone outside the workspace reads it, so no app links, no names of other people.
-export function renderSubmitterResponseEmail(row: OutboxRow, canReply: boolean): Rendered {
+export function renderSubmitterResponseEmail(row: OutboxRow, canReply: boolean, design?: AppliedDesign | null): Rendered {
   const p = payloadOf(row);
   const author = str(p.author_name) ?? "The team";
   const label = str(p.request_label);
@@ -84,6 +97,7 @@ export function renderSubmitterResponseEmail(row: OutboxRow, canReply: boolean):
             ? "Reply to this email to answer. Your reply is added to your request; only the text above the quoted message is kept."
             : "Replies to this email aren’t read.",
         ],
+        design,
       },
     ),
   };
@@ -102,7 +116,12 @@ function inviteRolePhrase(kind: keyof typeof INVITE_KINDS, role: string | null):
 // A project, portfolio, or team invite for someone who hasn't signed in yet (Real features 1): who
 // invited them (a name), to what, and a sign-up link for their own address that lands on it once they've
 // confirmed their email (the invite becomes a membership on that first sign-in).
-function renderTargetInviteEmail(row: OutboxRow, kind: keyof typeof INVITE_KINDS, path: string): Rendered {
+function renderTargetInviteEmail(
+  row: OutboxRow,
+  kind: keyof typeof INVITE_KINDS,
+  path: string,
+  design?: AppliedDesign | null,
+): Rendered {
   const p = payloadOf(row);
   const inviter = str(p.inviter_name) ?? "A teammate";
   const workspace = str(p.workspace_name) ?? "ALHC Projects";
@@ -126,6 +145,7 @@ function renderTargetInviteEmail(row: OutboxRow, kind: keyof typeof INVITE_KINDS
           origin ? `Already have an account? Sign in at ${origin}/login?next=${path}` : "Already have an account? Sign in with this address.",
           "If you weren’t expecting this, you can ignore this email.",
         ],
+        design,
       },
     ),
   };
@@ -133,12 +153,12 @@ function renderTargetInviteEmail(row: OutboxRow, kind: keyof typeof INVITE_KINDS
 
 // A workspace invite (Settings → Workspace → Members): who invited them (a name, never an address) and a
 // sign-up link for the recipient's own address. A project / portfolio / team invite carries its target.
-function renderInviteEmail(row: OutboxRow): Rendered {
+function renderInviteEmail(row: OutboxRow, design?: AppliedDesign | null): Rendered {
   const p = payloadOf(row);
   const kind = str(p.target_kind);
   const path = str(p.target_path);
   if (kind && kind in INVITE_KINDS && path && INVITE_TARGET_PATH.test(path)) {
-    return renderTargetInviteEmail(row, kind as keyof typeof INVITE_KINDS, path);
+    return renderTargetInviteEmail(row, kind as keyof typeof INVITE_KINDS, path, design);
   }
   const inviter = str(p.inviter_name) ?? "A workspace admin";
   const workspace = str(p.workspace_name) ?? "ALHC Projects";
@@ -159,6 +179,7 @@ function renderInviteEmail(row: OutboxRow): Rendered {
           origin ? `Already have an account? Sign in at ${origin}/login` : "Already have an account? Sign in with this address.",
           "If you weren’t expecting this, you can ignore this email.",
         ],
+        design,
       },
     ),
   };
@@ -189,7 +210,7 @@ const DECISIONS: Record<string, string> = {
 // An Inbox notification the recipient asked to get by email too (Settings → Notifications, Real
 // features 2): who did what where, the comment / message / note, and a link to it. The database stored
 // the parts (payload) and checks again at send time that the recipient still wants it and can open it.
-function renderNotificationEmail(row: OutboxRow): Rendered {
+function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null): Rendered {
   const p = payloadOf(row);
   const data = p.data && typeof p.data === "object" && !Array.isArray(p.data) ? p.data : {};
   const actor = str(p.actor_name) ?? "Someone";
@@ -255,15 +276,20 @@ function renderNotificationEmail(row: OutboxRow): Rendered {
       footer: [
         `You get this email because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Your Inbox has it too unless you turned that off.`,
       ],
+      design,
     }),
   };
 }
 
-export function renderEmail(row: OutboxRow, options: { canReply?: boolean } = {}): Rendered {
-  if (row.comment_id) return renderCommentEmail(row);
-  if (isSubmitterResponse(row)) return renderSubmitterResponseEmail(row, Boolean(options.canReply));
-  if (isInvite(row)) return renderInviteEmail(row);
-  if (isNotification(row)) return renderNotificationEmail(row);
+export function renderEmail(
+  row: OutboxRow,
+  options: { canReply?: boolean; design?: AppliedDesign | null } = {},
+): Rendered {
+  const design = options.design ?? defaultAppliedDesign(guessDesignKind(row));
+  if (row.comment_id) return renderCommentEmail(row, design);
+  if (isSubmitterResponse(row)) return renderSubmitterResponseEmail(row, Boolean(options.canReply), design);
+  if (isInvite(row)) return renderInviteEmail(row, design);
+  if (isNotification(row)) return renderNotificationEmail(row, design);
   const p = payloadOf(row);
   const label = str(p.request_label);
   const taskTitle = str(p.task_title) ?? "your request";
@@ -285,6 +311,7 @@ export function renderEmail(row: OutboxRow, options: { canReply?: boolean } = {}
           label ? `We received your request (${label})` : "We received your request",
           [message ?? "Thanks for your submission. We'll follow up by email as it moves along.", `Request: ${taskTitle}`],
           answers,
+          { design },
         ),
       };
     }
@@ -294,7 +321,7 @@ export function renderEmail(row: OutboxRow, options: { canReply?: boolean } = {}
         ...layout("Due tomorrow", [message ?? `“${taskTitle}” is due tomorrow.`], [
           ...(str(p.project_name) ? [{ label: "Project", value: str(p.project_name)! }] : []),
           ...(str(p.due_on) ? [{ label: "Due", value: str(p.due_on)! }] : []),
-        ]),
+        ], { design }),
       };
     case "requester_update":
     case "custom":
@@ -306,7 +333,9 @@ export function renderEmail(row: OutboxRow, options: { canReply?: boolean } = {}
       ];
       return {
         subject: row.subject ?? `${reference}Update on ${taskTitle}`,
-        ...layout(label ? `Update on ${label}` : "Update on your request", [message ?? `There's an update on “${taskTitle}”.`], rows),
+        ...layout(label ? `Update on ${label}` : "Update on your request", [message ?? `There's an update on “${taskTitle}”.`], rows, {
+          design,
+        }),
       };
     }
   }
@@ -369,15 +398,16 @@ async function renderScheduled(
   row: OutboxRow,
   kind: "digest" | "report",
   admin: Admin,
+  design: AppliedDesign,
 ): Promise<{ email: Rendered; headers: Record<string, string> } | { error: string }> {
   let email: Rendered;
   if (kind === "digest") {
     const items = await admin.rpc("digest_email_items", { target_email: row.id });
     if (items.error) return { error: "Couldn’t read the digest’s items" };
     if (!items.data?.length) return { error: "Not sent: everything in it was read, archived, or can no longer be opened" };
-    email = renderDigestEmail(row, items.data);
+    email = renderDigestEmail(row, items.data, design);
   } else {
-    email = renderReportEmail(row);
+    email = renderReportEmail(row, design);
   }
   const links = unsubscribeLinks(row, kind === "digest" ? "digest" : "reports");
   return {
@@ -386,6 +416,153 @@ async function renderScheduled(
       ? { "List-Unsubscribe": `<${links.oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
       : {},
   };
+}
+
+// Which design an email uses when the database can't say (a database without the email designs
+// update): emails to a form's submitter are requester emails, everything else internal.
+export function guessDesignKind(row: OutboxRow): EmailDesignKind {
+  if (isSubmitterResponse(row) || row.template === "form_confirmation") return "requester";
+  if (row.template === "requester_update" && !row.to_profile_id) return "requester";
+  return "internal";
+}
+
+// A logo in the public workspace-assets bucket, as a plain URL email clients can load.
+export function emailLogoUrl(path: string): string | null {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/+$/, "");
+  if (!base || !/^[0-9a-f-]{36}\/[A-Za-z0-9._/-]+$/.test(path) || path.includes("..")) return null;
+  return `${base}/storage/v1/object/public/${WORKSPACE_ASSETS_BUCKET}/${path}`;
+}
+
+// The email's design (Email designs): email_design_context (service role) says whether it's an internal
+// or a requester email, which project and form it belongs to, the resolved design (form → project →
+// workspace), and the fill-in values. Without the database update, the built-in look of the guessed kind.
+async function designFor(row: OutboxRow, admin: Admin): Promise<AppliedDesign> {
+  const fallback = guessDesignKind(row);
+  const { data, error } = await admin.rpc("email_design_context", { target_email: row.id });
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) return defaultAppliedDesign(fallback);
+  const ctx = data as Record<string, unknown>;
+  const kind = isEmailDesignKind(ctx.kind) ? ctx.kind : fallback;
+  const v = ctx.values && typeof ctx.values === "object" && !Array.isArray(ctx.values) ? (ctx.values as Record<string, unknown>) : {};
+  const s = (key: string) => (typeof v[key] === "string" && (v[key] as string).trim() ? (v[key] as string) : null);
+  const origin = backgroundOrigin();
+  const taskId = s("task_id");
+  const projectId = s("task_project_id");
+  const formId = typeof ctx.form_id === "string" ? ctx.form_id : null;
+  return applyDesign(
+    kind,
+    designFromJson(kind, ctx.design),
+    {
+      requester_name: s("requester_name"),
+      request_number: s("request_number"),
+      task_name: s("task_name"),
+      project_name: s("project_name"),
+      form_name: s("form_name"),
+      commenter_name: s("commenter_name"),
+      due_date: formatDesignDate(s("due_date")),
+      task_link:
+        kind === "internal" && origin && taskId
+          ? projectId
+            ? `${origin}/projects/${projectId}?task=${taskId}`
+            : `${origin}/my-tasks?task=${taskId}`
+          : null,
+    },
+    {
+      logoUrl: emailLogoUrl,
+      buttonHref: kind === "requester" && origin && formId ? `${origin}/forms/${formId}` : null,
+    },
+  );
+}
+
+// A representative email of a kind with a design, for the editor's live preview and "Send me a test":
+// a comment email for internal designs, a response to a submitter for requester designs.
+export function renderDesignSample(kind: EmailDesignKind, design: ResolvedDesign): Rendered {
+  const origin = backgroundOrigin() ?? "https://example.com";
+  const applied = applyDesign(kind, design, SAMPLE_VALUES, {
+    logoUrl: emailLogoUrl,
+    buttonHref: kind === "requester" ? `${origin}/forms/example` : null,
+  });
+  const now = new Date().toISOString();
+  const base: OutboxRow = {
+    id: "00000000-0000-4000-8000-000000000000",
+    task_id: "00000000-0000-4000-8000-000000000001",
+    rule_id: null,
+    to_email: "you@example.com",
+    template: "custom",
+    subject: null,
+    payload: {},
+    status: "pending",
+    attempts: 0,
+    last_error: null,
+    provider_message_id: null,
+    send_after: now,
+    sent_at: null,
+    created_at: now,
+    updated_at: now,
+    deleted_at: null,
+    to_profile_id: null,
+    comment_id: null,
+    max_attempts: 5,
+    delivery_status: null,
+    delivery_event_at: null,
+    delivery_detail: null,
+  };
+  if (kind === "requester") {
+    return renderSubmitterResponseEmail(
+      {
+        ...base,
+        subject: `Re: "${SAMPLE_VALUES.form_name}" submission received`,
+        payload: {
+          kind: "submitter_response",
+          author_name: SAMPLE_VALUES.commenter_name,
+          task_title: SAMPLE_VALUES.task_name,
+          request_label: SAMPLE_VALUES.request_number,
+          message: `Hi ${SAMPLE_VALUES.requester_name},\n\nThanks for the details. We’ll have a first draft for you by ${SAMPLE_VALUES.due_date}.`,
+        },
+      },
+      true,
+      applied,
+    );
+  }
+  return renderCommentEmail(
+    {
+      ...base,
+      comment_id: "00000000-0000-4000-8000-000000000002",
+      payload: {
+        kind: "comment",
+        task_title: SAMPLE_VALUES.task_name,
+        author_name: SAMPLE_VALUES.commenter_name,
+        comment_body: "The first draft is ready for review. Could you take a look before Friday?",
+        project_name: SAMPLE_VALUES.project_name,
+        request_label: SAMPLE_VALUES.request_number,
+      },
+    },
+    applied,
+  );
+}
+
+// "Send me a test": one email straight to the signed-in person (never another address). Mocked without
+// an email provider, like the drain.
+export async function sendTestEmail(to: string, email: Rendered): Promise<"sent" | "mocked"> {
+  if (!isEmailConfigured()) {
+    console.info("[email:mocked] design test");
+    return "mocked";
+  }
+  const admin = createAdminClient();
+  const senderName = admin ? await workspaceSenderName(admin) : null;
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: fromHeader(process.env.EMAIL_FROM!, senderName),
+      to: [to],
+      subject: `[Test] ${email.subject}`.slice(0, 300),
+      text: email.text,
+      html: email.html,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`Resend responded ${response.status}`);
+  return "sent";
 }
 
 async function deliver(
@@ -397,14 +574,15 @@ async function deliver(
   let email: Rendered;
   let headers: Record<string, string> = {};
   let reply: string | null = null;
+  const design = await designFor(row, admin);
   if (scheduled) {
-    const rendered = await renderScheduled(row, scheduled, admin);
+    const rendered = await renderScheduled(row, scheduled, admin, design);
     if ("error" in rendered) return { outcome: "error", error: rendered.error };
     email = rendered.email;
     headers = rendered.headers;
   } else {
     reply = await replyTo(row, admin);
-    email = renderEmail(row, { canReply: Boolean(reply) });
+    email = renderEmail(row, { canReply: Boolean(reply), design });
   }
   if (!isEmailConfigured()) {
     const template =

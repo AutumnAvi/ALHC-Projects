@@ -1,3 +1,4 @@
+import type { AppliedDesign } from "@/lib/email-design";
 import "server-only";
 import { escapeHtml, layout, payloadOf, str, type Block, type OutboxRow, type Rendered } from "@/lib/email-layout";
 import { isDigestFrequency, isScheduleFrequency, type UnsubscribeWhat } from "@/lib/email-schedules";
@@ -99,7 +100,7 @@ const MUTED = "color:#71717a;font-size:12px";
 
 // "3 unread notifications in your Inbox", grouped by project (or team) in the order of their newest
 // item, each line linking to the task, message, or project, with a short excerpt and its time.
-export function renderDigestEmail(row: OutboxRow, items: DigestItem[]): Rendered {
+export function renderDigestEmail(row: OutboxRow, items: DigestItem[], design?: AppliedDesign | null): Rendered {
   const p = payloadOf(row);
   const frequency = isDigestFrequency(p.frequency) ? p.frequency : "daily";
   const timeZone = str(p.time_zone) ?? "UTC";
@@ -166,6 +167,7 @@ export function renderDigestEmail(row: OutboxRow, items: DigestItem[]): Rendered
         `You get this ${frequency} digest because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Things you’ve read or archived aren’t included.`,
       ],
       footerLink: links ? { label: "Turn off digest", href: links.page } : null,
+      design,
     }),
   };
 }
@@ -225,7 +227,7 @@ function statTiles(t: Totals): Block {
 
 // A scheduled report: the key numbers, a table by project, and (for the Reports overview) the oldest
 // overdue tasks — all as the recipient could see them when it was built.
-export function renderReportEmail(row: OutboxRow): Rendered {
+export function renderReportEmail(row: OutboxRow, design?: AppliedDesign | null): Rendered {
   const p = payloadOf(row);
   const origin = backgroundOrigin();
   const name = str(p.name) ?? "Scheduled report";
@@ -322,6 +324,7 @@ export function renderReportEmail(row: OutboxRow): Rendered {
         }.`,
       ],
       footerLink: links ? { label: "Turn off report emails", href: links.page } : null,
+      design,
     }),
   };
 }

@@ -207,6 +207,7 @@ export type Database = {
           email_direction: string | null;
           email_address: string | null;
           email_subject: string | null;
+          email_skipped_files: Json | null;
         };
         Insert: {
           id?: string;
@@ -221,6 +222,7 @@ export type Database = {
           email_direction?: string | null;
           email_address?: string | null;
           email_subject?: string | null;
+          email_skipped_files?: Json | null;
         };
         Update: {
           id?: string;
@@ -235,6 +237,7 @@ export type Database = {
           email_direction?: string | null;
           email_address?: string | null;
           email_subject?: string | null;
+          email_skipped_files?: Json | null;
         };
         Relationships: [
           {
@@ -478,6 +481,8 @@ export type Database = {
           created_at: string;
           last_used_at: string | null;
           revoked_at: string | null;
+          closed_at: string | null;
+          closed_by: string | null;
         };
         Insert: {
           id?: string;
@@ -490,6 +495,8 @@ export type Database = {
           created_at?: string;
           last_used_at?: string | null;
           revoked_at?: string | null;
+          closed_at?: string | null;
+          closed_by?: string | null;
         };
         Update: {
           id?: string;
@@ -502,6 +509,8 @@ export type Database = {
           created_at?: string;
           last_used_at?: string | null;
           revoked_at?: string | null;
+          closed_at?: string | null;
+          closed_by?: string | null;
         };
         Relationships: [];
       };
@@ -562,6 +571,66 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
+      email_designs: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          kind: string;
+          project_id: string | null;
+          form_id: string | null;
+          logo_path: string | null;
+          accent_color: string | null;
+          header_text: string | null;
+          intro_message: string | null;
+          footer_text: string | null;
+          button_label: string | null;
+          button_color: string | null;
+          created_by: string | null;
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          kind: string;
+          project_id?: string | null;
+          form_id?: string | null;
+          logo_path?: string | null;
+          accent_color?: string | null;
+          header_text?: string | null;
+          intro_message?: string | null;
+          footer_text?: string | null;
+          button_label?: string | null;
+          button_color?: string | null;
+          created_by?: string | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          kind?: string;
+          project_id?: string | null;
+          form_id?: string | null;
+          logo_path?: string | null;
+          accent_color?: string | null;
+          header_text?: string | null;
+          intro_message?: string | null;
+          footer_text?: string | null;
+          button_label?: string | null;
+          button_color?: string | null;
+          created_by?: string | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
         };
         Relationships: [];
       };
@@ -2250,6 +2319,8 @@ export type Database = {
           created_at: string;
           deleted_at: string | null;
           source: string;
+          comment_id: string | null;
+          import_external_id: string | null;
         };
         Insert: {
           id?: string;
@@ -2262,6 +2333,8 @@ export type Database = {
           created_at?: string;
           deleted_at?: string | null;
           source?: string;
+          comment_id?: string | null;
+          import_external_id?: string | null;
         };
         Update: {
           id?: string;
@@ -2274,6 +2347,8 @@ export type Database = {
           created_at?: string;
           deleted_at?: string | null;
           source?: string;
+          comment_id?: string | null;
+          import_external_id?: string | null;
         };
         Relationships: [
           {
@@ -3856,6 +3931,7 @@ export type Database = {
           default_team_id: string | null;
           logo_path: string | null;
           email_sender_name: string | null;
+          allow_commenter_role: boolean;
         };
         Insert: {
           id?: string;
@@ -3866,6 +3942,7 @@ export type Database = {
           default_team_id?: string | null;
           logo_path?: string | null;
           email_sender_name?: string | null;
+          allow_commenter_role?: boolean;
         };
         Update: {
           id?: string;
@@ -3876,6 +3953,7 @@ export type Database = {
           default_team_id?: string | null;
           logo_path?: string | null;
           email_sender_name?: string | null;
+          allow_commenter_role?: boolean;
         };
         Relationships: [
           {
@@ -4879,6 +4957,62 @@ export type Database = {
       post_submitter_reply: {
         Args: { reply_token: string; sender_email: string; reply_body: string; provider_email_id?: string | null };
         Returns: Json;
+      };
+      resolve_email_design: {
+        Args: { design_kind: string; target_project?: string | null; target_form?: string | null };
+        Returns: Json;
+      };
+      email_design_context: {
+        Args: { target_email: string };
+        Returns: Json;
+      };
+      can_edit_email_design: {
+        Args: { target_workspace: string; target_project: string | null };
+        Returns: boolean;
+      };
+      set_submitter_thread_closed: {
+        Args: { target_task: string; closed: boolean };
+        Returns: Json;
+      };
+      submitter_thread_status: {
+        Args: { target_task: string };
+        Returns: Json;
+      };
+      attach_reply_file: {
+        Args: { target_comment: string; file_path: string; file_name: string; file_type: string | null; file_size: number };
+        Returns: string;
+      };
+      note_reply_skipped_files: {
+        Args: { target_comment: string; files: Json };
+        Returns: undefined;
+      };
+      commenter_role_allowed: {
+        Args: { target_workspace: string };
+        Returns: boolean;
+      };
+      list_commenter_members: {
+        Args: Record<PropertyKey, never>;
+        Returns: { profile_id: string; full_name: string | null; email: string; project_count: number; projects: Json }[];
+      };
+      convert_commenter_members: {
+        Args: { target_profile: string; new_role: string };
+        Returns: number;
+      };
+      import_attachment_targets: {
+        Args: { target_run: string; attachment_refs: Json };
+        Returns: { attachment_gid: string; task_id: string; present: boolean }[];
+      };
+      import_attachment_file: {
+        Args: {
+          target_run: string;
+          target_task: string;
+          attachment_gid: string;
+          file_path: string;
+          file_name: string;
+          file_type: string | null;
+          file_size: number;
+        };
+        Returns: string;
       };
       send_submitter_response: {
         Args: { target_task: string; response_body: string };
