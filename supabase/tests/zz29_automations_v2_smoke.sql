@@ -809,7 +809,10 @@ begin
   assert result ->> 'invalid' = 'true' and result ->> 'error' like 'Unknown action%', 'an invalid draft is explained';
   result := public.test_rule((select id from av2_ids where name = 'r_everything'), t, jsonb_build_object(
     'actions', jsonb_build_array(jsonb_build_object('type', 'add_to_project', 'project_id', (select id from av2_ids where name = 'q')))));
-  assert result ->> 'error' is not null, 'a step that would fail is reported';
+  assert result ->> 'error' like 'Add to project: you need to be an Editor in that project%', format('the draft is checked like a save: %s', result ->> 'error');
+  result := public.test_rule((select id from av2_ids where name = 'r_everything'), t, jsonb_build_object(
+    'name', 'Renamed draft', 'actions', '[{"type": "add_comment", "body": "From {{rule.name}}"}]'::jsonb));
+  assert result -> 'steps' -> 0 ->> 'result' = 'Commented: “From Renamed draft”', 'the draft''s name is tested too';
 end $$;
 
 reset role;

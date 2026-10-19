@@ -7,18 +7,24 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  ChevronRight,
+  CirclePause,
+  FlaskConical,
   FolderClosed,
   GitBranch,
   Plus,
   Trash2,
+  UserRound,
   X,
   Zap,
 } from "lucide-react";
+import { Avatar } from "@/components/avatar";
 import { PickerHighlightContext, SmartPicker } from "@/components/smart-picker";
 import type { BuiltRule } from "@/lib/rule-templates";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
-import { createRule, updateRule, type RevealedSigningSecret } from "@/lib/actions";
+import { createRule, setRuleEnabled, updateRule, type RevealedSigningSecret } from "@/lib/actions";
+import { runSteps } from "@/lib/rule-steps";
 import {
   ACTIONS,
   CONDITIONS,
@@ -58,6 +64,8 @@ import {
 } from "./rule-editor";
 import { vocabOptions } from "./rule-icons";
 import { branchLabel, ruleSentence, type RuleContext } from "./rule-shared";
+import { RuleTestPanel, type RuleTestDraft, type RuleTestTask } from "./rule-test-panel";
+import { RunSteps } from "./run-steps";
 
 const RUN_STATUS: Record<RuleRun["status"], string> = {
   succeeded: "bg-green-50 text-green-800",
@@ -75,18 +83,25 @@ const RUN_LABEL: Record<RuleRun["status"], string> = {
 
 const NEW_CONDITION: RuleCondition = { type: "is_incomplete" };
 
+// Triggers the scheduler or a person starts (run_rule directly, not fire_rules), so "changes made by
+// other rules" never apply to them.
+const NOT_CHANGE_TRIGGERS: ReadonlySet<TriggerType> = new Set(["due_approaching", "task_overdue", "scheduled", "manual"]);
+
 // Asana's rule builder (Asana parity, batch 4): a full-page canvas. The header has the rule's name, an
 // Active toggle, Cancel, and Save, with Build and Activity tabs. The flow reads top to bottom: the scope
 // (tasks in this project), the trigger, then "Check if" with its actions, optional "Else if" branches,
 // and "Otherwise", with "+ Add branch". Branches are stored as branch keys on the rule's conditions and
 // actions (run_rule runs the first branch whose conditions pass), so rules without branches are exactly
-// what they were and keep running unchanged.
+// what they were and keep running unchanged. Automations V2 (batch 4) adds the owner, the "changes
+// made by other rules" switch, the paused notice with Resume, a Test panel (a dry run of the draft),
+// and per-step run details on Activity.
 export function RuleCanvas({
   projectId,
   projectName,
   rule,
   initial = null,
   runs,
+  testTasks = [],
   ctx,
   batch4,
   canEdit,
@@ -99,6 +114,8 @@ export function RuleCanvas({
   // A new rule from the templates gallery: filled in, with what's still to pick (highlighted).
   initial?: BuiltRule | null;
   runs: RuleRun[];
+  // Tasks of the project to test the rule on (the Test panel).
+  testTasks?: RuleTestTask[];
   ctx: RuleContext;
   // This release's database update (Else if / Otherwise branches).
   batch4: boolean;
@@ -118,23 +135,43 @@ export function RuleCanvas({
   const [branches, setBranches] = useState<RuleBranch[]>(() =>
     rule ? splitBranches(rule) : initial ? splitBranches(initial) : [{ conditions: [], actions: [defaultsFor("add_comment")] }],
   );
+  // Batch 4 (Automations V2's database only): null owner on a new rule = whoever creates it.
+  const v2 = ctx.v2 === true;
+  const [ownerId, setOwnerId] = useState<string | null>(rule?.ownerId ?? null);
+  const [runOnRuleChanges, setRunOnRuleChanges] = useState(rule?.runOnRuleChanges ?? true);
+  // Resume (from the paused notice) saved the rule back on; the page's refresh clears the pause.
+  const [resumed, setResumed] = useState(false);
+  const [testOpen, setTestOpen] = useState(false);
   const [tab, setTab] = useState<"build" | "activity">("build");
   const [dirty, setDirty] = useState(false);
   const [revealed, setRevealed] = useState<RevealedSigningSecret[] | null>(null);
   const dirtyRef = useRef(dirty);
+  const testOpenRef = useRef(testOpen);
   const rootRef = useRef<HTMLDivElement>(null);
+  const testButtonRef = useRef<HTMLButtonElement>(null);
+  const testPanelId = useId();
+  const ruleChangesHintId = useId();
 
   useEffect(() => {
     dirtyRef.current = dirty;
-  }, [dirty]);
+    testOpenRef.current = testOpen;
+  }, [dirty, testOpen]);
+
+  function closeTest() {
+    setTestOpen(false);
+    testButtonRef.current?.focus();
+  }
 
   function leave() {
     if (dirtyRef.current && !window.confirm("Discard your changes to this rule?")) return;
     router.push(backHref);
   }
+  // Escape closes the Test panel first, then leaves the canvas (pickers handle their own Escape).
   const leaveRef = useRef(leave);
+  const closeTestRef = useRef(closeTest);
   useEffect(() => {
     leaveRef.current = leave;
+    closeTestRef.current = closeTest;
   });
 
   useEffect(() => {
@@ -142,7 +179,8 @@ export function RuleCanvas({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       e.preventDefault();
-      leaveRef.current();
+      if (testOpenRef.current) closeTestRef.current();
+      else leaveRef.current();
     };
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (dirtyRef.current) e.preventDefault();
@@ -201,13 +239,16 @@ export function RuleCanvas({
     const { conditions, actions } = joinBranches(branches);
     run(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const input = { name, triggerType, triggerConfig, conditions, actions, enabled, timeZone };
+      const input = { name, triggerType, triggerConfig, conditions, actions, enabled, timeZone, ...(v2 ? { ownerId, runOnRuleChanges } : {}) };
       const result = rule ? await updateRule(rule.id, input) : await createRule(projectId, input);
       if (!result.error) {
         setDirty(false);
         dirtyRef.current = false;
-        if (result.signingSecrets?.length) setRevealed(result.signingSecrets);
-        else {
+        if (result.signingSecrets?.length) {
+          // The reveal replaces the tabs and the Test panel; a hidden panel would swallow the next Escape.
+          setTestOpen(false);
+          setRevealed(result.signingSecrets);
+        } else {
           notify(rule ? "Rule saved" : enabled ? "Rule created and on" : "Rule created (off)");
           router.push(backHref);
         }
@@ -215,6 +256,40 @@ export function RuleCanvas({
       return result;
     });
   }
+
+  // The paused notice's Resume: with nothing else changed it turns the rule back on at once (the
+  // database clears the pause and the failure count); with unsaved changes it flips the switch, and
+  // Save resumes it along with the rest.
+  const paused = Boolean(rule?.pausedAt) && !resumed;
+  function resume() {
+    if (!rule) return;
+    if (dirty) {
+      setEnabled(true);
+      return;
+    }
+    run(async () => {
+      const result = await setRuleEnabled(rule.id, true);
+      if (!result.error) {
+        setEnabled(true);
+        setResumed(true);
+        notify("Rule resumed");
+      }
+      return result;
+    });
+  }
+
+  // What the Test panel runs: the builder's draft, saved or not.
+  const draft: RuleTestDraft = {
+    name,
+    triggerType,
+    triggerConfig,
+    ...joinBranches(branches),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  const testBlocked = !v2 ? "Needs this release’s database update" : !canEdit ? "Project admins and owners test rules" : null;
+  const owner = ownerId ? ctx.people.find((p) => p.id === ownerId) : null;
+  const ownerName = ownerId ? (owner?.name ?? "someone removed") : rule ? "the rule’s creator" : "you";
+  const editor = rule?.lastEditedBy ? ctx.people.find((p) => p.id === rule.lastEditedBy) : null;
 
   return (
     <div ref={rootRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-50 flex flex-col bg-white text-sm">
@@ -244,6 +319,45 @@ export function RuleCanvas({
           }}
           className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-base font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent"
         />
+        {v2 ? (
+          <span
+            data-tooltip="Gets a notice if the rule pauses itself; cross-project actions act with their access"
+            className="flex shrink-0 items-center gap-1"
+          >
+            <span aria-hidden className="hidden text-xs text-zinc-500 lg:inline">
+              Owner
+            </span>
+            <SmartPicker
+              id="rule-owner"
+              label={`Owner: ${ownerName}`}
+              value={ownerId}
+              options={(ctx.members ?? ctx.people).map((p) => ({ value: p.id, label: p.name, icon: <Avatar name={p.name} /> }))}
+              onChange={(v) => {
+                setOwnerId(v);
+                setDirty(true);
+              }}
+              variant="ghost"
+              searchable
+              disabled={!canEdit}
+              panelWidth={280}
+              emptyText="Nobody matches"
+              className="h-8 max-w-48 px-1.5"
+              renderValue={(chosen) =>
+                chosen[0] ? (
+                  <>
+                    <Avatar name={chosen[0].label} />
+                    <span className="hidden truncate md:inline">{chosen[0].label}</span>
+                  </>
+                ) : (
+                  <>
+                    <UserRound className="size-4" aria-hidden />
+                    <span className="hidden md:inline">{ownerId ? "Someone removed" : rule ? "Creator" : "You"}</span>
+                  </>
+                )
+              }
+            />
+          </span>
+        ) : null}
         <label className="flex shrink-0 items-center gap-2 text-sm text-zinc-700">
           <input
             type="checkbox"
@@ -260,9 +374,27 @@ export function RuleCanvas({
             aria-hidden
             className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
           />
-          <span className="hidden sm:inline">{enabled ? "Active" : "Off"}</span>
+          <span className="hidden sm:inline">{enabled ? "Active" : paused ? "Paused" : "Off"}</span>
           <span className="sr-only sm:hidden">Active</span>
         </label>
+        {revealed ? null : (
+          <button
+            ref={testButtonRef}
+            type="button"
+            onClick={() => {
+              if (!testBlocked) setTestOpen((open) => !open);
+            }}
+            aria-label="Test"
+            aria-disabled={testBlocked ? true : undefined}
+            aria-expanded={testBlocked ? undefined : testOpen}
+            aria-controls={testOpen ? testPanelId : undefined}
+            data-tooltip={testBlocked ?? (testOpen ? "Close the test panel" : "Try the rule on a task without changing anything")}
+            className="btn-secondary h-8 px-2.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          >
+            <FlaskConical className="size-4" aria-hidden />
+            <span className="hidden sm:inline">Test</span>
+          </button>
+        )}
         <button type="button" onClick={leave} className="btn-secondary h-8 px-3">
           {canEdit ? "Cancel" : "Close"}
         </button>
@@ -299,104 +431,183 @@ export function RuleCanvas({
             <RevealedSecrets secrets={revealed} describe={describeSecret} onDone={() => router.push(backHref)} />
           </div>
         </div>
-      ) : tab === "activity" ? (
-        <Activity projectId={projectId} rule={rule} runs={runs} branches={branches} />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50">
-          <fieldset disabled={!canEdit} className="m-0 mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 border-0 px-4 py-6">
-            {!canEdit ? (
-              <p className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
-                View only: project admins and owners change rules.
-              </p>
-            ) : null}
-            <RuleSummary triggerType={triggerType} triggerConfig={triggerConfig} branches={branches} ctx={ctx} projectName={projectName} />
-            {initial && initial.missing.length ? (
-              <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                From a template. Still to pick (highlighted below): {initial.missing.join(", ")}.
-              </p>
-            ) : null}
-            <PickerHighlightContext.Provider value={Boolean(initial)}>
-            <section aria-label="Rule" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-              <SentenceRow word="When">
-                <div className="flex flex-wrap items-center gap-1">
-                <SmartPicker
-                  id="rule-trigger"
-                  label="Trigger"
-                  value={triggerType}
-                  options={vocabOptions(TRIGGERS, { disabled: needsV2(ctx, V2_TRIGGERS) })}
-                  onChange={(v) => {
-                    setTriggerType(v as TriggerType);
-                    setTriggerConfig({});
-                    setDirty(true);
-                  }}
-                  variant="chip"
-                  searchable
-                  panelWidth={340}
-                />
-                <TriggerFields
-                  prefix="rule"
-                  triggerType={triggerType}
-                  triggerConfig={triggerConfig}
-                  ctx={ctx}
-                  onChange={(config) => {
-                    setTriggerConfig(config);
-                    setDirty(true);
-                  }}
-                />
-                </div>
-              </SentenceRow>
-              {branches.map((branch, index) => (
-                <BranchRows
-                  key={index}
-                  index={index}
-                  count={branches.length}
-                  branch={branch}
-                  ctx={ctx}
-                  projectId={projectId}
-                  canEdit={canEdit}
-                  onChange={(next) => setBranch(index, next)}
-                  onRemove={index === 0 ? undefined : () => changeBranches((current) => current.filter((_, i) => i !== index))}
-                />
-              ))}
-              {canEdit ? (
-                <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-4 py-2.5">
-                  <button
-                    type="button"
-                    onClick={addElseIf}
-                    disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES || (branches.length === 1 && branches[0].conditions.length === 0)}
-                    data-tooltip={
-                      !batch4
-                        ? "Branches arrive with this release’s database update"
-                        : branches.length === 1 && branches[0].conditions.length === 0
-                          ? "Add an If condition first"
-                          : "Runs when the conditions above don’t match"
-                    }
-                    className="btn-ghost h-7 text-xs"
-                  >
-                    <GitBranch className="size-3.5" aria-hidden />
-                    Otherwise if…
-                  </button>
-                  {!hasOtherwise && branches.some((b) => b.conditions.length > 0) ? (
-                    <button
-                      type="button"
-                      onClick={addOtherwise}
-                      disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES}
-                      data-tooltip={!batch4 ? "Branches arrive with this release’s database update" : "Runs when nothing above matches"}
-                      className="btn-ghost h-7 text-xs"
-                    >
-                      <Plus className="size-3.5" aria-hidden />
-                      Otherwise…
-                    </button>
+        // The Test panel sits beside the tab on wide screens and below it on narrow ones (where this
+        // whole area scrolls as one).
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+          {tab === "activity" ? (
+            <Activity projectId={projectId} rule={rule} runs={runs} branches={branches} />
+          ) : (
+            <div className="min-w-0 flex-1 bg-zinc-50 lg:min-h-0 lg:overflow-y-auto">
+              <fieldset disabled={!canEdit} className="m-0 mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 border-0 px-4 py-6">
+                {!canEdit ? (
+                  <p className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
+                    View only: project admins and owners change rules.
+                  </p>
+                ) : null}
+                {rule && paused ? (
+                  <div role="note" className="flex flex-wrap items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-900">
+                    <CirclePause className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">
+                        Paused after {Math.max(rule.consecutiveFailures ?? 0, 5)} failed runs in a row
+                        {rule.pausedAt ? (
+                          <span className="font-normal text-amber-800">
+                            {" · "}
+                            <Timestamp iso={rule.pausedAt} />
+                          </span>
+                        ) : null}
+                      </p>
+                      {rule.pauseReason ? <p className="mt-0.5 break-words text-xs">Last error: {rule.pauseReason}</p> : null}
+                      <p className="mt-0.5 text-xs text-amber-800">
+                        {enabled
+                          ? "Turned back on: it resumes once you save."
+                          : canEdit
+                            ? "Fix what made it fail (the Activity tab has each run’s steps), then resume it."
+                            : "A project admin can resume it once what made it fail is fixed."}
+                      </p>
+                    </div>
+                    {canEdit && !enabled ? (
+                      <button type="button" onClick={resume} disabled={pending} className="btn-secondary h-7 px-2.5">
+                        Resume
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                <RuleSummary triggerType={triggerType} triggerConfig={triggerConfig} branches={branches} ctx={ctx} projectName={projectName} />
+                {initial && initial.missing.length ? (
+                  <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    From a template. Still to pick (highlighted below): {initial.missing.join(", ")}.
+                  </p>
+                ) : null}
+                <PickerHighlightContext.Provider value={Boolean(initial)}>
+                <section aria-label="Rule" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+                  <SentenceRow word="When">
+                    <div className="flex flex-wrap items-center gap-1">
+                    <SmartPicker
+                      id="rule-trigger"
+                      label="Trigger"
+                      value={triggerType}
+                      options={vocabOptions(TRIGGERS, { disabled: needsV2(ctx, V2_TRIGGERS) })}
+                      onChange={(v) => {
+                        setTriggerType(v as TriggerType);
+                        setTriggerConfig({});
+                        setDirty(true);
+                      }}
+                      variant="chip"
+                      searchable
+                      panelWidth={340}
+                    />
+                    <TriggerFields
+                      prefix="rule"
+                      triggerType={triggerType}
+                      triggerConfig={triggerConfig}
+                      ctx={ctx}
+                      onChange={(config) => {
+                        setTriggerConfig(config);
+                        setDirty(true);
+                      }}
+                    />
+                    </div>
+                  </SentenceRow>
+                  {branches.map((branch, index) => (
+                    <BranchRows
+                      key={index}
+                      index={index}
+                      count={branches.length}
+                      branch={branch}
+                      ctx={ctx}
+                      projectId={projectId}
+                      canEdit={canEdit}
+                      onChange={(next) => setBranch(index, next)}
+                      onRemove={index === 0 ? undefined : () => changeBranches((current) => current.filter((_, i) => i !== index))}
+                    />
+                  ))}
+                  {canEdit ? (
+                    <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-4 py-2.5">
+                      <button
+                        type="button"
+                        onClick={addElseIf}
+                        disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES || (branches.length === 1 && branches[0].conditions.length === 0)}
+                        data-tooltip={
+                          !batch4
+                            ? "Branches arrive with this release’s database update"
+                            : branches.length === 1 && branches[0].conditions.length === 0
+                              ? "Add an If condition first"
+                              : "Runs when the conditions above don’t match"
+                        }
+                        className="btn-ghost h-7 text-xs"
+                      >
+                        <GitBranch className="size-3.5" aria-hidden />
+                        Otherwise if…
+                      </button>
+                      {!hasOtherwise && branches.some((b) => b.conditions.length > 0) ? (
+                        <button
+                          type="button"
+                          onClick={addOtherwise}
+                          disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES}
+                          data-tooltip={!batch4 ? "Branches arrive with this release’s database update" : "Runs when nothing above matches"}
+                          className="btn-ghost h-7 text-xs"
+                        >
+                          <Plus className="size-3.5" aria-hidden />
+                          Otherwise…
+                        </button>
+                      ) : null}
+                    </div>
                   ) : null}
-                </div>
-              ) : null}
-            </section>
-            </PickerHighlightContext.Provider>
-            <p className="text-center text-xs text-zinc-500">
-              Rules never trigger themselves, chains stop after three rules, and the Status field always follows the
-              section. Text can use placeholders like {"{{task.name}}"} (the {"{ }"} button lists them all).
-            </p>
-          </fieldset>
+                  {v2 && !NOT_CHANGE_TRIGGERS.has(triggerType) ? (
+                    <SentenceRow word="Also">
+                      {/* Off: fire_rules skips this rule for changes another rule makes (no chains through it). */}
+                      <div className="pt-0.5">
+                        <label className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={runOnRuleChanges}
+                            aria-describedby={ruleChangesHintId}
+                            onChange={(e) => {
+                              setRunOnRuleChanges(e.currentTarget.checked);
+                              setDirty(true);
+                            }}
+                            className="mt-0.5 size-4 accent-accent-600"
+                          />
+                          <span>
+                            <span className="sr-only">Also </span>
+                            <span className="text-zinc-800">Run when another rule makes the change</span>
+                          </span>
+                        </label>
+                        {/* Outside the label: it describes the checkbox rather than being part of its name. */}
+                        <p id={ruleChangesHintId} className="ml-6 text-xs text-zinc-500">
+                          Turn off to avoid chains: only people’s changes trigger it
+                        </p>
+                      </div>
+                    </SentenceRow>
+                  ) : null}
+                </section>
+                </PickerHighlightContext.Provider>
+                <p className="text-center text-xs text-zinc-500">
+                  Rules never trigger themselves, chains stop after three rules, and the Status field always follows the
+                  section. Text can use placeholders like {"{{task.name}}"} (the {"{ }"} button lists them all).
+                </p>
+                {rule?.lastEditedAt ? (
+                  <p className="text-center text-xs text-zinc-400">
+                    Last edited{editor ? ` by ${editor.name}` : ""} · <Timestamp iso={rule.lastEditedAt} />
+                  </p>
+                ) : null}
+              </fieldset>
+            </div>
+          )}
+          {testOpen && !testBlocked ? (
+            <RuleTestPanel
+              id={testPanelId}
+              projectId={projectId}
+              ruleId={rule?.id ?? null}
+              tasks={testTasks}
+              draft={draft}
+              problem={branchProblem(branches)}
+              ctx={ctx}
+              onClose={closeTest}
+            />
+          ) : null}
         </div>
       )}
     </div>
@@ -691,7 +902,8 @@ function BlockActionFields(props: Parameters<typeof ActionFields>[0]) {
   );
 }
 
-// The Activity tab: this rule's latest runs (the run log), with the branch each one took.
+// The Activity tab: this rule's latest runs (the run log), with the branch each one took. A row opens
+// to the run's steps (what each action did, or the error that stopped it); "Failed only" narrows it.
 function Activity({
   projectId,
   rule,
@@ -703,8 +915,22 @@ function Activity({
   runs: RuleRun[];
   branches: RuleBranch[];
 }) {
+  const [failedOnly, setFailedOnly] = useState(false);
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const failedCount = runs.filter((r) => r.status === "failed").length;
+  const shown = failedOnly ? runs.filter((r) => r.status === "failed") : runs;
+
+  function toggle(runId: string) {
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }
+
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6">
+    <div className="min-w-0 flex-1 px-4 py-6 lg:min-h-0 lg:overflow-y-auto">
       <div className="mx-auto max-w-2xl">
         {!rule ? (
           <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-8 text-center text-sm text-zinc-500">
@@ -715,41 +941,96 @@ function Activity({
             This rule hasn’t run yet. Runs show here once its trigger fires on a task.
           </p>
         ) : (
-          <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
-            {runs.map((r) => {
-              const reason = runReason(r.detail);
-              const detail = r.detail && typeof r.detail === "object" && !Array.isArray(r.detail) ? r.detail : {};
-              const branch = typeof detail.branch === "number" ? detail.branch : null;
-              const branchName =
-                branch !== null && branches[branch]
-                  ? branchLabel(branch, branches.length, branches[branch].conditions.length > 0)
-                  : branch !== null
-                    ? `Branch ${branch + 1}`
-                    : null;
-              return (
-                <li key={r.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
-                  <span className={`rounded-full px-2 py-0.5 text-2xs font-medium ${RUN_STATUS[r.status]}`}>{RUN_LABEL[r.status]}</span>
-                  {r.taskId ? (
-                    <Link href={`/projects/${projectId}/list?task=${r.taskId}`} className="min-w-0 truncate text-sm text-zinc-800 hover:underline">
-                      {r.taskTitle}
-                    </Link>
-                  ) : (
-                    <span className="text-sm text-zinc-500">A task you can’t open</span>
-                  )}
-                  {branchName ? (
-                    <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
-                      <GitBranch className="size-3" aria-hidden />
-                      {branchName}
-                    </span>
-                  ) : null}
-                  {reason ? <span className="text-xs text-zinc-500">· {reason}</span> : null}
-                  <span className="ml-auto text-xs text-zinc-400">
-                    <Timestamp iso={r.createdAt} />
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
+          <>
+            <div className="mb-3 flex items-center gap-2">
+              <div role="group" aria-label="Show" className="inline-flex h-7 items-center rounded-md bg-zinc-100 p-0.5">
+                {[
+                  { value: false, label: "All" },
+                  { value: true, label: `Failed only${failedCount ? ` (${failedCount})` : ""}` },
+                ].map((option) => (
+                  <button
+                    key={String(option.value)}
+                    type="button"
+                    aria-pressed={failedOnly === option.value}
+                    onClick={() => setFailedOnly(option.value)}
+                    className="h-6 rounded px-2 text-sm text-zinc-600 hover:text-zinc-900 aria-pressed:bg-white aria-pressed:font-medium aria-pressed:text-zinc-900 aria-pressed:shadow-xs"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {shown.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-8 text-center text-sm text-zinc-500">
+                No failed runs among the latest {runs.length}.
+              </p>
+            ) : (
+              <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+                {shown.map((r) => {
+                  const reason = runReason(r.detail);
+                  const detail = r.detail && typeof r.detail === "object" && !Array.isArray(r.detail) ? r.detail : {};
+                  const branch = typeof detail.branch === "number" ? detail.branch : null;
+                  const branchName =
+                    branch !== null && branches[branch]
+                      ? branchLabel(branch, branches.length, branches[branch].conditions.length > 0)
+                      : branch !== null
+                        ? `Branch ${branch + 1}`
+                        : null;
+                  const expanded = open.has(r.id);
+                  const stepsId = `run-${r.id}-steps`;
+                  const logged = runSteps(r.detail);
+                  return (
+                    <li key={r.id}>
+                      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() => toggle(r.id)}
+                          aria-expanded={expanded}
+                          aria-controls={expanded ? stepsId : undefined}
+                          aria-label={`Steps of this run (${RUN_LABEL[r.status]})`}
+                          data-tooltip={expanded ? "Hide steps" : "Show steps"}
+                          className="-ml-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-zinc-100"
+                        >
+                          <ChevronRight className={`size-3.5 text-zinc-400 transition-transform ${expanded ? "rotate-90" : ""}`} aria-hidden />
+                          <span className={`rounded-full px-2 py-0.5 text-2xs font-medium ${RUN_STATUS[r.status]}`}>{RUN_LABEL[r.status]}</span>
+                        </button>
+                        {r.taskId ? (
+                          <Link href={`/projects/${projectId}/list?task=${r.taskId}`} className="min-w-0 truncate text-sm text-zinc-800 hover:underline">
+                            {r.taskTitle}
+                          </Link>
+                        ) : (
+                          <span className="text-sm text-zinc-500">A task you can’t open</span>
+                        )}
+                        {branchName ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
+                            <GitBranch className="size-3" aria-hidden />
+                            {branchName}
+                          </span>
+                        ) : null}
+                        {reason ? (
+                          <span title={reason} className="min-w-0 truncate text-xs text-zinc-500">
+                            · {reason}
+                          </span>
+                        ) : null}
+                        <span className="ml-auto text-xs text-zinc-400">
+                          <Timestamp iso={r.createdAt} />
+                        </span>
+                      </div>
+                      {expanded ? (
+                        <div id={stepsId} className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-3">
+                          {r.status === "skipped" ? (
+                            <p className="text-xs text-zinc-600">Skipped{reason ? `: ${reason}` : ""}. Nothing ran.</p>
+                          ) : (
+                            <RunSteps steps={logged.steps} error={logged.error} />
+                          )}
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
         )}
         <p className="mt-3 text-xs text-zinc-500">The latest 50 runs. Runs that found no matching branch aren’t logged.</p>
       </div>

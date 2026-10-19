@@ -2080,7 +2080,7 @@ declare
   rule_project uuid;
   section uuid;
   branches jsonb := '[]'::jsonb;
-  conditions jsonb;
+  branch_conditions jsonb;
   c jsonb;
   b integer;
   chosen integer;
@@ -2127,7 +2127,8 @@ begin
         returning * into r;
       else
         update public.rules
-        set trigger_type = coalesce(draft ->> 'trigger_type', trigger_type),
+        set name = coalesce(nullif(trim(draft ->> 'name'), ''), name),
+            trigger_type = coalesce(draft ->> 'trigger_type', trigger_type),
             trigger_config = coalesce(draft -> 'trigger_config', trigger_config),
             conditions = coalesce(draft -> 'conditions', conditions),
             actions = coalesce(draft -> 'actions', actions)
@@ -2137,13 +2138,13 @@ begin
     end if;
 
     for b in 0 .. public.rule_branch_count(r.conditions, r.actions) - 1 loop
-      conditions := '[]'::jsonb;
+      branch_conditions := '[]'::jsonb;
       for c in select value from jsonb_array_elements(public.rule_branch_items(r.conditions, b)) loop
-        conditions := conditions || jsonb_build_array(jsonb_build_object(
+        branch_conditions := branch_conditions || jsonb_build_array(jsonb_build_object(
           'condition', c, 'ok', coalesce(public.rule_condition_ok(r, c, t, section), false)
         ));
       end loop;
-      branches := branches || jsonb_build_array(jsonb_build_object('branch', b, 'conditions', conditions));
+      branches := branches || jsonb_build_array(jsonb_build_object('branch', b, 'conditions', branch_conditions));
     end loop;
 
     chosen := public.rule_pick_branch(r, target_task, null);

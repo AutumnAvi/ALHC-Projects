@@ -8,6 +8,7 @@ import {
   Bookmark,
   BookmarkMinus,
   CheckCircle2,
+  CirclePause,
   Mail,
   MailOpen,
   MessageSquare,
@@ -21,6 +22,7 @@ import { Avatar, displayName } from "@/components/avatar";
 import { TaskLink } from "@/components/task/task-link";
 import { Timestamp } from "@/components/timestamp";
 import type { InboxItem, Profile } from "@/lib/data";
+import { isUuid } from "@/lib/ids";
 import { isFieldChange, type InboxDensity } from "@/lib/inbox";
 import { seedFromTitle } from "@/lib/task-seed";
 
@@ -100,6 +102,14 @@ function describe(item: InboxItem) {
   return { ruleName, verb, detail };
 }
 
+// A rule that paused itself after failing again and again (Automations V2) tells its owner with a
+// kind "rule" item carrying data.rule_paused; the card links to the rule so they can fix it.
+function pausedRuleHref(item: InboxItem): string | null {
+  const d = item.data;
+  if (item.kind !== "rule" || !d || typeof d !== "object" || Array.isArray(d) || d.rule_paused !== true) return null;
+  return isUuid(d.project_id) && isUuid(d.rule_id) ? `/projects/${d.project_id}/rules/${d.rule_id}` : null;
+}
+
 function isNewThread(item: InboxItem): boolean {
   const d = item.data;
   return !!d && typeof d === "object" && !Array.isArray(d) && d.new_thread === true;
@@ -165,7 +175,8 @@ export function InboxCard({
   const { ruleName, verb, detail } = describe(item);
   // A form submitter's emailed reply has no actor: name the address it came from.
   const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? "Someone");
-  const { icon: Icon } = KIND[item.kind];
+  const ruleHref = pausedRuleHref(item);
+  const Icon = ruleHref ? CirclePause : KIND[item.kind].icon;
   const strong = read ? "font-medium text-zinc-800" : "font-semibold text-zinc-900";
   const linkText = (
     <>
@@ -178,6 +189,33 @@ export function InboxCard({
     </>
   );
   const decides = item.approval !== null && item.approval.approverId === memberId;
+  const titleLink =
+    taskCard && item.taskId ? (
+      // A task opens in the pane next to the list at once (no navigation; Oct 19 notes).
+      <TaskLink
+        taskId={item.taskId}
+        seed={() => seedFromTitle(item.taskId!, item.taskTitle ?? "Task", { parentTitle: item.parentTitle ?? null })}
+        onClick={onOpen}
+        className={linkClass}
+      >
+        {linkText}
+      </TaskLink>
+    ) : (
+      <Link href={href} onClick={onOpen} className={linkClass}>
+        {linkText}
+      </Link>
+    );
+  // Above the card link's overlay, and kept from opening the task.
+  const openRule = ruleHref ? (
+    <Link
+      href={ruleHref}
+      onClick={(e) => e.stopPropagation()}
+      aria-label={ruleName ? `Open rule “${ruleName}”` : undefined}
+      className="relative z-10 shrink-0 text-xs font-medium text-accent-700 hover:underline focus-visible:outline-2 focus-visible:outline-accent-500"
+    >
+      Open rule
+    </Link>
+  ) : null;
 
   return (
     <li>
@@ -202,24 +240,13 @@ export function InboxCard({
           </span>
         )}
         <div className="min-w-0 flex-1">
-          {taskCard && item.taskId ? (
-            // A task opens in the pane next to the list at once (no navigation; Oct 19 notes).
-            <TaskLink
-              taskId={item.taskId}
-              seed={() => seedFromTitle(item.taskId!, item.taskTitle ?? "Task", { parentTitle: item.parentTitle ?? null })}
-              onClick={onOpen}
-              className={linkClass}
-            >
-              {linkText}
-            </TaskLink>
-          ) : (
-            <Link href={href} onClick={onOpen} className={linkClass}>
-              {linkText}
-            </Link>
-          )}
+          {titleLink}
           {!compact && detail ? (
             <p className="mt-1 line-clamp-2 whitespace-pre-line text-sm text-zinc-600">{detail}</p>
           ) : null}
+          {/* Under the title in both densities (like the approver's buttons): at the right end of a
+              compact row the hover / focus actions would cover it. */}
+          {openRule ? <p className="mt-1">{openRule}</p> : null}
           {decides && item.approval?.status === "pending" ? (
             <div className="relative z-10 mt-2 flex flex-wrap gap-1.5" role="group" aria-label={`Decide on “${item.taskTitle}”`}>
               <button type="button" onClick={() => onDecide("approved")} className="btn-primary h-6 px-2 text-xs">

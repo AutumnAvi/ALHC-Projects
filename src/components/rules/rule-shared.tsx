@@ -38,6 +38,8 @@ export type RuleContext = {
   inboundEndpoints: { id: string; name: string }[];
   // Automations V2 (optional so older callers keep compiling).
   projectName?: string;
+  // The project's members (a rule's owner must be one).
+  members?: { id: string; name: string }[];
   tags?: { id: string; name: string; color: string; archived: boolean }[];
   taskTemplates?: { id: string; name: string }[];
   // Other active projects where the viewer is an Editor+ (Add to another project).

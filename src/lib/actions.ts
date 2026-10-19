@@ -54,6 +54,7 @@ import {
   type FormQuestion,
 } from "@/lib/forms";
 import { branchProblem, isTriggerType, runReason, splitBranches, type RuleAction, type RuleCondition } from "@/lib/rules";
+import { parseRuleTestResult, type RuleTestResult } from "@/lib/rule-steps";
 import { isUuid } from "@/lib/ids";
 import { normalizeWorkWeek } from "@/lib/workdays";
 import { isReactionKey } from "@/lib/reactions";
@@ -4179,6 +4180,10 @@ type RuleInput = {
   enabled?: boolean;
   // The builder's browser time zone: "today", overdue, and schedules use it (trigger_config.timezone).
   timeZone?: string;
+  // Batch 4 (absent = unchanged): who the rule acts for and hears when it pauses, and whether changes
+  // other rules make can trigger it.
+  ownerId?: string | null;
+  runOnRuleChanges?: boolean;
 };
 
 // The new triggers (Automations V2) are refused by the old trigger CHECK until the migration's tail is
@@ -4263,6 +4268,8 @@ function ruleRow(input: RuleInput, revealed: RevealedSigningSecret[] = []) {
     conditions: (input.conditions ?? []) as Json,
     actions: actions as Json,
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
+    ...(input.ownerId ? { owner_id: id(input.ownerId, "owner") } : {}),
+    ...(input.runOnRuleChanges !== undefined ? { run_on_rule_changes: Boolean(input.runOnRuleChanges) } : {}),
   };
 }
 
@@ -4303,6 +4310,59 @@ export async function updateRule(ruleId: string, input: RuleInput): Promise<Rule
   });
   if (result.error) return { ...result, error: ruleSaveError(result.error) };
   return revealed.length === 0 ? result : { signingSecrets: revealed };
+}
+
+// Test a rule on a task without changing anything (test_rule: Admin+ of the rule's project; the
+// database runs the real engine and always rolls it back). `draft` = the builder's unsaved rule, tested
+// instead of the saved one; with ruleId null it's a new rule. Nothing is written, so nothing is
+// delivered or refreshed afterwards.
+export async function testRule(
+  projectId: string,
+  ruleId: string | null,
+  taskId: string,
+  draft: RuleInput | null,
+): Promise<ActionResult & { result?: RuleTestResult }> {
+  try {
+    const supabase = await createClient();
+    let draftJson: Json | null = null;
+    if (draft) {
+      if (!isTriggerType(draft.triggerType)) throw new InputError("Choose a trigger");
+      draft.actions.forEach(checkIntegrationAction);
+      // Signing secrets are only generated when the rule is saved.
+      const actions = draft.actions.map((action) => {
+        const copy = { ...action };
+        delete copy.generate_signing_secret;
+        if (typeof copy.signing_secret === "string" && copy.signing_secret !== "") delete copy.signing_secret;
+        return copy;
+      });
+      const triggerConfig: Record<string, Json> = { ...(draft.triggerConfig ?? {}) };
+      if (typeof draft.timeZone === "string" && draft.timeZone.length <= 64 && !triggerConfig.timezone) {
+        triggerConfig.timezone = draft.timeZone;
+      }
+      draftJson = {
+        project_id: id(projectId, "project"),
+        name: typeof draft.name === "string" ? draft.name.slice(0, 200) : "",
+        trigger_type: draft.triggerType,
+        trigger_config: triggerConfig,
+        conditions: (draft.conditions ?? []) as Json,
+        actions: actions as Json,
+      };
+    }
+    const tested = await supabase.rpc("test_rule", {
+      target_rule: ruleId ? id(ruleId, "rule") : null,
+      target_task: id(taskId, "task"),
+      draft: draftJson,
+    });
+    if (tested.error?.code === "PGRST202") throw new InputError("Testing rules needs this release’s database update");
+    check(tested);
+    const result = parseRuleTestResult(tested.data ?? null);
+    if (!result) throw new InputError("The test didn’t come back with a result");
+    // A draft with a new trigger, before the migration's tail: say so like saving does.
+    return { result: result.error ? { ...result, error: ruleSaveError(result.error) } : result };
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
 }
 
 export async function setRuleEnabled(ruleId: string, enabled: boolean): Promise<ActionResult> {

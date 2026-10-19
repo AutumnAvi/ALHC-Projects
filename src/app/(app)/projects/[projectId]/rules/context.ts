@@ -8,6 +8,7 @@ import {
   listEditableProjectsWithSections,
   listInboundEndpoints,
   listProfiles,
+  listProjectMembers,
   listProjectFields,
   listProjectForms,
   listSections,
@@ -19,7 +20,7 @@ import {
 // webhooks (the Rules page and the rule canvas). Read with the viewer's client: below Admin the
 // integration defaults and inbound webhooks come back empty.
 export async function loadRuleContext(projectId: string): Promise<RuleContext> {
-  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2] = await Promise.all([
+  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members] = await Promise.all([
     getProject(projectId),
     listSections(projectId),
     listProjectFields(projectId),
@@ -32,6 +33,7 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     listEditableProjectsWithSections(projectId),
     getWorkWeek(),
     hasAutomationsV2Schema(),
+    listProjectMembers(projectId),
   ]);
   return {
     sections: sections.map((s) => ({ id: s.id, name: s.name })),
@@ -50,6 +52,7 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     workWeek,
     v2,
     projectName: project?.name,
+    members: members.map((m) => ({ id: m.profileId, name: m.name })),
   };
 }
 

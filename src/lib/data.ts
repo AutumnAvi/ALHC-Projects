@@ -3171,6 +3171,29 @@ export const listProjectRules = cache(async (projectId: string): Promise<RuleDef
   return rows(result, "rules").map(toRuleDef);
 });
 
+// Tasks to test a rule on (the builder's Test panel): the project's top-level tasks the viewer can
+// read, open ones first, most recently changed first (at most 300).
+export const listRuleTestTasks = cache(
+  async (projectId: string): Promise<{ id: string; title: string; completed: boolean }[]> => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("tasks")
+      .select("id, title, completed_at, task_projects!inner(project_id)")
+      .eq("task_projects.project_id", projectId)
+      .is("task_projects.deleted_at", null)
+      .is("parent_task_id", null)
+      .is("deleted_at", null)
+      .order("completed_at", { ascending: false, nullsFirst: true })
+      .order("updated_at", { ascending: false })
+      .limit(300);
+    if (result.error) {
+      console.error(`[rules] couldn't load tasks to test on: ${result.error.message}`);
+      return [];
+    }
+    return (result.data ?? []).map((t) => ({ id: t.id, title: t.title, completed: t.completed_at !== null }));
+  },
+);
+
 // Each rule's last run and failures in the last 7 days (the rules list's health line). RLS on rule_runs
 // decides; empty without Automations V2's database update.
 export const listRuleRunStats = cache(async (ruleIds: string[]): Promise<Map<string, RuleRunStats>> => {
