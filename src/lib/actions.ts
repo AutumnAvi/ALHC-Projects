@@ -2128,6 +2128,17 @@ export async function sendSubmitterResponse(
   return { ...result, commentId: result.error ? undefined : commentId };
 }
 
+// Close (or reopen) the request's reply thread: while closed, the submitter's emailed replies are refused
+// and logged, never posted, and responses go out without a Reply-To. Editors+ (the database checks).
+export async function setReplyThreadClosed(taskId: string, closed: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_submitter_thread_closed", { target_task: id(taskId), closed: closed === true });
+    if (result.error?.code === "PGRST202") throw new InputError("Closing reply threads needs this release’s database update");
+    check(result);
+  });
+}
+
 // Authors edit only the text; the database stamps edited_at and notifies people the edit newly mentions.
 export async function editComment(commentId: string, body: string): Promise<ActionResult> {
   return run(async () => {

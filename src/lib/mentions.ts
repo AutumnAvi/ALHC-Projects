@@ -6,27 +6,37 @@
 
 export type MentionPerson = { id: string; full_name: string | null; email: string };
 
-export type MentionSegment = { type: "text"; text: string } | { type: "mention"; profileId: string; raw: string };
+// A team named in the text (`@Design Team`): shown as a pill with the team's card on hover. Team
+// mentions are display only — nobody is notified through a team.
+export type MentionTeam = { id: string; name: string; members: { id: string; name: string; email: string }[] };
+
+export type MentionSegment =
+  | { type: "text"; text: string }
+  | { type: "mention"; profileId: string; raw: string }
+  | { type: "team"; teamId: string; raw: string };
 
 function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function mentionSegments(body: string, people: MentionPerson[]): MentionSegment[] {
-  const tokens = people
-    .flatMap((p) => {
+export function mentionSegments(body: string, people: MentionPerson[], teams: Pick<MentionTeam, "id" | "name">[] = []): MentionSegment[] {
+  const tokens = [
+    ...people.flatMap((p) => {
       const name = p.full_name?.trim();
       const local = p.email.split("@")[0]?.trim();
       return [
-        ...(name ? [{ token: name.toLowerCase(), profileId: p.id }] : []),
-        ...(local ? [{ token: local.toLowerCase(), profileId: p.id }] : []),
+        ...(name ? [{ token: name.toLowerCase(), id: p.id, team: false }] : []),
+        ...(local ? [{ token: local.toLowerCase(), id: p.id, team: false }] : []),
       ];
-    })
-    // Longest first, so "@Ann Lee" wins over "@Ann".
+    }),
+    // People win over a team with the same name (they come first).
+    ...teams.flatMap((t) => (t.name.trim() ? [{ token: t.name.trim().toLowerCase(), id: t.id, team: true }] : [])),
+  ]
+    // Longest first, so "@Ann Lee" wins over "@Ann" (stable: people before teams on a tie).
     .sort((a, b) => b.token.length - a.token.length);
   if (tokens.length === 0 || !body) return body ? [{ type: "text", text: body }] : [];
-  const byToken = new Map<string, string>();
-  for (const t of tokens) if (!byToken.has(t.token)) byToken.set(t.token, t.profileId);
+  const byToken = new Map<string, { id: string; team: boolean }>();
+  for (const t of tokens) if (!byToken.has(t.token)) byToken.set(t.token, { id: t.id, team: t.team });
   const pattern = new RegExp(`@(${[...byToken.keys()].map(escapeRegex).join("|")})(?=[^\\p{L}\\p{N}_]|$)`, "giu");
 
   const segments: MentionSegment[] = [];
@@ -34,7 +44,8 @@ export function mentionSegments(body: string, people: MentionPerson[]): MentionS
   for (const match of body.matchAll(pattern)) {
     const start = match.index ?? 0;
     if (start > last) segments.push({ type: "text", text: body.slice(last, start) });
-    segments.push({ type: "mention", profileId: byToken.get(match[1].toLowerCase())!, raw: match[0] });
+    const hit = byToken.get(match[1].toLowerCase())!;
+    segments.push(hit.team ? { type: "team", teamId: hit.id, raw: match[0] } : { type: "mention", profileId: hit.id, raw: match[0] });
     last = start + match[0].length;
   }
   if (last < body.length) segments.push({ type: "text", text: body.slice(last) });

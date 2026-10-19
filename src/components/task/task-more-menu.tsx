@@ -8,6 +8,8 @@ import {
   Diamond,
   GitBranch,
   LayoutTemplate,
+  MailCheck,
+  MailX,
   Link2,
   ListPlus,
   MoreHorizontal,
@@ -20,8 +22,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
-import { useServerAction } from "@/components/toast";
-import { deleteTask, setTaskKind } from "@/lib/actions";
+import { useNotify, useServerAction } from "@/components/toast";
+import { deleteTask, setReplyThreadClosed, setTaskKind } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
 import { describeRecurrence } from "@/lib/recurrence";
 import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/task-kinds";
@@ -68,6 +70,7 @@ export function TaskMoreMenu({
   onDeleted: () => void;
 }) {
   const [, run] = useServerAction();
+  const notify = useNotify();
   const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | null>(null);
   const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
   const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
@@ -76,6 +79,22 @@ export function TaskMoreMenu({
     if (kind === task.kind) return;
     if (kind === "milestone" && task.startOn && !window.confirm("A milestone has only a due date. Clear the start date?")) return;
     run(() => setTaskKind(task.id, kind));
+  }
+
+  // Close or reopen the request's reply thread, with Undo on the toast.
+  function setThreadClosed(closed: boolean) {
+    run(async () => {
+      const result = await setReplyThreadClosed(task.id, closed);
+      if (!result.error) {
+        notify(
+          closed
+            ? "Reply thread closed. The submitter’s replies won’t be posted."
+            : "Reply thread reopened. The submitter’s replies come back as comments.",
+          { label: "Undo", onClick: () => run(() => setReplyThreadClosed(task.id, !closed)) },
+        );
+      }
+      return result;
+    });
   }
 
   function remove() {
@@ -150,6 +169,11 @@ export function TaskMoreMenu({
                 {canConvert(task) ? item(GitBranch, task.isSubtask ? "Convert to a task…" : "Convert to a subtask…", () => setDialog("convert"), close) : null}
                 {home && editableProjects.length ? item(LayoutTemplate, "Save as task template…", () => setDialog("template"), close) : null}
                 {item(Copy, task.isSubtask ? "Duplicate subtask…" : "Duplicate task…", () => setDialog("duplicate"), close)}
+                {task.replyThread
+                  ? task.replyThread.closed
+                    ? item(MailCheck, "Reopen reply thread", () => setThreadClosed(false), close)
+                    : item(MailX, "Close reply thread", () => setThreadClosed(true), close)
+                  : null}
               </>
             ) : null}
             {item(Link2, "Copy task link", onCopyLink, close)}

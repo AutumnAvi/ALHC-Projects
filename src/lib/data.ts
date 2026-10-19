@@ -5,6 +5,7 @@ import { displayName } from "@/components/avatar";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
+import type { MentionTeam } from "@/lib/mentions";
 import { isEmailDesignKind, settingsFromRow, type EmailDesignKind, type EmailDesignSettings } from "@/lib/email-design";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import { isFieldType, parseOptions, type FieldDef, type FieldOption, type FieldType, type LibraryField } from "@/lib/fields";
@@ -219,6 +220,9 @@ export type TaskDetail = {
   // The database has Comments and reply by email (20261014030000): responses to a form's submitter can
   // be sent (see canRespondToSubmitter()).
   submitterResponses: boolean;
+  // The request's reply thread (the top-level task's), once someone sent the submitter a response:
+  // closed = the submitter's replies are refused. Null without one (or without the database update).
+  replyThread: { closed: boolean; closedAt: string | null; closedByName: string | null; submitterEmail: string } | null;
   approvals: TaskApproval[];
   // Direct subtasks, in order.
   subtasks: SubtaskItem[];
@@ -240,6 +244,8 @@ export type TaskDetail = {
   // Set when an older page exists. The pane passes it to loadOlderComments.
   olderComments: { beforeAt: string; beforeId: string } | null;
   stories: TaskStory[];
+  // Teams whose @name in a comment shows as a pill with the team's members (display only).
+  mentionTeams: MentionTeam[];
   // The viewer's highest role across the task's projects (null: read access through nothing).
   viewerRole: ProjectRole | null;
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
@@ -308,6 +314,9 @@ export type TaskComment = {
   reactions: { emoji: ReactionKey; profileIds: string[] }[];
   // A response emailed to the form's submitter, or the submitter's emailed reply (no author).
   email: CommentEmail | null;
+  // A received reply's attachments (saved to the task) and the ones that weren't saved, with why.
+  emailFiles?: { id: string; name: string; sizeBytes: number; contentType: string | null }[];
+  emailSkipped?: { name: string; reason: "too_large" | "too_many" | "failed" }[];
 };
 
 export type TaskStory = {
@@ -931,7 +940,69 @@ export async function loadTaskCommentPage(
       },
     ]),
   );
-  return parseCommentPage(result.data, outbox);
+  return withReplyFiles(supabase, parseCommentPage(result.data, outbox));
+}
+
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+// A received reply's files (task_attachments.comment_id) and the ones left out (email_skipped_files),
+// read with the viewer's client. A database without the email designs update has neither column.
+async function withReplyFiles(supabase: Supabase, page: CommentPage): Promise<CommentPage> {
+  const ids = page.comments.filter((c) => c.email?.direction === "received").map((c) => c.id);
+  if (!ids.length) return page;
+  const [files, skipped] = await Promise.all([
+    supabase
+      .from("task_attachments")
+      .select("id, comment_id, file_name, size_bytes, content_type")
+      .in("comment_id", ids)
+      .is("deleted_at", null)
+      .order("created_at"),
+    supabase.from("comments").select("id, email_skipped_files").in("id", ids),
+  ]);
+  const byComment = new Map<string, NonNullable<TaskComment["emailFiles"]>>();
+  for (const f of files.error ? [] : (files.data ?? [])) {
+    if (!f.comment_id) continue;
+    const list = byComment.get(f.comment_id) ?? [];
+    list.push({ id: f.id, name: f.file_name, sizeBytes: f.size_bytes, contentType: f.content_type });
+    byComment.set(f.comment_id, list);
+  }
+  const skippedBy = new Map<string, NonNullable<TaskComment["emailSkipped"]>>();
+  for (const c of skipped.error ? [] : (skipped.data ?? [])) {
+    if (!Array.isArray(c.email_skipped_files)) continue;
+    skippedBy.set(
+      c.id,
+      c.email_skipped_files.flatMap((item) => {
+        const o = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, Json | undefined>) : null;
+        const reason = o?.reason;
+        return o && typeof o.name === "string" && (reason === "too_large" || reason === "too_many" || reason === "failed")
+          ? [{ name: o.name, reason }]
+          : [];
+      }),
+    );
+  }
+  return {
+    ...page,
+    comments: page.comments.map((c) =>
+      byComment.has(c.id) || skippedBy.has(c.id)
+        ? { ...c, emailFiles: byComment.get(c.id) ?? [], emailSkipped: skippedBy.get(c.id) ?? [] }
+        : c,
+    ),
+  };
+}
+
+// The task's reply thread state (submitter_thread_status: Viewer+, never the token). Null without one or
+// without the database update.
+async function loadReplyThread(supabase: Supabase, taskId: string): Promise<TaskDetail["replyThread"]> {
+  const { data, error } = await supabase.rpc("submitter_thread_status", { target_task: taskId });
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) return null;
+  const o = data as Record<string, Json | undefined>;
+  if (typeof o.submitter_email !== "string") return null;
+  return {
+    closed: o.closed === true,
+    closedAt: typeof o.closed_at === "string" ? o.closed_at : null,
+    closedByName: typeof o.closed_by_name === "string" ? o.closed_by_name : null,
+    submitterEmail: o.submitter_email,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1195,10 +1266,11 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("task_id", taskId)
       .is("deleted_at", null)
       .order("created_at"),
+    // A subtask of a form task answers the request's submitter (its top-level task's submission).
     supabase
       .from("form_submissions")
       .select("form_id, submitter_email, created_at")
-      .eq("task_id", taskId)
+      .eq("task_id", scopeTaskId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(1),
@@ -1259,6 +1331,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("payload->>kind", "submitter_response")
       .order("created_at"),
   ]);
+  const replyThread = await loadReplyThread(supabase, taskId);
 
   let submitterResponses = !commentEmails.error;
   if (commentEmails.error && !isMissingColumn(commentEmails.error)) {
@@ -1340,7 +1413,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
 
   let commentPage: CommentPage | null = null;
   if (!comments.error) {
-    commentPage = parseCommentPage(comments.data, responseStatus);
+    commentPage = await withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus));
     submitterResponses = true;
   } else if (!rpcMissing(comments.error)) {
     throw new Error(`Failed to load comments: ${comments.error.message}`);
@@ -1427,6 +1500,11 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     })),
     comments: taskComments,
     commentTotal,
+    mentionTeams: (await listTeams()).map((t) => ({
+      id: t.id,
+      name: t.name,
+      members: t.members.map((m) => ({ id: m.profileId, name: m.name, email: m.email })),
+    })),
     olderComments,
     stories: storyRows.map((st) => ({
       id: st.id,
@@ -1486,6 +1564,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
         }
       : null,
     submitterResponses,
+    replyThread,
     approvals: approvalRows.map((a) => ({
       id: a.id,
       subtaskId: a.subtask_id,

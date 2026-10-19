@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { drainOutbox } from "@/lib/email";
-import { copyForwardedAttachments } from "@/lib/email-forward";
+import { copyForwardedAttachments, copyReplyAttachments } from "@/lib/email-forward";
 import {
   bareAddress,
   forwardSenderVerified,
@@ -176,14 +176,25 @@ export async function POST(request: Request) {
     console.error("Reply by email failed", error.code);
     return json({ ok: false, error: "Something went wrong" }, 500);
   }
-  const result = (data ?? {}) as { ok?: boolean; status?: string; reason?: string };
+  const result = (data ?? {}) as { ok?: boolean; status?: string; reason?: string; comment_id?: string; task_id?: string };
   if (result.status !== "posted") {
     console.info(`Reply by email: ${result.status ?? "rejected"}${result.reason ? ` (${result.reason})` : ""}`);
     return json({ ok: true, status: result.status ?? "rejected" }, 200);
   }
 
-  // The new comment queued emails for the other followers; send them now.
+  // The reply's attachments go to the task, linked on the new comment (too-large ones are noted on
+  // it); then the emails the comment queued for the followers go out.
+  const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
+  const { comment_id: commentId, task_id: replyTaskId } = result;
   after(async () => {
+    if (hasAttachments && commentId && replyTaskId) {
+      try {
+        const copied = await copyReplyAttachments(admin, apiKey, { emailId, commentId, taskId: replyTaskId });
+        console.info(`Reply by email: ${copied.added} attachment(s) added, ${copied.skipped} skipped`);
+      } catch (e) {
+        console.error("Reply by email: attachments failed", e instanceof Error ? e.name : "error");
+      }
+    }
     try {
       await drainOutbox();
     } catch (e) {
