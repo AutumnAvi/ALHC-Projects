@@ -91,7 +91,7 @@ export function layout(
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 0 0;font-size:14px">${rows
         .map(
           (r) =>
-            `<tr><td valign="top" style="padding:6px 12px 6px 0;color:#71717a;white-space:nowrap;${font}">${escapeHtml(r.label)}</td><td valign="top" style="padding:6px 0;color:#18181b;${font}">${textHtml(r.value)}</td></tr>`,
+            `<tr><td valign="top" width="1%" style="width:1%;padding:6px 16px 6px 0;color:#71717a;white-space:nowrap;${font}">${escapeHtml(r.label)}</td><td valign="top" style="padding:6px 0;color:#18181b;${font}">${textHtml(r.value)}</td></tr>`,
         )
         .join("")}</table>`
     : "";
