@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useOptimistic, useState } from "react";
 import { Check, ChevronDown, Home, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
-import { useTaskHref } from "@/components/project/shared";
 import { useServerAction } from "@/components/toast";
 import { addTaskToProject, moveTask, removeTaskFromProject, setHomeProject } from "@/lib/actions";
 import type { TaskDetail, TaskMembership } from "@/lib/data";
 import { projectColorClass } from "@/lib/project-colors";
+import { TaskLink } from "@/components/task/task-link";
+import { seedFromTitle } from "@/lib/task-seed";
 
 // canAdd: the viewer is an Editor there, so the task can be added to that project.
 export type ProjectOption = { id: string; name: string; canAdd: boolean };
@@ -213,7 +214,6 @@ function AddToProjects({ task, projects }: { task: TaskDetail; projects: Project
 
 // A subtask's projects are its top-level task's (read-only here; change them on that task).
 function InheritedProjects({ task }: { task: TaskDetail }) {
-  const taskHref = useTaskHref();
   const root = task.ancestors[0];
   return (
     <div className="flex min-h-8 flex-col justify-center gap-0.5 py-0.5 text-sm">
@@ -242,9 +242,9 @@ function InheritedProjects({ task }: { task: TaskDetail }) {
       {root ? (
         <p className="px-1 text-xs text-zinc-500">
           Same as its top-level task,{" "}
-          <Link href={taskHref(root.id)} scroll={false} className="underline hover:text-zinc-800">
+          <TaskLink taskId={root.id} seed={() => seedFromTitle(root.id, root.title)} className="underline hover:text-zinc-800">
             {root.title}
-          </Link>
+          </TaskLink>
           .
         </p>
       ) : null}

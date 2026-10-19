@@ -588,6 +588,18 @@ export type Database = {
           footer_text: string | null;
           button_label: string | null;
           button_color: string | null;
+          subject_template: string | null;
+          heading_text: string | null;
+          notice_text: string | null;
+          show_logo: boolean | null;
+          show_header: boolean | null;
+          show_heading: boolean | null;
+          show_intro: boolean | null;
+          show_body: boolean | null;
+          show_details: boolean | null;
+          show_button: boolean | null;
+          show_notice: boolean | null;
+          show_footer: boolean | null;
           created_by: string | null;
           updated_by: string | null;
           created_at: string;
@@ -607,6 +619,18 @@ export type Database = {
           footer_text?: string | null;
           button_label?: string | null;
           button_color?: string | null;
+          subject_template?: string | null;
+          heading_text?: string | null;
+          notice_text?: string | null;
+          show_logo?: boolean | null;
+          show_header?: boolean | null;
+          show_heading?: boolean | null;
+          show_intro?: boolean | null;
+          show_body?: boolean | null;
+          show_details?: boolean | null;
+          show_button?: boolean | null;
+          show_notice?: boolean | null;
+          show_footer?: boolean | null;
           created_by?: string | null;
           updated_by?: string | null;
           created_at?: string;
@@ -626,6 +650,18 @@ export type Database = {
           footer_text?: string | null;
           button_label?: string | null;
           button_color?: string | null;
+          subject_template?: string | null;
+          heading_text?: string | null;
+          notice_text?: string | null;
+          show_logo?: boolean | null;
+          show_header?: boolean | null;
+          show_heading?: boolean | null;
+          show_intro?: boolean | null;
+          show_body?: boolean | null;
+          show_details?: boolean | null;
+          show_button?: boolean | null;
+          show_notice?: boolean | null;
+          show_footer?: boolean | null;
           created_by?: string | null;
           updated_by?: string | null;
           created_at?: string;
@@ -5336,6 +5372,18 @@ export type Database = {
       };
       task_request_label: {
         Args: { target_task: string };
+        Returns: string | null;
+      };
+      task_request_display_label: {
+        Args: { target_task: string };
+        Returns: string | null;
+      };
+      task_request_labels: {
+        Args: { task_ids: string[] };
+        Returns: Json;
+      };
+      request_display_label: {
+        Args: { label: string | null; wrap: boolean | null };
         Returns: string | null;
       };
       task_role: {

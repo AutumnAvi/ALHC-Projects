@@ -18,9 +18,11 @@ import {
   Workflow,
 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
+import { TaskLink } from "@/components/task/task-link";
 import { Timestamp } from "@/components/timestamp";
 import type { InboxItem, Profile } from "@/lib/data";
 import { isFieldChange, type InboxDensity } from "@/lib/inbox";
+import { seedFromTitle } from "@/lib/task-seed";
 
 // One notification card in the Inbox (Asana parity, batch 5): unread dot, actor, "Actor verb Task",
 // where it happened, the comment or message (Detailed density), an approver's decision buttons, the
@@ -155,11 +157,26 @@ export function InboxCard({
 }) {
   const { read, archived, bookmarked } = state;
   const compact = density === "compact";
+  // A task item opens in this page's pane; messages and status updates are links to other pages.
+  const taskCard = !item.message && !item.teamMessage && !item.statusUpdate;
+  const linkClass = `block text-sm text-zinc-700 outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-accent-400 ${
+    compact ? "truncate" : ""
+  }`;
   const { ruleName, verb, detail } = describe(item);
   // A form submitter's emailed reply has no actor: name the address it came from.
   const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? "Someone");
   const { icon: Icon } = KIND[item.kind];
   const strong = read ? "font-medium text-zinc-800" : "font-semibold text-zinc-900";
+  const linkText = (
+    <>
+      <span className={strong}>{actorName}</span> {verb} <span className={strong}>{item.taskTitle}</span>
+      {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
+      {item.message ? <span className="text-zinc-500"> · Messages in {item.message.projectName}</span> : null}
+      {item.teamMessage ? <span className="text-zinc-500"> · {item.teamMessage.teamName} team messages</span> : null}
+      {read ? null : <span className="sr-only"> (unread)</span>}
+      {bookmarked ? <span className="sr-only"> (bookmarked)</span> : null}
+    </>
+  );
   const decides = item.approval !== null && item.approval.approverId === memberId;
 
   return (
@@ -185,21 +202,21 @@ export function InboxCard({
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <Link
-            href={href}
-            scroll={item.taskId ? false : undefined}
-            onClick={onOpen}
-            className={`block text-sm text-zinc-700 outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-accent-400 ${
-              compact ? "truncate" : ""
-            }`}
-          >
-            <span className={strong}>{actorName}</span> {verb} <span className={strong}>{item.taskTitle}</span>
-            {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
-            {item.message ? <span className="text-zinc-500"> · Messages in {item.message.projectName}</span> : null}
-            {item.teamMessage ? <span className="text-zinc-500"> · {item.teamMessage.teamName} team messages</span> : null}
-            {read ? null : <span className="sr-only"> (unread)</span>}
-            {bookmarked ? <span className="sr-only"> (bookmarked)</span> : null}
-          </Link>
+          {taskCard && item.taskId ? (
+            // A task opens in the pane next to the list at once (no navigation; Oct 19 notes).
+            <TaskLink
+              taskId={item.taskId}
+              seed={() => seedFromTitle(item.taskId!, item.taskTitle ?? "Task", { parentTitle: item.parentTitle ?? null })}
+              onClick={onOpen}
+              className={linkClass}
+            >
+              {linkText}
+            </TaskLink>
+          ) : (
+            <Link href={href} onClick={onOpen} className={linkClass}>
+              {linkText}
+            </Link>
+          )}
           {!compact && detail ? (
             <p className="mt-1 line-clamp-2 whitespace-pre-line text-sm text-zinc-600">{detail}</p>
           ) : null}

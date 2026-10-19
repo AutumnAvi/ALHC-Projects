@@ -355,6 +355,52 @@ export function normalizeQuestions(questions: FormQuestion[], fields: FieldDef[]
   });
 }
 
+// Reordering in the form editor (drag and drop, Move up / Move down, Alt+↑ / Alt+↓). The order saves
+// with the rest of the form (forms.questions is saved in array order). Both return the same array when
+// nothing moves, so the editor can tell a no-op apart from a change.
+
+// Moves one question so it sits right before `beforeId` (null = at the end).
+export function moveQuestionBefore(questions: FormQuestion[], id: string, beforeId: string | null): FormQuestion[] {
+  const from = questions.findIndex((q) => q.id === id);
+  if (from < 0 || beforeId === id) return questions;
+  if (beforeId !== null && !questions.some((q) => q.id === beforeId)) return questions;
+  // Already right before the target (or already last, for the end).
+  if ((questions[from + 1]?.id ?? null) === beforeId) return questions;
+  const rest = questions.filter((q) => q.id !== id);
+  const at = beforeId === null ? rest.length : rest.findIndex((q) => q.id === beforeId);
+  return [...rest.slice(0, at), questions[from], ...rest.slice(at)];
+}
+
+// Move up = before the previous question; Move down = before the one after next (the end for the last
+// but one).
+export function moveQuestionBy(questions: FormQuestion[], id: string, delta: -1 | 1): FormQuestion[] {
+  const index = questions.findIndex((q) => q.id === id);
+  if (index < 0) return questions;
+  if (delta < 0) return index === 0 ? questions : moveQuestionBefore(questions, id, questions[index - 1].id);
+  if (index === questions.length - 1) return questions;
+  return moveQuestionBefore(questions, id, questions[index + 2]?.id ?? null);
+}
+
+// Questions whose branch question (show_if) doesn't come earlier: validate_form refuses them, and
+// normalizeQuestions drops their show_if, so they'd always show.
+export function brokenBranches(questions: FormQuestion[]): FormQuestion[] {
+  const earlier = new Set<string>();
+  const broken: FormQuestion[] = [];
+  for (const question of questions) {
+    if (question.show_if && !earlier.has(question.show_if.question_id)) broken.push(question);
+    earlier.add(question.id);
+  }
+  return broken;
+}
+
+// What the editor says after a move cleared those branches (with Undo).
+export function clearedBranchesMessage(broken: FormQuestion[]): string {
+  if (broken.length === 1) {
+    return `“${broken[0].label.trim() || "Untitled question"}” now always shows: its branch question is no longer above it.`;
+  }
+  return `${broken.length} questions now always show: their branch questions are no longer above them.`;
+}
+
 // A question that asks for a project field's value and fills it in (Asana's field-based questions).
 // People fields can't be asked on a form (there's no people question).
 export function questionForField(field: FieldDef, sectionOptions: QuestionOption[], newId: () => string): FormQuestion | null {

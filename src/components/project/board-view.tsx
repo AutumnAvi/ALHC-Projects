@@ -1,24 +1,27 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState, type DragEvent } from "react";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
 import { useCan } from "@/components/project/project-access";
 import { useViewConfig } from "@/components/project/view-config";
+import { useOpenTaskId } from "@/components/shell/right-panel";
+import { TaskLink } from "@/components/task/task-link";
 import { useServerAction } from "@/components/toast";
 import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
+import type { TaskSeed } from "@/lib/task-seed";
 import type { Profile, ProjectTask, ProjectTaskGroupPage, Section } from "@/lib/data";
 import { displayTaskTitle } from "@/lib/request-numbers";
 import type { FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { GroupTitle } from "./list-view";
-import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, addTaskKindOf, useTaskHref } from "./shared";
+import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, addTaskKindOf } from "./shared";
 import { Assignee, CommentCount, DueDate, StartDate, TaskBadges } from "./task-meta";
+import { useProjectTaskSeeds } from "./task-seeds";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
 
@@ -29,7 +32,8 @@ type Props = {
   profiles: Profile[];
   fields: FieldDef[];
   config: ViewConfig;
-  openTaskId: string | null;
+  // The task pane's preview shows it for a clicked card.
+  projectName?: string | null;
   taskPage?: ProjectTaskGroupPage[] | null;
   tags: Tag[];
   // Every task per section, whatever the view shows (a section can be deleted only when empty).
@@ -53,11 +57,14 @@ export function BoardView({
   profiles,
   fields,
   config: configProp,
-  openTaskId,
+  projectName = null,
   taskPage = null,
   tags,
   sectionTaskCounts = {},
 }: Props) {
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
+  const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const pages = useGroupPages();
   const showMorePage = usePagedShowMore();
@@ -266,6 +273,7 @@ export function BoardView({
                     showDue={showDue}
                     showStart={showStart}
                     open={openTaskId === task.id}
+                    seed={() => seeds.task(task)}
                     dragging={dragging === task.id}
                     groupKey={group.key}
                     moveOptions={moveOptions}
@@ -344,6 +352,7 @@ function TaskCard({
   showDue,
   showStart,
   open,
+  seed,
   dragging,
   groupKey,
   moveOptions,
@@ -361,6 +370,7 @@ function TaskCard({
   showDue: boolean;
   showStart: boolean;
   open: boolean;
+  seed: () => TaskSeed;
   dragging: boolean;
   groupKey: string;
   moveOptions: TaskGroup[];
@@ -373,7 +383,6 @@ function TaskCard({
   onDragStart: (e: DragEvent) => void;
   onDragEnd: () => void;
 }) {
-  const taskHref = useTaskHref();
   const completed = Boolean(task.completedAt);
   const due = showDue && task.dueOn;
   const start = showStart && task.startOn;
@@ -400,16 +409,16 @@ function TaskCard({
             label={kindToggleLabel(task.kind, task.title, completed)}
           />
         </span>
-        <Link
-          href={taskHref(task.id)}
-          scroll={false}
+        <TaskLink
+          taskId={task.id}
+          seed={seed}
           draggable={false}
           className={`min-w-0 flex-1 text-sm leading-snug break-words hover:underline ${
             completed ? "text-zinc-400 line-through" : "text-zinc-900"
           }`}
         >
           {displayTaskTitle(task.title, task.requestLabel)}
-        </Link>
+        </TaskLink>
       </div>
 
       {cardFields.some((f) => task.fieldValues[f.id] != null || f.boundToSections) ? (

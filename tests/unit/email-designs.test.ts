@@ -136,3 +136,18 @@ test("samples render both kinds for the preview", () => {
   assert.ok(requester.html.includes("Hello Jordan Lee") && requester.html.includes("Creative Requests"));
   assert.ok(!requester.text.includes("{"), "fill-ins replaced in the sample");
 });
+
+test("rendering: the request number follows the project's bracket setting (Oct 19)", () => {
+  const comment = row({
+    template: "custom",
+    comment_id: "00000000-0000-4000-8000-0000000000c2",
+    payload: { task_title: "Flyer", author_name: "Avery", comment_body: "Looks good", request_label: "Task #3" },
+  });
+  const wrapped = renderEmail(comment, { requestWrap: true });
+  assert.ok(wrapped.text.includes("[Task #3] Flyer"), "brackets on");
+  const bare = renderEmail(comment, { requestWrap: false });
+  assert.ok(bare.text.includes("Task #3 · Flyer") && !bare.text.includes("[Task #3]"), "brackets off");
+  const confirmation = row({ payload: { form_title: "Design request", task_title: "Logo", request_label: "Task #4" } });
+  assert.equal(renderEmail(confirmation, { requestWrap: false }).subject, "Task #4 · We received your Design request");
+  assert.equal(renderEmail(confirmation, { requestWrap: true }).subject, "[Task #4] We received your Design request");
+});

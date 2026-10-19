@@ -31,6 +31,7 @@ import { DuplicateTaskDialog } from "./duplicate-task-dialog";
 import { SaveTaskTemplateDialog } from "./save-task-template";
 import { ConvertTaskDialog, canConvert } from "./task-convert";
 import { OPEN_REPEATS_EVENT } from "./task-dates";
+import { displayTaskTitle } from "@/lib/request-numbers";
 
 const KIND_ICONS: Record<TaskKind, LucideIcon> = { task: CircleCheck, milestone: Diamond, approval: ThumbsUp };
 const HEADING = "px-2 pb-0.5 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-zinc-500";
@@ -202,9 +203,7 @@ export function TaskMoreMenu({
       {dialog === "template" && home ? (
         <SaveTaskTemplateDialog
           taskId={task.id}
-          title={
-            task.requestLabel && task.title.startsWith(`[${task.requestLabel}] `) ? task.title.slice(task.requestLabel.length + 3) : task.title
-          }
+          title={displayTaskTitle(task.title, task.requestLabel, { show: false })}
           hasAssignee={Boolean(task.assigneeId)}
           projects={editableProjects.map((m) => ({ id: m.projectId, name: m.projectName }))}
           defaultProjectId={editableProjects.find((m) => m.isHome)?.projectId ?? editableProjects[0].projectId}

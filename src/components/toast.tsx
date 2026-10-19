@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useState, useTransition, type ReactNode } from "react";
 import { X } from "lucide-react";
 import type { ActionResult } from "@/lib/actions";
+import { invalidateTaskPanes } from "@/components/task/task-pane-store";
 import { beginLocalMutation, endLocalMutation, failMutation } from "@/lib/optimistic-session";
 
 // An optional button on the toast (e.g. Undo); clicking it runs the action and dismisses the toast.
@@ -93,6 +94,8 @@ export function useServerAction() {
           throw error;
         } finally {
           endLocalMutation(token);
+          // Cached task panes may be out of date now (the open one gets its fresh copy with the refresh).
+          invalidateTaskPanes();
         }
       });
     },

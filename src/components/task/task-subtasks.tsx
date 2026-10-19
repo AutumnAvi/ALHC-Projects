@@ -1,23 +1,23 @@
 "use client";
 
-import Link from "next/link";
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, GripVertical, ListChecks, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
-import { useTaskHref } from "@/components/project/shared";
 import { useServerAction } from "@/components/toast";
 import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask } from "@/lib/actions";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, SubtaskItem, TaskDetail } from "@/lib/data";
-import { displayTaskTitle } from "@/lib/request-numbers";
+import { formatRequestLabel } from "@/lib/request-numbers";
 import { hasRole } from "@/lib/roles";
 import { MAX_SUBTASK_DEPTH, subtaskOrderBefore } from "@/lib/subtasks";
 import { DateRangePicker } from "./date-picker";
 import { PersonPicker } from "./person-picker";
 import { useDateText } from "./task-dates";
 import { PANE_HEADING } from "./pane-styles";
+import { TaskLink } from "@/components/task/task-link";
+import { seedFromSubtask } from "@/lib/task-seed";
 
 type Change =
   | { type: "toggle"; id: string; completed: boolean }
@@ -61,7 +61,16 @@ export function TaskSubtasks({
   onAddingChange: (adding: boolean) => void;
 }) {
   const [, run] = useServerAction();
-  const taskHref = useTaskHref();
+  // What a subtask row knows, drawn at once when it's opened (no navigation; Oct 19 notes).
+  const homeProject = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+  const subtaskSeed = (subtask: SubtaskItem) => {
+    const assignee = subtask.assigneeId ? profiles.find((p) => p.id === subtask.assigneeId) : undefined;
+    return seedFromSubtask(
+      subtask,
+      { title: task.title, projectName: homeProject?.projectName ?? (task.isPrivate ? "Private" : null) },
+      { personName: () => (assignee ? displayName(assignee) : null) },
+    );
+  };
   const inputRef = useRef<HTMLInputElement>(null);
   const [subtasks, change] = useOptimistic(task.subtasks, applyChange);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -206,7 +215,7 @@ export function TaskSubtasks({
                 </label>
                 {subtask.requestLabel ? (
                   <span className="shrink-0 text-xs font-medium text-zinc-500">
-                    {displayTaskTitle("", subtask.requestLabel).trim()}
+                    {formatRequestLabel(subtask.requestLabel)}
                   </span>
                 ) : null}
                 <input
@@ -282,15 +291,15 @@ export function TaskSubtasks({
                     )}
                   </Popover>
                 ) : null}
-                <Link
-                  href={taskHref(subtask.id)}
-                  scroll={false}
+                <TaskLink
+                  taskId={subtask.id}
+                  seed={() => subtaskSeed(subtask)}
                   aria-label={`Open subtask ${subtask.title}`}
                   data-tooltip="Open subtask"
                   className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
                 >
                   <ChevronRight className="size-4" />
-                </Link>
+                </TaskLink>
               </li>
             );
           })}

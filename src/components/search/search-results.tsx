@@ -1,12 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { CheckCircle2, Circle, FolderClosed, Lock, SearchX } from "lucide-react";
-import { useTaskHref } from "@/components/project/shared";
+import { useOpenTaskId } from "@/components/shell/right-panel";
+import { TaskLink } from "@/components/task/task-link";
 import { EmptyState } from "@/components/ui";
 import { formatDueDate } from "@/lib/dates";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
+import { seedFromTitle } from "@/lib/task-seed";
 
 export type SearchResult = {
   id: string;
@@ -23,15 +24,14 @@ export type SearchResult = {
 export function SearchResults({
   query,
   results,
-  openTaskId,
   tags,
 }: {
   query: string;
   results: SearchResult[];
-  openTaskId: string | null;
   tags: Tag[];
 }) {
-  const taskHref = useTaskHref();
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
   const tagsById = new Map(tags.map((t) => [t.id, t] as const));
 
   return (
@@ -52,9 +52,15 @@ export function SearchResults({
             const Icon = result.completed ? CheckCircle2 : Circle;
             return (
               <li key={result.id} className={open ? "bg-accent-50" : "hover:bg-zinc-50"}>
-                <Link
-                  href={taskHref(result.id)}
-                  scroll={false}
+                <TaskLink
+                  taskId={result.id}
+                  seed={() =>
+                    seedFromTitle(result.id, result.title, {
+                      completed: result.completed,
+                      dueOn: result.dueOn,
+                      projectName: result.projectName ?? "Private",
+                    })
+                  }
                   aria-current={open ? "true" : undefined}
                   className="flex min-h-row items-start gap-3 px-3 py-2"
                 >
@@ -91,7 +97,7 @@ export function SearchResults({
                       </span>
                     )}
                   </span>
-                </Link>
+                </TaskLink>
               </li>
             );
           })}

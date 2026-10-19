@@ -1,7 +1,6 @@
 "use client";
 
 import type { Tag } from "@/lib/tags";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useRef, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
 import { Inbox, Route } from "lucide-react";
@@ -15,7 +14,10 @@ import type { Profile, ProjectDependency, ProjectTask, Section } from "@/lib/dat
 import { displayTaskTitle } from "@/lib/request-numbers";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { groupOf, isIsoDate, type ViewConfig } from "@/lib/views";
-import { useTaskHref } from "./shared";
+import { useOpenTaskId } from "@/components/shell/right-panel";
+import { TaskLink } from "@/components/task/task-link";
+import type { TaskSeed } from "@/lib/task-seed";
+import { useProjectTaskSeeds } from "./task-seeds";
 import { Assignee } from "./task-meta";
 import {
   ZOOMS,
@@ -45,7 +47,8 @@ type Props = {
   profiles: Profile[];
   fields: FieldDef[];
   config: ViewConfig;
-  openTaskId: string | null;
+  // What the task pane's preview shows for a clicked bar.
+  projectName?: string | null;
   dependencies?: ProjectDependency[];
   // Slack per dated task of the whole project (not just this view), from project_critical_path().
   criticalPath?: CriticalPath;
@@ -71,7 +74,7 @@ export function TimelineView({
   profiles,
   fields,
   config,
-  openTaskId,
+  projectName = null,
   dependencies = [],
   criticalPath = EMPTY_CRITICAL_PATH,
   tags = [],
@@ -85,7 +88,9 @@ export function TimelineView({
   const searchParams = useSearchParams();
   const [navigating, startTransition] = useTransition();
   const clientToday = useToday();
-  const taskHref = useTaskHref();
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
+  const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const shift = useDependencyShift();
   const canEdit = useCan("editor");
@@ -424,7 +429,7 @@ export function TimelineView({
                   showCritical={showCritical}
                   schedule={criticalPath.tasks[slot.task.id]}
                   assignee={slot.task.assigneeId ? profilesById.get(slot.task.assigneeId) : undefined}
-                  href={taskHref(slot.task.id)}
+                  seed={() => seeds.task(slot.task!)}
                   onCommit={(dates) => reschedule(slot.task!, dates)}
                   onReveal={(date) => navigate({ d: date })}
                   onDragging={setDraggedId}
@@ -457,9 +462,9 @@ export function TimelineView({
         <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto">
           {tray.map((task) => (
             <li key={task.id}>
-              <Link
-                href={taskHref(task.id)}
-                scroll={false}
+              <TaskLink
+                taskId={task.id}
+                seed={() => seeds.task(task)}
                 draggable={false}
                 {...trayHandlers(task)}
                 aria-current={openTaskId === task.id ? "true" : undefined}
@@ -469,7 +474,7 @@ export function TimelineView({
               >
                 <span className="min-w-0 flex-1 truncate text-zinc-800">{displayTaskTitle(task.title, task.requestLabel)}</span>
                 <Assignee profile={task.assigneeId ? profilesById.get(task.assigneeId) : undefined} />
-              </Link>
+              </TaskLink>
             </li>
           ))}
           {tray.length === 0 ? (
@@ -555,7 +560,7 @@ function TimelineRow({
   showCritical,
   schedule,
   assignee,
-  href,
+  seed,
   onCommit,
   onReveal,
   onDragging,
@@ -572,7 +577,7 @@ function TimelineRow({
   showCritical: boolean;
   schedule: TaskSchedule | undefined;
   assignee: Profile | undefined;
-  href: string;
+  seed: () => TaskSeed;
   onCommit: (dates: Dates) => void;
   onReveal: (date: string) => void;
   onDragging: (taskId: string | null) => void;
@@ -588,9 +593,9 @@ function TimelineRow({
         }`}
         style={labelCell}
       >
-        <Link
-          href={href}
-          scroll={false}
+        <TaskLink
+          taskId={task.id}
+          seed={seed}
           aria-current={open ? "true" : undefined}
           className={`min-w-0 flex-1 truncate text-sm hover:underline ${
             completed ? "text-zinc-400 line-through" : "text-zinc-900"
@@ -605,7 +610,7 @@ function TimelineRow({
             {assignee ? `, assigned to ${displayName(assignee)}` : ""}
             {schedule ? `, ${slackLabel(schedule)}` : ""}
           </span>
-        </Link>
+        </TaskLink>
         <span aria-hidden>
           <Assignee profile={assignee} />
         </span>
@@ -613,7 +618,7 @@ function TimelineRow({
       <div className="relative" style={{ width }}>
         <TimelineBar
           task={task}
-          href={href}
+          seed={seed}
           open={open}
           overdue={overdue}
           windowStart={start}
@@ -635,7 +640,7 @@ type Drag = { mode: DragMode; delta: number; moved: boolean };
 
 function TimelineBar({
   task,
-  href,
+  seed,
   open,
   overdue,
   windowStart,
@@ -649,7 +654,7 @@ function TimelineBar({
   onDragging,
 }: {
   task: ProjectTask;
-  href: string;
+  seed: () => TaskSeed;
   open: boolean;
   overdue: boolean;
   windowStart: string;
@@ -756,9 +761,9 @@ function TimelineBar({
     const fill = completed ? "bg-zinc-300" : overdue ? "bg-red-500" : "bg-accent-600";
     return (
       <>
-        <Link
-          href={href}
-          scroll={false}
+        <TaskLink
+          taskId={task.id}
+          seed={seed}
           draggable={false}
           tabIndex={-1}
           aria-hidden
@@ -779,7 +784,7 @@ function TimelineBar({
             } ${drag?.moved ? "shadow-md" : ""}`}
             style={{ width: size - 2, height: size - 2 }}
           />
-        </Link>
+        </TaskLink>
         <span
           aria-hidden
           className={`pointer-events-none absolute top-1/2 -translate-y-1/2 truncate pl-1 text-xs whitespace-nowrap ${
@@ -804,9 +809,9 @@ function TimelineBar({
 
   return (
     <>
-      <Link
-        href={href}
-        scroll={false}
+      <TaskLink
+        taskId={task.id}
+        seed={seed}
         draggable={false}
         tabIndex={-1}
         aria-hidden
@@ -842,7 +847,7 @@ function TimelineBar({
         {canResize && !clippedEnd ? (
           <span data-edge="end" className="absolute inset-y-0 right-0 w-2 cursor-ew-resize rounded-r-md group-hover:bg-black/10" />
         ) : null}
-      </Link>
+      </TaskLink>
       {!labelInside ? (
         <span
           aria-hidden

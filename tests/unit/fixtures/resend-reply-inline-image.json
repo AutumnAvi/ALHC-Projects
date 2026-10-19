@@ -1,0 +1,66 @@
+{
+  "_about": "A submitter's reply from Apple Mail with a pasted logo, a PDF, a file over 25 MB, and Outlook's quoted image001.png, in the shapes of Resend's docs (email.received webhook; GET /emails/receiving/{id}?html_format=cid; GET /emails/receiving/{id}/attachments). Addresses, ids, and signatures are made up.",
+  "webhook": {
+    "type": "email.received",
+    "created_at": "2026-10-19T14:02:11.512Z",
+    "data": {
+      "email_id": "8f1c2a7e-3b4d-4e5f-9a6b-1c2d3e4f5a6b",
+      "created_at": "2026-10-19T14:02:11.204Z",
+      "from": "tjones@example.org",
+      "to": ["r-0123456789abcdef0123456789abcdef01234567@reply.mail.autumnlakemarketing.com"],
+      "bcc": [],
+      "cc": [],
+      "received_for": [],
+      "message_id": "<A1B2C3D4-0000-4000-8000-000000000001@example.org>",
+      "subject": "Re: \"CREATIVE REQUEST FORM\" submission received",
+      "attachments": [
+        { "id": "2a0c9ce0-3112-4728-976e-47ddcd16a318", "filename": "AL_ICON MARK.jpg", "content_type": "image/jpeg", "content_disposition": "inline", "content_id": "B7E2F0A1-5C3D-4E6F-8A9B-0C1D2E3F4A5B" },
+        { "id": "3b1d0df1-4223-5839-987f-54eedd27b419", "filename": "brief.pdf", "content_type": "application/pdf", "content_disposition": null, "content_id": null },
+        { "id": "4c2e1e02-5334-4940-a980-65ffee38c52a", "filename": "walkthrough.mov", "content_type": "video/quicktime", "content_disposition": "attachment", "content_id": null },
+        { "id": "5d3f2f13-6445-4a51-b091-760011490d3b", "filename": "image001.png", "content_type": "image/png", "content_disposition": "inline", "content_id": "image001.png@01DB2222.33334444" }
+      ]
+    }
+  },
+  "retrieved": {
+    "object": "email",
+    "id": "8f1c2a7e-3b4d-4e5f-9a6b-1c2d3e4f5a6b",
+    "to": ["r-0123456789abcdef0123456789abcdef01234567@reply.mail.autumnlakemarketing.com"],
+    "from": "Terry Jones <tjones@example.org>",
+    "created_at": "2026-10-19T14:02:11.204Z",
+    "subject": "Re: \"CREATIVE REQUEST FORM\" submission received",
+    "html": "<div>Here is the logo.</div><div><img src=\"cid:B7E2F0A1-5C3D-4E6F-8A9B-0C1D2E3F4A5B\" alt=\"AL_ICON MARK.jpg\"></div><div>Thanks,<br>Terry</div><blockquote type=\"cite\"><div><img src=\"cid:image001.png@01DB2222.33334444\"></div><div>—— Reply above this line ——</div><div>Hi Terry</div></blockquote>",
+    "html_format": "cid",
+    "text": "Here is the logo.\n\n[AL_ICON MARK.jpg]\n\nThanks,\nTerry\n\nOn Oct 19, 2026, at 9:40 AM, Autumn Lake <no-reply@mail.autumnlakemarketing.com> wrote:\n\n> [cid:image001.png@01DB2222.33334444]\n> —— Reply above this line ——\n> Hi Terry\n",
+    "headers": { "from": "Terry Jones <tjones@example.org>" },
+    "bcc": [],
+    "cc": [],
+    "reply_to": [],
+    "received_for": [],
+    "authentication": { "spf": "pass", "dkim": "pass", "dmarc": "pass" },
+    "message_id": "<A1B2C3D4-0000-4000-8000-000000000001@example.org>",
+    "raw": { "download_url": "https://inbound-cdn.resend.com/8f1c2a7e-3b4d-4e5f-9a6b-1c2d3e4f5a6b/raw?signature=sig-raw", "expires_at": "2026-10-19T15:02:11.521Z" },
+    "attachments": [
+      { "id": "2a0c9ce0-3112-4728-976e-47ddcd16a318", "filename": "AL_ICON MARK.jpg", "content_type": "image/jpeg", "content_disposition": "inline", "content_id": "B7E2F0A1-5C3D-4E6F-8A9B-0C1D2E3F4A5B", "size": 48213 },
+      { "id": "3b1d0df1-4223-5839-987f-54eedd27b419", "filename": "brief.pdf", "content_type": "application/pdf", "content_disposition": null, "content_id": null, "size": 13264 },
+      { "id": "4c2e1e02-5334-4940-a980-65ffee38c52a", "filename": "walkthrough.mov", "content_type": "video/quicktime", "content_disposition": "attachment", "content_id": null, "size": 31457280 },
+      { "id": "5d3f2f13-6445-4a51-b091-760011490d3b", "filename": "image001.png", "content_type": "image/png", "content_disposition": "inline", "content_id": "image001.png@01DB2222.33334444", "size": 6120 }
+    ]
+  },
+  "attachmentsList": {
+    "object": "list",
+    "has_more": false,
+    "data": [
+      { "id": "2a0c9ce0-3112-4728-976e-47ddcd16a318", "filename": "AL_ICON MARK.jpg", "size": 48213, "content_type": "image/jpeg", "content_disposition": "inline", "content_id": "B7E2F0A1-5C3D-4E6F-8A9B-0C1D2E3F4A5B", "download_url": "https://inbound-cdn.resend.com/8f1c2a7e-3b4d-4e5f-9a6b-1c2d3e4f5a6b/attachments/2a0c9ce0-3112-4728-976e-47ddcd16a318?signature=sig-1", "expires_at": "2026-10-19T15:02:11.521Z" },
+      { "id": "3b1d0df1-4223-5839-987f-54eedd27b419", "filename": "brief.pdf", "size": 13264, "content_type": "application/pdf", "content_disposition": null, "content_id": null, "download_url": "https://inbound-cdn.resend.com/8f1c2a7e-3b4d-4e5f-9a6b-1c2d3e4f5a6b/attachments/3b1d0df1-4223-5839-987f-54eedd27b419?signature=sig-2", "expires_at": "2026-10-19T15:02:11.521Z" },
+      { "id": "4c2e1e02-5334-4940-a980-65ffee38c52a", "filename": "walkthrough.mov", "size": 31457280, "content_type": "video/quicktime", "content_disposition": "attachment", "content_id": null, "download_url": "https://inbound-cdn.resend.com/8f1c2a7e-3b4d-4e5f-9a6b-1c2d3e4f5a6b/attachments/4c2e1e02-5334-4940-a980-65ffee38c52a?signature=sig-3", "expires_at": "2026-10-19T15:02:11.521Z" },
+      { "id": "5d3f2f13-6445-4a51-b091-760011490d3b", "filename": "image001.png", "size": 6120, "content_type": "image/png", "content_disposition": "inline", "content_id": "image001.png@01DB2222.33334444", "download_url": "https://inbound-cdn.resend.com/8f1c2a7e-3b4d-4e5f-9a6b-1c2d3e4f5a6b/attachments/5d3f2f13-6445-4a51-b091-760011490d3b?signature=sig-4", "expires_at": "2026-10-19T15:02:11.521Z" }
+    ]
+  },
+  "iphone": {
+    "text": "[AL_ICON MARK.jpg]\n\nSent from my iPhone",
+    "html": null,
+    "attachments": [
+      { "id": "6e404024-7556-4b62-8c1a-871122501e4c", "filename": "AL_ICON MARK.jpg", "content_type": "image/jpeg", "content_disposition": "inline", "content_id": "6E404024-AAAA-4B62-8C1A-871122501E4C", "size": 48213 }
+    ]
+  }
+}

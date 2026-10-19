@@ -1,9 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Dialog } from "@/components/dialog";
-import { useTaskHref } from "@/components/project/shared";
+import { useOpenTask } from "@/components/task/task-link";
 import { useNotify } from "@/components/toast";
 import { duplicateTask } from "@/lib/actions";
 import { DUPLICATE_TASK_OPTIONS, describeDuplicateSkips, type DuplicateTaskOptionKey } from "@/lib/duplicate-task";
@@ -22,8 +21,7 @@ export function DuplicateTaskDialog({
   isSubtask: boolean;
   onClose: () => void;
 }) {
-  const router = useRouter();
-  const taskHref = useTaskHref();
+  const openTask = useOpenTask();
   const notify = useNotify();
   const [pending, start] = useTransition();
   const [name, setName] = useState(`Copy of ${title}`);
@@ -41,7 +39,8 @@ export function DuplicateTaskDialog({
       const skipped = describeDuplicateSkips(outcome.result);
       notify(`Duplicated as “${name.trim() || `Copy of ${title}`}”${skipped ? `. ${skipped}` : ""}`);
       onClose();
-      router.push(taskHref(outcome.result.taskId), { scroll: false });
+      // The copy opens in the pane at once (no navigation).
+      openTask(outcome.result.taskId, { id: outcome.result.taskId, title: name.trim() || `Copy of ${title}` });
     });
   }
 

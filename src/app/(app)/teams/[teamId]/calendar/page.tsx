@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CalendarDays } from "lucide-react";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { TeamCalendar } from "@/components/teams/team-calendar";
 import { EmptyState } from "@/components/ui";
 import { getTeam, listTeamCalendarTasks } from "@/lib/data";
@@ -62,10 +62,9 @@ export default async function TeamCalendarPage({ params, searchParams }: PagePro
           tasks={calendar.tasks}
           projectCount={calendar.projectCount}
           capped={calendar.capped}
-          openTaskId={openTaskId}
         />
       )}
-      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
+      <TaskPaneSlot taskId={openTaskId} />
     </>
   );
 }

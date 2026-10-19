@@ -5,11 +5,12 @@ import { ListView } from "@/components/project/list-view";
 import { TimelineView } from "@/components/project/timeline-view";
 import { ViewToolbar } from "@/components/project/view-toolbar";
 import { ViewConfigProvider } from "@/components/project/view-config";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { listBulkContext } from "@/components/bulk/bulk-context";
 import { calendarVisibleDays, timelineWindow, type TimelineZoom } from "@/lib/date-input";
 import {
   filterProjectTaskIds,
+  getProject,
   listProfiles,
   listProjectDependencies,
   listProjectFields,
@@ -86,7 +87,7 @@ export async function ProjectViewPage({
   // Calendar and Timeline load the visible date window instead of every card.
   const scheduling = layout === "calendar" || layout === "timeline";
 
-  const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths, sectionCounts] =
+  const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths, sectionCounts, project] =
     await Promise.all([
     listSections(projectId),
     paging || scheduling ? Promise.resolve(null) : listProjectTasks(projectId),
@@ -99,6 +100,8 @@ export async function ProjectViewPage({
     listTags(),
     layout === "list" ? getListColumnWidths(projectId) : Promise.resolve({}),
     listSectionTaskCounts(projectId),
+    // Already read by the project layout (React-cached): the name the task pane's preview shows.
+    getProject(projectId),
   ]);
 
   const context = {
@@ -168,7 +171,8 @@ export async function ProjectViewPage({
     visible = everyTask.filter((task) => matching.has(task.id));
     taskPage = null;
   }
-  const props = { projectId, sections, tasks: visible, profiles, fields, config, openTaskId, tags };
+  // The open task (?task=) is read on the client (useOpenTaskId): opening one never renders this page.
+  const props = { projectId, projectName: project?.name ?? null, sections, tasks: visible, profiles, fields, config, tags };
   // List's “Show subtasks” (the view's show_subtasks setting, off by default): each task's subtask tree
   // under its row.
   const showSubtasks = layout === "list" && showsSubtasks(config);
@@ -212,7 +216,10 @@ export async function ProjectViewPage({
             projectId={projectId}
             tasks={visible}
             profiles={profiles}
-            openTaskId={openTaskId}
+            projectName={project?.name ?? null}
+            sections={sections}
+            tags={tags}
+            fields={fields}
             windowed={scheduleTasks !== null}
             today={today}
             anchor={requestedDay}
@@ -233,7 +240,7 @@ export async function ProjectViewPage({
           />
         ) : null}
       </ViewConfigProvider>
-      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
+      <TaskPaneSlot taskId={openTaskId} />
     </main>
   );
 }

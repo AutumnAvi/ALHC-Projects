@@ -7,6 +7,7 @@ import { InboxCard, inboxItemHref, type CardState, type Decision } from "@/compo
 import { useInboxDensity } from "@/components/inbox/inbox-density";
 import { InboxToolbar } from "@/components/inbox/inbox-toolbar";
 import { useTaskHref } from "@/components/project/shared";
+import { useOpenTaskId } from "@/components/shell/right-panel";
 import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, HEADER_TAB } from "@/components/ui";
@@ -47,7 +48,6 @@ export function InboxView({
   items,
   profiles,
   memberId,
-  openTaskId,
   bookmarks,
   timeZone,
   today,
@@ -56,7 +56,6 @@ export function InboxView({
   items: InboxItem[];
   profiles: Profile[];
   memberId: string;
-  openTaskId: string | null;
   // This release's migration is applied (hasBatch5Schema()): bookmarks work.
   bookmarks: boolean;
   // The viewer's zone and local day, from the server, so day headings match on both sides.
@@ -67,6 +66,8 @@ export function InboxView({
     { table: "inbox_items", filter: `recipient_id=eq.${memberId}` },
   ]);
   const taskHref = useTaskHref();
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
   const pages = useGroupPages();
   const density = useInboxDensity();
   const [, run] = useServerAction();

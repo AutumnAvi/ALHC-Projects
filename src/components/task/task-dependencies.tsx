@@ -1,23 +1,29 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { CheckCircle2, Circle, EyeOff, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { Segmented } from "@/components/project/view-chrome";
-import { useTaskHref } from "@/components/project/shared";
 import { useServerAction } from "@/components/toast";
 import { removeTaskDependency, setTaskDependency } from "@/lib/actions";
 import { slackLabel } from "@/lib/critical-path";
 import { DEPENDENCY_KINDS, MAX_LAG_DAYS, dependencyLabel, isDependencyKind, type DependencyKind } from "@/lib/dependencies";
 import type { TaskDependency, TaskDetail } from "@/lib/data";
+import { useTaskExtras } from "./task-pane-store";
+import { TaskLink } from "@/components/task/task-link";
+import { seedFromTitle } from "@/lib/task-seed";
 
 type Relation = TaskDependency["relation"];
 const RELATION_LABELS: Record<Relation, string> = { blocked_by: "Blocked by", blocking: "Blocking" };
 
+// A dated top-level task has slack in each of its projects (project_critical_path).
+function hasSchedule(task: TaskDetail) {
+  return Boolean(task.dueOn) && !task.isSubtask;
+}
+
 // Whether the pane shows a Dependencies row at all (Editors always can add one).
 export function hasDependencyRow(task: TaskDetail, canEdit: boolean) {
-  return canEdit || task.dependencies.length > 0 || task.schedule.length > 0 || task.hiddenBlockers > 0;
+  return canEdit || task.dependencies.length > 0 || hasSchedule(task) || task.hiddenBlockers > 0;
 }
 
 // The pane's Dependencies row (Asana parity, batch 3): "Blocked by" (tasks this one comes after) and
@@ -26,11 +32,9 @@ export function hasDependencyRow(task: TaskDetail, canEdit: boolean) {
 // completed before it) or start-to-start (starts on/after its start + lag; never blocks completion).
 // Editors of both tasks add, change, and remove links — across projects and between subtasks too.
 export function TaskDependencies({ task, canEdit }: { task: TaskDetail; canEdit: boolean }) {
-  const multiProject = task.schedule.length > 1;
-  const linked = new Set(task.dependencies.map((d) => d.taskId));
-  const candidates = task.dependencyCandidates
-    .map((group) => ({ ...group, tasks: group.tasks.filter((t) => !linked.has(t.id)) }))
-    .filter((group) => group.tasks.length > 0);
+  // The slack comes after the pane opens (a whole-project read; Oct 19 notes).
+  const schedule = useTaskExtras(task.id, "schedule", hasSchedule(task))?.schedule ?? [];
+  const multiProject = schedule.length > 1;
   const ordered = [
     ...task.dependencies.filter((d) => d.relation === "blocked_by"),
     ...task.dependencies.filter((d) => d.relation === "blocking"),
@@ -59,9 +63,9 @@ export function TaskDependencies({ task, canEdit }: { task: TaskDetail; canEdit:
           Also waiting on {task.hiddenBlockers === 1 ? "1 task" : `${task.hiddenBlockers} tasks`} you can’t open
         </p>
       ) : null}
-      {task.schedule.length > 0 ? (
+      {schedule.length > 0 ? (
         <ul className="px-1 text-xs text-zinc-500" aria-label="Schedule">
-          {task.schedule.map((s) => (
+          {schedule.map((s) => (
             <li key={s.projectId}>
               <span className={s.critical ? "font-medium text-zinc-800" : undefined}>{slackLabel(s)}</span>
               {multiProject ? <span className="text-zinc-400"> · {s.projectName}</span> : null}
@@ -69,7 +73,7 @@ export function TaskDependencies({ task, canEdit }: { task: TaskDetail; canEdit:
           ))}
         </ul>
       ) : null}
-      {canEdit ? <AddDependency task={task} candidates={candidates} /> : null}
+      {canEdit ? <AddDependency task={task} /> : null}
     </div>
   );
 }
@@ -85,7 +89,6 @@ function DependencyItem({
   canEdit: boolean;
   showRelation: boolean;
 }) {
-  const taskHref = useTaskHref();
   const custom = item.kind !== "finish_to_start" || item.lagDays !== 0;
   return (
     <li className="group/dep flex min-h-7 min-w-0 items-center gap-1.5 px-1 text-sm">
@@ -95,13 +98,13 @@ function DependencyItem({
       ) : (
         <Circle className="size-3.5 shrink-0 text-zinc-400" aria-label="Incomplete" />
       )}
-      <Link
-        href={taskHref(item.taskId)}
-        scroll={false}
+      <TaskLink
+        taskId={item.taskId}
+        seed={() => seedFromTitle(item.taskId, item.title, { completed: Boolean(item.completedAt) })}
         className={`min-w-20 truncate hover:underline ${item.completedAt ? "text-zinc-500 line-through" : "text-zinc-800"}`}
       >
         {item.title}
-      </Link>
+      </TaskLink>
       {item.isSubtask ? <span className="chip shrink-0">Subtask</span> : null}
       {custom ? <span className="min-w-0 truncate text-xs text-zinc-500">{dependencyLabel(item.kind, item.lagDays)}</span> : null}
       {canEdit ? <LinkOptions task={task} item={item} /> : null}
@@ -196,13 +199,20 @@ function LinkOptions({ task, item }: { task: TaskDetail; item: TaskDependency })
 
 // "Add dependencies": pick whether the other task comes before (Blocked by) or after (Blocking), then
 // find it among this task's tree, its projects you edit, and a few other projects you edit.
-function AddDependency({ task, candidates }: { task: TaskDetail; candidates: TaskDetail["dependencyCandidates"] }) {
+function AddDependency({ task }: { task: TaskDetail }) {
   const [, run] = useServerAction();
   const [relation, setRelation] = useState<Relation>("blocked_by");
   const [query, setQuery] = useState("");
+  const [opened, setOpened] = useState(false);
+  // The tasks to pick from load the first time the picker opens (a big read on a big project).
+  const extras = useTaskExtras(task.id, "candidates", opened);
+  const linked = new Set(task.dependencies.map((d) => d.taskId));
   const q = query.trim().toLowerCase();
-  const groups = candidates
-    .map((g) => ({ ...g, tasks: g.tasks.filter((t) => !q || t.title.toLowerCase().includes(q)).slice(0, 30) }))
+  const groups = (extras?.dependencyCandidates ?? [])
+    .map((g) => ({
+      ...g,
+      tasks: g.tasks.filter((t) => !linked.has(t.id) && (!q || t.title.toLowerCase().includes(q))).slice(0, 30),
+    }))
     .filter((g) => g.tasks.length > 0);
 
   function add(otherId: string) {
@@ -212,6 +222,9 @@ function AddDependency({ task, candidates }: { task: TaskDetail; candidates: Tas
   return (
     <Popover
       label="Add dependencies"
+      onOpenChange={(open) => {
+        if (open) setOpened(true);
+      }}
       panelClassName="w-80 p-0"
       buttonClassName="inline-flex h-7 items-center gap-1 self-start rounded-md px-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 aria-expanded:bg-zinc-100 print:hidden"
       button={
@@ -270,7 +283,11 @@ function AddDependency({ task, candidates }: { task: TaskDetail; candidates: Tas
                 </ul>
               </div>
             ))}
-            {groups.length === 0 ? (
+            {!extras ? (
+              <p role="status" className="px-2 py-2 text-xs text-zinc-500">
+                Loading tasks…
+              </p>
+            ) : groups.length === 0 ? (
               <p className="px-2 py-2 text-xs text-zinc-500">
                 {q ? `No task you can edit matches “${query.trim()}”.` : "No other tasks you can edit to link to."}
               </p>

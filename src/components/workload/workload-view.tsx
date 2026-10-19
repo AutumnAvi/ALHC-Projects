@@ -1,12 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useOptimistic, useState, useTransition, type DragEvent } from "react";
 import { Gauge, X } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Popover } from "@/components/popover";
-import { useTaskHref } from "@/components/project/shared";
 import { PeriodNav, Segmented } from "@/components/project/view-chrome";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -27,6 +25,8 @@ import {
   type WorkloadTask,
   type WorkloadZoom,
 } from "@/lib/workload";
+import { TaskLink } from "@/components/task/task-link";
+import { seedFromTitle } from "@/lib/task-seed";
 
 export type WorkloadPerson = { id: string; name: string };
 export type WorkloadScope = { projectId: string } | { portfolioId: string };
@@ -67,7 +67,6 @@ export function WorkloadView({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const taskHref = useTaskHref();
   const [navigating, startNavigation] = useTransition();
   const [, run] = useServerAction();
   const [selected, setSelected] = useState<Cell | null>(null);
@@ -337,9 +336,9 @@ export function WorkloadView({
                       dragging?.id === task.id ? "opacity-40" : ""
                     }`}
                   >
-                    <Link href={taskHref(task.id)} scroll={false} draggable={false} className="min-w-0 flex-1 truncate text-sm text-zinc-900 hover:underline">
+                    <TaskLink taskId={task.id} seed={() => seedFromTitle(task.id, task.title, { dueOn: task.dueOn, startOn: task.startOn, projectName: projectNames?.[task.projectId] ?? null })} draggable={false} className="min-w-0 flex-1 truncate text-sm text-zinc-900 hover:underline">
                       {task.title}
-                    </Link>
+                    </TaskLink>
                     {projectNames?.[task.projectId] ? (
                       <span className="chip hidden max-w-40 truncate sm:inline-flex">{projectNames[task.projectId]}</span>
                     ) : null}

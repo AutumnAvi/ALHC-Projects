@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { workloadParams, workloadPeople } from "@/components/workload/workload-params";
 import { WorkloadView } from "@/components/workload/workload-view";
 import {
@@ -64,7 +64,7 @@ export default async function PortfolioWorkloadPage({ params, searchParams }: Pa
         projectNames={Object.fromEntries(projects.map((p) => [p.id, p.name]))}
         hiddenProjects={hidden}
       />
-      {state.openTaskId ? <TaskPaneBoundary taskId={state.openTaskId} /> : null}
+      <TaskPaneSlot taskId={state.openTaskId} />
     </div>
   );
 }

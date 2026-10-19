@@ -18,6 +18,7 @@ import {
   portfolioReport,
   projectMetrics,
   reportCompletedSeries,
+  requestLabelsWith,
   searchTasks,
   type OverdueTask,
   type Profile,
@@ -98,7 +99,7 @@ async function taskKeys(supabase: Supabase, projectId: string): Promise<ProjectT
     let query = supabase
       .from("task_projects")
       .select(
-        "task_id, section_id, sort_order, task:tasks!inner(id, title, req_label, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, kind)",
+        "task_id, section_id, sort_order, task:tasks!inner(id, title, completed_at, start_on, due_on, assignee_id, home_project_id, created_at, kind)",
       )
       .eq("project_id", projectId)
       .is("deleted_at", null)
@@ -109,10 +110,14 @@ async function taskKeys(supabase: Supabase, projectId: string): Promise<ProjectT
     const { data, error } = await query;
     if (error) throw new Error(`Failed to export tasks: ${error.message}`);
     const list = data ?? [];
+    // The request number with its project's bracket setting (and only while numbering is on). The
+    // title stays bare so sorting by name matches the List.
+    const labels = await requestLabelsWith(supabase, list.map((m) => m.task.id));
     for (const m of list) {
       out.push({
         id: m.task.id,
-        title: displayTaskTitle(m.task.title, m.task.req_label),
+        title: m.task.title,
+        requestLabel: labels.get(m.task.id) ?? null,
         completedAt: m.task.completed_at,
         startOn: m.task.start_on,
         dueOn: m.task.due_on,
@@ -232,7 +237,7 @@ export async function exportList(projectId: string, viewId: string | null, draft
 
   const header = ["Task", "Section"];
   const cells: ((task: ProjectTask) => CsvCell)[] = [
-    (t) => t.title,
+    (t) => displayTaskTitle(t.title, t.requestLabel),
     (t) => (t.sectionId ? (sectionNames.get(t.sectionId) ?? "") : "No section"),
   ];
   const columnFieldIds: string[] = [];

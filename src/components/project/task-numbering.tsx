@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Hash } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useCan } from "@/components/project/project-access";
@@ -23,6 +23,16 @@ const KINDS = [
   { id: "approval", label: "Approvals" },
 ] as const;
 
+const noSubscribe = () => () => {};
+
+// Every IANA zone the browser knows, listed only after hydration (the server's list can differ).
+function useTimeZones(current: string): string[] {
+  const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
+  if (!mounted || typeof Intl.supportedValuesOf !== "function") return [current];
+  const zones = Intl.supportedValuesOf("timeZone");
+  return zones.includes(current) ? zones : [current, ...zones];
+}
+
 export function TaskNumberingForm({
   projectId,
   sequence,
@@ -39,10 +49,23 @@ export function TaskNumberingForm({
   const [pending, run] = useServerAction();
   const initial = sequence ?? emptyNumbering();
   const [draft, setDraft] = useState(initial);
+  // After a save the page refreshes with what the database stored: start from that (a refresh with
+  // the same settings, e.g. from Realtime, keeps unsaved edits).
+  const savedKey = JSON.stringify(initial);
+  const [syncedKey, setSyncedKey] = useState(savedKey);
+  if (savedKey !== syncedKey) {
+    setSyncedKey(savedKey);
+    setDraft(initial);
+  }
   const [confirmOn, setConfirmOn] = useState(false);
   const [numberExisting, setNumberExisting] = useState(true);
   const [renumberOpen, setRenumberOpen] = useState(false);
+  const [renumberStart, setRenumberStart] = useState(initial.startNumber);
   const [confirmation, setConfirmation] = useState("");
+  const timeZones = useTimeZones(draft.timeZone);
+  // A reset period or per-field counters: each counter starts at the start number, so that's the
+  // number to edit; one counter for the project: the next number.
+  const separateCounters = draft.resetPeriod !== "never" || Boolean(draft.counterFieldId);
   const formatError = templateProblem(draft.template, draft.resetPeriod);
   const previews = previewRequestLabels(draft.template, {
     wrapBrackets: draft.wrapBrackets,
@@ -52,11 +75,25 @@ export function TaskNumberingForm({
   const singleSelects = fields.filter((f) => f.fieldType === "single_select" && !f.boundToSections);
 
   function save(mode: "save" | "number_missing" | "renumber", next = draft) {
+    // Only a number someone changed is sent (resending it on every save moved where new counters and
+    // Renumber all start).
+    const counters = next.resetPeriod !== "never" || Boolean(next.counterFieldId);
+    const startNumber =
+      mode === "renumber"
+        ? renumberStart
+        : counters
+          ? next.startNumber !== initial.startNumber
+            ? next.startNumber
+            : null
+          : next.nextNumber !== initial.nextNumber
+            ? next.nextNumber
+            : null;
     run(() =>
       saveTaskNumbering(
         projectId,
         {
           ...next,
+          startNumber,
           confirmation: mode === "renumber" ? confirmation : undefined,
         },
         mode,
@@ -158,24 +195,44 @@ export function TaskNumberingForm({
             ))}
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="req-next" className="text-xs font-medium text-zinc-600">
-                Next number
-              </label>
-              <input
-                id="req-next"
-                type="number"
-                min={1}
-                value={draft.nextNumber}
-                disabled={!canEdit}
-                onChange={(e) => setDraft({ ...draft, nextNumber: Number(e.currentTarget.value) || 1 })}
-                className="field mt-1"
-              />
-              <p className="mt-1 text-xs text-zinc-500">
-                {draft.lastNumber > 0 ? `Last issued: ${draft.lastNumber}. ` : ""}
-                Numbers only move forward, unless you renumber every task.
-              </p>
-            </div>
+            {separateCounters ? (
+              <div>
+                <label htmlFor="req-start" className="text-xs font-medium text-zinc-600">
+                  Each counter starts at
+                </label>
+                <input
+                  id="req-start"
+                  type="number"
+                  min={1}
+                  value={draft.startNumber}
+                  disabled={!canEdit}
+                  onChange={(e) => setDraft({ ...draft, startNumber: Math.max(1, Number(e.currentTarget.value) || 1) })}
+                  className="field mt-1"
+                />
+                <p className="mt-1 text-xs text-zinc-500">
+                  {draft.resetPeriod !== "never" ? "Each new year or month" : "Each field value"} starts counting here.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label htmlFor="req-next" className="text-xs font-medium text-zinc-600">
+                  Next number
+                </label>
+                <input
+                  id="req-next"
+                  type="number"
+                  min={1}
+                  value={draft.nextNumber}
+                  disabled={!canEdit}
+                  onChange={(e) => setDraft({ ...draft, nextNumber: Math.max(1, Number(e.currentTarget.value) || 1) })}
+                  className="field mt-1"
+                />
+                <p className="mt-1 text-xs text-zinc-500">
+                  {draft.lastNumber > 0 ? `Last issued: ${draft.lastNumber}. ` : ""}
+                  Numbers only move forward, unless you renumber every task.
+                </p>
+              </div>
+            )}
             <div>
               <label htmlFor="req-code" className="text-xs font-medium text-zinc-600">
                 Project short code
@@ -294,6 +351,25 @@ export function TaskNumberingForm({
             </select>
             <p className="mt-1 text-xs text-zinc-500">Each option of one single-select field gets its own counter.</p>
           </div>
+          <div className="max-w-xs">
+            <label htmlFor="req-zone" className="text-xs font-medium text-zinc-600">
+              Time zone
+            </label>
+            <select
+              id="req-zone"
+              value={draft.timeZone}
+              disabled={!canEdit}
+              onChange={(e) => setDraft({ ...draft, timeZone: e.currentTarget.value })}
+              className="field mt-1"
+            >
+              {timeZones.map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone.replaceAll("_", " ")}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-zinc-500">The day a task is created in, for {"{yyyy}"} {"{yy}"} {"{mm}"} and resets.</p>
+          </div>
           <label className="flex items-center gap-2 text-sm text-zinc-800">
             <input
               type="checkbox"
@@ -359,7 +435,16 @@ export function TaskNumberingForm({
               Save numbering
             </button>
             {canRenumber ? (
-              <button type="button" disabled={pending} onClick={() => setRenumberOpen(true)} className="btn-secondary">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  setRenumberStart(initial.startNumber);
+                  setConfirmation("");
+                  setRenumberOpen(true);
+                }}
+                className="btn-secondary"
+              >
                 Renumber all
               </button>
             ) : null}
@@ -403,9 +488,19 @@ export function TaskNumberingForm({
       {renumberOpen ? (
         <Dialog title="Renumber every task?" onClose={() => setRenumberOpen(false)}>
           <p className="text-sm text-zinc-600">
-            This gives every task in this project a new number, in the order they were created, starting at the next
-            number above. It cannot be undone.
+            This gives every task in this project a new number, in the order they were created. It cannot be undone.
           </p>
+          <label htmlFor="req-renumber-start" className="mt-3 block text-xs font-medium text-zinc-600">
+            Start at
+          </label>
+          <input
+            id="req-renumber-start"
+            type="number"
+            min={1}
+            value={renumberStart}
+            onChange={(e) => setRenumberStart(Math.max(1, Number(e.currentTarget.value) || 1))}
+            className="field mt-1 max-w-32"
+          />
           <label htmlFor="req-confirm" className="mt-3 block text-xs font-medium text-zinc-600">
             Type RENUMBER to confirm
           </label>

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { displayTaskTitle, previewRequestLabels, renderRequestTemplate, templateProblem } from "@/lib/request-numbers";
+import {
+  displayTaskTitle,
+  formatRequestLabel,
+  previewRequestLabels,
+  renderRequestTemplate,
+  requestLabelFrom,
+  templateProblem,
+} from "@/lib/request-numbers";
 
 describe("task numbering labels", () => {
   it("renders the default template and brackets", () => {
@@ -20,9 +27,32 @@ describe("task numbering labels", () => {
   });
 
   it("shows the label in front of the name and does not double a baked prefix", () => {
-    assert.equal(displayTaskTitle("business cards", "Req #484"), "[Req #484] business cards");
-    assert.equal(displayTaskTitle("[Req #484] business cards", "Req #484"), "[Req #484] business cards");
-    assert.equal(displayTaskTitle("[Req #484] business cards", "Req #484", { show: false }), "business cards");
+    const wrapped = { text: "Req #484", wrap: true };
+    assert.equal(displayTaskTitle("business cards", wrapped), "[Req #484] business cards");
+    assert.equal(displayTaskTitle("[Req #484] business cards", wrapped), "[Req #484] business cards");
+    assert.equal(displayTaskTitle("[Req #484] business cards", wrapped, { show: false }), "business cards");
+  });
+
+  it("follows the project's bracket setting (Oct 19: unchecking it had no effect)", () => {
+    const bare = { text: "Task #3", wrap: false };
+    assert.equal(formatRequestLabel(bare), "Task #3");
+    assert.equal(formatRequestLabel({ text: "Task #3", wrap: true }), "[Task #3]");
+    assert.equal(displayTaskTitle("Logo refresh", bare), "Task #3 Logo refresh");
+    // A title that still has the label baked in, either way, is never prefixed twice.
+    assert.equal(displayTaskTitle("[Task #3] Logo refresh", bare), "Task #3 Logo refresh");
+    assert.equal(displayTaskTitle("Task #3 Logo refresh", bare), "Task #3 Logo refresh");
+    assert.equal(displayTaskTitle("Task #3 Logo refresh", { text: "Task #3", wrap: true }), "[Task #3] Logo refresh");
+    assert.equal(displayTaskTitle("Task #3 Logo refresh", bare, { show: false }), "Logo refresh");
+    assert.equal(displayTaskTitle("Logo refresh", null), "Logo refresh");
+    assert.deepEqual(previewRequestLabels("Req #{n}", { wrapBrackets: false }), ["Req #484", "Req #484.1", "Req #485"]);
+  });
+
+  it("reads task_request_labels() entries", () => {
+    assert.deepEqual(requestLabelFrom({ label: "Task #3", wrap: false }), { text: "Task #3", wrap: false });
+    assert.deepEqual(requestLabelFrom({ label: "Task #3", wrap: true }), { text: "Task #3", wrap: true });
+    assert.deepEqual(requestLabelFrom({ label: "Task #3" }), { text: "Task #3", wrap: true });
+    assert.equal(requestLabelFrom({ label: "" }), null);
+    assert.equal(requestLabelFrom(null), null);
   });
 
   it("requires a date token when the counter resets", () => {

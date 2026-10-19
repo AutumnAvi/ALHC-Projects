@@ -1,20 +1,24 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, type DragEvent } from "react";
 import { Inbox } from "lucide-react";
 import { CALENDAR_DRAG_TYPE, CalendarGrid, type CalendarDrag, type CalendarItem } from "@/components/calendar/calendar-grid";
 import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { useCan } from "@/components/project/project-access";
+import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useDependencyShift } from "@/components/task/dependency-shift";
+import { TaskLink } from "@/components/task/task-link";
 import { calendarVisibleDays, type CalendarMode } from "@/lib/date-input";
 import { addDays, useToday } from "@/lib/dates";
-import type { Profile, ProjectTask } from "@/lib/data";
+import type { Profile, ProjectTask, Section } from "@/lib/data";
+import type { FieldDef } from "@/lib/fields";
+import type { Tag } from "@/lib/tags";
+import type { TaskSeed } from "@/lib/task-seed";
 import { displayTaskTitle } from "@/lib/request-numbers";
 import { isIsoDate } from "@/lib/views";
-import { useTaskHref } from "./shared";
 import { Assignee } from "./task-meta";
+import { useProjectTaskSeeds } from "./task-seeds";
 import { useProjectTasks } from "./use-project-tasks";
 import { PeriodNav, Segmented, TRAY_EMPTY, TRAY_HEADING, VIEW_BODY, VIEW_HINT, ViewLoading, trayClass } from "./view-chrome";
 
@@ -49,7 +53,10 @@ export function CalendarView({
   projectId,
   tasks,
   profiles,
-  openTaskId,
+  projectName = null,
+  sections = [],
+  tags = [],
+  fields = [],
   windowed = false,
   today: todayFromServer = null,
   anchor: anchorFromServer = null,
@@ -59,7 +66,11 @@ export function CalendarView({
   projectId: string;
   tasks: ProjectTask[];
   profiles: Profile[];
-  openTaskId: string | null;
+  // What the task pane's preview shows for a clicked bar.
+  projectName?: string | null;
+  sections?: Section[];
+  tags?: Tag[];
+  fields?: FieldDef[];
   // The server already loaded this window. Changing month or week asks it for the next one.
   // Without the schedule function, the full list is here and the window stays in the browser.
   windowed?: boolean;
@@ -73,7 +84,9 @@ export function CalendarView({
   const searchParams = useSearchParams();
   const [navigating, startTransition] = useTransition();
   const clientToday = useToday();
-  const taskHref = useTaskHref();
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
+  const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const shift = useDependencyShift();
   const canEdit = useCan("editor");
@@ -134,7 +147,7 @@ export function CalendarView({
         overdue,
         canEdit,
         open: openTaskId === task.id,
-        href: taskHref(task.id),
+        seed: () => seeds.task(task),
         dotClass: completed ? "bg-green-500" : overdue ? "bg-red-500" : milestone ? "bg-accent-600" : "bg-zinc-300",
         tooltip: displayTaskTitle(task.title, task.requestLabel),
       },
@@ -229,6 +242,7 @@ export function CalendarView({
               task={task}
               assignee={task.assigneeId ? profilesById.get(task.assigneeId) : undefined}
               open={openTaskId === task.id}
+              seed={() => seeds.task(task)}
               dragging={drag?.id === task.id}
               draggable={canEdit}
               onDragStart={(e: DragEvent) => {
@@ -252,6 +266,7 @@ function CalendarChip({
   task,
   assignee,
   open,
+  seed,
   dragging,
   draggable,
   onDragStart,
@@ -260,16 +275,16 @@ function CalendarChip({
   task: ProjectTask;
   assignee: Profile | undefined;
   open: boolean;
+  seed: () => TaskSeed;
   dragging: boolean;
   draggable: boolean;
   onDragStart: (e: DragEvent) => void;
   onDragEnd: () => void;
 }) {
-  const taskHref = useTaskHref();
   return (
-    <Link
-      href={taskHref(task.id)}
-      scroll={false}
+    <TaskLink
+      taskId={task.id}
+      seed={seed}
       draggable={draggable}
       onDragStart={draggable ? onDragStart : undefined}
       onDragEnd={draggable ? onDragEnd : undefined}
@@ -288,6 +303,6 @@ function CalendarChip({
         {task.kind === "milestone" ? <span className="sr-only"> (milestone)</span> : null}
       </span>
       <Assignee profile={assignee} />
-    </Link>
+    </TaskLink>
   );
 }

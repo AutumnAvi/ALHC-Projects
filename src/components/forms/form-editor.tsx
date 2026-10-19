@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import {
   AlignLeft,
   ArrowDown,
@@ -15,6 +15,7 @@ import {
   FileInput,
   GitBranch,
   Globe,
+  GripVertical,
   Hash,
   Heading,
   Link2,
@@ -41,11 +42,15 @@ import {
   QUESTION_TYPES,
   REAL1_QUESTION_TYPES,
   branchOptions,
+  brokenBranches,
+  clearedBranchesMessage,
   fieldAccepts,
   isAnswerable,
   isBranchSource,
   isChoice,
   mapTargetLabel,
+  moveQuestionBefore,
+  moveQuestionBy,
   normalizeQuestions,
   questionForField,
   visibleQuestionIds,
@@ -80,6 +85,8 @@ function typeAvailable(type: QuestionType, batch4: boolean, real1: boolean) {
 
 const LABEL = "block text-xs font-medium text-zinc-600";
 const INPUT = "field h-8 w-full";
+// The drag data type of a question card's handle (native drag and drop, like the pane's subtasks).
+const QUESTION_DRAG = "application/x-alhc-form-question";
 
 function newId() {
   return crypto.randomUUID();
@@ -128,7 +135,20 @@ export function FormEditor({
   const [tab, setTab] = useState<"questions" | "settings">("questions");
   const [selectedId, setSelectedId] = useState<string | null>(form.questions[0]?.id ?? null);
   const [answers, setAnswers] = useState<FormAnswers>({});
+  // Dragging a question card by its handle: the card being dragged, and where it would land (the
+  // question it would sit before; null = the end; undefined = nowhere yet).
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropBefore, setDropBefore] = useState<string | null | undefined>(undefined);
+  // Read by the Escape handler: set as soon as a drag starts (the faded card waits a frame).
+  const dragRef = useRef<string | null>(null);
+  // Screen readers hear where a moved question went.
+  const [announcement, setAnnouncement] = useState("");
   const dirtyRef = useRef(dirty);
+  // The latest questions, for the branch Undo toast (it runs after later renders).
+  const questionsRef = useRef(questions);
+  useEffect(() => {
+    questionsRef.current = questions;
+  }, [questions]);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const publicUrl = `${origin}/forms/${form.id}`;
@@ -151,7 +171,8 @@ export function FormEditor({
   useEffect(() => {
     panelRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // Escape during a drag only cancels the drag.
+      if (e.key !== "Escape" || e.defaultPrevented || dragRef.current) return;
       e.preventDefault();
       closeRef.current();
     };
@@ -192,15 +213,75 @@ export function FormEditor({
     setTab("questions");
   }
 
-  function moveQuestion(id: string, delta: number) {
-    changeQuestions((current) => {
-      const index = current.findIndex((q) => q.id === id);
-      const target = index + delta;
-      if (index < 0 || target < 0 || target >= current.length) return current;
-      const copy = [...current];
-      [copy[index], copy[target]] = [copy[target], copy[index]];
-      return copy;
+  // The one reorder path (buttons, Alt+↑ / Alt+↓, and drops). Worked out from this render's questions in
+  // the event handler, not in a state updater (StrictMode runs updaters twice, which would toast twice).
+  // A move that puts a branch question below the questions it shows clears those branches (the database
+  // only accepts a branch on an earlier question), with Undo. The order saves with the form.
+  function applyOrder(movedId: string, moved: FormQuestion[]) {
+    if (moved === questions) return;
+    const broken = brokenBranches(moved);
+    const previous = questions;
+    const next = normalizeQuestions(moved, fields);
+    setQuestions(next);
+    setDirty(true);
+    const position = next.findIndex((q) => q.id === movedId);
+    const label = next[position]?.label.trim() || "Untitled question";
+    const message = `Moved “${label}” to position ${position + 1} of ${next.length}`;
+    // The same words twice in a row still get read out (a live region ignores an unchanged text).
+    setAnnouncement((prev) => (prev === message ? `${message}\u200b` : message));
+    if (broken.length) {
+      notify(clearedBranchesMessage(broken), {
+        label: "Undo",
+        // Only while nothing else changed since (an Undo never throws away later edits), and the form
+        // is unsaved again afterwards, so the restored branch gets saved too.
+        onClick: () => {
+          if (questionsRef.current !== next) return;
+          setQuestions(previous);
+          setDirty(true);
+        },
+      });
+    }
+  }
+
+  function reorder(id: string, beforeId: string | null) {
+    applyOrder(id, moveQuestionBefore(questions, id, beforeId));
+  }
+
+  function moveQuestion(id: string, delta: -1 | 1) {
+    applyOrder(id, moveQuestionBy(questions, id, delta));
+  }
+
+  function startDrag(id: string) {
+    dragRef.current = id;
+    // Fade the card a frame later: the browser takes its drag image from the card as the drag starts.
+    requestAnimationFrame(() => {
+      if (dragRef.current === id) setDragging(id);
     });
+  }
+
+  function endDrag() {
+    dragRef.current = null;
+    setDragging(null);
+    setDropBefore(undefined);
+  }
+
+  // Drops on a card bubble here; the card already set where it lands.
+  function dropQuestion(e: DragEvent<HTMLElement>) {
+    e.preventDefault();
+    const id = e.dataTransfer.getData(QUESTION_DRAG);
+    const beforeId = dropBefore ?? null;
+    endDrag();
+    if (id) reorder(id, beforeId);
+  }
+
+  // The drop line: before the card a drop would land in front of, or after the last card for the end.
+  // Targets that wouldn't move anything (right before the dragged card or the card after it) get none.
+  function dropLineFor(index: number): "before" | "after" | null {
+    if (!dragging || dropBefore === undefined) return null;
+    const from = questions.findIndex((q) => q.id === dragging);
+    if (from < 0 || dropBefore === dragging || dropBefore === (questions[from + 1]?.id ?? null)) return null;
+    if (dropBefore === questions[index].id) return "before";
+    return dropBefore === null && index === questions.length - 1 ? "after" : null;
   }
 
   function removeQuestion(id: string) {
@@ -336,6 +417,9 @@ export function FormEditor({
           </button>
         </header>
 
+        <p aria-live="polite" className="sr-only">
+          {announcement}
+        </p>
         <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_28rem]">
           <section aria-label="Preview" className="hidden min-h-0 overflow-y-auto bg-zinc-100 px-6 py-8 lg:block">
             <Preview
@@ -382,7 +466,22 @@ export function FormEditor({
                 </p>
               ) : null}
               {tab === "questions" ? (
-                <div className="flex flex-col gap-2">
+                // The whole Questions tab takes drops (a release below the last card, or on a drop line
+                // drawn just outside the list, lands at the end), and the line goes away when a drag
+                // leaves it.
+                <div
+                  className="flex flex-col gap-2"
+                  onDragOver={(e) => {
+                    if (!dragging) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dropBefore === undefined) setDropBefore(null);
+                  }}
+                  onDragLeave={(e) => {
+                    if (dragging && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDropBefore(undefined);
+                  }}
+                  onDrop={dragging ? dropQuestion : undefined}
+                >
                   <p className="text-xs text-zinc-500">
                     Every submission also asks for the submitter’s email. Answers that don’t fill in a task detail are
                     listed in the task description.
@@ -413,6 +512,16 @@ export function FormEditor({
                           batch4={batch4}
                           real1={real1}
                           open={selectedId === question.id}
+                          draggable={canEdit && questions.length > 1}
+                          dragging={dragging === question.id}
+                          dropLine={dropLineFor(index)}
+                          onDragStart={() => startDrag(question.id)}
+                          onDragEnd={endDrag}
+                          onDragOverCard={
+                            dragging
+                              ? (after) => setDropBefore(after ? (questions[index + 1]?.id ?? null) : question.id)
+                              : undefined
+                          }
                           onToggle={() => setSelectedId(selectedId === question.id ? null : question.id)}
                           onChange={(next) => updateQuestion(question.id, next)}
                           onChangeAll={changeQuestions}
@@ -677,6 +786,12 @@ function QuestionCard({
   batch4,
   real1,
   open,
+  draggable,
+  dragging,
+  dropLine,
+  onDragStart,
+  onDragEnd,
+  onDragOverCard,
   onToggle,
   onChange,
   onChangeAll,
@@ -693,10 +808,21 @@ function QuestionCard({
   batch4: boolean;
   real1: boolean;
   open: boolean;
+  // Editors with two or more questions get the drag handle and Alt+↑ / Alt+↓ (the disabled fieldset
+  // doesn't stop a draggable element, so the handle is only drawn when allowed).
+  draggable: boolean;
+  // This card is the one being dragged.
+  dragging: boolean;
+  // Where the drop line shows on this card, if anywhere.
+  dropLine: "before" | "after" | null;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  // Set while a drag is on: the pointer is over this card's upper (false) or lower (true) half.
+  onDragOverCard?: (after: boolean) => void;
   onToggle: () => void;
   onChange: (next: FormQuestion) => void;
   onChangeAll: (next: (current: FormQuestion[]) => FormQuestion[]) => void;
-  onMove: (delta: number) => void;
+  onMove: (delta: -1 | 1) => void;
   onDuplicate: () => void;
   onRemove: () => void;
 }) {
@@ -709,28 +835,94 @@ function QuestionCard({
     if (open) cardRef.current?.scrollIntoView({ block: "nearest" });
   }, [open]);
 
+  // Reordering moves the card in the page, which can drop the focus: put it back on the control that
+  // moved it (or the nearest one still enabled, e.g. Move down once the card is first).
+  function move(delta: -1 | 1, focusIds: string[]) {
+    onMove(delta);
+    requestAnimationFrame(() => {
+      for (const id of focusIds) {
+        const target = document.getElementById(id);
+        if (target instanceof HTMLButtonElement && !target.disabled) {
+          target.focus();
+          return;
+        }
+      }
+    });
+  }
+
   return (
-    <li ref={cardRef} className={`rounded-lg border bg-white ${open ? "border-accent-300 shadow-sm" : "border-zinc-200"}`}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-controls={`${prefix}-body`}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-      >
-        <span className="w-4 shrink-0 text-right text-2xs tabular-nums text-zinc-400">{index + 1}</span>
-        <Icon className="size-4 shrink-0 text-zinc-500" aria-hidden />
-        <span className={`min-w-0 flex-1 truncate ${question.label.trim() ? "text-zinc-900" : "text-zinc-400"}`}>
-          {question.label.trim() || "Untitled question"}
-          {question.required ? <span className="text-red-600"> *</span> : null}
-        </span>
-        {question.show_if ? <GitBranch className="size-3.5 shrink-0 text-zinc-400" aria-label="Shown by a branch" /> : null}
-        {question.maps_to ? (
-          <span className="max-w-28 shrink-0 truncate rounded bg-zinc-100 px-1.5 py-px text-2xs text-zinc-600">
-            {mapTargetLabel(question.maps_to.target, mappedField?.name)}
+    <li
+      ref={cardRef}
+      onDragOver={
+        onDragOverCard
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "move";
+              // Over the dragged card itself a drop changes nothing (it lands right before itself).
+              const rect = e.currentTarget.getBoundingClientRect();
+              onDragOverCard(!dragging && e.clientY > rect.top + rect.height / 2);
+            }
+          : undefined
+      }
+      className={`group relative rounded-lg border bg-white ${open ? "border-accent-300 shadow-sm" : "border-zinc-200"} ${
+        dragging ? "opacity-40" : ""
+      }`}
+    >
+      {dropLine ? (
+        <span
+          aria-hidden
+          className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent-500 ${
+            dropLine === "before" ? "-top-[5px]" : "-bottom-[5px]"
+          }`}
+        />
+      ) : null}
+      <div className="flex items-center">
+        {draggable ? (
+          <span
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(QUESTION_DRAG, question.id);
+              e.dataTransfer.effectAllowed = "move";
+              if (cardRef.current) e.dataTransfer.setDragImage(cardRef.current, 12, 12);
+              onDragStart();
+            }}
+            onDragEnd={onDragEnd}
+            aria-hidden
+            data-tooltip="Drag to reorder (or Alt+↑ / Alt+↓)"
+            className="flex w-6 shrink-0 cursor-grab items-center justify-center self-stretch pl-1 text-zinc-300 opacity-0 hover:text-zinc-500 active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+          >
+            <GripVertical className="size-4" />
           </span>
         ) : null}
-      </button>
+        <button
+          id={`${prefix}-toggle`}
+          type="button"
+          onClick={onToggle}
+          onKeyDown={(e) => {
+            if (!draggable || !e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+            e.preventDefault();
+            move(e.key === "ArrowUp" ? -1 : 1, [`${prefix}-toggle`]);
+          }}
+          aria-expanded={open}
+          aria-controls={`${prefix}-body`}
+          aria-keyshortcuts={draggable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
+          className={`flex min-w-0 flex-1 items-center gap-2 py-2 pr-3 text-left ${draggable ? "pl-1" : "pl-3"}`}
+        >
+          <span className="w-4 shrink-0 text-right text-2xs tabular-nums text-zinc-400">{index + 1}</span>
+          <Icon className="size-4 shrink-0 text-zinc-500" aria-hidden />
+          <span className={`min-w-0 flex-1 truncate ${question.label.trim() ? "text-zinc-900" : "text-zinc-400"}`}>
+            {question.label.trim() || "Untitled question"}
+            {question.required ? <span className="text-red-600"> *</span> : null}
+          </span>
+          {question.show_if ? <GitBranch className="size-3.5 shrink-0 text-zinc-400" aria-label="Shown by a branch" /> : null}
+          {question.maps_to ? (
+            <span className="max-w-28 shrink-0 truncate rounded bg-zinc-100 px-1.5 py-px text-2xs text-zinc-600">
+              {mapTargetLabel(question.maps_to.target, mappedField?.name)}
+            </span>
+          ) : null}
+        </button>
+      </div>
       {open ? (
         <div id={`${prefix}-body`} className="flex flex-col gap-3 border-t border-zinc-100 px-3 pb-3 pt-3">
           <div>
@@ -820,15 +1012,24 @@ function QuestionCard({
           ) : null}
 
           <div className="flex items-center gap-1 border-t border-zinc-100 pt-2">
-            <button type="button" aria-label="Move question up" data-tooltip="Move up" disabled={index === 0} onClick={() => onMove(-1)} className="btn-icon">
+            <button
+              id={`${prefix}-move-up`}
+              type="button"
+              aria-label="Move question up"
+              data-tooltip="Move up"
+              disabled={index === 0}
+              onClick={() => move(-1, [`${prefix}-move-up`, `${prefix}-move-down`])}
+              className="btn-icon"
+            >
               <ArrowUp className="size-4" />
             </button>
             <button
+              id={`${prefix}-move-down`}
               type="button"
               aria-label="Move question down"
               data-tooltip="Move down"
               disabled={index === count - 1}
-              onClick={() => onMove(1)}
+              onClick={() => move(1, [`${prefix}-move-down`, `${prefix}-move-up`])}
               className="btn-icon"
             >
               <ArrowDown className="size-4" />

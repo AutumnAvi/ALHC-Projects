@@ -3422,7 +3422,10 @@ export async function saveTaskNumbering(
     projectCode: string;
     renumberOnMove: boolean;
     timeZone: string;
-    nextNumber: number;
+    // Sent only when someone changed it: the next number (one counter), where each reset period /
+    // field counter starts, or where Renumber all starts. Every save used to resend it, which moved
+    // the start of new counters and of Renumber all to "last issued + 1".
+    startNumber?: number | null;
     confirmation?: string;
   },
   mode: "save" | "number_missing" | "renumber",
@@ -3434,8 +3437,9 @@ export async function saveTaskNumbering(
     const template = input.template.trim();
     const problem = templateProblem(template, input.resetPeriod);
     if (problem) throw new InputError(problem);
-    if (!Number.isInteger(input.nextNumber) || input.nextNumber < 1) {
-      throw new InputError("The next number must be a positive whole number");
+    const startNumber = input.startNumber ?? null;
+    if (startNumber !== null && (!Number.isInteger(startNumber) || startNumber < 1)) {
+      throw new InputError("The number must be a positive whole number");
     }
     if (input.numberScope === "sections" && input.sectionIds.length === 0) {
       throw new InputError("Choose at least one section to number");
@@ -3466,7 +3470,7 @@ export async function saveTaskNumbering(
         project_code: input.projectCode.trim(),
         renumber_on_move: Boolean(input.renumberOnMove),
         time_zone: input.timeZone || "UTC",
-        start_number: input.nextNumber,
+        ...(startNumber !== null ? { start_number: startNumber } : {}),
         ...(mode === "renumber" ? { confirmation: "RENUMBER" } : {}),
       },
       mode,

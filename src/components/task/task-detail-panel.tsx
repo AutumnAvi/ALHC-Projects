@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useOptimistic, useState } from "react";
 import { Check, ChevronRight, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, UserRound, X } from "lucide-react";
 import { TaskLike } from "./task-like";
@@ -14,7 +13,6 @@ import { approvalOpen, approvalTaskRequest, parseApprovalTaskStatus } from "@/li
 import type { Profile, TaskDetail } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 import type { Tag } from "@/lib/tags";
-import { useTaskHref } from "@/components/project/shared";
 import { ApprovalTaskBanner } from "./task-approval-banner";
 import { TaskActivity, TaskPaneFooter } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
@@ -28,6 +26,9 @@ import { TaskProjects, type ProjectOption } from "./task-projects";
 import { TaskSubtasks, canAddSubtask } from "./task-subtasks";
 import { TaskTags } from "./task-tags";
 import { PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
+import { formatRequestLabel } from "@/lib/request-numbers";
+import { TaskLink } from "@/components/task/task-link";
+import { seedFromTitle } from "@/lib/task-seed";
 
 export function TaskDetailPanel({
   task,
@@ -42,7 +43,7 @@ export function TaskDetailPanel({
   memberId: string;
   tags: Tag[];
 }) {
-  const { href, close } = useClosePane();
+  const { close } = useClosePane();
   const expanded = usePaneExpanded();
   const wide = usePaneWide();
   const [, run] = useServerAction();
@@ -112,7 +113,7 @@ export function TaskDetailPanel({
   );
 
   return (
-    <PaneShell label={`Task: ${task.title}`}>
+    <PaneShell label={`Task: ${task.title}`} taskId={task.id}>
       <RecordRecent kind="task" id={task.id} />
       {upload.input}
       <div className={PANE_HEADER}>
@@ -217,7 +218,7 @@ export function TaskDetailPanel({
             onCopyLink={copyLink}
             onDeleted={close}
           />
-          <CloseButton href={href} />
+          <CloseButton />
         </div>
       </div>
 
@@ -230,7 +231,7 @@ export function TaskDetailPanel({
           </label>
           {task.requestLabel ? (
             <p className="mb-1 text-sm font-medium text-zinc-500">
-              {task.requestWrap === false ? task.requestLabel : `[${task.requestLabel}]`}
+              {formatRequestLabel(task.requestLabel)}
             </p>
           ) : null}
           <textarea
@@ -407,22 +408,21 @@ function RequestBadges({ task }: { task: TaskDetail }) {
 
 // “Root › Parent” above a subtask's title; each link opens that task in the pane.
 function ParentBreadcrumb({ task }: { task: TaskDetail }) {
-  const taskHref = useTaskHref();
   return (
     <nav aria-label="Parent tasks" className="mb-1 flex min-w-0 flex-wrap items-center gap-1 text-xs text-zinc-500">
       <span className="sr-only">Subtask of</span>
       {task.ancestors.map((a, i) => (
         <span key={a.id} className="inline-flex min-w-0 items-center gap-1">
           {i > 0 ? <ChevronRight className="size-3 shrink-0 text-zinc-300" aria-hidden /> : null}
-          <Link
-            href={taskHref(a.id)}
-            scroll={false}
+          <TaskLink
+            taskId={a.id}
+            seed={() => seedFromTitle(a.id, a.title, { completed: Boolean(a.completedAt) })}
             className={`max-w-56 truncate rounded px-1 py-0.5 hover:bg-zinc-100 hover:text-zinc-900 ${
               a.completedAt ? "line-through" : ""
             }`}
           >
             {a.title}
-          </Link>
+          </TaskLink>
         </span>
       ))}
     </nav>

@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Mail, Paperclip, UsersRound } from "lucide-react";
+import { FileText, Mail, Paperclip, UsersRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { Timestamp } from "@/components/timestamp";
+import { ImageLightbox, Thumbnail } from "./task-attachments";
+import { previewKind } from "@/lib/attachment-preview";
 import { COMMENT_EMAIL_STATUS_LABELS, type CommentEmail } from "@/lib/comment-email";
 import { mentionSegments, type MentionPerson, type MentionTeam } from "@/lib/mentions";
 
@@ -308,37 +310,83 @@ function fileSize(bytes: number) {
 }
 
 // The files that came with a submitter's emailed reply (saved to the task) and the ones that weren't,
-// with why. Shown inside the reply's email card.
+// with why. Shown inside the reply's email card: images as thumbnails that open in the lightbox, PDFs
+// in the browser's viewer, the rest as downloads (the same rule as the pane's Attachments, previewKind).
 export function EmailFiles({
   files,
   skipped,
 }: {
-  files: { id: string; name: string; sizeBytes: number }[];
+  files: { id: string; name: string; sizeBytes: number; contentType?: string | null }[];
   skipped: { name: string; reason: keyof typeof SKIP_REASONS }[];
 }) {
+  const [open, setOpen] = useState<number | null>(null);
+  const [broken, setBroken] = useState<Set<string>>(() => new Set());
   if (!files.length && !skipped.length) return null;
+  const kinds = files.map((file) => previewKind(file.name, file.contentType ?? null));
+  const images = files.filter((file, i) => kinds[i] === "image" && !broken.has(file.id));
+  const others = files.filter((file, i) => kinds[i] !== "image" || broken.has(file.id));
+  const openImage = open === null ? null : (images[open] ?? null);
   return (
     <div className="border-t border-zinc-100 px-3.5 py-2" data-email-files>
-      {files.length ? (
-        <ul className="flex flex-wrap gap-1.5" aria-label="Attachments">
-          {files.map((file) => (
+      {images.length ? (
+        <ul className="mb-1.5 flex flex-wrap gap-1.5" aria-label="Images">
+          {images.map((file, i) => (
             <li key={file.id}>
-              <a
-                href={`/attachments/${file.id}`}
-                className="inline-flex max-w-64 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
+              <button
+                type="button"
+                onClick={() => setOpen(i)}
+                aria-label={`View ${file.name}`}
+                data-tooltip={file.name}
+                className="block size-24 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 hover:border-zinc-300 focus-visible:outline-2 focus-visible:outline-accent-500"
               >
-                <Paperclip className="size-3.5 shrink-0 text-zinc-500" aria-hidden />
-                <span className="truncate">{file.name}</span>
-                <span className="shrink-0 text-zinc-400">{fileSize(file.sizeBytes)}</span>
-              </a>
+                <Thumbnail
+                  src={`/attachments/${file.id}?preview=1`}
+                  onBroken={() => setBroken((current) => new Set(current).add(file.id))}
+                />
+              </button>
             </li>
           ))}
+        </ul>
+      ) : null}
+      {others.length ? (
+        <ul className="flex flex-wrap gap-1.5" aria-label="Attachments">
+          {others.map((file) => {
+            const pdf = previewKind(file.name, file.contentType ?? null) === "pdf";
+            return (
+              <li key={file.id}>
+                <a
+                  href={pdf ? `/attachments/${file.id}?preview=1` : `/attachments/${file.id}`}
+                  target={pdf ? "_blank" : undefined}
+                  rel={pdf ? "noopener" : undefined}
+                  className="inline-flex max-w-64 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
+                >
+                  {pdf ? (
+                    <FileText className="size-3.5 shrink-0 text-zinc-500" aria-hidden />
+                  ) : (
+                    <Paperclip className="size-3.5 shrink-0 text-zinc-500" aria-hidden />
+                  )}
+                  <span className="truncate">{file.name}</span>
+                  <span className="shrink-0 text-zinc-400">{fileSize(file.sizeBytes)}</span>
+                </a>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       {skipped.length ? (
         <p className={`text-xs text-amber-800 ${files.length ? "mt-1.5" : ""}`}>
           Not saved: {skipped.map((f) => `${f.name} (${SKIP_REASONS[f.reason]})`).join(", ")}
         </p>
+      ) : null}
+      {openImage && open !== null ? (
+        <ImageLightbox
+          image={{ id: openImage.id, fileName: openImage.name }}
+          position={open + 1}
+          total={images.length}
+          onPrevious={() => setOpen((i) => (i === null ? i : (i - 1 + images.length) % images.length))}
+          onNext={() => setOpen((i) => (i === null ? i : (i + 1) % images.length))}
+          onClose={() => setOpen(null)}
+        />
       ) : null}
     </div>
   );

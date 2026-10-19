@@ -158,18 +158,16 @@ export function renderDigestEmail(row: OutboxRow, items: DigestItem[], design?: 
 
   const links = unsubscribeLinks(row, "digest");
   const heading = `${total} unread ${noun} in your Inbox`;
-  return {
+  return layout(heading, [`Here’s what’s waiting for you${frequency === "weekly" ? " this week" : " since your last digest"}.`], [], {
     subject: `Your ${frequency} Inbox digest: ${total} unread ${noun}`,
-    ...layout(heading, [`Here’s what’s waiting for you${frequency === "weekly" ? " this week" : " since your last digest"}.`], [], {
-      blocks,
-      action: origin ? { label: "Open Inbox", href: `${origin}/inbox` } : null,
-      footer: [
-        `You get this ${frequency} digest because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Things you’ve read or archived aren’t included.`,
-      ],
-      footerLink: links ? { label: "Turn off digest", href: links.page } : null,
-      design,
-    }),
-  };
+    blocks,
+    action: origin ? { label: "Open Inbox", href: `${origin}/inbox` } : null,
+    footer: [
+      `You get this ${frequency} digest because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Things you’ve read or archived aren’t included.`,
+    ],
+    footerLink: links ? { label: "Turn off digest", href: links.page } : null,
+    design,
+  });
 }
 
 type Totals = { tasks: number; completed: number; open: number; overdue: number; completedRecent: number };
@@ -313,18 +311,16 @@ export function renderReportEmail(row: OutboxRow, design?: AppliedDesign | null)
     }.`,
     ...(summary.length ? [summary.join(" · ")] : report === "projects" ? ["Every project you can open."] : []),
   ];
-  return {
+  return layout(name, paragraphs, [], {
     subject: `${name}: ${totals.open} incomplete, ${totals.overdue} overdue`.slice(0, 300),
-    ...layout(name, paragraphs, [], {
-      blocks,
-      action: reportsHref ? { label: "Open in Reports", href: reportsHref } : null,
-      footer: [
-        `To change or stop it, ask ${owner}. You can turn off every scheduled report email in Settings → Notifications${
-          origin ? ` (${origin}${settingsHref("notifications")})` : ""
-        }.`,
-      ],
-      footerLink: links ? { label: "Turn off report emails", href: links.page } : null,
-      design,
-    }),
-  };
+    blocks,
+    action: reportsHref ? { label: "Open in Reports", href: reportsHref } : null,
+    footer: [
+      `To change or stop it, ask ${owner}. You can turn off every scheduled report email in Settings → Notifications${
+        origin ? ` (${origin}${settingsHref("notifications")})` : ""
+      }.`,
+    ],
+    footerLink: links ? { label: "Turn off report emails", href: links.page } : null,
+    design,
+  });
 }
