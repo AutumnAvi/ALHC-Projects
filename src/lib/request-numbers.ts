@@ -1,6 +1,16 @@
 // Task numbering labels. The database stores the number and renders `req_label` from the
 // project's template. The app draws that label in front of the name and keeps the stored
-// title free of it, so renaming never eats the number.
+// title free of it, so renaming never eats the number. A label always travels with its
+// project's "Wrap the label in brackets" setting (RequestLabel), so no screen can show one
+// without it; formatRequestLabel() mirrors request_display_label() in the database.
+
+export type RequestLabel = { text: string; wrap: boolean };
+
+/** "[Task #3]" or "Task #3", per the issuing project's setting. Mirrors request_display_label(). */
+export function formatRequestLabel(label: RequestLabel | null | undefined): string {
+  if (!label || !label.text.trim()) return "";
+  return label.wrap ? `[${label.text}]` : label.text;
+}
 
 export type NumberScope = "all_tasks" | "form_submissions" | "sections" | "kinds";
 export type ResetPeriod = "never" | "yearly" | "monthly";
@@ -26,6 +36,8 @@ export type TaskNumbering = {
   /** The next number a new task receives. */
   nextNumber: number;
   lastNumber: number;
+  /** Where Renumber all and every new reset period / per-field counter start. */
+  startNumber: number;
   /** False when this database does not have the task-numbering columns yet. */
   advanced: boolean;
 };
@@ -52,6 +64,7 @@ export function emptyNumbering(): TaskNumbering {
     timeZone: "UTC",
     nextNumber: 1,
     lastNumber: 0,
+    startNumber: 1,
     advanced: true,
   };
 }
@@ -88,7 +101,7 @@ export function previewRequestLabels(
       project: options.projectCode || sample.project,
       field: options.fieldSample || sample.field,
     });
-    return options.wrapBrackets ? `[${label}]` : label;
+    return formatRequestLabel({ text: label, wrap: options.wrapBrackets });
   });
 }
 
@@ -122,21 +135,18 @@ export function templateProblem(template: string, reset: ResetPeriod): string | 
 }
 
 /**
- * The name as people should read it. A stored title that already starts with the label
- * is not prefixed again. Passing a null label strips a previously baked prefix when
- * `baked` is the label that used to be on the title (numbering turned off).
+ * The name as people should read it: the label (bracketed or not, per its project) in front of
+ * the stored title. A title that still has the label baked in (either form) isn't prefixed
+ * twice. `show: false` returns the bare name.
  */
 export function displayTaskTitle(
   title: string,
-  label: string | null | undefined,
-  options: { wrap?: boolean; show?: boolean } = {},
+  label: RequestLabel | null | undefined,
+  options: { show?: boolean } = {},
 ): string {
-  const wrap = options.wrap !== false;
-  const show = options.show !== false && Boolean(label);
-  const bare = stripBakedLabel(title, label);
-  if (!show || !label) return bare;
-  const shown = wrap ? `[${label}]` : label;
-  return `${shown} ${bare}`;
+  const bare = stripBakedLabel(title, label?.text);
+  const shown = options.show === false ? "" : formatRequestLabel(label);
+  return shown ? `${shown} ${bare}` : bare;
 }
 
 function stripBakedLabel(title: string, label: string | null | undefined): string {
@@ -145,4 +155,12 @@ function stripBakedLabel(title: string, label: string | null | undefined): strin
   if (title.startsWith(bracketed)) return title.slice(bracketed.length);
   if (title.startsWith(`${label} `)) return title.slice(label.length + 1);
   return title;
+}
+
+/** Reads one entry of task_request_labels(): { label, wrap }. */
+export function requestLabelFrom(value: unknown): RequestLabel | null {
+  if (!value || typeof value !== "object") return null;
+  const entry = value as { label?: unknown; wrap?: unknown };
+  if (typeof entry.label !== "string" || !entry.label.trim()) return null;
+  return { text: entry.label, wrap: entry.wrap !== false };
 }

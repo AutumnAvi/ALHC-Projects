@@ -32,10 +32,18 @@ function taskLink(row: OutboxRow, projectId: string | null): string | null {
   return projectId ? `${origin}/projects/${projectId}?task=${row.task_id}` : `${origin}/my-tasks?task=${row.task_id}`;
 }
 
+// The request number in front of a task name, with the issuing project's "Wrap the label in brackets"
+// setting (email_design_context's request_wrap, read at send time): "[Task #3] Logo" or "Task #3 · Logo".
+// The label stays bare inside sentences ("We received your request (Task #3)").
+export function labelPrefix(label: string | null, wrap: boolean): string {
+  if (!label) return "";
+  return wrap ? `[${label}] ` : `${label} · `;
+}
+
 // A follower's comment email: task, project, who commented, the comment, and an Open task link. No-reply
 // (Comments and reply by email): workspace people answer in the app; only a form submitter's response
 // email can be answered by email (renderSubmitterResponseEmail).
-function renderCommentEmail(row: OutboxRow, design?: AppliedDesign | null): Rendered {
+function renderCommentEmail(row: OutboxRow, design?: AppliedDesign | null, requestWrap = true): Rendered {
   const p = payloadOf(row);
   const taskTitle = str(p.task_title) ?? "a task";
   const author = str(p.author_name) ?? "Someone";
@@ -51,7 +59,7 @@ function renderCommentEmail(row: OutboxRow, design?: AppliedDesign | null): Rend
       `${author} ${verb} “${taskTitle}”`,
       [str(p.comment_body) ?? ""],
       [
-        { label: "Task", value: label ? `${label} · ${taskTitle}` : taskTitle },
+        { label: "Task", value: `${labelPrefix(label, requestWrap)}${taskTitle}` },
         { label: "Project", value: project ?? "Private task (My tasks)" },
       ],
       {
@@ -75,7 +83,12 @@ export function isSubmitterResponse(row: OutboxRow): boolean {
 // A response to a form's submitter ("Send response to submitter" under the comment box): Asana's subject
 // (Re: "<form>" submission received), the comment as written, and — when replies by email are on — a line
 // to reply above. Someone outside the workspace reads it, so no app links, no names of other people.
-export function renderSubmitterResponseEmail(row: OutboxRow, canReply: boolean, design?: AppliedDesign | null): Rendered {
+export function renderSubmitterResponseEmail(
+  row: OutboxRow,
+  canReply: boolean,
+  design?: AppliedDesign | null,
+  requestWrap = true,
+): Rendered {
   const p = payloadOf(row);
   const author = str(p.author_name) ?? "The team";
   const label = str(p.request_label);
@@ -88,7 +101,7 @@ export function renderSubmitterResponseEmail(row: OutboxRow, canReply: boolean, 
       [str(p.message) ?? ""],
       [
         { label: "From", value: author },
-        ...(taskTitle ? [{ label: "Request", value: label ? `${label} · ${taskTitle}` : taskTitle }] : []),
+        ...(taskTitle ? [{ label: "Request", value: `${labelPrefix(label, requestWrap)}${taskTitle}` }] : []),
       ],
       {
         preface: canReply ? SUBMITTER_REPLY_MARKER : null,
@@ -283,18 +296,19 @@ function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null):
 
 export function renderEmail(
   row: OutboxRow,
-  options: { canReply?: boolean; design?: AppliedDesign | null } = {},
+  options: { canReply?: boolean; design?: AppliedDesign | null; requestWrap?: boolean } = {},
 ): Rendered {
   const design = options.design ?? defaultAppliedDesign(guessDesignKind(row));
-  if (row.comment_id) return renderCommentEmail(row, design);
-  if (isSubmitterResponse(row)) return renderSubmitterResponseEmail(row, Boolean(options.canReply), design);
+  const wrap = options.requestWrap !== false;
+  if (row.comment_id) return renderCommentEmail(row, design, wrap);
+  if (isSubmitterResponse(row)) return renderSubmitterResponseEmail(row, Boolean(options.canReply), design, wrap);
   if (isInvite(row)) return renderInviteEmail(row, design);
   if (isNotification(row)) return renderNotificationEmail(row, design);
   const p = payloadOf(row);
   const label = str(p.request_label);
   const taskTitle = str(p.task_title) ?? "your request";
   const message = str(p.message);
-  const reference = label ? `${label} · ` : "";
+  const reference = labelPrefix(label, wrap);
 
   switch (row.template) {
     case "form_confirmation": {
@@ -436,10 +450,12 @@ export function emailLogoUrl(path: string): string | null {
 // The email's design (Email designs): email_design_context (service role) says whether it's an internal
 // or a requester email, which project and form it belongs to, the resolved design (form → project →
 // workspace), and the fill-in values. Without the database update, the built-in look of the guessed kind.
-async function designFor(row: OutboxRow, admin: Admin): Promise<AppliedDesign> {
+async function designFor(row: OutboxRow, admin: Admin): Promise<{ design: AppliedDesign; requestWrap: boolean }> {
   const fallback = guessDesignKind(row);
   const { data, error } = await admin.rpc("email_design_context", { target_email: row.id });
-  if (error || !data || typeof data !== "object" || Array.isArray(data)) return defaultAppliedDesign(fallback);
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+    return { design: defaultAppliedDesign(fallback), requestWrap: true };
+  }
   const ctx = data as Record<string, unknown>;
   const kind = isEmailDesignKind(ctx.kind) ? ctx.kind : fallback;
   const v = ctx.values && typeof ctx.values === "object" && !Array.isArray(ctx.values) ? (ctx.values as Record<string, unknown>) : {};
@@ -448,7 +464,7 @@ async function designFor(row: OutboxRow, admin: Admin): Promise<AppliedDesign> {
   const taskId = s("task_id");
   const projectId = s("task_project_id");
   const formId = typeof ctx.form_id === "string" ? ctx.form_id : null;
-  return applyDesign(
+  const design = applyDesign(
     kind,
     designFromJson(kind, ctx.design),
     {
@@ -471,6 +487,8 @@ async function designFor(row: OutboxRow, admin: Admin): Promise<AppliedDesign> {
       buttonHref: kind === "requester" && origin && formId ? `${origin}/forms/${formId}` : null,
     },
   );
+  // The issuing project's bracket setting (absent before Oct 19's migration: brackets, as before).
+  return { design, requestWrap: v.request_wrap !== false };
 }
 
 // A representative email of a kind with a design, for the editor's live preview and "Send me a test":
@@ -574,7 +592,7 @@ async function deliver(
   let email: Rendered;
   let headers: Record<string, string> = {};
   let reply: string | null = null;
-  const design = await designFor(row, admin);
+  const { design, requestWrap } = await designFor(row, admin);
   if (scheduled) {
     const rendered = await renderScheduled(row, scheduled, admin, design);
     if ("error" in rendered) return { outcome: "error", error: rendered.error };
@@ -582,7 +600,7 @@ async function deliver(
     headers = rendered.headers;
   } else {
     reply = await replyTo(row, admin);
-    email = renderEmail(row, { canReply: Boolean(reply), design });
+    email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap });
   }
   if (!isEmailConfigured()) {
     const template =

@@ -28,6 +28,7 @@ import { TaskProjects, type ProjectOption } from "./task-projects";
 import { TaskSubtasks, canAddSubtask } from "./task-subtasks";
 import { TaskTags } from "./task-tags";
 import { PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
+import { formatRequestLabel } from "@/lib/request-numbers";
 
 export function TaskDetailPanel({
   task,
@@ -230,7 +231,7 @@ export function TaskDetailPanel({
           </label>
           {task.requestLabel ? (
             <p className="mb-1 text-sm font-medium text-zinc-500">
-              {task.requestWrap === false ? task.requestLabel : `[${task.requestLabel}]`}
+              {formatRequestLabel(task.requestLabel)}
             </p>
           ) : null}
           <textarea

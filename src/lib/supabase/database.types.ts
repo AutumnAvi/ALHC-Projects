@@ -5338,6 +5338,18 @@ export type Database = {
         Args: { target_task: string };
         Returns: string | null;
       };
+      task_request_display_label: {
+        Args: { target_task: string };
+        Returns: string | null;
+      };
+      task_request_labels: {
+        Args: { task_ids: string[] };
+        Returns: Json;
+      };
+      request_display_label: {
+        Args: { label: string | null; wrap: boolean | null };
+        Returns: string | null;
+      };
       task_role: {
         Args: { target_task: string };
         Returns: string | null;

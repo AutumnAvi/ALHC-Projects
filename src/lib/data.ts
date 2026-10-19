@@ -18,7 +18,13 @@ import {
   type RuleRun,
 } from "@/lib/rules";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
-import { displayTaskTitle, templateFromPrefix, type TaskNumbering } from "@/lib/request-numbers";
+import {
+  displayTaskTitle,
+  requestLabelFrom,
+  templateFromPrefix,
+  type RequestLabel,
+  type TaskNumbering,
+} from "@/lib/request-numbers";
 import { isReactionKey, REACTIONS, type ReactionKey } from "@/lib/reactions";
 import { commentEmailStatus, parseCommentEmail, type CommentEmail } from "@/lib/comment-email";
 import {
@@ -170,7 +176,8 @@ export type ProjectTask = {
   // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
   commentCount: number;
   // Shown in front of the name while numbering is on. The stored title stays bare.
-  requestLabel?: string | null;
+  // The request number with its project's bracket setting (task numbering on), else null.
+  requestLabel?: RequestLabel | null;
 };
 
 export type TaskMembership = {
@@ -212,9 +219,8 @@ export type TaskDetail = {
   createdAt: string;
   updatedAt: string;
   source: string;
-  requestLabel: string | null;
-  /** When numbering is on, the bracket style follows the project (default on). */
-  requestWrap: boolean;
+  // The request number with its project's bracket setting (task numbering on), else null.
+  requestLabel: RequestLabel | null;
   canAssignRequestNumber: boolean;
   submission: { email: string; formId: string; formTitle: string | null; createdAt: string } | null;
   // The database has Comments and reply by email (20261014030000): responses to a form's submitter can
@@ -800,7 +806,17 @@ async function listProjectTasksFromRows(projectId: string): Promise<ProjectTask[
   })));
 }
 
-async function withRequestLabels<T extends { id: string }>(tasks: T[]): Promise<Array<T & { requestLabel: string | null }>> {
+// The pane on a database without req_label: format_request_label() while the home sequence is on.
+function legacyPaneLabel(
+  numbering: QueryResult<{ wrap_brackets?: boolean | null } | null>,
+  label: QueryResult<string | null>,
+): RequestLabel | null {
+  const sequence = maybe(numbering, "request numbering");
+  const text = sequence ? maybe(label, "request number") : null;
+  return text ? { text, wrap: sequence?.wrap_brackets !== false } : null;
+}
+
+async function withRequestLabels<T extends { id: string }>(tasks: T[]): Promise<Array<T & { requestLabel: RequestLabel | null }>> {
   const labels = await visibleRequestLabels(tasks.map((task) => task.id));
   return tasks.map((task) => ({ ...task, requestLabel: labels.get(task.id) ?? null }));
 }
@@ -1054,7 +1070,8 @@ export type SubtaskItem = {
   sortOrder: number;
   subtaskCount: number;
   subtaskDoneCount: number;
-  requestLabel?: string | null;
+  // The request number with its project's bracket setting (task numbering on), else null.
+  requestLabel?: RequestLabel | null;
 };
 
 const SUBTASK_COLUMNS = "id, parent_task_id, title, completed_at, assignee_id, start_on, due_on, kind, subtask_order";
@@ -1283,7 +1300,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     task.home_project_id
       ? supabase
           .from("request_sequences")
-          .select("project_id")
+          .select("*")
           .eq("project_id", task.home_project_id)
           .eq("enabled", true)
           .is("deleted_at", null)
@@ -1550,10 +1567,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     createdAt: task.created_at,
     updatedAt: task.updated_at,
     source: task.source,
-    requestLabel:
-      (await visibleRequestLabels([task.id])).get(task.id) ??
-      (maybe(numbering, "request numbering") ? maybe(label, "request number") : null),
-    requestWrap: true,
+    requestLabel: (await visibleRequestLabels([task.id])).get(task.id) ?? legacyPaneLabel(numbering, label),
     canAssignRequestNumber: !task.req_number && !isSubtask && Boolean(maybe(numbering, "request numbering")),
     submission: submission
       ? {
@@ -1815,7 +1829,8 @@ export type MyTask = {
   kind: TaskKind;
   // Subtasks: the parent task's title ("in <parent>").
   parentTitle: string | null;
-  requestLabel?: string | null;
+  // The request number with its project's bracket setting (task numbering on), else null.
+  requestLabel?: RequestLabel | null;
 };
 
 function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
@@ -3088,6 +3103,7 @@ function numberingFromRow(row: {
     timeZone: row.time_zone || "UTC",
     nextNumber: row.last_number + 1,
     lastNumber: row.last_number,
+    startNumber: Math.max(1, Number(row.start_number ?? 1) || 1),
     advanced: row.advanced,
   };
 }
@@ -3114,11 +3130,40 @@ export const getRequestSequence = cache(async (projectId: string): Promise<TaskN
   return row ? numberingFromRow({ ...row, advanced: true }) : null;
 });
 
-// Labels for tasks whose numbering is turned on. Empty when this database has no req_label yet.
-export async function visibleRequestLabels(ids: string[]): Promise<Map<string, string>> {
+// Labels for tasks whose numbering is turned on, each with its project's bracket setting (Oct 19:
+// the setting was saved but no screen read it). One invoker RPC, so RLS decides as before and a
+// big project's ids travel in a POST body (no max_rows cut, no URL limit). Empty when this
+// database has no req_label yet.
+export async function visibleRequestLabels(ids: string[]): Promise<Map<string, RequestLabel>> {
+  return requestLabelsWith(await createClient(), ids);
+}
+
+type ServerClient = Awaited<ReturnType<typeof createClient>>;
+
+// Same, with a client made earlier (CSV exports read inside a stream, where cookies() is gone).
+export async function requestLabelsWith(supabase: ServerClient, ids: string[]): Promise<Map<string, RequestLabel>> {
   const unique = [...new Set(ids.filter(Boolean))];
-  if (unique.length === 0) return new Map();
-  const supabase = await createClient();
+  const labels = new Map<string, RequestLabel>();
+  if (unique.length === 0) return labels;
+  let rpcMissing = false;
+  for (let i = 0; i < unique.length; i += 5000) {
+    const result = await supabase.rpc("task_request_labels", { task_ids: unique.slice(i, i + 5000) });
+    if (result.error?.code === "PGRST202") {
+      rpcMissing = true;
+      break;
+    }
+    if (result.error) return new Map();
+    const map = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {};
+    for (const [taskId, value] of Object.entries(map)) {
+      const label = requestLabelFrom(value);
+      if (label) labels.set(taskId, label);
+    }
+  }
+  return rpcMissing ? legacyRequestLabels(supabase, unique) : labels;
+}
+
+// A database without task_request_labels (the release before Oct 19's migration): two reads.
+async function legacyRequestLabels(supabase: ServerClient, unique: string[]): Promise<Map<string, RequestLabel>> {
   const tasks = await supabase.from("tasks").select("id, req_label, req_project_id, home_project_id").in("id", unique);
   if (isMissingColumn(tasks.error) || tasks.error) return new Map();
   const projectIds = [
@@ -3129,16 +3174,17 @@ export async function visibleRequestLabels(ids: string[]): Promise<Map<string, s
   if (projectIds.length === 0) return new Map();
   const sequences = await supabase
     .from("request_sequences")
-    .select("project_id")
+    .select("project_id, wrap_brackets")
     .in("project_id", projectIds)
     .eq("enabled", true)
     .is("deleted_at", null);
   if (sequences.error) return new Map();
-  const on = new Set((sequences.data ?? []).map((s) => s.project_id));
-  const labels = new Map<string, string>();
+  const wrapFor = new Map((sequences.data ?? []).map((s) => [s.project_id, s.wrap_brackets !== false]));
+  const labels = new Map<string, RequestLabel>();
   for (const task of tasks.data ?? []) {
     const projectId = task.req_project_id ?? task.home_project_id;
-    if (task.req_label && projectId && on.has(projectId)) labels.set(task.id, task.req_label);
+    const wrap = projectId ? wrapFor.get(projectId) : undefined;
+    if (task.req_label && wrap !== undefined) labels.set(task.id, { text: task.req_label, wrap });
   }
   return labels;
 }
