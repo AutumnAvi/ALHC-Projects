@@ -43,6 +43,7 @@ export function MembersManager({
   teams,
   invites,
   resendable,
+  allowCommenter = true,
 }: {
   projectId: string;
   members: ProjectMember[];
@@ -53,6 +54,8 @@ export function MembersManager({
   invites: PendingInvite[];
   // Invite emails can be sent again (this release's database update is applied).
   resendable: boolean;
+  // The workspace offers the Commenter role (Admin console → Security).
+  allowCommenter?: boolean;
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
@@ -63,7 +66,7 @@ export function MembersManager({
   const [inviteRole, setInviteRole] = useState<ProjectRole>("editor");
   const canManage = hasRole(viewerRole, "admin");
   const isOwner = viewerRole === "owner";
-  const grantable = assignableRoles(viewerRole);
+  const grantable = assignableRoles(viewerRole, allowCommenter);
   const ownerCount = members.filter((m) => m.role === "owner").length;
   const sorted = [...members].sort(compareMembers);
 
@@ -365,7 +368,10 @@ export function MembersManager({
           {PROJECT_ROLES.map((role) => (
             <div key={role} className="contents">
               <dt className="font-medium text-zinc-800">{ROLE_LABELS[role]}</dt>
-              <dd className="text-zinc-600">{ROLE_DESCRIPTIONS[role]}</dd>
+              <dd className="text-zinc-600">
+                {ROLE_DESCRIPTIONS[role]}
+                {role === "commenter" && !allowCommenter ? " (not offered in this workspace)" : ""}
+              </dd>
             </div>
           ))}
         </dl>

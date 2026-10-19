@@ -2975,6 +2975,35 @@ export async function setWorkspaceLogo(path: string | null, size?: number): Prom
   });
 }
 
+// The Commenter project role (Admin console → Security; workspace admins, RLS and the column grant
+// decide). Turning it off never changes anyone's role.
+export async function setCommenterRoleAllowed(allowed: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    const result = await supabase
+      .from("workspaces")
+      .update({ allow_commenter_role: allowed === true })
+      .eq("id", workspace.id)
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
+      throw new InputError("This setting needs this release’s database update");
+    }
+    checkUpdated(result, WORKSPACE_ADMINS_ONLY);
+  });
+}
+
+// One click: someone's Commenter memberships become Viewer or Editor (workspace admins only).
+export async function convertCommenterMember(profileId: string, role: "viewer" | "editor"): Promise<ActionResult> {
+  return run(async () => {
+    if (role !== "viewer" && role !== "editor") throw new InputError("Choose Viewer or Editor");
+    const supabase = await createClient();
+    const result = await supabase.rpc("convert_commenter_members", { target_profile: id(profileId, "person"), new_role: role });
+    check(result, WORKSPACE_ADMINS_ONLY);
+  });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Teams directory (see 20261006050000_goals_teams.sql). Leads and workspace admins manage a team; a
 // team never grants project access — the group invite adds ordinary project members (Project Admin+).

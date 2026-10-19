@@ -36,10 +36,13 @@ export function compareMembers(a: { role: ProjectRole; name: string }, b: { role
   return RANK[b.role] - RANK[a.role] || a.name.localeCompare(b.name);
 }
 
-// Roles a member with `role` may hand out: admins up to admin, owners anything.
-export function assignableRoles(role: ProjectRole | null | undefined): ProjectRole[] {
-  if (role === "owner") return [...PROJECT_ROLES];
-  if (role === "admin") return PROJECT_ROLES.filter((r) => r !== "owner");
+// Roles a member with `role` may hand out: admins up to admin, owners anything. Commenter only while the
+// workspace allows it (Admin console → Security; people who already have it keep it — menus show a
+// member's current role either way).
+export function assignableRoles(role: ProjectRole | null | undefined, allowCommenter = true): ProjectRole[] {
+  const offered = allowCommenter ? [...PROJECT_ROLES] : PROJECT_ROLES.filter((r) => r !== "commenter");
+  if (role === "owner") return offered;
+  if (role === "admin") return offered.filter((r) => r !== "owner");
   return [];
 }
 
