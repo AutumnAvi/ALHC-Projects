@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { TooltipLayer } from "@/components/tooltip-layer";
 import { SettingsFromUrl } from "@/components/shell/settings-from-url";
 import { ShellDialogs } from "@/components/shell/shell-dialogs";
+import { RightPanelProvider } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
 import { SidebarContent, type SidebarProject } from "@/components/shell/sidebar";
 import { sharedClientModules } from "@/components/shell/shared-chunks";
@@ -30,33 +31,36 @@ export function AppShell({
   const sidebarProps = { projects, starredIds, unreadCount };
 
   return (
-    <div className="app-shell flex h-full flex-col">
-      <TopBar />
-      {/* --sidebar-w: the sidebar column's width, so the task pane can size itself to the content area
-          (globals.css). app-main is the pane's containing block. */}
-      <div
-        className="flex min-h-0 flex-1"
-        style={{ "--sidebar-w": sidebar.collapsed ? "0px" : "15rem" } as CSSProperties}
-      >
-        {sidebar.collapsed ? null : (
-          <aside
-            id="app-sidebar"
-            aria-label="Sidebar"
-            className="hidden w-60 shrink-0 flex-col bg-shell md:flex print:hidden"
-          >
-            <SidebarContent {...sidebarProps} />
-          </aside>
-        )}
-        {drawerOpen ? <SidebarDrawer>{<SidebarContent {...sidebarProps} />}</SidebarDrawer> : null}
-        <div className="app-main relative flex min-w-0 flex-1 flex-col">{children}</div>
+    // One right-side panel at a time across the app: the task pane, Customize, the status sheet.
+    <RightPanelProvider>
+      <div className="app-shell flex h-full flex-col">
+        <TopBar />
+        {/* --sidebar-w: the sidebar column's width, so the task pane can size itself to the content area
+            (globals.css). app-main is the pane's containing block. */}
+        <div
+          className="flex min-h-0 flex-1"
+          style={{ "--sidebar-w": sidebar.collapsed ? "0px" : "15rem" } as CSSProperties}
+        >
+          {sidebar.collapsed ? null : (
+            <aside
+              id="app-sidebar"
+              aria-label="Sidebar"
+              className="hidden w-60 shrink-0 flex-col bg-shell md:flex print:hidden"
+            >
+              <SidebarContent {...sidebarProps} />
+            </aside>
+          )}
+          {drawerOpen ? <SidebarDrawer>{<SidebarContent {...sidebarProps} />}</SidebarDrawer> : null}
+          <div className="app-main relative flex min-w-0 flex-1 flex-col">{children}</div>
+        </div>
+        <ShellDialogs />
+        {/* ?settings=<tab> on any page opens the Settings modal (links from emails, /settings/profile). */}
+        <Suspense fallback={null}>
+          <SettingsFromUrl />
+        </Suspense>
+        <TooltipLayer />
       </div>
-      <ShellDialogs />
-      {/* ?settings=<tab> on any page opens the Settings modal (links from emails, /settings/profile). */}
-      <Suspense fallback={null}>
-        <SettingsFromUrl />
-      </Suspense>
-      <TooltipLayer />
-    </div>
+    </RightPanelProvider>
   );
 }
 

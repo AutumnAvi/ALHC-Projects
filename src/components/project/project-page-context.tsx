@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { StatusUpdatePanel } from "@/components/project/status-update-panel";
+import { useRightPanel } from "@/components/shell/right-panel";
 
 // Share is a large dialog opened from the header. Leave it out of the project page chunk until then.
 const ShareDialog = dynamic(() => import("@/components/project/share-dialog").then((m) => m.ShareDialog));
@@ -37,27 +38,33 @@ export function ProjectPageProvider({
 }) {
   const [sharing, setSharing] = useState(false);
   const [statusUpdate, setStatusUpdate] = useState<ProjectStatus | null>(null);
+  // The status update sheet is a right-side panel: it takes the app's one slot (closing the task pane
+  // and Customize), and opening a task closes it. Share is a centered dialog and stays over the page.
+  const { open: statusOpen, setOpen: setStatusOpen } = useRightPanel(`status:${project.id}`);
   const value = useMemo<ProjectPage>(
     () => ({
       openShare: () => setSharing(true),
-      openStatusUpdate: (status) => setStatusUpdate(status),
+      openStatusUpdate: (status) => {
+        setStatusUpdate(status);
+        setStatusOpen(true);
+      },
       batch4,
     }),
-    [batch4],
+    [batch4, setStatusOpen],
   );
 
   return (
     <ProjectPageContext.Provider value={value}>
       {children}
       {sharing ? <ShareDialog projectId={project.id} projectName={project.name} onClose={() => setSharing(false)} /> : null}
-      {statusUpdate ? (
+      {statusOpen && statusUpdate ? (
         <StatusUpdatePanel
           key={statusUpdate}
           projectId={project.id}
           projectName={project.name}
           initialStatus={statusUpdate}
           templates={statusTemplates}
-          onClose={() => setStatusUpdate(null)}
+          onClose={() => setStatusOpen(false)}
         />
       ) : null}
     </ProjectPageContext.Provider>

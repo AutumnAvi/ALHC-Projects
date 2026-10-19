@@ -1,21 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { ArrowRightToLine, Maximize2, Minimize2, MoveHorizontal, SearchX, X } from "lucide-react";
+import { useTaskPane } from "@/components/shell/right-panel";
 import { EmptyState, Skeleton } from "@/components/ui";
 import { setPaneExpanded, setPaneWide, usePaneExpanded, usePaneWide } from "./pane-size";
 import { PANE_FIELDS } from "./pane-styles";
 
 export function useClosePane() {
-  const router = useRouter();
+  const { closeTask } = useTaskPane();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const params = new URLSearchParams(searchParams.toString());
   params.delete("task");
   const href = params.size ? `${pathname}?${params}` : pathname;
-  return { href, close: () => router.push(href, { scroll: false }) };
+  return { href, close: closeTask };
 }
 
 const PaneMode = createContext<{ expanded: boolean; wide: boolean }>({ expanded: false, wide: false });
@@ -27,10 +28,13 @@ const PaneMode = createContext<{ expanded: boolean; wide: boolean }>({ expanded:
 // or while a popover, dialog, or the search palette is open on top.
 export function PaneShell({ children, label }: { children: ReactNode; label: string }) {
   const { close } = useClosePane();
+  // One right panel at a time: Customize or the status sheet hides the pane (right-panel.tsx).
+  const { visible } = useTaskPane();
   const expanded = usePaneExpanded();
   const wide = usePaneWide();
 
   useEffect(() => {
+    if (!visible) return;
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
@@ -41,8 +45,9 @@ export function PaneShell({ children, label }: { children: ReactNode; label: str
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [close, expanded]);
+  }, [close, expanded, visible]);
 
+  if (!visible) return null;
   return (
     <PaneMode.Provider value={{ expanded, wide }}>
       <div

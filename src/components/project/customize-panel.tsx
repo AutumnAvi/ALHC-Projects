@@ -27,6 +27,7 @@ import { StatusTemplatesView } from "@/components/project/status-templates";
 import { TaskNumberingForm } from "@/components/project/task-numbering";
 import { useCan } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
+import { useRightPanel } from "@/components/shell/right-panel";
 import { useServerAction } from "@/components/toast";
 import { createForm, setRuleEnabled } from "@/lib/actions";
 import type { FieldDef } from "@/lib/fields";
@@ -77,8 +78,12 @@ const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
 // each opening its own view in the panel (back arrow to return). It sits next to the page, so new
 // fields show up in the List while it's open. The pages it links to keep their own role checks.
 export function CustomizePanel({ projectId, summary }: { projectId: string; summary: CustomizeSummary }) {
-  const [open, setOpen] = useState(false);
+  // The app's one right-panel slot: opening Customize closes the task pane (and the status sheet), and
+  // opening a task closes Customize.
+  const { open, setOpen } = useRightPanel(`customize:${projectId}`);
   const [view, setView] = useState<View>("home");
+  // Closed for any reason (a task opened too): the next open starts on the card list.
+  if (!open && view !== "home") setView("home");
   const pathname = usePathname();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -115,12 +120,9 @@ export function CustomizePanel({ projectId, summary }: { projectId: string; summ
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, setOpen]);
 
-  const close = () => {
-    setOpen(false);
-    setView("home");
-  };
+  const close = () => setOpen(false);
 
   return (
     <>
