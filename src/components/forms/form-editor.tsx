@@ -144,6 +144,11 @@ export function FormEditor({
   // Screen readers hear where a moved question went.
   const [announcement, setAnnouncement] = useState("");
   const dirtyRef = useRef(dirty);
+  // The latest questions, for the branch Undo toast (it runs after later renders).
+  const questionsRef = useRef(questions);
+  useEffect(() => {
+    questionsRef.current = questions;
+  }, [questions]);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const publicUrl = `${origin}/forms/${form.id}`;
@@ -221,12 +226,19 @@ export function FormEditor({
     setDirty(true);
     const position = next.findIndex((q) => q.id === movedId);
     const label = next[position]?.label.trim() || "Untitled question";
-    setAnnouncement(`Moved “${label}” to position ${position + 1} of ${next.length}`);
+    const message = `Moved “${label}” to position ${position + 1} of ${next.length}`;
+    // The same words twice in a row still get read out (a live region ignores an unchanged text).
+    setAnnouncement((prev) => (prev === message ? `${message}\u200b` : message));
     if (broken.length) {
       notify(clearedBranchesMessage(broken), {
         label: "Undo",
-        // Only while nothing else changed since: an Undo never throws away later edits.
-        onClick: () => setQuestions((current) => (current === next ? previous : current)),
+        // Only while nothing else changed since (an Undo never throws away later edits), and the form
+        // is unsaved again afterwards, so the restored branch gets saved too.
+        onClick: () => {
+          if (questionsRef.current !== next) return;
+          setQuestions(previous);
+          setDirty(true);
+        },
       });
     }
   }
@@ -254,7 +266,7 @@ export function FormEditor({
   }
 
   // Drops on a card bubble here; the card already set where it lands.
-  function dropQuestion(e: DragEvent<HTMLOListElement>) {
+  function dropQuestion(e: DragEvent<HTMLElement>) {
     e.preventDefault();
     const id = e.dataTransfer.getData(QUESTION_DRAG);
     const beforeId = dropBefore ?? null;
@@ -454,7 +466,22 @@ export function FormEditor({
                 </p>
               ) : null}
               {tab === "questions" ? (
-                <div className="flex flex-col gap-2">
+                // The whole Questions tab takes drops (a release below the last card, or on a drop line
+                // drawn just outside the list, lands at the end), and the line goes away when a drag
+                // leaves it.
+                <div
+                  className="flex flex-col gap-2"
+                  onDragOver={(e) => {
+                    if (!dragging) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dropBefore === undefined) setDropBefore(null);
+                  }}
+                  onDragLeave={(e) => {
+                    if (dragging && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDropBefore(undefined);
+                  }}
+                  onDrop={dragging ? dropQuestion : undefined}
+                >
                   <p className="text-xs text-zinc-500">
                     Every submission also asks for the submitter’s email. Answers that don’t fill in a task detail are
                     listed in the task description.
@@ -472,17 +499,7 @@ export function FormEditor({
                       No questions yet. Add one, or ask about one of this project’s fields.
                     </p>
                   ) : (
-                    <ol
-                      className="flex flex-col gap-2"
-                      aria-label="Questions"
-                      onDragOver={(e) => {
-                        if (!dragging) return;
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = "move";
-                        if (dropBefore === undefined) setDropBefore(null);
-                      }}
-                      onDrop={dragging ? dropQuestion : undefined}
-                    >
+                    <ol className="flex flex-col gap-2" aria-label="Questions">
                       {questions.map((question, index) => (
                         <QuestionCard
                           key={question.id}

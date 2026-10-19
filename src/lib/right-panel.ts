@@ -34,8 +34,10 @@ export function openPanel(state: RightPanelState, key: string, task: string | nu
   return { ...state, panel: key, suppressedTask: task };
 }
 
+// Closing a panel also drops the suppression: if a later navigation (built from a URL that still named
+// the task) put ?task= back before the strip landed, the pane comes back instead of staying hidden.
 export function closePanel(state: RightPanelState, key: string): RightPanelState {
-  return state.panel === key ? { ...state, panel: null } : state;
+  return state.panel === key ? { ...state, panel: null, suppressedTask: null } : state;
 }
 
 export function taskPaneVisible(state: RightPanelState, task: string | null): boolean {

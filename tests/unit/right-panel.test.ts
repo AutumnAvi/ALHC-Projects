@@ -63,6 +63,15 @@ test("Back to a task URL closes the panel opened after it", () => {
   assert.equal(taskPaneVisible(s, "t9"), true);
 });
 
+test("a strip overtaken by another navigation never leaves the pane hidden after the panel closes", () => {
+  // Customize opened over t1; a filter change built from the old URL kept ?task=t1, so the URL never
+  // changed and syncTask saw nothing new.
+  let s = openPanel(initialRightPanel("t1"), "customize:p", "t1");
+  assert.equal(syncTask(s, "t1"), s);
+  s = closePanel(s, "customize:p");
+  assert.equal(taskPaneVisible(s, "t1"), true);
+});
+
 test("hrefWithTask sets or removes ?task= and keeps the rest", () => {
   assert.equal(hrefWithTask("http://x.test/projects/p/views/v?f=abc#top", "t1"), "/projects/p/views/v?f=abc&task=t1#top");
   assert.equal(hrefWithTask("http://x.test/projects/p/views/v?task=t1&f=abc", null), "/projects/p/views/v?f=abc");

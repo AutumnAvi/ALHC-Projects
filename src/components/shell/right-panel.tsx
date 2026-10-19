@@ -29,7 +29,9 @@ const RightPanelContext = createContext<RightPanelApi | null>(null);
 
 export function RightPanelProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const task = useSearchParams().get("task");
+  const searchParams = useSearchParams();
+  const task = searchParams.get("task");
+  const search = searchParams.toString();
   const [state, setState] = useState(() => initialRightPanel(task));
   // Adjust during render (no effect), so a task opening and the panel closing land in the same commit.
   if (task !== state.seenTask) setState(syncTask(state, task));
@@ -39,9 +41,14 @@ export function RightPanelProvider({ children }: { children: ReactNode }) {
     routerRef.current = router;
   }, [router]);
 
+  // The query string a strip was sent from (see the effect below).
+  const strippedFrom = useRef<string | null>(null);
+
   // Callbacks read the URL at call time, so they stay stable while ?f= drafts and the like change.
   const openPanel = useCallback((key: string) => {
-    const current = new URL(window.location.href).searchParams.get("task");
+    const url = new URL(window.location.href);
+    const current = url.searchParams.get("task");
+    strippedFrom.current = current ? url.searchParams.toString() : null;
     setState((s) => openPanelState(s, key, current));
     // Replace, not push: Back shouldn't bring the task back underneath the panel.
     if (current) routerRef.current.replace(hrefWithTask(window.location.href, null), { scroll: false });
@@ -53,6 +60,15 @@ export function RightPanelProvider({ children }: { children: ReactNode }) {
   const closeTask = useCallback(() => {
     routerRef.current.push(hrefWithTask(window.location.href, null), { scroll: false });
   }, []);
+
+  // A panel is open, another navigation committed, and the URL still names the task: the strip was
+  // overtaken by a navigation built from the old URL (a filter, a Board card, Show more…). Send it again.
+  useEffect(() => {
+    if (!state.panel || !task || task !== state.suppressedTask) return;
+    if (strippedFrom.current === null || strippedFrom.current === search) return;
+    strippedFrom.current = search;
+    routerRef.current.replace(hrefWithTask(window.location.href, null), { scroll: false });
+  }, [state.panel, state.suppressedTask, task, search]);
 
   const visible = taskPaneVisible(state, task);
   const value = useMemo<RightPanelApi>(
