@@ -1,10 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useState, type DragEvent } from "react";
 import { CalendarDays } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { DateRangePicker } from "@/components/task/date-picker";
+import { TaskLink } from "@/components/task/task-link";
+import type { TaskSeed } from "@/lib/task-seed";
 import { addDays } from "@/lib/dates";
 import { longDate } from "@/lib/date-input";
 
@@ -33,7 +34,8 @@ export type CalendarItem = {
   canEdit: boolean;
   // The task open in the pane.
   open?: boolean;
-  href: string;
+  // What the bar knows about the task: the pane draws it at once when the bar is clicked (no navigation).
+  seed?: () => TaskSeed;
   // The dot's color class.
   dotClass: string;
   // Read after the title by screen readers (e.g. " in Marketing").
@@ -370,9 +372,9 @@ function Bar({
       className={`group/bar relative min-w-0 ${startsHere ? "pl-1" : ""} ${endsHere ? "pr-1" : ""}`}
       style={{ gridColumn: `${col + 1} / span ${span}`, gridRow: lane + 1 }}
     >
-      <Link
-        href={item.href}
-        scroll={false}
+      <TaskLink
+        taskId={item.id}
+        seed={item.seed}
         draggable={item.canEdit}
         onDragStart={item.canEdit ? (e) => onDragStart(e, "move") : undefined}
         onDragEnd={item.canEdit ? onDragEnd : undefined}
@@ -399,7 +401,7 @@ function Bar({
             {item.overdue ? " (overdue)" : ""}
           </span>
         </span>
-      </Link>
+      </TaskLink>
       {resizable && startsHere ? (
         <span
           aria-hidden

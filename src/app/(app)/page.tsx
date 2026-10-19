@@ -3,7 +3,7 @@ import { CircleCheck, House, UsersRound } from "lucide-react";
 import { MyTasksWidget } from "@/components/home/my-tasks-widget";
 import { PeopleWidget } from "@/components/home/people-widget";
 import { ProjectsWidget } from "@/components/home/projects-widget";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
 import { listArchivedProjects, listFrequentCollaborators, listMyTasks, listProjects, listStarredProjectIds } from "@/lib/data";
@@ -75,7 +75,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
         {/* A size container: two columns only when there's room, also with the task pane open. */}
         <div className="@container px-gutter pb-10">
           <div className="grid gap-4 @4xl:grid-cols-2">
-            <MyTasksWidget tasks={tasks} openTaskId={openTaskId} />
+            <MyTasksWidget tasks={tasks} />
             <ProjectsWidget
               projects={projects.map(({ id, name }) => ({ id, name }))}
               starredIds={starredIds}
@@ -85,7 +85,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
           </div>
         </div>
       </div>
-      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
+      <TaskPaneSlot taskId={openTaskId} />
     </main>
   );
 }

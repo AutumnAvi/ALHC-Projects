@@ -1,19 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useOptimistic, useRef, useState, type KeyboardEvent } from "react";
 import { CalendarCheck, CircleCheck, CircleCheckBig, Lock, Plus } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { DueDate } from "@/components/project/task-meta";
+import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
+import { TaskLink, useOpenTask } from "@/components/task/task-link";
 import { useTabChord } from "@/components/shortcuts/keyboard";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { Widget, WidgetTitle } from "@/components/home/widget";
 import { createPrivateTask, setTaskCompleted } from "@/lib/actions";
 import type { MyTask } from "@/lib/data";
+import { seedFromMyTask } from "@/lib/task-seed";
 import { HOME_TASK_TABS, RECENT_COMPLETED_LIMIT, createdFirst, type HomeTaskTab } from "@/lib/home";
 import { projectColorClass } from "@/lib/project-colors";
 
@@ -26,13 +28,13 @@ const NONE_SAVING: SavingTask[] = [];
 // Q) opens Asana's inline new-task row at the top of Upcoming.
 export function MyTasksWidget({
   tasks,
-  openTaskId,
 }: {
   // Split on the server against the viewer's local today (splitHomeTasks).
   tasks: Record<HomeTaskTab, MyTask[]>;
-  openTaskId: string | null;
 }) {
-  const router = useRouter();
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
+  const openTask = useOpenTask();
   const { member } = useShell();
   const [, run] = useServerAction();
   const [creating, create] = useServerAction();
@@ -202,7 +204,7 @@ export function MyTasksWidget({
             {shown.map((task) => {
               const done = isDone(task);
               const open = task.id === openTaskId;
-              const href = `/?task=${task.id}`;
+              const seed = () => seedFromMyTask(task, { id: member.id, name: member.name });
               return (
                 <li
                   key={task.id}
@@ -210,7 +212,7 @@ export function MyTasksWidget({
                     // Clicking anywhere on the row opens the task; the circle, the title, and the project
                     // chip keep their own meaning.
                     if ((e.target as HTMLElement).closest("a, button")) return;
-                    if (!open) router.push(href, { scroll: false });
+                    if (!open) openTask(task.id, seed());
                   }}
                   className={`group flex min-h-10 cursor-pointer items-center gap-2.5 border-b border-zinc-100 px-5 py-1.5 ${
                     open ? "bg-accent-50/60" : "hover:bg-zinc-50"
@@ -222,14 +224,14 @@ export function MyTasksWidget({
                     onToggle={() => toggle(task)}
                     label={kindToggleLabel(task.kind, task.title, done)}
                   />
-                  <Link
-                    href={href}
-                    scroll={false}
+                  <TaskLink
+                    taskId={task.id}
+                    seed={seed}
                     aria-current={open ? "true" : undefined}
                     className={`min-w-0 flex-1 truncate text-sm hover:underline ${done ? "text-zinc-400 line-through" : "text-zinc-900"}`}
                   >
                     {task.title}
-                  </Link>
+                  </TaskLink>
                   {task.parentTitle ? (
                     <span className="hidden max-w-28 shrink-0 truncate text-xs text-zinc-400 @xl:inline" title={`Subtask of ${task.parentTitle}`}>
                       <span className="sr-only">Subtask of </span>

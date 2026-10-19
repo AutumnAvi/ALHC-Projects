@@ -175,8 +175,8 @@ export type ProjectTask = {
   tagIds: string[];
   // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
   commentCount: number;
-  // Shown in front of the name while numbering is on. The stored title stays bare.
-  // The request number with its project's bracket setting (task numbering on), else null.
+  // Shown in front of the name while numbering is on, with its project's bracket setting. The stored
+  // title stays bare.
   requestLabel?: RequestLabel | null;
 };
 
@@ -206,13 +206,8 @@ export type TaskDetail = {
   dependencies: TaskDependency[];
   // Incomplete finish-to-start predecessors the viewer can't open (they still block completion).
   hiddenBlockers: number;
-  // Tasks that can be linked: active tasks of projects where the viewer is an Editor (the task's own
-  // projects first, then others), plus the other tasks and subtasks of the same task tree.
-  dependencyCandidates: DependencyCandidateGroup[];
   // Projects (with sections) where the viewer is an Editor among the task's projects (a subtask: its root's).
   editableProjectIds: string[];
-  // Slack / critical path in each of the task's projects (project_critical_path); empty without a due date.
-  schedule: (TaskSchedule & { projectId: string; projectName: string })[];
   assigneeId: string | null;
   // Null for a private task (and its subtasks): no project; only its creator and assignee can read it.
   homeProjectId: string | null;
@@ -279,6 +274,17 @@ export type TaskDependency = {
 };
 
 export type DependencyCandidateGroup = { key: string; label: string; tasks: { id: string; title: string }[] };
+
+// The pane's on-demand part (Oct 19 notes): the tasks the Dependencies picker and Convert offer, and the
+// slack in each project. On a big project these two reads take seconds (row-by-row RLS over every task),
+// so they stay off the path that opens a task; getTaskExtras() loads them when the pane needs them.
+export type TaskExtras = {
+  // Tasks that can be linked: active tasks of projects where the viewer is an Editor (the task's own
+  // projects first, then others), plus the other tasks and subtasks of the same task tree.
+  dependencyCandidates: DependencyCandidateGroup[];
+  // Slack / critical path in each of the task's projects (project_critical_path); empty without a due date.
+  schedule: (TaskSchedule & { projectId: string; projectName: string })[];
+};
 
 // Imported Asana attachments (name + link), and a duplicated task's links to the original's files
 // (attachmentId: opened through /attachments/<id>, which checks access to the original).
@@ -1179,6 +1185,32 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
 
   // A subtask lives in its root task's projects.
   const scopeTaskId = task.root_task_id ?? taskId;
+  const isPrivate = task.home_project_id === null;
+  // Reads that need only the task row start now and are awaited at the end, so they add no round trip.
+  const early = Promise.all([
+    listMyProjectRoles(),
+    listTaskTagIds([taskId]),
+    supabase.rpc("open_blocker_count", { target_task: taskId }),
+    supabase
+      .from("task_likes")
+      .select("profile_id")
+      .eq("task_id", taskId)
+      .is("deleted_at", null)
+      .order("created_at")
+      .then((r) => rows(r, "likes")),
+    isPrivate
+      ? supabase
+          .from("tasks")
+          .select("created_by, assignee_id")
+          .eq("id", scopeTaskId)
+          .maybeSingle()
+          .then((r) => maybe(r, "private task"))
+      : Promise.resolve(null),
+    listTeams(),
+    visibleRequestLabels([taskId]),
+  ]);
+  // Marked handled now; awaiting it below still throws its error.
+  early.catch(() => {});
   const [subtasks, memberships, tree] = await Promise.all([
     supabase
       .from("tasks")
@@ -1189,12 +1221,12 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .order("created_at"),
     supabase
       .from("task_projects")
-      .select("project_id, section_id, project:projects!inner(id, name)")
+      .select("project_id, section_id, project:projects!inner(id, name, sections(id, name, sort_order, deleted_at))")
       .eq("task_id", scopeTaskId)
       .is("deleted_at", null)
       .is("project.deleted_at", null)
       .order("created_at"),
-    // The whole task tree (root first): the breadcrumb, and dependency candidates within the tree.
+    // The whole task tree (root first): the breadcrumb, subtask counts, and Convert's candidates.
     supabase
       .from("tasks")
       .select("id, title, completed_at, parent_task_id, deleted_at")
@@ -1203,20 +1235,22 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .limit(500),
   ]);
   const subtaskRows = rows(subtasks, "subtasks");
-  const grandchildren = subtaskRows.length
-    ? rows(
-        await supabase
-          .from("tasks")
-          .select("parent_task_id, completed_at")
-          .in(
-            "parent_task_id",
-            subtaskRows.map((r) => r.id),
-          )
-          .is("deleted_at", null),
-        "subtasks",
-      )
-    : [];
-  const treeById = new Map(rows(tree, "parent tasks").map((r) => [r.id, r] as const));
+  const treeRows = rows(tree, "parent tasks");
+  const subtaskIds = new Set(subtaskRows.map((r) => r.id));
+  // The tree already holds the subtasks' own subtasks (x/y counts) unless it hit its limit.
+  const grandchildren = !subtaskRows.length
+    ? []
+    : treeRows.length < 500
+      ? treeRows.filter((r) => r.deleted_at === null && r.parent_task_id !== null && subtaskIds.has(r.parent_task_id))
+      : rows(
+          await supabase
+            .from("tasks")
+            .select("parent_task_id, completed_at")
+            .in("parent_task_id", [...subtaskIds])
+            .is("deleted_at", null),
+          "subtasks",
+        );
+  const treeById = new Map(treeRows.map((r) => [r.id, r] as const));
   const ancestors: TaskDetail["ancestors"] = [];
   for (let up = task.parent_task_id ? treeById.get(task.parent_task_id) : undefined; up && ancestors.length < 10; ) {
     ancestors.unshift({ id: up.id, title: up.title, completedAt: up.completed_at });
@@ -1226,17 +1260,13 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
 
   const membershipRows = rows(memberships, "task projects");
   const projectIds = membershipRows.map((m) => m.project_id);
-  const sections = projectIds.length
-    ? rows(
-        await supabase
-          .from("sections")
-          .select("id, project_id, name")
-          .in("project_id", projectIds)
-          .is("deleted_at", null)
-          .order("sort_order"),
-        "sections",
-      )
-    : [];
+  // Sections come embedded in the memberships read (one round trip less).
+  const sections = membershipRows.flatMap((m) =>
+    (m.project.sections ?? [])
+      .filter((sec) => sec.deleted_at === null)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((sec) => ({ id: sec.id, project_id: m.project_id, name: sec.name })),
+  );
 
   const [
     fields,
@@ -1348,7 +1378,6 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("payload->>kind", "submitter_response")
       .order("created_at"),
   ]);
-  const replyThread = await loadReplyThread(supabase, taskId);
 
   let submitterResponses = !commentEmails.error;
   if (commentEmails.error && !isMissingColumn(commentEmails.error)) {
@@ -1380,61 +1409,45 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   }
   const role = maybe(viewerRole, "task role");
   const viewerProjectRole = isProjectRole(role) ? role : null;
-  const myRoles = await listMyProjectRoles();
-  const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
-  const treeCandidates = rows(tree, "task tree")
-    .filter((r) => r.id !== taskId && r.deleted_at === null)
-    .map((r) => ({ id: r.id, title: r.title }));
-  const [dependencyCandidates, schedule, tagIds, blockerCount] = await Promise.all([
-    hasRole(viewerProjectRole, "editor")
-      ? listDependencyCandidates(
-          taskId,
-          membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })),
-          treeCandidates,
-        )
-      : Promise.resolve([]),
-    task.due_on && !isSubtask
-      ? Promise.all(
-          membershipRows.map(async (m) => {
-            const entry = (await projectCriticalPath(m.project_id)).tasks[taskId];
-            return entry ? [{ ...entry, projectId: m.project_id, projectName: m.project.name }] : [];
-          }),
-        ).then((lists) => lists.flat())
-      : Promise.resolve([]),
-    listTaskTagIds([taskId]),
-    supabase.rpc("open_blocker_count", { target_task: taskId }),
-  ]);
   const dependencyRows = rows(dependencies, "dependencies");
   const visibleBlockers = dependencyRows.filter(
     (d) => d.successor_id === taskId && d.kind === "finish_to_start" && d.predecessor.completed_at === null,
   ).length;
-  const isPrivate = task.home_project_id === null;
-  const [storyRows, likes, privateRoot] = await Promise.all([
-    withDependencyTitles(rows(stories, "activity")),
-    supabase
-      .from("task_likes")
-      .select("profile_id")
-      .eq("task_id", taskId)
-      .is("deleted_at", null)
-      .order("created_at")
-      .then((r) => rows(r, "likes")),
-    isPrivate
-      ? supabase
-          .from("tasks")
-          .select("created_by, assignee_id")
-          .eq("id", scopeTaskId)
-          .maybeSingle()
-          .then((r) => maybe(r, "private task"))
-      : Promise.resolve(null),
-  ]);
-
-  let commentPage: CommentPage | null = null;
-  if (!comments.error) {
-    commentPage = await withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus));
-    submitterResponses = true;
-  } else if (!rpcMissing(comments.error)) {
+  if (comments.error && !rpcMissing(comments.error)) {
     throw new Error(`Failed to load comments: ${comments.error.message}`);
   }
+  const storyList = rows(stories, "activity");
+  const approvalRows = rows(approvals, "approvals");
+  const submission = rows(submissions, "form submission")[0] ?? null;
+  const approvalRuleIds = [...new Set(approvalRows.map((a) => a.rule_id).filter((ruleId): ruleId is string => Boolean(ruleId)))];
+  // Everything that needed the reads above, in one wave, plus the reads started after the task row.
+  const [
+    replyThread,
+    storyRows,
+    emailStatus,
+    pagedComments,
+    approvalRuleNames,
+    formTitle,
+    [myRoles, tagIds, blockerCount, likes, privateRoot, teams, taskLabels],
+    subtaskItems,
+  ] = await Promise.all([
+    loadReplyThread(supabase, taskId),
+    withDependencyTitles(storyList),
+    storyEmailStatuses(storyList),
+    comments.error ? Promise.resolve(null) : withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus)),
+    approvalRuleIds.length
+      ? supabase.from("rules").select("id, name").in("id", approvalRuleIds)
+      : Promise.resolve({ data: [], error: null }),
+    submission
+      ? supabase.from("forms").select("title").eq("id", submission.form_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    early,
+    withRequestLabels(toSubtaskItems(subtaskRows, grandchildren)),
+  ]);
+  const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
+
+  const commentPage: CommentPage | null = pagedComments;
+  if (commentPage) submitterResponses = true;
   const legacyComments = commentPage
     ? []
     : rows(
@@ -1447,25 +1460,15 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
           .order("created_at"),
         "comments",
       );
-  const approvalRows = rows(approvals, "approvals");
-  const submission = rows(submissions, "form submission")[0] ?? null;
-  const ruleIds = [
-    ...new Set(
-      [...legacyComments.map((c) => c.rule_id), ...approvalRows.map((a) => a.rule_id)].filter(
-        (ruleId): ruleId is string => Boolean(ruleId),
-      ),
-    ),
+  // Rule names for approvals, plus rule comments on a database without task_comment_page (rare).
+  const legacyRuleIds = [
+    ...new Set(legacyComments.map((c) => c.rule_id).filter((ruleId): ruleId is string => Boolean(ruleId))),
+  ].filter((ruleId) => !approvalRuleIds.includes(ruleId));
+  const ruleNameRows = [
+    ...rows(approvalRuleNames, "rules"),
+    ...(legacyRuleIds.length ? rows(await supabase.from("rules").select("id, name").in("id", legacyRuleIds), "rules") : []),
   ];
-  const [ruleNames, formTitle] = await Promise.all([
-    ruleIds.length
-      ? supabase.from("rules").select("id, name").in("id", ruleIds)
-      : Promise.resolve({ data: [], error: null }),
-    submission
-      ? supabase.from("forms").select("title").eq("id", submission.form_id).maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-  ]);
-  const ruleName = new Map(rows(ruleNames, "rules").map((r) => [r.id, r.name] as const));
-  const emailStatus = await storyEmailStatuses(storyRows);
+  const ruleName = new Map(ruleNameRows.map((r) => [r.id, r.name] as const));
   const taskComments = commentPage
     ? commentPage.comments
     : legacyComments.map((c) => {
@@ -1517,7 +1520,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     })),
     comments: taskComments,
     commentTotal,
-    mentionTeams: (await listTeams()).map((t) => ({
+    mentionTeams: teams.map((t) => ({
       id: t.id,
       name: t.name,
       members: t.members.map((m) => ({ id: m.profileId, name: m.name, email: m.email })),
@@ -1559,15 +1562,13 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       };
     }),
     hiddenBlockers: Math.max(0, (maybe(blockerCount, "blockers") ?? 0) - visibleBlockers),
-    dependencyCandidates,
     editableProjectIds,
-    schedule,
     assigneeId: task.assignee_id,
     homeProjectId: task.home_project_id,
     createdAt: task.created_at,
     updatedAt: task.updated_at,
     source: task.source,
-    requestLabel: (await visibleRequestLabels([task.id])).get(task.id) ?? legacyPaneLabel(numbering, label),
+    requestLabel: taskLabels.get(task.id) ?? legacyPaneLabel(numbering, label),
     canAssignRequestNumber: !task.req_number && !isSubtask && Boolean(maybe(numbering, "request numbering")),
     submission: submission
       ? {
@@ -1599,7 +1600,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     privateReaderIds: [
       ...new Set([privateRoot?.created_by, privateRoot?.assignee_id].filter((p): p is string => Boolean(p))),
     ],
-    subtasks: await withRequestLabels(toSubtaskItems(subtaskRows, grandchildren)),
+    subtasks: subtaskItems,
     parentTaskId: task.parent_task_id,
     ancestors,
     isSubtask,
@@ -1616,6 +1617,94 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .sort((a, b) => Number(b.isHome) - Number(a.isHome)),
   };
 });
+
+// The pane's on-demand parts (see TaskExtras), one at a time: "candidates" = the Dependencies picker's and
+// Convert's tasks (Editors), "schedule" = the slack in each project (a dated top-level task). The other
+// part comes back empty. Null when the task isn't readable.
+export type TaskExtrasPart = "schedule" | "candidates";
+
+export async function getTaskExtras(taskId: string, part: TaskExtrasPart): Promise<TaskExtras | null> {
+  if (!isUuid(taskId)) return null;
+  const supabase = await createClient();
+  const task = maybe(
+    await supabase.from("tasks").select("id, due_on, parent_task_id, root_task_id").eq("id", taskId).is("deleted_at", null).maybeSingle(),
+    "task",
+  );
+  if (!task) return null;
+  const scopeTaskId = task.root_task_id ?? taskId;
+  const [memberships, tree, viewerRole] = await Promise.all([
+    supabase
+      .from("task_projects")
+      .select("project_id, project:projects!inner(id, name)")
+      .eq("task_id", scopeTaskId)
+      .is("deleted_at", null)
+      .is("project.deleted_at", null)
+      .order("created_at"),
+    supabase
+      .from("tasks")
+      .select("id, title, deleted_at")
+      .or(`id.eq.${scopeTaskId},root_task_id.eq.${scopeTaskId}`)
+      .order("created_at")
+      .limit(500),
+    supabase.rpc("task_role", { target_task: taskId }),
+  ]);
+  const membershipRows = rows(memberships, "task projects");
+  const role = maybe(viewerRole, "task role");
+  const treeCandidates = rows(tree, "task tree")
+    .filter((r) => r.id !== taskId && r.deleted_at === null)
+    .map((r) => ({ id: r.id, title: r.title }));
+  const [dependencyCandidates, schedule] = await Promise.all([
+    part === "candidates" && hasRole(isProjectRole(role) ? role : null, "editor")
+      ? listDependencyCandidates(
+          taskId,
+          membershipRows.map((m) => ({ id: m.project_id, name: m.project.name })),
+          treeCandidates,
+        )
+      : Promise.resolve([]),
+    part === "schedule" && task.due_on && task.parent_task_id === null
+      ? Promise.all(
+          membershipRows.map(async (m) => {
+            const entry = (await projectCriticalPath(m.project_id)).tasks[taskId];
+            return entry ? [{ ...entry, projectId: m.project_id, projectName: m.project.name }] : [];
+          }),
+        ).then((lists) => lists.flat())
+      : Promise.resolve([]),
+  ]);
+  return { dependencyCandidates, schedule };
+}
+
+// What the pane needs besides the task: the viewer, the projects they can add a task to, people, tags.
+export type TaskPaneContext = {
+  memberId: string;
+  projects: { id: string; name: string; canAdd: boolean }[];
+  profiles: Profile[];
+  tags: Tag[];
+};
+
+// One pane load (the page's server render of an open task, or GET /api/task-pane/<id>). loadedAt is when
+// the reads started (server clock), so the client keeps whichever copy is newer.
+export type TaskPanePayload = { task: TaskDetail | null; context: TaskPaneContext | null; loadedAt: number };
+
+export async function loadTaskPaneContext(): Promise<TaskPaneContext | null> {
+  const { user, allowlisted } = await getViewer();
+  if (!user || !allowlisted) return null;
+  const [projects, profiles, roles, tags] = await Promise.all([listProjects(), listProfiles(), listMyProjectRoles(), listTags()]);
+  return {
+    memberId: user.id,
+    projects: projects.map(({ id, name }) => ({ id, name, canAdd: hasRole(roles.get(id), "editor") })),
+    profiles,
+    tags,
+  };
+}
+
+export async function loadTaskPanePayload(taskId: string, withContext = true): Promise<TaskPanePayload> {
+  const loadedAt = Date.now();
+  const [task, context] = await Promise.all([
+    isUuid(taskId) ? getTaskDetail(taskId) : Promise.resolve(null),
+    withContext ? loadTaskPaneContext() : Promise.resolve(null),
+  ]);
+  return { task, context, loadedAt };
+}
 
 const MAX_DEPENDENCY_CANDIDATES = 300;
 const MAX_OTHER_CANDIDATE_PROJECTS = 10;

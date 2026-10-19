@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
 import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
@@ -40,9 +39,10 @@ import { useRealtimeRefresh } from "@/lib/realtime";
 import { describeRecurrence, parseRecurrence } from "@/lib/recurrence";
 import { TASK_KIND_LABELS, parseTaskKind } from "@/lib/task-kinds";
 import { dependencyLabel, parseDependencyKind } from "@/lib/dependencies";
-import { useTaskHref } from "@/components/project/shared";
 import { setActivityTab, useActivityTab } from "./pane-size";
 import { PeopleList } from "./person-picker";
+import { TaskLink } from "@/components/task/task-link";
+import { seedFromTitle } from "@/lib/task-seed";
 
 // The live state of a queued email, after "queued an email to …": sending, sent, failed with the reason,
 // or not sent because no email provider is configured.
@@ -138,7 +138,6 @@ export function TaskActivity({
     { table: "email_outbox", filter: `task_id=eq.${task.id}` },
   ]);
 
-  const taskHref = useTaskHref();
   const tab = useActivityTab();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const canComment = hasRole(task.viewerRole, "commenter");
@@ -332,9 +331,9 @@ export function TaskActivity({
           <>
             created the{" "}
             {nextId ? (
-              <Link href={taskHref(nextId)} scroll={false} className="text-accent-700 hover:underline">
+              <TaskLink taskId={nextId} seed={() => seedFromTitle(nextId, task.title, { kind: task.kind })} className="text-accent-700 hover:underline">
                 next occurrence
-              </Link>
+              </TaskLink>
             ) : (
               "next occurrence"
             )}
@@ -381,9 +380,9 @@ export function TaskActivity({
           <>
             made this a subtask of{" "}
             {parentId ? (
-              <Link href={taskHref(parentId)} scroll={false} className="font-medium text-zinc-700 hover:underline">
+              <TaskLink taskId={parentId} seed={() => seedFromTitle(parentId, str(d, "parent_title") || "Parent task")} className="font-medium text-zinc-700 hover:underline">
                 “{str(d, "parent_title")}”
-              </Link>
+              </TaskLink>
             ) : (
               <>“{str(d, "parent_title")}”</>
             )}

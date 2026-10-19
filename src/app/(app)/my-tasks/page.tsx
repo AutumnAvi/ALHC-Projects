@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { CircleCheck } from "lucide-react";
 import { listBulkContext } from "@/components/bulk/bulk-context";
 import { MyTasksView } from "@/components/my-tasks/my-tasks-view";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
@@ -35,7 +35,6 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
           <MyTasksView
             open={open}
             completed={completed}
-            openTaskId={openTaskId}
             bulk={bulk}
             layout={isMyTasksLayout(saved) ? saved : "sections"}
             sections={sections}
@@ -43,7 +42,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
           />
         </div>
       </div>
-      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
+      <TaskPaneSlot taskId={openTaskId} />
     </main>
   );
 }

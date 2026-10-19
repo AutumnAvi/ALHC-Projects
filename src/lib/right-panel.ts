@@ -44,6 +44,17 @@ export function taskPaneVisible(state: RightPanelState, task: string | null): bo
   return task !== null && state.panel === null && task !== state.suppressedTask;
 }
 
+// The open task (Oct 19 notes): what the person just chose (pinned: a task id, or null for closed) wins
+// until the URL — updated with history.pushState, which reaches useSearchParams a little later — says
+// the same; undefined = follow the URL (cold links, Back / Forward, router navigations).
+export function openTaskOf(pinned: string | null | undefined, urlTask: string | null): string | null {
+  return pinned === undefined ? urlTask : pinned;
+}
+
+export function pinCaughtUp(pinned: string | null | undefined, urlTask: string | null): boolean {
+  return pinned !== undefined && pinned === urlTask;
+}
+
 // The current URL with `?task=` set (id) or removed (null), other parameters and the hash kept.
 export function hrefWithTask(href: string, taskId: string | null): string {
   const url = new URL(href, "http://local.invalid");

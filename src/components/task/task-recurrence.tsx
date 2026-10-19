@@ -1,9 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { CalendarDays, ChevronRight, Repeat } from "lucide-react";
-import { useTaskHref } from "@/components/project/shared";
 import { useServerAction } from "@/components/toast";
 import { setTaskRecurrence } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
@@ -17,6 +15,8 @@ import {
   type RecurrenceEnds,
 } from "@/lib/recurrence";
 import { MiniCalendar } from "./date-picker";
+import { TaskLink } from "@/components/task/task-link";
+import { seedFromTitle } from "@/lib/task-seed";
 
 const FREQUENCY_LABELS = { daily: "Daily", weekly: "Weekly", monthly: "Monthly", yearly: "Yearly" } as const;
 const UNITS = { daily: "day(s)", weekly: "week(s)", monthly: "month(s)", yearly: "year(s)" } as const;
@@ -52,7 +52,6 @@ export function TaskRecurrence({ task, defaultOpen = false }: { task: TaskDetail
 
 function RecurrenceEditor({ task }: { task: TaskDetail }) {
   const [, run] = useServerAction();
-  const taskHref = useTaskHref();
   const [rule, setRule] = useState<Recurrence | null>(task.recurrence);
   const [pickingUntil, setPickingUntil] = useState(false);
 
@@ -221,9 +220,9 @@ function RecurrenceEditor({ task }: { task: TaskDetail }) {
       ) : null}
 
       {task.nextOccurrenceId ? (
-        <Link href={taskHref(task.nextOccurrenceId)} scroll={false} className="text-xs text-accent-700 hover:underline">
+        <TaskLink taskId={task.nextOccurrenceId} seed={() => seedFromTitle(task.nextOccurrenceId!, task.title, { kind: task.kind })} className="text-xs text-accent-700 hover:underline">
           Open the next occurrence
-        </Link>
+        </TaskLink>
       ) : null}
     </div>
   );

@@ -15,13 +15,15 @@ import {
   Users,
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { OpenTaskLink } from "@/components/task/task-link";
+import { seedFromTitle } from "@/lib/task-seed";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { getPersonProfile, type PersonTask } from "@/lib/data";
 import { dayLabel } from "@/lib/date-input";
 import { isUuid } from "@/lib/ids";
-import { PROFILE_TASK_LIMIT, activityVerb, personHref, personReportsHref } from "@/lib/people";
+import { PROFILE_TASK_LIMIT, activityVerb, personReportsHref } from "@/lib/people";
 import { projectColorClass } from "@/lib/project-colors";
 import { ROLE_LABELS, isProjectRole } from "@/lib/roles";
 import { TEAM_ROLE_LABELS } from "@/lib/teams";
@@ -61,7 +63,6 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
   const self = viewer.user?.id === person.id;
   const first = person.name.split(/\s+/)[0] || person.name;
   const statusChip = STATUS_CHIP[person.status];
-  const taskHref = (taskId: string) => `${personHref(person.id)}?task=${taskId}`;
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
@@ -125,7 +126,7 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
                 ) : (
                   <ul className="divide-y divide-zinc-100">
                     {person.openTasks.map((t) => (
-                      <TaskRow key={t.id} task={t} href={taskHref(t.id)} today={today} year={year} active={t.id === openTaskId} />
+                      <TaskRow key={t.id} task={t} today={today} year={year} />
                     ))}
                   </ul>
                 )}
@@ -154,10 +155,11 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
                   <ol className="divide-y divide-zinc-100">
                     {person.activity.map((a) => (
                       <li key={a.id}>
-                        <Link
-                          href={taskHref(a.taskId)}
-                          scroll={false}
+                        <OpenTaskLink
+                          taskId={a.taskId}
+                          seedData={seedFromTitle(a.taskId, a.taskTitle)}
                           className="flex gap-2.5 px-4 py-2.5 text-sm hover:bg-zinc-50"
+                          activeClassName="bg-accent-50"
                         >
                           {a.kind === "comment" ? (
                             <MessageSquare className="mt-0.5 size-4 shrink-0 text-zinc-400" aria-hidden />
@@ -175,7 +177,7 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
                             ) : null}
                           </span>
                           <Timestamp iso={a.at} className="shrink-0 text-xs text-zinc-400" />
-                        </Link>
+                        </OpenTaskLink>
                       </li>
                     ))}
                   </ol>
@@ -189,7 +191,7 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
                   </h2>
                   <ul className="divide-y divide-zinc-100">
                     {person.recentlyCompleted.map((t) => (
-                      <TaskRow key={t.id} task={t} href={taskHref(t.id)} today={today} year={year} active={t.id === openTaskId} />
+                      <TaskRow key={t.id} task={t} today={today} year={year} />
                     ))}
                   </ul>
                 </section>
@@ -244,7 +246,7 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
           </div>
         </div>
       </div>
-      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
+      <TaskPaneSlot taskId={openTaskId} />
     </main>
   );
 }
@@ -285,29 +287,21 @@ function LastActivity({ person }: { person: NonNullable<Awaited<ReturnType<typeo
   );
 }
 
-function TaskRow({
-  task: t,
-  href,
-  today,
-  year,
-  active,
-}: {
-  task: PersonTask;
-  href: string;
-  today: string;
-  year: number;
-  active: boolean;
-}) {
+function TaskRow({ task: t, today, year }: { task: PersonTask; today: string; year: number }) {
   const done = t.completedAt !== null;
   const overdue = !done && t.dueOn !== null && t.dueOn < today;
   const Icon = t.kind === "milestone" ? Diamond : done ? CheckCircle2 : Circle;
   return (
     <li>
-      <Link
-        href={href}
-        scroll={false}
-        aria-current={active ? "true" : undefined}
-        className={`flex items-center gap-2.5 px-4 py-2 text-sm hover:bg-zinc-50 ${active ? "bg-accent-50" : ""}`}
+      <OpenTaskLink
+        taskId={t.id}
+        seedData={seedFromTitle(t.id, t.title, {
+          completed: t.completedAt !== null,
+          dueOn: t.dueOn,
+          projectName: t.projectName ?? "Private",
+        })}
+        className="flex items-center gap-2.5 px-4 py-2 text-sm hover:bg-zinc-50"
+        activeClassName="bg-accent-50"
       >
         <Icon className={`size-4 shrink-0 ${done ? "text-green-600" : "text-zinc-400"}`} aria-hidden />
         <span className="min-w-0 flex-1">
@@ -326,7 +320,7 @@ function TaskRow({
             {dayLabel(t.dueOn, year)}
           </span>
         ) : null}
-      </Link>
+      </OpenTaskLink>
     </li>
   );
 }

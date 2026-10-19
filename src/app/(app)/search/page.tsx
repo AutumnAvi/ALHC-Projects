@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Search } from "lucide-react";
 import { ExportLink } from "@/components/reports/report-chrome";
 import { SearchResults } from "@/components/search/search-results";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { listTags, listTaskTagIds, searchTasks } from "@/lib/data";
 
@@ -53,7 +53,6 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
           {query ? (
             <SearchResults
               query={query}
-              openTaskId={openTaskId}
               tags={tags}
               results={results.map((r) => ({
                 id: r.id,
@@ -76,7 +75,7 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
           )}
         </div>
       </div>
-      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
+      <TaskPaneSlot taskId={openTaskId} />
     </main>
   );
 }

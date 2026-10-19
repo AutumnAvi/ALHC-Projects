@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { ArrowRightToLine, Maximize2, Minimize2, MoveHorizontal, SearchX, X } from "lucide-react";
@@ -26,7 +25,19 @@ const PaneMode = createContext<{ expanded: boolean; wide: boolean }>({ expanded:
 // over the app (sidebar hidden), wider in Wide view. Both modes keep the same elements, so switching
 // keeps drafts. Escape returns from full screen to the pane, then closes the pane — never while typing
 // or while a popover, dialog, or the search palette is open on top.
-export function PaneShell({ children, label }: { children: ReactNode; label: string }) {
+export function PaneShell({
+  children,
+  label,
+  paneState = "ready",
+  taskId,
+}: {
+  children: ReactNode;
+  label: string;
+  // loading = placeholders, preview = what the clicked row showed, ready = the full pane. Also read by the
+  // timing script (docs/PERF-AUDIT.md).
+  paneState?: "loading" | "preview" | "ready";
+  taskId?: string;
+}) {
   const { close } = useClosePane();
   // One right panel at a time: Customize or the status sheet hides the pane (right-panel.tsx).
   const { visible } = useTaskPane();
@@ -59,6 +70,8 @@ export function PaneShell({ children, label }: { children: ReactNode; label: str
       >
         <aside
           data-task-pane={expanded ? "full" : "side"}
+          data-pane-state={paneState}
+          data-task-id={taskId}
           role={expanded ? "dialog" : undefined}
           aria-modal={expanded ? true : undefined}
           aria-label={label}
@@ -109,24 +122,25 @@ export function WideViewToggle() {
   );
 }
 
-export function CloseButton({ href }: { href: string }) {
+// Closes at once, without a server render (useTaskPane().closeTask: a history entry, like before).
+export function CloseButton() {
   const { expanded } = useContext(PaneMode);
+  const { close } = useClosePane();
   return (
-    <Link href={href} scroll={false} aria-label="Close task details" data-tooltip="Close" className="btn-icon">
+    <button type="button" onClick={close} aria-label="Close task details" data-tooltip="Close" className="btn-icon">
       {expanded ? <X className="size-4" /> : <ArrowRightToLine className="size-4" />}
-    </Link>
+    </button>
   );
 }
 
 export const PANE_HEADER = "flex h-12 shrink-0 items-center gap-2 border-b border-zinc-200 px-3 print:hidden";
 
 export function TaskNotFoundPanel() {
-  const { href } = useClosePane();
   return (
     <PaneShell label="Task details">
       <div className={`${PANE_HEADER} justify-end`}>
         <ExpandButton />
-        <CloseButton href={href} />
+        <CloseButton />
       </div>
       <div className="p-gutter">
         <EmptyState icon={SearchX} title="Task not found" size="inline">
@@ -137,16 +151,16 @@ export function TaskNotFoundPanel() {
   );
 }
 
-// Shown while the pane streams in (see TaskPaneBoundary): same chrome, placeholder rows.
+// Shown while the pane loads with nothing to draw yet (a link from elsewhere): same chrome, placeholder
+// rows. A click on a row shows TaskPanePreview instead.
 export function TaskPaneLoading() {
-  const { href } = useClosePane();
   return (
-    <PaneShell label="Task details">
+    <PaneShell label="Task details" paneState="loading">
       <div className={PANE_HEADER}>
         <Skeleton className="h-8 w-32 rounded-md" />
         <div className="ml-auto flex items-center gap-1">
           <ExpandButton />
-          <CloseButton href={href} />
+          <CloseButton />
         </div>
       </div>
       <div role="status" className="px-gutter py-4">

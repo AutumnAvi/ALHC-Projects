@@ -311,3 +311,8 @@ select public.alhc_patch_function(
         where s.project_id = coalesce(t.req_project_id, t.home_project_id) and s.deleted_at is null
       ), true),$p$
 );
+
+-- =============================================================================================
+-- Statements that must run last (applied by hand) go after the marker below. None this time.
+-- =============================================================================================
+-- TAIL

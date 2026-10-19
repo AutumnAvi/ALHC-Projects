@@ -6,13 +6,14 @@ import { useServerAction } from "@/components/toast";
 import { convertToSubtask, convertToTask } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
+import { useTaskExtras } from "./task-pane-store";
 
 // Whether the "…" menu offers Convert: a subtask can become a task of a project you edit; a task can
-// become a subtask of another task you edit.
+// become a subtask of another task you edit (the dialog lists them, and says so when there are none).
 export function canConvert(task: TaskDetail) {
   if (!hasRole(task.viewerRole, "editor")) return false;
   if (task.isSubtask) return task.memberships.some((m) => task.editableProjectIds.includes(m.projectId));
-  return task.dependencyCandidates.some((g) => g.key !== "tree" && g.tasks.length > 0);
+  return true;
 }
 
 // Convert a task into a subtask of another task (it leaves its projects), or a subtask into a task of a
@@ -26,7 +27,9 @@ export function ConvertTaskDialog({ task, onClose }: { task: TaskDetail; onClose
   const [sectionId, setSectionId] = useState("");
   const [parentId, setParentId] = useState("");
   // Possible parents: tasks of projects you edit, not this task's own subtasks (that would be a cycle).
-  const parents = task.dependencyCandidates.filter((g) => g.key !== "tree");
+  // Loaded when the dialog opens (a big read on a big project).
+  const extras = useTaskExtras(task.id, "candidates", !task.isSubtask);
+  const parents = (extras?.dependencyCandidates ?? []).filter((g) => g.key !== "tree" && g.tasks.length > 0);
 
   function finish(result: Promise<{ error?: string }>) {
     run(async () => {
@@ -119,8 +122,15 @@ export function ConvertTaskDialog({ task, onClose }: { task: TaskDetail; onClose
           <label htmlFor="convert-parent" className={DIALOG_LABEL}>
             Parent task
           </label>
-          <select id="convert-parent" value={parentId} onChange={(e) => setParentId(e.currentTarget.value)} className="field mt-1 w-full" required>
-            <option value="">Choose a task…</option>
+          <select
+            id="convert-parent"
+            value={parentId}
+            onChange={(e) => setParentId(e.currentTarget.value)}
+            disabled={!extras || parents.length === 0}
+            className="field mt-1 w-full"
+            required
+          >
+            <option value="">{!extras ? "Loading tasks…" : parents.length ? "Choose a task…" : "No tasks you edit"}</option>
             {parents.map((group) => (
               <optgroup key={group.key} label={group.label}>
                 {group.tasks.map((t) => (

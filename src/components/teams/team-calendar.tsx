@@ -5,9 +5,11 @@ import { useOptimistic, useState, useTransition } from "react";
 import { CalendarGrid, type CalendarDates, type CalendarDrag, type CalendarItem } from "@/components/calendar/calendar-grid";
 import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { PeriodNav } from "@/components/project/view-chrome";
+import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { monthLabel, shiftMonth } from "@/lib/date-input";
 import { projectColorClass } from "@/lib/project-colors";
+import { parseTaskKind } from "@/lib/task-kinds";
 import { TEAM_CALENDAR_LIMIT, type TeamCalendarTask } from "@/lib/teams";
 
 type Move = { taskId: string } & CalendarDates;
@@ -27,7 +29,6 @@ export function TeamCalendar({
   tasks,
   projectCount,
   capped,
-  openTaskId,
 }: {
   teamId: string;
   // "YYYY-MM"
@@ -39,8 +40,9 @@ export function TeamCalendar({
   tasks: TeamCalendarTask[];
   projectCount: number;
   capped: boolean;
-  openTaskId: string | null;
 }) {
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -85,7 +87,16 @@ export function TeamCalendar({
       overdue,
       canEdit: task.canEdit,
       open: openTaskId === task.id,
-      href: hrefWith({ task: task.id }),
+      // The pane's preview of a clicked bar.
+      seed: () => ({
+        id: task.id,
+        title: task.title,
+        completed,
+        kind: parseTaskKind(task.kind),
+        dueOn: task.dueOn,
+        startOn: task.startOn,
+        projectName: task.projectName,
+      }),
       dotClass: projectColorClass(task.projectId),
       srDetail: ` in ${task.projectName}`,
       tooltip: `${task.title} · ${task.projectName}`,

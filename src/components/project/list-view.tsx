@@ -1,7 +1,5 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useOptimistic, useRef, useState, useTransition, type DragEvent, type ReactNode } from "react";
 import {
   ArrowDownNarrowWide,
@@ -27,6 +25,8 @@ import { useCan } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
 import { useViewConfig } from "@/components/project/view-config";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
+import { useOpenTaskId } from "@/components/shell/right-panel";
+import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { placeSection, placeTask, saveListColumnWidths, setTaskCompleted, updateTask } from "@/lib/actions";
@@ -54,12 +54,16 @@ import {
   type ViewConfig,
 } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
-import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf, useTaskHref } from "./shared";
+import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf } from "./shared";
 import { Assignee, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
+import { useProjectTaskSeeds } from "./task-seeds";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
+import type { TaskSeed } from "@/lib/task-seed";
+
+type Seeds = ReturnType<typeof useProjectTaskSeeds>;
 
 type Props = {
   projectId: string;
@@ -68,7 +72,8 @@ type Props = {
   profiles: Profile[];
   fields: FieldDef[];
   config: ViewConfig;
-  openTaskId: string | null;
+  // The task pane's preview shows it for a clicked row.
+  projectName?: string | null;
   // Server page of cards. Null means every matching task is already in `tasks`.
   taskPage?: ProjectTaskGroupPage[] | null;
   bulk?: Omit<BulkContext, "project">;
@@ -123,7 +128,7 @@ export function ListView({
   profiles,
   fields,
   config: configProp,
-  openTaskId,
+  projectName = null,
   taskPage = null,
   bulk,
   subtasks = null,
@@ -131,8 +136,10 @@ export function ListView({
   columnWidths = {},
   sectionTaskCounts = {},
 }: Props) {
-  const router = useRouter();
-  const taskHref = useTaskHref();
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
+  const openTask = useOpenTask();
+  const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const viewConfig = useViewConfig();
   // The page's (optimistic) config: column menus apply instantly as an unsaved draft.
   const config = viewConfig?.current ?? configProp;
@@ -251,7 +258,8 @@ export function ListView({
     },
     open() {
       const id = selection.active ?? (selection.selected.length === 1 ? selection.selected[0] : null);
-      if (id) router.push(taskHref(id), { scroll: false });
+      const task = id ? tasksById.get(id) : undefined;
+      if (id) openTask(id, task ? seeds.task(task) : null);
     },
     escape() {
       if (openTaskId) return false; // the pane closes itself
@@ -359,6 +367,7 @@ export function ListView({
     profilesById,
     tagsById,
     openTaskId,
+    seeds,
     onToggle: toggle,
     onRename: rename,
     canEdit,
@@ -597,9 +606,11 @@ export function ListView({
                 {childrenOf ? (
                   <SubtaskRows
                     parentId={task.id}
+                    parentTitle={task.title}
                     depth={1}
                     childrenOf={childrenOf}
                     profilesById={profilesById}
+                    seeds={seeds}
                     openTaskId={openTaskId}
                     canEdit={canEdit}
                     columns={columns}
@@ -929,6 +940,7 @@ function HeaderCell({
 // name is a link to the task.
 function TaskTitle({
   task,
+  seed,
   canEdit,
   open,
   editing,
@@ -936,26 +948,26 @@ function TaskTitle({
   onRename,
 }: {
   task: ProjectTask;
+  seed: () => TaskSeed;
   canEdit: boolean;
   open: boolean;
   editing: boolean;
   setEditing: (editing: boolean) => void;
   onRename: (title: string) => void;
 }) {
-  const taskHref = useTaskHref();
   const completed = Boolean(task.completedAt);
   const tone = completed ? "text-zinc-400 line-through" : "text-zinc-900";
   if (!canEdit) {
     return (
-      <Link
-        href={taskHref(task.id)}
-        scroll={false}
+      <TaskLink
+        taskId={task.id}
+        seed={seed}
         draggable={false}
         aria-current={open ? "true" : undefined}
         className={`min-w-0 truncate text-sm hover:underline ${tone}`}
       >
         {displayTaskTitle(task.title, task.requestLabel)}
-      </Link>
+      </TaskLink>
     );
   }
   if (editing) {
@@ -1002,6 +1014,7 @@ function TaskRow({
   profilesById,
   tagsById,
   openTaskId,
+  seeds,
   onToggle,
   onRename,
   canEdit,
@@ -1021,6 +1034,7 @@ function TaskRow({
   profilesById: Map<string, Profile>;
   tagsById: Map<string, Tag>;
   openTaskId: string | null;
+  seeds: Seeds;
   onToggle: (task: ProjectTask) => void;
   onRename: (task: ProjectTask, title: string) => void;
   canEdit: boolean;
@@ -1036,8 +1050,10 @@ function TaskRow({
   onDragStart: (e: DragEvent) => void;
   onDragEnd: () => void;
 }) {
-  const router = useRouter();
-  const taskHref = useTaskHref();
+  const openTask = useOpenTask();
+  const seed = () => seeds.task(task);
+  // Hovering the row fetches the pane's data, so a click usually finds it ready.
+  const prefetch = useTaskPrefetch(task.id, seed);
   // Renaming in place: the row stops being draggable so the mouse can select text in the name.
   const [editing, setEditing] = useState(false);
   const completed = Boolean(task.completedAt);
@@ -1055,6 +1071,8 @@ function TaskRow({
       draggable={draggable && !editing}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onPointerEnter={prefetch.onPointerEnter}
+      onPointerLeave={prefetch.onPointerLeave}
       onClick={(e) => {
         const target = e.target as HTMLElement;
         const control = target.closest("a, button, input, select, textarea, label");
@@ -1065,7 +1083,7 @@ function TaskRow({
         }
         // Clicking a row opens the task; only the checkbox on the left selects (and brings up the bulk bar).
         selection.setActive(task.id);
-        if (!open) router.push(taskHref(task.id), { scroll: false });
+        if (!open) openTask(task.id, seed());
       }}
       className={`cv-row group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${
         selected || open ? "bg-accent-50" : "hover:bg-zinc-50"
@@ -1113,6 +1131,7 @@ function TaskRow({
         />
         <TaskTitle
           task={task}
+          seed={seed}
           canEdit={canEdit}
           open={open}
           editing={editing}
@@ -1124,9 +1143,9 @@ function TaskRow({
           <CommentCount count={task.commentCount} />
         </span>
         {tagsInline ? <TagChips ids={task.tagIds} byId={tagsById} /> : null}
-        <Link
-          href={taskHref(task.id)}
-          scroll={false}
+        <TaskLink
+          taskId={task.id}
+          seed={seed}
           draggable={false}
           aria-label={`Open “${task.title}”`}
           aria-current={open ? "true" : undefined}
@@ -1134,7 +1153,7 @@ function TaskRow({
           className="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 opacity-0 hover:bg-zinc-200/70 hover:text-zinc-700 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
         >
           <ChevronRight className="size-4" />
-        </Link>
+        </TaskLink>
       </div>
       {columns.map((column) => {
         if (column === "assignee") {
@@ -1189,9 +1208,11 @@ function TaskRow({
 // they follow their task.
 function SubtaskRows({
   parentId,
+  parentTitle,
   depth,
   childrenOf,
   profilesById,
+  seeds,
   openTaskId,
   canEdit,
   columns,
@@ -1199,17 +1220,18 @@ function SubtaskRows({
   onToggle,
 }: {
   parentId: string;
+  parentTitle: string;
   depth: number;
   childrenOf: Map<string, SubtaskItem[]>;
   profilesById: Map<string, Profile>;
+  seeds: Seeds;
   openTaskId: string | null;
   canEdit: boolean;
   columns: ColumnKey[];
   gridStyle: React.CSSProperties;
   onToggle: (subtask: SubtaskItem) => void;
 }) {
-  const router = useRouter();
-  const taskHref = useTaskHref();
+  const openTask = useOpenTask();
   const children = childrenOf.get(parentId) ?? [];
   if (children.length === 0) return null;
   return (
@@ -1223,7 +1245,7 @@ function SubtaskRows({
               data-subtask-row={subtask.id}
               onClick={(e) => {
                 if ((e.target as HTMLElement).closest("a, button, input, select, textarea, label")) return;
-                if (!open) router.push(taskHref(subtask.id), { scroll: false });
+                if (!open) openTask(subtask.id, seeds.subtask(subtask, parentTitle));
               }}
               className={`cv-row group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
               style={gridStyle}
@@ -1240,15 +1262,15 @@ function SubtaskRows({
                   onToggle={() => onToggle(subtask)}
                   label={kindToggleLabel(subtask.kind, subtask.title, completed)}
                 />
-                <Link
-                  href={taskHref(subtask.id)}
-                  scroll={false}
+                <TaskLink
+                  taskId={subtask.id}
+                  seed={() => seeds.subtask(subtask, parentTitle)}
                   aria-current={open ? "true" : undefined}
                   className={`min-w-0 truncate text-sm hover:underline ${completed ? "text-zinc-400 line-through" : "text-zinc-700"}`}
                 >
                   <span className="sr-only">Subtask: </span>
                   {displayTaskTitle(subtask.title, subtask.requestLabel)}
-                </Link>
+                </TaskLink>
                 {subtask.subtaskCount > 0 ? (
                   <span
                     className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500"
@@ -1277,9 +1299,11 @@ function SubtaskRows({
             </div>
             <SubtaskRows
               parentId={subtask.id}
+              parentTitle={subtask.title}
               depth={depth + 1}
               childrenOf={childrenOf}
               profilesById={profilesById}
+              seeds={seeds}
               openTaskId={openTaskId}
               canEdit={canEdit}
               columns={columns}

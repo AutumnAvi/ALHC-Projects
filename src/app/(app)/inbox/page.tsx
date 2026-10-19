@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { InboxView } from "@/components/inbox/inbox-view";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { requireMember } from "@/lib/auth";
 import { hasBatch5Schema, listInbox, listProfiles } from "@/lib/data";
 import { parseInboxTab } from "@/lib/inbox";
@@ -29,12 +29,11 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
         items={items}
         profiles={profiles}
         memberId={member.id}
-        openTaskId={openTaskId}
         bookmarks={bookmarks}
         timeZone={timeZone}
         today={todayIn(timeZone)}
       />
-      {openTaskId ? <TaskPaneBoundary taskId={openTaskId} /> : null}
+      <TaskPaneSlot taskId={openTaskId} />
     </main>
   );
 }

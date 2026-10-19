@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useOptimistic, useState, type DragEvent, type ReactNode } from "react";
 import {
   ArrowDown,
@@ -22,10 +21,12 @@ import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-b
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
-import { useTaskHref } from "@/components/project/shared";
 import { Segmented } from "@/components/project/view-chrome";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { ShowMoreRows, useGroupPages } from "@/components/show-more";
+import { useOpenTaskId } from "@/components/shell/right-panel";
+import { useShell } from "@/components/shell/shell-context";
+import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import {
@@ -40,6 +41,7 @@ import {
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
 import { EmptyCellHint } from "@/components/project/task-meta";
 import type { MyTask } from "@/lib/data";
+import { seedFromMyTask, type TaskSeed } from "@/lib/task-seed";
 import {
   MY_TASKS_LAYOUT_COOKIE,
   type MyTaskPlacement,
@@ -112,7 +114,6 @@ function sortOrderFor(tasks: MyTask[], placements: Record<string, MyTaskPlacemen
 export function MyTasksView({
   open,
   completed,
-  openTaskId,
   bulk,
   layout: initialLayout,
   sections,
@@ -120,14 +121,16 @@ export function MyTasksView({
 }: {
   open: MyTask[];
   completed: MyTask[];
-  openTaskId: string | null;
   bulk: Omit<BulkContext, "project">;
   layout: MyTasksLayout;
   sections: MyTaskSection[];
   placements: Record<string, MyTaskPlacement>;
 }) {
-  const router = useRouter();
-  const taskHref = useTaskHref();
+  // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const openTaskId = useOpenTaskId();
+  const openTask = useOpenTask();
+  const { member } = useShell();
+  const seed = (task: MyTask): TaskSeed => seedFromMyTask(task, { id: member.id, name: member.name });
   const today = useToday();
   const [, run] = useServerAction();
   const bulkEdit = useBulkEdit();
@@ -200,7 +203,8 @@ export function MyTasksView({
     },
     open() {
       const id = selection.active ?? (selection.selected.length === 1 ? selection.selected[0] : null);
-      if (id) router.push(taskHref(id), { scroll: false });
+      const task = id ? tasksById.get(id) : undefined;
+      if (id) openTask(id, task ? seed(task) : null);
     },
     escape() {
       if (openTaskId || selection.selected.length === 0) return false;
@@ -261,7 +265,7 @@ export function MyTasksView({
     if (sectionId && target) moveSection(sectionId, target.beforeId);
   }
 
-  const rowProps = { openTaskId, today, isDone, onToggle: toggle, selection, selecting: selection.selected.length > 0 };
+  const rowProps = { openTaskId, seed, today, isDone, onToggle: toggle, selection, selecting: selection.selected.length > 0 };
   const collapseProps = (key: string) => ({
     collapsed: collapsed.has(key),
     onToggleCollapsed: () =>
@@ -774,6 +778,7 @@ function TaskGroup({
 function MyTaskRow({
   task,
   openTaskId,
+  seed,
   today,
   isDone,
   onToggle,
@@ -787,6 +792,7 @@ function MyTaskRow({
 }: {
   task: MyTask;
   openTaskId: string | null;
+  seed: (task: MyTask) => TaskSeed;
   today: string | null;
   isDone: (task: MyTask) => boolean;
   onToggle: (task: MyTask) => void;
@@ -798,8 +804,10 @@ function MyTaskRow({
   onDragEnd?: () => void;
   onDragOver?: (e: DragEvent<HTMLLIElement>) => void;
 }) {
-  const router = useRouter();
-  const taskHref = useTaskHref();
+  const openTask = useOpenTask();
+  const seedThis = () => seed(task);
+  // Hovering the row fetches the pane's data, so a click usually finds it ready.
+  const prefetch = useTaskPrefetch(task.id, seedThis);
   const done = isDone(task);
   const open = openTaskId === task.id;
   const overdue = Boolean(task.dueOn && today && !done && task.dueOn < today);
@@ -812,6 +820,8 @@ function MyTaskRow({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
+      onPointerEnter={prefetch.onPointerEnter}
+      onPointerLeave={prefetch.onPointerLeave}
       onClick={(e) => {
         const control = (e.target as HTMLElement).closest("a, button, input, select, textarea, label");
         if (control) {
@@ -822,7 +832,7 @@ function MyTaskRow({
         // Clicking a row opens the task; only the checkbox on the left selects (and brings up the bulk bar).
 
         selection.setActive(task.id);
-        if (!open) router.push(taskHref(task.id), { scroll: false });
+        if (!open) openTask(task.id, seedThis());
       }}
       className={`cv-row group flex min-h-row cursor-pointer items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
         dropBefore ? "shadow-[inset_0_2px_0_var(--color-accent-500)]" : ""
@@ -851,16 +861,16 @@ function MyTaskRow({
         onToggle={() => onToggle(task)}
         label={kindToggleLabel(task.kind, task.title, done)}
       />
-      <Link
-        href={taskHref(task.id)}
-        scroll={false}
+      <TaskLink
+        taskId={task.id}
+        seed={seedThis}
         draggable={false}
         data-task-link=""
         aria-current={open ? "true" : undefined}
         className={`min-w-0 flex-1 truncate text-sm hover:underline ${done ? "text-zinc-400 line-through" : "text-zinc-900"}`}
       >
         {task.title}
-      </Link>
+      </TaskLink>
       {task.parentTitle ? (
         <span className="hidden max-w-40 shrink-0 truncate text-xs text-zinc-500 md:inline" title={`Subtask of ${task.parentTitle}`}>
           <span className="sr-only">Subtask of </span>

@@ -33,3 +33,13 @@ for f in supabase/migrations/*.sql; do "${PSQL[@]}" -f "$f"; done
 ```
 
 Plans in `scripts/perf/plans/` were taken on this seed as `perf-seed@example.com` (`set role authenticated` and `request.jwt.claim.sub` set to that id), with `EXPLAIN (ANALYZE, BUFFERS)`. `bundle.txt` is the production client JS from `next build` on the same commit as the stage 1 plans.
+
+## Task pane timings (Oct 19 notes)
+
+`seed-pane.sql` adds 3 subtasks under tasks 2–21 and a pinned Priority field (run it after `seed.sql`). `pane-timing.mjs` opens, closes, and switches tasks in headless Chrome against a running app on that database and prints JSON (medians, p95, server renders per action). It needs `playwright-core` (not a dependency: point `PLAYWRIGHT_CORE` at a copy) and Chrome (`CHROME`, default `/usr/bin/google-chrome`):
+
+```bash
+PLAYWRIGHT_CORE=/path/to/playwright-core node scripts/perf/pane-timing.mjs http://localhost:3000 after 2 > pane-after.json
+```
+
+The script signs in as `perf-seed@example.com` with the password `local-password`, so the app needs an Auth service in front of that database that accepts it (the seed creates no password).

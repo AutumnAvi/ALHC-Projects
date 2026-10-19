@@ -130,6 +130,40 @@ The project view already had one copy of that code, so its first load stays put.
 
 `TZ=UTC npm run db:test` passed, including `zz23`. `npm run typecheck`, `npm run lint`, unit tests (21 passed), and `npm run build` passed.
 
+## Oct 19 notes: opening a task
+
+Avi's note: opening a task must feel instant. Target: the pane shows the task in under 100 ms from what the row already has; comments, activity, subtasks, and attachments follow; closing and switching tasks are instant too.
+
+**Setup.** A local stack on `scripts/perf/seed.sql` plus `scripts/perf/seed-pane.sql` (3 subtasks under tasks 2–21, a Priority field on tasks 1–200): Postgres 17, PostgREST, a small auth stand-in, and `next build` + `next start` of each commit side by side. Timings come from `scripts/perf/pane-timing.mjs` in headless Chrome (1440 × 900), measured inside the page from the click event to the first animation frame where the condition holds. The pointer rests on the row for 150 ms before the click, as a person's does. "Server renders" counts RSC requests (a server render of the whole page) per action. Before = `c815303`, after = this branch. Two rounds each.
+
+| Action (median / p95, ms) | Before | After |
+| --- | ---: | ---: |
+| Open: the pane appears | 137 / 165 (a skeleton) | **49 / 147** (the task) |
+| Open: the task's name shows | 4,215 / 4,736 | **49 / 147** |
+| Open: full detail (editable, comments, activity, subtasks) | 4,215 / 4,736 | **49 / 147** |
+| Close | 138.5 / 160 | **47.5 / 98** |
+| Switch to another task (full detail) | 4,236.5 / 4,382 | **36 / 71** |
+| Open a subtask from the pane (full detail) | 4,180 / 4,375 | **36 / 41** |
+| Server renders per open / close / switch / subtask | 1 / 1 / 1 / 1 | **0 / 0 / 0 / 0** |
+
+n = 16 opens, 16 closes, 10 switches, 10 subtasks on each side, no timeouts. With 16 samples the p95 is the slowest one: 14 of the 16 opens took 42–88 ms, the other two 114 and 147 ms. Without the hover (a cold fetch), the pane's data route answers in **42 ms** median over 11 tasks (25–30 ms of it on the server, `Server-Timing: pane`); the first open of a visit also loads the pickers' people, projects, and tags (153 ms) while the row's own data is already drawn.
+
+**Why it was slow.**
+
+1. Opening, closing, and switching were `router.push` / `router.replace` of `?task=`: a server render of the whole page (the 10,000-card List included) before the pane could change.
+2. `getTaskDetail` made about 14 round trips one after another.
+3. Two parts of it took 3–5 s each on this project, for every task: the critical path (`project_critical_path`, only for the slack line under Dependencies) and the dependency picker's candidate tasks (only used once someone opens Add dependencies or Convert).
+
+**What changed.**
+
+- Opening a task pins it in a client store and moves the URL with `history.pushState` (Next 16 keeps its router in step; Back / Forward work, and a later refresh renders with the new `?task=`). Rows and cards are `TaskLink`s: a plain click opens in place, ⌘ / Ctrl / middle click still opens a new tab. Closing is `pushState` without `?task=`.
+- The pane draws at once from what the row knows (`TaskSeed`: name, number, done, kind, assignee, dates, project, section, tags, pinned field values, counts) and swaps to the full detail when it arrives; hover (75 ms) and focus prefetch it, three at a time.
+- The detail comes from `GET /api/task-pane/<id>` (the person's own client and RLS, `private, no-store`), not a server action, because server actions run one at a time per tab. A small client cache (50 tasks, newest copy wins) makes reopening and Back instant; it is revalidated after 10 s and dropped after every write.
+- `getTaskDetail` runs its independent reads in two waves (about 3 round trips), and the critical path and the dependency candidates moved to `?part=schedule` / `?part=candidates`, loaded only when the slack line can show and when the picker or Convert opens.
+- A cold `?task=` link still renders the pane on the server (the same loader, streamed to the client host).
+
+Browser checks on the same stack (`/tmp` script, not committed): row click, open link, switch, Back / Forward, rename from the pane reaching the List row, a comment, the dependency picker loading on open, Customize closing the pane (and a task closing Customize), the close button, Escape, a subtask and its breadcrumb, a cold link, Ctrl-click to a new tab, My tasks, and an Inbox card — 26 of 26 passed with no page errors.
+
 ## Deferred
 
 Deferred: none.

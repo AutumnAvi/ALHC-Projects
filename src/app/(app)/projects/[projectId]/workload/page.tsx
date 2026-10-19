@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { TaskPaneBoundary } from "@/components/task/task-pane";
+import { TaskPaneSlot } from "@/components/task/task-pane";
 import { workloadParams, workloadPeople } from "@/components/workload/workload-params";
 import { WorkloadView } from "@/components/workload/workload-view";
 import {
@@ -53,7 +53,7 @@ export default async function ProjectWorkloadPage({ params, searchParams }: Page
         measure={measure}
         canEditCapacity={hasRole(role, "editor")}
       />
-      {state.openTaskId ? <TaskPaneBoundary taskId={state.openTaskId} /> : null}
+      <TaskPaneSlot taskId={state.openTaskId} />
     </main>
   );
 }

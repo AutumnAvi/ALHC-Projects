@@ -1,44 +1,23 @@
-import dynamic from "next/dynamic";
-import { Suspense } from "react";
-import { requireMember } from "@/lib/auth";
-import { getTaskDetail, listMyProjectRoles, listProfiles, listProjects, listTags } from "@/lib/data";
-import { hasRole } from "@/lib/roles";
+import { loadTaskPanePayload } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
-import { TaskNotFoundPanel, TaskPaneLoading } from "./task-pane-frame";
+import { TaskPaneHost } from "./task-pane-host";
 
-// The detail panel pulls in comments, dates, and attachments. Load that chunk only once a task opens.
-const TaskDetailPanel = dynamic(() => import("./task-detail-panel").then((mod) => mod.TaskDetailPanel));
-
-// Streams the pane: the page underneath renders without waiting for the task, and the pane shows a
-// skeleton right away. Keyed by task so switching tasks shows the skeleton again instead of the old task.
-export function TaskPaneBoundary({ taskId }: { taskId: string }) {
+// Every page that shows the task pane renders this, whether or not a task is open: the client host
+// follows the open task itself (Oct 19 notes), and this adds the page's own server render of ?task= — a
+// promise, so the page never waits for it — for a cold link and for the refresh after every write.
+export function TaskPaneSlot({ taskId }: { taskId: string | null }) {
+  const valid = taskId && isUuid(taskId) ? taskId : null;
   return (
-    <Suspense key={taskId} fallback={<TaskPaneLoading />}>
-      <TaskPane taskId={taskId} />
-    </Suspense>
-  );
-}
-
-export async function TaskPane({ taskId }: { taskId: string }) {
-  if (!isUuid(taskId)) return <TaskNotFoundPanel />;
-  const [member, task, projects, profiles, roles, tags] = await Promise.all([
-    requireMember(),
-    getTaskDetail(taskId),
-    listProjects(),
-    listProfiles(),
-    listMyProjectRoles(),
-    listTags(),
-  ]);
-  if (!task) return <TaskNotFoundPanel />;
-
-  return (
-    <TaskDetailPanel
-      key={task.id}
-      task={task}
-      projects={projects.map(({ id, name }) => ({ id, name, canAdd: hasRole(roles.get(id), "editor") }))}
-      profiles={profiles}
-      memberId={member.id}
-      tags={tags}
+    <TaskPaneHost
+      serverTaskId={taskId}
+      serverPane={
+        valid
+          ? loadTaskPanePayload(valid).catch((error: unknown) => {
+              console.error("[task pane] couldn't load the task", error instanceof Error ? error.message : error);
+              return null;
+            })
+          : null
+      }
     />
   );
 }

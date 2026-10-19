@@ -1,64 +1,110 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ensureTaskPane, seedTask, setPinnedTask, usePinnedTask } from "@/components/task/task-pane-store";
 import {
   closePanel as closePanelState,
   hrefWithTask,
   initialRightPanel,
   openPanel as openPanelState,
+  openTaskOf,
+  pinCaughtUp,
   syncTask,
   taskPaneVisible,
 } from "@/lib/right-panel";
+import type { TaskSeed } from "@/lib/task-seed";
 
 // The app's single right-panel slot (src/lib/right-panel.ts has the rules). Mounted once by AppShell,
 // so the task pane on every page and the project's Customize panel and status update sheet share it.
+// Opening, switching, and closing a task never navigate (Oct 19 notes): the open task is pinned at
+// once (an urgent store update), and the URL follows with history.pushState, which Next keeps in sync
+// with useSearchParams without rendering the page on the server.
 type RightPanelApi = {
-  /** The URL's task id (`?task=`), whether or not the pane is showing. */
+  /** The open task (`?task=`, or what was just clicked), whether or not the pane is showing. */
   task: string | null;
   /** The open non-task panel's key, or null. */
   activePanel: string | null;
   taskPaneVisible: boolean;
   openPanel: (key: string) => void;
   closePanel: (key: string) => void;
-  openTask: (taskId: string) => void;
+  openTask: (taskId: string, seed?: TaskSeed | null) => void;
   closeTask: () => void;
 };
 
 const RightPanelContext = createContext<RightPanelApi | null>(null);
 
+function markOpen() {
+  try {
+    performance.mark("alhc:pane:open");
+  } catch {
+    // Performance marks are only for measuring.
+  }
+}
+
 export function RightPanelProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const task = searchParams.get("task");
+  const urlTask = searchParams.get("task");
   const search = searchParams.toString();
+  const pinned = usePinnedTask();
+  const task = openTaskOf(pinned, urlTask);
   const [state, setState] = useState(() => initialRightPanel(task));
   // Adjust during render (no effect), so a task opening and the panel closing land in the same commit.
   if (task !== state.seenTask) setState(syncTask(state, task));
 
   const routerRef = useRef(router);
+  const taskRef = useRef(task);
   useEffect(() => {
     routerRef.current = router;
-  }, [router]);
+    taskRef.current = task;
+  }, [router, task]);
+
+  // The URL caught up with the pin: follow the URL again.
+  useEffect(() => {
+    if (pinCaughtUp(pinned, urlTask)) setPinnedTask(undefined);
+  }, [pinned, urlTask]);
+  // A router navigation to another page: the URL is the truth there.
+  useEffect(() => {
+    setPinnedTask(undefined);
+  }, [pathname]);
+  // Back / Forward: open or close at once (useSearchParams follows in a transition).
+  useEffect(() => {
+    const onPopState = () => setPinnedTask(new URL(window.location.href).searchParams.get("task"));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   // The query string a strip was sent from (see the effect below).
   const strippedFrom = useRef<string | null>(null);
 
   // Callbacks read the URL at call time, so they stay stable while ?f= drafts and the like change.
   const openPanel = useCallback((key: string) => {
+    const current = taskRef.current;
     const url = new URL(window.location.href);
-    const current = url.searchParams.get("task");
     strippedFrom.current = current ? url.searchParams.toString() : null;
     setState((s) => openPanelState(s, key, current));
-    // Replace, not push: Back shouldn't bring the task back underneath the panel.
-    if (current) routerRef.current.replace(hrefWithTask(window.location.href, null), { scroll: false });
+    if (current) {
+      setPinnedTask(null);
+      // Replace, not push: Back shouldn't bring the task back underneath the panel.
+      window.history.replaceState(null, "", hrefWithTask(window.location.href, null));
+    }
   }, []);
   const closePanel = useCallback((key: string) => setState((s) => closePanelState(s, key)), []);
-  const openTask = useCallback((taskId: string) => {
-    routerRef.current.push(hrefWithTask(window.location.href, taskId), { scroll: false });
+  const openTask = useCallback((taskId: string, seed?: TaskSeed | null) => {
+    seedTask(seed);
+    markOpen();
+    ensureTaskPane(taskId);
+    if (taskRef.current === taskId && new URL(window.location.href).searchParams.get("task") === taskId) return;
+    setPinnedTask(taskId);
+    window.history.pushState(null, "", hrefWithTask(window.location.href, taskId));
   }, []);
   const closeTask = useCallback(() => {
-    routerRef.current.push(hrefWithTask(window.location.href, null), { scroll: false });
+    setPinnedTask(null);
+    if (new URL(window.location.href).searchParams.has("task")) {
+      window.history.pushState(null, "", hrefWithTask(window.location.href, null));
+    }
   }, []);
 
   // A panel is open, another navigation committed, and the URL still names the task: the strip was
@@ -103,19 +149,36 @@ export function useRightPanel(key: string): { open: boolean; setOpen: (open: boo
   return { open: api ? api.activePanel === key : localOpen, setOpen };
 }
 
-// The task pane's view of the slot. Without a provider the pane simply shows.
-export function useTaskPane(): { visible: boolean; openTask: (taskId: string) => void; closeTask: () => void } {
+type TaskPaneApi = {
+  task: string | null;
+  visible: boolean;
+  openTask: (taskId: string, seed?: TaskSeed | null) => void;
+  closeTask: () => void;
+};
+
+// The task pane's view of the slot. Without a provider (outside the app shell) it navigates as before.
+export function useTaskPane(): TaskPaneApi {
   const api = useContext(RightPanelContext);
   const router = useRouter();
+  const urlTask = useSearchParams().get("task");
   return useMemo(
     () =>
       api
-        ? { visible: api.taskPaneVisible, openTask: api.openTask, closeTask: api.closeTask }
+        ? { task: api.task, visible: api.taskPaneVisible, openTask: api.openTask, closeTask: api.closeTask }
         : {
+            task: urlTask,
             visible: true,
             openTask: (taskId: string) => router.push(hrefWithTask(window.location.href, taskId), { scroll: false }),
             closeTask: () => router.push(hrefWithTask(window.location.href, null), { scroll: false }),
           },
-    [api, router],
+    [api, router, urlTask],
   );
+}
+
+// The task whose pane is showing (rows highlight it), or null.
+export function useOpenTaskId(): string | null {
+  const api = useContext(RightPanelContext);
+  const urlTask = useSearchParams().get("task");
+  if (!api) return urlTask;
+  return api.taskPaneVisible ? api.task : null;
 }
