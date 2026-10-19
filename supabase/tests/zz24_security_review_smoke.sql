@@ -277,6 +277,8 @@ end $$;
 reset role;
 
 -- FIXED (finding 6): logos stay public files; only workspace admins list or remove them.
+-- These policies come from supabase/manual/20261018020000_storage_logo_policies.sql (run by hand
+-- on the hosted project; run.sh applies it locally).
 do $$
 begin
   assert (select public from storage.buckets where id = 'workspace-assets'), 'logo URLs keep working';

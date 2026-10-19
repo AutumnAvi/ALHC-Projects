@@ -30,6 +30,13 @@ for migration in "$ROOT"/supabase/migrations/*.sql; do
   echo "applying $(basename "$migration")"
   "${PSQL[@]}" -f "$migration"
 done
+# Statements the hosted migration role can't run (storage.objects policies), applied by hand on
+# the hosted project as the storage owner. The local test database owns everything.
+for manual in "$ROOT"/supabase/manual/*.sql; do
+  [ -f "$manual" ] || continue
+  echo "applying manual/$(basename "$manual")"
+  "${PSQL[@]}" -f "$manual"
+done
 "${PSQL[@]}" -f "$ROOT/supabase/seed.sql"
 for test in "$ROOT"/supabase/tests/*_smoke.sql; do
   echo "running $(basename "$test")"

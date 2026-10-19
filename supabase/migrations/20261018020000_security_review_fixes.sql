@@ -284,21 +284,7 @@ end $$;
 -- 5. Workspace logos: public files, admin-only listing
 -- ---------------------------------------------------------------------------------------------
 
--- The files stay public (getPublicUrl); listing the bucket is for that workspace's admins.
-alter policy workspace_assets_objects_select_allowlisted on storage.objects
-  using (
-    bucket_id = 'workspace-assets'
-    and (select public.is_workspace_admin(public.workspace_asset_workspace(name)))
-  );
-alter policy workspace_assets_objects_select_allowlisted on storage.objects
-  rename to workspace_assets_objects_select_admin;
-
--- TAIL
--- Workspace admins remove replaced logos (setWorkspaceLogo removes the previous file). Nothing
--- above depends on this.
-create policy workspace_assets_objects_delete_admin on storage.objects
-  for delete to authenticated
-  using (
-    bucket_id = 'workspace-assets'
-    and (select public.is_workspace_admin(public.workspace_asset_workspace(name)))
-  );
+-- The storage.objects policy changes (admin-only listing, admin delete) live in
+-- supabase/manual/20261018020000_storage_logo_policies.sql. storage.objects is owned by
+-- supabase_storage_admin, so the migration role (postgres) can't alter its policies
+-- ("must be owner of table objects"). Run that file by hand as the storage owner.
