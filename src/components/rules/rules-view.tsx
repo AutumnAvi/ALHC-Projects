@@ -265,11 +265,11 @@ function PresetCard({ projectId, preset, ctx }: { projectId: string; preset: Rul
                   {input.label}
                 </label>
                 {input.kind === "section" ? (
-                  <SectionSelect id={id} label={input.label} value={inputs[input.key]} ctx={ctx} onChange={set} />
+                  <SectionSelect id={id} label={input.label} value={inputs[input.key]} ctx={ctx} onChange={set} variant="control" />
                 ) : input.kind === "field" ? (
-                  <FieldSelect id={id} label={input.label} value={inputs[input.key]} fields={ruleFields(ctx)} onChange={set} />
+                  <FieldSelect id={id} label={input.label} value={inputs[input.key]} fields={ruleFields(ctx)} onChange={set} variant="control" />
                 ) : input.kind === "person" ? (
-                  <PersonSelect id={id} label={input.label} value={inputs[input.key]} ctx={ctx} onChange={set} />
+                  <PersonSelect id={id} label={input.label} value={inputs[input.key]} ctx={ctx} onChange={set} variant="control" />
                 ) : input.kind === "number" ? (
                   <input
                     id={id}

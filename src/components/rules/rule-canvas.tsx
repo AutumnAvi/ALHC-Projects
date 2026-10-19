@@ -7,20 +7,20 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
-  Filter,
   FolderClosed,
   GitBranch,
-  ListChecks,
   Plus,
   Trash2,
   X,
   Zap,
 } from "lucide-react";
+import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { createRule, updateRule, type RevealedSigningSecret } from "@/lib/actions";
 import {
   ACTIONS,
+  CONDITIONS,
   MAX_BRANCH_ACTIONS,
   MAX_BRANCH_CONDITIONS,
   MAX_RULE_BRANCHES,
@@ -31,6 +31,7 @@ import {
   runReason,
   splitBranches,
   type ActionType,
+  type ConditionType,
   type RuleAction,
   type RuleBranch,
   type RuleCondition,
@@ -40,7 +41,8 @@ import {
 } from "@/lib/rules";
 import type { Json } from "@/lib/supabase/database.types";
 import { ActionFields, ConditionFields, RevealedSecrets, TriggerFields, defaultsFor } from "./rule-editor";
-import { branchLabel, inputClass, type RuleContext } from "./rule-shared";
+import { vocabOptions } from "./rule-icons";
+import { branchLabel, ruleSentence, type RuleContext } from "./rule-shared";
 
 const RUN_STATUS: Record<RuleRun["status"], string> = {
   succeeded: "bg-green-50 text-green-800",
@@ -280,40 +282,30 @@ export function RuleCanvas({
       ) : tab === "activity" ? (
         <Activity projectId={projectId} rule={rule} runs={runs} branches={branches} />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 bg-[radial-gradient(circle,var(--color-zinc-200)_1px,transparent_1px)] bg-[length:18px_18px]">
-          <fieldset disabled={!canEdit} className="m-0 mx-auto flex w-full min-w-0 max-w-2xl flex-col border-0 px-4 py-8">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50">
+          <fieldset disabled={!canEdit} className="m-0 mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 border-0 px-4 py-6">
             {!canEdit ? (
-              <p className="mb-4 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
+              <p className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
                 View only: project admins and owners change rules.
               </p>
             ) : null}
-            <Card icon={FolderClosed} title="Rule scope">
-              <p className="text-sm text-zinc-700">
-                Tasks in <span className="font-medium text-zinc-900">{projectName}</span> (subtasks don’t trigger rules)
-              </p>
-            </Card>
-            <Connector />
-            <Card icon={Zap} title="When" accent>
-              <div className="flex flex-col gap-2">
-                <label htmlFor="rule-trigger" className="sr-only">
-                  Trigger
-                </label>
-                <select
+            <RuleSummary triggerType={triggerType} triggerConfig={triggerConfig} branches={branches} ctx={ctx} projectName={projectName} />
+            <section aria-label="Rule" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+              <SentenceRow word="When">
+                <SmartPicker
                   id="rule-trigger"
+                  label="Trigger"
                   value={triggerType}
-                  onChange={(e) => {
-                    setTriggerType(e.currentTarget.value as TriggerType);
+                  options={vocabOptions(TRIGGERS)}
+                  onChange={(v) => {
+                    setTriggerType(v as TriggerType);
                     setTriggerConfig({});
                     setDirty(true);
                   }}
-                  className={`${inputClass} w-full`}
-                >
-                  {TRIGGERS.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
+                  variant="chip"
+                  searchable
+                  panelWidth={340}
+                />
                 <TriggerFields
                   prefix="rule"
                   triggerType={triggerType}
@@ -324,56 +316,55 @@ export function RuleCanvas({
                     setDirty(true);
                   }}
                 />
-              </div>
-            </Card>
-            {branches.map((branch, index) => (
-              <div key={index} className="flex flex-col">
-                <Connector label={index === 0 ? undefined : "Else"} />
-                <BranchCard
+              </SentenceRow>
+              {branches.map((branch, index) => (
+                <BranchRows
+                  key={index}
                   index={index}
                   count={branches.length}
                   branch={branch}
                   ctx={ctx}
                   projectId={projectId}
+                  canEdit={canEdit}
                   onChange={(next) => setBranch(index, next)}
                   onRemove={index === 0 ? undefined : () => changeBranches((current) => current.filter((_, i) => i !== index))}
                 />
-              </div>
-            ))}
-            {canEdit ? (
-              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={addElseIf}
-                  disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES || (branches.length === 1 && branches[0].conditions.length === 0)}
-                  data-tooltip={
-                    !batch4
-                      ? "Branches arrive with this release’s database update"
-                      : branches.length === 1 && branches[0].conditions.length === 0
-                        ? "Add a condition to Check if first"
-                        : undefined
-                  }
-                  className="btn-secondary h-8 border-dashed bg-white px-3"
-                >
-                  <GitBranch className="size-4" aria-hidden />
-                  Add branch
-                </button>
-                {!hasOtherwise && branches.some((b) => b.conditions.length > 0) ? (
+              ))}
+              {canEdit ? (
+                <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-4 py-2.5">
                   <button
                     type="button"
-                    onClick={addOtherwise}
-                    disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES}
-                    data-tooltip={!batch4 ? "Branches arrive with this release’s database update" : undefined}
-                    className="btn-ghost h-8 px-3"
+                    onClick={addElseIf}
+                    disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES || (branches.length === 1 && branches[0].conditions.length === 0)}
+                    data-tooltip={
+                      !batch4
+                        ? "Branches arrive with this release’s database update"
+                        : branches.length === 1 && branches[0].conditions.length === 0
+                          ? "Add an If condition first"
+                          : "Runs when the conditions above don’t match"
+                    }
+                    className="btn-ghost h-7 text-xs"
                   >
-                    <Plus className="size-4" aria-hidden />
-                    Add Otherwise
+                    <GitBranch className="size-3.5" aria-hidden />
+                    Otherwise if…
                   </button>
-                ) : null}
-              </div>
-            ) : null}
-            <p className="mt-6 text-center text-xs text-zinc-500">
-              Rules never trigger themselves, chains stop after five rules, and the Status field always follows the
+                  {!hasOtherwise && branches.some((b) => b.conditions.length > 0) ? (
+                    <button
+                      type="button"
+                      onClick={addOtherwise}
+                      disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES}
+                      data-tooltip={!batch4 ? "Branches arrive with this release’s database update" : "Runs when nothing above matches"}
+                      className="btn-ghost h-7 text-xs"
+                    >
+                      <Plus className="size-3.5" aria-hidden />
+                      Otherwise…
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+            <p className="text-center text-xs text-zinc-500">
+              Rules never trigger themselves, chains stop after a few rules, and the Status field always follows the
               section. Text can use {TEXT_TOKENS}.
             </p>
           </fieldset>
@@ -383,52 +374,67 @@ export function RuleCanvas({
   );
 }
 
-function Card({
-  icon: Icon,
-  title,
-  accent = false,
-  action,
-  children,
+// The live summary at the top: the whole rule as one English sentence, plus its scope.
+function RuleSummary({
+  triggerType,
+  triggerConfig,
+  branches,
+  ctx,
+  projectName,
 }: {
-  icon: typeof Zap;
-  title: ReactNode;
-  accent?: boolean;
-  action?: ReactNode;
-  children: ReactNode;
+  triggerType: TriggerType;
+  triggerConfig: Record<string, Json>;
+  branches: RuleBranch[];
+  ctx: RuleContext;
+  projectName: string;
 }) {
+  const sentence = ruleSentence({ triggerType, triggerConfig, ...joinBranches(branches) }, ctx);
   return (
-    <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-2.5">
-        <span
-          aria-hidden
-          className={`flex size-6 items-center justify-center rounded-md ${accent ? "bg-accent-50 text-accent-700" : "bg-zinc-100 text-zinc-600"}`}
-        >
-          <Icon className="size-3.5" />
-        </span>
-        <h3 className="flex-1 text-sm font-semibold text-zinc-900">{title}</h3>
-        {action}
-      </div>
-      <div className="px-4 py-3">{children}</div>
-    </section>
-  );
-}
-
-function Connector({ label }: { label?: string }) {
-  return (
-    <div aria-hidden className="flex flex-col items-center py-1">
-      <span className="h-3 w-px bg-zinc-300" />
-      {label ? <span className="rounded-full bg-white px-2 py-px text-2xs font-medium text-zinc-500 ring-1 ring-zinc-200">{label}</span> : null}
-      <span className="h-3 w-px bg-zinc-300" />
+    <div className="rounded-xl border border-accent-100 bg-accent-50/60 px-4 py-3">
+      <p className="text-2xs font-semibold uppercase tracking-wide text-accent-700">Summary</p>
+      <p className="mt-1 text-sm text-zinc-800" aria-live="polite">
+        {sentence}
+      </p>
+      <p className="mt-1.5 flex items-center gap-1 text-xs text-zinc-500">
+        <FolderClosed className="size-3.5" aria-hidden />
+        Tasks in <span className="font-medium text-zinc-700">{projectName}</span> (subtasks don’t trigger rules)
+      </p>
     </div>
   );
 }
 
-function BranchCard({
+// One line of the sentence: the word ("When", "If", "Then") in a gutter, then its tokens.
+function SentenceRow({
+  word,
+  children,
+  aside,
+  muted = false,
+}: {
+  word: ReactNode;
+  children: ReactNode;
+  aside?: ReactNode;
+  muted?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-3 border-t border-zinc-100 px-4 py-2.5 first:border-t-0">
+      <span
+        className={`mt-1 w-20 shrink-0 text-xs font-semibold uppercase tracking-wide ${muted ? "text-zinc-400" : "text-zinc-500"}`}
+      >
+        {word}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-sm text-zinc-700">{children}</div>
+      {aside}
+    </div>
+  );
+}
+
+function BranchRows({
   index,
   count,
   branch,
   ctx,
   projectId,
+  canEdit,
   onChange,
   onRemove,
 }: {
@@ -437,12 +443,14 @@ function BranchCard({
   branch: RuleBranch;
   ctx: RuleContext;
   projectId: string;
+  canEdit: boolean;
   onChange: (next: RuleBranch) => void;
   onRemove?: () => void;
 }) {
   const label = branchLabel(index, count, branch.conditions.length > 0);
   const otherwise = label === "Otherwise";
   const prefix = `branch-${index}`;
+  const ifWord = index === 0 ? "If" : otherwise ? "Otherwise" : "Otherwise if";
 
   function setCondition(i: number, next: RuleCondition | null) {
     onChange({
@@ -464,143 +472,151 @@ function BranchCard({
     onChange({ ...branch, actions: copy });
   }
 
+  const removeBranch = onRemove ? (
+    <button type="button" onClick={onRemove} aria-label={`Remove this ${label} branch`} data-tooltip="Remove branch" className="btn-icon">
+      <X className="size-4" />
+    </button>
+  ) : null;
+
   return (
-    <section aria-label={label} className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-2.5">
-        <span aria-hidden className="flex size-6 items-center justify-center rounded-md bg-zinc-100 text-zinc-600">
-          {otherwise ? <GitBranch className="size-3.5" /> : <Filter className="size-3.5" />}
-        </span>
-        <h3 className="flex-1 text-sm font-semibold text-zinc-900">
-          {label}
-          {index === 0 && count === 1 && branch.conditions.length === 0 ? (
-            <span className="ml-1.5 text-xs font-normal text-zinc-400">(optional)</span>
-          ) : null}
-        </h3>
-        {onRemove ? (
-          <button type="button" onClick={onRemove} aria-label={`Remove this ${label} branch`} data-tooltip="Remove branch" className="btn-icon">
-            <X className="size-4" />
-          </button>
-        ) : null}
-      </div>
-      <div className="flex flex-col gap-2 px-4 py-3">
+    <div role="group" aria-label={index === 0 ? "If, then" : label} className={index > 0 ? "border-t-4 border-zinc-50" : ""}>
+      <SentenceRow word={ifWord} muted={index === 0 && branch.conditions.length === 0} aside={removeBranch}>
         {otherwise ? (
-          <p className="text-xs text-zinc-500">Runs when no branch above matches.</p>
+          <p className="pt-1 text-xs text-zinc-500">nothing above matches</p>
         ) : (
           <>
             {branch.conditions.length === 0 ? (
-              <p className="text-xs text-zinc-500">No conditions: the actions run every time the trigger fires.</p>
+              <p className="pt-1 text-xs text-zinc-500">Always (no conditions). Add one to run only for some tasks.</p>
             ) : null}
             {branch.conditions.map((condition, i) => (
-              <div key={i} className="flex flex-col gap-1">
-                {i > 0 ? <span className="text-2xs font-semibold uppercase tracking-wide text-zinc-400">and</span> : null}
-                <div className="flex items-start gap-1.5">
-                  <div className="min-w-0 flex-1">
-                    <ConditionFields
-                      prefix={`${prefix}-c${i}`}
-                      condition={condition}
-                      ctx={ctx}
-                      onChange={(next) => setCondition(i, next)}
-                    />
-                  </div>
+              <div key={i} className="flex flex-wrap items-center gap-1">
+                {i > 0 ? <span className="mr-0.5 text-xs font-semibold text-zinc-400">and</span> : null}
+                <ConditionFields prefix={`${prefix}-c${i}`} condition={condition} ctx={ctx} onChange={(next) => setCondition(i, next)} />
+                {canEdit ? (
                   <button
                     type="button"
                     aria-label={`Remove condition ${i + 1}`}
                     data-tooltip="Remove condition"
                     onClick={() => setCondition(i, null)}
-                    className="btn-icon"
+                    className="btn-icon size-6"
                   >
-                    <X className="size-4" />
+                    <X className="size-3.5" />
                   </button>
-                </div>
+                ) : null}
               </div>
             ))}
-            <button
-              type="button"
-              disabled={branch.conditions.length >= MAX_BRANCH_CONDITIONS}
-              onClick={() => onChange({ ...branch, conditions: [...branch.conditions, NEW_CONDITION] })}
-              className="btn-ghost h-7 self-start text-xs"
-            >
-              <Plus className="size-3.5" aria-hidden />
-              Add condition
-            </button>
+            {canEdit && branch.conditions.length < MAX_BRANCH_CONDITIONS ? (
+              <SmartPicker
+                label="Add condition"
+                value={null}
+                options={vocabOptions(CONDITIONS)}
+                onChange={(v) => onChange({ ...branch, conditions: [...branch.conditions, { type: v as ConditionType }] })}
+                variant="ghost"
+                searchable
+                className="h-6 self-start px-1.5 text-xs"
+                renderValue={() => (
+                  <>
+                    <Plus className="size-3.5" aria-hidden />
+                    {branch.conditions.length ? "And…" : "Add condition"}
+                  </>
+                )}
+              />
+            ) : null}
           </>
         )}
-        <div className="mt-1 flex flex-col gap-2 rounded-lg bg-zinc-50 p-2.5">
-          <p className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700">
-            <ListChecks className="size-3.5 text-zinc-500" aria-hidden />
-            Do this
-          </p>
+      </SentenceRow>
+      <SentenceRow word="Then">
+        <ol className="flex flex-col gap-2">
           {branch.actions.map((action, i) => (
-            <div key={i} className="rounded-lg border border-zinc-200 bg-white p-3">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs font-medium tabular-nums text-zinc-400">{i + 1}.</span>
-                <select
-                  aria-label={`Action ${i + 1}`}
+            <li key={i} className="group/action rounded-lg border border-transparent px-1 py-0.5 hover:border-zinc-200">
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="w-4 text-xs font-medium tabular-nums text-zinc-400">{i + 1}.</span>
+                <SmartPicker
+                  label={`Action ${i + 1}`}
                   value={action.type}
-                  onChange={(e) => setAction(i, defaultsFor(e.currentTarget.value as ActionType))}
-                  className={inputClass}
-                >
-                  {ACTIONS.map((a) => (
-                    <option key={a.value} value={a.value}>
-                      {a.label}
-                    </option>
-                  ))}
-                </select>
-                <span className="flex-1" />
-                <button
-                  type="button"
-                  aria-label={`Move action ${i + 1} up`}
-                  data-tooltip="Move up"
-                  disabled={i === 0}
-                  onClick={() => moveAction(i, -1)}
-                  className="btn-icon"
-                >
-                  <ArrowUp className="size-4" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Move action ${i + 1} down`}
-                  data-tooltip="Move down"
-                  disabled={i === branch.actions.length - 1}
-                  onClick={() => moveAction(i, 1)}
-                  className="btn-icon"
-                >
-                  <ArrowDown className="size-4" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Remove action ${i + 1}`}
-                  data-tooltip="Remove action"
-                  disabled={branch.actions.length === 1}
-                  onClick={() => setAction(i, null)}
-                  className="btn-icon"
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-              <div className="mt-2">
-                <ActionFields
-                  projectId={projectId}
-                  prefix={`${prefix}-a${i}`}
-                  action={action}
-                  ctx={ctx}
-                  onChange={(next) => setAction(i, next)}
+                  options={vocabOptions(ACTIONS)}
+                  onChange={(v) => setAction(i, defaultsFor(v as ActionType))}
+                  variant="chip"
+                  searchable
+                  panelWidth={340}
                 />
+                <InlineActionFields projectId={projectId} prefix={`${prefix}-a${i}`} action={action} ctx={ctx} onChange={(next) => setAction(i, next)} />
+                <span className="flex-1" />
+                {canEdit ? (
+                  <span className="flex items-center opacity-60 group-hover/action:opacity-100 group-focus-within/action:opacity-100">
+                    <button
+                      type="button"
+                      aria-label={`Move action ${i + 1} up`}
+                      data-tooltip="Move up"
+                      disabled={i === 0}
+                      onClick={() => moveAction(i, -1)}
+                      className="btn-icon size-6"
+                    >
+                      <ArrowUp className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move action ${i + 1} down`}
+                      data-tooltip="Move down"
+                      disabled={i === branch.actions.length - 1}
+                      onClick={() => moveAction(i, 1)}
+                      className="btn-icon size-6"
+                    >
+                      <ArrowDown className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Remove action ${i + 1}`}
+                      data-tooltip="Remove action"
+                      disabled={branch.actions.length === 1}
+                      onClick={() => setAction(i, null)}
+                      className="btn-icon size-6"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </span>
+                ) : null}
               </div>
-            </div>
+              <BlockActionFields projectId={projectId} prefix={`${prefix}-a${i}`} action={action} ctx={ctx} onChange={(next) => setAction(i, next)} />
+            </li>
           ))}
-          <button
-            type="button"
-            disabled={branch.actions.length >= MAX_BRANCH_ACTIONS}
-            onClick={() => onChange({ ...branch, actions: [...branch.actions, defaultsFor("add_comment")] })}
-            className="btn-ghost h-7 self-start text-xs"
-          >
-            <Plus className="size-3.5" aria-hidden />
-            Add action
-          </button>
-        </div>
-      </div>
-    </section>
+        </ol>
+        {canEdit && branch.actions.length < MAX_BRANCH_ACTIONS ? (
+          <SmartPicker
+            label="Add action"
+            value={null}
+            options={vocabOptions(ACTIONS)}
+            onChange={(v) => onChange({ ...branch, actions: [...branch.actions, defaultsFor(v as ActionType)] })}
+            variant="ghost"
+            searchable
+            panelWidth={340}
+            className="h-6 self-start px-1.5 text-xs"
+            renderValue={() => (
+              <>
+                <Plus className="size-3.5" aria-hidden />
+                Then…
+              </>
+            )}
+          />
+        ) : null}
+      </SentenceRow>
+    </div>
+  );
+}
+
+// Actions whose settings fit on the sentence line (a section, a field and value, a person, hours).
+const INLINE_ACTIONS = new Set<string>(["move_section", "set_field", "set_assignee", "add_followers", "request_approval", "delay"]);
+
+function InlineActionFields(props: Parameters<typeof ActionFields>[0]) {
+  return INLINE_ACTIONS.has(props.action.type) ? <ActionFields {...props} part="inline" /> : null;
+}
+
+function BlockActionFields(props: Parameters<typeof ActionFields>[0]) {
+  if (INLINE_ACTIONS.has(props.action.type) && props.action.type !== "request_approval") return null;
+  return (
+    <div className="ml-5 mt-1.5 max-w-xl">
+      <ActionFields {...props} part="block" />
+    </div>
   );
 }
 

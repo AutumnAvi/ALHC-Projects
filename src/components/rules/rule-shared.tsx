@@ -1,6 +1,9 @@
 "use client";
 
-import type { FieldDef } from "@/lib/fields";
+import { Columns3, PenLine, User, UserMinus } from "lucide-react";
+import { Avatar } from "@/components/avatar";
+import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import { OPTION_SWATCH_CLASSES, type FieldDef, type OptionColor } from "@/lib/fields";
 import type { ProjectIntegrations } from "@/lib/integrations-shared";
 import {
   ACTIONS,
@@ -28,8 +31,17 @@ export type RuleContext = {
   inboundEndpoints: { id: string; name: string }[];
 };
 
-export const inputClass =
-  "control h-auto min-h-8 py-1";
+export const inputClass = "control h-auto min-h-7 py-0.5";
+
+const FIELD_TYPE_LABELS: Record<string, string> = {
+  text: "Text",
+  number: "Number",
+  date: "Date",
+  boolean: "Checkbox",
+  single_select: "Single choice",
+  multi_select: "Multiple choice",
+  people: "People",
+};
 export const labelClass = "text-xs font-medium text-zinc-600";
 
 // Fields a rule can write or compare. People fields are left to the task pane.
@@ -173,28 +185,78 @@ export function describeBranches(rule: Pick<RuleDef, "conditions" | "actions">, 
   });
 }
 
+// The whole rule as one sentence: "When a task moves into Review, if Priority is High, assign Dana and
+// move to Video intake." Branches read "…; otherwise if …, …; otherwise, …".
+export function ruleSentence(rule: Pick<RuleDef, "triggerType" | "triggerConfig" | "conditions" | "actions">, ctx: RuleContext) {
+  const trigger = describeTrigger(rule, ctx);
+  const when = `When ${trigger.charAt(0).toLowerCase()}${trigger.slice(1)}`;
+  const parts = describeBranches(rule, ctx).map((b, i) => {
+    const actions = b.actions || "do nothing yet";
+    if (i === 0) return b.conditions ? `if ${b.conditions}, ${actions}` : actions;
+    return b.conditions ? `otherwise if ${b.conditions}, ${actions}` : `otherwise, ${actions}`;
+  });
+  return `${when}, ${parts.join("; ")}.`;
+}
+
+type PickerLook = { variant?: "control" | "chip" | "ghost"; highlight?: boolean; placeholder?: string };
+
+const SECTION_ICON = <Columns3 className="size-4" />;
+
+export function sectionOptions(ctx: RuleContext): SmartOption[] {
+  return ctx.sections.map((s) => ({ value: s.id, label: s.name, icon: SECTION_ICON }));
+}
+
+export function fieldOptions(fields: FieldDef[]): SmartOption[] {
+  return fields.map((f) => ({
+    value: f.id,
+    label: f.boundToSections ? `${f.name} (Status)` : f.name,
+    description: f.boundToSections ? "Follows the section" : FIELD_TYPE_LABELS[f.fieldType] ?? undefined,
+    keywords: [f.fieldType.replace("_", " ")],
+    icon: <PenLine className="size-4" />,
+  }));
+}
+
+// Roles first (the task's assignee / creator), then everyone, with avatars.
+export function personOptions(ctx: RuleContext, opts: { none?: string } = {}): SmartOption[] {
+  return [
+    ...(opts.none ? [{ value: "", label: opts.none, group: "Roles", icon: <UserMinus className="size-4" /> }] : []),
+    ...PERSON_ROLES.map((r) => ({
+      value: r.value as string,
+      label: r.label,
+      group: "Roles",
+      description: r.value === "assignee" ? "Whoever the task is assigned to when the rule runs" : "Whoever created the task",
+      icon: <User className="size-4" />,
+    })),
+    ...ctx.people.map((p) => ({ value: p.id, label: p.name, group: "People", icon: <Avatar name={p.name} /> })),
+  ];
+}
+
 export function SectionSelect({
   id,
   label,
   value,
   ctx,
   onChange,
+  ...look
 }: {
   id: string;
   label: string;
   value: Json | undefined;
   ctx: RuleContext;
   onChange: (value: string) => void;
-}) {
+} & PickerLook) {
   return (
-    <select id={id} aria-label={label} value={str(value)} onChange={(e) => onChange(e.currentTarget.value)} className={inputClass}>
-      <option value="">Choose section…</option>
-      {ctx.sections.map((s) => (
-        <option key={s.id} value={s.id}>
-          {s.name}
-        </option>
-      ))}
-    </select>
+    <SmartPicker
+      id={id}
+      label={label}
+      value={str(value) || null}
+      options={sectionOptions(ctx)}
+      onChange={onChange}
+      variant={look.variant ?? "chip"}
+      highlight={look.highlight}
+      placeholder={look.placeholder ?? "choose section"}
+      emptyText={ctx.sections.length ? "No section matches" : "This project has no sections yet"}
+    />
   );
 }
 
@@ -204,23 +266,26 @@ export function FieldSelect({
   value,
   fields,
   onChange,
+  ...look
 }: {
   id: string;
   label: string;
   value: Json | undefined;
   fields: FieldDef[];
   onChange: (value: string) => void;
-}) {
+} & PickerLook) {
   return (
-    <select id={id} aria-label={label} value={str(value)} onChange={(e) => onChange(e.currentTarget.value)} className={inputClass}>
-      <option value="">Choose field…</option>
-      {fields.map((f) => (
-        <option key={f.id} value={f.id}>
-          {f.name}
-          {f.boundToSections ? " (Status)" : ""}
-        </option>
-      ))}
-    </select>
+    <SmartPicker
+      id={id}
+      label={label}
+      value={str(value) || null}
+      options={fieldOptions(fields)}
+      onChange={onChange}
+      variant={look.variant ?? "chip"}
+      highlight={look.highlight}
+      placeholder={look.placeholder ?? "choose field"}
+      emptyText={fields.length ? "No field matches" : "Add a field to this project first"}
+    />
   );
 }
 
@@ -231,6 +296,7 @@ export function PersonSelect({
   ctx,
   onChange,
   allowNone,
+  ...look
 }: {
   id: string;
   label: string;
@@ -238,25 +304,20 @@ export function PersonSelect({
   ctx: RuleContext;
   onChange: (value: string) => void;
   allowNone?: string;
-}) {
+} & PickerLook) {
+  const current = str(value);
   return (
-    <select id={id} aria-label={label} value={str(value)} onChange={(e) => onChange(e.currentTarget.value)} className={inputClass}>
-      <option value="">{allowNone ?? "Choose person…"}</option>
-      <optgroup label="Roles">
-        {PERSON_ROLES.map((r) => (
-          <option key={r.value} value={r.value}>
-            {r.label}
-          </option>
-        ))}
-      </optgroup>
-      <optgroup label="People">
-        {ctx.people.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </optgroup>
-    </select>
+    <SmartPicker
+      id={id}
+      label={label}
+      value={current || (allowNone && value === null ? "" : null)}
+      options={personOptions(ctx, { none: allowNone })}
+      onChange={onChange}
+      variant={look.variant ?? "chip"}
+      highlight={look.highlight}
+      placeholder={look.placeholder ?? "choose person"}
+      searchable
+    />
   );
 }
 
@@ -266,36 +327,33 @@ export function PeoplePicker({
   value,
   ctx,
   onChange,
+  ...look
 }: {
   idPrefix: string;
   label: string;
   value: Json | undefined;
   ctx: RuleContext;
   onChange: (value: string[]) => void;
-}) {
+} & PickerLook) {
   const selected = Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
-  const options = [
-    ...PERSON_ROLES.map((r) => ({ id: r.value as string, name: r.label })),
-    ...ctx.people,
-  ];
   return (
-    <fieldset className="flex flex-wrap gap-x-3 gap-y-1">
-      <legend className="sr-only">{label}</legend>
-      {options.map((o) => (
-        <label key={o.id} htmlFor={`${idPrefix}-${o.id}`} className="flex items-center gap-1.5 text-sm text-zinc-700">
-          <input
-            id={`${idPrefix}-${o.id}`}
-            type="checkbox"
-            checked={selected.includes(o.id)}
-            onChange={(e) =>
-              onChange(e.currentTarget.checked ? [...selected, o.id] : selected.filter((s) => s !== o.id))
-            }
-          />
-          {o.name}
-        </label>
-      ))}
-    </fieldset>
+    <SmartPicker
+      multiple
+      id={`${idPrefix}-picker`}
+      label={label}
+      value={selected}
+      options={personOptions(ctx)}
+      onChange={onChange}
+      variant={look.variant ?? "chip"}
+      highlight={look.highlight}
+      placeholder={look.placeholder ?? "choose people"}
+      searchable
+    />
   );
+}
+
+function optionDot(color: string) {
+  return <span className={`size-2.5 rounded-full ${OPTION_SWATCH_CLASSES[color as OptionColor] ?? "bg-zinc-300"}`} />;
 }
 
 // Value editor matching how task_field_values stores each field type (bound Status → section id).
@@ -305,55 +363,65 @@ export function FieldValueInput({
   value,
   ctx,
   onChange,
+  highlight,
 }: {
   id: string;
   field: FieldDef | undefined;
   value: Json | undefined;
   ctx: RuleContext;
   onChange: (value: Json) => void;
+  highlight?: boolean;
 }) {
   if (!field) return null;
   if (field.boundToSections) {
-    return <SectionSelect id={id} label={`${field.name} value`} value={value} ctx={ctx} onChange={onChange} />;
+    return <SectionSelect id={id} label={`${field.name} value`} value={value} ctx={ctx} onChange={onChange} highlight={highlight} />;
   }
   switch (field.fieldType) {
     case "single_select":
       return (
-        <select id={id} aria-label={`${field.name} value`} value={str(value)} onChange={(e) => onChange(e.currentTarget.value || null)} className={inputClass}>
-          <option value="">Empty</option>
-          {field.options.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </select>
+        <SmartPicker
+          id={id}
+          label={`${field.name} value`}
+          value={str(value) || null}
+          options={[
+            { value: "", label: "Empty", description: "Clear the value" },
+            ...field.options.map((o) => ({ value: o.id, label: o.name, icon: optionDot(o.color) })),
+          ]}
+          onChange={(v) => onChange(v || null)}
+          variant="chip"
+          highlight={highlight}
+          placeholder="choose option"
+        />
       );
     case "multi_select": {
-      const selected = Array.isArray(value) ? value : [];
+      const selected = Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
       return (
-        <fieldset className="flex flex-wrap gap-x-3 gap-y-1">
-          <legend className="sr-only">{field.name} value</legend>
-          {field.options.map((o) => (
-            <label key={o.id} className="flex items-center gap-1.5 text-sm text-zinc-700">
-              <input
-                type="checkbox"
-                checked={selected.includes(o.id)}
-                onChange={(e) =>
-                  onChange(e.currentTarget.checked ? [...selected, o.id] : selected.filter((s) => s !== o.id))
-                }
-              />
-              {o.name}
-            </label>
-          ))}
-        </fieldset>
+        <SmartPicker
+          multiple
+          id={id}
+          label={`${field.name} value`}
+          value={selected}
+          options={field.options.map((o) => ({ value: o.id, label: o.name, icon: optionDot(o.color) }))}
+          onChange={(v) => onChange(v)}
+          variant="chip"
+          highlight={highlight}
+          placeholder="choose options"
+        />
       );
     }
     case "boolean":
       return (
-        <label className="flex items-center gap-1.5 text-sm text-zinc-700">
-          <input id={id} type="checkbox" checked={value === true} onChange={(e) => onChange(e.currentTarget.checked)} />
-          Checked
-        </label>
+        <SmartPicker
+          id={id}
+          label={`${field.name} value`}
+          value={value === true ? "true" : "false"}
+          options={[
+            { value: "true", label: "Checked" },
+            { value: "false", label: "Unchecked" },
+          ]}
+          onChange={(v) => onChange(v === "true")}
+          variant="chip"
+        />
       );
     case "number":
       return (
@@ -363,7 +431,7 @@ export function FieldValueInput({
           type="number"
           value={typeof value === "number" ? value : ""}
           onChange={(e) => onChange(e.currentTarget.value === "" ? null : Number(e.currentTarget.value))}
-          className={inputClass}
+          className={`${inputClass} w-28`}
         />
       );
     case "date":

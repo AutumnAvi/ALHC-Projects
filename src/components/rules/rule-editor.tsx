@@ -14,11 +14,13 @@ import {
   isAllowedHeaderName,
   isAllowedWebhookUrl,
 } from "@/lib/integrations-shared";
+import { SmartPicker } from "@/components/smart-picker";
 import {
   APPROVAL_DECISIONS,
   CONDITIONS,
   EMAIL_RECIPIENTS,
   EMAIL_TEMPLATES,
+  TASK_SOURCES,
   type ActionType,
   type ConditionType,
   type RuleAction,
@@ -37,6 +39,7 @@ import {
   ruleFields,
   type RuleContext,
 } from "./rule-shared";
+import { vocabOptions } from "./rule-icons";
 
 export function defaultsFor(type: ActionType): RuleAction {
   switch (type) {
@@ -159,19 +162,16 @@ export function TriggerFields({
             onChange={(v) => setConfig({ field_id: v, option_id: undefined })}
           />
           {triggerField && triggerField.options.length ? (
-            <select
-              aria-label="Changes to"
+            <SmartPicker
+              label="Changes to"
               value={typeof triggerConfig.option_id === "string" ? triggerConfig.option_id : ""}
-              onChange={(e) => setConfig({ option_id: e.currentTarget.value })}
-              className={inputClass}
-            >
-              <option value="">to any value</option>
-              {triggerField.options.map((o) => (
-                <option key={o.id} value={o.id}>
-                  to {o.name}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: "to any value", description: "Any change to the field" },
+                ...triggerField.options.map((o) => ({ value: o.id, label: `to ${o.name}` })),
+              ]}
+              onChange={(v) => setConfig({ option_id: v })}
+              variant="chip"
+            />
           ) : null}
         </Row>
       );
@@ -186,61 +186,49 @@ export function TriggerFields({
             onChange={(e) => setConfig({ days: Number(e.currentTarget.value) })}
             className={`${inputClass} w-16`}
           />
-          days before due
+          days before it’s due
         </label>
       );
     case "approval_decided": {
-      const statuses = Array.isArray(triggerConfig.statuses) ? triggerConfig.statuses : [];
+      const statuses = Array.isArray(triggerConfig.statuses)
+        ? triggerConfig.statuses.filter((v): v is string => typeof v === "string")
+        : [];
       return (
-        <fieldset className="flex flex-wrap gap-3">
-          <legend className="sr-only">Decisions</legend>
-          {APPROVAL_DECISIONS.map((d) => (
-            <label key={d.value} className="flex items-center gap-1.5 text-sm text-zinc-700">
-              <input
-                type="checkbox"
-                checked={statuses.includes(d.value)}
-                onChange={(e) => {
-                  const next = e.currentTarget.checked ? [...statuses, d.value] : statuses.filter((v) => v !== d.value);
-                  setConfig({ statuses: next.length ? next : undefined });
-                }}
-              />
-              {d.label}
-            </label>
-          ))}
-        </fieldset>
+        <SmartPicker
+          multiple
+          label="Decisions"
+          value={statuses}
+          options={APPROVAL_DECISIONS.map((d) => ({ value: d.value, label: d.label }))}
+          onChange={(next) => setConfig({ statuses: next.length ? next : undefined })}
+          variant="chip"
+          placeholder="with any decision"
+          renderValue={(chosen) => (chosen.length ? <span>as {chosen.map((c) => c.label.toLowerCase()).join(" or ")}</span> : undefined)}
+        />
       );
     }
     case "inbound_received":
       return (
-        <select
-          aria-label="Inbound webhook"
+        <SmartPicker
+          label="Inbound webhook"
           value={typeof triggerConfig.endpoint_id === "string" ? triggerConfig.endpoint_id : ""}
-          onChange={(e) => setConfig({ endpoint_id: e.currentTarget.value })}
-          className={inputClass}
-        >
-          <option value="">Any inbound webhook</option>
-          {ctx.inboundEndpoints.map((endpoint) => (
-            <option key={endpoint.id} value={endpoint.id}>
-              {endpoint.name}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: "", label: "Any inbound webhook" },
+            ...ctx.inboundEndpoints.map((endpoint) => ({ value: endpoint.id, label: endpoint.name })),
+          ]}
+          onChange={(v) => setConfig({ endpoint_id: v })}
+          variant="chip"
+        />
       );
     case "form_submitted":
       return (
-        <select
-          aria-label="Form"
+        <SmartPicker
+          label="Form"
           value={typeof triggerConfig.form_id === "string" ? triggerConfig.form_id : ""}
-          onChange={(e) => setConfig({ form_id: e.currentTarget.value })}
-          className={inputClass}
-        >
-          <option value="">Any form</option>
-          {ctx.forms.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.title}
-            </option>
-          ))}
-        </select>
+          options={[{ value: "", label: "Any form" }, ...ctx.forms.map((f) => ({ value: f.id, label: f.title }))]}
+          onChange={(v) => setConfig({ form_id: v })}
+          variant="chip"
+          emptyText="Add a form to this project first"
+        />
       );
     default:
       return null;
@@ -262,18 +250,14 @@ export function ConditionFields({
   const fields = ruleFields(ctx);
   return (
     <Row>
-      <select
-        aria-label="Condition"
+      <SmartPicker
+        label="Condition"
         value={condition.type}
-        onChange={(e) => onChange({ type: e.currentTarget.value as ConditionType })}
-        className={inputClass}
-      >
-        {CONDITIONS.map((c) => (
-          <option key={c.value} value={c.value}>
-            {c.label}
-          </option>
-        ))}
-      </select>
+        options={vocabOptions(CONDITIONS)}
+        onChange={(v) => onChange({ type: v as ConditionType })}
+        variant="chip"
+        searchable
+      />
       {condition.type === "section_is" || condition.type === "section_is_not" ? (
         <SectionSelect
           id={`${prefix}-section`}
@@ -302,37 +286,40 @@ export function ConditionFields({
         />
       ) : null}
       {condition.type === "source_is" ? (
-        <select
-          aria-label="Source"
-          value={typeof condition.source === "string" ? condition.source : ""}
-          onChange={(e) => onChange({ ...condition, source: e.currentTarget.value })}
-          className={inputClass}
-        >
-          <option value="">Choose…</option>
-          <option value="form">A form</option>
-          <option value="manual">Created in the app</option>
-          <option value="import">An import</option>
-          <option value="inbound">An inbound webhook</option>
-        </select>
+        <SmartPicker
+          label="Source"
+          value={typeof condition.source === "string" ? condition.source : null}
+          options={TASK_SOURCES.map((x) => ({ ...x }))}
+          onChange={(v) => onChange({ ...condition, source: v })}
+          variant="chip"
+          placeholder="choose source"
+        />
       ) : null}
     </Row>
   );
 }
 
+// An action's settings. The sentence builder draws short ones on the action's line (part = inline: a
+// section, a field and its value, a person, hours) and the rest below it (part = block: messages,
+// recipients, integrations). Without `part` everything is drawn.
 export function ActionFields({
   projectId,
   prefix,
   action,
   ctx,
   onChange,
+  part,
 }: {
   projectId: string;
   prefix: string;
   action: RuleAction;
   ctx: RuleContext;
   onChange: (next: RuleAction) => void;
+  part?: "inline" | "block";
 }) {
   const fields = ruleFields(ctx);
+  const inline = part !== "block";
+  const block = part !== "inline";
   const text = (key: string, label: string, opts: { multiline?: boolean; placeholder?: string } = {}) => {
     const props = {
       id: `${prefix}-${key}`,
@@ -350,11 +337,11 @@ export function ActionFields({
 
   switch (action.type) {
     case "move_section":
-      return (
+      return !inline ? null : (
         <SectionSelect id={`${prefix}-section`} label="Section" value={action.section_id} ctx={ctx} onChange={(v) => onChange({ ...action, section_id: v })} />
       );
     case "set_field":
-      return (
+      return !inline ? null : (
         <Row>
           <FieldSelect
             id={`${prefix}-field`}
@@ -376,7 +363,7 @@ export function ActionFields({
         </Row>
       );
     case "set_assignee":
-      return (
+      return !inline ? null : (
         <PersonSelect
           id={`${prefix}-assignee`}
           label="Assignee"
@@ -387,40 +374,41 @@ export function ActionFields({
         />
       );
     case "add_comment":
-      return text("body", "Comment", { multiline: true, placeholder: "@{assignee} this is ready for you" });
+      return !block ? null : text("body", "Comment", { multiline: true, placeholder: "@{assignee} this is ready for you" });
     case "add_followers":
-      return <PeoplePicker idPrefix={`${prefix}-people`} label="Followers" value={action.people} ctx={ctx} onChange={(v) => onChange({ ...action, people: v })} />;
+      return !inline ? null : <PeoplePicker idPrefix={`${prefix}-people`} label="Followers" value={action.people} ctx={ctx} onChange={(v) => onChange({ ...action, people: v })} />;
     case "notify":
-      return (
+      return !block ? null : (
         <div className="space-y-2">
           <PeoplePicker idPrefix={`${prefix}-people`} label="Notify" value={action.people} ctx={ctx} onChange={(v) => onChange({ ...action, people: v })} />
           {text("message", "Message")}
         </div>
       );
     case "request_approval":
+      if (part === "inline") {
+        return <PersonSelect id={`${prefix}-approver`} label="Approver" value={action.approver} ctx={ctx} onChange={(v) => onChange({ ...action, approver: v })} placeholder="choose approver" />;
+      }
       return (
         <div className="space-y-2">
-          <PersonSelect id={`${prefix}-approver`} label="Approver" value={action.approver} ctx={ctx} onChange={(v) => onChange({ ...action, approver: v })} />
+          {part === "block" ? null : (
+            <PersonSelect id={`${prefix}-approver`} label="Approver" value={action.approver} ctx={ctx} onChange={(v) => onChange({ ...action, approver: v })} />
+          )}
           {text("title", "Approval subtask title (optional)")}
           {text("note", "Note to the approver (optional)")}
         </div>
       );
     case "send_email":
-      return (
+      return !block ? null : (
         <div className="space-y-2">
           <Row>
-            <select
-              aria-label="Recipient"
+            <span className="text-zinc-600">to</span>
+            <SmartPicker
+              label="Recipient"
               value={typeof action.to === "string" ? action.to : "submitter"}
-              onChange={(e) => onChange({ ...action, to: e.currentTarget.value })}
-              className={inputClass}
-            >
-              {EMAIL_RECIPIENTS.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+              options={EMAIL_RECIPIENTS.map((r) => ({ ...r }))}
+              onChange={(v) => onChange({ ...action, to: v })}
+              variant="chip"
+            />
             {action.to === "field" ? (
               <FieldSelect
                 id={`${prefix}-email-field`}
@@ -440,18 +428,14 @@ export function ActionFields({
                 className={inputClass}
               />
             ) : null}
-            <select
-              aria-label="Template"
+            <span className="text-zinc-600">using</span>
+            <SmartPicker
+              label="Template"
               value={typeof action.template === "string" ? action.template : "requester_update"}
-              onChange={(e) => onChange({ ...action, template: e.currentTarget.value })}
-              className={inputClass}
-            >
-              {EMAIL_TEMPLATES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
+              options={EMAIL_TEMPLATES.map((t) => ({ ...t }))}
+              onChange={(v) => onChange({ ...action, template: v })}
+              variant="chip"
+            />
           </Row>
           {text("subject", "Subject (optional)")}
           {text("message", "Message", { multiline: true })}
@@ -474,10 +458,11 @@ export function ActionFields({
       );
     case "send_slack":
     case "call_webhook":
-      return <IntegrationFields projectId={projectId} prefix={prefix} action={action} ctx={ctx} onChange={onChange} />;
+      return !block ? null : <IntegrationFields projectId={projectId} prefix={prefix} action={action} ctx={ctx} onChange={onChange} />;
     case "delay":
-      return (
-        <label className="flex items-center gap-1.5 text-sm text-zinc-700">
+      return !inline ? null : (
+        <label className="flex items-center gap-1.5 text-sm text-zinc-700" title="The remaining actions are skipped if the conditions stop matching or the rule is turned off">
+          <span className="sr-only">Hours to wait</span>
           <input
             type="number"
             min={0.1}
@@ -487,7 +472,7 @@ export function ActionFields({
             onChange={(e) => onChange({ ...action, hours: Number(e.currentTarget.value) })}
             className={`${inputClass} w-20`}
           />
-          hours, then run the remaining actions (skipped if the conditions stop matching or the rule is turned off)
+          hours, then continue
         </label>
       );
     default:
@@ -543,23 +528,19 @@ function IntegrationFields({
           <label htmlFor={`${prefix}-format`} className={`${labelClass} mt-1`}>
             Message style
           </label>
-          <select
+          <SmartPicker
             id={`${prefix}-format`}
+            label="Message style"
             value={action.format === "blocks" ? "blocks" : "text"}
-            onChange={(e) => {
+            options={SLACK_FORMATS.map((f) => ({ value: f.value, label: f.label }))}
+            onChange={(v) => {
               const next = { ...action };
-              if (e.currentTarget.value === "blocks") next.format = "blocks";
+              if (v === "blocks") next.format = "blocks";
               else delete next.format;
               onChange(next);
             }}
-            className={`${inputClass} w-full max-w-xs`}
-          >
-            {SLACK_FORMATS.map((f) => (
-              <option key={f.value} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+            className="w-full max-w-xs"
+          />
           {action.format === "blocks" ? (
             <p className="text-xs text-zinc-500">
               Your message, then a card with the task title (linked), project, assignee, due date, status, and an Open

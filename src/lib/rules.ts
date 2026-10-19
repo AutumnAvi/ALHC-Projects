@@ -3,46 +3,47 @@ import type { Json } from "@/lib/supabase/database.types";
 // Vocabulary of the rules engine (see the workflows migration). The database validates every rule
 // (`validate_rule`) and runs it; this module only describes rules for the builder UI.
 
+// Each entry has a group, a one-line description, and search keywords for the rule builder's picker.
 export const TRIGGERS = [
-  { value: "task_created", label: "Task is added to this project" },
-  { value: "section_changed", label: "Task moves into a section" },
-  { value: "field_changed", label: "A field changes" },
-  { value: "assignee_changed", label: "Assignee changes" },
-  { value: "due_approaching", label: "Due date is approaching" },
-  { value: "approval_decided", label: "An approval is decided" },
-  { value: "form_submitted", label: "A form is submitted" },
-  { value: "inbound_received", label: "Created by inbound webhook" },
+  { value: "task_created", label: "Task is added to this project", group: "Task", description: "Fires when a task is created in this project or a form or webhook adds one.", keywords: ["new", "created", "added"] },
+  { value: "section_changed", label: "Task moves into a section", group: "Task", description: "Fires when a task enters a section you pick.", keywords: ["moved", "column", "status", "stage"] },
+  { value: "field_changed", label: "A field changes", group: "Fields", description: "Fires when a custom field changes, or changes to a value you pick.", keywords: ["custom field", "priority", "value"] },
+  { value: "assignee_changed", label: "Assignee changes", group: "People", description: "Fires when someone is assigned, reassigned, or unassigned.", keywords: ["assign", "owner", "person"] },
+  { value: "due_approaching", label: "Due date is approaching", group: "Dates", description: "Fires once per open task a number of days before its due date.", keywords: ["deadline", "reminder", "soon"] },
+  { value: "approval_decided", label: "An approval is decided", group: "Approvals and forms", description: "Fires when an approver approves, requests changes, or rejects.", keywords: ["approve", "review", "rejected", "changes requested"] },
+  { value: "form_submitted", label: "A form is submitted", group: "Approvals and forms", description: "Fires when someone submits one of this project's forms.", keywords: ["intake", "request", "submission"] },
+  { value: "inbound_received", label: "Created by inbound webhook", group: "Integrations", description: "Fires when a task comes in through one of this project's inbound webhooks.", keywords: ["api", "zapier", "make", "webhook"] },
 ] as const;
 
 export type TriggerType = (typeof TRIGGERS)[number]["value"];
 
 export const CONDITIONS = [
-  { value: "section_is", label: "Section is" },
-  { value: "section_is_not", label: "Section is not" },
-  { value: "field_equals", label: "Field equals" },
-  { value: "field_is_set", label: "Field is set" },
-  { value: "field_is_empty", label: "Field is empty" },
-  { value: "assignee_is_set", label: "Has an assignee" },
-  { value: "assignee_is_empty", label: "Has no assignee" },
-  { value: "is_incomplete", label: "Task is incomplete" },
-  { value: "is_complete", label: "Task is complete" },
-  { value: "source_is", label: "Task came from" },
+  { value: "section_is", label: "Section is", group: "Task", description: "The task is in a section you pick.", keywords: ["column", "stage"] },
+  { value: "section_is_not", label: "Section is not", group: "Task", description: "The task is in any other section.", keywords: ["column", "stage", "not"] },
+  { value: "is_incomplete", label: "Task is incomplete", group: "Task", description: "The task isn't marked complete.", keywords: ["open", "not done"] },
+  { value: "is_complete", label: "Task is complete", group: "Task", description: "The task is marked complete.", keywords: ["done", "finished"] },
+  { value: "source_is", label: "Task came from", group: "Task", description: "Created in the app, by a form, an import, or an inbound webhook.", keywords: ["source", "form", "import", "origin"] },
+  { value: "field_equals", label: "Field equals", group: "Fields", description: "A custom field has the value you pick.", keywords: ["custom field", "value", "is"] },
+  { value: "field_is_set", label: "Field is set", group: "Fields", description: "A custom field has any value.", keywords: ["custom field", "filled", "not empty"] },
+  { value: "field_is_empty", label: "Field is empty", group: "Fields", description: "A custom field has no value.", keywords: ["custom field", "blank", "missing"] },
+  { value: "assignee_is_set", label: "Has an assignee", group: "People", description: "Someone is assigned.", keywords: ["assign", "assigned"] },
+  { value: "assignee_is_empty", label: "Has no assignee", group: "People", description: "Nobody is assigned yet.", keywords: ["assign", "unassigned"] },
 ] as const;
 
 export type ConditionType = (typeof CONDITIONS)[number]["value"];
 
 export const ACTIONS = [
-  { value: "move_section", label: "Move to section" },
-  { value: "set_field", label: "Set field" },
-  { value: "set_assignee", label: "Set assignee" },
-  { value: "add_comment", label: "Add comment" },
-  { value: "add_followers", label: "Add followers" },
-  { value: "notify", label: "Send inbox notification" },
-  { value: "request_approval", label: "Request approval (approval subtask)" },
-  { value: "send_email", label: "Send email" },
-  { value: "send_slack", label: "Send Slack message" },
-  { value: "call_webhook", label: "Call webhook" },
-  { value: "delay", label: "Wait, then continue" },
+  { value: "move_section", label: "Move to section", group: "Task", description: "Moves the task to a section of this project.", keywords: ["column", "stage", "status"] },
+  { value: "set_field", label: "Set field", group: "Fields", description: "Writes a value into a custom field (Status moves the section).", keywords: ["custom field", "priority", "value"] },
+  { value: "set_assignee", label: "Set assignee", group: "People", description: "Assigns a person, the creator, or nobody.", keywords: ["assign", "owner", "unassign", "remove assignee"] },
+  { value: "add_followers", label: "Add followers", group: "People", description: "Adds collaborators who'll hear about updates.", keywords: ["collaborator", "follow", "watch"] },
+  { value: "add_comment", label: "Add comment", group: "Communication", description: "Posts a comment on the task as this rule.", keywords: ["message", "note", "mention"] },
+  { value: "notify", label: "Send inbox notification", group: "Communication", description: "Puts a message in people's Inbox.", keywords: ["alert", "inbox", "ping", "tell"] },
+  { value: "send_email", label: "Send email", group: "Communication", description: "Emails the submitter, the assignee, an address in a field, or a fixed address.", keywords: ["mail", "requester", "submitter"] },
+  { value: "request_approval", label: "Request approval (approval subtask)", group: "Approvals", description: "Asks someone to approve, with an approval subtask.", keywords: ["approve", "review", "sign off"] },
+  { value: "send_slack", label: "Send Slack message", group: "Integrations", description: "Posts to a Slack channel through an incoming webhook.", keywords: ["chat", "channel"] },
+  { value: "call_webhook", label: "Call webhook", group: "Integrations", description: "POSTs a JSON summary of the task to an https:// address.", keywords: ["api", "zapier", "make", "http"] },
+  { value: "delay", label: "Wait, then continue", group: "Flow", description: "Pauses for some hours, then runs the remaining actions.", keywords: ["delay", "later", "pause", "hours"] },
 ] as const;
 
 export type ActionType = (typeof ACTIONS)[number]["value"];
@@ -54,16 +55,24 @@ export const APPROVAL_DECISIONS = [
 ] as const;
 
 export const EMAIL_RECIPIENTS = [
-  { value: "submitter", label: "Form submitter" },
-  { value: "assignee", label: "Assignee" },
-  { value: "field", label: "Email in a field" },
-  { value: "address", label: "Fixed address" },
+  { value: "submitter", label: "Form submitter", description: "Whoever submitted the form that made this task." },
+  { value: "assignee", label: "Assignee", description: "The task's assignee." },
+  { value: "field", label: "Email in a field", description: "The address written in a text field." },
+  { value: "address", label: "Fixed address", description: "Always the same address." },
 ] as const;
 
 export const EMAIL_TEMPLATES = [
-  { value: "requester_update", label: "Requester update" },
-  { value: "due_tomorrow", label: "Due tomorrow" },
-  { value: "custom", label: "Plain message" },
+  { value: "requester_update", label: "Requester update", description: "“Your request moved to …” with the task, project, and section." },
+  { value: "due_tomorrow", label: "Due tomorrow", description: "A reminder that the task is due tomorrow." },
+  { value: "custom", label: "Plain message", description: "Just your subject and message." },
+] as const;
+
+// Where a task can come from (the "Task came from" condition; mirrors validate_rule).
+export const TASK_SOURCES = [
+  { value: "manual", label: "Created in the app", description: "Someone added it in a list, board, or My tasks." },
+  { value: "form", label: "A form", description: "A form submission made it." },
+  { value: "import", label: "An import", description: "The Asana importer brought it in." },
+  { value: "inbound", label: "An inbound webhook", description: "Another tool sent it in." },
 ] as const;
 
 // People slots accept a profile id or one of these roles.
