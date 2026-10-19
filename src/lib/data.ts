@@ -6,7 +6,16 @@ import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
 import type { MentionTeam } from "@/lib/mentions";
-import { isEmailDesignKind, settingsFromRow, type EmailDesignKind, type EmailDesignSettings } from "@/lib/email-design";
+import {
+  DESIGN_COLUMNS,
+  DESIGN_FIELDS,
+  isEmailDesignKind,
+  LEGACY_DESIGN_FIELDS,
+  settingsFromRow,
+  type DesignField,
+  type EmailDesignKind,
+  type EmailDesignSettings,
+} from "@/lib/email-design";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import { isFieldType, parseOptions, type FieldDef, type FieldOption, type FieldType, type LibraryField } from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
@@ -223,7 +232,14 @@ export type TaskDetail = {
   submitterResponses: boolean;
   // The request's reply thread (the top-level task's), once someone sent the submitter a response:
   // closed = the submitter's replies are refused. Null without one (or without the database update).
-  replyThread: { closed: boolean; closedAt: string | null; closedByName: string | null; submitterEmail: string } | null;
+  // subject = the conversation's subject (every response and reply in it keeps it), null before Oct 19 notes.
+  replyThread: {
+    closed: boolean;
+    closedAt: string | null;
+    closedByName: string | null;
+    submitterEmail: string;
+    subject: string | null;
+  } | null;
   approvals: TaskApproval[];
   // Direct subtasks, in order.
   subtasks: SubtaskItem[];
@@ -1024,6 +1040,7 @@ async function loadReplyThread(supabase: Supabase, taskId: string): Promise<Task
     closedAt: typeof o.closed_at === "string" ? o.closed_at : null,
     closedByName: typeof o.closed_by_name === "string" ? o.closed_by_name : null,
     submitterEmail: o.submitter_email,
+    subject: typeof o.subject === "string" && o.subject.trim() ? o.subject : null,
   };
 }
 
@@ -5688,13 +5705,19 @@ export const listEmailDesigns = cache(async (projectId: string | null): Promise<
   const workspace = await getWorkspace();
   if (!workspace) return null;
   const supabase = await createClient();
-  let query = supabase
-    .from("email_designs")
-    .select("id, kind, project_id, form_id, logo_path, accent_color, header_text, intro_message, footer_text, button_label, button_color, updated_at")
-    .is("deleted_at", null)
-    .eq("workspace_id", workspace.id);
-  query = projectId ? query.or(`project_id.is.null,project_id.eq.${projectId}`) : query.is("project_id", null);
-  const result = await query;
+  const run = (fields: readonly DesignField[]) => {
+    const columns = fields.map((f) => DESIGN_COLUMNS[f]).join(", ");
+    let query = supabase
+      .from("email_designs")
+      .select(`id, kind, project_id, form_id, updated_at, ${columns}`)
+      .is("deleted_at", null)
+      .eq("workspace_id", workspace.id);
+    query = projectId ? query.or(`project_id.is.null,project_id.eq.${projectId}`) : query.is("project_id", null);
+    return query.returns<({ id: string; kind: string; project_id: string | null; form_id: string | null; updated_at: string } & Record<string, unknown>)[]>();
+  };
+  let result = await run(DESIGN_FIELDS);
+  // A database without Oct 19 notes' update has only the first settings.
+  if (result.error && isMissingColumn(result.error)) result = await run(LEGACY_DESIGN_FIELDS);
   if (result.error) {
     if (result.error.code === "PGRST205" || result.error.code === "42P01") return null;
     throw new Error(`Failed to load email designs: ${result.error.message}`);

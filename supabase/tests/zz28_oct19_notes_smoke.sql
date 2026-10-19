@@ -4,6 +4,9 @@
 --    that didn't take effect: a reset period and a per-field counter (task creation failed),
 --    "Number subtasks" off / on, {parent} after one save, a sequence apply_task_numbering creates,
 --    and Duplicate project keeping every setting.
+-- 2. Email control: the new design settings (grants, guard, resolution), the SQL subject fill-in
+--    (parity vectors shared with the unit tests), and a response's subject rendered by the database:
+--    the same on the comment, its thread, its email, later responses, a subtask's, and the reply.
 --   a1a19019…01 o19-owner@example.com   owner
 --   a1a19019…02 o19-viewer@example.com  viewer
 --   a1a19019…03 o19-out@example.com     allowlisted, not a member
@@ -282,6 +285,216 @@ do $$
 begin
   assert public.email_design_context((select id from o19_ids where name = 'email')) -> 'values' ->> 'request_wrap' = 'true',
     'wrap on reaches the drain';
+end $$;
+reset role;
+
+-- ---------------------------------------------------------------------------------------------
+-- 2. Email control: subject and heading templates, small print, show / hide per block
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+declare
+  col text;
+begin
+  foreach col in array array['subject_template', 'heading_text', 'notice_text', 'show_logo', 'show_header', 'show_heading',
+    'show_intro', 'show_body', 'show_details', 'show_button', 'show_notice', 'show_footer'] loop
+    assert has_column_privilege('authenticated', 'public.email_designs', col, 'INSERT')
+      and has_column_privilege('authenticated', 'public.email_designs', col, 'UPDATE'),
+      format('designers write %s', col);
+    assert not has_column_privilege('anon', 'public.email_designs', col, 'SELECT'), format('anon: no %s', col);
+  end loop;
+  assert not (select prosecdef from pg_proc where oid = 'public.email_subject_fill_in(text,jsonb,text)'::regprocedure)
+    and not (select prosecdef from pg_proc where oid = 'public.submitter_response_subject(uuid,uuid)'::regprocedure),
+    'the subject helpers are not definers';
+  assert not has_function_privilege('authenticated', 'public.email_subject_fill_in(text,jsonb,text)', 'execute')
+    and not has_function_privilege('anon', 'public.email_subject_fill_in(text,jsonb,text)', 'execute')
+    and not has_function_privilege('authenticated', 'public.submitter_response_subject(uuid,uuid)', 'execute')
+    and not has_function_privilege('anon', 'public.submitter_response_subject(uuid,uuid)', 'execute'),
+    'clients call neither subject helper';
+end $$;
+
+-- The SQL fill-in matches the app's (the same vectors are in tests/unit/email-design-blocks.test.ts).
+do $$
+begin
+  assert public.email_subject_fill_in('Re: {request_number} – {Task_Name} for { requester_name } {nonsense}{task_link}',
+    jsonb_build_object('request_number', 'Req #042', 'task_name', E'  Spring\tflyer ', 'requester_name', 'Jordan', 'task_link', 'x'),
+    'requester') = 'Re: Req #042 – Spring flyer for Jordan', 'tokens, case, spaces in braces, unknown and internal-only fields';
+  assert public.email_subject_fill_in(E'[Creative]\n  {email_subject}  ', jsonb_build_object('email_subject', '{task_name} \ back'),
+    'internal') = '[Creative] {task_name} \ back', 'one line; a value is never filled in again; backslashes kept';
+  assert public.email_subject_fill_in('{task_link}', '{"task_link":"L"}', 'internal') = 'L', 'task_link for internal emails';
+  assert public.email_subject_fill_in('{task_link}', '{"task_link":"L"}', 'requester') = '', 'never for requester emails';
+  assert public.email_subject_fill_in('Due {due_date}', '{"due_date":"Sep 5, 2026"}', 'requester') = 'Due Sep 5, 2026', 'dates';
+  assert public.email_subject_fill_in(repeat('é', 310), '{}', 'requester') = repeat('é', 300), 'cut at 300 characters';
+  assert public.email_subject_fill_in('', '{}', 'requester') = '' and public.email_subject_fill_in(null, '{}', 'requester') = '',
+    'empty in, empty out';
+  assert to_char(date '2026-09-05', 'Mon FMDD, YYYY') = 'Sep 5, 2026', 'the due date reads like the app''s';
+end $$;
+
+-- A project with two forms; the owner designs, the viewer reads.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1a19019-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  p uuid;
+  s uuid;
+  fa uuid;
+  fb uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'O19 Mail') returning id into p;
+  insert into public.sections (project_id, name, sort_order) values (p, 'Intake', 1024) returning id into s;
+  perform public.add_project_member(p, 'o19-viewer@example.com', 'viewer');
+  insert into public.forms (project_id, title, accepting_responses, send_confirmation, destination_section_id, questions)
+  values (p, 'Mail Form', true, false, s, '[{"id":"q1","type":"short_text","label":"Your name"}]'::jsonb) returning id into fa;
+  insert into public.forms (project_id, title, accepting_responses, send_confirmation, destination_section_id)
+  values (p, 'Mail Other', true, false, s) returning id into fb;
+  insert into o19_ids values ('mp', p), ('fa', fa), ('fb', fb);
+end $$;
+reset role;
+
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+insert into o19_ids select 'ma1', (public.submit_form((select id from o19_ids where name = 'fa'), 'Rhea@Example.org', '{"q1":"Rhea Rowntree"}') ->> 'task_id')::uuid;
+insert into o19_ids select 'ma2', (public.submit_form((select id from o19_ids where name = 'fa'), 'rhea2@example.org', '{"q1":"Rex Second"}') ->> 'task_id')::uuid;
+insert into o19_ids select 'mb1', (public.submit_form((select id from o19_ids where name = 'fb'), 'bea@example.org', '{}') ->> 'task_id')::uuid;
+insert into o19_ids select 'mb2', (public.submit_form((select id from o19_ids where name = 'fb'), 'bo@example.org', '{}') ->> 'task_id')::uuid;
+reset role;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1a19019-0000-4000-8000-000000000001', false) is not null as ok \gset
+-- No template: Asana's subject, as before.
+insert into o19_ids select 'rb1', public.send_submitter_response((select id from o19_ids where name = 'mb1'), 'First, no template');
+do $$
+begin
+  assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'rb1')) = 'Re: "Mail Other" submission received',
+    'no template = the default subject';
+end $$;
+
+-- The guard puts a pasted subject on one line and trims; the CHECKs keep the limits.
+insert into public.email_designs (workspace_id, kind, project_id, subject_template, heading_text, show_heading, show_details)
+values ('00000000-0000-4000-8000-000000000001', 'requester', (select id from o19_ids where name = 'mp'),
+  E'Proj:  {form_name}\n', '  Hello  ', false, false);
+insert into public.email_designs (workspace_id, kind, project_id, form_id, subject_template, show_heading)
+values ('00000000-0000-4000-8000-000000000001', 'requester', (select id from o19_ids where name = 'mp'),
+  (select id from o19_ids where name = 'fa'), 'Re: {request_number} {task_name} for {requester_name} {nonsense}{task_link}', true);
+do $$
+declare
+  p uuid := (select id from o19_ids where name = 'mp');
+  d jsonb;
+begin
+  assert (select subject_template from public.email_designs where project_id = p and form_id is null and deleted_at is null) = 'Proj: {form_name}'
+    and (select heading_text from public.email_designs where project_id = p and form_id is null and deleted_at is null) = 'Hello',
+    'subject collapsed to one line, heading trimmed';
+  begin
+    update public.email_designs set heading_text = repeat('h', 301) where project_id = p and form_id is null and deleted_at is null;
+    raise exception 'a heading over 300 characters should fail';
+  exception when check_violation then null;
+  end;
+  begin
+    update public.email_designs set notice_text = repeat('n', 501) where project_id = p and form_id is null and deleted_at is null;
+    raise exception 'small print over 500 characters should fail';
+  exception when check_violation then null;
+  end;
+  -- Resolution: the form's switch beats the project's; another form gets the project's; kinds never mix.
+  d := public.resolve_email_design('requester', p, (select id from o19_ids where name = 'fa'));
+  assert (d ->> 'show_heading')::boolean and not (d ->> 'show_details')::boolean
+    and d ->> 'subject_template' like 'Re: {request_number}%' and d ->> 'heading_text' = 'Hello',
+    format('form, then project: %s', d);
+  d := public.resolve_email_design('requester', p, (select id from o19_ids where name = 'fb'));
+  assert not (d ->> 'show_heading')::boolean and d ->> 'subject_template' = 'Proj: {form_name}', 'another form: the project''s';
+  assert d ->> 'show_logo' is null, 'a switch nobody set = the built-in default';
+  d := public.resolve_email_design('internal', p, null);
+  assert d ->> 'show_heading' is null and d ->> 'subject_template' is null, 'internal emails don''t see requester settings';
+end $$;
+reset role;
+
+-- The viewer can't change a design.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1a19019-0000-4000-8000-000000000002', false) is not null as ok \gset
+update public.email_designs set subject_template = 'Hijack' where project_id = (select id from o19_ids where name = 'mp');
+reset role;
+do $$
+begin
+  assert not exists (select 1 from public.email_designs where subject_template = 'Hijack'), 'a Viewer can''t change a design';
+end $$;
+
+-- A response under the form's template: the comment, its thread, and its email share the rendered subject.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1a19019-0000-4000-8000-000000000001', false) is not null as ok \gset
+insert into o19_ids select 'ra1', public.send_submitter_response((select id from o19_ids where name = 'ma1'), 'Hi Rhea');
+reset role;
+do $$
+declare
+  t uuid := (select id from o19_ids where name = 'ma1');
+  expected text;
+  c public.comments;
+begin
+  expected := 'Re: ' || coalesce(public.task_request_label(t) || ' ', '') || (select title from public.tasks where id = t) || ' for Rhea Rowntree';
+  select * into c from public.comments where id = (select id from o19_ids where name = 'ra1');
+  assert c.email_subject = expected, format('the form''s template, filled in: %s (expected %s)', c.email_subject, expected);
+  assert (select subject from public.email_outbox where payload ->> 'comment_id' = c.id::text) = expected, 'the email''s subject';
+  assert (select subject from public.submitter_reply_threads where task_id = t and revoked_at is null) = expected, 'the thread''s subject';
+  perform set_config('o19.subject', expected, false);
+end $$;
+
+-- A later response keeps the conversation's subject, even after the template changes; so does a subtask's.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1a19019-0000-4000-8000-000000000001', false) is not null as ok \gset
+update public.email_designs set subject_template = 'Changed {task_name}'
+where form_id = (select id from o19_ids where name = 'fa') and deleted_at is null;
+insert into o19_ids select 'ra2', public.send_submitter_response((select id from o19_ids where name = 'ma1'), 'Second');
+insert into o19_ids select 'msub', public.create_subtask((select id from o19_ids where name = 'ma1'), 'Mail subtask', null);
+insert into o19_ids select 'rsub', public.send_submitter_response((select id from o19_ids where name = 'msub'), 'From the subtask');
+-- A template that renders empty falls back to the default subject.
+update public.email_designs set subject_template = '{nonsense} {task_link}'
+where form_id = (select id from o19_ids where name = 'fa') and deleted_at is null;
+insert into o19_ids select 'ra3', public.send_submitter_response((select id from o19_ids where name = 'ma2'), 'Blank template');
+-- The project's template on the other form; the conversation that started before it keeps its subject.
+insert into o19_ids select 'rb2', public.send_submitter_response((select id from o19_ids where name = 'mb2'), 'Project template');
+insert into o19_ids select 'rb3', public.send_submitter_response((select id from o19_ids where name = 'mb1'), 'Second, after the template');
+reset role;
+do $$
+declare
+  expected text := current_setting('o19.subject');
+begin
+  assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'ra2')) = expected
+    and (select subject from public.email_outbox where payload ->> 'comment_id' = (select id::text from o19_ids where name = 'ra2')) = expected,
+    'a conversation keeps its subject';
+  assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'rsub')) = expected, 'a subtask''s response too';
+  assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'ra3')) = 'Re: "Mail Form" submission received',
+    'a template that renders empty = the default';
+  assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'rb2')) = 'Proj: Mail Other',
+    'the project''s template on another form';
+  assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'rb3')) = 'Re: "Mail Other" submission received',
+    'an older conversation keeps the subject it started with';
+end $$;
+
+-- The submitter's reply comes back under the same subject.
+set role service_role;
+do $$
+declare
+  result jsonb;
+  tok text;
+begin
+  select token into tok from public.submitter_reply_threads where task_id = (select id from o19_ids where name = 'ma1') and revoked_at is null;
+  result := public.post_submitter_reply(tok, 'rhea@example.org', 'Thanks!', 'o19-reply-1');
+  assert result ->> 'status' = 'posted', format('the reply posts: %s', result);
+  assert (select email_subject from public.comments where id = (result ->> 'comment_id')::uuid) = current_setting('o19.subject'),
+    'the reply carries the conversation''s subject';
+end $$;
+reset role;
+
+-- The pane reads the conversation's subject (Viewers); outsiders learn nothing.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1a19019-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  assert public.submitter_thread_status((select id from o19_ids where name = 'ma1')) ->> 'subject' = current_setting('o19.subject'),
+    'a Viewer sees the conversation''s subject';
+end $$;
+select set_config('request.jwt.claim.sub', 'a1a19019-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+begin
+  assert public.submitter_thread_status((select id from o19_ids where name = 'ma1')) is null, 'an outsider sees nothing';
 end $$;
 reset role;
 

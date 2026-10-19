@@ -825,7 +825,13 @@ export function TaskPaneFooter({
       createdAt: new Date().toISOString(),
       email:
         emailed && submitterEmail
-          ? { direction: "sent", address: submitterEmail.toLowerCase(), subject: submitterResponseSubject(task.submission?.formTitle) }
+          ? {
+              direction: "sent",
+              address: submitterEmail.toLowerCase(),
+              // The conversation's subject once there is one (a first response under a subject template
+              // shows the default until the server's row replaces this one).
+              subject: task.replyThread?.subject ?? submitterResponseSubject(task.submission?.formTitle),
+            }
           : null,
       serverId: null,
       knownIds: task.comments.map((c) => c.id),

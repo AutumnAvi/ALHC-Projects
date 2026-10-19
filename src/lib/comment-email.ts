@@ -19,8 +19,9 @@ export type CommentEmail = {
   error: string | null;
 };
 
-// The subject Asana uses for responses: Re: "<form name>" submission received (the database builds the
-// stored one in task_submitter(); this is for the composer's preview and optimistic rows).
+// The subject Asana uses for responses: Re: "<form name>" submission received. The database stores the
+// real one (submitter_response_subject(): the conversation's subject, else the requester design's subject
+// template, else this); this is for the composer's optimistic row and the email designer's preview.
 export function submitterResponseSubject(formTitle: string | null | undefined): string {
   const name = formTitle?.trim() || "Your request";
   return `Re: "${name}" submission received`.slice(0, 300);

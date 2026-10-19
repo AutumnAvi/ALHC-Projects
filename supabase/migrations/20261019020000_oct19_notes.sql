@@ -15,6 +15,13 @@
 --    setting; email_design_context tells the drain the issuing project's bracket setting.
 --    Tokens and payloads stay bare on purpose: the webhook "req", Slack {req}, the email fill-in
 --    {request_number}, submit_form's request_label, and the inbound response.
+-- 2. Email control. Designs gain a subject template and a heading (fill-in fields plus the email's own
+--    {email_subject} / {email_heading}), editable small print, and a show / hide switch per block
+--    (logo, header label, heading, intro, message, details, button, small print, sign-off), resolved
+--    form → project → workspace like the rest. A response to a form's submitter gets its subject from
+--    the database (submitter_response_subject: the conversation's subject, else the design's template
+--    filled in by email_subject_fill_in, else Asana's), and the comment, its thread, and its email all
+--    carry it. Every other email's subject and heading are designed at send time by the drain.
 --
 -- No new SECURITY DEFINER function for clients (suite 60 unchanged); the new functions are invoker or
 -- immutable helpers, revoked from anon. fire_rules, notify_with, notify_message, and add_story are
@@ -310,6 +317,201 @@ select public.alhc_patch_function(
         select s.wrap_brackets from public.request_sequences s
         where s.project_id = coalesce(t.req_project_id, t.home_project_id) and s.deleted_at is null
       ), true),$p$
+);
+
+-- =============================================================================================
+-- 2. Email control: subject and heading templates, small print, and show / hide per block
+-- =============================================================================================
+
+-- New settings on every design scope (null = inherit, like the others). '' in subject_template,
+-- heading_text, and notice_text = "this email's own".
+alter table public.email_designs
+  add column subject_template text constraint email_designs_subject_template_check check (
+    subject_template is null or (char_length(subject_template) <= 300 and subject_template !~ '[\r\n]')
+  ),
+  add column heading_text text constraint email_designs_heading_text_check check (
+    heading_text is null or char_length(heading_text) <= 300
+  ),
+  add column notice_text text constraint email_designs_notice_text_check check (
+    notice_text is null or char_length(notice_text) <= 500
+  ),
+  add column show_logo boolean,
+  add column show_header boolean,
+  add column show_heading boolean,
+  add column show_intro boolean,
+  add column show_body boolean,
+  add column show_details boolean,
+  add column show_button boolean,
+  add column show_notice boolean,
+  add column show_footer boolean;
+
+comment on column public.email_designs.subject_template is
+  'The subject, with fill-in fields and {email_subject} (the email''s own). '''' = the email''s own. '
+  'A response to a form''s submitter keeps the subject of its conversation''s first response.';
+comment on column public.email_designs.heading_text is
+  'The heading, with fill-in fields, {email_heading}, and {email_subject}. '''' = the email''s own.';
+comment on column public.email_designs.notice_text is
+  'The small print under the card (how to reply, why they got it). '''' = the email''s own. '
+  'The reply marker and the digest / report "Turn off" links always stay.';
+comment on column public.email_designs.show_body is
+  'Show the message (comment, confirmation message, rule text). A response to a submitter always shows it.';
+
+grant insert (subject_template, heading_text, notice_text, show_logo, show_header, show_heading, show_intro,
+  show_body, show_details, show_button, show_notice, show_footer)
+  on public.email_designs to authenticated;
+grant update (subject_template, heading_text, notice_text, show_logo, show_header, show_heading, show_intro,
+  show_body, show_details, show_button, show_notice, show_footer)
+  on public.email_designs to authenticated;
+
+-- The guard trims the new texts and puts a pasted subject on one line (before the CHECK sees it).
+select public.alhc_patch_function(
+  'public.guard_email_design()'::regprocedure,
+  $p$  new.header_text := case when new.header_text is null then null else btrim(new.header_text) end;$p$,
+  $p$  new.header_text := case when new.header_text is null then null else btrim(new.header_text) end;
+  new.heading_text := case when new.heading_text is null then null else btrim(new.heading_text) end;
+  new.notice_text := case when new.notice_text is null then null else btrim(new.notice_text) end;
+  new.subject_template := case when new.subject_template is null then null
+    else btrim(regexp_replace(new.subject_template, '[ \t\r\n\f\v]+', ' ', 'g')) end;$p$
+);
+
+-- resolve_email_design returns the new settings too, each from the nearest scope that sets it.
+select public.alhc_patch_function(
+  'public.resolve_email_design(text, uuid, uuid)'::regprocedure,
+  $p$    'button_color', (select s.button_color from scopes s where s.button_color is not null order by s.rank limit 1)$p$,
+  $p$    'button_color', (select s.button_color from scopes s where s.button_color is not null order by s.rank limit 1),
+    'subject_template', (select s.subject_template from scopes s where s.subject_template is not null order by s.rank limit 1),
+    'heading_text', (select s.heading_text from scopes s where s.heading_text is not null order by s.rank limit 1),
+    'notice_text', (select s.notice_text from scopes s where s.notice_text is not null order by s.rank limit 1),
+    'show_logo', (select s.show_logo from scopes s where s.show_logo is not null order by s.rank limit 1),
+    'show_header', (select s.show_header from scopes s where s.show_header is not null order by s.rank limit 1),
+    'show_heading', (select s.show_heading from scopes s where s.show_heading is not null order by s.rank limit 1),
+    'show_intro', (select s.show_intro from scopes s where s.show_intro is not null order by s.rank limit 1),
+    'show_body', (select s.show_body from scopes s where s.show_body is not null order by s.rank limit 1),
+    'show_details', (select s.show_details from scopes s where s.show_details is not null order by s.rank limit 1),
+    'show_button', (select s.show_button from scopes s where s.show_button is not null order by s.rank limit 1),
+    'show_notice', (select s.show_notice from scopes s where s.show_notice is not null order by s.rank limit 1),
+    'show_footer', (select s.show_footer from scopes s where s.show_footer is not null order by s.rank limit 1)$p$
+);
+
+-- A subject template filled in, on one line, at most 300 characters. Mirrors renderSubjectTemplate()
+-- in src/lib/email-design.ts: the same {field} tokens (case-insensitive, spaces allowed inside the
+-- braces), one pass (a value that looks like {field} is never filled in again), unknown fields and
+-- fields the kind doesn't offer blank ({task_link} only for internal emails), values trimmed, every run
+-- of whitespace one space. Whitespace is an explicit class so the browser and the database agree.
+create or replace function public.email_subject_fill_in(template text, vals jsonb, design_kind text)
+returns text
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  token constant text := '\{[ \t\r\n\f\v]*([A-Za-z_]+)[ \t\r\n\f\v]*\}';
+  allowed text[] := array['requester_name', 'request_number', 'task_name', 'project_name', 'form_name',
+    'commenter_name', 'due_date', 'email_subject'];
+  pieces text[];
+  keys text[];
+  result text;
+  val text;
+begin
+  if template is null then
+    return '';
+  end if;
+  if design_kind = 'internal' then
+    allowed := allowed || 'task_link'::text;
+  end if;
+  pieces := regexp_split_to_array(template, token);
+  select coalesce(array_agg(lower(m.match[1]) order by m.n), '{}') into keys
+  from regexp_matches(template, token, 'g') with ordinality as m(match, n);
+  result := coalesce(pieces[1], '');
+  for i in 1 .. coalesce(array_length(keys, 1), 0) loop
+    val := case when keys[i] = any(allowed) then vals ->> keys[i] end;
+    val := regexp_replace(coalesce(val, ''), '^[ \t\r\n\f\v]+|[ \t\r\n\f\v]+$', '', 'g');
+    result := result || val || coalesce(pieces[i + 1], '');
+  end loop;
+  result := regexp_replace(result, '[ \t\r\n\f\v]+', ' ', 'g');
+  result := regexp_replace(result, '^ | $', '', 'g');
+  return left(result, 300);
+end;
+$$;
+
+revoke all on function public.email_subject_fill_in(text, jsonb, text) from public, anon, authenticated;
+grant execute on function public.email_subject_fill_in(text, jsonb, text) to service_role;
+
+-- The subject of a response to a form's submitter. A conversation keeps one subject (the submitter's
+-- mailbox groups by it, and their replies come back with it): an open thread's subject wins. A new
+-- conversation gets the requester design's subject template (form → project → workspace) filled in
+-- with the same values email_design_context gives the drain, else Asana's Re: "<form>" submission
+-- received. Invoker, revoked from clients: only fill_comment_email (a definer trigger) calls it.
+create or replace function public.submitter_response_subject(target_task uuid, author uuid)
+returns text
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  s record;
+  t public.tasks;
+  r public.tasks;
+  existing text;
+  tmpl text;
+  rendered text;
+begin
+  select * into s from public.task_submitter(target_task);
+  if s.submitter_email is null then
+    return null;
+  end if;
+  select * into t from public.tasks where id = target_task;
+  select * into r from public.tasks where id = coalesce(t.root_task_id, t.id);
+  select k.subject into existing from public.submitter_reply_threads k
+  where k.task_id = r.id and k.submitter_email = s.submitter_email and k.revoked_at is null
+  order by k.created_at desc
+  limit 1;
+  if existing is not null then
+    return existing;
+  end if;
+  tmpl := public.resolve_email_design('requester', r.home_project_id, s.form_id) ->> 'subject_template';
+  if coalesce(public.email_subject_fill_in(tmpl, '{}'::jsonb, 'requester'), '') = '' then
+    return s.subject;
+  end if;
+  rendered := public.email_subject_fill_in(tmpl, jsonb_build_object(
+    'requester_name', public.submission_requester_name(s.submission_id),
+    'request_number', public.task_request_label(r.id),
+    'task_name', r.title,
+    'project_name', (select p.name from public.projects p where p.id = r.home_project_id),
+    'form_name', (select f.title from public.forms f where f.id = s.form_id),
+    'commenter_name', coalesce(
+      (select coalesce(nullif(btrim(p.full_name), ''), p.email) from public.profiles p where p.id = author),
+      'The team'
+    ),
+    'due_date', to_char(coalesce(t.due_on, r.due_on), 'Mon FMDD, YYYY'),
+    'email_subject', s.subject
+  ), 'requester');
+  return coalesce(nullif(rendered, ''), s.subject);
+end;
+$$;
+
+revoke all on function public.submitter_response_subject(uuid, uuid) from public, anon, authenticated;
+
+-- A response comment, its thread, and its outbox email all carry that one subject.
+select public.alhc_patch_function(
+  'public.fill_comment_email()'::regprocedure,
+  $p$  new.email_subject := s.subject;$p$,
+  $p$  new.email_subject := coalesce(public.submitter_response_subject(new.task_id, new.author_id), s.subject);$p$
+);
+
+select public.alhc_patch_function(
+  'public.on_comment_submitter_response()'::regprocedure,
+  $p$  values (root.id, s.submission_id, s.submitter_email, s.subject, left(public.inbound_random_hex(), 40), new.author_id)$p$,
+  $p$  values (root.id, s.submission_id, s.submitter_email, new.email_subject, left(public.inbound_random_hex(), 40), new.author_id)$p$
+);
+
+-- The pane's optimistic response card uses the conversation's subject (task Viewers already see it on
+-- the sent and received cards).
+select public.alhc_patch_function(
+  'public.submitter_thread_status(uuid)'::regprocedure,
+  $p$      'submitter_email', k.submitter_email,$p$,
+  $p$      'submitter_email', k.submitter_email,
+      'subject', k.subject,$p$
 );
 
 -- =============================================================================================

@@ -4,16 +4,26 @@ import { refresh } from "next/cache";
 import { getViewer } from "@/lib/auth";
 import { renderDesignSample, sendTestEmail } from "@/lib/email";
 import {
+  DESIGN_COLUMNS,
   DESIGN_FIELDS,
   designProblem,
+  isBlockField,
+  isDesignSample,
   isEmailDesignKind,
   isHexColor,
+  LEGACY_DESIGN_FIELDS,
   resolveEmailDesign,
   settingsFromRow,
+  type DesignField,
+  type DesignSample,
   type EmailDesignKind,
   type EmailDesignSettings,
+  type FillInValues,
 } from "@/lib/email-design";
+import { isInboundEmailConfigured } from "@/lib/email-reply";
 import { isUuid } from "@/lib/ids";
+import { backgroundOrigin } from "@/lib/origin";
+import type { TablesUpdate } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 
 // Email designs (Settings → Emails): save or reset one scope's design, render the live preview, and send
@@ -24,8 +34,12 @@ export type EmailDesignScope = { kind: EmailDesignKind; projectId: string | null
 type Result = { error?: string };
 
 const NOT_ALLOWED = "Only workspace admins change the workspace’s email designs, and project admins their project’s";
-const SELECT =
-  "id, workspace_id, logo_path, accent_color, header_text, intro_message, footer_text, button_label, button_color" as const;
+const NEEDS_UPDATE = "The subject, heading, small print, and show / hide settings need this release’s database update";
+const columnsOf = (fields: readonly DesignField[]) => fields.map((f) => DESIGN_COLUMNS[f]).join(", ");
+const SELECT = `id, workspace_id, ${columnsOf(DESIGN_FIELDS)}`;
+const LEGACY_SELECT = `id, workspace_id, ${columnsOf(LEGACY_DESIGN_FIELDS)}`;
+// A column this database doesn't have yet (before Oct 19 notes' update).
+const isMissingColumn = (code: string | undefined) => code === "42703" || code === "PGRST204";
 
 function checkScope(scope: EmailDesignScope): EmailDesignScope {
   if (!isEmailDesignKind(scope?.kind)) throw new Error("Unknown email kind");
@@ -37,15 +51,16 @@ function checkScope(scope: EmailDesignScope): EmailDesignScope {
 }
 
 function cleanSettings(input: Partial<EmailDesignSettings>): EmailDesignSettings {
-  const out = {} as EmailDesignSettings;
+  const out: Record<DesignField, string | boolean | null> = {} as Record<DesignField, string | boolean | null>;
   for (const field of DESIGN_FIELDS) {
     const value = input?.[field];
-    out[field] = typeof value === "string" ? (field === "accentColor" || field === "buttonColor" ? value.trim().toLowerCase() : value) : null;
+    if (isBlockField(field)) out[field] = typeof value === "boolean" ? value : null;
+    else if (typeof value !== "string") out[field] = null;
+    else if (field === "accentColor" || field === "buttonColor") out[field] = value.trim().toLowerCase() || null;
+    else if (field === "subjectTemplate") out[field] = value.replace(/[\r\n]+/g, " ");
+    else out[field] = value;
   }
-  for (const color of ["accentColor", "buttonColor"] as const) {
-    if (out[color] === "") out[color] = null;
-  }
-  return out;
+  return out as EmailDesignSettings;
 }
 
 type Client = Awaited<ReturnType<typeof createClient>>;
@@ -62,28 +77,24 @@ async function workspaceId(supabase: Client): Promise<string> {
   return data.id;
 }
 
-async function liveRow(supabase: Client, ws: string, scope: EmailDesignScope) {
-  let query = supabase.from("email_designs").select(SELECT).is("deleted_at", null).eq("workspace_id", ws).eq("kind", scope.kind);
-  query = scope.projectId ? query.eq("project_id", scope.projectId) : query.is("project_id", null);
-  query = scope.formId ? query.eq("form_id", scope.formId) : query.is("form_id", null);
-  const { data, error } = await query.maybeSingle();
+async function liveRow(supabase: Client, ws: string, scope: EmailDesignScope): Promise<(Record<string, unknown> & { id: string }) | null> {
+  const run = (columns: string) => {
+    let query = supabase.from("email_designs").select(columns).is("deleted_at", null).eq("workspace_id", ws).eq("kind", scope.kind);
+    query = scope.projectId ? query.eq("project_id", scope.projectId) : query.is("project_id", null);
+    query = scope.formId ? query.eq("form_id", scope.formId) : query.is("form_id", null);
+    return query.maybeSingle();
+  };
+  let { data, error } = await run(SELECT);
+  if (error && isMissingColumn(error.code)) ({ data, error } = await run(LEGACY_SELECT));
   if (error) {
     if (error.code === "PGRST205" || error.code === "42P01") throw new Error("Email designs need this release’s database update");
     throw new Error(error.message);
   }
-  return data;
+  return (data as unknown as (Record<string, unknown> & { id: string }) | null) ?? null;
 }
 
-function toColumns(settings: EmailDesignSettings) {
-  return {
-    logo_path: settings.logoPath,
-    accent_color: settings.accentColor,
-    header_text: settings.headerText,
-    intro_message: settings.introMessage,
-    footer_text: settings.footerText,
-    button_label: settings.buttonLabel,
-    button_color: settings.buttonColor,
-  };
+function toColumns(settings: EmailDesignSettings, fields: readonly DesignField[] = DESIGN_FIELDS): TablesUpdate<"email_designs"> {
+  return Object.fromEntries(fields.map((f) => [DESIGN_COLUMNS[f], settings[f]]));
 }
 
 function message(error: unknown): string {
@@ -103,12 +114,22 @@ export async function saveEmailDesign(input: EmailDesignScope & { settings: Part
       return { error: "Upload the logo again" };
     }
     const existing = await liveRow(supabase, ws, scope);
-    const result = existing
-      ? await supabase.from("email_designs").update(toColumns(settings)).eq("id", existing.id).select("id")
-      : await supabase
-          .from("email_designs")
-          .insert({ workspace_id: ws, kind: scope.kind, project_id: scope.projectId, form_id: scope.formId, ...toColumns(settings) })
-          .select("id");
+    const write = (fields: readonly DesignField[]) =>
+      existing
+        ? supabase.from("email_designs").update(toColumns(settings, fields)).eq("id", existing.id).select("id")
+        : supabase
+            .from("email_designs")
+            .insert({ workspace_id: ws, kind: scope.kind, project_id: scope.projectId, form_id: scope.formId, ...toColumns(settings, fields) })
+            .select("id");
+    let result = await write(DESIGN_FIELDS);
+    if (result.error && isMissingColumn(result.error.code)) {
+      // A database without Oct 19 notes' update: save what it has, unless a new setting says more than
+      // the built-in default ("" = the email's own, shown).
+      const legacy = new Set<DesignField>(LEGACY_DESIGN_FIELDS);
+      const extra = DESIGN_FIELDS.filter((f) => !legacy.has(f)).some((f) => settings[f] !== null && settings[f] !== "" && settings[f] !== true);
+      if (extra) return { error: NEEDS_UPDATE };
+      result = await write(LEGACY_DESIGN_FIELDS);
+    }
     if (result.error) {
       if (result.error.code === "42501") return { error: NOT_ALLOWED };
       return { error: result.error.message };
@@ -159,16 +180,46 @@ async function draftDesign(scope: EmailDesignScope, draft: Partial<EmailDesignSe
   }).design;
 }
 
+// What a sample email of this scope fills in: the scope's real project and form names (read with the
+// person's own client), its form's link for a requester button, and the project's bracket setting.
+async function sampleOptions(scope: EmailDesignScope, sample: DesignSample | null) {
+  const supabase = await createClient();
+  const values: FillInValues = {};
+  let requestWrap = true;
+  if (scope.projectId) {
+    const [project, numbering] = await Promise.all([
+      supabase.from("projects").select("name").eq("id", scope.projectId).maybeSingle(),
+      supabase.from("request_sequences").select("wrap_brackets").eq("project_id", scope.projectId).is("deleted_at", null).maybeSingle(),
+    ]);
+    if (project.data?.name) values.project_name = project.data.name;
+    if (numbering.data) requestWrap = numbering.data.wrap_brackets !== false;
+  }
+  if (scope.formId) {
+    const form = await supabase.from("forms").select("title").eq("id", scope.formId).maybeSingle();
+    if (form.data?.title) values.form_name = form.data.title;
+  }
+  const origin = backgroundOrigin() ?? "https://example.com";
+  return {
+    sample,
+    values,
+    requestWrap,
+    // A real response has a Reply-To (and the reply line) only when replies by email are set up here.
+    canReply: isInboundEmailConfigured(),
+    buttonHref: scope.formId ? `${origin}/forms/${scope.formId}` : null,
+  };
+}
+
 // The live preview: a sample email of the kind rendered with the draft, exactly as the drain would.
 export async function previewEmailDesign(
-  input: EmailDesignScope & { settings: Partial<EmailDesignSettings> },
+  input: EmailDesignScope & { settings: Partial<EmailDesignSettings>; sample?: DesignSample | null },
 ): Promise<{ error?: string; subject?: string; html?: string; text?: string }> {
   try {
     const scope = checkScope(input);
     const viewer = await getViewer();
     if (!viewer) return { error: "Sign in again" };
     const design = await draftDesign(scope, input.settings);
-    const email = renderDesignSample(scope.kind, design);
+    const sample = isDesignSample(input.sample) ? input.sample : null;
+    const email = renderDesignSample(scope.kind, design, await sampleOptions(scope, sample));
     return { subject: email.subject, html: email.html, text: email.text };
   } catch (error) {
     return { error: message(error) };
@@ -178,7 +229,7 @@ export async function previewEmailDesign(
 // "Send me a test": the sample email with the draft, to the signed-in person's own address only, and
 // only for people who could save this design.
 export async function sendEmailDesignTest(
-  input: EmailDesignScope & { settings: Partial<EmailDesignSettings> },
+  input: EmailDesignScope & { settings: Partial<EmailDesignSettings>; sample?: DesignSample | null },
 ): Promise<{ error?: string; outcome?: "sent" | "mocked"; to?: string }> {
   try {
     const scope = checkScope(input);
@@ -194,7 +245,8 @@ export async function sendEmailDesignTest(
     const problem = designProblem(cleanSettings(input.settings));
     if (problem) return { error: problem };
     const design = await draftDesign(scope, input.settings);
-    const outcome = await sendTestEmail(user.email, renderDesignSample(scope.kind, design));
+    const sample = isDesignSample(input.sample) ? input.sample : null;
+    const outcome = await sendTestEmail(user.email, renderDesignSample(scope.kind, design, await sampleOptions(scope, sample)));
     return { outcome, to: user.email };
   } catch (error) {
     return { error: message(error) };

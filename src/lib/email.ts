@@ -4,12 +4,18 @@ import {
   defaultAppliedDesign,
   designFromJson,
   formatDesignDate,
+  DESIGN_SAMPLES,
   isEmailDesignKind,
+  renderSubjectTemplate,
+  RESPONSE_HEADING,
   SAMPLE_VALUES,
   type AppliedDesign,
+  type DesignSample,
   type EmailDesignKind,
+  type FillInValues,
   type ResolvedDesign,
 } from "@/lib/email-design";
+import { submitterResponseSubject } from "@/lib/comment-email";
 import { layout, payloadOf, str, type OutboxRow, type Rendered } from "@/lib/email-layout";
 import { isInboundEmailConfigured, replyAddress, SUBMITTER_REPLY_MARKER } from "@/lib/email-reply";
 import { renderDigestEmail, renderReportEmail, unsubscribeLinks } from "@/lib/email-scheduled";
@@ -53,36 +59,36 @@ function renderCommentEmail(row: OutboxRow, design?: AppliedDesign | null, reque
   const origin = backgroundOrigin();
   // Real features 2: a follower who is @mentioned in the comment (and wants mention emails).
   const verb = p.mentioned === true ? "mentioned you on" : "commented on";
-  return {
-    subject: row.subject ?? `${author} ${verb} “${taskTitle}”`,
-    ...layout(
-      `${author} ${verb} “${taskTitle}”`,
-      [str(p.comment_body) ?? ""],
-      [
-        { label: "Task", value: `${labelPrefix(label, requestWrap)}${taskTitle}` },
-        { label: "Project", value: project ?? "Private task (My tasks)" },
+  return layout(
+    `${author} ${verb} “${taskTitle}”`,
+    [str(p.comment_body) ?? ""],
+    [
+      { label: "Task", value: `${labelPrefix(label, requestWrap)}${taskTitle}` },
+      { label: "Project", value: project ?? "Private task (My tasks)" },
+    ],
+    {
+      subject: row.subject ?? `${author} ${verb} “${taskTitle}”`,
+      action: link ? { label: "Open task", href: link } : null,
+      footer: [
+        "Open the task to reply. Replies to this email aren’t read.",
+        p.mentioned === true
+          ? `You were @mentioned. Choose which emails you get in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`
+          : `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
       ],
-      {
-        action: link ? { label: "Open task", href: link } : null,
-        footer: [
-          "Open the task to reply. Replies to this email aren’t read.",
-          p.mentioned === true
-            ? `You were @mentioned. Choose which emails you get in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`
-            : `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
-        ],
-        design,
-      },
-    ),
-  };
+      design,
+    },
+  );
 }
 
 export function isSubmitterResponse(row: OutboxRow): boolean {
   return Boolean(row.task_id) && !row.comment_id && payloadOf(row).kind === "submitter_response";
 }
 
-// A response to a form's submitter ("Send response to submitter" under the comment box): Asana's subject
-// (Re: "<form>" submission received), the comment as written, and — when replies by email are on — a line
-// to reply above. Someone outside the workspace reads it, so no app links, no names of other people.
+// A response to a form's submitter ("Send response to submitter" under the comment box): the subject the
+// database stored (Asana's Re: "<form>" submission received, or the requester design's subject template,
+// kept for the whole conversation so replies stay together), a heading that doesn't repeat it, the
+// comment as written (always, whatever the design hides), and — when replies by email are on — a line to
+// reply above. Someone outside the workspace reads it, so no app links, no names of other people.
 export function renderSubmitterResponseEmail(
   row: OutboxRow,
   canReply: boolean,
@@ -93,27 +99,26 @@ export function renderSubmitterResponseEmail(
   const author = str(p.author_name) ?? "The team";
   const label = str(p.request_label);
   const taskTitle = str(p.task_title);
-  const subject = row.subject ?? "Re: your request";
-  return {
-    subject,
-    ...layout(
-      subject,
-      [str(p.message) ?? ""],
-      [
-        { label: "From", value: author },
-        ...(taskTitle ? [{ label: "Request", value: `${labelPrefix(label, requestWrap)}${taskTitle}` }] : []),
+  return layout(
+    RESPONSE_HEADING,
+    [str(p.message) ?? ""],
+    [
+      { label: "From", value: author },
+      ...(taskTitle ? [{ label: "Request", value: `${labelPrefix(label, requestWrap)}${taskTitle}` }] : []),
+    ],
+    {
+      subject: row.subject ?? "Re: your request",
+      subjectFixed: true,
+      alwaysBody: true,
+      preface: canReply ? SUBMITTER_REPLY_MARKER : null,
+      footer: [
+        canReply
+          ? "Reply to this email to answer. Your reply is added to your request; only the text above the quoted message is kept."
+          : "Replies to this email aren’t read.",
       ],
-      {
-        preface: canReply ? SUBMITTER_REPLY_MARKER : null,
-        footer: [
-          canReply
-            ? "Reply to this email to answer. Your reply is added to your request; only the text above the quoted message is kept."
-            : "Replies to this email aren’t read.",
-        ],
-        design,
-      },
-    ),
-  };
+      design,
+    },
+  );
 }
 
 const INVITE_TARGET_PATH = /^\/(projects|portfolios|teams)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -142,26 +147,24 @@ function renderTargetInviteEmail(
   const origin = backgroundOrigin();
   const next = encodeURIComponent(path);
   const signUp = origin ? `${origin}/signup?email=${encodeURIComponent(row.to_email)}&next=${next}` : null;
-  return {
-    subject: row.subject ?? `${inviter} invited you to ${target}`,
-    ...layout(
-      `${inviter} invited you to ${target}`,
-      [
-        `${inviter} added you to the ${INVITE_KINDS[kind]} “${target}”${inviteRolePhrase(kind, str(p.role))} in ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
-        `Create your account with this email address. Once you confirm it, you’ll land on the ${INVITE_KINDS[kind]}.`,
+  return layout(
+    `${inviter} invited you to ${target}`,
+    [
+      `${inviter} added you to the ${INVITE_KINDS[kind]} “${target}”${inviteRolePhrase(kind, str(p.role))} in ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
+      `Create your account with this email address. Once you confirm it, you’ll land on the ${INVITE_KINDS[kind]}.`,
+    ],
+    [],
+    {
+      subject: row.subject ?? `${inviter} invited you to ${target}`,
+      action: signUp ? { label: "Sign up", href: signUp } : null,
+      footer: [
+        // The path is /projects|portfolios|teams/<uuid> (checked above), fine unencoded in a query string.
+        origin ? `Already have an account? Sign in at ${origin}/login?next=${path}` : "Already have an account? Sign in with this address.",
+        "If you weren’t expecting this, you can ignore this email.",
       ],
-      [],
-      {
-        action: signUp ? { label: "Sign up", href: signUp } : null,
-        footer: [
-          // The path is /projects|portfolios|teams/<uuid> (checked above), fine unencoded in a query string.
-          origin ? `Already have an account? Sign in at ${origin}/login?next=${path}` : "Already have an account? Sign in with this address.",
-          "If you weren’t expecting this, you can ignore this email.",
-        ],
-        design,
-      },
-    ),
-  };
+      design,
+    },
+  );
 }
 
 // A workspace invite (Settings → Workspace → Members): who invited them (a name, never an address) and a
@@ -177,25 +180,23 @@ function renderInviteEmail(row: OutboxRow, design?: AppliedDesign | null): Rende
   const workspace = str(p.workspace_name) ?? "ALHC Projects";
   const origin = backgroundOrigin();
   const signUp = origin ? `${origin}/signup?email=${encodeURIComponent(row.to_email)}` : null;
-  return {
-    subject: row.subject ?? "You’ve been invited to ALHC Projects",
-    ...layout(
-      "You’ve been invited to ALHC Projects",
-      [
-        `${inviter} invited you to ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
-        "Create your account with this email address. Projects and teams you were added to are waiting for you after you confirm your email.",
+  return layout(
+    "You’ve been invited to ALHC Projects",
+    [
+      `${inviter} invited you to ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
+      "Create your account with this email address. Projects and teams you were added to are waiting for you after you confirm your email.",
+    ],
+    [],
+    {
+      subject: row.subject ?? "You’ve been invited to ALHC Projects",
+      action: signUp ? { label: "Sign up", href: signUp } : null,
+      footer: [
+        origin ? `Already have an account? Sign in at ${origin}/login` : "Already have an account? Sign in with this address.",
+        "If you weren’t expecting this, you can ignore this email.",
       ],
-      [],
-      {
-        action: signUp ? { label: "Sign up", href: signUp } : null,
-        footer: [
-          origin ? `Already have an account? Sign in at ${origin}/login` : "Already have an account? Sign in with this address.",
-          "If you weren’t expecting this, you can ignore this email.",
-        ],
-        design,
-      },
-    ),
-  };
+      design,
+    },
+  );
 }
 
 function isInvite(row: OutboxRow) {
@@ -282,16 +283,14 @@ function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null):
   const field = str(data.field_name);
   const body =
     str(p.item_kind) === "rule" && field ? (detail ? `${field}: ${detail}` : `${field} was cleared`) : detail;
-  return {
+  return layout(heading, body ? [body] : [], rows, {
     subject: (row.subject ?? heading).slice(0, 300),
-    ...layout(heading, body ? [body] : [], rows, {
-      action: href ? { label: action, href } : null,
-      footer: [
-        `You get this email because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Your Inbox has it too unless you turned that off.`,
-      ],
-      design,
-    }),
-  };
+    action: href ? { label: action, href } : null,
+    footer: [
+      `You get this email because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Your Inbox has it too unless you turned that off.`,
+    ],
+    design,
+  });
 }
 
 export function renderEmail(
@@ -319,24 +318,28 @@ export function renderEmail(
             return typeof r.label === "string" && typeof r.value === "string" ? [{ label: r.label, value: r.value }] : [];
           })
         : [];
-      return {
-        subject: row.subject ?? `${reference}We received your ${formTitle}`,
-        ...layout(
-          label ? `We received your request (${label})` : "We received your request",
-          [message ?? "Thanks for your submission. We'll follow up by email as it moves along.", `Request: ${taskTitle}`],
-          answers,
-          { design },
-        ),
-      };
+      // submit_form stores "<label> · We received your <form>"; the issuing project's bracket setting
+      // decides how the label reads, at send time like every other email.
+      return layout(
+        label ? `We received your request (${label})` : "We received your request",
+        [message ?? "Thanks for your submission. We'll follow up by email as it moves along.", `Request: ${taskTitle}`],
+        answers,
+        {
+          subject: str(p.form_title) ? `${reference}We received your ${formTitle}` : (row.subject ?? `${reference}We received your request`),
+          design,
+        },
+      );
     }
     case "due_tomorrow":
-      return {
-        subject: row.subject ?? `${reference}Due tomorrow: ${taskTitle}`,
-        ...layout("Due tomorrow", [message ?? `“${taskTitle}” is due tomorrow.`], [
+      return layout(
+        "Due tomorrow",
+        [message ?? `“${taskTitle}” is due tomorrow.`],
+        [
           ...(str(p.project_name) ? [{ label: "Project", value: str(p.project_name)! }] : []),
           ...(str(p.due_on) ? [{ label: "Due", value: str(p.due_on)! }] : []),
-        ], { design }),
-      };
+        ],
+        { subject: row.subject ?? `${reference}Due tomorrow: ${taskTitle}`, design },
+      );
     case "requester_update":
     case "custom":
     default: {
@@ -345,12 +348,10 @@ export function renderEmail(
         ...(str(p.section_name) && row.template === "requester_update" ? [{ label: "Status", value: str(p.section_name)! }] : []),
         ...(field && str(field.name) && str(field.value) ? [{ label: str(field.name)!, value: str(field.value)! }] : []),
       ];
-      return {
+      return layout(label ? `Update on ${label}` : "Update on your request", [message ?? `There's an update on “${taskTitle}”.`], rows, {
         subject: row.subject ?? `${reference}Update on ${taskTitle}`,
-        ...layout(label ? `Update on ${label}` : "Update on your request", [message ?? `There's an update on “${taskTitle}”.`], rows, {
-          design,
-        }),
-      };
+        design,
+      });
     }
   }
 }
@@ -491,14 +492,34 @@ async function designFor(row: OutboxRow, admin: Admin): Promise<{ design: Applie
   return { design, requestWrap: v.request_wrap !== false };
 }
 
-// A representative email of a kind with a design, for the editor's live preview and "Send me a test":
-// a comment email for internal designs, a response to a submitter for requester designs.
-export function renderDesignSample(kind: EmailDesignKind, design: ResolvedDesign): Rendered {
+// A sample email of a kind with a design, for the editor's live preview and "Send me a test", rendered
+// by renderEmail exactly as the drain renders that kind of email: a response to a submitter, a form
+// confirmation, or a rule email for requester designs; a comment, an assignment, or an invite for internal
+// ones. `values` are the scope's real names where it has them (the project, the form); `canReply` is
+// whether replies by email are on here (the drain's Reply-To rule), so the reply line shows only when a
+// real response would carry it.
+export function renderDesignSample(
+  kind: EmailDesignKind,
+  design: ResolvedDesign,
+  options: {
+    sample?: DesignSample | null;
+    values?: FillInValues;
+    canReply?: boolean;
+    buttonHref?: string | null;
+    requestWrap?: boolean;
+  } = {},
+): Rendered {
   const origin = backgroundOrigin() ?? "https://example.com";
-  const applied = applyDesign(kind, design, SAMPLE_VALUES, {
+  const values: Required<Record<keyof typeof SAMPLE_VALUES, string>> = { ...SAMPLE_VALUES };
+  for (const [key, value] of Object.entries(options.values ?? {})) {
+    if (typeof value === "string" && value.trim()) values[key as keyof typeof SAMPLE_VALUES] = value;
+  }
+  const applied = applyDesign(kind, design, kind === "internal" ? values : { ...values, task_link: null }, {
     logoUrl: emailLogoUrl,
-    buttonHref: kind === "requester" ? `${origin}/forms/example` : null,
+    buttonHref: kind === "requester" ? (options.buttonHref ?? `${origin}/forms/example`) : null,
   });
+  const samples = DESIGN_SAMPLES[kind].map((x) => x.key);
+  const sample = options.sample && samples.includes(options.sample) ? options.sample : samples[0];
   const now = new Date().toISOString();
   const base: OutboxRow = {
     id: "00000000-0000-4000-8000-000000000000",
@@ -524,38 +545,100 @@ export function renderDesignSample(kind: EmailDesignKind, design: ResolvedDesign
     delivery_event_at: null,
     delivery_detail: null,
   };
-  if (kind === "requester") {
-    return renderSubmitterResponseEmail(
-      {
+  let row: OutboxRow;
+  switch (sample) {
+    case "confirmation":
+      // As submit_form queues it.
+      row = {
         ...base,
-        subject: `Re: "${SAMPLE_VALUES.form_name}" submission received`,
+        template: "form_confirmation",
+        subject: `${values.request_number} · We received your ${values.form_name}`,
+        payload: {
+          form_title: values.form_name,
+          request_label: values.request_number,
+          task_title: values.task_name,
+          message: "Thanks! We’ll get started and keep you posted by email.",
+          answers: [
+            { label: "What do you need?", value: "A flyer for the spring open house" },
+            { label: "When do you need it?", value: values.due_date },
+          ],
+        },
+      };
+      break;
+    case "update":
+      // A rule's "Send email" to the submitter (no subject of its own).
+      row = {
+        ...base,
+        template: "requester_update",
+        payload: {
+          request_label: values.request_number,
+          task_title: values.task_name,
+          section_name: "In progress",
+          message: `Your request “${values.task_name}” is now in progress.`,
+        },
+      };
+      break;
+    case "comment":
+      row = {
+        ...base,
+        comment_id: "00000000-0000-4000-8000-000000000002",
+        to_profile_id: "00000000-0000-4000-8000-000000000003",
+        payload: {
+          kind: "comment",
+          task_title: values.task_name,
+          author_name: values.commenter_name,
+          comment_body: "The first draft is ready for review. Could you take a look before Friday?",
+          project_name: values.project_name,
+          request_label: values.request_number,
+        },
+      };
+      break;
+    case "assigned":
+      row = {
+        ...base,
+        task_id: null,
+        to_profile_id: "00000000-0000-4000-8000-000000000003",
+        payload: {
+          kind: "notification",
+          item_kind: "assigned",
+          actor_name: values.commenter_name,
+          title: values.task_name,
+          context: values.project_name,
+          path: "/my-tasks",
+        },
+      };
+      break;
+    case "invite":
+      row = {
+        ...base,
+        task_id: null,
+        payload: {
+          kind: "invite",
+          inviter_name: values.commenter_name,
+          workspace_name: "ALHC",
+          target_kind: "project",
+          target_name: values.project_name,
+          target_path: "/projects/00000000-0000-4000-8000-000000000004",
+          role: "editor",
+        },
+      };
+      break;
+    case "response":
+    default:
+      // The subject the database gives a new conversation (submitter_response_subject()).
+      row = {
+        ...base,
+        subject: renderSubjectTemplate(applied.subjectTemplate, applied.values, "requester", submitterResponseSubject(values.form_name)),
         payload: {
           kind: "submitter_response",
-          author_name: SAMPLE_VALUES.commenter_name,
-          task_title: SAMPLE_VALUES.task_name,
-          request_label: SAMPLE_VALUES.request_number,
-          message: `Hi ${SAMPLE_VALUES.requester_name},\n\nThanks for the details. We’ll have a first draft for you by ${SAMPLE_VALUES.due_date}.`,
+          author_name: values.commenter_name,
+          task_title: values.task_name,
+          request_label: values.request_number,
+          message: `Hi ${values.requester_name},\n\nThanks for the details. We’ll have a first draft for you by ${values.due_date}.`,
         },
-      },
-      true,
-      applied,
-    );
+      };
   }
-  return renderCommentEmail(
-    {
-      ...base,
-      comment_id: "00000000-0000-4000-8000-000000000002",
-      payload: {
-        kind: "comment",
-        task_title: SAMPLE_VALUES.task_name,
-        author_name: SAMPLE_VALUES.commenter_name,
-        comment_body: "The first draft is ready for review. Could you take a look before Friday?",
-        project_name: SAMPLE_VALUES.project_name,
-        request_label: SAMPLE_VALUES.request_number,
-      },
-    },
-    applied,
-  );
+  return renderEmail(row, { design: applied, canReply: Boolean(options.canReply), requestWrap: options.requestWrap !== false });
 }
 
 // "Send me a test": one email straight to the signed-in person (never another address). Mocked without
