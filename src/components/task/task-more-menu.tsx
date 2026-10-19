@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   ThumbsUp,
   Trash2,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
@@ -28,6 +29,7 @@ import type { TaskDetail } from "@/lib/data";
 import { describeRecurrence } from "@/lib/recurrence";
 import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/task-kinds";
 import { DuplicateTaskDialog } from "./duplicate-task-dialog";
+import { RunRuleDialog } from "./run-rule-dialog";
 import { SaveTaskTemplateDialog } from "./save-task-template";
 import { ConvertTaskDialog, canConvert } from "./task-convert";
 import { OPEN_REPEATS_EVENT } from "./task-dates";
@@ -49,8 +51,8 @@ export function printTask() {
 }
 
 // The pane's "…" (Asana parity, batch 3): what used to crowd the top of the pane — Repeats, the task
-// type, approvals — plus convert, save as template, duplicate, copy link, print, and delete. Viewers and
-// Commenters get the read-only items.
+// type, approvals — plus convert, save as template, duplicate, run a rule, copy link, print, and delete.
+// Viewers and Commenters get the read-only items.
 export function TaskMoreMenu({
   task,
   canEdit,
@@ -72,7 +74,7 @@ export function TaskMoreMenu({
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
-  const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | null>(null);
+  const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | "rule" | null>(null);
   const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
   const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
 
@@ -170,6 +172,8 @@ export function TaskMoreMenu({
                 {canConvert(task) ? item(GitBranch, task.isSubtask ? "Convert to a task…" : "Convert to a subtask…", () => setDialog("convert"), close) : null}
                 {home && editableProjects.length ? item(LayoutTemplate, "Save as task template…", () => setDialog("template"), close) : null}
                 {item(Copy, task.isSubtask ? "Duplicate subtask…" : "Duplicate task…", () => setDialog("duplicate"), close)}
+                {/* "Run manually" rules (Automations V2) run on top-level tasks of their project only. */}
+                {!task.isSubtask && task.memberships.length ? item(Workflow, "Run a rule…", () => setDialog("rule"), close) : null}
                 {task.replyThread
                   ? task.replyThread.closed
                     ? item(MailCheck, "Reopen reply thread", () => setThreadClosed(false), close)
@@ -200,6 +204,7 @@ export function TaskMoreMenu({
         <DuplicateTaskDialog taskId={task.id} title={task.title} isSubtask={task.isSubtask} onClose={() => setDialog(null)} />
       ) : null}
       {dialog === "convert" ? <ConvertTaskDialog task={task} onClose={() => setDialog(null)} /> : null}
+      {dialog === "rule" ? <RunRuleDialog taskId={task.id} onClose={() => setDialog(null)} /> : null}
       {dialog === "template" && home ? (
         <SaveTaskTemplateDialog
           taskId={task.id}

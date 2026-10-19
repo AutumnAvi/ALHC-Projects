@@ -13,6 +13,18 @@ export const TRIGGERS = [
   { value: "approval_decided", label: "An approval is decided", group: "Approvals and forms", description: "Fires when an approver approves, requests changes, or rejects.", keywords: ["approve", "review", "rejected", "changes requested"] },
   { value: "form_submitted", label: "A form is submitted", group: "Approvals and forms", description: "Fires when someone submits one of this project's forms.", keywords: ["intake", "request", "submission"] },
   { value: "inbound_received", label: "Created by inbound webhook", group: "Integrations", description: "Fires when a task comes in through one of this project's inbound webhooks.", keywords: ["api", "zapier", "make", "webhook"] },
+  // Automations V2 (20261020010000_automations_v2.sql).
+  { value: "task_completed", label: "Task is completed", group: "Task", description: "Fires when someone (or a rule) marks a task complete.", keywords: ["done", "finished", "complete"] },
+  { value: "task_reopened", label: "Task is reopened", group: "Task", description: "Fires when a completed task is marked incomplete again.", keywords: ["undo", "incomplete", "reopen"] },
+  { value: "subtasks_completed", label: "All subtasks are done", group: "Task", description: "Fires on a task when its last open subtask is completed.", keywords: ["checklist", "children", "parent"] },
+  { value: "task_added_from_project", label: "Task is added from another project", group: "Task", description: "Fires when a task that lives in another project is also added here.", keywords: ["multi-home", "multihome", "cross-project", "calendar"] },
+  { value: "comment_added", label: "A comment is added", group: "Communication", description: "Fires when someone comments on a task (or a submitter replies by email).", keywords: ["reply", "message", "feedback"] },
+  { value: "attachment_added", label: "A file is attached", group: "Task", description: "Fires when a file is attached to a task.", keywords: ["upload", "file", "attachment", "asset"] },
+  { value: "tag_added", label: "A tag is added", group: "Fields", description: "Fires when a task gets a tag, or a tag you pick.", keywords: ["label", "tag"] },
+  { value: "due_date_changed", label: "Due date changes", group: "Dates", description: "Fires when a task's due date is set, moved, or cleared.", keywords: ["deadline", "reschedule", "moved"] },
+  { value: "task_overdue", label: "Task becomes overdue", group: "Dates", description: "Fires once per open task the day after its due date (or later).", keywords: ["late", "missed", "past due"] },
+  { value: "scheduled", label: "On a schedule", group: "Flow", description: "Runs every day, workday, week, or month for the open tasks that match.", keywords: ["cron", "daily", "weekly", "every", "recurring", "time"] },
+  { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks it from a task's … menu (Run a rule).", keywords: ["button", "on demand", "by hand", "click"] },
 ] as const;
 
 export type TriggerType = (typeof TRIGGERS)[number]["value"];
@@ -28,6 +40,22 @@ export const CONDITIONS = [
   { value: "field_is_empty", label: "Field is empty", group: "Fields", description: "A custom field has no value.", keywords: ["custom field", "blank", "missing"] },
   { value: "assignee_is_set", label: "Has an assignee", group: "People", description: "Someone is assigned.", keywords: ["assign", "assigned"] },
   { value: "assignee_is_empty", label: "Has no assignee", group: "People", description: "Nobody is assigned yet.", keywords: ["assign", "unassigned"] },
+  // Automations V2.
+  { value: "field_compare", label: "Field compares", group: "Fields", description: "Greater or less than, before or after, contains, or is not.", keywords: ["custom field", "more than", "less than", "contains", "not", "number", "date"] },
+  { value: "has_tag", label: "Has tag", group: "Fields", description: "The task has a tag you pick.", keywords: ["label"] },
+  { value: "lacks_tag", label: "Doesn't have tag", group: "Fields", description: "The task doesn't have a tag you pick.", keywords: ["label", "without", "not"] },
+  { value: "assignee_is", label: "Assignee is", group: "People", description: "Assigned to one of the people you pick.", keywords: ["assign", "person", "owner"] },
+  { value: "assignee_is_not", label: "Assignee is not", group: "People", description: "Unassigned, or assigned to someone else.", keywords: ["assign", "person", "not"] },
+  { value: "creator_is", label: "Created by", group: "People", description: "One of the people you pick created the task.", keywords: ["creator", "author", "requester"] },
+  { value: "is_overdue", label: "Is overdue", group: "Dates", description: "Open, and due before today.", keywords: ["late", "past due"] },
+  { value: "due_within", label: "Due within", group: "Dates", description: "Due today or in the next few days.", keywords: ["soon", "deadline", "upcoming"] },
+  { value: "has_due_date", label: "Has a due date", group: "Dates", description: "A due date is set.", keywords: ["deadline", "scheduled"] },
+  { value: "no_due_date", label: "Has no due date", group: "Dates", description: "No due date yet.", keywords: ["deadline", "unscheduled", "missing"] },
+  { value: "task_type_is", label: "Task type is", group: "Task", description: "A task, a milestone, or an approval.", keywords: ["kind", "milestone", "approval"] },
+  { value: "has_open_subtasks", label: "Has open subtasks", group: "Task", description: "At least one subtask isn't done.", keywords: ["checklist", "children", "incomplete"] },
+  { value: "all_subtasks_done", label: "All subtasks are done", group: "Task", description: "It has subtasks and every one is complete.", keywords: ["checklist", "children", "finished"] },
+  { value: "title_contains", label: "Name contains", group: "Task", description: "The task's name includes some text (any case).", keywords: ["title", "text", "keyword"] },
+  { value: "form_answer_contains", label: "Form answer contains", group: "Approvals and forms", description: "An answer on the task's form submission includes some text.", keywords: ["form", "request", "submission", "answer", "intake"] },
 ] as const;
 
 export type ConditionType = (typeof CONDITIONS)[number]["value"];
@@ -44,6 +72,16 @@ export const ACTIONS = [
   { value: "send_slack", label: "Send Slack message", group: "Integrations", description: "Posts to a Slack channel through an incoming webhook.", keywords: ["chat", "channel"] },
   { value: "call_webhook", label: "Call webhook", group: "Integrations", description: "POSTs a JSON summary of the task to an https:// address.", keywords: ["api", "zapier", "make", "http"] },
   { value: "delay", label: "Wait, then continue", group: "Flow", description: "Pauses for some hours, then runs the remaining actions.", keywords: ["delay", "later", "pause", "hours"] },
+  // Automations V2.
+  { value: "complete_task", label: "Mark complete", group: "Task", description: "Completes the task.", keywords: ["done", "finish", "close"] },
+  { value: "reopen_task", label: "Mark incomplete", group: "Task", description: "Reopens a completed task.", keywords: ["reopen", "undo", "incomplete"] },
+  { value: "set_title", label: "Rename task", group: "Task", description: "Changes the task's name (placeholders work here).", keywords: ["title", "name", "prefix"] },
+  { value: "create_subtasks", label: "Create subtasks", group: "Task", description: "Adds a checklist of subtasks, optionally assigned.", keywords: ["checklist", "steps", "children", "todo"] },
+  { value: "apply_task_template", label: "Apply task template", group: "Task", description: "Adds a task template's subtasks, tags, and field values.", keywords: ["template", "checklist", "preset"] },
+  { value: "add_to_project", label: "Add to another project", group: "Task", description: "Also lists the task in another project (multi-home), in a section you pick.", keywords: ["multi-home", "copy", "calendar", "cross-project"] },
+  { value: "set_due_date", label: "Set due date", group: "Dates", description: "Sets the due date a number of days (or business days) from today or another date, or clears it.", keywords: ["deadline", "relative", "business days", "workdays", "clear"] },
+  { value: "add_tag", label: "Add tag", group: "Fields", description: "Tags the task.", keywords: ["label"] },
+  { value: "remove_tag", label: "Remove tag", group: "Fields", description: "Removes a tag from the task.", keywords: ["label", "untag"] },
 ] as const;
 
 export type ActionType = (typeof ACTIONS)[number]["value"];
@@ -98,6 +136,60 @@ export const INTEGRATION_KEYS = {
   call_webhook: { plain: "url", ref: "url_ref", hint: "url_hint" },
 } as const;
 
+// Triggers, conditions, and actions that arrive with Automations V2's database update.
+export const V2_TRIGGERS: ReadonlySet<string> = new Set([
+  "task_completed", "task_reopened", "subtasks_completed", "task_added_from_project", "comment_added",
+  "attachment_added", "tag_added", "due_date_changed", "task_overdue", "scheduled", "manual",
+]);
+export const V2_CONDITIONS: ReadonlySet<string> = new Set([
+  "field_compare", "has_tag", "lacks_tag", "assignee_is", "assignee_is_not", "creator_is", "is_overdue",
+  "due_within", "has_due_date", "no_due_date", "task_type_is", "has_open_subtasks", "all_subtasks_done",
+  "title_contains", "form_answer_contains",
+]);
+export const V2_ACTIONS: ReadonlySet<string> = new Set([
+  "complete_task", "reopen_task", "set_title", "create_subtasks", "apply_task_template", "add_to_project",
+  "set_due_date", "add_tag", "remove_tag",
+]);
+
+// "On a schedule" (mirrors rule_schedule_next_at): when, at an hour of the rule's time zone.
+export const SCHEDULE_FREQUENCIES = [
+  { value: "daily", label: "Every day", description: "Seven days a week" },
+  { value: "workdays", label: "Every workday", description: "The workspace's workweek (Admin console → Organization)" },
+  { value: "weekly", label: "Every week", description: "On a day you pick" },
+  { value: "monthly", label: "Every month", description: "On a day from 1 to 28" },
+] as const;
+
+// "Field compares" operators by field type (mirrors validate_rule).
+export const COMPARE_OPS = [
+  { value: "gt", label: "is greater than", types: ["number"] },
+  { value: "gte", label: "is at least", types: ["number"] },
+  { value: "lt", label: "is less than", types: ["number"] },
+  { value: "lte", label: "is at most", types: ["number"] },
+  { value: "before", label: "is before", types: ["date"] },
+  { value: "after", label: "is after", types: ["date"] },
+  { value: "contains", label: "contains", types: ["text", "multi_select"] },
+  { value: "not_contains", label: "doesn't contain", types: ["text", "multi_select"] },
+  { value: "not_equals", label: "is not", types: ["number", "date", "text", "single_select", "boolean", "status"] },
+] as const;
+
+export function compareOpsFor(fieldType: string, boundToSections = false) {
+  const key = boundToSections ? "status" : fieldType;
+  return COMPARE_OPS.filter((op) => (op.types as readonly string[]).includes(key));
+}
+
+// "Set due date": counted from (mirrors execute_rule_actions).
+export const DUE_FROM = [
+  { value: "today", label: "today", description: "The day the rule runs" },
+  { value: "due_date", label: "the current due date", description: "Today if there isn't one" },
+  { value: "start_date", label: "the start date", description: "Today if there isn't one" },
+] as const;
+
+export const TASK_KIND_OPTIONS = [
+  { value: "task", label: "Task" },
+  { value: "milestone", label: "Milestone" },
+  { value: "approval", label: "Approval" },
+] as const;
+
 export type RuleCondition = { type: ConditionType } & Record<string, Json>;
 export type RuleAction = { type: ActionType } & Record<string, Json>;
 
@@ -111,6 +203,24 @@ export type RuleDef = {
   conditions: RuleCondition[];
   actions: RuleAction[];
   presetKey: string | null;
+  // Automations V2: who the rule acts for, and a scheduled rule's next run.
+  ownerId?: string | null;
+  nextRunAt?: string | null;
+  // Batch 4: who changed it last, the rule-caused switch, and its health (auto-pause).
+  lastEditedBy?: string | null;
+  lastEditedAt?: string | null;
+  runOnRuleChanges?: boolean;
+  pausedAt?: string | null;
+  pauseReason?: string | null;
+  consecutiveFailures?: number;
+};
+
+export type RuleRunStats = {
+  ruleId: string;
+  lastRunAt: string | null;
+  lastStatus: RuleRun["status"] | null;
+  runs7d: number;
+  failures7d: number;
 };
 
 export type RuleRun = {
@@ -168,6 +278,14 @@ export function toRuleDef(row: {
   conditions: Json;
   actions: Json;
   preset_key: string | null;
+  owner_id?: string | null;
+  next_run_at?: string | null;
+  last_edited_by?: string | null;
+  last_edited_at?: string | null;
+  run_on_rule_changes?: boolean;
+  paused_at?: string | null;
+  pause_reason?: string | null;
+  consecutive_failures?: number;
 }): RuleDef {
   return {
     id: row.id,
@@ -179,6 +297,14 @@ export function toRuleDef(row: {
     conditions: typedList<RuleCondition>(row.conditions),
     actions: typedList<RuleAction>(row.actions),
     presetKey: row.preset_key,
+    ownerId: row.owner_id ?? null,
+    nextRunAt: row.next_run_at ?? null,
+    lastEditedBy: row.last_edited_by ?? null,
+    lastEditedAt: row.last_edited_at ?? null,
+    runOnRuleChanges: row.run_on_rule_changes ?? true,
+    pausedAt: row.paused_at ?? null,
+    pauseReason: row.pause_reason ?? null,
+    consecutiveFailures: row.consecutive_failures ?? 0,
   };
 }
 
@@ -195,7 +321,12 @@ export function runReason(detail: Json): string | null {
   const d = record(detail);
   if (typeof d.reason === "string") {
     return (
-      { loop: "loop prevented", depth_limit: "chain too deep", throttled: "throttled" }[d.reason] ?? d.reason
+      {
+        loop: "loop prevented (a rule can’t trigger itself)",
+        depth_limit: "chain too deep (rules started by rules stop after three)",
+        throttled: "throttled (20 runs an hour on one task)",
+        rate_limited: "rate limited (1,000 runs an hour)",
+      }[d.reason] ?? d.reason
     );
   }
   if (typeof d.error === "string") return d.error;
@@ -267,4 +398,48 @@ export function branchProblem(branches: RuleBranch[]): string | null {
     }
   }
   return null;
+}
+
+// OR groups inside a branch (Automations V2; mirrors rule_item_group() / rule_conditions_pass()): a
+// condition may carry "group": 0–9 (missing = 0). A branch passes when every condition of any one group
+// passes. One group writes no group keys (exactly the old shape).
+export const MAX_CONDITION_GROUPS = 10;
+
+export function conditionGroup(item: Record<string, Json>): number {
+  const value = item.group;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value < MAX_CONDITION_GROUPS ? value : 0;
+}
+
+// The branch's conditions as groups in order (empty groups dropped), without their group keys.
+export function splitGroups(conditions: RuleCondition[]): RuleCondition[][] {
+  const groups = new Map<number, RuleCondition[]>();
+  for (const c of conditions) {
+    const g = conditionGroup(c);
+    const copy = { ...c };
+    delete copy.group;
+    groups.set(g, [...(groups.get(g) ?? []), copy]);
+  }
+  return [...groups.entries()].sort(([a], [b]) => a - b).map(([, items]) => items);
+}
+
+// Back to one list: group keys 0, 1, 2… in order (the first group writes none); a single group writes
+// no keys at all.
+export function joinGroups(groups: RuleCondition[][]): RuleCondition[] {
+  const kept = groups.filter((g) => g.length > 0);
+  return kept.flatMap((g, i) =>
+    g.map((c) => {
+      const copy: RuleCondition = { ...c };
+      delete copy.group;
+      return kept.length > 1 && i > 0 ? { ...copy, group: i } : copy;
+    }),
+  );
+}
+
+// The same evaluation rule_conditions_pass makes, given each condition's own result (for previews,
+// the dry run's explanation, and tests).
+export function groupsPass<T>(conditions: T[], groupOf: (c: T) => number, ok: (c: T) => boolean): boolean {
+  if (conditions.length === 0) return true;
+  const groups = new Map<number, T[]>();
+  for (const c of conditions) groups.set(groupOf(c), [...(groups.get(groupOf(c)) ?? []), c]);
+  return [...groups.values()].some((g) => g.every(ok));
 }

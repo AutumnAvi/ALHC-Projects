@@ -14,13 +14,20 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { SmartPicker } from "@/components/smart-picker";
+import { PickerHighlightContext, SmartPicker } from "@/components/smart-picker";
+import type { BuiltRule } from "@/lib/rule-templates";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { createRule, updateRule, type RevealedSigningSecret } from "@/lib/actions";
 import {
   ACTIONS,
   CONDITIONS,
+  MAX_CONDITION_GROUPS,
+  V2_ACTIONS,
+  V2_CONDITIONS,
+  V2_TRIGGERS,
+  joinGroups,
+  splitGroups,
   MAX_BRANCH_ACTIONS,
   MAX_BRANCH_CONDITIONS,
   MAX_RULE_BRANCHES,
@@ -40,7 +47,16 @@ import {
   type TriggerType,
 } from "@/lib/rules";
 import type { Json } from "@/lib/supabase/database.types";
-import { ActionFields, ConditionFields, RevealedSecrets, TriggerFields, defaultsFor } from "./rule-editor";
+import {
+  ActionFields,
+  ConditionFields,
+  INLINE_ACTION_TYPES,
+  INLINE_AND_BLOCK_ACTION_TYPES,
+  RevealedSecrets,
+  TriggerFields,
+  conditionDefaultsFor,
+  defaultsFor,
+} from "./rule-editor";
 import { vocabOptions } from "./rule-icons";
 import { branchLabel, ruleSentence, type RuleContext } from "./rule-shared";
 
@@ -70,6 +86,7 @@ export function RuleCanvas({
   projectId,
   projectName,
   rule,
+  initial = null,
   runs,
   ctx,
   batch4,
@@ -80,6 +97,8 @@ export function RuleCanvas({
   projectName: string;
   // Null = a new rule.
   rule: RuleDef | null;
+  // A new rule from the templates gallery: filled in, with what's still to pick (highlighted).
+  initial?: BuiltRule | null;
   runs: RuleRun[];
   ctx: RuleContext;
   // This release's database update (Else if / Otherwise branches).
@@ -92,12 +111,13 @@ export function RuleCanvas({
   const notify = useNotify();
   const titleId = useId();
   const [pending, run] = useServerAction();
-  const [name, setName] = useState(rule?.name ?? "");
-  const [enabled, setEnabled] = useState(rule ? rule.enabled : true);
-  const [triggerType, setTriggerType] = useState<TriggerType>(rule?.triggerType ?? "section_changed");
-  const [triggerConfig, setTriggerConfig] = useState<Record<string, Json>>(rule?.triggerConfig ?? {});
+  const [name, setName] = useState(rule?.name ?? initial?.name ?? "");
+  // A template's rule starts off, so it can be checked (and tested) before it runs.
+  const [enabled, setEnabled] = useState(rule ? rule.enabled : !initial);
+  const [triggerType, setTriggerType] = useState<TriggerType>(rule?.triggerType ?? initial?.triggerType ?? "section_changed");
+  const [triggerConfig, setTriggerConfig] = useState<Record<string, Json>>(rule?.triggerConfig ?? initial?.triggerConfig ?? {});
   const [branches, setBranches] = useState<RuleBranch[]>(() =>
-    rule ? splitBranches(rule) : [{ conditions: [], actions: [defaultsFor("add_comment")] }],
+    rule ? splitBranches(rule) : initial ? splitBranches(initial) : [{ conditions: [], actions: [defaultsFor("add_comment")] }],
   );
   const [tab, setTab] = useState<"build" | "activity">("build");
   const [dirty, setDirty] = useState(false);
@@ -181,7 +201,8 @@ export function RuleCanvas({
     }
     const { conditions, actions } = joinBranches(branches);
     run(async () => {
-      const input = { name, triggerType, triggerConfig, conditions, actions, enabled };
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const input = { name, triggerType, triggerConfig, conditions, actions, enabled, timeZone };
       const result = rule ? await updateRule(rule.id, input) : await createRule(projectId, input);
       if (!result.error) {
         setDirty(false);
@@ -290,13 +311,19 @@ export function RuleCanvas({
               </p>
             ) : null}
             <RuleSummary triggerType={triggerType} triggerConfig={triggerConfig} branches={branches} ctx={ctx} projectName={projectName} />
+            {initial && initial.missing.length ? (
+              <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                From a template. Still to pick (highlighted below): {initial.missing.join(", ")}.
+              </p>
+            ) : null}
+            <PickerHighlightContext.Provider value={Boolean(initial)}>
             <section aria-label="Rule" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
               <SentenceRow word="When">
                 <SmartPicker
                   id="rule-trigger"
                   label="Trigger"
                   value={triggerType}
-                  options={vocabOptions(TRIGGERS)}
+                  options={vocabOptions(TRIGGERS, { disabled: needsV2(ctx, V2_TRIGGERS) })}
                   onChange={(v) => {
                     setTriggerType(v as TriggerType);
                     setTriggerConfig({});
@@ -363,6 +390,7 @@ export function RuleCanvas({
                 </div>
               ) : null}
             </section>
+            </PickerHighlightContext.Provider>
             <p className="text-center text-xs text-zinc-500">
               Rules never trigger themselves, chains stop after a few rules, and the Status field always follows the
               section. Text can use {TEXT_TOKENS}.
@@ -372,6 +400,11 @@ export function RuleCanvas({
       )}
     </div>
   );
+}
+
+// Before Automations V2's database update the new vocabulary is listed but disabled, with the reason.
+function needsV2(ctx: RuleContext, set: ReadonlySet<string>) {
+  return (value: string) => (ctx.v2 === false && set.has(value) ? "Needs this release’s database update" : null);
 }
 
 // The live summary at the top: the whole rule as one English sentence, plus its scope.
@@ -452,11 +485,16 @@ function BranchRows({
   const prefix = `branch-${index}`;
   const ifWord = index === 0 ? "If" : otherwise ? "Otherwise" : "Otherwise if";
 
-  function setCondition(i: number, next: RuleCondition | null) {
-    onChange({
-      ...branch,
-      conditions: next ? branch.conditions.map((c, j) => (j === i ? next : c)) : branch.conditions.filter((_, j) => j !== i),
-    });
+  // OR groups: AND within a group, OR between groups (one group stores no group keys).
+  const groups = splitGroups(branch.conditions);
+  const conditionOptions = vocabOptions(CONDITIONS, { disabled: needsV2(ctx, V2_CONDITIONS) });
+  const actionOptions = vocabOptions(ACTIONS, { disabled: needsV2(ctx, V2_ACTIONS) });
+
+  function setGroups(next: RuleCondition[][]) {
+    onChange({ ...branch, conditions: joinGroups(next) });
+  }
+  function setCondition(g: number, i: number, next: RuleCondition | null) {
+    setGroups(groups.map((items, j) => (j !== g ? items : next ? items.map((c, k) => (k === i ? next : c)) : items.filter((_, k) => k !== i))));
   }
   function setAction(i: number, next: RuleAction | null) {
     onChange({
@@ -488,36 +526,71 @@ function BranchRows({
             {branch.conditions.length === 0 ? (
               <p className="pt-1 text-xs text-zinc-500">Always (no conditions). Add one to run only for some tasks.</p>
             ) : null}
-            {branch.conditions.map((condition, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-1">
-                {i > 0 ? <span className="mr-0.5 text-xs font-semibold text-zinc-400">and</span> : null}
-                <ConditionFields prefix={`${prefix}-c${i}`} condition={condition} ctx={ctx} onChange={(next) => setCondition(i, next)} />
-                {canEdit ? (
-                  <button
-                    type="button"
-                    aria-label={`Remove condition ${i + 1}`}
-                    data-tooltip="Remove condition"
-                    onClick={() => setCondition(i, null)}
-                    className="btn-icon size-6"
-                  >
-                    <X className="size-3.5" />
-                  </button>
+            {groups.map((group, g) => (
+              <div key={g} role="group" aria-label={groups.length > 1 ? `Condition group ${g + 1}` : "Conditions"} className="flex flex-col gap-1.5">
+                {g > 0 ? (
+                  <div className="flex items-center gap-2 py-0.5" aria-hidden>
+                    <span className="rounded-full bg-amber-50 px-2 py-px text-2xs font-semibold uppercase tracking-wide text-amber-800 ring-1 ring-amber-200">
+                      or
+                    </span>
+                    <span className="h-px flex-1 bg-zinc-100" />
+                  </div>
+                ) : null}
+                {group.map((condition, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-1">
+                    {i > 0 ? <span className="mr-0.5 text-xs font-semibold text-zinc-400">and</span> : null}
+                    <ConditionFields
+                      prefix={`${prefix}-g${g}-c${i}`}
+                      condition={condition}
+                      ctx={ctx}
+                      onChange={(next) => setCondition(g, i, next)}
+                    />
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        aria-label={`Remove condition ${i + 1}${groups.length > 1 ? ` of group ${g + 1}` : ""}`}
+                        data-tooltip="Remove condition"
+                        onClick={() => setCondition(g, i, null)}
+                        className="btn-icon size-6"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+                {canEdit && group.length > 0 && branch.conditions.length < MAX_BRANCH_CONDITIONS ? (
+                  <SmartPicker
+                    label={groups.length > 1 ? `Add a condition to group ${g + 1}` : "Add condition"}
+                    value={null}
+                    options={conditionOptions}
+                    onChange={(v) => setGroups(groups.map((items, j) => (j === g ? [...items, conditionDefaultsFor(v as ConditionType)] : items)))}
+                    variant="ghost"
+                    searchable
+                    className="h-6 self-start px-1.5 text-xs"
+                    renderValue={() => (
+                      <>
+                        <Plus className="size-3.5" aria-hidden />
+                        And…
+                      </>
+                    )}
+                  />
                 ) : null}
               </div>
             ))}
-            {canEdit && branch.conditions.length < MAX_BRANCH_CONDITIONS ? (
+            {canEdit && branch.conditions.length < MAX_BRANCH_CONDITIONS && groups.length < MAX_CONDITION_GROUPS ? (
               <SmartPicker
-                label="Add condition"
+                label={groups.length ? "Add an Or group" : "Add condition"}
                 value={null}
-                options={vocabOptions(CONDITIONS)}
-                onChange={(v) => onChange({ ...branch, conditions: [...branch.conditions, { type: v as ConditionType }] })}
+                options={conditionOptions}
+                onChange={(v) => setGroups([...groups, [conditionDefaultsFor(v as ConditionType)]])}
                 variant="ghost"
                 searchable
+                disabled={groups.length > 0 && ctx.v2 === false}
                 className="h-6 self-start px-1.5 text-xs"
                 renderValue={() => (
                   <>
                     <Plus className="size-3.5" aria-hidden />
-                    {branch.conditions.length ? "And…" : "Add condition"}
+                    {groups.length ? "Or…" : "Add condition"}
                   </>
                 )}
               />
@@ -534,7 +607,7 @@ function BranchRows({
                 <SmartPicker
                   label={`Action ${i + 1}`}
                   value={action.type}
-                  options={vocabOptions(ACTIONS)}
+                  options={actionOptions}
                   onChange={(v) => setAction(i, defaultsFor(v as ActionType))}
                   variant="chip"
                   searchable
@@ -585,7 +658,7 @@ function BranchRows({
           <SmartPicker
             label="Add action"
             value={null}
-            options={vocabOptions(ACTIONS)}
+            options={actionOptions}
             onChange={(v) => onChange({ ...branch, actions: [...branch.actions, defaultsFor(v as ActionType)] })}
             variant="ghost"
             searchable
@@ -604,15 +677,12 @@ function BranchRows({
   );
 }
 
-// Actions whose settings fit on the sentence line (a section, a field and value, a person, hours).
-const INLINE_ACTIONS = new Set<string>(["move_section", "set_field", "set_assignee", "add_followers", "request_approval", "delay"]);
-
 function InlineActionFields(props: Parameters<typeof ActionFields>[0]) {
-  return INLINE_ACTIONS.has(props.action.type) ? <ActionFields {...props} part="inline" /> : null;
+  return INLINE_ACTION_TYPES.has(props.action.type) ? <ActionFields {...props} part="inline" /> : null;
 }
 
 function BlockActionFields(props: Parameters<typeof ActionFields>[0]) {
-  if (INLINE_ACTIONS.has(props.action.type) && props.action.type !== "request_approval") return null;
+  if (INLINE_ACTION_TYPES.has(props.action.type) && !INLINE_AND_BLOCK_ACTION_TYPES.has(props.action.type)) return null;
   return (
     <div className="ml-5 mt-1.5 max-w-xl">
       <ActionFields {...props} part="block" />

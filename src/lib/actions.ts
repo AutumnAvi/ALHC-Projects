@@ -7,6 +7,7 @@ import {
   getWorkspace,
   hasBatch4Schema,
   listFieldLibrary,
+  listMyProjectRoles,
   listMyTeamIds,
   listProjectTemplates,
   listTeams,
@@ -52,8 +53,9 @@ import {
   type FormAnswers,
   type FormQuestion,
 } from "@/lib/forms";
-import { branchProblem, isTriggerType, splitBranches, type RuleAction, type RuleCondition } from "@/lib/rules";
+import { branchProblem, isTriggerType, runReason, splitBranches, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { isUuid } from "@/lib/ids";
+import { normalizeWorkWeek } from "@/lib/workdays";
 import { isReactionKey } from "@/lib/reactions";
 import {
   MAX_SHIFT_MOVES,
@@ -78,7 +80,7 @@ import {
 } from "@/lib/duplicate-task";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
-import { isPortfolioRole, isProjectRole } from "@/lib/roles";
+import { hasRole, isPortfolioRole, isProjectRole } from "@/lib/roles";
 import {
   EMAIL_PATTERN,
   LOGO_MAX_BYTES,
@@ -4175,7 +4177,17 @@ type RuleInput = {
   actions: RuleAction[];
   // The canvas's Active toggle (absent = unchanged; a new rule without it starts off).
   enabled?: boolean;
+  // The builder's browser time zone: "today", overdue, and schedules use it (trigger_config.timezone).
+  timeZone?: string;
 };
+
+// The new triggers (Automations V2) are refused by the old trigger CHECK until the migration's tail is
+// applied; say so instead of the raw constraint message.
+function ruleSaveError(message: string): string {
+  return /rules_trigger_type_check/.test(message)
+    ? "This trigger arrives with the last step of this release’s database update, which isn’t applied yet"
+    : message;
+}
 
 // Same checks the database makes (integration_url_ok / integration_header_ok), for a clearer message.
 // Plain URLs and secrets are moved out of rules.actions by a trigger before the rule is stored.
@@ -4240,10 +4252,14 @@ function ruleRow(input: RuleInput, revealed: RevealedSigningSecret[] = []) {
   if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
   input.actions.forEach(checkIntegrationAction);
   const actions = input.actions.map((action, index) => prepareSigningSecret(action, index, revealed));
+  const triggerConfig: Record<string, Json> = { ...(input.triggerConfig ?? {}) };
+  if (typeof input.timeZone === "string" && input.timeZone.length <= 64 && !triggerConfig.timezone) {
+    triggerConfig.timezone = input.timeZone;
+  }
   return {
     name: text(input.name, "Rule name", { max: 200 }),
     trigger_type: input.triggerType,
-    trigger_config: (input.triggerConfig ?? {}) as Json,
+    trigger_config: triggerConfig as Json,
     conditions: (input.conditions ?? []) as Json,
     actions: actions as Json,
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
@@ -4274,7 +4290,7 @@ export async function createRule(projectId: string, input: RuleInput): Promise<R
     check(inserted);
     ruleId = inserted.data?.id;
   });
-  if (result.error) return result;
+  if (result.error) return { ...result, error: ruleSaveError(result.error) };
   return revealed.length === 0 ? { ruleId } : { ruleId, signingSecrets: revealed };
 }
 
@@ -4285,7 +4301,8 @@ export async function updateRule(ruleId: string, input: RuleInput): Promise<Rule
     const supabase = await createClient();
     checkUpdated(await supabase.from("rules").update(ruleRow(input, revealed)).eq("id", id(ruleId)).select("id"));
   });
-  return result.error || revealed.length === 0 ? result : { signingSecrets: revealed };
+  if (result.error) return { ...result, error: ruleSaveError(result.error) };
+  return revealed.length === 0 ? result : { signingSecrets: revealed };
 }
 
 export async function setRuleEnabled(ruleId: string, enabled: boolean): Promise<ActionResult> {
@@ -4320,6 +4337,125 @@ export async function installRulePreset(
         enable: Boolean(enable),
       }),
     );
+  });
+}
+
+// "Run manually" rules (Automations V2) a task can run from the pane's "…" menu: enabled rules with
+// the manual trigger in the task's projects where the viewer is an Editor (run_manual_rule's own check;
+// archived projects cap everyone at Viewer), the home project's first. Read with the person's own
+// client, so RLS decides; a subtask or a private task has no projects and gets none, and a database
+// without the manual trigger simply has no such rules.
+export type ManualRule = { id: string; name: string; projectId: string; projectName: string };
+
+export async function listManualRules(taskId: string): Promise<ActionResult & { rules: ManualRule[] }> {
+  const outcome = await read(async (): Promise<ManualRule[]> => {
+    const supabase = await createClient();
+    const [task, memberships] = await Promise.all([
+      supabase.from("tasks").select("home_project_id, parent_task_id").eq("id", id(taskId, "task")).maybeSingle(),
+      supabase.from("task_projects").select("project_id").eq("task_id", taskId).is("deleted_at", null),
+    ]);
+    check(task);
+    check(memberships);
+    if (!task.data || task.data.parent_task_id) return [];
+    const roles = await listMyProjectRoles();
+    const projectIds = [...new Set((memberships.data ?? []).map((m) => m.project_id))].filter((p) =>
+      hasRole(roles.get(p) ?? null, "editor"),
+    );
+    if (projectIds.length === 0) return [];
+    const [projects, rules] = await Promise.all([
+      supabase.from("projects").select("id, name").in("id", projectIds).is("deleted_at", null),
+      supabase
+        .from("rules")
+        .select("id, name, project_id")
+        .in("project_id", projectIds)
+        .eq("trigger_type", "manual")
+        .eq("enabled", true)
+        .is("deleted_at", null)
+        .order("sort_order")
+        .order("created_at"),
+    ]);
+    check(projects);
+    check(rules);
+    const home = task.data.home_project_id;
+    const ordered = [...(projects.data ?? [])].sort(
+      (a, b) => Number(b.id === home) - Number(a.id === home) || a.name.localeCompare(b.name),
+    );
+    return ordered.flatMap((project) =>
+      (rules.data ?? [])
+        .filter((rule) => rule.project_id === project.id)
+        .map((rule) => ({ id: rule.id, name: rule.name, projectId: project.id, projectName: project.name })),
+    );
+  });
+  return { error: outcome.error, rules: outcome.data ?? [] };
+}
+
+export type ManualRuleStatus = "succeeded" | "scheduled" | "failed" | "skipped" | "conditions" | "duplicate";
+const MANUAL_RULE_STATUSES: readonly ManualRuleStatus[] = ["succeeded", "scheduled", "failed", "skipped", "conditions", "duplicate"];
+
+// Runs a "Run manually" rule on a task now (run_manual_rule: Editor+ of the rule's project, the task in
+// that project). `summary` is what each step did (the run log's step results); a run whose actions
+// failed comes back as status "failed" with its error (nothing it did is kept). The rule may queue
+// emails, Slack messages, or webhooks, so the outboxes are delivered like after any write.
+export async function runManualRule(
+  ruleId: string,
+  taskId: string,
+): Promise<ActionResult & { status?: ManualRuleStatus; summary: string[]; reason?: string }> {
+  let status: ManualRuleStatus | undefined;
+  let summary: string[] = [];
+  let failure: string | undefined;
+  let reason: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const ran = await supabase.rpc("run_manual_rule", { target_rule: id(ruleId, "rule"), target_task: id(taskId, "task") });
+    if (ran.error?.code === "PGRST202") throw new InputError("Running rules from a task needs this release’s database update");
+    check(ran);
+    const data = (ran.data ?? {}) as { status?: unknown; detail?: Json | null };
+    status = MANUAL_RULE_STATUSES.find((s) => s === data.status) ?? "failed";
+    // Why it was skipped (loop, chain too deep, throttled, rate limited), in words.
+    if (status === "skipped") reason = runReason(data.detail ?? null) ?? undefined;
+    const detail = data.detail && typeof data.detail === "object" && !Array.isArray(data.detail) ? data.detail : null;
+    const actions = detail?.actions;
+    if (Array.isArray(actions)) {
+      summary = actions.flatMap((step) =>
+        step && typeof step === "object" && typeof (step as { result?: unknown }).result === "string"
+          ? [(step as { result: string }).result]
+          : [],
+      );
+    } else if (status === "failed") {
+      const error = actions && typeof actions === "object" ? (actions as { error?: unknown }).error : null;
+      failure = typeof error === "string" && error ? error : "The rule couldn’t finish";
+    }
+  });
+  if (result.error) return { error: result.error, summary: [] };
+  return { status, summary, ...(failure ? { error: failure } : {}), ...(reason ? { reason } : {}) };
+}
+
+// The workspace's workweek (Admin console → Organization): the days "Set due date" actions count as
+// business days and "Every workday" schedules run on. Workspace admins only (workspaces_update_admin
+// and the work_week column grant); RLS turns anyone else's update into zero rows.
+export async function setWorkWeek(days: number[]): Promise<ActionResult> {
+  return run(async () => {
+    if (
+      !Array.isArray(days) ||
+      days.length < 1 ||
+      days.length > 7 ||
+      days.some((d) => !Number.isInteger(d) || d < 0 || d > 6) ||
+      new Set(days).size !== days.length
+    ) {
+      throw new InputError("Choose 1 to 7 different days of the week");
+    }
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    const result = await supabase
+      .from("workspaces")
+      .update({ work_week: normalizeWorkWeek(days) })
+      .eq("id", workspace.id)
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
+      throw new InputError("The workweek needs this release’s database update");
+    }
+    checkUpdated(result, WORKSPACE_ADMINS_ONLY);
   });
 }
 

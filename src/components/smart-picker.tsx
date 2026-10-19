@@ -2,7 +2,9 @@
 
 import { Check, ChevronDown, Search } from "lucide-react";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -69,6 +71,10 @@ const BUTTON_CLASS = {
   ghost: "btn-ghost",
 } as const;
 
+// Inside a provider set to true, every empty picker (but "ghost" buttons) is highlighted: the rule
+// builder turns it on for a rule that came from a template, so the slots still to fill stand out.
+export const PickerHighlightContext = createContext(false);
+
 // One searchable, grouped picker for the rules builder (and anything else that needs one): a button
 // that opens a listbox drawn on document.body, so panels and scroll containers never clip it.
 // Keyboard: ↑ ↓ Home End PageUp PageDown to move, Enter to choose, Esc to close (a first Esc clears the
@@ -83,15 +89,22 @@ export function SmartPicker(props: SingleProps | MultiProps) {
     variant = "control",
     disabled = false,
     renderValue,
-    highlight = false,
     className = "",
     emptyText = "Nothing matches",
     panelWidth = 300,
   } = props;
+  // "" counts as a choice when an option has that value ("Any form", "any tag", "Nobody").
   const selected = useMemo<string[]>(
-    () => (props.multiple ? [...props.value] : props.value ? [props.value] : []),
-    [props.multiple, props.value],
+    () =>
+      props.multiple
+        ? [...props.value]
+        : props.value || (props.value === "" && options.some((o) => o.value === ""))
+          ? [props.value]
+          : [],
+    [props.multiple, props.value, options],
   );
+  const highlightAll = useContext(PickerHighlightContext);
+  const highlight = props.highlight ?? (highlightAll && variant !== "ghost");
   const searchable = props.searchable ?? options.length > 7;
   const autoId = useId();
   const buttonId = props.id ?? `picker-${autoId}`;

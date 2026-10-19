@@ -125,6 +125,12 @@ export function ruleIcon(value: string): LucideIcon {
   return ICONS[value] ?? Zap;
 }
 
+// A vocabulary item's icon as an element (a stable component, so it can be drawn during render).
+export function RuleIcon({ value, className = "size-4" }: { value: string; className?: string }) {
+  const Icon = ICONS[value] ?? Zap;
+  return <Icon className={className} aria-hidden />;
+}
+
 // A vocabulary list (TRIGGERS, CONDITIONS, ACTIONS, …) as picker options with icons.
 export function vocabOptions(
   list: readonly { value: string; label: string; group?: string; description?: string; keywords?: readonly string[] }[],

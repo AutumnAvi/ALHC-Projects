@@ -29,6 +29,11 @@ const RUN_STATUS: Record<RuleRun["status"], string> = {
   failed: "bg-red-100 text-red-800",
 };
 
+// "Task moves into Review" → "task moves into Review" (names, "AM" / "PM" keep their case).
+function lowerFirst(text: string) {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
 export function RulesView({
   projectId,
   rules,
@@ -113,7 +118,7 @@ export function RulesView({
                     ) : null}
                   </p>
                   <p className="mt-1 text-sm text-zinc-600">
-                    <span className="font-medium text-zinc-700">When</span> {describeTrigger(rule, context).toLowerCase()}
+                    <span className="font-medium text-zinc-700">When</span> {lowerFirst(describeTrigger(rule, context))}
                     {flow.length === 1 ? (
                       <>
                         {flow[0].conditions ? (

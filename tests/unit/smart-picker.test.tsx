@@ -103,7 +103,7 @@ test("search keeps groups, ranks label matches first, and matches keywords and d
 
 test("typing “assign” finds Set assignee, Assignee changes and Has an assignee", () => {
   const all = [...TRIGGERS, ...CONDITIONS, ...ACTIONS].map((x) => ({ ...x, value: `${x.value}:${x.label}` }));
-  const labels = flatOptions(filterOptions(all, "assign")).map((o) => o.label);
+  const labels: string[] = flatOptions(filterOptions(all, "assign")).map((o) => o.label);
   for (const wanted of ["Set assignee", "Assignee changes", "Has an assignee"]) assert.ok(labels.includes(wanted), wanted);
 });
 

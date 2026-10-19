@@ -25,7 +25,9 @@ import {
   type RuleDef,
   type RulePreset,
   type RuleRun,
+  type RuleRunStats,
 } from "@/lib/rules";
+import { DEFAULT_WORK_WEEK, normalizeWorkWeek } from "@/lib/workdays";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import {
   displayTaskTitle,
@@ -3095,16 +3097,101 @@ export const getPublicForm = cache(async (formId: string): Promise<PublicForm | 
   };
 });
 
-export const listProjectRules = cache(async (projectId: string): Promise<RuleDef[]> => {
+// Automations V2's database update (20261020010000_automations_v2.sql) is applied when rules have
+// next_run_at; without it the builder offers only the old vocabulary.
+export const hasAutomationsV2Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.from("rules").select("next_run_at").limit(1);
+  return !result.error;
+});
+
+// The workspace's workweek for business days (Sunday–Thursday until an admin changes it).
+export const getWorkWeek = cache(async (): Promise<number[]> => {
   const supabase = await createClient();
   const result = await supabase
+    .from("workspaces")
+    .select("work_week")
+    .is("deleted_at", null)
+    .order("created_at")
+    .limit(1)
+    .maybeSingle();
+  if (result.error || !result.data) return [...DEFAULT_WORK_WEEK];
+  return normalizeWorkWeek((result.data as { work_week?: unknown }).work_week);
+});
+
+// Active projects other than `exceptId` where the viewer is an Editor+, with their sections (the "Add
+// to another project" action: saving it needs Editor+ there).
+export const listEditableProjectsWithSections = cache(
+  async (exceptId: string): Promise<{ id: string; name: string; sections: { id: string; name: string }[] }[]> => {
+    const [projects, roles] = await Promise.all([listProjects(), listMyProjectRoles()]);
+    const editable = projects
+      .filter((p) => p.id !== exceptId && hasRole(roles.get(p.id) ?? null, "editor"))
+      .slice(0, 100);
+    if (editable.length === 0) return [];
+    const supabase = await createClient();
+    const sections = rows(
+      await supabase
+        .from("sections")
+        .select("id, name, project_id, sort_order")
+        .in("project_id", editable.map((p) => p.id))
+        .is("deleted_at", null)
+        .order("sort_order"),
+      "sections",
+    );
+    return editable.map((p) => ({
+      id: p.id,
+      name: p.name,
+      sections: sections.filter((s) => s.project_id === p.id).map((s) => ({ id: s.id, name: s.name })),
+    }));
+  },
+);
+
+export const listProjectRules = cache(async (projectId: string): Promise<RuleDef[]> => {
+  const [supabase, v2] = await Promise.all([createClient(), hasAutomationsV2Schema()]);
+  const base = "id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key";
+  if (v2) {
+    const result = await supabase
+      .from("rules")
+      .select(
+        `${base}, owner_id, next_run_at, last_edited_by, last_edited_at, run_on_rule_changes, paused_at, pause_reason, consecutive_failures`,
+      )
+      .eq("project_id", projectId)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    return rows(result, "rules").map(toRuleDef);
+  }
+  const result = await supabase
     .from("rules")
-    .select("id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key")
+    .select(base)
     .eq("project_id", projectId)
     .is("deleted_at", null)
     .order("sort_order")
     .order("created_at");
   return rows(result, "rules").map(toRuleDef);
+});
+
+// Each rule's last run and failures in the last 7 days (the rules list's health line). RLS on rule_runs
+// decides; empty without Automations V2's database update.
+export const listRuleRunStats = cache(async (ruleIds: string[]): Promise<Map<string, RuleRunStats>> => {
+  const out = new Map<string, RuleRunStats>();
+  if (ruleIds.length === 0 || !(await hasAutomationsV2Schema())) return out;
+  const supabase = await createClient();
+  const result = await supabase.rpc("rule_run_stats", { rule_ids: ruleIds.slice(0, 200) });
+  if (result.error) {
+    console.error(`[rules] couldn't load run stats: ${result.error.message}`);
+    return out;
+  }
+  for (const row of result.data ?? []) {
+    out.set(row.rule_id, {
+      ruleId: row.rule_id,
+      lastRunAt: row.last_run_at,
+      lastStatus: (row.last_status as RuleRunStats["lastStatus"]) ?? null,
+      runs7d: row.runs_7d,
+      failures7d: row.failures_7d,
+    });
+  }
+  return out;
 });
 
 export const listRecentRuleRuns = cache(async (ruleIds: string[]): Promise<RuleRun[]> => {
