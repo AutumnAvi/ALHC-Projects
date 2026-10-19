@@ -8,7 +8,8 @@ export const ADMIN_SECTIONS = [
   { key: "teams", href: "/admin/teams", label: "Teams", description: "Every team and the default team" },
   { key: "security", href: "/admin/security", label: "Security", description: "Sign-in methods and who can get in" },
   { key: "organization", href: "/admin/organization", label: "Organization", description: "Name, logo, and default team" },
-  { key: "email", href: "/admin/email", label: "Email", description: "Sender name and deliveries" },
+  { key: "emails", href: "/admin/emails", label: "Emails", description: "How emails look" },
+  { key: "email", href: "/admin/email", label: "Email delivery", description: "Sender name and deliveries" },
   { key: "tags", href: "/admin/tags", label: "Tags", description: "Workspace tags" },
 ] as const;
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]["key"];

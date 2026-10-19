@@ -5,6 +5,7 @@ import { displayName } from "@/components/avatar";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
+import { isEmailDesignKind, settingsFromRow, type EmailDesignKind, type EmailDesignSettings } from "@/lib/email-design";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import { isFieldType, parseOptions, type FieldDef, type FieldOption, type FieldType, type LibraryField } from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
@@ -5445,4 +5446,104 @@ export const getPersonProfile = cache(async (profileId: string): Promise<PersonP
     activity,
     lastActivity,
   };
+});
+
+// ---------------------------------------------------------------------------------------------
+// Email designs (20261019010000_email_designs.sql): the workspace defaults of each kind, a project's
+// overrides, and its forms' overrides — whatever RLS lets the viewer read. null = a database without
+// the update (the pages say so).
+// ---------------------------------------------------------------------------------------------
+
+export type EmailDesignRow = {
+  id: string;
+  kind: EmailDesignKind;
+  projectId: string | null;
+  formId: string | null;
+  settings: EmailDesignSettings;
+  updatedAt: string;
+};
+
+export type EmailDesignScopes = {
+  workspaceId: string;
+  workspace: Partial<Record<EmailDesignKind, EmailDesignRow>>;
+  project: Partial<Record<EmailDesignKind, EmailDesignRow>>;
+  forms: Record<string, EmailDesignRow>;
+};
+
+export const listEmailDesigns = cache(async (projectId: string | null): Promise<EmailDesignScopes | null> => {
+  const workspace = await getWorkspace();
+  if (!workspace) return null;
+  const supabase = await createClient();
+  let query = supabase
+    .from("email_designs")
+    .select("id, kind, project_id, form_id, logo_path, accent_color, header_text, intro_message, footer_text, button_label, button_color, updated_at")
+    .is("deleted_at", null)
+    .eq("workspace_id", workspace.id);
+  query = projectId ? query.or(`project_id.is.null,project_id.eq.${projectId}`) : query.is("project_id", null);
+  const result = await query;
+  if (result.error) {
+    if (result.error.code === "PGRST205" || result.error.code === "42P01") return null;
+    throw new Error(`Failed to load email designs: ${result.error.message}`);
+  }
+  const scopes: EmailDesignScopes = { workspaceId: workspace.id, workspace: {}, project: {}, forms: {} };
+  for (const row of result.data ?? []) {
+    if (!isEmailDesignKind(row.kind)) continue;
+    const design: EmailDesignRow = {
+      id: row.id,
+      kind: row.kind,
+      projectId: row.project_id,
+      formId: row.form_id,
+      settings: settingsFromRow(row)!,
+      updatedAt: row.updated_at,
+    };
+    if (row.form_id) scopes.forms[row.form_id] = design;
+    else if (row.project_id) scopes.project[row.kind] = design;
+    else scopes.workspace[row.kind] = design;
+  }
+  return scopes;
+});
+
+// Whether the Commenter project role is offered (Admin console → Security). A database without the
+// update keeps the old behavior (offered).
+export const commenterRoleAllowed = cache(async (): Promise<boolean> => {
+  const workspace = await getWorkspace();
+  if (!workspace) return true;
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("workspaces").select("allow_commenter_role").eq("id", workspace.id).maybeSingle();
+  if (error) {
+    if (isMissingColumn(error)) return true;
+    throw new Error(`Failed to load the Commenter setting: ${error.message}`);
+  }
+  return data?.allow_commenter_role ?? true;
+});
+
+export type CommenterMember = {
+  profileId: string;
+  name: string;
+  email: string;
+  projectCount: number;
+  // Only projects the viewer can open; the rest are a count.
+  projects: { id: string; name: string }[];
+};
+
+// Workspace admins: everyone who holds the Commenter role somewhere (list_commenter_members). Empty
+// for anyone else or without the update.
+export const listCommenterMembers = cache(async (): Promise<CommenterMember[]> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("list_commenter_members");
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42501") return [];
+    throw new Error(`Failed to load Commenters: ${error.message}`);
+  }
+  return (data ?? []).map((r) => ({
+    profileId: r.profile_id,
+    name: displayName({ full_name: r.full_name, email: r.email }),
+    email: r.email,
+    projectCount: r.project_count,
+    projects: Array.isArray(r.projects)
+      ? (r.projects as { id?: unknown; name?: unknown }[]).flatMap((p) =>
+          typeof p?.id === "string" && typeof p?.name === "string" ? [{ id: p.id, name: p.name }] : [],
+        )
+      : [],
+  }));
 });
