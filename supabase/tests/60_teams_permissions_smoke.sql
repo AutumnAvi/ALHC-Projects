@@ -566,13 +566,15 @@ begin
   -- window; a non-member gets an empty list). alhc_task_in_schedule is internal.
   -- Task numbering: apply_task_numbering is the new client definer (Editor+; renumber is admin).
   -- format_request_label and task_request_label are invoker, so RLS hides them from non-members.
+  -- Security review pass 2: custom_field_project / rule_project (a field or rule id → its project)
+  -- are no longer granted; policies use custom_field_has_role / rule_has_role (the caller's own role).
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
-    'apply_task_numbering,assign_request_number,browse_project_people,browse_projects,can_manage_project_template,cancel_approval,cancel_integration_delivery,clear_email_suppression,create_project_from_template,custom_field_project,'
+    'apply_task_numbering,assign_request_number,browse_project_people,browse_projects,can_manage_project_template,cancel_approval,cancel_integration_delivery,clear_email_suppression,create_project_from_template,custom_field_has_role,'
     'decide_approval,delete_project_template,duplicate_project,finish_import_run,'
     'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,is_workspace_admin,join_project,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,move_portfolio_project,'
     'my_task_cards,my_tasks_layout,open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_role,project_schedule_cards,project_section_task_counts,project_task_card_page,project_task_cards,'
     'receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,remove_workspace_member,'
-    'request_approval,resend_workspace_invite,restore_task,resubmit_approval,retry_email_delivery,retry_integration_delivery,rule_project,save_project_as_template,set_project_archived,set_project_integration,set_project_status,set_task_dependency,start_import_run,submit_form,'
+    'request_approval,resend_workspace_invite,restore_task,resubmit_approval,retry_email_delivery,retry_integration_delivery,rule_has_role,save_project_as_template,set_project_archived,set_project_integration,set_project_status,set_task_dependency,start_import_run,submit_form,'
     'sync_my_task_placements,task_comment_page,task_role,transfer_portfolio_ownership,transfer_project_ownership,'
     'update_portfolio_member_role,update_project_member_role,update_project_template,workspace_email_summary,workspace_hidden_project_count',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);

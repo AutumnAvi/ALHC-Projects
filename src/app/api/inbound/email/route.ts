@@ -3,12 +3,15 @@ import { drainOutbox } from "@/lib/email";
 import { copyForwardedAttachments } from "@/lib/email-forward";
 import {
   bareAddress,
+  forwardSenderVerified,
   forwardTokenFrom,
   forwardedText,
   htmlToText,
   isInboundEmailConfigured,
   replyTokenFrom,
+  type SenderAuthentication,
   stripQuotedReply,
+  submitterReplyVerified,
   verifyResendWebhook,
 } from "@/lib/email-reply";
 import { isResendDeliveryEvent, RESEND_DELIVERY_EVENTS } from "@/lib/email-schedules";
@@ -57,26 +60,8 @@ type Received = {
   text?: unknown;
   html?: unknown;
   attachments?: unknown;
-  authentication?: { spf?: unknown; dkim?: unknown; dmarc?: unknown } | null;
+  authentication?: SenderAuthentication;
 };
-
-// Defence in depth on top of the secret token and the sender match: when Resend reports the sender's
-// authentication, DMARC must not fail and SPF or DKIM must pass.
-function senderAuthenticated(message: Received): boolean {
-  const auth = message.authentication;
-  if (!auth || typeof auth !== "object") return true;
-  if (auth.dmarc === "fail") return false;
-  if (auth.spf === undefined && auth.dkim === undefined) return true;
-  return auth.spf === "pass" || auth.dkim === "pass";
-}
-
-// A forward creates a task as the person, so its From must be proven theirs: Resend must report DMARC
-// passing (SPF or DKIM aligned with the From domain). No report, or anything else, is refused and logged
-// for the person ("didn't pass sender checks").
-function forwardSenderVerified(message: Received): boolean {
-  const auth = message.authentication;
-  return Boolean(auth && typeof auth === "object" && auth.dmarc === "pass");
-}
 
 export async function POST(request: Request) {
   const secret = process.env.RESEND_WEBHOOK_SECRET?.trim();
@@ -162,10 +147,12 @@ export async function POST(request: Request) {
       console.info("Forwarded email: rejected (no sender address)");
       return json({ ok: true, status: "rejected" }, 200);
     }
-    return forwardedEmail(admin, apiKey, { forwardToken, sender, verified: forwardSenderVerified(message), emailId, message });
+    return forwardedEmail(admin, apiKey, { forwardToken, sender, verified: forwardSenderVerified(message.authentication), emailId, message });
   }
-  if (!sender || !senderAuthenticated(message)) {
-    console.info("Reply by email: rejected (sender not authenticated)");
+  // Fails closed: no authentication result from Resend counts as unverified, and an unverified reply is
+  // never posted under the submitter's address.
+  if (!sender || !submitterReplyVerified(message.authentication)) {
+    console.info(`Reply by email: rejected (${sender ? "unverified_sender" : "no sender address"})`);
     return json({ ok: true, status: "rejected" }, 200);
   }
   if (!token) return json({ ok: true, ignored: true }, 200);
