@@ -269,7 +269,7 @@ export function TaskAttachments({
 
 // An image card's thumbnail. A load that failed before the page hydrated never reaches onError, so the
 // mount check catches it too; either way the card falls back to the file icon.
-function Thumbnail({ src, onBroken }: { src: string; onBroken: () => void }) {
+export function Thumbnail({ src, onBroken }: { src: string; onBroken: () => void }) {
   const ref = useRef<HTMLImageElement>(null);
   const brokenRef = useRef(onBroken);
   useEffect(() => {
@@ -291,8 +291,8 @@ const LIGHTBOX_BUTTON =
 // Full-size image viewer: modal dialog over the page (portalled to <body> so the pane's stacking
 // context doesn't clip it). Esc / Close closes, ←/→ and the side buttons step through the task's
 // images, Tab stays inside. Keys are caught in the capture phase so the pane's own Escape (close
-// the pane) and the list shortcuts don't also fire.
-function ImageLightbox({
+// the pane) and the list shortcuts don't also fire. Also used for a reply's images (comment-parts.tsx).
+export function ImageLightbox({
   image,
   position,
   total,
@@ -300,7 +300,7 @@ function ImageLightbox({
   onNext,
   onClose,
 }: {
-  image: TaskAttachment;
+  image: Pick<TaskAttachment, "id" | "fileName">;
   position: number;
   total: number;
   onPrevious: () => void;

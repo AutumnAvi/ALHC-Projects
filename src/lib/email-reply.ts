@@ -116,18 +116,20 @@ export function verifyResendWebhook(
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
+// The part of an HTML body the person wrote: head / style / script and the quoted blocks (blockquotes,
+// Gmail's and Outlook's quoted message) cut. Still HTML (its cid: images say which inline files are theirs).
+export function keptHtml(html: string): string {
+  return html
+    .replace(/<(head|style|script)[\s\S]*?<\/\1>/gi, "")
+    .replace(/<blockquote[\s\S]*?<\/blockquote>/gi, "\n")
+    .replace(/<div[^>]*class="[^"]*gmail_quote[\s\S]*$/i, "")
+    .replace(/<div[^>]*id="(?:divRplyFwdMsg|appendonsend)"[\s\S]*$/i, "");
+}
+
 // Plain text from an HTML body: quoted blocks out (unless `keepQuoted`, for forwarded emails whose
 // point is the quoted message), line breaks kept, tags and entities resolved.
 export function htmlToText(html: string, { keepQuoted = false } = {}): string {
-  const body = html.replace(/<(head|style|script)[\s\S]*?<\/\1>/gi, "");
-  return (
-    keepQuoted
-      ? body
-      : body
-          .replace(/<blockquote[\s\S]*?<\/blockquote>/gi, "\n")
-          .replace(/<div[^>]*class="[^"]*gmail_quote[\s\S]*$/i, "")
-          .replace(/<div[^>]*id="(?:divRplyFwdMsg|appendonsend)"[\s\S]*$/i, "")
-  )
+  return (keepQuoted ? html.replace(/<(head|style|script)[\s\S]*?<\/\1>/gi, "") : keptHtml(html))
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
     .replace(/<[^>]+>/g, "")

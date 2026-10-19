@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { drainOutbox } from "@/lib/email";
-import { copyForwardedAttachments, copyReplyAttachments } from "@/lib/email-forward";
+import { copyForwardedAttachments, copyReplyAttachments, resendFileSource } from "@/lib/email-forward";
 import {
   bareAddress,
   forwardSenderVerified,
@@ -8,6 +8,7 @@ import {
   forwardedText,
   htmlToText,
   isInboundEmailConfigured,
+  keptHtml,
   replyTokenFrom,
   type SenderAuthentication,
   stripQuotedReply,
@@ -15,6 +16,13 @@ import {
   verifyResendWebhook,
 } from "@/lib/email-reply";
 import { isResendDeliveryEvent, RESEND_DELIVERY_EVENTS } from "@/lib/email-schedules";
+import {
+  attachmentsOnlyBody,
+  normalizeReceivedFiles,
+  planReceivedFiles,
+  plannedFiles,
+  stripAttachmentPlaceholders,
+} from "@/lib/reply-attachments";
 import { drainIntegrationOutbox } from "@/lib/integrations";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -43,8 +51,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // or Resend's own suppression puts the address on the suppression list (Admin console → Email).
 
 export const dynamic = "force-dynamic";
-// Copying a forwarded email's attachments (up to 10 × 25 MB) runs after the response.
-export const maxDuration = 60;
+// Copying a forwarded email's or a reply's attachments (up to 10 × 25 MB, three at a time) runs after
+// the response.
+export const maxDuration = 300;
 
 const MAX_WEBHOOK_BYTES = 256 * 1024;
 // How long a delivery event for an email id we don't know yet is worth a retry (see deliveryEvent).
@@ -122,10 +131,11 @@ export async function POST(request: Request) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!admin || !apiKey) return json({ ok: false, error: "Service unavailable" }, 503);
 
-  // The webhook has metadata only; the text comes from the Receiving API.
+  // The webhook has metadata only; the text comes from the Receiving API. html_format=cid keeps inline
+  // images as cid: references (matched to the attachments' content ids) instead of base64 data.
   let message: Received;
   try {
-    const response = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`, {
+    const response = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}?html_format=cid`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10_000),
       cache: "no-store",
@@ -156,13 +166,21 @@ export async function POST(request: Request) {
     return json({ ok: true, status: "rejected" }, 200);
   }
   if (!token) return json({ ok: true, ignored: true }, 200);
-  const text =
-    typeof message.text === "string" && message.text.trim()
-      ? message.text
-      : typeof message.html === "string"
-        ? htmlToText(message.html)
-        : "";
-  const body = stripQuotedReply(text);
+  const html = typeof message.html === "string" ? message.html : null;
+  const hasText = typeof message.text === "string" && message.text.trim();
+  const keptText = stripQuotedReply(hasText ? (message.text as string) : html ? htmlToText(html) : "");
+  // Which files to save (pasted and Apple Mail images included; quoted and signature images and
+  // tracking pixels left out), and the text without their "[image.jpg]" placeholders. A reply that was
+  // only files still says so.
+  const files = normalizeReceivedFiles(message.attachments);
+  const plan = planReceivedFiles(files, {
+    rawText: hasText ? (message.text as string) : html ? htmlToText(html, { keepQuoted: true }) : "",
+    keptText,
+    html,
+    keptHtml: html ? keptHtml(html) : null,
+  });
+  const saving = plan.copy.length + plan.skipped.length;
+  const body = stripAttachmentPlaceholders(keptText, plannedFiles(files, plan)) || (saving ? attachmentsOnlyBody(saving) : "");
 
   const { data, error } = await admin.rpc("post_submitter_reply", {
     reply_token: token,
@@ -182,15 +200,14 @@ export async function POST(request: Request) {
     return json({ ok: true, status: result.status ?? "rejected" }, 200);
   }
 
-  // The reply's attachments go to the task, linked on the new comment (too-large ones are noted on
-  // it); then the emails the comment queued for the followers go out.
-  const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
+  // The reply's attachments go to the task, linked on the new comment (the ones not saved are noted on
+  // it, with why); then the emails the comment queued for the followers go out.
   const { comment_id: commentId, task_id: replyTaskId } = result;
   after(async () => {
-    if (hasAttachments && commentId && replyTaskId) {
+    if (saving && commentId && replyTaskId) {
       try {
-        const copied = await copyReplyAttachments(admin, apiKey, { emailId, commentId, taskId: replyTaskId });
-        console.info(`Reply by email: ${copied.added} attachment(s) added, ${copied.skipped} skipped`);
+        const copied = await copyReplyAttachments(admin, resendFileSource(apiKey), { emailId, commentId, taskId: replyTaskId, plan });
+        console.info(`Reply by email: ${copied.added} attachment(s) added, ${copied.skipped} skipped, ${plan.ignored.length} left out`);
       } catch (e) {
         console.error("Reply by email: attachments failed", e instanceof Error ? e.name : "error");
       }
@@ -234,12 +251,20 @@ async function forwardedEmail(
     return json({ ok: true, status: result.status ?? "rejected" }, 200);
   }
   const { task_id: taskId, forward_id: forwardId } = result;
-  const hasAttachments = Array.isArray(input.message.attachments) && input.message.attachments.length > 0;
+  // A forwarded email is kept whole, so every image it shows counts (tracking pixels left out).
+  const html = typeof input.message.html === "string" ? input.message.html : null;
+  const text =
+    typeof input.message.text === "string" && input.message.text.trim()
+      ? input.message.text
+      : html
+        ? htmlToText(html, { keepQuoted: true })
+        : "";
+  const plan = planReceivedFiles(normalizeReceivedFiles(input.message.attachments), { rawText: text, keptText: text, html, keptHtml: html });
   after(async () => {
-    if (hasAttachments) {
+    if (plan.copy.length || plan.skipped.length) {
       try {
-        const copied = await copyForwardedAttachments(admin, apiKey, { emailId: input.emailId, forwardId, taskId });
-        console.info(`Forwarded email: ${copied.added} attachment(s) added, ${copied.skipped} skipped`);
+        const copied = await copyForwardedAttachments(admin, resendFileSource(apiKey), { emailId: input.emailId, forwardId, taskId, plan });
+        console.info(`Forwarded email: ${copied.added} attachment(s) added, ${copied.skipped} skipped, ${plan.ignored.length} left out`);
       } catch (e) {
         console.error("Forwarded email: attachments failed", e instanceof Error ? e.name : "error");
       }
