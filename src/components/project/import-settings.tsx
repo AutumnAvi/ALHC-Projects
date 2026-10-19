@@ -9,6 +9,7 @@ import { discardImportUploads, previewAsanaImport, runAsanaImport } from "@/lib/
 import type { ImportRun } from "@/lib/data";
 import {
   IMPORTS_BUCKET,
+  describeAttachmentFiles,
   describeImportCreated,
   MAX_IMPORT_FILES,
   MAX_IMPORT_FILE_BYTES,
@@ -34,6 +35,7 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
   const [phase, setPhase] = useState<Phase>({ kind: "pick" });
   const [error, setError] = useState<string | null>(null);
   const [invite, setInvite] = useState(false);
+  const [download, setDownload] = useState(false);
 
   async function upload(files: File[]) {
     setError(null);
@@ -68,6 +70,7 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
       return setError(result.error ?? "Couldn’t read the export.");
     }
     setInvite(false);
+    setDownload(false);
     setPhase({ kind: "preview", paths, preview: result.preview });
   }
 
@@ -83,6 +86,8 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
         step: progress?.step ?? 0,
         totals: progress?.totals ?? {},
         inviteRole: invite ? "editor" : null,
+        downloadAttachments: download,
+        files: progress?.files ?? null,
       }).catch(() => ({ error: "Lost the connection to the server.", progress: undefined }));
       if (result.error || !result.progress) {
         setPhase({ kind: "importing", paths, preview, progress });
@@ -115,7 +120,8 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
           In Asana, open the project, click the arrow next to its name, and choose <em>Export/Print</em> → <em>JSON</em>{" "}
           (and/or <em>CSV</em>). Upload one or both exports of the same project. The JSON export brings comments,
           attachment links, and memberships in other projects; the CSV export adds assignee emails, which is how people
-          are matched to members here. Nothing connects to Asana — only the files you upload are read.
+          are matched to members here. The Asana API is never used — only the files you upload are read (and, if you
+          choose Download attachments, the file links inside them).
         </p>
         <p className="mt-2 text-sm text-zinc-600">
           Re-importing the same export never duplicates anything: tasks already imported are skipped and never
@@ -162,6 +168,8 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
           preview={phase.preview}
           invite={invite}
           onInviteChange={setInvite}
+          download={download}
+          onDownloadChange={setDownload}
           importing={phase.kind === "importing"}
           progress={phase.kind === "importing" ? phase.progress : null}
           failed={phase.kind === "importing" && error !== null}
@@ -176,6 +184,17 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
             Import finished
           </h2>
           <p className="mt-1 text-sm text-zinc-600">{describeTotals(phase.progress.totals)}</p>
+          {phase.progress.files ? (
+            <p className="mt-1 text-sm text-zinc-600">
+              {describeAttachmentFiles({
+                downloaded: phase.progress.files.downloaded,
+                already: phase.progress.files.already,
+                too_large: phase.progress.files.tooLarge,
+                failed: phase.progress.files.failed,
+              })}
+              .
+            </p>
+          ) : null}
           <div className="mt-4 flex gap-2">
             <Link href={`/projects/${projectId}`} className="btn-primary">
               Open the project
@@ -212,6 +231,9 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
                   {run.createdByName ? ` by ${run.createdByName}` : ""}
                   {" · "}
                   {describeImportCreated(run.summary.created)}
+                  {describeAttachmentFiles(run.summary.attachment_files)
+                    ? ` · ${describeAttachmentFiles(run.summary.attachment_files)}`
+                    : ""}
                 </p>
               </li>
             ))}
@@ -226,6 +248,8 @@ function PreviewCard({
   preview,
   invite,
   onInviteChange,
+  download,
+  onDownloadChange,
   importing,
   progress,
   failed,
@@ -235,6 +259,8 @@ function PreviewCard({
   preview: ImportPreview;
   invite: boolean;
   onInviteChange: (value: boolean) => void;
+  download: boolean;
+  onDownloadChange: (value: boolean) => void;
   importing: boolean;
   progress: ImportProgress | null;
   failed: boolean;
@@ -254,7 +280,10 @@ function PreviewCard({
     ["Dependencies", c.dependencies, null],
   ];
   if (c.rules > 0) rows.push(["Rules (added turned off)", c.rules, null]);
-  const percent = progress ? Math.round((100 * progress.step) / Math.max(progress.steps, 1)) : 0;
+  const fileWork = progress?.files?.total ?? 0;
+  const percent = progress
+    ? Math.round((100 * (progress.step + (progress.files?.index ?? 0))) / Math.max(progress.steps + fileWork, 1))
+    : 0;
 
   return (
     <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="import-preview-heading">
@@ -347,6 +376,26 @@ function PreviewCard({
         />
       </div>
 
+      <div className="mt-5 rounded-md border border-zinc-200 px-3 py-2.5">
+        <label className="flex items-start gap-2 text-sm text-zinc-800">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={download}
+            disabled={importing || c.attachmentFiles === 0}
+            onChange={(e) => onDownloadChange(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Download attachments</span>
+            <span className="block text-xs text-zinc-500">
+              {c.attachmentFiles > 0
+                ? `Copies ${c.attachmentFiles} attachment file${c.attachmentFiles === 1 ? "" : "s"} from the export’s download links into this project, so they open here like any attachment. Files over 25 MB are skipped and counted. Asana’s download links expire after a while, so use a fresh export. Re-running never copies a file twice.`
+                : "This export has no attachment download links (only the JSON export carries them). Attachments are still added as links."}
+            </span>
+          </span>
+        </label>
+      </div>
+
       {preview.warnings.length > 0 ? (
         <div className="mt-5">
           <h3 className="text-sm font-semibold text-zinc-900">Good to know</h3>
@@ -373,7 +422,9 @@ function PreviewCard({
           <p className="mt-1 text-xs text-zinc-500" aria-live="polite">
             {failed
               ? `Stopped at batch ${progress?.step ?? 0} of ${progress?.steps ?? preview.steps}. Trying again picks up where it left off.`
-              : `Importing… batch ${progress?.step ?? 0} of ${progress?.steps ?? preview.steps}. Keep this page open.`}
+              : progress?.files && progress.step >= progress.steps
+                ? `Downloading attachments… ${progress.files.index} of ${progress.files.total}. Keep this page open.`
+                : `Importing… batch ${progress?.step ?? 0} of ${progress?.steps ?? preview.steps}. Keep this page open.`}
           </p>
         </div>
       ) : null}
