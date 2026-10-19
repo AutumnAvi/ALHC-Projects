@@ -166,7 +166,7 @@ function InviteForm({
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
   // Inviting as Owner isn't offered (owners promote someone from the list below instead).
-  const roles = assignableRoles(data.viewerRole).filter((r) => r !== "owner");
+  const roles = assignableRoles(data.viewerRole, data.allowCommenter).filter((r) => r !== "owner");
   const [role, setRole] = useState(roles.includes("editor") ? "editor" : (roles[0] ?? "viewer"));
 
   const memberIds = new Set(data.members.map((m) => m.profileId));
@@ -506,7 +506,7 @@ function WhoHasAccess({
   notify: (message: string) => void;
 }) {
   const isOwner = data.viewerRole === "owner";
-  const grantable = assignableRoles(data.viewerRole);
+  const grantable = assignableRoles(data.viewerRole, data.allowCommenter);
   const ownerCount = data.members.filter((m) => m.role === "owner").length;
   // Already in Asana's order (owners first; loadProjectShare sorts with compareMembers).
   const members = data.members;

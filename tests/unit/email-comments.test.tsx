@@ -28,12 +28,21 @@ test("subject and status follow Asana and the outbox", () => {
   assert.equal(commentEmailStatus({ status: "failed" }), "failed");
 });
 
-test("only form tasks with a submitter offer the checkbox", () => {
-  const base = { source: "form", isSubtask: false, submission: { email: "t@example.net" }, submitterResponses: true };
+test("only form tasks (and their subtasks) with a submitter offer the checkbox, to Editors and above", () => {
+  const base = {
+    source: "form",
+    isSubtask: false,
+    submission: { email: "t@example.net" },
+    submitterResponses: true,
+    viewerRole: "editor",
+  };
   assert.equal(canRespondToSubmitter(base), true);
   assert.equal(canRespondToSubmitter({ ...base, source: "manual" }), false);
   assert.equal(canRespondToSubmitter({ ...base, submission: null }), false);
-  assert.equal(canRespondToSubmitter({ ...base, isSubtask: true }), false);
+  assert.equal(canRespondToSubmitter({ ...base, source: "manual", isSubtask: true }), true, "a subtask answers the request's submitter");
+  assert.equal(canRespondToSubmitter({ ...base, viewerRole: "commenter" }), false, "Commenters can't send");
+  assert.equal(canRespondToSubmitter({ ...base, viewerRole: "viewer" }), false);
+  assert.equal(canRespondToSubmitter({ ...base, viewerRole: "owner" }), true);
   assert.equal(canRespondToSubmitter({ ...base, submitterResponses: false }), false, "not before the database update");
 });
 

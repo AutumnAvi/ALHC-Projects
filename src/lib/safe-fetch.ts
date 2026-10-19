@@ -173,3 +173,104 @@ export function safePost(
     req.end(init.body);
   });
 }
+
+export type SafeDownloadResult =
+  | { ok: true; status: number; bytes: Buffer; contentType: string | null }
+  | { ok: false; status: number; tooLarge: boolean };
+
+// GET a public https:// file (the Asana importer's attachment downloads). Every connection uses the
+// guarded lookup (no private or local addresses, so no DNS rebinding); redirects are followed by hand,
+// at most `maxRedirects`, each hop https-only and checked the same way. Stops reading past `maxBytes`
+// (tooLarge) instead of buffering a huge file. Sends no credentials or cookies.
+export async function safeDownload(
+  url: string,
+  init: { timeoutMs: number; maxBytes: number; maxRedirects?: number },
+  resolve?: LookupFn,
+): Promise<SafeDownloadResult> {
+  let current = url;
+  for (let hop = 0; hop <= (init.maxRedirects ?? 3); hop++) {
+    const result = await getOnce(current, init, resolve);
+    if ("location" in result) {
+      current = new URL(result.location, current).toString();
+      continue;
+    }
+    return result;
+  }
+  return { ok: false, status: 310, tooLarge: false };
+}
+
+function getOnce(
+  url: string,
+  init: { timeoutMs: number; maxBytes: number },
+  resolve?: LookupFn,
+): Promise<SafeDownloadResult | { location: string }> {
+  const target = new URL(url);
+  if (target.protocol !== "https:") return Promise.reject(new Error("Only https:// downloads are allowed"));
+  const host = target.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host) && isBlockedAddress(host)) return Promise.reject(new BlockedAddressError());
+  return new Promise((resolvePromise, reject) => {
+    const req = request(
+      target,
+      { method: "GET", lookup: guardedLookup(resolve) as never, agent: false, timeout: init.timeoutMs },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const location = res.headers.location;
+        if (status >= 300 && status < 400 && typeof location === "string") {
+          clearTimeout(timer);
+          res.resume();
+          return resolvePromise({ location });
+        }
+        if (status < 200 || status >= 300) {
+          clearTimeout(timer);
+          res.resume();
+          return resolvePromise({ ok: false, status, tooLarge: false });
+        }
+        if (Number(res.headers["content-length"] ?? "0") > init.maxBytes) {
+          clearTimeout(timer);
+          res.destroy();
+          return resolvePromise({ ok: false, status, tooLarge: true });
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let done = false;
+        res.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > init.maxBytes) {
+            done = true;
+            clearTimeout(timer);
+            res.destroy();
+            resolvePromise({ ok: false, status, tooLarge: true });
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on("end", () => {
+          if (done) return;
+          clearTimeout(timer);
+          const type = res.headers["content-type"];
+          resolvePromise({
+            ok: true,
+            status,
+            bytes: Buffer.concat(chunks),
+            contentType: typeof type === "string" ? type.split(";")[0].trim().slice(0, 255) || null : null,
+          });
+        });
+        res.on("error", (error) => {
+          if (done) return;
+          clearTimeout(timer);
+          reject(error);
+        });
+      },
+    );
+    const timer = setTimeout(() => {
+      const e = new Error("The request timed out");
+      e.name = "TimeoutError";
+      req.destroy(e);
+    }, init.timeoutMs);
+    req.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    req.end();
+  });
+}

@@ -20,6 +20,7 @@ import {
   listProjectMembers,
   listProjectTeamAccess,
   listTeams,
+  commenterRoleAllowed,
 } from "@/lib/data";
 import { isEmailConfigured } from "@/lib/email";
 import { isUuid } from "@/lib/ids";
@@ -31,7 +32,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
   if (!isUuid(projectId)) return null;
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
-  const [project, role, members, invites, teamAccess, teams, people, resendable] = await Promise.all([
+  const [project, role, members, invites, teamAccess, teams, people, resendable, allowCommenter] = await Promise.all([
     getProject(projectId),
     getProjectRole(projectId),
     listProjectMembers(projectId),
@@ -40,6 +41,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     listTeams(),
     listActivePeople(),
     hasReal1Schema(),
+    commenterRoleAllowed(),
   ]);
   if (!project || !role) return null;
   const teamsById = new Map(teams.map((t) => [t.id, { id: t.id, name: t.name, memberCount: t.members.length }] as const));
@@ -59,6 +61,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     })),
     people,
     teams: [...teamsById.values()],
+    allowCommenter,
   };
 }
 

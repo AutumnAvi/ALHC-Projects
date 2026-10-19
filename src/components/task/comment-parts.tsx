@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Mail } from "lucide-react";
+import { Mail, Paperclip, UsersRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { Timestamp } from "@/components/timestamp";
 import { COMMENT_EMAIL_STATUS_LABELS, type CommentEmail } from "@/lib/comment-email";
-import { mentionSegments, type MentionPerson } from "@/lib/mentions";
+import { mentionSegments, type MentionPerson, type MentionTeam } from "@/lib/mentions";
 
 // Pieces of the comment feed (Comments and reply by email): @mention pills with a profile card on hover,
 // and Asana's email cards for responses sent to a form's submitter and the submitter's emailed replies.
@@ -31,19 +31,30 @@ export function ProfileCard({ person, detail }: { person: MentionPerson; detail:
 
 const CARD_WIDTH = 256;
 
-// A highlighted @mention showing the person's real name. Hover or focus shows their card; a click does
-// nothing (no navigation).
-export function MentionPill({ person, detail, raw }: { person: MentionPerson; detail: string | null; raw: string }) {
+// A highlighted pill with a card on hover or focus; a click does nothing (no navigation). Shared by
+// person and team mentions.
+function HoverPill({
+  label,
+  title,
+  ariaLabel,
+  data,
+  card,
+}: {
+  label: string;
+  title?: string;
+  ariaLabel: string;
+  data: Record<string, string>;
+  card: ReactNode;
+}) {
   const ref = useRef<HTMLSpanElement>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number; above: boolean } | null>(null);
   const hideTimer = useRef<number | undefined>(undefined);
-  const name = displayName(person);
 
   function show() {
     window.clearTimeout(hideTimer.current);
     const rect = ref.current?.getBoundingClientRect();
     if (!rect) return;
-    const above = rect.bottom + 120 > window.innerHeight;
+    const above = rect.bottom + 160 > window.innerHeight;
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - CARD_WIDTH - 8));
     setAnchor({ left, top: above ? rect.top - 6 : rect.bottom + 6, above });
   }
@@ -64,9 +75,9 @@ export function MentionPill({ person, detail, raw }: { person: MentionPerson; de
       <span
         ref={ref}
         tabIndex={0}
-        data-mention={person.id}
-        title={raw === `@${name}` ? undefined : raw}
-        aria-label={`@${name}, ${person.email}${detail ? `, ${detail}` : ""}`}
+        {...data}
+        title={title}
+        aria-label={ariaLabel}
         onMouseEnter={show}
         onMouseLeave={hide}
         onFocus={show}
@@ -74,7 +85,7 @@ export function MentionPill({ person, detail, raw }: { person: MentionPerson; de
         onClick={(e) => e.preventDefault()}
         className="cursor-default rounded bg-accent-50 px-1 py-px font-medium text-accent-700 outline-none hover:bg-accent-100 focus-visible:ring-2 focus-visible:ring-accent-400"
       >
-        @{name}
+        {label}
       </span>
       {anchor
         ? createPortal(
@@ -90,12 +101,76 @@ export function MentionPill({ person, detail, raw }: { person: MentionPerson; de
               }}
               className="z-[70] rounded-lg border border-zinc-200 bg-white shadow-lg"
             >
-              <ProfileCard person={person} detail={detail} />
+              {card}
             </div>,
             document.body,
           )
         : null}
     </>
+  );
+}
+
+// A highlighted @mention showing the person's real name. Hover or focus shows their card; a click does
+// nothing (no navigation).
+export function MentionPill({ person, detail, raw }: { person: MentionPerson; detail: string | null; raw: string }) {
+  const name = displayName(person);
+  return (
+    <HoverPill
+      label={`@${name}`}
+      title={raw === `@${name}` ? undefined : raw}
+      ariaLabel={`@${name}, ${person.email}${detail ? `, ${detail}` : ""}`}
+      data={{ "data-mention": person.id }}
+      card={<ProfileCard person={person} detail={detail} />}
+    />
+  );
+}
+
+const TEAM_CARD_MEMBERS = 8;
+
+// A team's card: its name and members (the first eight, then a count). Like a person's card, nothing
+// to click.
+export function TeamCard({ team }: { team: MentionTeam }) {
+  const shown = team.members.slice(0, TEAM_CARD_MEMBERS);
+  return (
+    <div className="w-64 p-3" data-team-card>
+      <div className="flex items-center gap-2.5">
+        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-600">
+          <UsersRound className="size-4.5" aria-hidden />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-zinc-900">{team.name}</p>
+          <p className="text-xs text-zinc-500">
+            {team.members.length} member{team.members.length === 1 ? "" : "s"}
+          </p>
+        </div>
+      </div>
+      {shown.length ? (
+        <ul className="mt-2.5 space-y-1.5">
+          {shown.map((m) => (
+            <li key={m.id} className="flex items-center gap-2">
+              <Avatar name={m.name} size="sm" />
+              <span className="min-w-0 truncate text-xs text-zinc-700">{m.name}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {team.members.length > shown.length ? (
+        <p className="mt-1.5 text-xs text-zinc-500">and {team.members.length - shown.length} more</p>
+      ) : null}
+    </div>
+  );
+}
+
+// A highlighted @team mention: the team's name; hover or focus shows its members.
+export function TeamMentionPill({ team, raw }: { team: MentionTeam; raw: string }) {
+  return (
+    <HoverPill
+      label={`@${team.name}`}
+      title={raw === `@${team.name}` ? undefined : raw}
+      ariaLabel={`@${team.name}, team of ${team.members.length}`}
+      data={{ "data-team-mention": team.id }}
+      card={<TeamCard team={team} />}
+    />
   );
 }
 
@@ -105,17 +180,23 @@ export function MentionText({
   body,
   people,
   describe,
+  teams = [],
 }: {
   body: string;
   people: MentionPerson[];
   describe?: DescribePerson;
+  // Teams whose @name shows as a pill with its members (display only).
+  teams?: MentionTeam[];
 }) {
   const byId = new Map(people.map((p) => [p.id, p] as const));
+  const teamsById = new Map(teams.map((t) => [t.id, t] as const));
   return (
     <>
-      {mentionSegments(body, people).map((segment, index) =>
+      {mentionSegments(body, people, teams).map((segment, index) =>
         segment.type === "text" ? (
           segment.text
+        ) : segment.type === "team" ? (
+          <TeamMentionPill key={index} team={teamsById.get(segment.teamId)!} raw={segment.raw} />
         ) : (
           <MentionPill
             key={index}
@@ -155,10 +236,13 @@ export function EmailCard({
   email,
   createdAt,
   children,
+  files,
 }: {
   email: Pick<CommentEmail, "subject" | "status" | "error" | "direction">;
   createdAt: string;
   children: ReactNode;
+  // A received reply's attachments (EmailFiles), under the message.
+  files?: ReactNode;
 }) {
   const status = email.direction === "sent" ? email.status : null;
   const problem = status === "failed" || status === "bounced";
@@ -166,6 +250,7 @@ export function EmailCard({
     <div className="mt-1.5 overflow-hidden rounded-xl border border-zinc-200 bg-white" data-email-card={email.direction}>
       <div className="bg-zinc-100 px-3.5 py-2 text-sm font-semibold text-zinc-900">{email.subject}</div>
       <div className="whitespace-pre-wrap break-words px-3.5 pb-1 pt-2.5 text-sm leading-relaxed text-zinc-800">{children}</div>
+      {files}
       <div className="flex flex-wrap items-center gap-x-1 px-3.5 pb-2.5 pt-1 text-xs text-zinc-500">
         <Timestamp iso={createdAt} />
         {status ? (
@@ -207,5 +292,54 @@ export function EmailCommentHeader({
         <EmailLink address={email.address} />
       </p>
     </>
+  );
+}
+
+const SKIP_REASONS = {
+  too_large: "over 25 MB",
+  too_many: "more than 10 files",
+  failed: "couldn’t be saved",
+} as const;
+
+function fileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// The files that came with a submitter's emailed reply (saved to the task) and the ones that weren't,
+// with why. Shown inside the reply's email card.
+export function EmailFiles({
+  files,
+  skipped,
+}: {
+  files: { id: string; name: string; sizeBytes: number }[];
+  skipped: { name: string; reason: keyof typeof SKIP_REASONS }[];
+}) {
+  if (!files.length && !skipped.length) return null;
+  return (
+    <div className="border-t border-zinc-100 px-3.5 py-2" data-email-files>
+      {files.length ? (
+        <ul className="flex flex-wrap gap-1.5" aria-label="Attachments">
+          {files.map((file) => (
+            <li key={file.id}>
+              <a
+                href={`/attachments/${file.id}`}
+                className="inline-flex max-w-64 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
+              >
+                <Paperclip className="size-3.5 shrink-0 text-zinc-500" aria-hidden />
+                <span className="truncate">{file.name}</span>
+                <span className="shrink-0 text-zinc-400">{fileSize(file.sizeBytes)}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {skipped.length ? (
+        <p className={`text-xs text-amber-800 ${files.length ? "mt-1.5" : ""}`}>
+          Not saved: {skipped.map((f) => `${f.name} (${SKIP_REASONS[f.reason]})`).join(", ")}
+        </p>
+      ) : null}
+    </div>
   );
 }

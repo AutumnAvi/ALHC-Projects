@@ -47,6 +47,8 @@ export type ShareData = {
   // The invite search: people in the workspace and every team.
   people: SharePerson[];
   teams: ShareTeam[];
+  // The workspace offers the Commenter role (off by default; existing Commenters keep it).
+  allowCommenter: boolean;
 };
 
 // The Overview tab's activity timeline (newest first): status updates, people joining, the project

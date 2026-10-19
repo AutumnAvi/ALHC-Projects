@@ -38,6 +38,9 @@ export type PlanComment = {
   created_at: string | null;
 };
 export type PlanAttachment = { gid: string; name: string; url: string | null };
+// An attachment's file, for "Download attachments": the export's download link (signed by Asana and
+// short-lived, so it works only with a fresh export) and the size Asana reports. Kept out of the batches.
+export type PlanAttachmentFile = { taskGid: string; gid: string; name: string; downloadUrl: string; size: number | null };
 export type PlanTask = {
   gid: string;
   title: string;
@@ -83,6 +86,7 @@ export type ImportPlan = {
   people: PlanPerson[];
   tagCount: number;
   warnings: string[];
+  attachmentFiles: PlanAttachmentFile[];
 };
 
 export class ImportParseError extends Error {}
@@ -363,6 +367,7 @@ function asanaFieldType(field: Obj): ImportFieldType {
 
 export function buildImportPlan(files: { name: string; text: string }[]): ImportPlan {
   const warnings: string[] = [];
+  const filesByTask = new Map<string, PlanAttachmentFile[]>();
   const jsonRoots: { name: string; tasks: Obj[]; rules: unknown[] }[] = [];
   const csvFiles: { name: string; tasks: CsvTask[]; customColumns: string[] }[] = [];
 
@@ -655,6 +660,18 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
       if (!ag || !name) continue;
       const url = str(a.permanent_url) ?? str(a.view_url);
       attachments.push({ gid: ag, name: name.slice(0, 255), url: url && url.startsWith("https://") ? url : null });
+      const download = str(a.download_url);
+      if (download && download.startsWith("https://")) {
+        const files = filesByTask.get(gid) ?? [];
+        files.push({
+          taskGid: gid,
+          gid: ag,
+          name: name.slice(0, 255),
+          downloadUrl: download,
+          size: typeof a.size === "number" && Number.isFinite(a.size) ? a.size : null,
+        });
+        filesByTask.set(gid, files);
+      }
     }
 
     for (const d of arr(t.dependencies)) if (isObj(d)) addDependency(str(d.gid), gid);
@@ -888,6 +905,7 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
     people: [...people.values()].sort((a, b) => b.references - a.references),
     tagCount: tagNames.size,
     warnings,
+    attachmentFiles: tasks.flatMap((t) => filesByTask.get(t.gid) ?? []),
   };
 }
 

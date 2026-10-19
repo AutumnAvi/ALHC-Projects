@@ -41,6 +41,8 @@ export type ImportPreview = {
     tags: number;
     dependencies: number;
     rules: number;
+    // Attachments the JSON export has a download link for ("Download attachments").
+    attachmentFiles: number;
   };
   people: {
     matched: ImportPerson[];
@@ -83,13 +85,43 @@ export function addTotals(a: ImportTotals, b: unknown): ImportTotals {
   return next;
 }
 
+// "Download attachments": where the file downloads are (index into the plan's files) and what happened.
+export type AttachmentFileProgress = {
+  index: number;
+  total: number;
+  downloaded: number;
+  already: number;
+  tooLarge: number;
+  failed: number;
+};
+
 export type ImportProgress = {
   runId: string;
   step: number;
   steps: number;
   done: boolean;
   totals: ImportTotals;
+  // Set when the import downloads attachment files (after the batches).
+  files?: AttachmentFileProgress | null;
 };
+
+// "Downloaded 12 attachment files; 2 skipped (over 25 MB)…" for the finished screen and past imports.
+export function describeAttachmentFiles(files: unknown): string | null {
+  if (!files || typeof files !== "object") return null;
+  const f = files as Record<string, unknown>;
+  const n = (k: string) => (typeof f[k] === "number" ? (f[k] as number) : 0);
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const skipped = n("too_large") + n("failed");
+  const parts = [`${plural(n("downloaded"), "attachment file")} downloaded`];
+  if (n("already")) parts.push(`${n("already")} already here`);
+  if (skipped) {
+    const why = [n("too_large") ? `${n("too_large")} over 25 MB` : null, n("failed") ? `${n("failed")} couldn’t be downloaded` : null]
+      .filter(Boolean)
+      .join(", ");
+    parts.push(`${plural(skipped, "file")} skipped (${why})`);
+  }
+  return parts.join("; ");
+}
 
 // What a finished run added (import_runs.summary.created), for the past-imports lists.
 export function describeImportCreated(created: unknown) {

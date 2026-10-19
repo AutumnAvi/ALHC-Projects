@@ -511,6 +511,11 @@ function EmailsView({
   return (
     <div>
       <Intro>Everything this project emails: rule emails, form confirmations, and comment emails to collaborators.</Intro>
+      <SubHeading>Design</SubHeading>
+      <p className="text-xs text-zinc-500">
+        The logo, colors, header, and sign-off of this project’s emails (and of each form’s emails to requesters).
+      </p>
+      <PanelLink href={`${base}/settings/emails`}>Open email designs</PanelLink>
       <SubHeading>Rule emails</SubHeading>
       {emailRules.length ? (
         <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
@@ -544,8 +549,8 @@ function EmailsView({
       )}
       <SubHeading>Comment emails</SubHeading>
       <p className="text-xs text-zinc-500">
-        Collaborators get an email for each new comment unless they turned it off in Settings → Notifications. Replying to
-        the email posts a comment.
+        Collaborators get an email for each new comment unless they turned it off in Settings → Notifications. These
+        emails are no-reply; only a form’s submitter can answer a response by email.
       </p>
       <SubHeading>Deliveries</SubHeading>
       {details === "loading" ? (

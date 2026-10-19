@@ -5,6 +5,8 @@ import { displayName } from "@/components/avatar";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
+import type { MentionTeam } from "@/lib/mentions";
+import { isEmailDesignKind, settingsFromRow, type EmailDesignKind, type EmailDesignSettings } from "@/lib/email-design";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import { isFieldType, parseOptions, type FieldDef, type FieldOption, type FieldType, type LibraryField } from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
@@ -218,6 +220,9 @@ export type TaskDetail = {
   // The database has Comments and reply by email (20261014030000): responses to a form's submitter can
   // be sent (see canRespondToSubmitter()).
   submitterResponses: boolean;
+  // The request's reply thread (the top-level task's), once someone sent the submitter a response:
+  // closed = the submitter's replies are refused. Null without one (or without the database update).
+  replyThread: { closed: boolean; closedAt: string | null; closedByName: string | null; submitterEmail: string } | null;
   approvals: TaskApproval[];
   // Direct subtasks, in order.
   subtasks: SubtaskItem[];
@@ -239,6 +244,8 @@ export type TaskDetail = {
   // Set when an older page exists. The pane passes it to loadOlderComments.
   olderComments: { beforeAt: string; beforeId: string } | null;
   stories: TaskStory[];
+  // Teams whose @name in a comment shows as a pill with the team's members (display only).
+  mentionTeams: MentionTeam[];
   // The viewer's highest role across the task's projects (null: read access through nothing).
   viewerRole: ProjectRole | null;
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
@@ -307,6 +314,9 @@ export type TaskComment = {
   reactions: { emoji: ReactionKey; profileIds: string[] }[];
   // A response emailed to the form's submitter, or the submitter's emailed reply (no author).
   email: CommentEmail | null;
+  // A received reply's attachments (saved to the task) and the ones that weren't saved, with why.
+  emailFiles?: { id: string; name: string; sizeBytes: number; contentType: string | null }[];
+  emailSkipped?: { name: string; reason: "too_large" | "too_many" | "failed" }[];
 };
 
 export type TaskStory = {
@@ -930,7 +940,69 @@ export async function loadTaskCommentPage(
       },
     ]),
   );
-  return parseCommentPage(result.data, outbox);
+  return withReplyFiles(supabase, parseCommentPage(result.data, outbox));
+}
+
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+// A received reply's files (task_attachments.comment_id) and the ones left out (email_skipped_files),
+// read with the viewer's client. A database without the email designs update has neither column.
+async function withReplyFiles(supabase: Supabase, page: CommentPage): Promise<CommentPage> {
+  const ids = page.comments.filter((c) => c.email?.direction === "received").map((c) => c.id);
+  if (!ids.length) return page;
+  const [files, skipped] = await Promise.all([
+    supabase
+      .from("task_attachments")
+      .select("id, comment_id, file_name, size_bytes, content_type")
+      .in("comment_id", ids)
+      .is("deleted_at", null)
+      .order("created_at"),
+    supabase.from("comments").select("id, email_skipped_files").in("id", ids),
+  ]);
+  const byComment = new Map<string, NonNullable<TaskComment["emailFiles"]>>();
+  for (const f of files.error ? [] : (files.data ?? [])) {
+    if (!f.comment_id) continue;
+    const list = byComment.get(f.comment_id) ?? [];
+    list.push({ id: f.id, name: f.file_name, sizeBytes: f.size_bytes, contentType: f.content_type });
+    byComment.set(f.comment_id, list);
+  }
+  const skippedBy = new Map<string, NonNullable<TaskComment["emailSkipped"]>>();
+  for (const c of skipped.error ? [] : (skipped.data ?? [])) {
+    if (!Array.isArray(c.email_skipped_files)) continue;
+    skippedBy.set(
+      c.id,
+      c.email_skipped_files.flatMap((item) => {
+        const o = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, Json | undefined>) : null;
+        const reason = o?.reason;
+        return o && typeof o.name === "string" && (reason === "too_large" || reason === "too_many" || reason === "failed")
+          ? [{ name: o.name, reason }]
+          : [];
+      }),
+    );
+  }
+  return {
+    ...page,
+    comments: page.comments.map((c) =>
+      byComment.has(c.id) || skippedBy.has(c.id)
+        ? { ...c, emailFiles: byComment.get(c.id) ?? [], emailSkipped: skippedBy.get(c.id) ?? [] }
+        : c,
+    ),
+  };
+}
+
+// The task's reply thread state (submitter_thread_status: Viewer+, never the token). Null without one or
+// without the database update.
+async function loadReplyThread(supabase: Supabase, taskId: string): Promise<TaskDetail["replyThread"]> {
+  const { data, error } = await supabase.rpc("submitter_thread_status", { target_task: taskId });
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) return null;
+  const o = data as Record<string, Json | undefined>;
+  if (typeof o.submitter_email !== "string") return null;
+  return {
+    closed: o.closed === true,
+    closedAt: typeof o.closed_at === "string" ? o.closed_at : null,
+    closedByName: typeof o.closed_by_name === "string" ? o.closed_by_name : null,
+    submitterEmail: o.submitter_email,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1194,10 +1266,11 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("task_id", taskId)
       .is("deleted_at", null)
       .order("created_at"),
+    // A subtask of a form task answers the request's submitter (its top-level task's submission).
     supabase
       .from("form_submissions")
       .select("form_id, submitter_email, created_at")
-      .eq("task_id", taskId)
+      .eq("task_id", scopeTaskId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(1),
@@ -1258,6 +1331,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("payload->>kind", "submitter_response")
       .order("created_at"),
   ]);
+  const replyThread = await loadReplyThread(supabase, taskId);
 
   let submitterResponses = !commentEmails.error;
   if (commentEmails.error && !isMissingColumn(commentEmails.error)) {
@@ -1339,7 +1413,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
 
   let commentPage: CommentPage | null = null;
   if (!comments.error) {
-    commentPage = parseCommentPage(comments.data, responseStatus);
+    commentPage = await withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus));
     submitterResponses = true;
   } else if (!rpcMissing(comments.error)) {
     throw new Error(`Failed to load comments: ${comments.error.message}`);
@@ -1426,6 +1500,11 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     })),
     comments: taskComments,
     commentTotal,
+    mentionTeams: (await listTeams()).map((t) => ({
+      id: t.id,
+      name: t.name,
+      members: t.members.map((m) => ({ id: m.profileId, name: m.name, email: m.email })),
+    })),
     olderComments,
     stories: storyRows.map((st) => ({
       id: st.id,
@@ -1485,6 +1564,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
         }
       : null,
     submitterResponses,
+    replyThread,
     approvals: approvalRows.map((a) => ({
       id: a.id,
       subtaskId: a.subtask_id,
@@ -5445,4 +5525,104 @@ export const getPersonProfile = cache(async (profileId: string): Promise<PersonP
     activity,
     lastActivity,
   };
+});
+
+// ---------------------------------------------------------------------------------------------
+// Email designs (20261019010000_email_designs.sql): the workspace defaults of each kind, a project's
+// overrides, and its forms' overrides — whatever RLS lets the viewer read. null = a database without
+// the update (the pages say so).
+// ---------------------------------------------------------------------------------------------
+
+export type EmailDesignRow = {
+  id: string;
+  kind: EmailDesignKind;
+  projectId: string | null;
+  formId: string | null;
+  settings: EmailDesignSettings;
+  updatedAt: string;
+};
+
+export type EmailDesignScopes = {
+  workspaceId: string;
+  workspace: Partial<Record<EmailDesignKind, EmailDesignRow>>;
+  project: Partial<Record<EmailDesignKind, EmailDesignRow>>;
+  forms: Record<string, EmailDesignRow>;
+};
+
+export const listEmailDesigns = cache(async (projectId: string | null): Promise<EmailDesignScopes | null> => {
+  const workspace = await getWorkspace();
+  if (!workspace) return null;
+  const supabase = await createClient();
+  let query = supabase
+    .from("email_designs")
+    .select("id, kind, project_id, form_id, logo_path, accent_color, header_text, intro_message, footer_text, button_label, button_color, updated_at")
+    .is("deleted_at", null)
+    .eq("workspace_id", workspace.id);
+  query = projectId ? query.or(`project_id.is.null,project_id.eq.${projectId}`) : query.is("project_id", null);
+  const result = await query;
+  if (result.error) {
+    if (result.error.code === "PGRST205" || result.error.code === "42P01") return null;
+    throw new Error(`Failed to load email designs: ${result.error.message}`);
+  }
+  const scopes: EmailDesignScopes = { workspaceId: workspace.id, workspace: {}, project: {}, forms: {} };
+  for (const row of result.data ?? []) {
+    if (!isEmailDesignKind(row.kind)) continue;
+    const design: EmailDesignRow = {
+      id: row.id,
+      kind: row.kind,
+      projectId: row.project_id,
+      formId: row.form_id,
+      settings: settingsFromRow(row)!,
+      updatedAt: row.updated_at,
+    };
+    if (row.form_id) scopes.forms[row.form_id] = design;
+    else if (row.project_id) scopes.project[row.kind] = design;
+    else scopes.workspace[row.kind] = design;
+  }
+  return scopes;
+});
+
+// Whether the Commenter project role is offered (Admin console → Security). A database without the
+// update keeps the old behavior (offered).
+export const commenterRoleAllowed = cache(async (): Promise<boolean> => {
+  const workspace = await getWorkspace();
+  if (!workspace) return true;
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("workspaces").select("allow_commenter_role").eq("id", workspace.id).maybeSingle();
+  if (error) {
+    if (isMissingColumn(error)) return true;
+    throw new Error(`Failed to load the Commenter setting: ${error.message}`);
+  }
+  return data?.allow_commenter_role ?? true;
+});
+
+export type CommenterMember = {
+  profileId: string;
+  name: string;
+  email: string;
+  projectCount: number;
+  // Only projects the viewer can open; the rest are a count.
+  projects: { id: string; name: string }[];
+};
+
+// Workspace admins: everyone who holds the Commenter role somewhere (list_commenter_members). Empty
+// for anyone else or without the update.
+export const listCommenterMembers = cache(async (): Promise<CommenterMember[]> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("list_commenter_members");
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42501") return [];
+    throw new Error(`Failed to load Commenters: ${error.message}`);
+  }
+  return (data ?? []).map((r) => ({
+    profileId: r.profile_id,
+    name: displayName({ full_name: r.full_name, email: r.email }),
+    email: r.email,
+    projectCount: r.project_count,
+    projects: Array.isArray(r.projects)
+      ? (r.projects as { id?: unknown; name?: unknown }[]).flatMap((p) =>
+          typeof p?.id === "string" && typeof p?.name === "string" ? [{ id: p.id, name: p.name }] : [],
+        )
+      : [],
+  }));
 });

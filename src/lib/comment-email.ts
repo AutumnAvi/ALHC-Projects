@@ -63,13 +63,18 @@ export const COMMENT_EMAIL_STATUS_LABELS: Record<CommentEmailStatus, string> = {
   not_sent: "Not sent (no email provider)",
 };
 
-// The task can offer "Send response to submitter": a top-level task a form created, with the submitter's
-// address, while the database has this release's update.
+// The task can offer "Send response to submitter": a task a form created — or a subtask of one, which
+// answers the request's submitter — with the submitter's address, for Editors and above (the database
+// refuses anyone else), while the database has this release's update.
 export function canRespondToSubmitter(task: {
   source: string;
   isSubtask: boolean;
   submission: { email: string } | null;
   submitterResponses: boolean;
+  viewerRole?: string | null;
 }): boolean {
-  return task.submitterResponses && task.source === "form" && !task.isSubtask && Boolean(task.submission?.email);
+  const editor = task.viewerRole === undefined || ["editor", "admin", "owner"].includes(task.viewerRole ?? "");
+  return (
+    editor && task.submitterResponses && (task.source === "form" || task.isSubtask) && Boolean(task.submission?.email)
+  );
 }

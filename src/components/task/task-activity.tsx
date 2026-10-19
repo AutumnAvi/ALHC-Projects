@@ -21,7 +21,7 @@ import { canRespondToSubmitter, submitterResponseSubject } from "@/lib/comment-e
 import { mentionSegments } from "@/lib/mentions";
 import { mergePendingComments, type PendingComment } from "@/lib/pending-comments";
 import { ROLE_LABELS } from "@/lib/roles";
-import { EmailCard, EmailCommentHeader, MailAvatar, MentionText, type DescribePerson } from "./comment-parts";
+import { EmailCard, EmailCommentHeader, EmailFiles, MailAvatar, MentionText, type DescribePerson } from "./comment-parts";
 import {
   addPendingComment,
   dropPendingComment,
@@ -484,6 +484,7 @@ export function TaskActivity({
               candidates={candidates}
               mentioned={entry.comment.mentionIds.flatMap((mentionId) => profileById(mentionId) ?? [])}
               describe={describe}
+              teams={task.mentionTeams}
             />
           ),
         )}
@@ -523,6 +524,7 @@ function CommentItem({
   candidates,
   mentioned,
   describe,
+  teams,
 }: {
   comment: TaskComment;
   // Still on its way to the server (optimistic): no edit, delete, or reactions yet.
@@ -535,6 +537,7 @@ function CommentItem({
   candidates: Profile[];
   mentioned: Profile[];
   describe: DescribePerson;
+  teams: TaskDetail["mentionTeams"];
 }) {
   const [pending, run] = useServerAction();
   const [draft, setDraft] = useState<string | null>(null);
@@ -607,8 +610,14 @@ function CommentItem({
         {received ? <MailAvatar /> : <Avatar name={authorName} size="md" />}
         <div className="min-w-0 flex-1">
           <EmailCommentHeader email={comment.email} authorName={authorName} createdAt={comment.createdAt} actions={controls} />
-          <EmailCard email={comment.email} createdAt={comment.createdAt}>
-            {received ? comment.body : <MentionText body={comment.body} people={mentioned} describe={describe} />}
+          <EmailCard
+            email={comment.email}
+            createdAt={comment.createdAt}
+            files={
+              received ? <EmailFiles files={comment.emailFiles ?? []} skipped={comment.emailSkipped ?? []} /> : null
+            }
+          >
+            {received ? comment.body : <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} />}
           </EmailCard>
           {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
         </div>
@@ -663,7 +672,7 @@ function CommentItem({
           </div>
         ) : (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
-            <MentionText body={comment.body} people={mentioned} describe={describe} />
+            <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} />
           </p>
         )}
         {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
@@ -897,7 +906,9 @@ export function TaskPaneFooter({
               <div className="flex items-center gap-2 px-2 pb-1.5">
                 <span className="mr-auto text-2xs text-zinc-500">
                   {toSubmitter && submitterEmail
-                    ? "This comment is emailed to the submitter; their reply comes back here"
+                    ? task.replyThread?.closed
+                      ? "Emailed to the submitter. Replies are closed, so their answers won’t be posted"
+                      : "This comment is emailed to the submitter; their reply comes back here"
                     : "Type @ to mention someone · ⌘/Ctrl+Enter to send"}
                 </span>
                 <button type="button" onClick={submit} disabled={!draft.trim()} className="btn-primary h-7 px-3">

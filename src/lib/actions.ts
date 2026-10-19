@@ -13,7 +13,8 @@ import {
   loadTaskCommentPage,
   type TaskComment,
 } from "@/lib/data";
-import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
+import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/attachments";
+import { safeDownload } from "@/lib/safe-fetch";
 import { drainOutbox, isEmailConfigured } from "@/lib/email";
 import { forwardingAddress } from "@/lib/email-reply";
 import { templateProblem } from "@/lib/request-numbers";
@@ -26,6 +27,7 @@ import {
   addTotals,
   importFileKind,
   importFileName,
+  type AttachmentFileProgress,
   type ImportPerson,
   type ImportPreview,
   type ImportProgress,
@@ -2128,6 +2130,17 @@ export async function sendSubmitterResponse(
   return { ...result, commentId: result.error ? undefined : commentId };
 }
 
+// Close (or reopen) the request's reply thread: while closed, the submitter's emailed replies are refused
+// and logged, never posted, and responses go out without a Reply-To. Editors+ (the database checks).
+export async function setReplyThreadClosed(taskId: string, closed: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_submitter_thread_closed", { target_task: id(taskId), closed: closed === true });
+    if (result.error?.code === "PGRST202") throw new InputError("Closing reply threads needs this release’s database update");
+    check(result);
+  });
+}
+
 // Authors edit only the text; the database stamps edited_at and notifies people the edit newly mentions.
 export async function editComment(commentId: string, body: string): Promise<ActionResult> {
   return run(async () => {
@@ -2961,6 +2974,35 @@ export async function setWorkspaceLogo(path: string | null, size?: number): Prom
     if (previous && previous !== path && previous.startsWith(`${workspace.id}/`)) {
       await supabase.storage.from(WORKSPACE_ASSETS_BUCKET).remove([previous]);
     }
+  });
+}
+
+// The Commenter project role (Admin console → Security; workspace admins, RLS and the column grant
+// decide). Turning it off never changes anyone's role.
+export async function setCommenterRoleAllowed(allowed: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    const result = await supabase
+      .from("workspaces")
+      .update({ allow_commenter_role: allowed === true })
+      .eq("id", workspace.id)
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
+      throw new InputError("This setting needs this release’s database update");
+    }
+    checkUpdated(result, WORKSPACE_ADMINS_ONLY);
+  });
+}
+
+// One click: someone's Commenter memberships become Viewer or Editor (workspace admins only).
+export async function convertCommenterMember(profileId: string, role: "viewer" | "editor"): Promise<ActionResult> {
+  return run(async () => {
+    if (role !== "viewer" && role !== "editor") throw new InputError("Choose Viewer or Editor");
+    const supabase = await createClient();
+    const result = await supabase.rpc("convert_commenter_members", { target_profile: id(profileId, "person"), new_role: role });
+    check(result, WORKSPACE_ADMINS_ONLY);
   });
 }
 
@@ -4624,6 +4666,7 @@ export async function previewAsanaImport(
         tags: plan.tagCount,
         dependencies: plan.dependencies.length,
         rules: plan.rules.length,
+        attachmentFiles: plan.attachmentFiles.length,
       },
       people,
       warnings: plan.warnings,
@@ -4646,6 +4689,10 @@ export async function runAsanaImport(input: {
   step?: number;
   totals?: ImportTotals;
   inviteRole?: "editor" | null;
+  // "Download attachments" (off by default): after the batches, copy each task's Asana attachment
+  // files into Storage, resumably (files: where the last call stopped).
+  downloadAttachments?: boolean;
+  files?: AttachmentFileProgress | null;
 }): Promise<ActionResult & { progress?: ImportProgress }> {
   const started = Date.now();
   try {
@@ -4690,24 +4737,125 @@ export async function runAsanaImport(input: {
       step++;
     }
 
-    const done = step >= steps.length;
+    let fileProgress: AttachmentFileProgress | null = input.downloadAttachments
+      ? {
+          index: 0,
+          downloaded: 0,
+          already: 0,
+          tooLarge: 0,
+          failed: 0,
+          ...(input.files ?? {}),
+          total: plan.attachmentFiles.length,
+        }
+      : null;
+    if (fileProgress && step >= steps.length) {
+      fileProgress = await downloadImportFiles(supabase, runId, plan, fileProgress, started);
+    }
+
+    const done = step >= steps.length && (!fileProgress || fileProgress.index >= fileProgress.total);
     if (done) {
       check(
         await supabase.rpc("finish_import_run", {
           target_run: runId,
           run_status: "completed",
-          run_summary: { totals, warnings: plan.warnings, source_project: plan.project?.name ?? null } as unknown as Json,
+          run_summary: {
+            totals,
+            warnings: plan.warnings,
+            source_project: plan.project?.name ?? null,
+            ...(fileProgress
+              ? {
+                  attachment_files: {
+                    downloaded: fileProgress.downloaded,
+                    already: fileProgress.already,
+                    too_large: fileProgress.tooLarge,
+                    failed: fileProgress.failed,
+                  },
+                }
+              : {}),
+          } as unknown as Json,
         }),
       );
       // The uploaded exports are no longer needed once everything landed.
       await supabase.storage.from(IMPORTS_BUCKET).remove(input.paths);
       refresh();
     }
-    return { progress: { runId, step, steps: steps.length, done, totals } };
+    return { progress: { runId, step, steps: steps.length, done, totals, files: fileProgress } };
   } catch (error) {
     if (error instanceof InputError || error instanceof DbError) return { error: error.message };
     throw error;
   }
+}
+
+// Downloads the plan's attachment files from where it stopped, until the time budget is used: each file
+// is fetched from the export's own link (never the Asana API; safeDownload refuses private addresses and
+// stops past 25 MB), uploaded to the imported task's folder with the importer's own client, and recorded
+// by import_attachment_file — which skips files already there, so re-running never duplicates.
+async function downloadImportFiles(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  runId: string,
+  plan: ImportPlan,
+  progress: AttachmentFileProgress,
+  started: number,
+): Promise<AttachmentFileProgress> {
+  const files = { ...progress };
+  while (files.index < files.total && Date.now() - started < IMPORT_TIME_BUDGET_MS) {
+    const chunk = plan.attachmentFiles.slice(files.index, files.index + 20);
+    const targets = await supabase.rpc("import_attachment_targets", {
+      target_run: runId,
+      attachment_refs: chunk.map((f) => ({ task: f.taskGid, attachment: f.gid })),
+    });
+    if (targets.error?.code === "PGRST202") throw new InputError("Downloading attachments needs this release’s database update");
+    check(targets);
+    const byGid = new Map((targets.data ?? []).map((t) => [t.attachment_gid, t] as const));
+    for (const file of chunk) {
+      if (Date.now() - started >= IMPORT_TIME_BUDGET_MS) return files;
+      files.index += 1;
+      const target = byGid.get(file.gid);
+      if (!target) {
+        files.failed += 1;
+        continue;
+      }
+      if (target.present) {
+        files.already += 1;
+        continue;
+      }
+      if (file.size !== null && file.size > MAX_ATTACHMENT_BYTES) {
+        files.tooLarge += 1;
+        continue;
+      }
+      try {
+        const got = await safeDownload(file.downloadUrl, { timeoutMs: 20_000, maxBytes: MAX_ATTACHMENT_BYTES });
+        if (!got.ok) {
+          if (got.tooLarge) files.tooLarge += 1;
+          else files.failed += 1;
+          continue;
+        }
+        const path = attachmentPath(target.task_id, file.name, crypto.randomUUID());
+        const uploaded = await supabase.storage
+          .from(ATTACHMENTS_BUCKET)
+          .upload(path, got.bytes, { contentType: got.contentType ?? undefined, upsert: false });
+        if (uploaded.error) {
+          files.failed += 1;
+          continue;
+        }
+        const recorded = await supabase.rpc("import_attachment_file", {
+          target_run: runId,
+          target_task: target.task_id,
+          attachment_gid: file.gid,
+          file_path: path,
+          file_name: file.name,
+          file_type: got.contentType,
+          file_size: got.bytes.byteLength,
+        });
+        if (recorded.error) files.failed += 1;
+        else if (recorded.data === "exists") files.already += 1;
+        else files.downloaded += 1;
+      } catch {
+        files.failed += 1;
+      }
+    }
+  }
+  return files;
 }
 
 // Removes uploaded export files that won't be imported (e.g. after "Start over").

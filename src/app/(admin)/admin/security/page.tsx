@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AdminPage } from "@/components/admin/admin-chrome";
+import { CommenterRoleSettings } from "@/components/admin/commenter-role-settings";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
-import { listWorkspaceMembers } from "@/lib/data";
+import { commenterRoleAllowed, listCommenterMembers, listWorkspaceMembers } from "@/lib/data";
 import { isGoogleAuthEnabled } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Security · Admin console" };
@@ -13,7 +14,11 @@ export const metadata: Metadata = { title: "Security · Admin console" };
 // admin does and doesn't open.
 export default async function AdminSecurityPage() {
   await requireWorkspaceAdmin();
-  const members = await listWorkspaceMembers();
+  const [members, allowCommenter, commenters] = await Promise.all([
+    listWorkspaceMembers(),
+    commenterRoleAllowed(),
+    listCommenterMembers(),
+  ]);
   const google = isGoogleAuthEnabled();
   const methods = [
     { name: "Email and password", state: "On", note: "People create an account at /signup and confirm their address by email." },
@@ -78,6 +83,15 @@ export default async function AdminSecurityPage() {
             Manage in Users
           </Link>
         </div>
+      </SettingsCard>
+
+      <SettingsCard
+        id="admin-project-roles"
+        title="Project roles"
+        description="Which roles project admins can give people when sharing a project or inviting them."
+        isAdmin
+      >
+        <CommenterRoleSettings allowed={allowCommenter} commenters={commenters} />
       </SettingsCard>
 
       <SettingsCard id="admin-project-access" title="Project access" isAdmin>

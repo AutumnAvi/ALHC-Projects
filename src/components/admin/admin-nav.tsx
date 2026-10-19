@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Mail, ShieldCheck, Tag, Users, UsersRound, type LucideIcon } from "lucide-react";
+import { Building2, MailCheck, Palette, ShieldCheck, Tag, Users, UsersRound, type LucideIcon } from "lucide-react";
 import { ADMIN_SECTIONS, type AdminSection } from "@/lib/admin";
 
 const ICONS: Record<AdminSection, LucideIcon> = {
@@ -10,7 +10,8 @@ const ICONS: Record<AdminSection, LucideIcon> = {
   teams: UsersRound,
   security: ShieldCheck,
   organization: Building2,
-  email: Mail,
+  emails: Palette,
+  email: MailCheck,
   tags: Tag,
 };
 
