@@ -2089,6 +2089,14 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          owner_id: string | null;
+          next_run_at: string | null;
+          last_edited_by: string | null;
+          last_edited_at: string | null;
+          run_on_rule_changes: boolean;
+          paused_at: string | null;
+          pause_reason: string | null;
+          consecutive_failures: number;
         };
         Insert: {
           id?: string;
@@ -2105,6 +2113,14 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          owner_id?: string | null;
+          next_run_at?: string | null;
+          last_edited_by?: string | null;
+          last_edited_at?: string | null;
+          run_on_rule_changes?: boolean;
+          paused_at?: string | null;
+          pause_reason?: string | null;
+          consecutive_failures?: number;
         };
         Update: {
           id?: string;
@@ -2121,6 +2137,14 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          owner_id?: string | null;
+          next_run_at?: string | null;
+          last_edited_by?: string | null;
+          last_edited_at?: string | null;
+          run_on_rule_changes?: boolean;
+          paused_at?: string | null;
+          pause_reason?: string | null;
+          consecutive_failures?: number;
         };
         Relationships: [];
       };
@@ -3968,6 +3992,7 @@ export type Database = {
           logo_path: string | null;
           email_sender_name: string | null;
           allow_commenter_role: boolean;
+          work_week: number[];
         };
         Insert: {
           id?: string;
@@ -3979,6 +4004,7 @@ export type Database = {
           logo_path?: string | null;
           email_sender_name?: string | null;
           allow_commenter_role?: boolean;
+          work_week?: number[];
         };
         Update: {
           id?: string;
@@ -3990,6 +4016,7 @@ export type Database = {
           logo_path?: string | null;
           email_sender_name?: string | null;
           allow_commenter_role?: boolean;
+          work_week?: number[];
         };
         Relationships: [
           {
@@ -5336,6 +5363,22 @@ export type Database = {
       restore_task: {
         Args: { target_task: string };
         Returns: undefined;
+      };
+      run_manual_rule: {
+        Args: { target_rule: string; target_task: string };
+        Returns: Json;
+      };
+      test_rule: {
+        Args: { target_rule: string | null; target_task: string; draft?: Json | null };
+        Returns: Json;
+      };
+      rule_run_stats: {
+        Args: { rule_ids: string[] };
+        Returns: { rule_id: string; last_run_at: string | null; last_status: string | null; runs_7d: number; failures_7d: number }[];
+      };
+      rule_add_days: {
+        Args: { start_on: string; days: number; business: boolean; work_week: number[] };
+        Returns: string;
       };
       resubmit_approval: {
         Args: { target_approval: string; approval_note?: string | null };

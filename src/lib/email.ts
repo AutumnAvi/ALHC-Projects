@@ -20,6 +20,7 @@ import { layout, payloadOf, str, type OutboxRow, type Rendered } from "@/lib/ema
 import { isInboundEmailConfigured, replyAddress, SUBMITTER_REPLY_MARKER } from "@/lib/email-reply";
 import { renderDigestEmail, renderReportEmail, unsubscribeLinks } from "@/lib/email-scheduled";
 import { backgroundOrigin } from "@/lib/origin";
+import { resolveTaskLinkMarkers } from "@/lib/rule-placeholders";
 import { settingsHref } from "@/lib/shell";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { WORKSPACE_ASSETS_BUCKET } from "@/lib/workspace";
@@ -306,7 +307,10 @@ export function renderEmail(
   const p = payloadOf(row);
   const label = str(p.request_label);
   const taskTitle = str(p.task_title) ?? "your request";
-  const message = str(p.message);
+  // Rule emails: {{task.url}} arrives as an alhc-link: marker (Automations V2).
+  const origin = backgroundOrigin();
+  const message = str(p.message) === null ? null : resolveTaskLinkMarkers(str(p.message)!, origin);
+  row = row.subject ? { ...row, subject: resolveTaskLinkMarkers(row.subject, origin) } : row;
   const reference = labelPrefix(label, wrap);
 
   switch (row.template) {

@@ -482,7 +482,8 @@ declare
   t uuid;
 begin
   t := public.create_task(p, (select id from ids where name = 's_intake'), 'Due soon');
-  update public.tasks set due_on = current_date + 1, assignee_id = '44444444-4444-4444-8444-444444444444' where id = t;
+  update public.tasks set due_on = (now() at time zone 'UTC')::date + 1, -- the rule counts days in UTC
+    assignee_id = '44444444-4444-4444-8444-444444444444' where id = t;
   insert into ids values ('due_task', t);
   t := public.create_task(p, (select id from ids where name = 's_intake'), 'Sits in doing');
   insert into ids values ('stale_task', t);
