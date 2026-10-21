@@ -76,7 +76,7 @@ export function MyTaskRulesButton({ rules, ctx }: { rules: MyTaskRule[] | null; 
   );
 }
 
-function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[] | null; ctx: MyTaskRuleContext; onClose: () => void }) {
+export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[] | null; ctx: MyTaskRuleContext; onClose: () => void }) {
   const [pending, run] = useServerAction();
   const [editing, setEditing] = useState<MyTaskRule | "new" | null>(null);
 
@@ -147,7 +147,7 @@ function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[] | null
   );
 }
 
-function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | null; ctx: MyTaskRuleContext; onDone: () => void }) {
+export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | null; ctx: MyTaskRuleContext; onDone: () => void }) {
   const notify = useNotify();
   const [pending, run] = useServerAction();
   const [name, setName] = useState(rule?.name ?? "");

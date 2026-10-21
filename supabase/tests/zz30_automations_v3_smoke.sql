@@ -948,6 +948,42 @@ begin
     'due tomorrow → Do today';
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- Saving V3 rules as the person (not the superuser): every validation and guard helper they reach
+-- must be executable by authenticated (a browser run caught one that wasn't).
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a3030030-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+begin
+  insert into public.rules (project_id, name, trigger_type, trigger_config, conditions, actions)
+  values (p, 'As Ava: dates', 'start_approaching', '{"amount": 4, "unit": "hours"}',
+    jsonb_build_array(
+      jsonb_build_object('type', 'date_compare', 'date', 'due', 'op', 'between', 'value', '2026-11-01', 'to', '2026-11-30'),
+      jsonb_build_object('type', 'section_is_one_of', 'section_ids', jsonb_build_array(pg_temp.av3('intake'))),
+      jsonb_build_object('type', 'approval_status_is', 'statuses', jsonb_build_array('none'))),
+    jsonb_build_array(
+      jsonb_build_object('type', 'set_start_date', 'mode', 'date', 'date', '2026-11-02'),
+      jsonb_build_object('type', 'create_task', 'title', 'Next {{task.name}}', 'link', 'blocked_by'),
+      jsonb_build_object('type', 'convert_to_project', 'portfolio_id', pg_temp.av3('pf'))));
+  insert into public.rules (project_id, name, trigger_type, trigger_config, actions)
+  values (p, 'As Ava: schedule', 'scheduled', '{"frequency": "weekly", "weekdays": [0, 3], "interval": 2, "anchor": "2026-10-18", "minute": 30}',
+    '[{"type": "set_task_type", "kind": "milestone"}]');
+  insert into public.portfolio_rules (portfolio_id, name, trigger_type, trigger_config, conditions, actions)
+  values (pg_temp.av3('pf'), 'As Ava: portfolio', 'scheduled', '{"frequency": "daily", "hour": 8}',
+    '[{"type": "status_is", "statuses": ["at_risk"]}, {"type": "date_compare", "op": "before", "value": "2026-12-01"}]',
+    '[{"type": "status_reminder"}, {"type": "set_due_date", "mode": "relative", "days": 5, "business_days": true}]');
+  update public.portfolio_rules set paused_until = now() + interval '1 day', owner_id = pg_temp.av3('eli')
+  where name = 'As Ava: portfolio';
+  assert found, 'the portfolio rule saved and changed as Ava';
+  insert into public.my_task_rules (name, trigger_type, trigger_config, conditions, actions)
+  values ('As Ava: mine', 'task_overdue', '{"days": 2}', '[{"type": "is_private"}]', '[{"type": "complete_task"}]');
+end $$;
+reset role;
+
 do $$
 begin
   raise notice 'automations v3 smoke: all assertions passed';
