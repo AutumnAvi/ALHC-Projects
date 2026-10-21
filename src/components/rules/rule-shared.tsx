@@ -70,6 +70,9 @@ export type RuleContext = {
   v2?: boolean;
   // Automations V3's database update is applied (the same, for V3's vocabulary).
   v3?: boolean;
+  // Batch E (Convert to a project): the workspace's project templates and portfolios the viewer edits.
+  projectTemplates?: { id: string; name: string }[];
+  portfolios?: { id: string; name: string }[];
 };
 
 export const NEEDS_UPDATE = "Needs this release’s database update";
@@ -561,6 +564,13 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
     }
     case "remove_from_project":
       return "remove from this project";
+    case "convert_to_project": {
+      const template = ctx.projectTemplates?.find((t) => t.id === a.template_id);
+      const portfolio = ctx.portfolios?.find((p) => p.id === a.portfolio_id);
+      return `convert to a project${template ? ` from “${template.name}”` : a.template_id ? " from a template" : ""}${
+        portfolio ? ` in “${portfolio.name}”` : ""
+      }${a.complete_task === true ? " and complete the task" : ""}`;
+    }
     case "set_task_type":
       return a.kind ? `make it ${kindArticle(a.kind)}` : "set the task type";
     case "set_description":

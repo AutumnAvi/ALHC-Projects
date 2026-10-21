@@ -91,6 +91,8 @@ export type PortfolioRuleDef = {
   pausedAt: string | null;
   pauseReason: string | null;
   lastEditedAt: string | null;
+  // Batch E: paused by a person until this time.
+  pausedUntil: string | null;
 };
 
 export type PortfolioRuleRun = {
@@ -147,6 +149,7 @@ export function toPortfolioRuleDef(row: {
   paused_at: string | null;
   pause_reason: string | null;
   last_edited_at: string | null;
+  paused_until?: string | null;
 }): PortfolioRuleDef {
   return {
     id: row.id,
@@ -162,6 +165,7 @@ export function toPortfolioRuleDef(row: {
     pausedAt: row.paused_at,
     pauseReason: row.pause_reason,
     lastEditedAt: row.last_edited_at,
+    pausedUntil: row.paused_until ?? null,
   };
 }
 

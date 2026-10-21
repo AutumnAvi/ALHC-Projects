@@ -7,7 +7,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
-import { ArrowLeft, ChevronRight, CirclePause, Play, Plus, Trash2, UserRound, X, Zap } from "lucide-react";
+import { ArrowLeft, ChevronRight, CirclePause, Copy, Play, Plus, Trash2, UserRound, X, Zap } from "lucide-react";
+import { RulePauseControls } from "@/components/rules/rule-pause";
 import { Avatar } from "@/components/avatar";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
@@ -19,8 +20,10 @@ import { RunSteps } from "@/components/rules/run-steps";
 import {
   createPortfolioRule,
   deletePortfolioRule,
+  duplicatePortfolioRule,
   runPortfolioRule,
   setPortfolioRuleEnabled,
+  setPortfolioRulePausedUntil,
   updatePortfolioRule,
 } from "@/lib/actions";
 import {
@@ -211,6 +214,32 @@ export function PortfolioRulesView({
                       </>
                     )}
                   />
+                ) : null}
+                {canEdit && rule.enabled ? (
+                  <RulePauseControls
+                    name={rule.name}
+                    pausedUntil={rule.pausedUntil}
+                    disabled={pending}
+                    onChange={(until) => run(() => setPortfolioRulePausedUntil(rule.id, until))}
+                  />
+                ) : null}
+                {canEdit ? (
+                  <button
+                    type="button"
+                    aria-label={`Duplicate ${rule.name}`}
+                    data-tooltip="Duplicate (the copy starts off)"
+                    disabled={pending}
+                    onClick={() =>
+                      run(async () => {
+                        const result = await duplicatePortfolioRule(rule.id);
+                        if (!result.error) notify(`Copied “${rule.name}” (off until you turn it on)`);
+                        return result;
+                      })
+                    }
+                    className="btn-icon size-7"
+                  >
+                    <Copy className="size-4" />
+                  </button>
                 ) : null}
                 {canEdit ? (
                   <button

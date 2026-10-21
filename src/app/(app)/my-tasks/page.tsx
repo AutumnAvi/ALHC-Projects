@@ -7,7 +7,8 @@ import { TaskPaneSlot } from "@/components/task/task-pane";
 import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { listMyTaskLayout, listMyTasks } from "@/lib/data";
+import { MyTaskRulesButton } from "@/components/my-tasks/my-task-rules";
+import { listMyTaskLayout, listMyTaskRules, listMyTasks, listProjects } from "@/lib/data";
 import { MY_TASKS_LAYOUT_COOKIE, isMyTasksLayout } from "@/lib/my-tasks";
 
 export const metadata: Metadata = { title: "My tasks" };
@@ -20,7 +21,12 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
   // The layout call seeds the viewer's sections and places newly assigned tasks first, so it runs
   // before the task lists are read.
   const { sections, placements } = await listMyTaskLayout();
-  const [{ open, completed }, bulk] = await Promise.all([listMyTasks(member.id), listBulkContext(null)]);
+  const [{ open, completed }, bulk, rules, projects] = await Promise.all([
+    listMyTasks(member.id),
+    listBulkContext(null),
+    listMyTaskRules(),
+    listProjects(),
+  ]);
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
@@ -28,7 +34,15 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
         icon={CircleCheck}
         title="My tasks"
         description="Everything assigned to you, across every project, in your own sections or by due date"
-        actions={<SyncCalendarButton scope="my_tasks" className="btn-secondary" />}
+        actions={
+          <div className="flex items-center gap-2">
+            <MyTaskRulesButton
+              rules={rules}
+              ctx={{ sections: sections.map((s) => ({ id: s.id, name: s.name })), projects: projects.map((p) => ({ id: p.id, name: p.name })) }}
+            />
+            <SyncCalendarButton scope="my_tasks" className="btn-secondary" />
+          </div>
+        }
       />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="px-gutter pb-8 pt-2">

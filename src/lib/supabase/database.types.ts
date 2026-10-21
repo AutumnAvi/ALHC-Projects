@@ -2040,6 +2040,81 @@ export type Database = {
         };
         Relationships: [];
       };
+      my_task_rule_runs: {
+        Row: {
+          id: string;
+          rule_id: string;
+          profile_id: string;
+          task_id: string | null;
+          status: string;
+          detail: Json;
+          dedupe_key: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          rule_id: string;
+          profile_id: string;
+          task_id?: string | null;
+          status: string;
+          detail?: Json;
+          dedupe_key?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          rule_id?: string;
+          profile_id?: string;
+          task_id?: string | null;
+          status?: string;
+          detail?: Json;
+          dedupe_key?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      my_task_rules: {
+        Row: {
+          id: string;
+          profile_id: string;
+          name: string;
+          enabled: boolean;
+          trigger_type: string;
+          trigger_config: Json;
+          conditions: Json;
+          actions: Json;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          name: string;
+          enabled?: boolean;
+          trigger_type: string;
+          trigger_config?: Json;
+          conditions?: Json;
+          actions?: Json;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          name?: string;
+          enabled?: boolean;
+          trigger_type?: string;
+          trigger_config?: Json;
+          conditions?: Json;
+          actions?: Json;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
       portfolio_rule_runs: {
         Row: {
           id: string;
@@ -2098,6 +2173,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          paused_until: string | null;
         };
         Insert: {
           id?: string;
@@ -2120,6 +2196,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          paused_until?: string | null;
         };
         Update: {
           id?: string;
@@ -2142,6 +2219,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          paused_until?: string | null;
         };
         Relationships: [];
       };
@@ -2197,6 +2275,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          paused_until: string | null;
           owner_id: string | null;
           next_run_at: string | null;
           last_edited_by: string | null;
@@ -2221,6 +2300,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          paused_until?: string | null;
           owner_id?: string | null;
           next_run_at?: string | null;
           last_edited_by?: string | null;
@@ -2245,6 +2325,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          paused_until?: string | null;
           owner_id?: string | null;
           next_run_at?: string | null;
           last_edited_by?: string | null;

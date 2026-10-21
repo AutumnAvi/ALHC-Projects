@@ -23,6 +23,12 @@
 --   changes" trigger and "Task type is not", conditions on the approval status, attachments, and
 --   comments, "Set description", "Task moves out of a section", "Section is one of / none of", and
 --   "is one of / none of" for single-choice fields.
+-- Batch D — portfolio rules (section 10 below).
+-- Batch E — polish: pause a rule for a while (rules.paused_until / portfolio_rules.paused_until),
+--   "Convert to a project" (blank or from a template, into a portfolio, with the task's people, and a
+--   brief task that links the task's files), and My Tasks rules (each person's own rules on the tasks
+--   assigned to them: when a task is assigned to me, is due soon, or is overdue → move it to one of my
+--   sections, set its due date, or complete it). Duplicating rules and branches is app-only.
 --
 -- fire_rules keeps its import and copy checks first, exactly as they were; notify_with,
 -- notify_message, and add_story are untouched. Every new table has RLS on, no anon privilege, and no
@@ -1307,6 +1313,29 @@ begin
         if coalesce(item ->> 'kind', '') not in ('task', 'milestone', 'approval') then
           raise exception 'Set task type: choose task, milestone, or approval' using errcode = 'check_violation';
         end if;
+      -- Batch E.
+      when 'convert_to_project' then
+        if coalesce(item ->> 'template_id', '') <> '' and not exists (
+          select 1 from public.project_templates pt
+          where pt.id::text = item ->> 'template_id' and pt.workspace_id = ws and pt.deleted_at is null
+        ) then
+          raise exception 'Convert to project: choose a project template of this workspace' using errcode = 'check_violation';
+        end if;
+        if length(coalesce(item ->> 'name', '')) > 200 then
+          raise exception 'Convert to project: the name is up to 200 characters' using errcode = 'check_violation';
+        end if;
+        if coalesce(item ->> 'portfolio_id', '') <> '' and (
+          not exists (select 1 from public.portfolios pf where pf.id::text = item ->> 'portfolio_id' and pf.workspace_id = ws and pf.deleted_at is null)
+          or not public.has_portfolio_role((item ->> 'portfolio_id')::uuid, 'editor')
+        ) then
+          raise exception 'Convert to project: choose a portfolio where you''re an Editor' using errcode = 'check_violation';
+        end if;
+        if coalesce(item ->> 'members', 'none') not in ('none', 'task_people') then
+          raise exception 'Convert to project: invite nobody, or the task''s assignee and collaborators' using errcode = 'check_violation';
+        end if;
+        if exists (select 1 from jsonb_each(item) e where e.key in ('brief', 'complete_task') and jsonb_typeof(e.value) <> 'boolean') then
+          raise exception 'Convert to project: the switches are on or off' using errcode = 'check_violation';
+        end if;
       when 'set_description' then
         if coalesce(item ->> 'mode', 'replace') not in ('replace', 'append', 'prepend') then
           raise exception 'Set description: replace it, or add to the start or the end' using errcode = 'check_violation';
@@ -1872,6 +1901,65 @@ begin
             end if;
           end if;
 
+        when 'convert_to_project' then
+          -- Batch E: made with the rule owner's access (they own the new project).
+          person := coalesce(r.owner_id, r.created_by);
+          if person is null or not public.profile_is_allowlisted(person) then
+            raise exception 'Convert to project: the rule''s owner is no longer in the workspace' using errcode = 'insufficient_privilege';
+          end if;
+          body := left(public.render_rule_text(coalesce(nullif(a ->> 'name', ''), '{{task.name}}'), target_task, r.project_id, event), 200);
+          if body = '' then
+            body := left(t.title, 200);
+          end if;
+          input := jsonb_build_object('name', body,
+            'template', (select pt.name from public.project_templates pt where pt.id::text = a ->> 'template_id'),
+            'portfolio', (select pf.name from public.portfolios pf where pf.id::text = a ->> 'portfolio_id'));
+          names := coalesce(current_setting('request.jwt.claim.sub', true), '');
+          perform set_config('request.jwt.claim.sub', person::text, true);
+          if coalesce(a ->> 'template_id', '') <> '' then
+            made := (public.create_project_from_template((a ->> 'template_id')::uuid, body, public.rule_local_today(r)) ->> 'project_id')::uuid;
+          else
+            insert into public.projects (workspace_id, name, team_id, created_by)
+            values (t.workspace_id, body, (select pj.team_id from public.projects pj where pj.id = r.project_id), person)
+            returning id into made;
+          end if;
+          if coalesce(a ->> 'members', 'none') = 'task_people' then
+            for elem in
+              select to_jsonb(pr.email) from public.profiles pr
+              where pr.id <> person and (pr.id = t.assignee_id or pr.id in (
+                select f.profile_id from public.task_followers f where f.task_id = target_task and f.deleted_at is null
+              ))
+            loop
+              begin
+                perform public.add_project_member(made, elem #>> '{}', 'editor');
+              exception when others then
+                null;
+              end;
+            end loop;
+          end if;
+          if coalesce(a ->> 'portfolio_id', '') <> '' then
+            perform public.add_portfolio_project((a ->> 'portfolio_id')::uuid, made);
+          end if;
+          perform set_config('request.jwt.claim.sub', names, true);
+          names := null;
+          -- The brief: a first task with the request's description and links to its files.
+          if coalesce((a ->> 'brief')::boolean, true) then
+            insert into public.tasks (home_project_id, title, notes, created_by)
+            values (made, 'Brief: ' || left(t.title, 490), t.notes, person)
+            returning id into new_home;
+            insert into public.task_attachment_links (task_id, source, name, url, attachment_id)
+            select new_home, 'duplicate', left(ta.file_name, 255), null, ta.id
+            from public.task_attachments ta where ta.task_id = target_task and ta.deleted_at is null;
+          end if;
+          insert into public.comments (task_id, author_id, rule_id, body)
+          values (target_task, null, r.id, 'Converted to the project “' || body || '” (/projects/' || made || '/overview).');
+          if coalesce((a ->> 'complete_task')::boolean, false) then
+            update public.tasks set completed_at = now() where id = target_task and completed_at is null;
+          end if;
+          result := 'Created the project “' || body || '”' || coalesce(' from “' || (input ->> 'template') || '”', '')
+            || coalesce(' in “' || (input ->> 'portfolio') || '”', '');
+          input := input || jsonb_build_object('project_id', made);
+
         when 'create_task' then
           target_project := coalesce(nullif(a ->> 'project_id', '')::uuid, r.project_id);
           target_section := nullif(a ->> 'section_id', '')::uuid;
@@ -2292,6 +2380,7 @@ declare
   starts integer := 0;
   unblocked integer := 0;
   portfolio integer := 0;
+  my_tasks integer := 0;
   scheduled integer := 0;
   ran integer;
   outcome text;
@@ -2305,6 +2394,8 @@ begin
     for update skip locked
   loop
     select * into r from public.rules where id = job.rule_id;
+    -- Batch E: a paused rule's waiting steps wait for it.
+    continue when r.enabled and r.paused_until > now();
     if not r.enabled or r.deleted_at is not null
        or exists (select 1 from public.projects ap where ap.id = r.project_id and ap.archived_at is not null)
        or not exists (select 1 from public.tasks tk where tk.id = job.task_id and tk.deleted_at is null) then
@@ -2362,8 +2453,9 @@ begin
     where id = r.id;
   end loop;
 
-  -- Batch D: portfolio rules (due soon, overdue, scheduled).
+  -- Batch D: portfolio rules (due soon, overdue, scheduled). Batch E: My Tasks rules.
   portfolio := public.portfolio_rules_tick();
+  my_tasks := public.my_task_rules_tick();
 
   -- Batch C: start-kind dependencies released by the calendar.
   for r in
@@ -2375,7 +2467,7 @@ begin
   end loop;
 
   return jsonb_build_object('delayed_actions', delayed, 'due_rules', due, 'overdue_rules', overdue,
-    'start_rules', starts, 'unblocked_rules', unblocked, 'scheduled_rules', scheduled, 'portfolio_rules', portfolio);
+    'start_rules', starts, 'unblocked_rules', unblocked, 'scheduled_rules', scheduled, 'portfolio_rules', portfolio, 'my_task_rules', my_tasks);
 end;
 $$;
 
@@ -2772,6 +2864,8 @@ create table if not exists public.portfolio_rules (
   last_edited_at timestamptz,
   sort_order double precision not null default 0,
   next_run_at timestamptz,
+  -- Batch E: paused for a while (people set it; null = not paused).
+  paused_until timestamptz,
   paused_at timestamptz,
   pause_reason text check (length(pause_reason) <= 500),
   consecutive_failures integer not null default 0 check (consecutive_failures >= 0),
@@ -2814,7 +2908,7 @@ select public.alhc_revoke_client_truncate(array['portfolio_rules', 'portfolio_ru
 grant select on public.portfolio_rules to authenticated;
 grant insert (portfolio_id, name, enabled, trigger_type, trigger_config, conditions, actions, owner_id, sort_order)
   on public.portfolio_rules to authenticated;
-grant update (name, enabled, trigger_type, trigger_config, conditions, actions, owner_id, sort_order, deleted_at)
+grant update (name, enabled, trigger_type, trigger_config, conditions, actions, owner_id, sort_order, deleted_at, paused_until)
   on public.portfolio_rules to authenticated;
 grant select on public.portfolio_rule_runs to authenticated;
 
@@ -3452,6 +3546,9 @@ begin
   if not found then
     return 'missing';
   end if;
+  if r.paused_until > now() then
+    return 'paused';
+  end if;
   if dedupe is not null and exists (
     select 1 from public.portfolio_rule_runs rr where rr.rule_id = r.id and rr.project_id = target_project and rr.dedupe_key = dedupe
   ) then
@@ -3751,6 +3848,9 @@ begin
   if not r.enabled then
     raise exception 'This rule is off' using errcode = 'check_violation';
   end if;
+  if r.paused_until > now() then
+    raise exception 'This rule is paused until %', to_char(r.paused_until, 'Mon FMDD, HH24:MI "UTC"') using errcode = 'check_violation';
+  end if;
   if not public.has_portfolio_role(r.portfolio_id, 'editor') then
     raise exception 'Your role in this portfolio doesn’t allow running rules' using errcode = 'insufficient_privilege';
   end if;
@@ -3780,4 +3880,388 @@ select public.alhc_revoke_anon_execute(array[
   'run_portfolio_rule_engine(public.portfolio_rules, uuid, jsonb, text)',
   'fire_portfolio_rules(text, uuid, uuid, jsonb)', 'portfolio_rules_on_item()', 'portfolio_rules_on_project()',
   'portfolio_rules_on_owner()', 'portfolio_rules_on_field()', 'portfolio_rules_tick()', 'run_portfolio_rule(uuid, uuid)'
+]);
+
+-- =============================================================================================
+-- 11. Polish (batch E)
+
+-- 11a. Pause a rule for a while: people set rules.paused_until (null = not paused); while it's in the
+-- future the rule doesn't run (its waiting steps wait), and it resumes on its own afterwards.
+alter table public.rules add column if not exists paused_until timestamptz;
+grant update (paused_until) on public.rules to authenticated;
+
+select public.alhc_patch_function('public.run_rule(public.rules, uuid, jsonb, jsonb, text)',
+$p$  if dedupe is not null and exists (
+    select 1 from public.rule_runs rr where rr.rule_id = r.id and rr.task_id = target_task and rr.dedupe_key = dedupe
+  ) then
+    return 'duplicate';
+  end if;$p$,
+$p$  -- Automations V3: paused for a while.
+  if r.paused_until > now() then
+    return 'paused';
+  end if;
+  if dedupe is not null and exists (
+    select 1 from public.rule_runs rr where rr.rule_id = r.id and rr.task_id = target_task and rr.dedupe_key = dedupe
+  ) then
+    return 'duplicate';
+  end if;$p$);
+
+select public.alhc_patch_function('public.run_manual_rule(uuid, uuid)',
+$p$  if not r.enabled then
+    raise exception 'This rule is off' using errcode = 'check_violation';
+  end if;$p$,
+$p$  if not r.enabled then
+    raise exception 'This rule is off' using errcode = 'check_violation';
+  end if;
+  if r.paused_until > now() then
+    raise exception 'This rule is paused until %', to_char(r.paused_until, 'Mon FMDD, HH24:MI "UTC"') using errcode = 'check_violation';
+  end if;$p$);
+
+-- 11b. My Tasks rules: each person's own rules on the tasks assigned to them (Asana's My Tasks rules).
+--   triggers   assigned (a task is assigned to me), due_approaching { days 0–60 }, task_overdue { days 1–60 }
+--   conditions in_project { project_ids }, not_in_project { project_ids }, has_due_date, no_due_date,
+--              due_within { days }, task_type_is { kind }, is_private
+--   actions    move_to_section { section_id: one of my My Tasks sections }, set_due_date { days,
+--              business_days? } (from today), complete_task
+-- Own rows only (nobody else, workspace admins included, reads or changes them). The actions run as
+-- the person (their access decides: editing dates or completing needs Editor on the task).
+create table if not exists public.my_task_rules (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null default auth.uid() references public.profiles (id),
+  name text not null check (char_length(btrim(name)) between 1 and 200),
+  enabled boolean not null default true,
+  trigger_type text not null check (trigger_type in ('assigned', 'due_approaching', 'task_overdue')),
+  trigger_config jsonb not null default '{}'::jsonb check (jsonb_typeof(trigger_config) = 'object'),
+  conditions jsonb not null default '[]'::jsonb check (jsonb_typeof(conditions) = 'array'),
+  actions jsonb not null default '[]'::jsonb check (jsonb_typeof(actions) = 'array'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+
+create index if not exists my_task_rules_profile_idx on public.my_task_rules (profile_id) where deleted_at is null;
+
+create table if not exists public.my_task_rule_runs (
+  id uuid primary key default gen_random_uuid(),
+  rule_id uuid not null references public.my_task_rules (id),
+  profile_id uuid not null references public.profiles (id),
+  task_id uuid references public.tasks (id),
+  status text not null check (status in ('succeeded', 'failed', 'skipped')),
+  detail jsonb not null default '{}'::jsonb,
+  dedupe_key text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists my_task_rule_runs_rule_idx on public.my_task_rule_runs (rule_id, created_at desc);
+create index if not exists my_task_rule_runs_profile_idx on public.my_task_rule_runs (profile_id, created_at desc);
+create index if not exists my_task_rule_runs_task_idx on public.my_task_rule_runs (task_id);
+
+alter table public.my_task_rules enable row level security;
+alter table public.my_task_rule_runs enable row level security;
+revoke all on public.my_task_rules from anon, authenticated;
+revoke all on public.my_task_rule_runs from anon, authenticated;
+select public.alhc_revoke_anon_grants(array['my_task_rules', 'my_task_rule_runs']);
+select public.alhc_revoke_client_truncate(array['my_task_rules', 'my_task_rule_runs']);
+grant select on public.my_task_rules to authenticated;
+grant insert (name, enabled, trigger_type, trigger_config, conditions, actions) on public.my_task_rules to authenticated;
+grant update (name, enabled, trigger_type, trigger_config, conditions, actions, deleted_at) on public.my_task_rules to authenticated;
+grant select on public.my_task_rule_runs to authenticated;
+
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'my_task_rules' and policyname = 'my_task_rules_select_own') then
+    create policy my_task_rules_select_own on public.my_task_rules for select to authenticated
+      using (profile_id = (select auth.uid()) and (select public.is_allowlisted()));
+    create policy my_task_rules_insert_own on public.my_task_rules for insert to authenticated
+      with check (profile_id = (select auth.uid()) and (select public.is_allowlisted()));
+    create policy my_task_rules_update_own on public.my_task_rules for update to authenticated
+      using (profile_id = (select auth.uid()) and (select public.is_allowlisted()))
+      with check (profile_id = (select auth.uid()) and (select public.is_allowlisted()));
+    create policy my_task_rule_runs_select_own on public.my_task_rule_runs for select to authenticated
+      using (profile_id = (select auth.uid()));
+  end if;
+end $$;
+
+comment on table public.my_task_rules is
+  'Automations V3 (batch E): a person''s own rules on the tasks assigned to them (My Tasks). Own rows only.';
+
+-- Owner fixed, removal final, and the vocabulary above (invoker: runs as the person saving).
+create or replace function public.guard_my_task_rule()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  item jsonb;
+  kind text;
+  cfg jsonb := new.trigger_config;
+begin
+  if tg_op = 'INSERT' then
+    if public.is_client_role() then
+      new.profile_id := auth.uid();
+      new.created_at := now();
+    end if;
+  else
+    if new.profile_id is distinct from old.profile_id then
+      raise exception 'A rule stays its owner''s' using errcode = 'check_violation';
+    end if;
+    if old.deleted_at is not null and new.deleted_at is null then
+      raise exception 'A removed rule stays removed' using errcode = 'check_violation';
+    end if;
+    new.updated_at := now();
+    if new.deleted_at is not null then
+      return new;
+    end if;
+  end if;
+  if cfg ? 'timezone' and (jsonb_typeof(cfg -> 'timezone') <> 'string' or length(cfg ->> 'timezone') > 64) then
+    raise exception 'The rule''s time zone is not valid' using errcode = 'check_violation';
+  end if;
+  if new.trigger_type in ('due_approaching', 'task_overdue') and cfg ? 'days' and (
+    coalesce(jsonb_typeof(cfg -> 'days'), 'missing') <> 'number' or (cfg ->> 'days') !~ '^[0-9]{1,2}$' or (cfg ->> 'days')::integer > 60
+    or (new.trigger_type = 'task_overdue' and (cfg ->> 'days')::integer < 1)
+  ) then
+    raise exception 'Days must be between % and 60', case new.trigger_type when 'task_overdue' then 1 else 0 end using errcode = 'check_violation';
+  end if;
+  if jsonb_array_length(new.conditions) > 10 then
+    raise exception 'Up to 10 conditions' using errcode = 'check_violation';
+  end if;
+  for item in select value from jsonb_array_elements(new.conditions) loop
+    kind := item ->> 'type';
+    if kind in ('in_project', 'not_in_project') then
+      if coalesce(jsonb_typeof(item -> 'project_ids'), 'missing') <> 'array' or jsonb_array_length(item -> 'project_ids') not between 1 and 50
+         or exists (select 1 from jsonb_array_elements_text(item -> 'project_ids') x where x !~* '^[0-9a-f-]{36}$') then
+        raise exception 'In project: choose projects' using errcode = 'check_violation';
+      end if;
+    elsif kind = 'due_within' then
+      if coalesce(jsonb_typeof(item -> 'days'), 'missing') <> 'number' or (item ->> 'days') !~ '^[0-9]{1,3}$' or (item ->> 'days')::integer > 365 then
+        raise exception 'Due within: choose 0 to 365 days' using errcode = 'check_violation';
+      end if;
+    elsif kind = 'task_type_is' then
+      if coalesce(item ->> 'kind', '') not in ('task', 'milestone', 'approval') then
+        raise exception 'Choose a task type' using errcode = 'check_violation';
+      end if;
+    elsif kind is null or kind not in ('has_due_date', 'no_due_date', 'is_private') then
+      raise exception 'Unknown condition %', coalesce(kind, '(none)') using errcode = 'check_violation';
+    end if;
+  end loop;
+  if jsonb_array_length(new.actions) not between 1 and 5 then
+    raise exception 'A rule has 1 to 5 actions' using errcode = 'check_violation';
+  end if;
+  for item in select value from jsonb_array_elements(new.actions) loop
+    kind := item ->> 'type';
+    if kind = 'move_to_section' then
+      if not exists (
+        select 1 from public.my_task_sections s
+        where s.id::text = item ->> 'section_id' and s.profile_id = new.profile_id and s.deleted_at is null
+      ) then
+        raise exception 'Move to section: choose one of your My Tasks sections' using errcode = 'check_violation';
+      end if;
+    elsif kind = 'set_due_date' then
+      if coalesce(jsonb_typeof(item -> 'days'), 'missing') <> 'number' or (item ->> 'days') !~ '^[0-9]{1,3}$' or (item ->> 'days')::integer > 365
+         or (item ? 'business_days' and jsonb_typeof(item -> 'business_days') <> 'boolean') then
+        raise exception 'Set due date: 0 to 365 days from today' using errcode = 'check_violation';
+      end if;
+    elsif kind is null or kind <> 'complete_task' then
+      raise exception 'Unknown action %', coalesce(kind, '(none)') using errcode = 'check_violation';
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+
+revoke all on function public.guard_my_task_rule() from public, anon;
+grant execute on function public.guard_my_task_rule() to authenticated;
+
+create or replace trigger my_task_rules_05_guard
+before insert or update on public.my_task_rules
+for each row execute function public.guard_my_task_rule();
+
+-- One My Tasks rule on one task assigned to its owner: conditions, then the actions as the owner. 100
+-- runs an hour per rule at most; a failure is logged (nothing is kept).
+create or replace function public.run_my_task_rule(r public.my_task_rules, target_task uuid, event jsonb, dedupe text default null)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  t public.tasks;
+  c jsonb;
+  a jsonb;
+  ok boolean;
+  today date := (now() at time zone public.safe_timezone(coalesce(nullif(r.trigger_config ->> 'timezone', ''), 'UTC')))::date;
+  previous_sub text := coalesce(current_setting('request.jwt.claim.sub', true), '');
+  log jsonb := '[]'::jsonb;
+  outcome text;
+  result text;
+  new_due date;
+  error_message text;
+  run_status text := 'succeeded';
+begin
+  select * into t from public.tasks where id = target_task and deleted_at is null;
+  if not found or t.assignee_id is distinct from r.profile_id or t.completed_at is not null then
+    return 'missing';
+  end if;
+  if dedupe is not null and exists (
+    select 1 from public.my_task_rule_runs rr where rr.rule_id = r.id and rr.task_id = target_task and rr.dedupe_key = dedupe
+  ) then
+    return 'duplicate';
+  end if;
+  if (select count(*) from public.my_task_rule_runs rr where rr.rule_id = r.id and rr.created_at > now() - interval '1 hour') >= 100 then
+    return 'skipped';
+  end if;
+  for c in select value from jsonb_array_elements(r.conditions) loop
+    ok := case c ->> 'type'
+      when 'in_project' then exists (
+        select 1 from public.task_projects tp where tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+          and tp.project_id::text in (select jsonb_array_elements_text(c -> 'project_ids')))
+      when 'not_in_project' then not exists (
+        select 1 from public.task_projects tp where tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+          and tp.project_id::text in (select jsonb_array_elements_text(c -> 'project_ids')))
+      when 'has_due_date' then t.due_on is not null
+      when 'no_due_date' then t.due_on is null
+      when 'due_within' then t.due_on between today and today + coalesce((c ->> 'days')::integer, 0)
+      when 'task_type_is' then t.kind = c ->> 'kind'
+      when 'is_private' then t.home_project_id is null
+      else false
+    end;
+    if not coalesce(ok, false) then
+      return 'conditions';
+    end if;
+  end loop;
+
+  begin
+    perform set_config('request.jwt.claim.sub', r.profile_id::text, true);
+    for a in select value from jsonb_array_elements(r.actions) loop
+      outcome := 'done';
+      case a ->> 'type'
+        when 'move_to_section' then
+          if exists (
+            select 1 from public.my_task_placements pl
+            where pl.profile_id = r.profile_id and pl.task_id = target_task and pl.section_id::text = a ->> 'section_id'
+              and public.my_task_placement_valid(pl.profile_id, pl.assigned_at, t.assignee_id, t.assigned_at)
+          ) then
+            outcome := 'unchanged';
+            result := 'Already in that section';
+          else
+            perform public.place_my_task(target_task, (a ->> 'section_id')::uuid, null);
+            result := 'Moved to “' || coalesce((select s.name from public.my_task_sections s where s.id::text = a ->> 'section_id'), '?') || '”';
+          end if;
+        when 'set_due_date' then
+          if not public.has_task_role(target_task, 'editor') then
+            raise exception 'You can’t change this task’s dates' using errcode = 'insufficient_privilege';
+          end if;
+          new_due := public.rule_add_days(today, (a ->> 'days')::integer, coalesce((a ->> 'business_days')::boolean, false),
+            (select w.work_week from public.workspaces w where w.id = t.workspace_id));
+          update public.tasks
+          set due_on = new_due,
+              start_on = case when start_on > new_due then null else start_on end,
+              start_at = case when start_on > new_due then null else start_at end
+          where id = target_task and due_on is distinct from new_due;
+          if not found then outcome := 'unchanged'; result := 'Already due then';
+          else result := 'Due date set to ' || to_char(new_due, 'Dy, Mon FMDD, YYYY'); end if;
+        when 'complete_task' then
+          if not public.has_task_role(target_task, 'editor') then
+            raise exception 'You can’t complete this task' using errcode = 'insufficient_privilege';
+          end if;
+          if public.open_blocker_count(target_task) > 0 then
+            raise exception 'This task is blocked by tasks that aren’t done' using errcode = 'check_violation';
+          end if;
+          update public.tasks set completed_at = now() where id = target_task and completed_at is null;
+          result := 'Marked complete';
+      end case;
+      log := log || jsonb_build_array(jsonb_build_object('type', a ->> 'type', 'outcome', outcome, 'result', result));
+    end loop;
+    perform set_config('request.jwt.claim.sub', previous_sub, true);
+  exception when others then
+    error_message := sqlerrm;
+    log := jsonb_build_object('error', error_message);
+    run_status := 'failed';
+  end;
+  perform set_config('request.jwt.claim.sub', previous_sub, true);
+  insert into public.my_task_rule_runs (rule_id, profile_id, task_id, status, detail, dedupe_key)
+  values (r.id, r.profile_id, target_task, run_status, jsonb_build_object('actions', log, 'event', coalesce(event, '{}'::jsonb)), dedupe);
+  return run_status;
+end;
+$$;
+
+revoke all on function public.run_my_task_rule(public.my_task_rules, uuid, jsonb, text) from public, anon, authenticated;
+
+-- "A task is assigned to me": the new assignee's rules (also for a task created already assigned).
+-- Imports and copies are quiet.
+create or replace function public.my_task_rules_on_assign()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.my_task_rules;
+begin
+  if public.import_context_id() is not null or public.copy_context_id() is not null then
+    return null;
+  end if;
+  if new.assignee_id is null or new.deleted_at is not null or new.completed_at is not null
+     or (tg_op = 'UPDATE' and new.assignee_id is not distinct from old.assignee_id) then
+    return null;
+  end if;
+  for r in
+    select * from public.my_task_rules
+    where profile_id = new.assignee_id and enabled and deleted_at is null and trigger_type = 'assigned'
+    order by created_at
+  loop
+    perform public.run_my_task_rule(r, new.id, jsonb_build_object('assigned_at', now()));
+  end loop;
+  return null;
+end;
+$$;
+
+revoke all on function public.my_task_rules_on_assign() from public, anon, authenticated;
+
+create or replace trigger tasks_zz_my_task_rules
+after insert or update of assignee_id on public.tasks
+for each row execute function public.my_task_rules_on_assign();
+
+-- The scheduler's part: due soon and overdue, once per task and due date.
+create or replace function public.my_task_rules_tick()
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.my_task_rules;
+  x record;
+  days integer;
+  today date;
+  ran integer := 0;
+begin
+  for r in
+    select ru.* from public.my_task_rules ru
+    where ru.enabled and ru.deleted_at is null and ru.trigger_type in ('due_approaching', 'task_overdue')
+      and public.profile_is_allowlisted(ru.profile_id)
+  loop
+    days := coalesce((r.trigger_config ->> 'days')::integer, 1);
+    today := (now() at time zone public.safe_timezone(coalesce(nullif(r.trigger_config ->> 'timezone', ''), 'UTC')))::date;
+    for x in
+      select tk.id, tk.due_on from public.tasks tk
+      where tk.assignee_id = r.profile_id and tk.deleted_at is null and tk.completed_at is null
+        and case when r.trigger_type = 'due_approaching' then tk.due_on = today + days
+          else tk.due_on between today - greatest(days, 1) - 2 and today - greatest(days, 1) end
+    loop
+      if public.run_my_task_rule(r, x.id, jsonb_build_object('due_on', x.due_on),
+           case when r.trigger_type = 'due_approaching' then 'due:' else 'overdue:' end || x.due_on::text) = 'succeeded' then
+        ran := ran + 1;
+      end if;
+    end loop;
+  end loop;
+  return ran;
+end;
+$$;
+
+revoke all on function public.my_task_rules_tick() from public, anon, authenticated;
+
+select public.alhc_revoke_anon_execute(array[
+  'guard_my_task_rule()', 'run_my_task_rule(public.my_task_rules, uuid, jsonb, text)',
+  'my_task_rules_on_assign()', 'my_task_rules_tick()'
 ]);

@@ -121,6 +121,8 @@ export const ACTIONS = [
   { value: "remove_from_project", label: "Remove from this project", group: "Task", description: "Takes the task out of this project when it also lives in another one.", keywords: ["multi-home", "unlist", "remove"] },
   { value: "set_task_type", label: "Set task type", group: "Task", description: "Makes it a task, a milestone, or an approval.", keywords: ["kind", "milestone", "approval"] },
   { value: "set_description", label: "Set description", group: "Task", description: "Replaces the description, or adds text to its start or end (placeholders work).", keywords: ["notes", "details", "brief", "append"] },
+  // Batch E.
+  { value: "convert_to_project", label: "Convert to a project", group: "Task", description: "Makes a project from the task (blank or from a template), with its people and a brief linking its files.", keywords: ["project", "campaign", "event", "template", "spin off"] },
 ] as const;
 
 export type ActionType = (typeof ACTIONS)[number]["value"];
@@ -207,6 +209,7 @@ export const V3_CONDITIONS: ReadonlySet<string> = new Set([
 export const V3_ACTIONS: ReadonlySet<string> = new Set([
   "remove_followers", "set_start_date",
   "create_task", "move_to_project", "remove_from_project", "set_task_type", "set_description",
+  "convert_to_project",
 ]);
 
 // A People field as a person slot.
@@ -380,6 +383,8 @@ export type RuleDef = {
   pausedAt?: string | null;
   pauseReason?: string | null;
   consecutiveFailures?: number;
+  // Automations V3 (batch E): paused by a person until this time (null = not paused).
+  pausedUntil?: string | null;
 };
 
 export type RuleRunStats = {
@@ -453,6 +458,7 @@ export function toRuleDef(row: {
   paused_at?: string | null;
   pause_reason?: string | null;
   consecutive_failures?: number;
+  paused_until?: string | null;
 }): RuleDef {
   return {
     id: row.id,
@@ -472,6 +478,7 @@ export function toRuleDef(row: {
     pausedAt: row.paused_at ?? null,
     pauseReason: row.pause_reason ?? null,
     consecutiveFailures: row.consecutive_failures ?? 0,
+    pausedUntil: row.paused_until ?? null,
   };
 }
 

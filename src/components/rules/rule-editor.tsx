@@ -1153,9 +1153,10 @@ export const INLINE_ACTION_TYPES: ReadonlySet<string> = new Set([
   "complete_task", "reopen_task", "add_tag", "remove_tag", "add_to_project", "set_due_date", "apply_task_template",
   // Automations V3.
   "set_start_date", "move_to_project", "remove_from_project", "set_task_type", "set_description", "create_task",
+  "convert_to_project",
 ]);
 // Of those, the ones with more settings below the line too (part = block).
-export const INLINE_AND_BLOCK_ACTION_TYPES: ReadonlySet<string> = new Set(["request_approval", "set_description", "create_task"]);
+export const INLINE_AND_BLOCK_ACTION_TYPES: ReadonlySet<string> = new Set(["request_approval", "set_description", "create_task", "convert_to_project"]);
 
 // An action's settings. The sentence builder draws short ones on the action's line (part = inline: a
 // section, a field and its value, a person, hours) and the rest below it (part = block: messages,
@@ -1362,6 +1363,85 @@ export function ActionFields({
         <div className="space-y-2">
           {mode}
           {body}
+        </div>
+      );
+    }
+    case "convert_to_project": {
+      const inlinePart = (
+        <Row>
+          <SmartPicker
+            id={`${prefix}-convert-template`}
+            label="Blank or from a template"
+            value={str(action.template_id)}
+            options={[
+              { value: "", label: "blank", description: "Sections and fields are up to you" },
+              ...(ctx.projectTemplates ?? []).map((t) => ({ value: t.id, label: `from “${t.name}”`, icon: <FolderClosed className="size-4" /> })),
+            ]}
+            onChange={(v) => onChange(v ? { ...action, template_id: v } : omit(action, "template_id"))}
+            variant="chip"
+            searchable
+            renderValue={valueOr(action.template_id ? "from a removed template" : "blank")}
+          />
+          <Word>in</Word>
+          <SmartPicker
+            id={`${prefix}-convert-portfolio`}
+            label="Portfolio"
+            value={str(action.portfolio_id)}
+            options={[{ value: "", label: "no portfolio" }, ...(ctx.portfolios ?? []).map((p) => ({ value: p.id, label: p.name }))]}
+            onChange={(v) => onChange(v ? { ...action, portfolio_id: v } : omit(action, "portfolio_id"))}
+            variant="chip"
+            renderValue={valueOr(action.portfolio_id ? "a portfolio you can’t edit" : "no portfolio")}
+          />
+        </Row>
+      );
+      const blockPart = (
+        <div className="space-y-2">
+          {text("name", "Project name (empty = the task’s name)", { placeholder: "Event: {{task.name}}", maxLength: 200 })}
+          <Row>
+            <Word>and</Word>
+            <SmartPicker
+              id={`${prefix}-convert-members`}
+              label="Who joins"
+              value={str(action.members) || "none"}
+              options={[
+                { value: "none", label: "invite nobody else", description: "Only the rule’s owner (who owns the project)" },
+                { value: "task_people", label: "invite the task’s people", description: "Its assignee and collaborators, as Editors" },
+              ]}
+              onChange={(v) => onChange(v === "none" ? omit(action, "members") : { ...action, members: v })}
+              variant="chip"
+            />
+            <SmartPicker
+              id={`${prefix}-convert-brief`}
+              label="Brief task"
+              value={action.brief === false ? "no" : "yes"}
+              options={[
+                { value: "yes", label: "add a brief task", description: "The task’s description and links to its files" },
+                { value: "no", label: "no brief task" },
+              ]}
+              onChange={(v) => onChange(v === "yes" ? omit(action, "brief") : { ...action, brief: false })}
+              variant="chip"
+            />
+            <SmartPicker
+              id={`${prefix}-convert-complete`}
+              label="Then the task"
+              value={action.complete_task === true ? "yes" : "no"}
+              options={[
+                { value: "no", label: "keep the task open" },
+                { value: "yes", label: "complete the task" },
+              ]}
+              onChange={(v) => onChange(v === "yes" ? { ...action, complete_task: true } : omit(action, "complete_task"))}
+              variant="chip"
+            />
+          </Row>
+          <p className="text-xs text-zinc-500">The rule’s owner owns the new project. A comment on the task links to it.</p>
+        </div>
+      );
+      if (part === "inline") return inlinePart;
+      if (part === "block") return blockPart;
+      return (
+        <div className="space-y-2">
+          {inlinePart}
+          {blockPart}
         </div>
       );
     }

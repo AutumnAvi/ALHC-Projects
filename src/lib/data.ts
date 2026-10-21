@@ -82,6 +82,7 @@ import {
   type TeamRole,
 } from "@/lib/teams";
 import { INBOX_LIMIT, type InboxTab } from "@/lib/inbox";
+import { toMyTaskRule, type MyTaskRule } from "@/lib/my-task-rules";
 import { toPortfolioRuleDef, type PortfolioRuleDef, type PortfolioRuleRun } from "@/lib/portfolio-rules";
 import { resolveNotificationSettings, type NotificationSettings } from "@/lib/notifications";
 import {
@@ -3170,8 +3171,21 @@ export const listEditableProjectsWithSections = cache(
 );
 
 export const listProjectRules = cache(async (projectId: string): Promise<RuleDef[]> => {
-  const [supabase, v2] = await Promise.all([createClient(), hasAutomationsV2Schema()]);
+  const [supabase, v2, v3] = await Promise.all([createClient(), hasAutomationsV2Schema(), hasAutomationsV3Schema()]);
   const base = "id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key";
+  if (v3) {
+    // Automations V3 adds paused_until (a pause for a while).
+    const result = await supabase
+      .from("rules")
+      .select(
+        "id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key, owner_id, next_run_at, last_edited_by, last_edited_at, run_on_rule_changes, paused_at, pause_reason, consecutive_failures, paused_until",
+      )
+      .eq("project_id", projectId)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    return rows(result, "rules").map(toRuleDef);
+  }
   if (v2) {
     const result = await supabase
       .from("rules")
@@ -5924,7 +5938,7 @@ export const listCommenterMembers = cache(async (): Promise<CommenterMember[]> =
 // ---------------------------------------------------------------------------------------------
 
 const PORTFOLIO_RULE_COLUMNS =
-  "id, portfolio_id, name, enabled, trigger_type, trigger_config, conditions, actions, owner_id, next_run_at, paused_at, pause_reason, last_edited_at";
+  "id, portfolio_id, name, enabled, trigger_type, trigger_config, conditions, actions, owner_id, next_run_at, paused_at, pause_reason, last_edited_at, paused_until";
 
 export const listPortfolioRules = cache(async (portfolioId: string): Promise<PortfolioRuleDef[] | null> => {
   const supabase = await createClient();
@@ -5993,3 +6007,16 @@ export async function listEditablePortfolios(exceptId: string): Promise<{ id: st
   const portfolios = await supabase.from("portfolios").select("id, name").in("id", ids).is("deleted_at", null).order("name");
   return (portfolios.data ?? []).map((p) => ({ id: p.id, name: p.name }));
 }
+
+// My Tasks rules (Automations V3, batch E): the viewer's own rules (RLS: own rows only). Null = this
+// release's database update isn't applied.
+export const listMyTaskRules = cache(async (): Promise<MyTaskRule[] | null> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("my_task_rules")
+    .select("id, name, enabled, trigger_type, trigger_config, conditions, actions")
+    .is("deleted_at", null)
+    .order("created_at");
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
+  return rows(result, "My Tasks rules").map(toMyTaskRule);
+});

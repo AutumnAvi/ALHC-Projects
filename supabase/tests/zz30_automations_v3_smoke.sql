@@ -841,6 +841,113 @@ begin
   assert (public.workflow_tick() ->> 'portfolio_rules')::integer = 0, 'once per project and due date';
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- Batch E: pause for a while, Convert to project, My Tasks rules
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+  r uuid;
+  t uuid;
+begin
+  t := public.create_task(p, pg_temp.av3('intake'), 'Pause me');
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values (p, 'Paused', true, 'manual', '[{"type": "add_comment", "body": "ran"}]') returning id into r;
+  update public.rules set paused_until = now() + interval '1 day' where id = r;
+  begin
+    perform public.run_manual_rule(r, t);
+    raise exception 'a paused rule doesn''t run';
+  exception when check_violation then null;
+  end;
+  assert public.run_rule((select ru from public.rules ru where ru.id = r), t, '{}') = 'paused', 'the engine skips it';
+  update public.rules set paused_until = now() - interval '1 minute' where id = r;
+  assert (public.run_manual_rule(r, t)) ->> 'status' = 'succeeded', 'it runs again once the pause is over';
+end $$;
+
+-- Convert to project: a blank project owned by the rule's owner, with the task's people, in the
+-- portfolio, with a brief that links the task's files; the task is completed and gets a comment.
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+  r uuid;
+  t uuid;
+  made uuid;
+  brief uuid;
+begin
+  t := public.create_task(p, pg_temp.av3('intake'), 'Holiday event');
+  update public.tasks set notes = 'Venue + catering', assignee_id = pg_temp.av3('dana') where id = t;
+  insert into public.task_attachments (task_id, storage_path, file_name, content_type, size_bytes, uploaded_by)
+  values (t, t || '/x-plan.pdf', 'plan.pdf', 'application/pdf', 10, pg_temp.av3('ava'));
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values (p, 'Make it a project', true, 'manual', jsonb_build_array(jsonb_build_object(
+    'type', 'convert_to_project', 'name', 'Event: {{task.name}}', 'members', 'task_people',
+    'portfolio_id', pg_temp.av3('pf'), 'complete_task', true
+  ))) returning id into r;
+  assert (public.run_manual_rule(r, t)) ->> 'status' = 'succeeded', 'converted';
+  select id into made from public.projects where name = 'Event: Holiday event';
+  assert made is not null, 'the project exists';
+  assert public.profile_project_role(pg_temp.av3('ava'), made) = 'owner', 'the rule''s owner owns it';
+  assert public.profile_project_role(pg_temp.av3('dana'), made) = 'editor', 'the task''s people joined';
+  assert exists (select 1 from public.portfolio_projects where portfolio_id = pg_temp.av3('pf') and project_id = made and deleted_at is null),
+    'in the portfolio';
+  select id into brief from public.tasks where home_project_id = made and title = 'Brief: Holiday event';
+  assert (select notes from public.tasks where id = brief) = 'Venue + catering', 'the brief carries the description';
+  assert exists (select 1 from public.task_attachment_links l where l.task_id = brief and l.name = 'plan.pdf' and l.attachment_id is not null),
+    'and links the files';
+  assert (select completed_at is not null from public.tasks where id = t), 'the task was completed';
+  assert exists (select 1 from public.comments where task_id = t and body like 'Converted to the project “Event: Holiday event”%'), 'and says so';
+end $$;
+
+-- My Tasks rules: Dana's own rules on what's assigned to her.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a3030030-0000-4000-8000-000000000003', false) is not null as ok \gset
+select count(*) >= 0 as ok from public.my_tasks_layout() \gset
+do $$
+declare
+  later uuid := (select id from public.my_task_sections where profile_id = pg_temp.av3('dana') and kind = 'do_later' and deleted_at is null);
+  today_s uuid := (select id from public.my_task_sections where profile_id = pg_temp.av3('dana') and kind = 'do_today' and deleted_at is null);
+begin
+  insert into av3_ids values ('dana_later', later), ('dana_today', today_s);
+  insert into public.my_task_rules (name, trigger_type, conditions, actions)
+  values ('Requests wait', 'assigned', jsonb_build_array(jsonb_build_object('type', 'in_project', 'project_ids', jsonb_build_array(pg_temp.av3('p')))),
+    jsonb_build_array(jsonb_build_object('type', 'move_to_section', 'section_id', later)));
+  insert into public.my_task_rules (name, trigger_type, trigger_config, actions)
+  values ('Due tomorrow', 'due_approaching', '{"days": 1, "timezone": "UTC"}',
+    jsonb_build_array(jsonb_build_object('type', 'move_to_section', 'section_id', today_s)));
+  begin
+    insert into public.my_task_rules (name, trigger_type, actions)
+    values ('Not mine', 'assigned', jsonb_build_array(jsonb_build_object('type', 'move_to_section',
+      'section_id', (select id from public.my_task_sections where profile_id <> pg_temp.av3('dana') limit 1))));
+    raise exception 'someone else''s section is refused';
+  exception when check_violation then null;
+  end;
+end $$;
+select set_config('request.jwt.claim.sub', 'a3030030-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  assert not exists (select 1 from public.my_task_rules where profile_id = pg_temp.av3('dana')), 'nobody else reads them';
+end $$;
+reset role;
+
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+  t uuid;
+  u uuid;
+begin
+  t := public.create_task(p, pg_temp.av3('intake'), 'For Dana');
+  insert into av3_ids values ('t_dana', t);
+  update public.tasks set assignee_id = pg_temp.av3('dana') where id = t;
+  assert (select section_id from public.my_task_placements where profile_id = pg_temp.av3('dana') and task_id = t) = pg_temp.av3('dana_later'),
+    'assigned → moved to Do later';
+  u := public.create_task(p, pg_temp.av3('intake'), 'Due soon for Dana');
+  update public.tasks set assignee_id = pg_temp.av3('dana'), due_on = (now() at time zone 'UTC')::date + 1 where id = u;
+  assert (public.workflow_tick() ->> 'my_task_rules')::integer >= 1, 'the scheduler ran Dana''s rule';
+  assert (select section_id from public.my_task_placements where profile_id = pg_temp.av3('dana') and task_id = u) = pg_temp.av3('dana_today'),
+    'due tomorrow → Do today';
+end $$;
+
 do $$
 begin
   raise notice 'automations v3 smoke: all assertions passed';

@@ -6,6 +6,7 @@ import {
   AlarmClock,
   AlignLeft,
   FolderInput,
+  FolderKanban,
   FolderMinus,
   Lock,
   LogOut,
@@ -153,6 +154,7 @@ const ICONS: Record<string, LucideIcon> = {
   remove_from_project: FolderMinus,
   set_task_type: Shapes,
   set_description: AlignLeft,
+  convert_to_project: FolderKanban,
   // Misc
   branch: GitBranch,
   mention: AtSign,
