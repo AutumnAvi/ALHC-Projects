@@ -5,11 +5,14 @@ import {
   getProjectIntegrations,
   getWorkWeek,
   hasAutomationsV2Schema,
+  hasAutomationsV3Schema,
+  listEditablePortfolios,
   listEditableProjectsWithSections,
   listInboundEndpoints,
   listProfiles,
   listProjectMembers,
   listProjectFields,
+  listProjectTemplates,
   listProjectForms,
   listSections,
   listTags,
@@ -20,7 +23,7 @@ import {
 // webhooks (the Rules page and the rule canvas). Read with the viewer's client: below Admin the
 // integration defaults and inbound webhooks come back empty.
 export async function loadRuleContext(projectId: string): Promise<RuleContext> {
-  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members] = await Promise.all([
+  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members, v3, projectTemplates, portfolios] = await Promise.all([
     getProject(projectId),
     listSections(projectId),
     listProjectFields(projectId),
@@ -34,6 +37,9 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     getWorkWeek(),
     hasAutomationsV2Schema(),
     listProjectMembers(projectId),
+    hasAutomationsV3Schema(),
+    listProjectTemplates(),
+    listEditablePortfolios(""),
   ]);
   return {
     sections: sections.map((s) => ({ id: s.id, name: s.name })),
@@ -51,8 +57,11 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     otherProjects,
     workWeek,
     v2,
+    v3,
     projectName: project?.name,
     members: members.map((m) => ({ id: m.profileId, name: m.name })),
+    projectTemplates: projectTemplates.map((t) => ({ id: t.id, name: t.name })),
+    portfolios,
   };
 }
 

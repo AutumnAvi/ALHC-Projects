@@ -9,6 +9,7 @@ import {
   ArrowUp,
   ChevronRight,
   CirclePause,
+  Copy,
   FlaskConical,
   FolderClosed,
   GitBranch,
@@ -29,9 +30,6 @@ import {
   ACTIONS,
   CONDITIONS,
   MAX_CONDITION_GROUPS,
-  V2_ACTIONS,
-  V2_CONDITIONS,
-  V2_TRIGGERS,
   joinGroups,
   splitGroups,
   MAX_BRANCH_ACTIONS,
@@ -63,7 +61,7 @@ import {
   defaultsFor,
 } from "./rule-editor";
 import { vocabOptions } from "./rule-icons";
-import { branchLabel, ruleSentence, type RuleContext } from "./rule-shared";
+import { branchLabel, needsUpdate, ruleSentence, type RuleContext } from "./rule-shared";
 import { RuleTestPanel, type RuleTestDraft, type RuleTestTask } from "./rule-test-panel";
 import { RunSteps } from "./run-steps";
 
@@ -85,7 +83,9 @@ const NEW_CONDITION: RuleCondition = { type: "is_incomplete" };
 
 // Triggers the scheduler or a person starts (run_rule directly, not fire_rules), so "changes made by
 // other rules" never apply to them.
-const NOT_CHANGE_TRIGGERS: ReadonlySet<TriggerType> = new Set(["due_approaching", "task_overdue", "scheduled", "manual"]);
+const NOT_CHANGE_TRIGGERS: ReadonlySet<TriggerType> = new Set([
+  "due_approaching", "task_overdue", "scheduled", "manual", "start_approaching", "start_reached",
+]);
 
 // Asana's rule builder (Asana parity, batch 4): a full-page canvas. The header has the rule's name, an
 // Active toggle, Cancel, and Save, with Build and Activity tabs. The flow reads top to bottom: the scope
@@ -210,6 +210,27 @@ export function RuleCanvas({
       const branch = { conditions: [NEW_CONDITION], actions: [defaultsFor("add_comment")] };
       const otherwise = current.length > 1 && current[current.length - 1].conditions.length === 0;
       return otherwise ? [...current.slice(0, -1), branch, current[current.length - 1]] : [...current, branch];
+    });
+  }
+
+  // Automations V3 (batch E): copy a branch right after itself, and move branches up / down. The
+  // Otherwise branch (last, no conditions) stays last and isn't copied.
+  function duplicateBranch(index: number) {
+    changeBranches((current) => {
+      if (current.length >= MAX_RULE_BRANCHES) return current;
+      const copy = structuredClone(current[index]);
+      return [...current.slice(0, index + 1), copy, ...current.slice(index + 1)];
+    });
+  }
+
+  function moveBranch(index: number, delta: number) {
+    changeBranches((current) => {
+      const target = index + delta;
+      const otherwiseAt = current.length > 1 && current[current.length - 1].conditions.length === 0 ? current.length - 1 : -1;
+      if (target < 0 || target >= current.length || target === otherwiseAt || index === otherwiseAt) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
     });
   }
 
@@ -488,7 +509,7 @@ export function RuleCanvas({
                       id="rule-trigger"
                       label="Trigger"
                       value={triggerType}
-                      options={vocabOptions(TRIGGERS, { disabled: needsV2(ctx, V2_TRIGGERS) })}
+                      options={vocabOptions(TRIGGERS, { disabled: needsUpdate(ctx) })}
                       onChange={(v) => {
                         setTriggerType(v as TriggerType);
                         setTriggerConfig({});
@@ -521,6 +542,12 @@ export function RuleCanvas({
                       canEdit={canEdit}
                       onChange={(next) => setBranch(index, next)}
                       onRemove={index === 0 ? undefined : () => changeBranches((current) => current.filter((_, i) => i !== index))}
+                      onDuplicate={
+                        batch4 && branches.length < MAX_RULE_BRANCHES && branch.conditions.length > 0 ? () => duplicateBranch(index) : undefined
+                      }
+                      onMove={branches.length > 1 && branch.conditions.length > 0 ? (delta) => moveBranch(index, delta) : undefined}
+                      canMoveUp={index > 0}
+                      canMoveDown={index < branches.length - (hasOtherwise ? 2 : 1)}
                     />
                   ))}
                   {canEdit ? (
@@ -614,11 +641,6 @@ export function RuleCanvas({
   );
 }
 
-// Before Automations V2's database update the new vocabulary is listed but disabled, with the reason.
-function needsV2(ctx: RuleContext, set: ReadonlySet<string>) {
-  return (value: string) => (ctx.v2 === false && set.has(value) ? "Needs this release’s database update" : null);
-}
-
 // The live summary at the top: the whole rule as one English sentence, plus its scope.
 function RuleSummary({
   triggerType,
@@ -682,6 +704,10 @@ function BranchRows({
   canEdit,
   onChange,
   onRemove,
+  onDuplicate,
+  onMove,
+  canMoveUp = false,
+  canMoveDown = false,
 }: {
   index: number;
   count: number;
@@ -691,6 +717,10 @@ function BranchRows({
   canEdit: boolean;
   onChange: (next: RuleBranch) => void;
   onRemove?: () => void;
+  onDuplicate?: () => void;
+  onMove?: (delta: number) => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }) {
   const label = branchLabel(index, count, branch.conditions.length > 0);
   const otherwise = label === "Otherwise";
@@ -699,8 +729,8 @@ function BranchRows({
 
   // OR groups: AND within a group, OR between groups (one group stores no group keys).
   const groups = splitGroups(branch.conditions);
-  const conditionOptions = vocabOptions(CONDITIONS, { disabled: needsV2(ctx, V2_CONDITIONS) });
-  const actionOptions = vocabOptions(ACTIONS, { disabled: needsV2(ctx, V2_ACTIONS) });
+  const conditionOptions = vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx) });
+  const actionOptions = vocabOptions(ACTIONS, { disabled: needsUpdate(ctx) });
 
   function setGroups(next: RuleCondition[][]) {
     onChange({ ...branch, conditions: joinGroups(next) });
@@ -722,11 +752,45 @@ function BranchRows({
     onChange({ ...branch, actions: copy });
   }
 
-  const removeBranch = onRemove ? (
-    <button type="button" onClick={onRemove} aria-label={`Remove this ${label} branch`} data-tooltip="Remove branch" className="btn-icon">
-      <X className="size-4" />
-    </button>
-  ) : null;
+  const removeBranch =
+    canEdit && (onRemove || onDuplicate || onMove) ? (
+      <span className="flex items-center">
+        {onMove ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onMove(-1)}
+              disabled={!canMoveUp}
+              aria-label={`Move this ${label} branch up`}
+              data-tooltip="Move branch up (it's checked earlier)"
+              className="btn-icon size-7"
+            >
+              <ArrowUp className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onMove(1)}
+              disabled={!canMoveDown}
+              aria-label={`Move this ${label} branch down`}
+              data-tooltip="Move branch down"
+              className="btn-icon size-7"
+            >
+              <ArrowDown className="size-4" />
+            </button>
+          </>
+        ) : null}
+        {onDuplicate ? (
+          <button type="button" onClick={onDuplicate} aria-label={`Duplicate this ${label} branch`} data-tooltip="Duplicate branch" className="btn-icon size-7">
+            <Copy className="size-4" />
+          </button>
+        ) : null}
+        {onRemove ? (
+          <button type="button" onClick={onRemove} aria-label={`Remove this ${label} branch`} data-tooltip="Remove branch" className="btn-icon size-7">
+            <X className="size-4" />
+          </button>
+        ) : null}
+      </span>
+    ) : null;
 
   return (
     <div role="group" aria-label={index === 0 ? "If, then" : label} className={index > 0 ? "border-t-4 border-zinc-50" : ""}>

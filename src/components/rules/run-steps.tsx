@@ -37,6 +37,7 @@ export function RunSteps({
   error,
   emptyText = "No steps were logged for this run.",
   dryRun = false,
+  actionLabel = (type: string) => labelOf(ACTIONS, type),
 }: {
   steps: RuleStep[];
   // The run's own error (a failed run), shown unless its failing step already says it.
@@ -44,6 +45,8 @@ export function RunSteps({
   emptyText?: string;
   // The Test panel's steps (nothing ran for real), which changes how a failure is explained.
   dryRun?: boolean;
+  // How a step's action is named (portfolio rules have their own vocabulary).
+  actionLabel?: (type: string) => string;
 }) {
   const failedStep = steps.find((s) => stepTone(s.outcome) === "error");
   const runError = error && !steps.some((s) => s.error === error) ? error : null;
@@ -69,7 +72,7 @@ export function RunSteps({
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                       <span className="text-2xs font-medium tabular-nums text-zinc-400">{step.step}.</span>
                       <RuleIcon value={step.type} className="size-3.5 text-zinc-400" />
-                      <span className="text-sm font-medium text-zinc-800">{labelOf(ACTIONS, step.type)}</span>
+                      <span className="text-sm font-medium text-zinc-800">{actionLabel(step.type)}</span>
                       <span className={`rounded-full px-1.5 py-px text-2xs font-medium ${look.badge}`}>{stepOutcomeLabel(step.outcome)}</span>
                       {step.afterWait ? <span className="chip text-2xs">after the wait</span> : null}
                     </div>

@@ -6,7 +6,7 @@ import type { Json } from "@/lib/supabase/database.types";
 // Each entry has a group, a one-line description, and search keywords for the rule builder's picker.
 export const TRIGGERS = [
   { value: "task_created", label: "Task is added to this project", group: "Task", description: "Fires when a task is created in this project or a form or webhook adds one.", keywords: ["new", "created", "added"] },
-  { value: "section_changed", label: "Task moves into a section", group: "Task", description: "Fires when a task enters a section you pick.", keywords: ["moved", "column", "status", "stage"] },
+  { value: "section_changed", label: "Task moves into a section", group: "Task", description: "Fires when a task enters a section you pick (or any section).", keywords: ["moved", "column", "status", "stage"] },
   { value: "field_changed", label: "A field changes", group: "Fields", description: "Fires when a custom field changes, or changes to a value you pick.", keywords: ["custom field", "priority", "value"] },
   { value: "assignee_changed", label: "Assignee changes", group: "People", description: "Fires when someone is assigned, reassigned, or unassigned.", keywords: ["assign", "owner", "person"] },
   { value: "due_approaching", label: "Due date is approaching", group: "Dates", description: "Fires once per open task a number of days before its due date.", keywords: ["deadline", "reminder", "soon"] },
@@ -25,6 +25,16 @@ export const TRIGGERS = [
   { value: "task_overdue", label: "Task becomes overdue", group: "Dates", description: "Fires once per open task the day after its due date (or later).", keywords: ["late", "missed", "past due"] },
   { value: "scheduled", label: "On a schedule", group: "Flow", description: "Runs every day, workday, week, or month for the open tasks that match.", keywords: ["cron", "daily", "weekly", "every", "recurring", "time"] },
   { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks it from a task's … menu (Run a rule).", keywords: ["button", "on demand", "by hand", "click"] },
+  // Automations V3 (20261021010000_automations_v3_a.sql).
+  { value: "follower_added", label: "A collaborator is added", group: "People", description: "Fires when someone starts following a task (anyone, or people you pick).", keywords: ["follower", "collaborator", "watch", "follow"] },
+  // Batch B: start dates.
+  { value: "start_date_changed", label: "Start date changes", group: "Dates", description: "Fires when a task's start date is set, moved, or cleared.", keywords: ["begin", "kickoff", "reschedule"] },
+  { value: "start_approaching", label: "Start date is approaching", group: "Dates", description: "Fires once per open task some hours, days, or weeks before it starts.", keywords: ["begin", "kickoff", "soon", "reminder"] },
+  { value: "start_reached", label: "Start date arrives", group: "Dates", description: "Fires once per open task when its start date comes (or a while after).", keywords: ["begin", "kickoff", "started", "passed"] },
+  // Batch C: flow.
+  { value: "task_unblocked", label: "Task is no longer blocked", group: "Flow", description: "Fires when the last task it waits on is done (or has started, for start dependencies).", keywords: ["dependency", "dependencies", "blocked", "waiting", "handoff", "ready"] },
+  { value: "task_type_changed", label: "Task type changes", group: "Task", description: "Fires when a task becomes a task, a milestone, or an approval.", keywords: ["kind", "milestone", "approval"] },
+  { value: "section_left", label: "Task moves out of a section", group: "Task", description: "Fires when a task leaves a section you pick.", keywords: ["moved", "column", "stage", "leaves", "out of"] },
 ] as const;
 
 export type TriggerType = (typeof TRIGGERS)[number]["value"];
@@ -56,6 +66,25 @@ export const CONDITIONS = [
   { value: "all_subtasks_done", label: "All subtasks are done", group: "Task", description: "It has subtasks and every one is complete.", keywords: ["checklist", "children", "finished"] },
   { value: "title_contains", label: "Name contains", group: "Task", description: "The task's name includes some text (any case).", keywords: ["title", "text", "keyword"] },
   { value: "form_answer_contains", label: "Form answer contains", group: "Approvals and forms", description: "An answer on the task's form submission includes some text.", keywords: ["form", "request", "submission", "answer", "intake"] },
+  // Automations V3.
+  { value: "person_compare", label: "Compare people", group: "People", description: "The assignee, creator, collaborators, or a People field is (or isn't) someone — e.g. the assignee is the creator.", keywords: ["dynamic", "same", "creator", "assignee", "people field", "collaborator", "follower", "equals"] },
+  // Batch B: dates.
+  { value: "date_compare", label: "Date is", group: "Dates", description: "The due or start date is before, after, on, or between dates you pick.", keywords: ["due", "start", "before", "after", "between", "range", "on"] },
+  { value: "has_start_date", label: "Has a start date", group: "Dates", description: "A start date is set.", keywords: ["begin", "kickoff"] },
+  { value: "no_start_date", label: "Has no start date", group: "Dates", description: "No start date yet.", keywords: ["begin", "missing"] },
+  { value: "has_started", label: "Start date has arrived", group: "Dates", description: "It starts today or started earlier.", keywords: ["begin", "started", "passed", "in progress"] },
+  { value: "start_within", label: "Starts within", group: "Dates", description: "Starts today or in the next few days.", keywords: ["begin", "soon", "upcoming"] },
+  // Batch C: flow.
+  { value: "section_is_one_of", label: "Section is one of", group: "Task", description: "The task is in any of the sections you pick.", keywords: ["column", "stage", "any of", "multiple"] },
+  { value: "section_is_none_of", label: "Section is none of", group: "Task", description: "The task is in none of the sections you pick.", keywords: ["column", "stage", "not", "except"] },
+  { value: "task_type_is_not", label: "Task type is not", group: "Task", description: "Not a task, a milestone, or an approval (your pick).", keywords: ["kind", "milestone", "approval", "not"] },
+  { value: "is_blocked", label: "Is blocked", group: "Flow", description: "It waits on a task that isn't done (or hasn't started).", keywords: ["dependency", "waiting", "blocked by"] },
+  { value: "is_not_blocked", label: "Isn't blocked", group: "Flow", description: "Nothing it depends on holds it up.", keywords: ["dependency", "ready", "unblocked"] },
+  { value: "approval_status_is", label: "Approval status is", group: "Approvals and forms", description: "The task's latest approval is pending, approved, changes requested, rejected, or there isn't one.", keywords: ["approve", "review", "pending", "rejected"] },
+  { value: "has_attachment", label: "Has an attachment", group: "Task", description: "At least one file is attached.", keywords: ["file", "upload", "asset"] },
+  { value: "no_attachment", label: "Has no attachment", group: "Task", description: "No file is attached yet.", keywords: ["file", "upload", "missing"] },
+  { value: "has_comment", label: "Has a comment", group: "Communication", description: "Someone (or a rule) commented.", keywords: ["reply", "message", "feedback"] },
+  { value: "no_comment", label: "Has no comment", group: "Communication", description: "Nobody has commented yet.", keywords: ["reply", "message", "silent"] },
 ] as const;
 
 export type ConditionType = (typeof CONDITIONS)[number]["value"];
@@ -82,6 +111,18 @@ export const ACTIONS = [
   { value: "set_due_date", label: "Set due date", group: "Dates", description: "Sets the due date a number of days (or business days) from today or another date, or clears it.", keywords: ["deadline", "relative", "business days", "workdays", "clear"] },
   { value: "add_tag", label: "Add tag", group: "Fields", description: "Tags the task.", keywords: ["label"] },
   { value: "remove_tag", label: "Remove tag", group: "Fields", description: "Removes a tag from the task.", keywords: ["label", "untag"] },
+  // Automations V3.
+  { value: "remove_followers", label: "Remove followers", group: "People", description: "People stop following the task (they no longer hear about updates).", keywords: ["collaborator", "unfollow", "watch", "remove"] },
+  // Batch B.
+  { value: "set_start_date", label: "Set start date", group: "Dates", description: "Sets the start date on a day, some days, weeks, or hours from a date, or clears it.", keywords: ["begin", "kickoff", "relative", "business days", "clear"] },
+  // Batch C.
+  { value: "create_task", label: "Create a task", group: "Task", description: "Makes a new task, milestone, or approval here or in another project, optionally linked to this one.", keywords: ["new", "spawn", "follow-up", "milestone", "approval", "handoff"] },
+  { value: "move_to_project", label: "Move to another project", group: "Task", description: "Moves the task to another project (it leaves this one).", keywords: ["transfer", "cross-project", "relocate"] },
+  { value: "remove_from_project", label: "Remove from this project", group: "Task", description: "Takes the task out of this project when it also lives in another one.", keywords: ["multi-home", "unlist", "remove"] },
+  { value: "set_task_type", label: "Set task type", group: "Task", description: "Makes it a task, a milestone, or an approval.", keywords: ["kind", "milestone", "approval"] },
+  { value: "set_description", label: "Set description", group: "Task", description: "Replaces the description, or adds text to its start or end (placeholders work).", keywords: ["notes", "details", "brief", "append"] },
+  // Batch E.
+  { value: "convert_to_project", label: "Convert to a project", group: "Task", description: "Makes a project from the task (blank or from a template), with its people and a brief linking its files.", keywords: ["project", "campaign", "event", "template", "spin off"] },
 ] as const;
 
 export type ActionType = (typeof ACTIONS)[number]["value"];
@@ -113,7 +154,8 @@ export const TASK_SOURCES = [
   { value: "inbound", label: "An inbound webhook", description: "Another tool sent it in." },
 ] as const;
 
-// People slots accept a profile id or one of these roles.
+// People slots accept a profile id, one of these roles, or (Automations V3) "field:<id>" — a People
+// field of the project (its first person where one is needed, everyone in it where several are).
 export const PERSON_ROLES = [
   { value: "assignee", label: "Task assignee" },
   { value: "creator", label: "Task creator" },
@@ -151,11 +193,56 @@ export const V2_ACTIONS: ReadonlySet<string> = new Set([
   "set_due_date", "add_tag", "remove_tag",
 ]);
 
-// "On a schedule" (mirrors rule_schedule_next_at): when, at an hour of the rule's time zone.
+// Triggers, conditions, and actions that arrive with Automations V3's database update (new triggers
+// also need its tail: the old trigger CHECK refuses them until then).
+export const V3_TRIGGERS: ReadonlySet<string> = new Set([
+  "follower_added",
+  "start_date_changed", "start_approaching", "start_reached",
+  "task_unblocked", "task_type_changed", "section_left",
+]);
+export const V3_CONDITIONS: ReadonlySet<string> = new Set([
+  "person_compare",
+  "date_compare", "has_start_date", "no_start_date", "has_started", "start_within",
+  "section_is_one_of", "section_is_none_of", "task_type_is_not", "is_blocked", "is_not_blocked", "approval_status_is",
+  "has_attachment", "no_attachment", "has_comment", "no_comment",
+]);
+export const V3_ACTIONS: ReadonlySet<string> = new Set([
+  "remove_followers", "set_start_date",
+  "create_task", "move_to_project", "remove_from_project", "set_task_type", "set_description",
+  "convert_to_project",
+]);
+
+// A People field as a person slot.
+export const FIELD_SLOT_PREFIX = "field:";
+export function fieldSlot(fieldId: string) {
+  return `${FIELD_SLOT_PREFIX}${fieldId}`;
+}
+export function fieldOfSlot(value: unknown): string | null {
+  return typeof value === "string" && value.startsWith(FIELD_SLOT_PREFIX) ? value.slice(FIELD_SLOT_PREFIX.length) : null;
+}
+
+// "Set assignee" (mirrors execute_rule_actions / rule_pick_assignee): one person (a profile, a role, or
+// a People field), take turns (round robin), or whoever has the fewest open tasks in the project.
+export const ASSIGN_MODES = [
+  { value: "person", label: "to", description: "A person, the task's creator, a People field, or nobody" },
+  { value: "round_robin", label: "round robin among", description: "Takes turns through the people you pick" },
+  { value: "balanced", label: "to the least busy of", description: "Whoever has the fewest open tasks in this project (ties take turns)" },
+] as const;
+export type AssignMode = (typeof ASSIGN_MODES)[number]["value"];
+
+// "Compare people" sides (mirrors rule_side_people): plus "field:<id>" for a People field.
+export const PERSON_SIDES = [
+  { value: "assignee", label: "Assignee" },
+  { value: "creator", label: "Creator" },
+  { value: "followers", label: "Collaborators" },
+] as const;
+
+// "On a schedule" (mirrors rule_schedule_next_at): when, at a time of the rule's time zone. Automations
+// V3 adds minutes, every N days / weeks (counted from `anchor`), and several weekdays (`weekdays`).
 export const SCHEDULE_FREQUENCIES = [
-  { value: "daily", label: "Every day", description: "Seven days a week" },
+  { value: "daily", label: "Every day", description: "Every day, or every few days" },
   { value: "workdays", label: "Every workday", description: "The workspace's workweek (Admin console → Organization)" },
-  { value: "weekly", label: "Every week", description: "On a day you pick" },
+  { value: "weekly", label: "Every week", description: "On the days you pick, every week or every few weeks" },
   { value: "monthly", label: "Every month", description: "On a day from 1 to 28" },
 ] as const;
 
@@ -170,6 +257,89 @@ export const COMPARE_OPS = [
   { value: "contains", label: "contains", types: ["text", "multi_select"] },
   { value: "not_contains", label: "doesn't contain", types: ["text", "multi_select"] },
   { value: "not_equals", label: "is not", types: ["number", "date", "text", "single_select", "boolean", "status"] },
+  // Automations V3 (batch B).
+  { value: "between", label: "is between", types: ["number", "date"] },
+  { value: "not_between", label: "isn't between", types: ["number", "date"] },
+  // Batch C.
+  { value: "one_of", label: "is one of", types: ["single_select", "status"] },
+  { value: "none_of", label: "is none of", types: ["single_select", "status"] },
+] as const;
+
+// Compare ops whose value is a list of options.
+export const LIST_OPS: ReadonlySet<string> = new Set(["one_of", "none_of"]);
+
+// "Approval status is" (mirrors rule_condition_ok: the latest request that isn't cancelled).
+export const APPROVAL_STATUSES = [
+  { value: "none", label: "No approval", description: "Nobody has been asked" },
+  { value: "pending", label: "Pending" },
+  { value: "changes_requested", label: "Changes requested" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+] as const;
+
+// "Task is no longer blocked": which kinds of link (mirrors task_dependencies' four kinds).
+export const UNBLOCK_KINDS = [
+  { value: "finish_to_start", label: "Finish → start", description: "It can start once the other task is done" },
+  { value: "start_to_start", label: "Start → start", description: "It can start once the other task starts" },
+  { value: "finish_to_finish", label: "Finish → finish", description: "It can finish once the other task is done" },
+  { value: "start_to_finish", label: "Start → finish", description: "It can finish once the other task starts" },
+] as const;
+
+// "Create a task": how the new task relates to the one that triggered the rule.
+export const CREATE_LINKS = [
+  { value: "none", label: "not linked", description: "Just a new task" },
+  { value: "blocked_by", label: "waiting on this task", description: "The new task is blocked by this one (finish → start)" },
+  { value: "blocking", label: "holding this task up", description: "This task is blocked by the new one (finish → start)" },
+] as const;
+
+// "Set description": replace, or add to the start or the end.
+export const DESCRIPTION_MODES = [
+  { value: "replace", label: "to", description: "Replaces the whole description" },
+  { value: "append", label: "by adding at the end", description: "Keeps what's there" },
+  { value: "prepend", label: "by adding at the start", description: "Keeps what's there" },
+] as const;
+
+// Compare ops that need a second value (`to`).
+export const RANGE_OPS: ReadonlySet<string> = new Set(["between", "not_between"]);
+
+// "Date is" (mirrors rule_date_matches): which date, and how it compares with one or two days.
+export const DATE_SUBJECTS = [
+  { value: "due", label: "Due date" },
+  { value: "start", label: "Start date" },
+] as const;
+
+export const DATE_OPS = [
+  { value: "before", label: "is before" },
+  { value: "after", label: "is after" },
+  { value: "on", label: "is on" },
+  { value: "on_or_before", label: "is on or before" },
+  { value: "on_or_after", label: "is on or after" },
+  { value: "between", label: "is between" },
+  { value: "not_between", label: "isn't between" },
+] as const;
+
+// Date triggers' offsets (mirrors rule_trigger_offset): { amount, unit } or the older { days }.
+export const OFFSET_UNITS = [
+  { value: "hours", label: "hours", one: "hour", max: 720, min: 1 },
+  { value: "days", label: "days", one: "day", max: 90, min: 0 },
+  { value: "weeks", label: "weeks", one: "week", max: 12, min: 1 },
+] as const;
+export type OffsetUnit = (typeof OFFSET_UNITS)[number]["value"];
+
+export function triggerOffset(cfg: Record<string, Json>, defaultDays = 1): { amount: number; unit: OffsetUnit } {
+  const whole = (v: Json | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null);
+  if (typeof cfg.unit === "string") {
+    const unit = (["hours", "weeks"].includes(cfg.unit) ? cfg.unit : "days") as OffsetUnit;
+    return { amount: whole(cfg.amount) ?? defaultDays, unit };
+  }
+  return { amount: whole(cfg.days) ?? defaultDays, unit: "days" };
+}
+
+// "Due / start date changes": any change, only to a new date, or only when it's cleared.
+export const DATE_CHANGES = [
+  { value: "any", label: "in any way", description: "Set, moved, or cleared" },
+  { value: "set", label: "to a new date", description: "Set or moved (not cleared)" },
+  { value: "cleared", label: "and is cleared", description: "Removed" },
 ] as const;
 
 export function compareOpsFor(fieldType: string, boundToSections = false) {
@@ -177,7 +347,7 @@ export function compareOpsFor(fieldType: string, boundToSections = false) {
   return COMPARE_OPS.filter((op) => (op.types as readonly string[]).includes(key));
 }
 
-// "Set due date": counted from (mirrors execute_rule_actions).
+// "Set due / start date": counted from (mirrors rule_set_task_date). Hours always count from now.
 export const DUE_FROM = [
   { value: "today", label: "today", description: "The day the rule runs" },
   { value: "due_date", label: "the current due date", description: "Today if there isn't one" },
@@ -213,6 +383,8 @@ export type RuleDef = {
   pausedAt?: string | null;
   pauseReason?: string | null;
   consecutiveFailures?: number;
+  // Automations V3 (batch E): paused by a person until this time (null = not paused).
+  pausedUntil?: string | null;
 };
 
 export type RuleRunStats = {
@@ -286,6 +458,7 @@ export function toRuleDef(row: {
   paused_at?: string | null;
   pause_reason?: string | null;
   consecutive_failures?: number;
+  paused_until?: string | null;
 }): RuleDef {
   return {
     id: row.id,
@@ -305,6 +478,7 @@ export function toRuleDef(row: {
     pausedAt: row.paused_at ?? null,
     pauseReason: row.pause_reason ?? null,
     consecutiveFailures: row.consecutive_failures ?? 0,
+    pausedUntil: row.paused_until ?? null,
   };
 }
 

@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { Fragment, useId, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ChevronRight, GitBranch, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
+import { ChevronRight, Copy, GitBranch, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
 import { useCan } from "@/components/project/project-access";
 import { Segmented } from "@/components/project/view-chrome";
 import { Timestamp } from "@/components/timestamp";
-import { useServerAction } from "@/components/toast";
-import { deleteRule, installRulePreset, setRuleEnabled } from "@/lib/actions";
+import { useNotify, useServerAction } from "@/components/toast";
+import { deleteRule, duplicateRule, installRulePreset, setRuleEnabled, setRulePausedUntil } from "@/lib/actions";
+import { RulePauseControls, isPausedNow } from "./rule-pause";
 import { runSteps } from "@/lib/rule-steps";
 import { runReason, type RuleDef, type RulePreset, type RuleRun, type RuleRunStats } from "@/lib/rules";
 import type { Json } from "@/lib/supabase/database.types";
@@ -63,7 +64,7 @@ function isFailing(rule: RuleDef, stat: RuleRunStats | undefined) {
 function matchesFilter(rule: RuleDef, filter: RuleFilter, stat: RuleRunStats | undefined) {
   if (filter === "on") return rule.enabled;
   if (filter === "off") return !rule.enabled;
-  if (filter === "paused") return Boolean(rule.pausedAt);
+  if (filter === "paused") return Boolean(rule.pausedAt) || isPausedNow(rule.pausedUntil);
   if (filter === "failing") return isFailing(rule, stat);
   return true;
 }
@@ -100,6 +101,7 @@ export function RulesView({
   context: RuleContext;
 }) {
   const [pending, run] = useServerAction();
+  const notify = useNotify();
   const canEdit = useCan("admin");
   // Turning a rule on also clears an auto-pause (the database's guard does the same).
   const [optimisticRules, setOptimistic] = useOptimistic(rules, (current, patch: { id: string; enabled: boolean }) =>
@@ -308,6 +310,33 @@ export function RulesView({
                       >
                         <Play className="size-3.5" aria-hidden />
                         Resume
+                      </button>
+                    ) : null}
+                    {canEdit && rule.enabled ? (
+                      <RulePauseControls
+                        name={rule.name}
+                        pausedUntil={rule.pausedUntil}
+                        disabled={pending}
+                        unavailable={context.v3 === false ? "Needs this release’s database update" : null}
+                        onChange={(until) => run(() => setRulePausedUntil(rule.id, until))}
+                      />
+                    ) : null}
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        aria-label={`Duplicate ${rule.name}`}
+                        data-tooltip="Duplicate (the copy starts off)"
+                        disabled={pending}
+                        onClick={() =>
+                          run(async () => {
+                            const result = await duplicateRule(rule.id);
+                            if (!result.error) notify(`Copied “${rule.name}” (off until you turn it on)`);
+                            return result;
+                          })
+                        }
+                        className="btn-icon"
+                      >
+                        <Copy className="size-4" />
                       </button>
                     ) : null}
                     <Link

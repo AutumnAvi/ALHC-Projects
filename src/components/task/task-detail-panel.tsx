@@ -54,9 +54,13 @@ export function TaskDetailPanel({
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [requestingApproval, setRequestingApproval] = useState(false);
   const completed = Boolean(completedAt);
-  // Only finish-to-start links block completion; hidden ones (tasks the viewer can't open) count too.
+  // Finish → start and finish → finish links block completion while the other task is open (start →
+  // finish until it starts; the database checks that one); hidden ones (tasks the viewer can't open)
+  // count too.
   const openBlockers =
-    task.dependencies.filter((d) => d.relation === "blocked_by" && d.kind === "finish_to_start" && !d.completedAt).length +
+    task.dependencies.filter(
+      (d) => d.relation === "blocked_by" && (d.kind === "finish_to_start" || d.kind === "finish_to_finish") && !d.completedAt,
+    ).length +
     task.hiddenBlockers;
   const blocked = !completed && openBlockers > 0;
   // An approval task is completed by its assignee's decision while the request is open.

@@ -1038,6 +1038,7 @@ export type Database = {
           task_id: string | null;
           message_id: string | null;
           team_message_id: string | null;
+          project_id: string | null;
           status_update_id: string | null;
           comment_id: string | null;
           kind: string;
@@ -1054,6 +1055,7 @@ export type Database = {
           task_id?: string | null;
           message_id?: string | null;
           team_message_id?: string | null;
+          project_id?: string | null;
           status_update_id?: string | null;
           comment_id?: string | null;
           kind: string;
@@ -1070,6 +1072,7 @@ export type Database = {
           task_id?: string | null;
           message_id?: string | null;
           team_message_id?: string | null;
+          project_id?: string | null;
           status_update_id?: string | null;
           comment_id?: string | null;
           kind?: string;
@@ -2037,6 +2040,189 @@ export type Database = {
         };
         Relationships: [];
       };
+      my_task_rule_runs: {
+        Row: {
+          id: string;
+          rule_id: string;
+          profile_id: string;
+          task_id: string | null;
+          status: string;
+          detail: Json;
+          dedupe_key: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          rule_id: string;
+          profile_id: string;
+          task_id?: string | null;
+          status: string;
+          detail?: Json;
+          dedupe_key?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          rule_id?: string;
+          profile_id?: string;
+          task_id?: string | null;
+          status?: string;
+          detail?: Json;
+          dedupe_key?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      my_task_rules: {
+        Row: {
+          id: string;
+          profile_id: string;
+          name: string;
+          enabled: boolean;
+          trigger_type: string;
+          trigger_config: Json;
+          conditions: Json;
+          actions: Json;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          name: string;
+          enabled?: boolean;
+          trigger_type: string;
+          trigger_config?: Json;
+          conditions?: Json;
+          actions?: Json;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          name?: string;
+          enabled?: boolean;
+          trigger_type?: string;
+          trigger_config?: Json;
+          conditions?: Json;
+          actions?: Json;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      portfolio_rule_runs: {
+        Row: {
+          id: string;
+          rule_id: string;
+          portfolio_id: string;
+          project_id: string | null;
+          trigger_type: string;
+          status: string;
+          detail: Json;
+          dedupe_key: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          rule_id: string;
+          portfolio_id: string;
+          project_id?: string | null;
+          trigger_type: string;
+          status: string;
+          detail?: Json;
+          dedupe_key?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          rule_id?: string;
+          portfolio_id?: string;
+          project_id?: string | null;
+          trigger_type?: string;
+          status?: string;
+          detail?: Json;
+          dedupe_key?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      portfolio_rules: {
+        Row: {
+          id: string;
+          portfolio_id: string;
+          name: string;
+          enabled: boolean;
+          trigger_type: string;
+          trigger_config: Json;
+          conditions: Json;
+          actions: Json;
+          owner_id: string | null;
+          created_by: string | null;
+          last_edited_by: string | null;
+          last_edited_at: string | null;
+          sort_order: number;
+          next_run_at: string | null;
+          paused_at: string | null;
+          pause_reason: string | null;
+          consecutive_failures: number;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+          paused_until: string | null;
+        };
+        Insert: {
+          id?: string;
+          portfolio_id: string;
+          name: string;
+          enabled?: boolean;
+          trigger_type: string;
+          trigger_config?: Json;
+          conditions?: Json;
+          actions?: Json;
+          owner_id?: string | null;
+          created_by?: string | null;
+          last_edited_by?: string | null;
+          last_edited_at?: string | null;
+          sort_order?: number;
+          next_run_at?: string | null;
+          paused_at?: string | null;
+          pause_reason?: string | null;
+          consecutive_failures?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+          paused_until?: string | null;
+        };
+        Update: {
+          id?: string;
+          portfolio_id?: string;
+          name?: string;
+          enabled?: boolean;
+          trigger_type?: string;
+          trigger_config?: Json;
+          conditions?: Json;
+          actions?: Json;
+          owner_id?: string | null;
+          created_by?: string | null;
+          last_edited_by?: string | null;
+          last_edited_at?: string | null;
+          sort_order?: number;
+          next_run_at?: string | null;
+          paused_at?: string | null;
+          pause_reason?: string | null;
+          consecutive_failures?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+          paused_until?: string | null;
+        };
+        Relationships: [];
+      };
       rule_runs: {
         Row: {
           id: string;
@@ -2089,6 +2275,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          paused_until: string | null;
           owner_id: string | null;
           next_run_at: string | null;
           last_edited_by: string | null;
@@ -2113,6 +2300,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          paused_until?: string | null;
           owner_id?: string | null;
           next_run_at?: string | null;
           last_edited_by?: string | null;
@@ -2137,6 +2325,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          paused_until?: string | null;
           owner_id?: string | null;
           next_run_at?: string | null;
           last_edited_by?: string | null;
@@ -5368,9 +5557,17 @@ export type Database = {
         Args: { target_rule: string; target_task: string };
         Returns: Json;
       };
+      run_portfolio_rule: {
+        Args: { target_rule: string; target_project: string };
+        Returns: Json;
+      };
       test_rule: {
         Args: { target_rule: string | null; target_task: string; draft?: Json | null };
         Returns: Json;
+      };
+      automations_v3_ready: {
+        Args: Record<string, never>;
+        Returns: boolean;
       };
       rule_run_stats: {
         Args: { rule_ids: string[] };

@@ -1,0 +1,18 @@
+-- ALHC Projects — Automations V3, the tail (applied by hand, after 20261021010000_automations_v3_a.sql).
+--
+-- Only the statements the hosted connector refuses. Each one retires a narrower CHECK that the V3
+-- migration added a wider twin for, then gives the twin the old name. Works whether or not Automations
+-- V2's tail was applied (its old trigger CHECK and the _v2 twin are both retired here).
+
+-- Rule trigger types: the V3 list (follower_added, …).
+alter table public.rules drop constraint if exists rules_trigger_type_check;
+alter table public.rules drop constraint if exists rules_trigger_type_check_v2;
+alter table public.rules rename constraint rules_trigger_type_check_v3 to rules_trigger_type_check;
+
+-- Dependency kinds: all four (finish-to-finish and start-to-finish, batch C).
+alter table public.task_dependencies drop constraint if exists task_dependencies_kind_check;
+alter table public.task_dependencies rename constraint task_dependencies_kind_check_v3 to task_dependencies_kind_check;
+
+-- Inbox items about a project (portfolio rule notifications and status reminders, batch D).
+alter table public.inbox_items drop constraint if exists inbox_items_target_check;
+alter table public.inbox_items rename constraint inbox_items_target_check_v3 to inbox_items_target_check;

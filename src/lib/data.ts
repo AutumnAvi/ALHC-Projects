@@ -82,6 +82,8 @@ import {
   type TeamRole,
 } from "@/lib/teams";
 import { INBOX_LIMIT, type InboxTab } from "@/lib/inbox";
+import { toMyTaskRule, type MyTaskRule } from "@/lib/my-task-rules";
+import { toPortfolioRuleDef, type PortfolioRuleDef, type PortfolioRuleRun } from "@/lib/portfolio-rules";
 import { resolveNotificationSettings, type NotificationSettings } from "@/lib/notifications";
 import {
   DEFAULT_EMAIL_PREFERENCES,
@@ -754,7 +756,9 @@ async function listProjectTasksFromRows(projectId: string): Promise<ProjectTask[
       .from("task_dependencies")
       .select("successor_id, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id)")
       .in("successor_id", taskIds)
-      .eq("kind", "finish_to_start")
+      // Links that hold up completing the task while the predecessor is open (start → start never does;
+      // start → finish only until the predecessor starts, which the pane's count and the database check).
+      .in("kind", ["finish_to_start", "finish_to_finish"])
       .is("deleted_at", null)
       .is("predecessor.deleted_at", null)
       .is("predecessor.completed_at", null),
@@ -1430,7 +1434,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   const viewerProjectRole = isProjectRole(role) ? role : null;
   const dependencyRows = rows(dependencies, "dependencies");
   const visibleBlockers = dependencyRows.filter(
-    (d) => d.successor_id === taskId && d.kind === "finish_to_start" && d.predecessor.completed_at === null,
+    (d) => d.successor_id === taskId && (d.kind === "finish_to_start" || d.kind === "finish_to_finish") && d.predecessor.completed_at === null,
   ).length;
   if (comments.error && !rpcMissing(comments.error)) {
     throw new Error(`Failed to load comments: ${comments.error.message}`);
@@ -2112,6 +2116,9 @@ export type InboxItem = {
   message: { id: string; threadId: string; projectId: string; projectName: string } | null;
   teamMessage: { id: string; threadId: string; teamId: string; teamName: string } | null;
   statusUpdate: { id: string; projectId: string; projectName: string; status: string; title: string | null } | null;
+  // Automations V3 (batch D): an item about a project (a portfolio rule's notification or status
+  // reminder): taskTitle is the project's name and commentBody the message.
+  project: { id: string; name: string } | null;
   // approval_requested items: the request now (its approver decides it from the Inbox while pending).
   approval: { id: string; status: TaskApproval["status"]; approverId: string } | null;
   // A form submitter's emailed reply (Comments and reply by email): who sent it (no actor).
@@ -2287,6 +2294,7 @@ function inboxItemsFromPage(data: Json): InboxItem[] {
     const message = objectOrNull(row.message);
     const teamMessage = objectOrNull(row.team_message);
     const statusUpdate = objectOrNull(row.status_update);
+    const project = objectOrNull(row.project);
     const approval = objectOrNull(row.approval);
     items.push({
       id: row.id,
@@ -2329,6 +2337,10 @@ function inboxItemsFromPage(data: Json): InboxItem[] {
               status: typeof statusUpdate.status === "string" ? statusUpdate.status : "",
               title: inboxString(statusUpdate.title),
             }
+          : null,
+      project:
+        project && typeof project.id === "string"
+          ? { id: project.id, name: typeof project.name === "string" ? project.name : "" }
           : null,
       approval:
         approval && typeof approval.id === "string" && typeof approval.approver_id === "string"
@@ -2525,6 +2537,7 @@ async function listInboxFromRows(tab: InboxTab = "activity"): Promise<InboxItem[
       message: null,
       teamMessage: null,
       statusUpdate: null,
+      project: null,
       approval: (() => {
         const d = item.data;
         const approvalId =
@@ -2556,6 +2569,7 @@ async function listInboxFromRows(tab: InboxTab = "activity"): Promise<InboxItem[
         message: { id: m.id, threadId: m.thread_id ?? m.id, projectId: m.project_id, projectName: m.project.name },
         teamMessage: null,
         statusUpdate: null,
+        project: null,
         approval: null,
       emailFrom: null,
       },
@@ -2582,6 +2596,7 @@ async function listInboxFromRows(tab: InboxTab = "activity"): Promise<InboxItem[
         message: null,
         teamMessage: { id: m.id, threadId: m.thread_id ?? m.id, teamId: m.team_id, teamName: m.team.name },
         statusUpdate: null,
+        project: null,
         approval: null,
       emailFrom: null,
       },
@@ -2605,6 +2620,7 @@ async function listInboxFromRows(tab: InboxTab = "activity"): Promise<InboxItem[
       message: null,
       teamMessage: null,
       statusUpdate: { id: u.id, projectId: u.project_id, projectName: u.project.name, status: u.status, title: u.title },
+      project: null,
       approval: null,
       emailFrom: null,
     };
@@ -3105,6 +3121,14 @@ export const hasAutomationsV2Schema = cache(async (): Promise<boolean> => {
   return !result.error;
 });
 
+// Automations V3's database update (20261021010000_automations_v3_a.sql): its probe function exists.
+// Without it the builder lists V3's vocabulary disabled. (New triggers also need the V3 tail.)
+export const hasAutomationsV3Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("automations_v3_ready");
+  return !result.error && result.data === true;
+});
+
 // The workspace's workweek for business days (Sunday–Thursday until an admin changes it).
 export const getWorkWeek = cache(async (): Promise<number[]> => {
   const supabase = await createClient();
@@ -3147,8 +3171,21 @@ export const listEditableProjectsWithSections = cache(
 );
 
 export const listProjectRules = cache(async (projectId: string): Promise<RuleDef[]> => {
-  const [supabase, v2] = await Promise.all([createClient(), hasAutomationsV2Schema()]);
+  const [supabase, v2, v3] = await Promise.all([createClient(), hasAutomationsV2Schema(), hasAutomationsV3Schema()]);
   const base = "id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key";
+  if (v3) {
+    // Automations V3 adds paused_until (a pause for a while).
+    const result = await supabase
+      .from("rules")
+      .select(
+        "id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key, owner_id, next_run_at, last_edited_by, last_edited_at, run_on_rule_changes, paused_at, pause_reason, consecutive_failures, paused_until",
+      )
+      .eq("project_id", projectId)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    return rows(result, "rules").map(toRuleDef);
+  }
   if (v2) {
     const result = await supabase
       .from("rules")
@@ -5893,4 +5930,93 @@ export const listCommenterMembers = cache(async (): Promise<CommenterMember[]> =
         )
       : [],
   }));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Portfolio rules (Automations V3, batch D). RLS: the portfolio's Viewers+ read rules; runs also need
+// the project. Null = this release's database update isn't applied.
+// ---------------------------------------------------------------------------------------------
+
+const PORTFOLIO_RULE_COLUMNS =
+  "id, portfolio_id, name, enabled, trigger_type, trigger_config, conditions, actions, owner_id, next_run_at, paused_at, pause_reason, last_edited_at, paused_until";
+
+export const listPortfolioRules = cache(async (portfolioId: string): Promise<PortfolioRuleDef[] | null> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("portfolio_rules")
+    .select(PORTFOLIO_RULE_COLUMNS)
+    .eq("portfolio_id", portfolioId)
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
+  return rows(result, "portfolio rules").map(toPortfolioRuleDef);
+});
+
+export const getPortfolioRule = cache(async (ruleId: string): Promise<PortfolioRuleDef | null> => {
+  const supabase = await createClient();
+  const result = await supabase.from("portfolio_rules").select(PORTFOLIO_RULE_COLUMNS).eq("id", ruleId).is("deleted_at", null).maybeSingle();
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
+  const row = maybe(result, "portfolio rule");
+  return row ? toPortfolioRuleDef(row) : null;
+});
+
+// The latest 50 runs of a portfolio's rules (or one rule), with project names the viewer can read.
+export async function listPortfolioRuleRuns(portfolioId: string, ruleId?: string): Promise<PortfolioRuleRun[]> {
+  const supabase = await createClient();
+  let query = supabase
+    .from("portfolio_rule_runs")
+    .select("id, rule_id, project_id, status, detail, created_at")
+    .eq("portfolio_id", portfolioId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (ruleId) query = query.eq("rule_id", ruleId);
+  const result = await query;
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return [];
+  const list = rows(result, "portfolio rule runs");
+  const projectIds = [...new Set(list.map((r) => r.project_id).filter((x): x is string => Boolean(x)))];
+  const names = new Map<string, string>();
+  if (projectIds.length) {
+    const projects = await supabase.from("projects").select("id, name").in("id", projectIds);
+    for (const p of projects.data ?? []) names.set(p.id, p.name);
+  }
+  return list.map((r) => ({
+    id: r.id,
+    ruleId: r.rule_id,
+    projectId: r.project_id,
+    projectName: r.project_id ? (names.get(r.project_id) ?? null) : null,
+    status: r.status as PortfolioRuleRun["status"],
+    detail: r.detail,
+    createdAt: r.created_at,
+  }));
+}
+
+// Other portfolios where the viewer is an Editor+ (Add to another portfolio).
+export async function listEditablePortfolios(exceptId: string): Promise<{ id: string; name: string }[]> {
+  const supabase = await createClient();
+  const viewer = await getViewer();
+  if (!viewer.user) return [];
+  const result = await supabase
+    .from("portfolio_members")
+    .select("portfolio_id, role")
+    .eq("profile_id", viewer.user.id)
+    .is("deleted_at", null)
+    .in("role", ["owner", "admin", "editor"]);
+  const ids = (result.data ?? []).map((m) => m.portfolio_id).filter((x) => x !== exceptId);
+  if (!ids.length) return [];
+  const portfolios = await supabase.from("portfolios").select("id, name").in("id", ids).is("deleted_at", null).order("name");
+  return (portfolios.data ?? []).map((p) => ({ id: p.id, name: p.name }));
+}
+
+// My Tasks rules (Automations V3, batch E): the viewer's own rules (RLS: own rows only). Null = this
+// release's database update isn't applied.
+export const listMyTaskRules = cache(async (): Promise<MyTaskRule[] | null> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("my_task_rules")
+    .select("id, name, enabled, trigger_type, trigger_config, conditions, actions")
+    .is("deleted_at", null)
+    .order("created_at");
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
+  return rows(result, "My Tasks rules").map(toMyTaskRule);
 });
