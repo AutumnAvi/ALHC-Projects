@@ -952,7 +952,7 @@ export function FieldValueInput({
           variant="chip"
           highlight={highlight}
           placeholder="choose checked or unchecked"
-          />
+        />
       );
     case "number":
       return (
