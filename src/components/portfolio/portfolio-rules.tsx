@@ -461,7 +461,7 @@ function TriggerSettings({
           options={statusOptions}
           onChange={(v) => onChange(v.length ? { ...config, statuses: v } : omit(config, "statuses"))}
           variant="chip"
-          placeholder="to any status"
+          placeholder="any status"
           renderValue={(chosen) => (chosen.length ? <span>to {chosen.map((c) => c.label.toLowerCase()).join(" or ")}</span> : undefined)}
         />
       );

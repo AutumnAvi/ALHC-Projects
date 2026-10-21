@@ -347,7 +347,7 @@ export function TriggerFields({
           options={UNBLOCK_KINDS.map((k) => ({ ...k }))}
           onChange={(next) => setConfig({ kinds: next.length ? next : undefined })}
           variant="chip"
-          placeholder="by any dependency"
+          placeholder="any dependency"
           renderValue={(chosen) => (chosen.length ? <span>by {chosen.map((c) => c.label).join(" or ")} dependencies</span> : undefined)}
         />
       );
@@ -421,7 +421,7 @@ export function TriggerFields({
           options={APPROVAL_DECISIONS.map((d) => ({ value: d.value, label: d.label }))}
           onChange={(next) => setConfig({ statuses: next.length ? next : undefined })}
           variant="chip"
-          placeholder="with any decision"
+          placeholder="any decision"
           renderValue={(chosen) => (chosen.length ? <span>as {chosen.map((c) => c.label.toLowerCase()).join(" or ")}</span> : undefined)}
         />
       );
@@ -1341,7 +1341,7 @@ export function ActionFields({
           options={TASK_KIND_OPTIONS.map((k) => ({ value: k.value, label: k.label.toLowerCase() }))}
           onChange={(v) => onChange({ ...action, kind: v })}
           variant="chip"
-          placeholder="choose type"
+          placeholder="choose a task type"
           renderValue={(chosen) => (chosen[0] ? <span>to {chosen[0].label}</span> : undefined)}
         />
       );

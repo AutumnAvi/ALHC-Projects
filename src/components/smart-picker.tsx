@@ -71,6 +71,10 @@ const BUTTON_CLASS = {
   ghost: "btn-ghost",
 } as const;
 
+function hasContent(node: ReactNode) {
+  return node !== null && node !== undefined && node !== false && node !== "";
+}
+
 // Inside a provider set to true, every empty picker (but "ghost" buttons) is highlighted: the rule
 // builder turns it on for a rule that came from a template, so the slots still to fill stand out.
 export const PickerHighlightContext = createContext(false);
@@ -255,8 +259,11 @@ export function SmartPicker(props: SingleProps | MultiProps) {
   }
 
   const empty = selectedOptions.length === 0;
-  const display = renderValue ? (
-    renderValue(selectedOptions)
+  // A renderValue that draws nothing (null / undefined / false / "") falls back to the placeholder, so
+  // the button never ends up blank and invisible.
+  const custom = renderValue ? renderValue(selectedOptions) : null;
+  const display = hasContent(custom) ? (
+    custom
   ) : empty ? (
     <span className={variant === "chip" ? "border-b border-dashed border-current font-normal" : "text-zinc-400"}>{placeholder}</span>
   ) : props.multiple ? (
