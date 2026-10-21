@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { useParamSlot } from "@/components/param-slot";
 import {
   filterOptions,
   flatOptions,
@@ -71,6 +72,10 @@ const BUTTON_CLASS = {
   ghost: "btn-ghost",
 } as const;
 
+function hasContent(node: ReactNode) {
+  return node !== null && node !== undefined && node !== false && node !== "";
+}
+
 // Inside a provider set to true, every empty picker (but "ghost" buttons) is highlighted: the rule
 // builder turns it on for a rule that came from a template, so the slots still to fill stand out.
 export const PickerHighlightContext = createContext(false);
@@ -104,7 +109,9 @@ export function SmartPicker(props: SingleProps | MultiProps) {
     [props.multiple, props.value, options],
   );
   const highlightAll = useContext(PickerHighlightContext);
-  const highlight = props.highlight ?? (highlightAll && variant !== "ghost");
+  // Inside a rule step's ParamSlot: highlighted while that setting is missing (rule-params.ts).
+  const slot = useParamSlot<string & string[]>((value) => (props.onChange as (v: string | string[]) => void)(value));
+  const highlight = props.highlight ?? ((highlightAll || slot.missing) && variant !== "ghost");
   const searchable = props.searchable ?? options.length > 7;
   const autoId = useId();
   const buttonId = props.id ?? `picker-${autoId}`;
@@ -255,8 +262,11 @@ export function SmartPicker(props: SingleProps | MultiProps) {
   }
 
   const empty = selectedOptions.length === 0;
-  const display = renderValue ? (
-    renderValue(selectedOptions)
+  // A renderValue that draws nothing (null / undefined / false / "") falls back to the placeholder, so
+  // the button never ends up blank and invisible.
+  const custom = renderValue ? renderValue(selectedOptions) : null;
+  const display = hasContent(custom) ? (
+    custom
   ) : empty ? (
     <span className={variant === "chip" ? "border-b border-dashed border-current font-normal" : "text-zinc-400"}>{placeholder}</span>
   ) : props.multiple ? (
@@ -281,6 +291,7 @@ export function SmartPicker(props: SingleProps | MultiProps) {
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         disabled={disabled}
+        aria-invalid={slot.missing || undefined}
         data-picker-empty={empty || undefined}
         onClick={() => (open ? close() : openList())}
         onKeyDown={onButtonKey}

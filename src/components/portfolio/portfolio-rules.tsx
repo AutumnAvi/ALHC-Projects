@@ -10,11 +10,12 @@ import { useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronRight, CirclePause, Copy, Play, Plus, Trash2, UserRound, X, Zap } from "lucide-react";
 import { RulePauseControls } from "@/components/rules/rule-pause";
 import { Avatar } from "@/components/avatar";
+import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { RuleDateInput, optionDot, scheduleLabel, type RuleContext } from "@/components/rules/rule-shared";
+import { MISSING_INPUT, RuleDateInput, SlotInput, optionDot, scheduleLabel, type RuleContext } from "@/components/rules/rule-shared";
 import { TriggerFields } from "@/components/rules/rule-editor";
 import { RunSteps } from "@/components/rules/run-steps";
 import {
@@ -47,6 +48,7 @@ import {
   type PortfolioTriggerType,
 } from "@/lib/portfolio-rules";
 import { runReason } from "@/lib/rules";
+import { missingParams, ruleProblems, saveBlockedReason, stepProblems, type StepScope } from "@/lib/rule-params";
 import { runSteps } from "@/lib/rule-steps";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -88,7 +90,7 @@ function scheduleCtx(ctx: PortfolioRuleContext): RuleContext {
 }
 
 function sentence(rule: Pick<PortfolioRuleDef, "triggerType" | "triggerConfig" | "conditions" | "actions">, ctx: PortfolioRuleContext) {
-  return portfolioRuleSentence(rule, ctx, rule.triggerType === "scheduled" ? scheduleLabel(rule.triggerConfig) : undefined);
+  return portfolioRuleSentence(rule, ctx, rule.triggerType === "scheduled" && rule.triggerConfig.frequency ? scheduleLabel(rule.triggerConfig) : undefined);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -356,10 +358,13 @@ function SentenceRow({ word, children }: { word: string; children: ReactNode }) 
 }
 
 function NumberInput({ label, value, min, max, onChange }: { label: string; value: number | null; min: number; max: number; onChange: (n: number) => void }) {
+  const slot = useParamSlot<number>(onChange);
+  const missing = slot.missing && value === null;
   return (
     <input
       type="number"
       aria-label={label}
+      aria-invalid={missing || undefined}
       min={min}
       max={max}
       step={1}
@@ -368,20 +373,37 @@ function NumberInput({ label, value, min, max, onChange }: { label: string; valu
         const n = Number(e.currentTarget.value);
         if (e.currentTarget.value !== "" && Number.isFinite(n)) onChange(Math.min(Math.max(Math.trunc(n), min), max));
       }}
-      className={`${INPUT} w-16`}
+      className={`${INPUT} w-16 ${missing ? MISSING_INPUT : ""}`}
     />
   );
 }
 
-function TextInput({ label, value, onChange, placeholder, wide = false }: { label: string; value: Json | undefined; onChange: (v: string) => void; placeholder?: string; wide?: boolean }) {
+function TextInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  wide = false,
+  maxLength = 1000,
+}: {
+  label: string;
+  value: Json | undefined;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  wide?: boolean;
+  maxLength?: number;
+}) {
+  const slot = useParamSlot<string>(onChange);
+  const missing = slot.missing && str(value).trim() === "";
   return (
     <input
       aria-label={label}
+      aria-invalid={missing || undefined}
       value={str(value)}
       placeholder={placeholder}
-      maxLength={1000}
+      maxLength={maxLength}
       onChange={(e) => onChange(e.currentTarget.value)}
-      className={`${INPUT} ${wide ? "w-full" : "w-56"}`}
+      className={`${INPUT} ${wide ? "w-full" : "w-56"} ${missing ? MISSING_INPUT : ""}`}
     />
   );
 }
@@ -413,12 +435,12 @@ function FieldValue({ ctx, fieldId, value, onChange }: { ctx: PortfolioRuleConte
   if (field.fieldType === "date") return <RuleDateInput label={`${field.name} value`} value={value} onChange={(v) => onChange(v)} />;
   if (field.fieldType === "number") {
     return (
-      <input
+      <SlotInput
         type="number"
-        aria-label={`${field.name} value`}
-        value={typeof value === "number" ? value : ""}
-        onChange={(e) => onChange(e.currentTarget.value === "" ? null : Number(e.currentTarget.value))}
-        className={`${INPUT} w-28`}
+        label={`${field.name} value`}
+        value={typeof value === "number" ? String(value) : ""}
+        onChange={(v) => onChange(v === "" || !Number.isFinite(Number(v)) ? null : Number(v))}
+        className="w-28"
       />
     );
   }
@@ -440,7 +462,7 @@ function FieldPicker({ ctx, value, onChange, options = "all" }: { ctx: Portfolio
   );
 }
 
-function TriggerSettings({
+export function TriggerSettings({
   triggerType,
   config,
   ctx,
@@ -454,30 +476,36 @@ function TriggerSettings({
   switch (triggerType) {
     case "status_changed":
       return (
-        <SmartPicker
-          multiple
-          label="To which statuses"
-          value={strings(config.statuses)}
-          options={statusOptions}
-          onChange={(v) => onChange(v.length ? { ...config, statuses: v } : omit(config, "statuses"))}
-          variant="chip"
-          placeholder="to any status"
-          renderValue={(chosen) => (chosen.length ? <span>to {chosen.map((c) => c.label.toLowerCase()).join(" or ")}</span> : undefined)}
-        />
+        <ParamSlot param="statuses">
+          <SmartPicker
+            multiple
+            label="To which statuses"
+            value={strings(config.statuses)}
+            options={statusOptions}
+            onChange={(v) => onChange(v.length ? { ...config, statuses: v } : omit(config, "statuses"))}
+            variant="chip"
+            placeholder="any status"
+            renderValue={(chosen) => (chosen.length ? <span>to {chosen.map((c) => c.label.toLowerCase()).join(" or ")}</span> : undefined)}
+          />
+        </ParamSlot>
       );
     case "field_changed": {
       const field = ctx.fields.find((f) => f.id === config.field_id);
       return (
         <Row>
-          <FieldPicker ctx={ctx} value={config.field_id} onChange={(v) => onChange({ ...omit(config, "option_id"), field_id: v })} />
+          <ParamSlot param="field_id">
+            <FieldPicker ctx={ctx} value={config.field_id} onChange={(v) => onChange({ ...omit(config, "option_id"), field_id: v })} />
+          </ParamSlot>
           {field?.fieldType === "single_select" ? (
-            <SmartPicker
-              label="Changes to"
-              value={str(config.option_id)}
-              options={[{ value: "", label: "to any value" }, ...field.options.map((o) => ({ value: o.id, label: `to ${o.name}`, icon: optionDot(o.color) }))]}
-              onChange={(v) => onChange(v ? { ...config, option_id: v } : omit(config, "option_id"))}
-              variant="chip"
-            />
+            <ParamSlot param="option_id">
+              <SmartPicker
+                label="Changes to"
+                value={str(config.option_id)}
+                options={[{ value: "", label: "to any value" }, ...field.options.map((o) => ({ value: o.id, label: `to ${o.name}`, icon: optionDot(o.color) }))]}
+                onChange={(v) => onChange(v ? { ...config, option_id: v } : omit(config, "option_id"))}
+                variant="chip"
+              />
+            </ParamSlot>
           ) : null}
         </Row>
       );
@@ -487,7 +515,9 @@ function TriggerSettings({
       const min = triggerType === "item_overdue" ? 1 : 0;
       return (
         <span className="flex items-center gap-1.5">
-          <NumberInput label="Days" value={Math.max(whole(config.days) ?? 1, min)} min={min} max={60} onChange={(n) => onChange({ ...config, days: n })} />
+          <ParamSlot param="days">
+            <NumberInput label="Days" value={Math.max(whole(config.days) ?? 1, min)} min={min} max={60} onChange={(n) => onChange({ ...config, days: n })} />
+          </ParamSlot>
           {triggerType === "due_approaching" ? "days before it’s due" : "days after it’s due"}
         </span>
       );
@@ -499,22 +529,28 @@ function TriggerSettings({
   }
 }
 
-function ConditionSettings({ c, ctx, onChange }: { c: PortfolioRuleItem; ctx: PortfolioRuleContext; onChange: (next: PortfolioRuleItem) => void }) {
+export function ConditionSettings({ c, ctx, onChange }: { c: PortfolioRuleItem; ctx: PortfolioRuleContext; onChange: (next: PortfolioRuleItem) => void }) {
   switch (c.type) {
     case "status_is":
     case "status_is_not":
       return (
-        <SmartPicker multiple label="Statuses" value={strings(c.statuses)} options={statusOptions} onChange={(v) => onChange({ ...c, statuses: v })} variant="chip" placeholder="choose statuses" />
+        <ParamSlot param="statuses">
+          <SmartPicker multiple label="Statuses" value={strings(c.statuses)} options={statusOptions} onChange={(v) => onChange({ ...c, statuses: v })} variant="chip" placeholder="choose statuses" />
+        </ParamSlot>
       );
     case "owner_is":
     case "owner_is_not":
       return (
-        <SmartPicker multiple label="People" value={strings(c.people)} options={peopleOptions(ctx, false)} onChange={(v) => onChange({ ...c, people: v })} variant="chip" placeholder="choose people" searchable />
+        <ParamSlot param="people">
+          <SmartPicker multiple label="People" value={strings(c.people)} options={peopleOptions(ctx, false)} onChange={(v) => onChange({ ...c, people: v })} variant="chip" placeholder="choose people" searchable />
+        </ParamSlot>
       );
     case "due_within":
       return (
         <span className="flex items-center gap-1.5">
-          <NumberInput label="Days" value={whole(c.days)} min={0} max={365} onChange={(n) => onChange({ ...c, days: n })} />
+          <ParamSlot param="days">
+            <NumberInput label="Days" value={whole(c.days)} min={0} max={365} onChange={(n) => onChange({ ...c, days: n })} />
+          </ParamSlot>
           days
         </span>
       );
@@ -522,26 +558,33 @@ function ConditionSettings({ c, ctx, onChange }: { c: PortfolioRuleItem; ctx: Po
       const range = c.op === "between" || c.op === "not_between";
       return (
         <Row>
-          <SmartPicker
-            label="Comparison"
-            value={str(c.op) || null}
-            options={[
-              { value: "before", label: "is before" },
-              { value: "after", label: "is after" },
-              { value: "on", label: "is on" },
-              { value: "on_or_before", label: "is on or before" },
-              { value: "on_or_after", label: "is on or after" },
-              { value: "between", label: "is between" },
-              { value: "not_between", label: "isn’t between" },
-            ]}
-            onChange={(v) => onChange(v === "between" || v === "not_between" ? { ...c, op: v } : { ...omit(c, "to"), op: v })}
-            variant="chip"
-          />
-          <RuleDateInput label="Date" value={c.value} onChange={(v) => onChange(v ? { ...c, value: v } : omit(c, "value"))} />
+          <ParamSlot param="op">
+            <SmartPicker
+              label="Comparison"
+              value={str(c.op) || null}
+              options={[
+                { value: "before", label: "is before" },
+                { value: "after", label: "is after" },
+                { value: "on", label: "is on" },
+                { value: "on_or_before", label: "is on or before" },
+                { value: "on_or_after", label: "is on or after" },
+                { value: "between", label: "is between" },
+                { value: "not_between", label: "isn’t between" },
+              ]}
+              onChange={(v) => onChange(v === "between" || v === "not_between" ? { ...c, op: v } : { ...omit(c, "to"), op: v })}
+              variant="chip"
+              placeholder="choose a comparison"
+            />
+          </ParamSlot>
+          <ParamSlot param="value">
+            <RuleDateInput label="Date" value={c.value} onChange={(v) => onChange(v ? { ...c, value: v } : omit(c, "value"))} />
+          </ParamSlot>
           {range ? (
             <>
               <span className="text-zinc-600">and</span>
-              <RuleDateInput label="To" value={c.to} onChange={(v) => onChange(v ? { ...c, to: v } : omit(c, "to"))} />
+              <ParamSlot param="to">
+                <RuleDateInput label="To" value={c.to} onChange={(v) => onChange(v ? { ...c, to: v } : omit(c, "to"))} />
+              </ParamSlot>
             </>
           ) : null}
         </Row>
@@ -552,8 +595,10 @@ function ConditionSettings({ c, ctx, onChange }: { c: PortfolioRuleItem; ctx: Po
     case "field_is_empty":
       return (
         <Row>
-          <FieldPicker ctx={ctx} value={c.field_id} onChange={(v) => onChange({ type: c.type, field_id: v })} />
-          {c.type === "field_equals" ? <FieldValue ctx={ctx} fieldId={c.field_id} value={c.value} onChange={(v) => onChange({ ...c, value: v })} /> : null}
+          <ParamSlot param="field_id">
+            <FieldPicker ctx={ctx} value={c.field_id} onChange={(v) => onChange({ type: c.type, field_id: v })} />
+          </ParamSlot>
+          {c.type === "field_equals" ? <ParamSlot param="value"><FieldValue ctx={ctx} fieldId={c.field_id} value={c.value} onChange={(v) => onChange({ ...c, value: v })} /></ParamSlot> : null}
         </Row>
       );
     default:
@@ -563,53 +608,69 @@ function ConditionSettings({ c, ctx, onChange }: { c: PortfolioRuleItem; ctx: Po
 
 const PLACEHOLDER_HINT = `Placeholders: ${PORTFOLIO_TEXT_PLACEHOLDERS.map((p) => `{{${p.key}}}`).join(", ")}`;
 
-function ActionSettings({ a, ctx, onChange }: { a: PortfolioRuleItem; ctx: PortfolioRuleContext; onChange: (next: PortfolioRuleItem) => void }) {
+export function ActionSettings({ a, ctx, onChange }: { a: PortfolioRuleItem; ctx: PortfolioRuleContext; onChange: (next: PortfolioRuleItem) => void }) {
   switch (a.type) {
     case "set_status":
       return (
         <Row>
-          <SmartPicker label="Status" value={str(a.status) || null} options={statusOptions} onChange={(v) => onChange({ ...a, status: v })} variant="chip" placeholder="choose status" />
-          <TextInput label="Note (optional)" value={a.note} placeholder="Note (optional)" onChange={(v) => onChange(v ? { ...a, note: v } : omit(a, "note"))} />
+          <ParamSlot param="status">
+            <SmartPicker label="Status" value={str(a.status) || null} options={statusOptions} onChange={(v) => onChange({ ...a, status: v })} variant="chip" placeholder="choose status" />
+          </ParamSlot>
+          <ParamSlot param="note">
+            <TextInput label="Note (optional)" value={a.note} placeholder="Note (optional)" maxLength={2000} onChange={(v) => onChange(v ? { ...a, note: v } : omit(a, "note"))} />
+          </ParamSlot>
         </Row>
       );
     case "status_reminder":
       return (
         <div className="w-full space-y-1">
-          <TextInput label="Message (optional)" value={a.message} wide placeholder="Time for a status update on {{project.name}}." onChange={(v) => onChange(v ? { ...a, message: v } : omit(a, "message"))} />
+          <ParamSlot param="message">
+            <TextInput label="Message (optional)" value={a.message} wide placeholder="Time for a status update on {{project.name}}." onChange={(v) => onChange(v ? { ...a, message: v } : omit(a, "message"))} />
+          </ParamSlot>
           <p className="text-xs text-zinc-500">{PLACEHOLDER_HINT}</p>
         </div>
       );
     case "notify":
       return (
         <div className="w-full space-y-1.5">
-          <SmartPicker multiple label="Who" value={strings(a.people)} options={peopleOptions(ctx, true)} onChange={(v) => onChange({ ...a, people: v })} variant="chip" placeholder="choose who" searchable />
-          <TextInput label="Message" value={a.message} wide placeholder="{{project.name}} is {{project.status}}" onChange={(v) => onChange({ ...a, message: v })} />
+          <ParamSlot param="people">
+            <SmartPicker multiple label="Who" value={strings(a.people)} options={peopleOptions(ctx, true)} onChange={(v) => onChange({ ...a, people: v })} variant="chip" placeholder="choose who" searchable />
+          </ParamSlot>
+          <ParamSlot param="message">
+            <TextInput label="Message" value={a.message} wide placeholder="{{project.name}} is {{project.status}}" onChange={(v) => onChange({ ...a, message: v })} />
+          </ParamSlot>
           <p className="text-xs text-zinc-500">{PLACEHOLDER_HINT}</p>
         </div>
       );
     case "set_owner":
       return (
-        <SmartPicker label="New owner" value={str(a.person) || null} options={peopleOptions(ctx, false)} onChange={(v) => onChange({ ...a, person: v })} variant="chip" placeholder="choose person" searchable />
+        <ParamSlot param="person">
+          <SmartPicker label="New owner" value={str(a.person) || null} options={peopleOptions(ctx, false)} onChange={(v) => onChange({ ...a, person: v })} variant="chip" placeholder="choose person" searchable />
+        </ParamSlot>
       );
     case "set_due_date": {
       const mode = a.mode === "clear" || a.mode === "date" ? a.mode : "relative";
       return (
         <Row>
-          <SmartPicker
-            label="Set or clear"
-            value={mode}
-            options={[
-              { value: "relative", label: "to", description: "Some days from today" },
-              { value: "date", label: "on", description: "A date you pick" },
-              { value: "clear", label: "clear it" },
-            ]}
-            onChange={(v) => onChange(v === "relative" ? portfolioActionDefaults("set_due_date") : { type: a.type, mode: v })}
-            variant="chip"
-          />
-          {mode === "date" ? <RuleDateInput label="Due date" value={a.date} onChange={(v) => onChange(v ? { ...a, date: v } : omit(a, "date"))} /> : null}
+          <ParamSlot param="mode">
+            <SmartPicker
+              label="Set or clear"
+              value={mode}
+              options={[
+                { value: "relative", label: "to", description: "Some days from today" },
+                { value: "date", label: "on", description: "A date you pick" },
+                { value: "clear", label: "clear it" },
+              ]}
+              onChange={(v) => onChange(v === "relative" ? portfolioActionDefaults("set_due_date") : { type: a.type, mode: v })}
+              variant="chip"
+            />
+          </ParamSlot>
+          {mode === "date" ? <ParamSlot param="date"><RuleDateInput label="Due date" value={a.date} onChange={(v) => onChange(v ? { ...a, date: v } : omit(a, "date"))} /></ParamSlot> : null}
           {mode === "relative" ? (
             <>
-              <NumberInput label="Days" value={whole(a.days)} min={-365} max={365} onChange={(n) => onChange({ ...a, days: n })} />
+              <ParamSlot param="days">
+                <NumberInput label="Days" value={whole(a.days)} min={-365} max={365} onChange={(n) => onChange({ ...a, days: n })} />
+              </ParamSlot>
               <SmartPicker
                 label="Days or business days"
                 value={a.business_days === true ? "business" : "days"}
@@ -629,45 +690,74 @@ function ActionSettings({ a, ctx, onChange }: { a: PortfolioRuleItem; ctx: Portf
     case "set_name":
       return (
         <div className="w-full space-y-1">
-          <TextInput label="New name" value={a.name} wide onChange={(v) => onChange({ ...a, name: v })} />
+          <ParamSlot param="name">
+            <TextInput label="New name" value={a.name} wide maxLength={100} onChange={(v) => onChange({ ...a, name: v })} />
+          </ParamSlot>
           <p className="text-xs text-zinc-500">{PLACEHOLDER_HINT}</p>
         </div>
       );
     case "set_field":
       return (
         <Row>
-          <FieldPicker ctx={ctx} value={a.field_id} onChange={(v) => onChange({ type: a.type, field_id: v })} />
-          <FieldValue ctx={ctx} fieldId={a.field_id} value={a.value} onChange={(v) => onChange({ ...a, value: v })} />
+          <ParamSlot param="field_id">
+            <FieldPicker ctx={ctx} value={a.field_id} onChange={(v) => onChange({ type: a.type, field_id: v })} />
+          </ParamSlot>
+          <ParamSlot param="value">
+            <FieldValue ctx={ctx} fieldId={a.field_id} value={a.value} onChange={(v) => onChange({ ...a, value: v })} />
+          </ParamSlot>
         </Row>
       );
     case "add_members":
     case "remove_members":
       return (
         <Row>
-          <SmartPicker multiple label="People" value={strings(a.people)} options={peopleOptions(ctx, false)} onChange={(v) => onChange({ ...a, people: v })} variant="chip" placeholder="choose people" searchable />
+          <ParamSlot param="people">
+            <SmartPicker multiple label="People" value={strings(a.people)} options={peopleOptions(ctx, false)} onChange={(v) => onChange({ ...a, people: v })} variant="chip" placeholder="choose people" searchable />
+          </ParamSlot>
           {a.type === "add_members" ? (
             <>
               <span className="text-zinc-600">as</span>
-              <SmartPicker label="Role" value={str(a.role) || "editor"} options={MEMBER_ROLES.map((r) => ({ ...r }))} onChange={(v) => onChange({ ...a, role: v })} variant="chip" />
+              <ParamSlot param="role">
+                <SmartPicker
+                  label="Role"
+                  value={str(a.role) || "editor"}
+                  options={MEMBER_ROLES.map((r) => ({
+                    ...r,
+                    ...(r.value === "commenter" ? { description: "Only while the Commenter role is on (Admin console → Security)" } : {}),
+                  }))}
+                  onChange={(v) => onChange({ ...a, role: v })}
+                  variant="chip"
+                />
+              </ParamSlot>
             </>
           ) : null}
         </Row>
       );
     case "add_to_portfolio":
       return (
-        <SmartPicker
-          label="Portfolio"
-          value={str(a.portfolio_id) || null}
-          options={ctx.otherPortfolios.map((p) => ({ value: p.id, label: p.name }))}
-          onChange={(v) => onChange({ ...a, portfolio_id: v })}
-          variant="chip"
-          placeholder="choose portfolio"
-          emptyText="You don’t edit another portfolio"
-        />
+        <ParamSlot param="portfolio_id">
+          <SmartPicker
+            label="Portfolio"
+            value={str(a.portfolio_id) || null}
+            options={ctx.otherPortfolios.map((p) => ({ value: p.id, label: p.name }))}
+            onChange={(v) => onChange({ ...a, portfolio_id: v })}
+            variant="chip"
+            placeholder="choose portfolio"
+            emptyText="You don’t edit another portfolio"
+          />
+        </ParamSlot>
       );
     default:
       return null;
   }
+}
+
+const CONDITION_SCOPE: StepScope = { system: "portfolio", kind: "condition" };
+const ACTION_SCOPE: StepScope = { system: "portfolio", kind: "action" };
+
+// The keys a step is still missing (its editors are highlighted).
+function missingKeys(step: PortfolioRuleItem, scope: StepScope) {
+  return missingParams(step, scope).map((p) => p.key);
 }
 
 export function PortfolioRuleBuilder({
@@ -697,6 +787,9 @@ export function PortfolioRuleBuilder({
 
   const draft = { triggerType, triggerConfig, conditions, actions };
   const owner = ownerId ? ctx.members.find((m) => m.id === ownerId) : null;
+  // Every step's settings (rule-params.ts): Save waits until nothing required is missing.
+  const problems = ruleProblems(draft, "portfolio");
+  const blocked = saveBlockedReason(problems);
 
   function save() {
     if (!name.trim()) {
@@ -705,6 +798,10 @@ export function PortfolioRuleBuilder({
     }
     if (actions.length === 0) {
       notify("Add at least one action");
+      return;
+    }
+    if (blocked) {
+      notify(blocked);
       return;
     }
     run(async () => {
@@ -769,8 +866,20 @@ export function PortfolioRuleBuilder({
           />
           {enabled ? "Active" : "Off"}
         </label>
+        {canEdit && blocked ? (
+          <span id="portfolio-rule-save-blocked" role="status" className="max-w-64 truncate text-xs text-amber-800" title={problems.join("\n")}>
+            {blocked}
+          </span>
+        ) : null}
         {canEdit ? (
-          <button type="button" onClick={save} disabled={pending} className="btn-primary h-8 px-3">
+          <button
+            type="button"
+            onClick={save}
+            disabled={pending || Boolean(blocked)}
+            aria-describedby={blocked ? "portfolio-rule-save-blocked" : undefined}
+            data-tooltip={blocked ?? undefined}
+            className="btn-primary h-8 px-3"
+          >
             {pending ? "Saving…" : rule ? "Save" : "Create rule"}
           </button>
         ) : null}
@@ -802,7 +911,10 @@ export function PortfolioRuleBuilder({
               searchable
               panelWidth={340}
             />
-            <TriggerSettings triggerType={triggerType} config={triggerConfig} ctx={ctx} onChange={setTriggerConfig} />
+            <StepParams missing={missingKeys({ type: triggerType, ...triggerConfig }, { system: "portfolio", kind: "trigger" })}>
+              <TriggerSettings triggerType={triggerType} config={triggerConfig} ctx={ctx} onChange={setTriggerConfig} />
+            </StepParams>
+            <StepPrompt problems={stepProblems({ type: triggerType, ...triggerConfig }, { system: "portfolio", kind: "trigger" })} />
           </Row>
         </SentenceRow>
         <SentenceRow word="If">
@@ -818,7 +930,10 @@ export function PortfolioRuleBuilder({
                 variant="chip"
                 searchable
               />
-              <ConditionSettings c={c} ctx={ctx} onChange={(next) => setConditions(conditions.map((x, j) => (j === i ? next : x)))} />
+              <StepParams missing={missingKeys(c, CONDITION_SCOPE)}>
+                <ConditionSettings c={c} ctx={ctx} onChange={(next) => setConditions(conditions.map((x, j) => (j === i ? next : x)))} />
+              </StepParams>
+              <StepPrompt problems={stepProblems(c, CONDITION_SCOPE)} />
               {canEdit ? (
                 <button type="button" aria-label={`Remove condition ${i + 1}`} data-tooltip="Remove condition" onClick={() => setConditions(conditions.filter((_, j) => j !== i))} className="btn-icon size-6">
                   <X className="size-3.5" />
@@ -859,7 +974,10 @@ export function PortfolioRuleBuilder({
                     searchable
                     panelWidth={340}
                   />
-                  <ActionSettings a={a} ctx={ctx} onChange={(next) => setActions(actions.map((x, j) => (j === i ? next : x)))} />
+                  <StepParams missing={missingKeys(a, ACTION_SCOPE)}>
+                    <ActionSettings a={a} ctx={ctx} onChange={(next) => setActions(actions.map((x, j) => (j === i ? next : x)))} />
+                  </StepParams>
+                  <StepPrompt problems={stepProblems(a, ACTION_SCOPE)} />
                   {canEdit ? (
                     <button
                       type="button"

@@ -3,6 +3,7 @@
 import { CalendarDays, Columns3, Contact, PenLine, User, UserMinus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Avatar } from "@/components/avatar";
+import { useParamSlot } from "@/components/param-slot";
 import { Popover } from "@/components/popover";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { SingleDatePicker } from "@/components/task/date-picker";
@@ -20,6 +21,7 @@ import {
   DATE_OPS,
   DUE_FROM,
   EMAIL_RECIPIENTS,
+  EMAIL_TEMPLATES,
   LIST_OPS,
   OFFSET_UNITS,
   RANGE_OPS,
@@ -46,6 +48,7 @@ import {
 } from "@/lib/rules";
 import type { Json } from "@/lib/supabase/database.types";
 import { WEEKDAYS } from "@/lib/workdays";
+import { chooseFor, hasValue } from "@/lib/rule-params";
 
 export type RuleContext = {
   sections: { id: string; name: string }[];
@@ -87,6 +90,8 @@ export function needsUpdate(ctx: RuleContext) {
 }
 
 export const inputClass = "control h-auto min-h-7 py-0.5";
+// A text or number box whose setting is still missing (rule-params.ts): the amber of an empty picker.
+export const MISSING_INPUT = "border-amber-300 bg-amber-50 ring-1 ring-amber-300";
 
 const FIELD_TYPE_LABELS: Record<string, string> = {
   text: "Text",
@@ -110,6 +115,24 @@ function str(value: Json | undefined) {
 
 export function sectionName(ctx: RuleContext, id: Json | undefined) {
   return ctx.sections.find((s) => s.id === id)?.name ?? "a removed section";
+}
+
+// The summary's "(choose a task type)" for a project rule step's setting that's still missing.
+const ask = {
+  trigger: (type: string, key: string) => chooseFor(type, key, { system: "project", kind: "trigger" }),
+  condition: (type: string, key: string) => chooseFor(type, key, { system: "project", kind: "condition" }),
+  action: (type: string, key: string) => chooseFor(type, key, { system: "project", kind: "action" }),
+};
+
+// Set (not empty) for the summary: a missing value reads as "(choose …)".
+function given(value: Json | undefined) {
+  return hasValue(value, { editor: "text" });
+}
+
+// Rule text in a summary: quoted, cut at 40 characters.
+export function quoteText(value: Json | undefined) {
+  const text = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  return `“${text.length > 40 ? `${text.slice(0, 39)}…` : text}”`;
 }
 
 function fieldName(ctx: RuleContext, id: Json | undefined) {
@@ -136,14 +159,14 @@ function peopleFieldName(ctx: RuleContext, fieldId: string) {
 
 export function fieldValueLabel(ctx: RuleContext, fieldId: Json | undefined, value: Json | undefined) {
   const field = ctx.fields.find((f) => f.id === fieldId);
-  if (!field) return String(value ?? "");
+  if (value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) return "empty";
+  if (!field) return String(value);
   if (field.boundToSections) return sectionName(ctx, value);
   if (field.fieldType === "single_select" || field.fieldType === "multi_select") {
     const ids = Array.isArray(value) ? value : [value];
     return ids.map((id) => field.options.find((o) => o.id === id)?.name ?? "?").join(", ");
   }
   if (field.fieldType === "boolean") return value === true ? "checked" : "unchecked";
-  if (value === null || value === undefined || value === "") return "empty";
   return String(value);
 }
 
@@ -260,9 +283,9 @@ function dayText(value: Json | undefined) {
 export function describeDateAction(a: RuleAction) {
   const what = a.type === "set_start_date" ? "start date" : "due date";
   if (a.mode === "clear") return `clear the ${what}`;
-  if (a.mode === "date") return `set the ${what} to ${dayText(a.date)}`;
+  if (a.mode === "date") return `set the ${what} to ${given(a.date) ? dayText(a.date) : ask.action(a.type, "date")}`;
   const n = wholeNumber(a.days);
-  if (n === null) return `set the ${what}`;
+  if (n === null) return `set the ${what} to ${ask.action(a.type, "days")}`;
   const unit = a.unit === "weeks" || a.unit === "hours" ? a.unit : "days";
   if (unit === "hours") return `set the ${what} to ${offsetLabel(n, "hours")} from now`;
   const from = dueFromLabel(a.from);
@@ -288,25 +311,26 @@ export function dateChangeLabel(value: Json | undefined) {
 
 export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConfig">, ctx: RuleContext) {
   const cfg = rule.triggerConfig;
-  switch (rule.triggerType) {
+  const t = rule.triggerType;
+  switch (t) {
     case "section_changed":
       return cfg.section_id ? `A task moves into ${sectionName(ctx, cfg.section_id)}` : "A task moves to another section";
     case "section_left":
-      return `A task moves out of ${sectionName(ctx, cfg.section_id)}`;
+      return `A task moves out of ${given(cfg.section_id) ? sectionName(ctx, cfg.section_id) : ask.trigger(t, "section_id")}`;
     case "task_unblocked": {
       const kinds = Array.isArray(cfg.kinds) ? cfg.kinds.map((k) => labelOf(UNBLOCK_KINDS, k).toLowerCase()) : [];
-      return kinds.length ? `A task is no longer blocked (${joinWords(kinds, "or")})` : "A task is no longer blocked";
+      return kinds.length ? `A task is no longer blocked by a ${joinWords(kinds, "or")} dependency` : "A task is no longer blocked by any dependency";
     }
     case "task_type_changed":
-      return cfg.kind ? `A task becomes ${kindArticle(cfg.kind)}` : "A task’s type changes";
+      return cfg.kind ? `A task becomes ${kindArticle(cfg.kind)}` : "A task’s type changes to any type";
     case "field_changed": {
-      const base = `${fieldName(ctx, cfg.field_id)} changes`;
-      return cfg.option_id ? `${base} to ${fieldValueLabel(ctx, cfg.field_id, cfg.option_id)}` : base;
+      const base = `${given(cfg.field_id) ? fieldName(ctx, cfg.field_id) : ask.trigger(t, "field_id")} changes`;
+      return cfg.option_id ? `${base} to ${fieldValueLabel(ctx, cfg.field_id, cfg.option_id)}` : `${base} to any value`;
     }
     case "due_approaching":
     case "start_approaching": {
       const { amount, unit } = triggerOffset(cfg);
-      const what = rule.triggerType === "due_approaching" ? "is due" : "starts";
+      const what = t === "due_approaching" ? "is due" : "starts";
       return amount === 0 && unit === "days" ? `A task ${what} today` : `A task ${what} in ${offsetLabel(amount, unit)}`;
     }
     case "start_reached": {
@@ -315,14 +339,14 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
     }
     case "start_date_changed":
     case "due_date_changed": {
-      const what = rule.triggerType === "due_date_changed" ? "A due date" : "A start date";
+      const what = t === "due_date_changed" ? "A due date" : "A start date";
       return cfg.change === "set" ? `${what} is set or moved` : cfg.change === "cleared" ? `${what} is cleared` : `${what} changes`;
     }
     case "approval_decided": {
       const statuses = Array.isArray(cfg.statuses) ? cfg.statuses : [];
       return statuses.length
-        ? `An approval is ${statuses.map((s) => labelOf(APPROVAL_DECISIONS, s).toLowerCase()).join(" or ")}`
-        : "An approval is decided";
+        ? `An approval is ${statuses.map((x) => labelOf(APPROVAL_DECISIONS, x).toLowerCase()).join(" or ")}`
+        : "An approval gets any decision";
     }
     case "form_submitted":
       return cfg.form_id
@@ -345,7 +369,7 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
     case "attachment_added":
       return "A file is attached";
     case "tag_added":
-      return cfg.tag_id ? `Tag “${tagName(ctx, cfg.tag_id)}” is added` : "A tag is added";
+      return cfg.tag_id ? `Tag “${tagName(ctx, cfg.tag_id)}” is added` : "Any tag is added";
     case "task_overdue": {
       // How long overdue when the rule runs (1 day = the day after the due date; missing or 0 days count
       // as 1), as rule_date_tick reads it. Hours count from the due time (the end of the day without one).
@@ -354,7 +378,7 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
       return `A task is ${offsetLabel(unit === "days" ? Math.max(amount, 1) : amount, unit)} overdue`;
     }
     case "scheduled":
-      return scheduleLabel(cfg);
+      return given(cfg.frequency) ? scheduleLabel(cfg) : `On a schedule ${ask.trigger(t, "frequency")}`;
     case "manual":
       return "Someone runs it from a task";
     case "follower_added": {
@@ -362,63 +386,71 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
       return names.length ? `${joinWords(names, "or")} starts following a task` : "A collaborator is added";
     }
     default:
-      return labelOf(TRIGGERS, rule.triggerType);
+      return labelOf(TRIGGERS, t);
   }
 }
 
 export function describeCondition(c: RuleCondition, ctx: RuleContext) {
-  switch (c.type) {
+  const t = c.type;
+  const choose = (key: string) => ask.condition(t, key);
+  const section = (key: string) => (given(c[key]) ? sectionName(ctx, c[key]) : choose(key));
+  const field = () => (given(c.field_id) ? fieldName(ctx, c.field_id) : choose("field_id"));
+  const people = () => {
+    const names = peopleNames(ctx, c.people);
+    return names.length ? joinWords(names, "or") : choose("people");
+  };
+  switch (t) {
     case "section_is":
     case "section_is_not":
-      return `${labelOf(CONDITIONS, c.type).toLowerCase()} ${sectionName(ctx, c.section_id)}`;
+      return `${labelOf(CONDITIONS, t).toLowerCase()} ${section("section_id")}`;
     case "field_equals":
-      return `${fieldName(ctx, c.field_id)} is ${fieldValueLabel(ctx, c.field_id, c.value)}`;
+      return `${field()} is ${given(c.value) ? fieldValueLabel(ctx, c.field_id, c.value) : choose("value")}`;
     case "field_is_set":
     case "field_is_empty":
-      return `${fieldName(ctx, c.field_id)} is ${c.type === "field_is_set" ? "set" : "empty"}`;
-    case "source_is":
+      return `${field()} is ${t === "field_is_set" ? "set" : "empty"}`;
+    case "source_is": {
       if (c.source === "form" && c.form_id) return `task came from “${ctx.forms.find((f) => f.id === c.form_id)?.title ?? "a removed form"}”`;
-      return `task came from ${
-        c.source === "form" ? "a form" : c.source === "inbound" ? "an inbound webhook" : c.source === "manual" ? "the app" : str(c.source)
-      }`;
+      const from =
+        c.source === "form" ? "a form" : c.source === "inbound" ? "an inbound webhook" : c.source === "manual" ? "the app" : c.source === "import" ? "an import" : choose("source");
+      return `task came from ${from}`;
+    }
     case "person_compare": {
-      const left = sideName(ctx, c.left);
-      const names = peopleNames(ctx, c.people);
-      const right = names.length ? joinWords(names, "or") : "…";
-      return `${left} ${personCompareVerb(c.left, c.op === "is_not")} ${right}`;
+      const left = given(c.left) ? sideName(ctx, c.left) : choose("left");
+      const verb = c.op === "is" || c.op === "is_not" ? personCompareVerb(c.left, c.op === "is_not") : choose("op");
+      return `${left} ${verb} ${people()}`;
     }
     case "field_compare": {
       const op = COMPARE_OPS.find((o) => o.value === c.op);
-      if (!op) return `${fieldName(ctx, c.field_id)} compares`;
+      if (!op) return `${field()} ${choose("op")}`;
+      const value = (key: string) => (given(c[key]) ? compareValueLabel(ctx, c.field_id, c[key]) : choose(key));
       if (LIST_OPS.has(op.value)) {
         const names = Array.isArray(c.value) ? c.value.map((v) => fieldValueLabel(ctx, c.field_id, v)) : [];
-        return `${fieldName(ctx, c.field_id)} ${op.label} ${names.length ? joinWords(names, "or") : "…"}`;
+        return `${field()} ${op.label} ${names.length ? joinWords(names, "or") : choose("value")}`;
       }
-      if (RANGE_OPS.has(op.value)) {
-        return `${fieldName(ctx, c.field_id)} ${op.label} ${compareValueLabel(ctx, c.field_id, c.value)} and ${compareValueLabel(ctx, c.field_id, c.to)}`;
-      }
-      return `${fieldName(ctx, c.field_id)} ${op.label} ${compareValueLabel(ctx, c.field_id, c.value)}`;
+      if (RANGE_OPS.has(op.value)) return `${field()} ${op.label} ${value("value")} and ${value("to")}`;
+      return `${field()} ${op.label} ${value("value")}`;
     }
     case "has_tag":
-      return `has tag “${tagName(ctx, c.tag_id)}”`;
+      return `has tag ${given(c.tag_id) ? `“${tagName(ctx, c.tag_id)}”` : choose("tag_id")}`;
     case "lacks_tag":
-      return `doesn’t have tag “${tagName(ctx, c.tag_id)}”`;
+      return `doesn’t have tag ${given(c.tag_id) ? `“${tagName(ctx, c.tag_id)}”` : choose("tag_id")}`;
     case "assignee_is":
-    case "creator_is": {
-      const names = peopleNames(ctx, c.people);
-      return `${c.type === "creator_is" ? "created by" : "assignee is"} ${names.length ? joinWords(names, "or") : "…"}`;
-    }
+      return `assignee is ${people()}`;
+    case "creator_is":
+      return `created by ${people()}`;
     case "assignee_is_not": {
       const names = peopleNames(ctx, c.people);
       if (names.length === 2) return `assignee is neither ${names[0]} nor ${names[1]}`;
-      return names.length > 2 ? `assignee is none of ${joinWords(names, "and")}` : `assignee is not ${names[0] ?? "…"}`;
+      return names.length > 2 ? `assignee is none of ${joinWords(names, "and")}` : `assignee is not ${names[0] ?? choose("people")}`;
     }
     case "is_overdue":
       return "is overdue";
-    case "due_within": {
+    case "due_within":
+    case "start_within": {
       const days = wholeNumber(c.days);
-      if (days === null) return "is due within a few days";
-      return days === 0 ? "is due today" : `is due within ${days} day${days === 1 ? "" : "s"}`;
+      const verb = t === "due_within" ? "is due" : "starts";
+      if (days === null) return `${verb} within ${choose("days")}`;
+      return days === 0 ? `${verb} today` : `${verb} within ${days} day${days === 1 ? "" : "s"}`;
     }
     case "has_due_date":
       return "has a due date";
@@ -430,26 +462,21 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
       return "has no start date";
     case "has_started":
       return "its start date has arrived";
-    case "start_within": {
-      const days = wholeNumber(c.days);
-      if (days === null) return "starts within a few days";
-      return days === 0 ? "starts today" : `starts within ${days} day${days === 1 ? "" : "s"}`;
-    }
     case "date_compare": {
-      const subject = c.date === "start" ? "the start date" : "the due date";
+      const subject = c.date === "start" ? "the start date" : c.date === "due" ? "the due date" : choose("date");
       const op = DATE_OPS.find((o) => o.value === c.op);
-      if (!op) return `${subject} is …`;
-      const first = dayText(c.value);
-      return RANGE_OPS.has(op.value) ? `${subject} ${op.label} ${first} and ${dayText(c.to)}` : `${subject} ${op.label} ${first}`;
+      if (!op) return `${subject} ${choose("op")}`;
+      const day = (key: string) => (given(c[key]) ? dayText(c[key]) : choose(key));
+      return RANGE_OPS.has(op.value) ? `${subject} ${op.label} ${day("value")} and ${day("to")}` : `${subject} ${op.label} ${day("value")}`;
     }
     case "task_type_is":
     case "task_type_is_not":
-      return `task type ${c.type === "task_type_is" ? "is" : "isn’t"} ${c.kind ? labelOf(TASK_KIND_OPTIONS, c.kind) : "…"}`;
+      return `task type ${t === "task_type_is" ? "is" : "isn’t"} ${c.kind ? labelOf(TASK_KIND_OPTIONS, c.kind) : choose("kind")}`;
     case "section_is_one_of":
     case "section_is_none_of": {
       const names = Array.isArray(c.section_ids) ? c.section_ids.map((id) => sectionName(ctx, id)) : [];
-      if (!names.length) return `section is ${c.type === "section_is_one_of" ? "one" : "none"} of …`;
-      return c.type === "section_is_one_of"
+      if (!names.length) return `section is ${t === "section_is_one_of" ? "one" : "none"} of ${choose("section_ids")}`;
+      return t === "section_is_one_of"
         ? `section is ${joinWords(names, "or")}`
         : names.length === 1
           ? `section isn’t ${names[0]}`
@@ -461,7 +488,7 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
       return "isn’t blocked";
     case "approval_status_is": {
       const names = Array.isArray(c.statuses) ? c.statuses.map((x) => labelOf(APPROVAL_STATUSES, x).toLowerCase()) : [];
-      return names.length ? `approval status is ${joinWords(names, "or")}` : "approval status is …";
+      return `approval status is ${names.length ? joinWords(names, "or") : choose("statuses")}`;
     }
     case "has_attachment":
       return "has an attachment";
@@ -476,111 +503,127 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
     case "all_subtasks_done":
       return "all subtasks are done";
     case "title_contains":
-      return `name contains “${str(c.text)}”`;
-    case "form_answer_contains":
-      return c.question_id
-        ? `the answer to “${formQuestionLabel(ctx, c.question_id)}” contains “${str(c.text)}”`
-        : `a form answer contains “${str(c.text)}”`;
+      return `name contains ${given(c.text) ? quoteText(c.text) : choose("text")}`;
+    case "form_answer_contains": {
+      const text = given(c.text) ? quoteText(c.text) : choose("text");
+      return c.question_id ? `the answer to “${formQuestionLabel(ctx, c.question_id)}” contains ${text}` : `a form answer contains ${text}`;
+    }
     default:
-      return labelOf(CONDITIONS, c.type).toLowerCase();
+      return labelOf(CONDITIONS, t).toLowerCase();
   }
 }
 
 export function describeAction(a: RuleAction, ctx: RuleContext) {
-  switch (a.type) {
+  const t = a.type;
+  const choose = (key: string) => ask.action(t, key);
+  const people = (key = "people", word: "and" | "or" = "and") => {
+    const names = peopleNames(ctx, a[key]);
+    return names.length ? joinWords(names, word) : choose(key);
+  };
+  const quoted = (key: string) => (given(a[key]) ? quoteText(a[key]) : choose(key));
+  const otherProject = () => {
+    const project = otherProjectOf(ctx, a.project_id);
+    if (!given(a.project_id)) return choose("project_id");
+    const section = project?.sections.find((x) => x.id === a.section_id);
+    return `${project ? `“${project.name}”` : "another project"}${section ? ` in “${section.name}”` : ""}`;
+  };
+  switch (t) {
     case "move_section":
-      return `move to ${sectionName(ctx, a.section_id)}`;
+      return `move to ${given(a.section_id) ? sectionName(ctx, a.section_id) : choose("section_id")}`;
     case "set_field":
-      return `set ${fieldName(ctx, a.field_id)} to ${fieldValueLabel(ctx, a.field_id, a.value)}`;
+      return given(a.field_id) ? `set ${fieldName(ctx, a.field_id)} to ${fieldValueLabel(ctx, a.field_id, a.value)}` : `set ${choose("field_id")}`;
     case "set_assignee": {
       if (a.mode === "round_robin" || a.mode === "balanced") {
-        const names = peopleNames(ctx, a.people);
-        const pool = names.length ? joinWords(names, "and") : "…";
-        return a.mode === "round_robin" ? `assign round robin among ${pool}` : `assign whoever has the fewest open tasks of ${pool}`;
+        return a.mode === "round_robin" ? `assign round robin among ${people()}` : `assign whoever has the fewest open tasks of ${people()}`;
       }
-      return a.assignee ? `assign ${personName(ctx, a.assignee)}` : a.assignee === "" ? "assign someone (choose a person)" : "unassign";
+      return a.assignee === null ? "unassign" : given(a.assignee) ? `assign ${personName(ctx, a.assignee)}` : `assign ${choose("assignee")}`;
     }
-    case "remove_followers": {
-      const names = peopleNames(ctx, a.people);
-      return `remove follower${names.length === 1 ? "" : "s"} ${names.length ? joinWords(names, "and") : "…"}`;
-    }
+    case "remove_followers":
+      return `remove follower${peopleNames(ctx, a.people).length === 1 ? "" : "s"} ${people()}`;
     case "add_comment":
-      return "comment";
+      return `comment ${quoted("body")}`;
     case "add_followers":
-    case "notify": {
-      const people = Array.isArray(a.people) ? a.people.map((p) => personName(ctx, p)).join(", ") : "";
-      return `${a.type === "notify" ? "notify" : "add follower"} ${people}`;
-    }
+      return `add follower${peopleNames(ctx, a.people).length === 1 ? "" : "s"} ${people()}`;
+    case "notify":
+      return `notify ${people()}: ${quoted("message")}`;
     case "request_approval":
-      return `ask ${personName(ctx, a.approver)} to approve`;
-    case "send_email":
-      return `email ${
+      return `ask ${given(a.approver) ? personName(ctx, a.approver) : choose("approver")} to approve`;
+    case "send_email": {
+      const to =
         a.to === "address"
-          ? str(a.address)
+          ? given(a.address)
+            ? str(a.address)
+            : choose("address")
           : a.to === "field"
-            ? `the address in ${fieldName(ctx, a.field_id)}`
-            : labelOf(EMAIL_RECIPIENTS, a.to).toLowerCase()
-      }`;
+            ? `the address in ${given(a.field_id) ? fieldName(ctx, a.field_id) : choose("field_id")}`
+            : given(a.to)
+              ? labelOf(EMAIL_RECIPIENTS, a.to).toLowerCase()
+              : choose("to");
+      const template = given(a.template) ? ` (${labelOf(EMAIL_TEMPLATES, a.template).toLowerCase()})` : "";
+      const subject = given(a.subject) ? ` ${quoteText(a.subject)}` : "";
+      const message = a.template === "custom" && !given(a.message) ? ` ${choose("message")}` : given(a.message) ? `: ${quoteText(a.message)}` : "";
+      const include = given(a.include_field_id) ? ` with ${fieldName(ctx, a.include_field_id)}` : "";
+      return `email ${to}${template}${subject}${message}${include}`;
+    }
     case "send_slack":
-      return `post to Slack${a.format === "blocks" ? " as a task card" : ""} (${a.use_project_webhook !== true && str(a.webhook_hint) ? str(a.webhook_hint) : "project webhook"})`;
+      return `post ${quoted("message")} to Slack${a.format === "blocks" ? " as a task card" : ""} (${a.use_project_webhook !== true && str(a.webhook_hint) ? str(a.webhook_hint) : "project webhook"})`;
     case "call_webhook":
       return `call webhook (${a.use_project_webhook !== true && str(a.url_hint) ? str(a.url_hint) : "project webhook"}${a.signing_set === true ? ", signed" : ""})`;
     case "delay":
-      return `wait ${a.hours} h`;
+      return typeof a.hours === "number" && Number.isFinite(a.hours) ? `wait ${a.hours} h` : `wait ${choose("hours")}`;
     case "complete_task":
       return "mark complete";
     case "reopen_task":
       return "mark incomplete";
     case "set_title":
-      return `rename to “${str(a.title)}”`;
+      return `rename to ${quoted("title")}`;
     case "create_subtasks": {
-      const titles = Array.isArray(a.titles) ? a.titles.filter((t): t is string => typeof t === "string" && t.trim() !== "") : [];
-      const what =
-        titles.length === 0 ? "create subtasks" : titles.length === 1 ? `create subtask “${titles[0]}”` : `create ${titles.length} subtasks`;
+      const titles = Array.isArray(a.titles) ? a.titles.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
+      const what = titles.length === 0 ? `create subtasks ${choose("titles")}` : titles.length === 1 ? `create subtask ${quoteText(titles[0])}` : `create ${titles.length} subtasks`;
       return a.assignee ? `${what} assigned to ${personName(ctx, a.assignee)}` : what;
     }
     case "apply_task_template":
-      return `apply template “${templateName(ctx, a.template_id)}”`;
-    case "add_to_project": {
-      const project = otherProjectOf(ctx, a.project_id);
-      const section = project?.sections.find((s) => s.id === a.section_id);
-      return `add to ${project ? `“${project.name}”` : "another project"}${section ? ` in “${section.name}”` : ""}`;
-    }
+      return `apply template ${given(a.template_id) ? `“${templateName(ctx, a.template_id)}”` : choose("template_id")}`;
+    case "add_to_project":
+      return `add to ${otherProject()}`;
+    case "move_to_project":
+      return `move to ${otherProject()}`;
     case "set_due_date":
     case "set_start_date":
       return describeDateAction(a);
     case "create_task": {
       const kind = a.kind === "milestone" || a.kind === "approval" ? a.kind : "task";
       const project = a.project_id && a.project_id !== "" ? otherProjectOf(ctx, a.project_id) : null;
-      const where = project ? ` in “${project.name}”` : a.project_id ? " in another project" : "";
+      const sections = project ? project.sections : a.project_id ? [] : ctx.sections;
+      const section = sections.find((x) => x.id === a.section_id);
+      const where = `${project ? ` in “${project.name}”` : a.project_id ? " in another project" : ""}${section ? ` › ${section.name}` : ""}`;
       const link = a.link === "blocked_by" ? " waiting on this one" : a.link === "blocking" ? " that this one waits on" : "";
-      const title = str(a.title);
-      return `create ${kindArticle(kind)}${title ? ` “${title}”` : ""}${where}${a.assignee ? ` for ${personName(ctx, a.assignee)}` : ""}${link}`;
-    }
-    case "move_to_project": {
-      const project = otherProjectOf(ctx, a.project_id);
-      const section = project?.sections.find((x) => x.id === a.section_id);
-      return `move to ${project ? `“${project.name}”` : "another project"}${section ? ` in “${section.name}”` : ""}`;
+      const due = typeof a.due_days === "number" ? `, due in ${a.due_days} ${a.business_days === true ? "business " : ""}day${a.due_days === 1 ? "" : "s"}` : "";
+      return `create ${kindArticle(kind)} ${quoted("title")}${where}${a.assignee ? ` for ${personName(ctx, a.assignee)}` : ""}${due}${link}`;
     }
     case "remove_from_project":
       return "remove from this project";
     case "convert_to_project": {
-      const template = ctx.projectTemplates?.find((t) => t.id === a.template_id);
+      const template = ctx.projectTemplates?.find((x) => x.id === a.template_id);
       const portfolio = ctx.portfolios?.find((p) => p.id === a.portfolio_id);
-      return `convert to a project${template ? ` from “${template.name}”` : a.template_id ? " from a template" : ""}${
-        portfolio ? ` in “${portfolio.name}”` : ""
-      }${a.complete_task === true ? " and complete the task" : ""}`;
+      return `convert to a project${given(a.name) ? ` ${quoteText(a.name)}` : ""}${template ? ` from “${template.name}”` : a.template_id ? " from a template" : ""}${
+        portfolio ? ` in “${portfolio.name}”` : a.portfolio_id ? " in a portfolio" : ""
+      }${a.complete_task === true ? " and complete the task" : ""}${a.members === "task_people" ? " (inviting the task’s people)" : ""}`;
     }
     case "set_task_type":
-      return a.kind ? `make it ${kindArticle(a.kind)}` : "set the task type";
-    case "set_description":
-      return a.mode === "append" ? "add to the end of the description" : a.mode === "prepend" ? "add to the start of the description" : "set the description";
+      return `make it ${a.kind ? kindArticle(a.kind) : choose("kind")}`;
+    case "set_description": {
+      const text = given(a.text) ? quoteText(a.text) : null;
+      if (a.mode === "append") return `add ${text ?? choose("text")} to the end of the description`;
+      if (a.mode === "prepend") return `add ${text ?? choose("text")} to the start of the description`;
+      return text ? `set the description to ${text}` : "clear the description";
+    }
     case "add_tag":
-      return `add tag “${tagName(ctx, a.tag_id)}”`;
+      return `add tag ${given(a.tag_id) ? `“${tagName(ctx, a.tag_id)}”` : choose("tag_id")}`;
     case "remove_tag":
-      return `remove tag “${tagName(ctx, a.tag_id)}”`;
+      return `remove tag ${given(a.tag_id) ? `“${tagName(ctx, a.tag_id)}”` : choose("tag_id")}`;
     default:
-      return labelOf(ACTIONS, a.type).toLowerCase();
+      return labelOf(ACTIONS, t).toLowerCase();
   }
 }
 
@@ -900,33 +943,72 @@ export function FieldValueInput({
         <SmartPicker
           id={id}
           label={`${field.name} value`}
-          value={value === true ? "true" : "false"}
+          value={value === true ? "true" : value === false ? "false" : null}
           options={[
             { value: "true", label: "Checked" },
             { value: "false", label: "Unchecked" },
           ]}
           onChange={(v) => onChange(v === "true")}
           variant="chip"
+          highlight={highlight}
+          placeholder="choose checked or unchecked"
         />
       );
     case "number":
       return (
-        <input
+        <SlotInput
           id={id}
-          aria-label={`${field.name} value`}
+          label={`${field.name} value`}
           type="number"
-          value={typeof value === "number" ? value : ""}
-          onChange={(e) => onChange(e.currentTarget.value === "" ? null : Number(e.currentTarget.value))}
-          className={`${inputClass} w-28`}
+          value={typeof value === "number" ? String(value) : ""}
+          onChange={(v) => onChange(v === "" || !Number.isFinite(Number(v)) ? null : Number(v))}
+          className="w-28"
         />
       );
     case "date":
       return <RuleDateInput id={id} label={`${field.name} value`} value={value} onChange={onChange} highlight={highlight} />;
     default:
       return (
-        <input id={id} aria-label={`${field.name} value`} value={str(value)} maxLength={1000} onChange={(e) => onChange(e.currentTarget.value)} className={inputClass} />
+        <SlotInput id={id} label={`${field.name} value`} value={str(value)} onChange={(v) => onChange(v)} />
       );
   }
+}
+
+// A plain text or number box for a rule setting; inside a ParamSlot it's highlighted while empty.
+export function SlotInput({
+  id,
+  label,
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  maxLength = 1000,
+  className = "",
+}: {
+  id?: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: "text" | "number" | "email";
+  placeholder?: string;
+  maxLength?: number;
+  className?: string;
+}) {
+  const slot = useParamSlot<string>(onChange);
+  const missing = slot.missing && value.trim() === "";
+  return (
+    <input
+      id={id}
+      type={type}
+      aria-label={label}
+      aria-invalid={missing || undefined}
+      placeholder={placeholder}
+      value={value}
+      maxLength={type === "number" ? undefined : maxLength}
+      onChange={(e) => onChange(e.currentTarget.value)}
+      className={`${inputClass} ${className} ${missing ? MISSING_INPUT : ""}`}
+    />
+  );
 }
 
 // A day for a rule (YYYY-MM-DD): a chip that opens the app's date picker (quick picks, a calendar, and a
@@ -947,13 +1029,16 @@ export function RuleDateInput({
   highlight?: boolean;
 }) {
   const day = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+  // Inside a rule step's ParamSlot: highlighted while the date is still missing (rule-params.ts).
+  const slot = useParamSlot<string | null>(onChange);
+  const lit = highlight || slot.missing;
   return (
     <Popover
       label={`${label}: ${day ? dayLabel(day, 0) : "not chosen"}. Change`}
       buttonId={id}
       panelClassName="w-[19rem] p-0"
       buttonClassName={`inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-left font-medium hover:bg-accent-50 aria-expanded:bg-accent-50 ${
-        day ? "text-accent-700" : highlight ? "bg-amber-50 text-amber-800 ring-1 ring-amber-300" : "text-zinc-500 underline decoration-dashed underline-offset-4"
+        day ? "text-accent-700" : lit ? "bg-amber-50 text-amber-800 ring-1 ring-amber-300" : "text-zinc-500 underline decoration-dashed underline-offset-4"
       }`}
       button={
         <>

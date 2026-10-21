@@ -127,3 +127,22 @@ test("an empty chip shows its placeholder; a template slot that still needs a va
   assert.match(html, /data-picker-empty="true"/);
   assert.match(html, /bg-amber-50/);
 });
+
+test("a renderValue that draws nothing for an empty choice falls back to the placeholder", () => {
+  for (const nothing of [undefined, null, false, ""] as const) {
+    const single = renderToStaticMarkup(
+      <SmartPicker label="Task type" value={null} options={options} onChange={() => {}} variant="chip" placeholder="choose a task type" renderValue={() => nothing} />,
+    );
+    assert.match(single, /choose a task type/, `single, renderValue → ${String(nothing)}`);
+    const multi = renderToStaticMarkup(
+      <SmartPicker multiple label="Which dependencies" value={[]} options={options} onChange={() => {}} variant="chip" placeholder="any dependency" renderValue={() => nothing} />,
+    );
+    assert.match(multi, /any dependency/, `multiple, renderValue → ${String(nothing)}`);
+  }
+  // A chosen value still draws what renderValue returns.
+  const chosen = renderToStaticMarkup(
+    <SmartPicker label="Task type" value="c" options={options} onChange={() => {}} placeholder="choose a task type" renderValue={(c) => <span>to {c[0]?.label}</span>} />,
+  );
+  assert.match(chosen, /to Cherry/);
+  assert.doesNotMatch(chosen, /choose a task type/);
+});

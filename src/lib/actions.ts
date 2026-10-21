@@ -53,6 +53,7 @@ import {
   type FormAnswers,
   type FormQuestion,
 } from "@/lib/forms";
+import { ruleProblems, type RuleStep, type RuleSystem } from "@/lib/rule-params";
 import { branchProblem, isTriggerType, runReason, splitBranches, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { parseRuleTestResult, type RuleTestResult } from "@/lib/rule-steps";
 import { isPortfolioTrigger } from "@/lib/portfolio-rules";
@@ -4253,9 +4254,21 @@ async function checkBranches(input: RuleInput) {
   if (problem) throw new InputError(problem);
 }
 
+// Every step's required settings (src/lib/rule-params.ts, the builders' own check): the first
+// problem, said where it is ("Action 2: Choose a task type"), instead of the database's raw refusal.
+function checkRuleSteps(input: { triggerType: string; triggerConfig?: Record<string, Json>; conditions?: unknown; actions?: unknown }, system: RuleSystem) {
+  const steps = (value: unknown) => (Array.isArray(value) ? value.filter((x): x is RuleStep => Boolean(x) && typeof x === "object" && typeof x.type === "string") : []);
+  const problems = ruleProblems(
+    { triggerType: input.triggerType, triggerConfig: input.triggerConfig ?? {}, conditions: steps(input.conditions), actions: steps(input.actions) },
+    system,
+  );
+  if (problems.length) throw new InputError(problems[0]);
+}
+
 function ruleRow(input: RuleInput, revealed: RevealedSigningSecret[] = []) {
   if (!isTriggerType(input.triggerType)) throw new InputError("Choose a trigger");
   if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
+  checkRuleSteps(input, "project");
   input.actions.forEach(checkIntegrationAction);
   const actions = input.actions.map((action, index) => prepareSigningSecret(action, index, revealed));
   const triggerConfig: Record<string, Json> = { ...(input.triggerConfig ?? {}) };
@@ -4328,6 +4341,7 @@ export async function testRule(
     let draftJson: Json | null = null;
     if (draft) {
       if (!isTriggerType(draft.triggerType)) throw new InputError("Choose a trigger");
+      checkRuleSteps(draft, "project");
       draft.actions.forEach(checkIntegrationAction);
       // Signing secrets are only generated when the rule is saved.
       const actions = draft.actions.map((action) => {
@@ -5402,6 +5416,8 @@ const PORTFOLIO_RULES_MISSING = "Portfolio rules need this release’s database 
 
 function portfolioRuleRow(input: PortfolioRuleInput) {
   if (!isPortfolioTrigger(input.triggerType)) throw new InputError("Choose a trigger");
+  if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
+  checkRuleSteps(input, "portfolio");
   const triggerConfig: Record<string, Json> = { ...(input.triggerConfig ?? {}) };
   // Dates and schedules count in the browser's time zone (like project rules).
   if (input.timeZone && input.timeZone.length <= 64) triggerConfig.timezone = input.timeZone;
@@ -5596,6 +5612,8 @@ export type MyTaskRuleInput = {
 
 function myTaskRuleRow(input: MyTaskRuleInput) {
   if (!["assigned", "due_approaching", "task_overdue"].includes(input.triggerType)) throw new InputError("Choose a trigger");
+  if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
+  checkRuleSteps(input, "my_tasks");
   const triggerConfig: Record<string, Json> = { ...(input.triggerConfig ?? {}) };
   if (input.timeZone && input.timeZone.length <= 64) triggerConfig.timezone = input.timeZone;
   return {

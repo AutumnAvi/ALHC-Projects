@@ -20,7 +20,9 @@ import {
   Zap,
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { StepParams, StepPrompt } from "@/components/param-slot";
 import { PickerHighlightContext, SmartPicker } from "@/components/smart-picker";
+import { missingParams, ruleProblems, saveBlockedReason, stepProblems, type StepScope } from "@/lib/rule-params";
 import type { BuiltRule } from "@/lib/rule-templates";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -251,7 +253,15 @@ export function RuleCanvas({
     return `Call webhook (action ${secret.action})`;
   }
 
+  // Every step's settings (rule-params.ts): Save waits until nothing required is missing.
+  const problems = ruleProblems({ triggerType, triggerConfig, ...joinBranches(branches) }, "project", { v3: ctx.v3 });
+  const blocked = saveBlockedReason(problems);
+
   function save() {
+    if (blocked) {
+      notify(blocked);
+      return;
+    }
     const problem = branchProblem(branches);
     if (problem) {
       notify(problem);
@@ -419,8 +429,20 @@ export function RuleCanvas({
         <button type="button" onClick={leave} className="btn-secondary h-8 px-3">
           {canEdit ? "Cancel" : "Close"}
         </button>
+        {canEdit && blocked ? (
+          <span id="rule-save-blocked" role="status" className="hidden max-w-64 truncate text-xs text-amber-800 md:inline" title={problems.join("\n")}>
+            {blocked}
+          </span>
+        ) : null}
         {canEdit ? (
-          <button type="button" onClick={save} disabled={pending || !name.trim()} className="btn-primary h-8 px-3">
+          <button
+            type="button"
+            onClick={save}
+            disabled={pending || !name.trim() || Boolean(blocked)}
+            aria-describedby={blocked ? "rule-save-blocked" : undefined}
+            data-tooltip={blocked ?? (!name.trim() ? "Name the rule first" : undefined)}
+            className="btn-primary h-8 px-3"
+          >
             {pending ? "Saving…" : rule ? "Save" : "Create rule"}
           </button>
         ) : null}
@@ -519,16 +541,19 @@ export function RuleCanvas({
                       searchable
                       panelWidth={340}
                     />
-                    <TriggerFields
-                      prefix="rule"
-                      triggerType={triggerType}
-                      triggerConfig={triggerConfig}
-                      ctx={ctx}
-                      onChange={(config) => {
-                        setTriggerConfig(config);
-                        setDirty(true);
-                      }}
-                    />
+                    <StepParams missing={missingKeys({ type: triggerType, ...triggerConfig }, { system: "project", kind: "trigger", v3: ctx.v3 })}>
+                      <TriggerFields
+                        prefix="rule"
+                        triggerType={triggerType}
+                        triggerConfig={triggerConfig}
+                        ctx={ctx}
+                        onChange={(config) => {
+                          setTriggerConfig(config);
+                          setDirty(true);
+                        }}
+                      />
+                    </StepParams>
+                    <StepPrompt problems={stepProblems({ type: triggerType, ...triggerConfig }, { system: "project", kind: "trigger", v3: ctx.v3 })} />
                     </div>
                   </SentenceRow>
                   {branches.map((branch, index) => (
@@ -630,7 +655,7 @@ export function RuleCanvas({
               ruleId={rule?.id ?? null}
               tasks={testTasks}
               draft={draft}
-              problem={branchProblem(branches)}
+              problem={blocked ?? branchProblem(branches)}
               ctx={ctx}
               onClose={closeTest}
             />
@@ -730,6 +755,8 @@ function BranchRows({
   // OR groups: AND within a group, OR between groups (one group stores no group keys).
   const groups = splitGroups(branch.conditions);
   const conditionOptions = vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx) });
+  const conditionScope: StepScope = { system: "project", kind: "condition", v3: ctx.v3 };
+  const actionScope: StepScope = { system: "project", kind: "action", v3: ctx.v3 };
   const actionOptions = vocabOptions(ACTIONS, { disabled: needsUpdate(ctx) });
 
   function setGroups(next: RuleCondition[][]) {
@@ -815,12 +842,15 @@ function BranchRows({
                 {group.map((condition, i) => (
                   <div key={i} className="flex flex-wrap items-center gap-1">
                     {i > 0 ? <span className="mr-0.5 text-xs font-semibold text-zinc-400">and</span> : null}
-                    <ConditionFields
-                      prefix={`${prefix}-g${g}-c${i}`}
-                      condition={condition}
-                      ctx={ctx}
-                      onChange={(next) => setCondition(g, i, next)}
-                    />
+                    <StepParams missing={missingKeys(condition, conditionScope)}>
+                      <ConditionFields
+                        prefix={`${prefix}-g${g}-c${i}`}
+                        condition={condition}
+                        ctx={ctx}
+                        onChange={(next) => setCondition(g, i, next)}
+                      />
+                    </StepParams>
+                    <StepPrompt problems={stepProblems(condition, conditionScope)} />
                     {canEdit ? (
                       <button
                         type="button"
@@ -876,8 +906,15 @@ function BranchRows({
       </SentenceRow>
       <SentenceRow word="Then">
         <ol className="flex flex-col gap-2">
-          {branch.actions.map((action, i) => (
-            <li key={i} className="group/action rounded-lg border border-transparent px-1 py-0.5 hover:border-zinc-200">
+          {branch.actions.map((action, i) => {
+            const actionProblems = stepProblems(action, actionScope);
+            return (
+            <li
+              key={i}
+              data-step-incomplete={actionProblems.length > 0 || undefined}
+              className="group/action rounded-lg border border-transparent px-1 py-0.5 hover:border-zinc-200 data-[step-incomplete]:border-amber-200 data-[step-incomplete]:bg-amber-50/40"
+            >
+              <StepParams missing={missingKeys(action, actionScope)}>
               <div className="flex flex-wrap items-center gap-1">
                 <span className="w-4 text-xs font-medium tabular-nums text-zinc-400">{i + 1}.</span>
                 <SmartPicker
@@ -890,6 +927,7 @@ function BranchRows({
                   panelWidth={340}
                 />
                 <InlineActionFields projectId={projectId} prefix={`${prefix}-a${i}`} action={action} ctx={ctx} onChange={(next) => setAction(i, next)} />
+                <StepPrompt problems={actionProblems} />
                 <span className="flex-1" />
                 {canEdit ? (
                   <span className="flex items-center opacity-60 group-hover/action:opacity-100 group-focus-within/action:opacity-100">
@@ -927,8 +965,10 @@ function BranchRows({
                 ) : null}
               </div>
               <BlockActionFields projectId={projectId} prefix={`${prefix}-a${i}`} action={action} ctx={ctx} onChange={(next) => setAction(i, next)} />
+              </StepParams>
             </li>
-          ))}
+            );
+          })}
         </ol>
         {canEdit && branch.actions.length < MAX_BRANCH_ACTIONS ? (
           <SmartPicker
@@ -951,6 +991,11 @@ function BranchRows({
       </SentenceRow>
     </div>
   );
+}
+
+// The keys a step is still missing (its editors are highlighted).
+function missingKeys(step: { type: string } & Record<string, Json>, scope: StepScope) {
+  return missingParams(step, scope).map((p) => p.key);
 }
 
 function InlineActionFields(props: Parameters<typeof ActionFields>[0]) {

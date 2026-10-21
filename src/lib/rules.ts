@@ -259,7 +259,7 @@ export const COMPARE_OPS = [
   { value: "not_equals", label: "is not", types: ["number", "date", "text", "single_select", "boolean", "status"] },
   // Automations V3 (batch B).
   { value: "between", label: "is between", types: ["number", "date"] },
-  { value: "not_between", label: "isn't between", types: ["number", "date"] },
+  { value: "not_between", label: "isn’t between", types: ["number", "date"] },
   // Batch C.
   { value: "one_of", label: "is one of", types: ["single_select", "status"] },
   { value: "none_of", label: "is none of", types: ["single_select", "status"] },
@@ -315,7 +315,7 @@ export const DATE_OPS = [
   { value: "on_or_before", label: "is on or before" },
   { value: "on_or_after", label: "is on or after" },
   { value: "between", label: "is between" },
-  { value: "not_between", label: "isn't between" },
+  { value: "not_between", label: "isn’t between" },
 ] as const;
 
 // Date triggers' offsets (mirrors rule_trigger_offset): { amount, unit } or the older { days }.

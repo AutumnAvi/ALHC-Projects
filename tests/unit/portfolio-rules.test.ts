@@ -38,7 +38,7 @@ test("portfolio triggers read as sentences", () => {
 test("portfolio conditions and actions read as sentences", () => {
   assert.equal(describePortfolioCondition(item({ type: "owner_is_not", people: ["p-dana"] }), ctx), "owner isn’t Dana");
   assert.equal(describePortfolioCondition(item({ type: "date_compare", op: "between", value: "2026-11-01", to: "2026-11-30" }), ctx), "the due date is between Nov 1, 2026 and Nov 30, 2026");
-  assert.equal(describePortfolioAction(item({ type: "notify", people: ["owner", "p-sam"], message: "x" }), ctx), "notify the project owner and Sam");
+  assert.equal(describePortfolioAction(item({ type: "notify", people: ["owner", "p-sam"], message: "x" }), ctx), "notify the project owner and Sam: “x”");
   assert.equal(describePortfolioAction(item({ type: "add_members", people: ["p-sam"], role: "viewer" }), ctx), "add Sam as viewer");
   assert.equal(describePortfolioAction(item({ type: "add_to_portfolio", portfolio_id: "pf-2" }), ctx), "add it to “Brand”");
   assert.equal(describePortfolioAction(item({ type: "set_due_date", days: 5, business_days: true }), ctx), "set the due date to 5 business days from today");

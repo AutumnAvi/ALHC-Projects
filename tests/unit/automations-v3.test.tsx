@@ -128,10 +128,10 @@ test("date conditions and actions read as sentences", () => {
 // ---------------------------------------------------------------------------------------------
 
 test("flow triggers, conditions, and actions read as sentences", () => {
-  assert.equal(describeTrigger({ triggerType: "task_unblocked", triggerConfig: {} }, ctx), "A task is no longer blocked");
+  assert.equal(describeTrigger({ triggerType: "task_unblocked", triggerConfig: {} }, ctx), "A task is no longer blocked by any dependency");
   assert.equal(
     describeTrigger({ triggerType: "task_unblocked", triggerConfig: { kinds: ["start_to_start", "finish_to_finish"] } }, ctx),
-    "A task is no longer blocked (start → start or finish → finish)",
+    "A task is no longer blocked by a start → start or finish → finish dependency",
   );
   assert.equal(describeTrigger({ triggerType: "section_changed", triggerConfig: {} }, ctx), "A task moves to another section");
   assert.equal(describeTrigger({ triggerType: "section_left", triggerConfig: { section_id: "s-intake" } }, ctx), "A task moves out of Intake");
@@ -145,7 +145,7 @@ test("flow triggers, conditions, and actions read as sentences", () => {
     "create a milestone “Launch” for the task creator waiting on this one",
   );
   assert.equal(describeAction(action({ type: "set_task_type", kind: "approval" }), ctx), "make it an approval");
-  assert.equal(describeAction(action({ type: "set_description", mode: "append", text: "x" }), ctx), "add to the end of the description");
+  assert.equal(describeAction(action({ type: "set_description", mode: "append", text: "x" }), ctx), "add “x” to the end of the description");
   assert.equal(describeAction(action({ type: "remove_from_project" }), ctx), "remove from this project");
 });
 
