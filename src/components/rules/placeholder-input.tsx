@@ -2,6 +2,7 @@
 
 import { Braces } from "lucide-react";
 import { useMemo, useRef, type KeyboardEvent } from "react";
+import { NotAParam, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import {
   PLACEHOLDERS,
@@ -11,7 +12,7 @@ import {
   samplePlaceholderValues,
   unknownPlaceholders,
 } from "@/lib/rule-placeholders";
-import { inputClass, type RuleContext } from "./rule-shared";
+import { MISSING_INPUT, inputClass, type RuleContext } from "./rule-shared";
 
 const KNOWN = new Set(PLACEHOLDERS.map((p) => p.key));
 
@@ -85,6 +86,9 @@ export function PlaceholderInput({
       }),
     [ctx],
   );
+  // Inside a rule step's ParamSlot: highlighted while the text is still missing (rule-params.ts).
+  const slot = useParamSlot<string>(onChange);
+  const missing = slot.missing && value.trim() === "";
   const hasTokens = /\{\{[^{}]+\}\}|\{[a-z_]+\}/.test(value);
   const unknown = hasTokens ? unknownPlaceholders(value, KNOWN) : [];
 
@@ -115,7 +119,8 @@ export function PlaceholderInput({
     maxLength,
     onBlur: remember,
     onSelect: remember,
-    className: `${inputClass} min-w-0 flex-1 ${multiline ? "py-1.5" : ""}`,
+    "aria-invalid": missing || undefined,
+    className: `${inputClass} min-w-0 flex-1 ${multiline ? "py-1.5" : ""} ${missing ? MISSING_INPUT : ""}`,
   };
 
   return (
@@ -126,6 +131,7 @@ export function PlaceholderInput({
         ) : (
           <input {...common} onKeyDown={onKeyDown} onChange={(e) => onChange(e.currentTarget.value)} />
         )}
+        <NotAParam>
         <SmartPicker
           label={`Insert a placeholder into ${label.toLowerCase()}`}
           value={null}
@@ -141,6 +147,7 @@ export function PlaceholderInput({
             </span>
           )}
         />
+        </NotAParam>
       </div>
       {preview && hasTokens ? (
         <p className="text-xs text-zinc-500">

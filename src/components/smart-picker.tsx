@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { useParamSlot } from "@/components/param-slot";
 import {
   filterOptions,
   flatOptions,
@@ -108,7 +109,9 @@ export function SmartPicker(props: SingleProps | MultiProps) {
     [props.multiple, props.value, options],
   );
   const highlightAll = useContext(PickerHighlightContext);
-  const highlight = props.highlight ?? (highlightAll && variant !== "ghost");
+  // Inside a rule step's ParamSlot: highlighted while that setting is missing (rule-params.ts).
+  const slot = useParamSlot<string & string[]>((value) => (props.onChange as (v: string | string[]) => void)(value));
+  const highlight = props.highlight ?? ((highlightAll || slot.missing) && variant !== "ghost");
   const searchable = props.searchable ?? options.length > 7;
   const autoId = useId();
   const buttonId = props.id ?? `picker-${autoId}`;
@@ -288,6 +291,7 @@ export function SmartPicker(props: SingleProps | MultiProps) {
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         disabled={disabled}
+        aria-invalid={slot.missing || undefined}
         data-picker-empty={empty || undefined}
         onClick={() => (open ? close() : openList())}
         onKeyDown={onButtonKey}
