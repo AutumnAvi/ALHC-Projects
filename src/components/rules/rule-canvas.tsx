@@ -29,9 +29,6 @@ import {
   ACTIONS,
   CONDITIONS,
   MAX_CONDITION_GROUPS,
-  V2_ACTIONS,
-  V2_CONDITIONS,
-  V2_TRIGGERS,
   joinGroups,
   splitGroups,
   MAX_BRANCH_ACTIONS,
@@ -63,7 +60,7 @@ import {
   defaultsFor,
 } from "./rule-editor";
 import { vocabOptions } from "./rule-icons";
-import { branchLabel, ruleSentence, type RuleContext } from "./rule-shared";
+import { branchLabel, needsUpdate, ruleSentence, type RuleContext } from "./rule-shared";
 import { RuleTestPanel, type RuleTestDraft, type RuleTestTask } from "./rule-test-panel";
 import { RunSteps } from "./run-steps";
 
@@ -488,7 +485,7 @@ export function RuleCanvas({
                       id="rule-trigger"
                       label="Trigger"
                       value={triggerType}
-                      options={vocabOptions(TRIGGERS, { disabled: needsV2(ctx, V2_TRIGGERS) })}
+                      options={vocabOptions(TRIGGERS, { disabled: needsUpdate(ctx) })}
                       onChange={(v) => {
                         setTriggerType(v as TriggerType);
                         setTriggerConfig({});
@@ -614,11 +611,6 @@ export function RuleCanvas({
   );
 }
 
-// Before Automations V2's database update the new vocabulary is listed but disabled, with the reason.
-function needsV2(ctx: RuleContext, set: ReadonlySet<string>) {
-  return (value: string) => (ctx.v2 === false && set.has(value) ? "Needs this release’s database update" : null);
-}
-
 // The live summary at the top: the whole rule as one English sentence, plus its scope.
 function RuleSummary({
   triggerType,
@@ -699,8 +691,8 @@ function BranchRows({
 
   // OR groups: AND within a group, OR between groups (one group stores no group keys).
   const groups = splitGroups(branch.conditions);
-  const conditionOptions = vocabOptions(CONDITIONS, { disabled: needsV2(ctx, V2_CONDITIONS) });
-  const actionOptions = vocabOptions(ACTIONS, { disabled: needsV2(ctx, V2_ACTIONS) });
+  const conditionOptions = vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx) });
+  const actionOptions = vocabOptions(ACTIONS, { disabled: needsUpdate(ctx) });
 
   function setGroups(next: RuleCondition[][]) {
     onChange({ ...branch, conditions: joinGroups(next) });

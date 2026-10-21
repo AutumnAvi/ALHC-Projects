@@ -3105,6 +3105,14 @@ export const hasAutomationsV2Schema = cache(async (): Promise<boolean> => {
   return !result.error;
 });
 
+// Automations V3's database update (20261021010000_automations_v3_a.sql): its probe function exists.
+// Without it the builder lists V3's vocabulary disabled. (New triggers also need the V3 tail.)
+export const hasAutomationsV3Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("automations_v3_ready");
+  return !result.error && result.data === true;
+});
+
 // The workspace's workweek for business days (Sunday–Thursday until an admin changes it).
 export const getWorkWeek = cache(async (): Promise<number[]> => {
   const supabase = await createClient();

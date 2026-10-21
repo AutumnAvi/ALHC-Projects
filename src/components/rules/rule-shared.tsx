@@ -1,6 +1,6 @@
 "use client";
 
-import { Columns3, PenLine, User, UserMinus } from "lucide-react";
+import { Columns3, Contact, PenLine, User, UserMinus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Avatar } from "@/components/avatar";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
@@ -15,8 +15,17 @@ import {
   DUE_FROM,
   EMAIL_RECIPIENTS,
   PERSON_ROLES,
+  PERSON_SIDES,
   TASK_KIND_OPTIONS,
   TRIGGERS,
+  V2_ACTIONS,
+  V2_CONDITIONS,
+  V2_TRIGGERS,
+  V3_ACTIONS,
+  V3_CONDITIONS,
+  V3_TRIGGERS,
+  fieldOfSlot,
+  fieldSlot,
   labelOf,
   splitBranches,
   splitGroups,
@@ -48,7 +57,20 @@ export type RuleContext = {
   workWeek?: number[];
   // Automations V2's database update is applied (else the new vocabulary is offered but disabled).
   v2?: boolean;
+  // Automations V3's database update is applied (the same, for V3's vocabulary).
+  v3?: boolean;
 };
+
+export const NEEDS_UPDATE = "Needs this release’s database update";
+
+// A picker option's "disabled" reason: vocabulary from a database update that isn't applied yet.
+export function needsUpdate(ctx: RuleContext) {
+  return (value: string) =>
+    (ctx.v2 === false && (V2_TRIGGERS.has(value) || V2_CONDITIONS.has(value) || V2_ACTIONS.has(value))) ||
+    (ctx.v3 === false && (V3_TRIGGERS.has(value) || V3_CONDITIONS.has(value) || V3_ACTIONS.has(value)))
+      ? NEEDS_UPDATE
+      : null;
+}
 
 export const inputClass = "control h-auto min-h-7 py-0.5";
 
@@ -83,7 +105,19 @@ function fieldName(ctx: RuleContext, id: Json | undefined) {
 export function personName(ctx: RuleContext, value: Json | undefined) {
   const role = PERSON_ROLES.find((r) => r.value === value);
   if (role) return `the ${role.label.toLowerCase()}`;
+  const field = fieldOfSlot(value);
+  if (field !== null) return `the ${peopleFieldName(ctx, field)} field`;
   return ctx.people.find((p) => p.id === value)?.name ?? "someone removed";
+}
+
+// The project's People fields (person slots "field:<id>").
+export function peopleFields(ctx: RuleContext) {
+  return ctx.fields.filter((f) => f.fieldType === "people");
+}
+
+function peopleFieldName(ctx: RuleContext, fieldId: string) {
+  const name = ctx.fields.find((f) => f.id === fieldId)?.name;
+  return name ? `“${name}”` : "removed People";
 }
 
 export function fieldValueLabel(ctx: RuleContext, fieldId: Json | undefined, value: Json | undefined) {
@@ -232,6 +266,10 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
       return scheduleLabel(cfg);
     case "manual":
       return "Someone runs it from a task";
+    case "follower_added": {
+      const names = peopleNames(ctx, cfg.people);
+      return names.length ? `${joinWords(names, "or")} starts following a task` : "A collaborator is added";
+    }
     default:
       return labelOf(TRIGGERS, rule.triggerType);
   }
@@ -248,9 +286,16 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
     case "field_is_empty":
       return `${fieldName(ctx, c.field_id)} is ${c.type === "field_is_set" ? "set" : "empty"}`;
     case "source_is":
+      if (c.source === "form" && c.form_id) return `task came from “${ctx.forms.find((f) => f.id === c.form_id)?.title ?? "a removed form"}”`;
       return `task came from ${
         c.source === "form" ? "a form" : c.source === "inbound" ? "an inbound webhook" : c.source === "manual" ? "the app" : str(c.source)
       }`;
+    case "person_compare": {
+      const left = sideName(ctx, c.left);
+      const names = peopleNames(ctx, c.people);
+      const right = names.length ? joinWords(names, "or") : "…";
+      return `${left} ${personCompareVerb(c.left, c.op === "is_not")} ${right}`;
+    }
     case "field_compare": {
       const op = COMPARE_OPS.find((o) => o.value === c.op);
       if (!op) return `${fieldName(ctx, c.field_id)} compares`;
@@ -304,8 +349,18 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
       return `move to ${sectionName(ctx, a.section_id)}`;
     case "set_field":
       return `set ${fieldName(ctx, a.field_id)} to ${fieldValueLabel(ctx, a.field_id, a.value)}`;
-    case "set_assignee":
+    case "set_assignee": {
+      if (a.mode === "round_robin" || a.mode === "balanced") {
+        const names = peopleNames(ctx, a.people);
+        const pool = names.length ? joinWords(names, "and") : "…";
+        return a.mode === "round_robin" ? `assign round robin among ${pool}` : `assign whoever has the fewest open tasks of ${pool}`;
+      }
       return a.assignee ? `assign ${personName(ctx, a.assignee)}` : a.assignee === "" ? "assign someone (choose a person)" : "unassign";
+    }
+    case "remove_followers": {
+      const names = peopleNames(ctx, a.people);
+      return `remove follower${names.length === 1 ? "" : "s"} ${names.length ? joinWords(names, "and") : "…"}`;
+    }
     case "add_comment":
       return "comment";
     case "add_followers":
@@ -419,8 +474,10 @@ export function fieldOptions(fields: FieldDef[]): SmartOption[] {
   }));
 }
 
-// Roles first (the task's assignee / creator), then everyone, with avatars.
-export function personOptions(ctx: RuleContext, opts: { none?: string } = {}): SmartOption[] {
+// Roles first (the task's assignee / creator), then the project's People fields (Automations V3), then
+// everyone, with avatars. `many` = the slot takes everyone in a People field (followers, notify,
+// conditions); else its first person.
+export function personOptions(ctx: RuleContext, opts: { none?: string; many?: boolean } = {}): SmartOption[] {
   return [
     ...(opts.none ? [{ value: "", label: opts.none, group: "Roles", icon: <UserMinus className="size-4" /> }] : []),
     ...PERSON_ROLES.map((r) => ({
@@ -430,8 +487,39 @@ export function personOptions(ctx: RuleContext, opts: { none?: string } = {}): S
       description: r.value === "assignee" ? "Whoever the task is assigned to when the rule runs" : "Whoever created the task",
       icon: <User className="size-4" />,
     })),
+    ...peopleFields(ctx).map((f) => ({
+      value: fieldSlot(f.id),
+      label: `${f.name} (People field)`,
+      group: "People fields",
+      description: opts.many ? "Everyone in this field on the task" : "The first person in this field on the task",
+      keywords: ["field", "role", "custom"],
+      icon: <Contact className="size-4" />,
+      ...(ctx.v3 === false ? { disabled: true, disabledReason: NEEDS_UPDATE } : {}),
+    })),
     ...ctx.people.map((p) => ({ value: p.id, label: p.name, group: "People", icon: <Avatar name={p.name} /> })),
   ];
+}
+
+// "is" / "isn't" for one person, "includes" for a People field, "include" for the collaborators.
+export function personCompareVerb(side: Json | undefined, negated: boolean) {
+  if (side === "followers") return negated ? "don’t include" : "include";
+  if (fieldOfSlot(side) !== null) return negated ? "doesn’t include" : "includes";
+  return negated ? "isn’t" : "is";
+}
+
+// A "Compare people" side: the assignee, the creator, the collaborators, or a People field.
+export function sideOptions(ctx: RuleContext): SmartOption[] {
+  return [
+    ...PERSON_SIDES.map((side) => ({ value: side.value as string, label: side.label, group: "On the task", icon: <User className="size-4" /> })),
+    ...peopleFields(ctx).map((f) => ({ value: fieldSlot(f.id), label: f.name, group: "People fields", icon: <Contact className="size-4" /> })),
+  ];
+}
+
+export function sideName(ctx: RuleContext, value: Json | undefined) {
+  const side = PERSON_SIDES.find((s) => s.value === value);
+  if (side) return `the ${side.label.toLowerCase()}`;
+  const field = fieldOfSlot(value);
+  return field !== null ? `the ${peopleFieldName(ctx, field)} field` : "…";
 }
 
 // The workspace's tags with their color dots. Archived ones are marked, or listed but disabled
@@ -577,7 +665,7 @@ export function PeoplePicker({
       id={`${idPrefix}-picker`}
       label={label}
       value={selected}
-      options={personOptions(ctx)}
+      options={personOptions(ctx, { many: true })}
       onChange={onChange}
       variant={look.variant ?? "chip"}
       highlight={look.highlight}

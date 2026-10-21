@@ -67,6 +67,7 @@ const ICONS: Record<string, LucideIcon> = {
   task_added_from_project: FolderPlus,
   scheduled: Repeat,
   manual: Hand,
+  follower_added: UserPlus,
   // Conditions
   section_is: Columns3,
   section_is_not: Columns3,
@@ -93,6 +94,7 @@ const ICONS: Record<string, LucideIcon> = {
   all_subtasks_done: ListChecks,
   title_contains: Type,
   form_answer_contains: FileInput,
+  person_compare: Users,
   // Actions
   move_section: ArrowRightLeft,
   set_field: PenLine,
@@ -113,6 +115,7 @@ const ICONS: Record<string, LucideIcon> = {
   add_to_project: FolderPlus,
   create_subtasks: ListPlus,
   apply_task_template: Copy,
+  remove_followers: UserMinus,
   // Misc
   branch: GitBranch,
   mention: AtSign,

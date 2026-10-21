@@ -25,6 +25,8 @@ export const TRIGGERS = [
   { value: "task_overdue", label: "Task becomes overdue", group: "Dates", description: "Fires once per open task the day after its due date (or later).", keywords: ["late", "missed", "past due"] },
   { value: "scheduled", label: "On a schedule", group: "Flow", description: "Runs every day, workday, week, or month for the open tasks that match.", keywords: ["cron", "daily", "weekly", "every", "recurring", "time"] },
   { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks it from a task's … menu (Run a rule).", keywords: ["button", "on demand", "by hand", "click"] },
+  // Automations V3 (20261021010000_automations_v3_a.sql).
+  { value: "follower_added", label: "A collaborator is added", group: "People", description: "Fires when someone starts following a task (anyone, or people you pick).", keywords: ["follower", "collaborator", "watch", "follow"] },
 ] as const;
 
 export type TriggerType = (typeof TRIGGERS)[number]["value"];
@@ -56,6 +58,8 @@ export const CONDITIONS = [
   { value: "all_subtasks_done", label: "All subtasks are done", group: "Task", description: "It has subtasks and every one is complete.", keywords: ["checklist", "children", "finished"] },
   { value: "title_contains", label: "Name contains", group: "Task", description: "The task's name includes some text (any case).", keywords: ["title", "text", "keyword"] },
   { value: "form_answer_contains", label: "Form answer contains", group: "Approvals and forms", description: "An answer on the task's form submission includes some text.", keywords: ["form", "request", "submission", "answer", "intake"] },
+  // Automations V3.
+  { value: "person_compare", label: "Compare people", group: "People", description: "The assignee, creator, collaborators, or a People field is (or isn't) someone — e.g. the assignee is the creator.", keywords: ["dynamic", "same", "creator", "assignee", "people field", "collaborator", "follower", "equals"] },
 ] as const;
 
 export type ConditionType = (typeof CONDITIONS)[number]["value"];
@@ -82,6 +86,8 @@ export const ACTIONS = [
   { value: "set_due_date", label: "Set due date", group: "Dates", description: "Sets the due date a number of days (or business days) from today or another date, or clears it.", keywords: ["deadline", "relative", "business days", "workdays", "clear"] },
   { value: "add_tag", label: "Add tag", group: "Fields", description: "Tags the task.", keywords: ["label"] },
   { value: "remove_tag", label: "Remove tag", group: "Fields", description: "Removes a tag from the task.", keywords: ["label", "untag"] },
+  // Automations V3.
+  { value: "remove_followers", label: "Remove followers", group: "People", description: "People stop following the task (they no longer hear about updates).", keywords: ["collaborator", "unfollow", "watch", "remove"] },
 ] as const;
 
 export type ActionType = (typeof ACTIONS)[number]["value"];
@@ -113,7 +119,8 @@ export const TASK_SOURCES = [
   { value: "inbound", label: "An inbound webhook", description: "Another tool sent it in." },
 ] as const;
 
-// People slots accept a profile id or one of these roles.
+// People slots accept a profile id, one of these roles, or (Automations V3) "field:<id>" — a People
+// field of the project (its first person where one is needed, everyone in it where several are).
 export const PERSON_ROLES = [
   { value: "assignee", label: "Task assignee" },
   { value: "creator", label: "Task creator" },
@@ -150,6 +157,37 @@ export const V2_ACTIONS: ReadonlySet<string> = new Set([
   "complete_task", "reopen_task", "set_title", "create_subtasks", "apply_task_template", "add_to_project",
   "set_due_date", "add_tag", "remove_tag",
 ]);
+
+// Triggers, conditions, and actions that arrive with Automations V3's database update (new triggers
+// also need its tail: the old trigger CHECK refuses them until then).
+export const V3_TRIGGERS: ReadonlySet<string> = new Set(["follower_added"]);
+export const V3_CONDITIONS: ReadonlySet<string> = new Set(["person_compare"]);
+export const V3_ACTIONS: ReadonlySet<string> = new Set(["remove_followers"]);
+
+// A People field as a person slot.
+export const FIELD_SLOT_PREFIX = "field:";
+export function fieldSlot(fieldId: string) {
+  return `${FIELD_SLOT_PREFIX}${fieldId}`;
+}
+export function fieldOfSlot(value: unknown): string | null {
+  return typeof value === "string" && value.startsWith(FIELD_SLOT_PREFIX) ? value.slice(FIELD_SLOT_PREFIX.length) : null;
+}
+
+// "Set assignee" (mirrors execute_rule_actions / rule_pick_assignee): one person (a profile, a role, or
+// a People field), take turns (round robin), or whoever has the fewest open tasks in the project.
+export const ASSIGN_MODES = [
+  { value: "person", label: "to", description: "A person, the task's creator, a People field, or nobody" },
+  { value: "round_robin", label: "round robin among", description: "Takes turns through the people you pick" },
+  { value: "balanced", label: "to the least busy of", description: "Whoever has the fewest open tasks in this project (ties take turns)" },
+] as const;
+export type AssignMode = (typeof ASSIGN_MODES)[number]["value"];
+
+// "Compare people" sides (mirrors rule_side_people): plus "field:<id>" for a People field.
+export const PERSON_SIDES = [
+  { value: "assignee", label: "Assignee" },
+  { value: "creator", label: "Creator" },
+  { value: "followers", label: "Collaborators" },
+] as const;
 
 // "On a schedule" (mirrors rule_schedule_next_at): when, at an hour of the rule's time zone.
 export const SCHEDULE_FREQUENCIES = [

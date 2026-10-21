@@ -5372,6 +5372,10 @@ export type Database = {
         Args: { target_rule: string | null; target_task: string; draft?: Json | null };
         Returns: Json;
       };
+      automations_v3_ready: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
       rule_run_stats: {
         Args: { rule_ids: string[] };
         Returns: { rule_id: string; last_run_at: string | null; last_status: string | null; runs_7d: number; failures_7d: number }[];

@@ -20,6 +20,7 @@ import {
 import { SmartPicker } from "@/components/smart-picker";
 import {
   APPROVAL_DECISIONS,
+  ASSIGN_MODES,
   CONDITIONS,
   DUE_FROM,
   EMAIL_RECIPIENTS,
@@ -27,7 +28,6 @@ import {
   SCHEDULE_FREQUENCIES,
   TASK_KIND_OPTIONS,
   TASK_SOURCES,
-  V2_CONDITIONS,
   compareOpsFor,
   type ActionType,
   type ConditionType,
@@ -46,10 +46,13 @@ import {
   hourLabel,
   inputClass,
   labelClass,
+  needsUpdate,
   optionDot,
+  personCompareVerb,
   ordinal,
   ruleFields,
   sectionOptions,
+  sideOptions,
   tagOptions,
   valueOr,
   type RuleContext,
@@ -80,6 +83,8 @@ export function defaultsFor(type: ActionType): RuleAction {
       return { type, titles: [""] };
     case "set_title":
       return { type, title: "{task}" };
+    case "remove_followers":
+      return { type, people: [] };
     default:
       return { type };
   }
@@ -87,10 +92,16 @@ export function defaultsFor(type: ActionType): RuleAction {
 
 // A new condition of this type (the database needs a number of days for Due within).
 export function conditionDefaultsFor(type: ConditionType): RuleCondition {
-  return type === "due_within" ? { type, days: 3 } : { type };
+  switch (type) {
+    case "due_within":
+      return { type, days: 3 };
+    case "person_compare":
+      // "The assignee is the creator" — the most asked-for comparison.
+      return { type, left: "assignee", op: "is", people: ["creator"] };
+    default:
+      return { type };
+  }
 }
-
-const NEEDS_V2 = "Needs this release’s database update";
 const MAX_SUBTASK_TITLES = 20;
 
 function Row({ children }: { children: React.ReactNode }) {
@@ -389,6 +400,17 @@ export function TriggerFields({
     }
     case "scheduled":
       return <ScheduleFields prefix={prefix} config={triggerConfig} ctx={ctx} setConfig={setConfig} />;
+    case "follower_added":
+      return (
+        <PeoplePicker
+          idPrefix={`${prefix}-trigger-people`}
+          label="Who starts following"
+          value={triggerConfig.people}
+          ctx={ctx}
+          placeholder="anyone"
+          onChange={(v) => setConfig({ people: v.length ? v : undefined })}
+        />
+      );
     default:
       return null;
   }
@@ -483,7 +505,7 @@ export function ConditionFields({
       <SmartPicker
         label="Condition"
         value={condition.type}
-        options={vocabOptions(CONDITIONS, { disabled: (v) => (ctx.v2 === false && V2_CONDITIONS.has(v) ? NEEDS_V2 : null) })}
+        options={vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx) })}
         onChange={(v) => onChange(conditionDefaultsFor(v as ConditionType))}
         variant="chip"
         searchable
@@ -521,9 +543,25 @@ export function ConditionFields({
           label="Source"
           value={typeof condition.source === "string" ? condition.source : null}
           options={TASK_SOURCES.map((x) => ({ ...x }))}
-          onChange={(v) => onChange({ ...condition, source: v })}
+          onChange={(v) => onChange(v === condition.source ? condition : { type: condition.type, source: v })}
           variant="chip"
           placeholder="choose source"
+        />
+      ) : null}
+      {condition.type === "source_is" && condition.source === "form" ? (
+        // Automations V3: which form (any form when none is picked).
+        <SmartPicker
+          id={`${prefix}-source-form`}
+          label="Which form"
+          value={str(condition.form_id)}
+          options={[
+            { value: "", label: "any form", description: "Whichever of this project's forms made the task" },
+            ...ctx.forms.map((f) => ({ value: f.id, label: f.title, ...(ctx.v3 === false ? { disabled: true, disabledReason: "Needs this release’s database update" } : {}) })),
+          ]}
+          onChange={(v) => onChange(v ? { ...condition, form_id: v } : omit(condition, "form_id"))}
+          variant="chip"
+          renderValue={valueOr(condition.form_id ? "a removed form" : "any form")}
+          emptyText="Add a form to this project first"
         />
       ) : null}
     </Row>
@@ -639,6 +677,38 @@ function V2ConditionFields({
           variant="chip"
           placeholder="choose type"
         />
+      );
+    case "person_compare":
+      return (
+        <>
+          <SmartPicker
+            id={`${prefix}-side`}
+            label="Who to compare"
+            value={str(condition.left) || null}
+            options={sideOptions(ctx)}
+            onChange={(v) => onChange({ ...condition, left: v })}
+            variant="chip"
+            placeholder="choose who"
+          />
+          <SmartPicker
+            id={`${prefix}-op`}
+            label="Is or isn't"
+            value={condition.op === "is_not" ? "is_not" : "is"}
+            options={[
+              { value: "is", label: personCompareVerb(condition.left, false), description: "One of the people you pick" },
+              { value: "is_not", label: personCompareVerb(condition.left, true), description: "None of the people you pick" },
+            ]}
+            onChange={(v) => onChange({ ...condition, op: v })}
+            variant="chip"
+          />
+          <PeoplePicker
+            idPrefix={`${prefix}-compare-people`}
+            label="Compared with"
+            value={condition.people}
+            ctx={ctx}
+            onChange={(v) => onChange(v.length ? { ...condition, people: v } : omit(condition, "people"))}
+          />
+        </>
       );
     case "title_contains":
       return (
@@ -772,7 +842,7 @@ function CompareValueInput({
 
 // Actions whose settings fit on the sentence line (part = inline). The rest draw below it.
 export const INLINE_ACTION_TYPES: ReadonlySet<string> = new Set([
-  "move_section", "set_field", "set_assignee", "add_followers", "request_approval", "delay",
+  "move_section", "set_field", "set_assignee", "add_followers", "remove_followers", "request_approval", "delay",
   // Automations V2 (Mark complete / incomplete have no settings at all).
   "complete_task", "reopen_task", "add_tag", "remove_tag", "add_to_project", "set_due_date", "apply_task_template",
 ]);
@@ -842,15 +912,10 @@ export function ActionFields({
         </Row>
       );
     case "set_assignee":
+      return !inline ? null : <SetAssigneeFields prefix={prefix} action={action} ctx={ctx} onChange={onChange} />;
+    case "remove_followers":
       return !inline ? null : (
-        <PersonSelect
-          id={`${prefix}-assignee`}
-          label="Assignee"
-          value={action.assignee === undefined ? null : action.assignee}
-          ctx={ctx}
-          allowNone="Nobody (unassign)"
-          onChange={(v) => onChange({ ...action, assignee: v || null })}
-        />
+        <PeoplePicker idPrefix={`${prefix}-people`} label="Stop following" value={action.people} ctx={ctx} onChange={(v) => onChange({ ...action, people: v })} />
       );
     case "add_comment":
       return !block ? null : text("body", "Comment", { multiline: true, placeholder: "{assignee} “{{task.name}}” is ready for you" });
@@ -1039,6 +1104,59 @@ export function ActionFields({
     default:
       return null;
   }
+}
+
+// Set assignee: "[to] [Dana]", "[round robin among] [Dana, Sam]", or "[to the least busy of] […]"
+// (Automations V3 adds the last two and People fields as people).
+function SetAssigneeFields({
+  prefix,
+  action,
+  ctx,
+  onChange,
+}: {
+  prefix: string;
+  action: RuleAction;
+  ctx: RuleContext;
+  onChange: (next: RuleAction) => void;
+}) {
+  const mode = action.mode === "round_robin" || action.mode === "balanced" ? action.mode : "person";
+  return (
+    <Row>
+      <SmartPicker
+        id={`${prefix}-assign-mode`}
+        label="How to pick the assignee"
+        value={mode}
+        options={ASSIGN_MODES.map((m) => ({
+          ...m,
+          ...(m.value !== "person" && ctx.v3 === false ? { disabled: true, disabledReason: "Needs this release’s database update" } : {}),
+        }))}
+        onChange={(v) => {
+          if (v === mode) return;
+          if (v === "person") onChange({ type: action.type, assignee: null });
+          else onChange({ type: action.type, mode: v, people: Array.isArray(action.people) ? action.people : [] });
+        }}
+        variant="chip"
+      />
+      {mode === "person" ? (
+        <PersonSelect
+          id={`${prefix}-assignee`}
+          label="Assignee"
+          value={action.assignee === undefined ? null : action.assignee}
+          ctx={ctx}
+          allowNone="Nobody (unassign)"
+          onChange={(v) => onChange({ ...action, assignee: v || null })}
+        />
+      ) : (
+        <PeoplePicker
+          idPrefix={`${prefix}-assign-pool`}
+          label={mode === "round_robin" ? "People who take turns" : "People to balance between"}
+          value={action.people}
+          ctx={ctx}
+          onChange={(v) => onChange({ ...action, people: v })}
+        />
+      )}
+    </Row>
+  );
 }
 
 // Set due date: "to [2] [business days] from [today]" (or "clear it"), with an example in the

@@ -112,6 +112,9 @@ const LABELS: Record<string, string> = {
   archived: "Tag archived",
   would_send: "Would send",
   would_wait: "Would wait",
+  // Automations V3
+  no_candidate: "Nobody can take it",
+  no_person: "Nobody to assign",
   error: "Failed",
 };
 
