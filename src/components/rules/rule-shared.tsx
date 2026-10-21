@@ -1,9 +1,11 @@
 "use client";
 
-import { Columns3, Contact, PenLine, User, UserMinus } from "lucide-react";
+import { CalendarDays, Columns3, Contact, PenLine, User, UserMinus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Avatar } from "@/components/avatar";
+import { Popover } from "@/components/popover";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import { SingleDatePicker } from "@/components/task/date-picker";
 import { dayLabel, formatTime } from "@/lib/date-input";
 import { OPTION_SWATCH_CLASSES, type FieldDef, type OptionColor } from "@/lib/fields";
 import type { ProjectIntegrations } from "@/lib/integrations-shared";
@@ -12,8 +14,12 @@ import {
   APPROVAL_DECISIONS,
   COMPARE_OPS,
   CONDITIONS,
+  DATE_CHANGES,
+  DATE_OPS,
   DUE_FROM,
   EMAIL_RECIPIENTS,
+  OFFSET_UNITS,
+  RANGE_OPS,
   PERSON_ROLES,
   PERSON_SIDES,
   TASK_KIND_OPTIONS,
@@ -29,6 +35,7 @@ import {
   labelOf,
   splitBranches,
   splitGroups,
+  triggerOffset,
   type RuleAction,
   type RuleCondition,
   type RuleDef,
@@ -180,16 +187,34 @@ function peopleNames(ctx: RuleContext, value: Json | undefined) {
   return Array.isArray(value) ? value.map((p) => personName(ctx, p)) : [];
 }
 
-// "Every week on Monday at 9:00 AM" (mirrors rule_schedule_next_at: hour 9, Sunday, and the 1st by default).
+// "9:30 AM" for an hour and a minute.
+export function timeLabel(hour: number, minute = 0) {
+  return formatTime(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
+}
+
+// A weekly schedule's days (the older single `weekday`, else Sunday).
+export function scheduleWeekdays(cfg: Record<string, Json>): number[] {
+  if (Array.isArray(cfg.weekdays)) {
+    const days = cfg.weekdays.filter((d): d is number => typeof d === "number" && d >= 0 && d <= 6);
+    if (days.length) return [...new Set(days)].sort((a, b) => a - b);
+  }
+  return [wholeNumber(cfg.weekday) ?? 0];
+}
+
+// "Every week on Monday at 9:00 AM", "Every 2 weeks on Monday and Thursday at 8:30 AM", "Every 3 days at
+// 9:00 AM" (mirrors rule_schedule_next_at: 9:00, Sunday, and the 1st by default).
 export function scheduleLabel(cfg: Record<string, Json>) {
-  const at = `at ${hourLabel(wholeNumber(cfg.hour) ?? 9)}`;
+  const at = `at ${timeLabel(wholeNumber(cfg.hour) ?? 9, wholeNumber(cfg.minute) ?? 0)}`;
+  const every = Math.max(wholeNumber(cfg.interval) ?? 1, 1);
   switch (cfg.frequency) {
     case "daily":
-      return `Every day ${at}`;
+      return every > 1 ? `Every ${every} days ${at}` : `Every day ${at}`;
     case "workdays":
       return `Every workday ${at}`;
-    case "weekly":
-      return `Every week on ${WEEKDAYS[wholeNumber(cfg.weekday) ?? 0]?.label ?? "Sunday"} ${at}`;
+    case "weekly": {
+      const days = joinWords(scheduleWeekdays(cfg).map((d) => WEEKDAYS[d]?.label ?? "Sunday"), "and");
+      return `${every > 1 ? `Every ${every} weeks` : "Every week"} on ${days} ${at}`;
+    }
     case "monthly":
       return `Every month on the ${ordinal(wholeNumber(cfg.month_day) ?? 1)} ${at}`;
     default:
@@ -213,6 +238,37 @@ function dueFromLabel(value: Json | undefined) {
   return DUE_FROM.find((d) => d.value === value)?.label ?? "today";
 }
 
+// "3 hours", "1 day", "2 weeks".
+export function offsetLabel(amount: number, unit: string) {
+  const u = OFFSET_UNITS.find((x) => x.value === unit) ?? OFFSET_UNITS[1];
+  return `${amount} ${amount === 1 ? u.one : u.label}`;
+}
+
+// A YYYY-MM-DD day in a sentence, with its year (so the server and the browser agree).
+function dayText(value: Json | undefined) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? dayLabel(value, 0) : "…";
+}
+
+// Set due date / Set start date in a sentence (mirrors rule_set_task_date).
+export function describeDateAction(a: RuleAction) {
+  const what = a.type === "set_start_date" ? "start date" : "due date";
+  if (a.mode === "clear") return `clear the ${what}`;
+  if (a.mode === "date") return `set the ${what} to ${dayText(a.date)}`;
+  const n = wholeNumber(a.days);
+  if (n === null) return `set the ${what}`;
+  const unit = a.unit === "weeks" || a.unit === "hours" ? a.unit : "days";
+  if (unit === "hours") return `set the ${what} to ${offsetLabel(n, "hours")} from now`;
+  const from = dueFromLabel(a.from);
+  if (n === 0) return a.business_days === true && unit === "days" ? `set the ${what} to ${from} (or the next workday)` : `set the ${what} to ${from}`;
+  const word = unit === "weeks" ? `week${Math.abs(n) === 1 ? "" : "s"}` : `${a.business_days === true ? "business " : ""}day${Math.abs(n) === 1 ? "" : "s"}`;
+  return `set the ${what} to ${Math.abs(n)} ${word} ${n < 0 ? "before" : "from"} ${from}`;
+}
+
+// "in any way", "to a new date", "and is cleared" (Due / Start date changes).
+export function dateChangeLabel(value: Json | undefined) {
+  return DATE_CHANGES.find((d) => d.value === value)?.label ?? DATE_CHANGES[0].label;
+}
+
 export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConfig">, ctx: RuleContext) {
   const cfg = rule.triggerConfig;
   switch (rule.triggerType) {
@@ -222,9 +278,20 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
       const base = `${fieldName(ctx, cfg.field_id)} changes`;
       return cfg.option_id ? `${base} to ${fieldValueLabel(ctx, cfg.field_id, cfg.option_id)}` : base;
     }
-    case "due_approaching": {
-      const days = typeof cfg.days === "number" ? cfg.days : 1;
-      return days === 0 ? "A task is due today" : `A task is due in ${days} day${days === 1 ? "" : "s"}`;
+    case "due_approaching":
+    case "start_approaching": {
+      const { amount, unit } = triggerOffset(cfg);
+      const what = rule.triggerType === "due_approaching" ? "is due" : "starts";
+      return amount === 0 && unit === "days" ? `A task ${what} today` : `A task ${what} in ${offsetLabel(amount, unit)}`;
+    }
+    case "start_reached": {
+      const { amount, unit } = triggerOffset(cfg, 0);
+      return amount === 0 ? "A task’s start date arrives" : `A task started ${offsetLabel(amount, unit)} ago`;
+    }
+    case "start_date_changed":
+    case "due_date_changed": {
+      const what = rule.triggerType === "due_date_changed" ? "A due date" : "A start date";
+      return cfg.change === "set" ? `${what} is set or moved` : cfg.change === "cleared" ? `${what} is cleared` : `${what} changes`;
     }
     case "approval_decided": {
       const statuses = Array.isArray(cfg.statuses) ? cfg.statuses : [];
@@ -254,13 +321,12 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
       return "A file is attached";
     case "tag_added":
       return cfg.tag_id ? `Tag “${tagName(ctx, cfg.tag_id)}” is added` : "A tag is added";
-    case "due_date_changed":
-      return "A due date changes";
     case "task_overdue": {
-      // `days` = how many days overdue when the rule runs (1 = the day after the due date; missing or
-      // 0 counts as 1), as workflow_tick reads it.
-      const days = Math.max(wholeNumber(cfg.days) ?? 1, 1);
-      return days === 1 ? "A task becomes overdue" : `A task is ${days} days overdue`;
+      // How long overdue when the rule runs (1 day = the day after the due date; missing or 0 days count
+      // as 1), as rule_date_tick reads it. Hours count from the due time (the end of the day without one).
+      const { amount, unit } = triggerOffset(cfg);
+      if (unit === "days" && amount <= 1) return "A task becomes overdue";
+      return `A task is ${offsetLabel(unit === "days" ? Math.max(amount, 1) : amount, unit)} overdue`;
     }
     case "scheduled":
       return scheduleLabel(cfg);
@@ -299,6 +365,9 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
     case "field_compare": {
       const op = COMPARE_OPS.find((o) => o.value === c.op);
       if (!op) return `${fieldName(ctx, c.field_id)} compares`;
+      if (RANGE_OPS.has(op.value)) {
+        return `${fieldName(ctx, c.field_id)} ${op.label} ${compareValueLabel(ctx, c.field_id, c.value)} and ${compareValueLabel(ctx, c.field_id, c.to)}`;
+      }
       return `${fieldName(ctx, c.field_id)} ${op.label} ${compareValueLabel(ctx, c.field_id, c.value)}`;
     }
     case "has_tag":
@@ -326,6 +395,24 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
       return "has a due date";
     case "no_due_date":
       return "has no due date";
+    case "has_start_date":
+      return "has a start date";
+    case "no_start_date":
+      return "has no start date";
+    case "has_started":
+      return "its start date has arrived";
+    case "start_within": {
+      const days = wholeNumber(c.days);
+      if (days === null) return "starts within a few days";
+      return days === 0 ? "starts today" : `starts within ${days} day${days === 1 ? "" : "s"}`;
+    }
+    case "date_compare": {
+      const subject = c.date === "start" ? "the start date" : "the due date";
+      const op = DATE_OPS.find((o) => o.value === c.op);
+      if (!op) return `${subject} is …`;
+      const first = dayText(c.value);
+      return RANGE_OPS.has(op.value) ? `${subject} ${op.label} ${first} and ${dayText(c.to)}` : `${subject} ${op.label} ${first}`;
+    }
     case "task_type_is":
       return `task type is ${c.kind ? labelOf(TASK_KIND_OPTIONS, c.kind) : "…"}`;
     case "has_open_subtasks":
@@ -403,15 +490,9 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
       const section = project?.sections.find((s) => s.id === a.section_id);
       return `add to ${project ? `“${project.name}”` : "another project"}${section ? ` in “${section.name}”` : ""}`;
     }
-    case "set_due_date": {
-      if (a.mode === "clear") return "clear the due date";
-      const days = wholeNumber(a.days);
-      const from = dueFromLabel(a.from);
-      if (days === null) return "set the due date";
-      if (days === 0) return a.business_days === true ? `set the due date to ${from} (or the next workday)` : `set the due date to ${from}`;
-      const unit = `${a.business_days === true ? "business " : ""}day${Math.abs(days) === 1 ? "" : "s"}`;
-      return `set the due date to ${Math.abs(days)} ${unit} ${days < 0 ? "before" : "from"} ${from}`;
-    }
+    case "set_due_date":
+    case "set_start_date":
+      return describeDateAction(a);
     case "add_tag":
       return `add tag “${tagName(ctx, a.tag_id)}”`;
     case "remove_tag":
@@ -758,12 +839,57 @@ export function FieldValueInput({
         />
       );
     case "date":
-      return (
-        <input id={id} aria-label={`${field.name} value`} type="date" value={str(value)} onChange={(e) => onChange(e.currentTarget.value || null)} className={inputClass} />
-      );
+      return <RuleDateInput id={id} label={`${field.name} value`} value={value} onChange={onChange} highlight={highlight} />;
     default:
       return (
         <input id={id} aria-label={`${field.name} value`} value={str(value)} maxLength={1000} onChange={(e) => onChange(e.currentTarget.value)} className={inputClass} />
       );
   }
+}
+
+// A day for a rule (YYYY-MM-DD): a chip that opens the app's date picker (quick picks, a calendar, and a
+// typed date) instead of the browser's own date popup.
+export function RuleDateInput({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder = "choose date",
+  highlight,
+}: {
+  id?: string;
+  label: string;
+  value: Json | undefined;
+  onChange: (value: string | null) => void;
+  placeholder?: string;
+  highlight?: boolean;
+}) {
+  const day = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+  return (
+    <Popover
+      label={`${label}: ${day ? dayLabel(day, 0) : "not chosen"}. Change`}
+      buttonId={id}
+      panelClassName="w-[19rem] p-0"
+      buttonClassName={`inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-left font-medium hover:bg-accent-50 aria-expanded:bg-accent-50 ${
+        day ? "text-accent-700" : highlight ? "bg-amber-50 text-amber-800 ring-1 ring-amber-300" : "text-zinc-500 underline decoration-dashed underline-offset-4"
+      }`}
+      button={
+        <>
+          <CalendarDays className="size-3.5 shrink-0" aria-hidden />
+          <span className="truncate">{day ? dayLabel(day, 0) : placeholder}</span>
+        </>
+      }
+    >
+      {(close) => (
+        <SingleDatePicker
+          label={label}
+          value={day}
+          onChange={(next) => {
+            close();
+            onChange(next);
+          }}
+        />
+      )}
+    </Popover>
+  );
 }

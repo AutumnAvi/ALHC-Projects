@@ -27,6 +27,10 @@ export const TRIGGERS = [
   { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks it from a task's … menu (Run a rule).", keywords: ["button", "on demand", "by hand", "click"] },
   // Automations V3 (20261021010000_automations_v3_a.sql).
   { value: "follower_added", label: "A collaborator is added", group: "People", description: "Fires when someone starts following a task (anyone, or people you pick).", keywords: ["follower", "collaborator", "watch", "follow"] },
+  // Batch B: start dates.
+  { value: "start_date_changed", label: "Start date changes", group: "Dates", description: "Fires when a task's start date is set, moved, or cleared.", keywords: ["begin", "kickoff", "reschedule"] },
+  { value: "start_approaching", label: "Start date is approaching", group: "Dates", description: "Fires once per open task some hours, days, or weeks before it starts.", keywords: ["begin", "kickoff", "soon", "reminder"] },
+  { value: "start_reached", label: "Start date arrives", group: "Dates", description: "Fires once per open task when its start date comes (or a while after).", keywords: ["begin", "kickoff", "started", "passed"] },
 ] as const;
 
 export type TriggerType = (typeof TRIGGERS)[number]["value"];
@@ -60,6 +64,12 @@ export const CONDITIONS = [
   { value: "form_answer_contains", label: "Form answer contains", group: "Approvals and forms", description: "An answer on the task's form submission includes some text.", keywords: ["form", "request", "submission", "answer", "intake"] },
   // Automations V3.
   { value: "person_compare", label: "Compare people", group: "People", description: "The assignee, creator, collaborators, or a People field is (or isn't) someone — e.g. the assignee is the creator.", keywords: ["dynamic", "same", "creator", "assignee", "people field", "collaborator", "follower", "equals"] },
+  // Batch B: dates.
+  { value: "date_compare", label: "Date is", group: "Dates", description: "The due or start date is before, after, on, or between dates you pick.", keywords: ["due", "start", "before", "after", "between", "range", "on"] },
+  { value: "has_start_date", label: "Has a start date", group: "Dates", description: "A start date is set.", keywords: ["begin", "kickoff"] },
+  { value: "no_start_date", label: "Has no start date", group: "Dates", description: "No start date yet.", keywords: ["begin", "missing"] },
+  { value: "has_started", label: "Start date has arrived", group: "Dates", description: "It starts today or started earlier.", keywords: ["begin", "started", "passed", "in progress"] },
+  { value: "start_within", label: "Starts within", group: "Dates", description: "Starts today or in the next few days.", keywords: ["begin", "soon", "upcoming"] },
 ] as const;
 
 export type ConditionType = (typeof CONDITIONS)[number]["value"];
@@ -88,6 +98,8 @@ export const ACTIONS = [
   { value: "remove_tag", label: "Remove tag", group: "Fields", description: "Removes a tag from the task.", keywords: ["label", "untag"] },
   // Automations V3.
   { value: "remove_followers", label: "Remove followers", group: "People", description: "People stop following the task (they no longer hear about updates).", keywords: ["collaborator", "unfollow", "watch", "remove"] },
+  // Batch B.
+  { value: "set_start_date", label: "Set start date", group: "Dates", description: "Sets the start date on a day, some days, weeks, or hours from a date, or clears it.", keywords: ["begin", "kickoff", "relative", "business days", "clear"] },
 ] as const;
 
 export type ActionType = (typeof ACTIONS)[number]["value"];
@@ -160,9 +172,15 @@ export const V2_ACTIONS: ReadonlySet<string> = new Set([
 
 // Triggers, conditions, and actions that arrive with Automations V3's database update (new triggers
 // also need its tail: the old trigger CHECK refuses them until then).
-export const V3_TRIGGERS: ReadonlySet<string> = new Set(["follower_added"]);
-export const V3_CONDITIONS: ReadonlySet<string> = new Set(["person_compare"]);
-export const V3_ACTIONS: ReadonlySet<string> = new Set(["remove_followers"]);
+export const V3_TRIGGERS: ReadonlySet<string> = new Set([
+  "follower_added",
+  "start_date_changed", "start_approaching", "start_reached",
+]);
+export const V3_CONDITIONS: ReadonlySet<string> = new Set([
+  "person_compare",
+  "date_compare", "has_start_date", "no_start_date", "has_started", "start_within",
+]);
+export const V3_ACTIONS: ReadonlySet<string> = new Set(["remove_followers", "set_start_date"]);
 
 // A People field as a person slot.
 export const FIELD_SLOT_PREFIX = "field:";
@@ -189,11 +207,12 @@ export const PERSON_SIDES = [
   { value: "followers", label: "Collaborators" },
 ] as const;
 
-// "On a schedule" (mirrors rule_schedule_next_at): when, at an hour of the rule's time zone.
+// "On a schedule" (mirrors rule_schedule_next_at): when, at a time of the rule's time zone. Automations
+// V3 adds minutes, every N days / weeks (counted from `anchor`), and several weekdays (`weekdays`).
 export const SCHEDULE_FREQUENCIES = [
-  { value: "daily", label: "Every day", description: "Seven days a week" },
+  { value: "daily", label: "Every day", description: "Every day, or every few days" },
   { value: "workdays", label: "Every workday", description: "The workspace's workweek (Admin console → Organization)" },
-  { value: "weekly", label: "Every week", description: "On a day you pick" },
+  { value: "weekly", label: "Every week", description: "On the days you pick, every week or every few weeks" },
   { value: "monthly", label: "Every month", description: "On a day from 1 to 28" },
 ] as const;
 
@@ -208,6 +227,52 @@ export const COMPARE_OPS = [
   { value: "contains", label: "contains", types: ["text", "multi_select"] },
   { value: "not_contains", label: "doesn't contain", types: ["text", "multi_select"] },
   { value: "not_equals", label: "is not", types: ["number", "date", "text", "single_select", "boolean", "status"] },
+  // Automations V3 (batch B).
+  { value: "between", label: "is between", types: ["number", "date"] },
+  { value: "not_between", label: "isn't between", types: ["number", "date"] },
+] as const;
+
+// Compare ops that need a second value (`to`).
+export const RANGE_OPS: ReadonlySet<string> = new Set(["between", "not_between"]);
+
+// "Date is" (mirrors rule_date_matches): which date, and how it compares with one or two days.
+export const DATE_SUBJECTS = [
+  { value: "due", label: "Due date" },
+  { value: "start", label: "Start date" },
+] as const;
+
+export const DATE_OPS = [
+  { value: "before", label: "is before" },
+  { value: "after", label: "is after" },
+  { value: "on", label: "is on" },
+  { value: "on_or_before", label: "is on or before" },
+  { value: "on_or_after", label: "is on or after" },
+  { value: "between", label: "is between" },
+  { value: "not_between", label: "isn't between" },
+] as const;
+
+// Date triggers' offsets (mirrors rule_trigger_offset): { amount, unit } or the older { days }.
+export const OFFSET_UNITS = [
+  { value: "hours", label: "hours", one: "hour", max: 720, min: 1 },
+  { value: "days", label: "days", one: "day", max: 90, min: 0 },
+  { value: "weeks", label: "weeks", one: "week", max: 12, min: 1 },
+] as const;
+export type OffsetUnit = (typeof OFFSET_UNITS)[number]["value"];
+
+export function triggerOffset(cfg: Record<string, Json>, defaultDays = 1): { amount: number; unit: OffsetUnit } {
+  const whole = (v: Json | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null);
+  if (typeof cfg.unit === "string") {
+    const unit = (["hours", "weeks"].includes(cfg.unit) ? cfg.unit : "days") as OffsetUnit;
+    return { amount: whole(cfg.amount) ?? defaultDays, unit };
+  }
+  return { amount: whole(cfg.days) ?? defaultDays, unit: "days" };
+}
+
+// "Due / start date changes": any change, only to a new date, or only when it's cleared.
+export const DATE_CHANGES = [
+  { value: "any", label: "in any way", description: "Set, moved, or cleared" },
+  { value: "set", label: "to a new date", description: "Set or moved (not cleared)" },
+  { value: "cleared", label: "and is cleared", description: "Removed" },
 ] as const;
 
 export function compareOpsFor(fieldType: string, boundToSections = false) {
@@ -215,7 +280,7 @@ export function compareOpsFor(fieldType: string, boundToSections = false) {
   return COMPARE_OPS.filter((op) => (op.types as readonly string[]).includes(key));
 }
 
-// "Set due date": counted from (mirrors execute_rule_actions).
+// "Set due / start date": counted from (mirrors rule_set_task_date). Hours always count from now.
 export const DUE_FROM = [
   { value: "today", label: "today", description: "The day the rule runs" },
   { value: "due_date", label: "the current due date", description: "Today if there isn't one" },

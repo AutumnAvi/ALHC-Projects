@@ -10,6 +10,12 @@
 --   slots everywhere (assignee, subtasks, approvers, followers, notifications, conditions), "Remove
 --   followers", the "Collaborator is added" trigger, "Compare people" (e.g. the assignee is the
 --   creator), and "Task came from a form" picking which form.
+-- Batch B — dates: start date triggers (changed, approaching, arrived) and conditions (set / empty,
+--   within, arrived), "Set start date", absolute dates (set a date; before / after / on / between
+--   conditions on the due date, the start date, and date or number fields), hour and week offsets for
+--   approaching / overdue / start triggers and the date actions, and schedules with a time of day,
+--   every N days or weeks, and several weekdays. Business days follow the workspace's workweek
+--   (Sunday–Thursday by default).
 --
 -- fire_rules keeps its import and copy checks first, exactly as they were; notify_with,
 -- notify_message, and add_story are untouched. Every new table has RLS on, no anon privilege, and no
@@ -40,7 +46,8 @@ begin
       'task_completed', 'task_reopened', 'due_date_changed', 'task_overdue', 'comment_added',
       'attachment_added', 'tag_added', 'subtasks_completed', 'task_added_from_project', 'scheduled', 'manual',
       -- Automations V3
-      'follower_added'
+      'follower_added',
+      'start_date_changed', 'start_approaching', 'start_reached'
     ));
   end if;
 end $$;
@@ -262,6 +269,289 @@ $$;
 revoke all on function public.rule_pick_assignee(public.rules, uuid, jsonb) from public, anon, authenticated;
 
 -- =============================================================================================
+-- 2b. Dates (batch B)
+
+-- A day compared with one or two days: before, after, on, on or before, on or after, between (both
+-- ends included, in either order), not between. An empty day never matches (use "has no due date").
+create or replace function public.rule_date_matches(d date, op text, first_day text, second_day text)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  a date;
+  b date;
+begin
+  if d is null or coalesce(first_day, '') !~ '^\d{4}-\d{2}-\d{2}$' then
+    return false;
+  end if;
+  a := first_day::date;
+  if op in ('between', 'not_between') then
+    if coalesce(second_day, '') !~ '^\d{4}-\d{2}-\d{2}$' then
+      return false;
+    end if;
+    b := second_day::date;
+    return (d between least(a, b) and greatest(a, b)) = (op = 'between');
+  end if;
+  return case op
+    when 'before' then d < a
+    when 'after' then d > a
+    when 'on' then d = a
+    when 'on_or_before' then d <= a
+    when 'on_or_after' then d >= a
+    else false
+  end;
+end;
+$$;
+
+revoke all on function public.rule_date_matches(date, text, text, text) from public, anon, authenticated;
+
+-- A real calendar day written YYYY-MM-DD (2026-02-30 isn't one).
+create or replace function public.rule_is_day(value jsonb)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $$
+begin
+  if value is null or jsonb_typeof(value) <> 'string' or (value #>> '{}') !~ '^\d{4}-\d{2}-\d{2}$' then
+    return false;
+  end if;
+  perform (value #>> '{}')::date;
+  return true;
+exception when others then
+  return false;
+end;
+$$;
+
+revoke all on function public.rule_is_day(jsonb) from public, anon;
+grant execute on function public.rule_is_day(jsonb) to authenticated;
+
+-- A date trigger's offset: { amount, unit: hours | days | weeks } (Automations V3), or the older
+-- { days } (= days). Missing = the trigger's default (1 day; 0 for "start date arrives").
+create or replace function public.rule_trigger_offset(cfg jsonb, default_days integer)
+returns table (amount integer, unit text)
+language sql
+immutable
+set search_path = ''
+as $$
+  select
+    case
+      when cfg ? 'unit' and jsonb_typeof(cfg -> 'amount') = 'number' then (cfg ->> 'amount')::numeric::integer
+      when cfg ? 'unit' then default_days
+      when jsonb_typeof(cfg -> 'days') = 'number' then (cfg ->> 'days')::numeric::integer
+      else default_days
+    end,
+    case when cfg ->> 'unit' in ('hours', 'weeks') then cfg ->> 'unit' else 'days' end;
+$$;
+
+revoke all on function public.rule_trigger_offset(jsonb, integer) from public, anon, authenticated;
+
+-- Why a date trigger's offset is refused (null = fine), for validate_rule.
+create or replace function public.rule_offset_problem(cfg jsonb, legacy_max integer)
+returns text
+language plpgsql
+immutable
+set search_path = ''
+as $$
+begin
+  if cfg ? 'unit' then
+    if coalesce(cfg ->> 'unit', '') not in ('hours', 'days', 'weeks') then
+      return 'Count the time in hours, days, or weeks';
+    end if;
+    if coalesce(jsonb_typeof(cfg -> 'amount'), 'missing') <> 'number' or (cfg ->> 'amount') !~ '^[0-9]{1,3}$' then
+      return 'Choose how many ' || (cfg ->> 'unit');
+    end if;
+    if (cfg ->> 'unit' = 'hours' and (cfg ->> 'amount')::integer not between 1 and 720)
+       or (cfg ->> 'unit' = 'days' and (cfg ->> 'amount')::integer not between 0 and 90)
+       or (cfg ->> 'unit' = 'weeks' and (cfg ->> 'amount')::integer not between 1 and 12) then
+      return 'Hours go from 1 to 720, days from 0 to 90, and weeks from 1 to 12';
+    end if;
+  elsif cfg ? 'days' and (coalesce(jsonb_typeof(cfg -> 'days'), 'missing') <> 'number' or (cfg ->> 'days')::numeric not between 0 and legacy_max) then
+    return 'Days must be between 0 and ' || legacy_max;
+  end if;
+  return null;
+end;
+$$;
+
+-- validate_rule runs as the person saving the rule.
+revoke all on function public.rule_offset_problem(jsonb, integer) from public, anon;
+grant execute on function public.rule_offset_problem(jsonb, integer) to authenticated;
+
+-- Why a Set due date / Set start date action is refused (null = fine). Shapes:
+--   { mode: "clear" }
+--   { mode: "date", date: "YYYY-MM-DD" }                                       (Automations V3)
+--   { mode: "relative" (default), days: −365…365, unit?: days | weeks | hours, business_days?, from? }
+-- Weeks are calendar weeks; hours count from now (from "today" only) and set a time.
+create or replace function public.rule_date_action_problem(a jsonb, label text)
+returns text
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  unit text := coalesce(a ->> 'unit', 'days');
+begin
+  case coalesce(a ->> 'mode', 'relative')
+    when 'clear' then
+      return null;
+    when 'date' then
+      if not public.rule_is_day(a -> 'date') then
+        return label || ': choose a date';
+      end if;
+      return null;
+    when 'relative' then
+      null;
+    else
+      return label || ': choose a date or clear it';
+  end case;
+  if unit not in ('days', 'weeks', 'hours') then
+    return label || ': count days, weeks, or hours';
+  end if;
+  if coalesce(jsonb_typeof(a -> 'days'), 'missing') <> 'number' or (a ->> 'days') !~ '^-?[0-9]{1,4}$' then
+    return label || ': choose −365 to 365 days';
+  end if;
+  if (unit = 'days' and abs((a ->> 'days')::integer) > 365)
+     or (unit = 'weeks' and abs((a ->> 'days')::integer) > 52)
+     or (unit = 'hours' and (a ->> 'days')::integer not between 1 and 2160) then
+    return label || ': up to 365 days, 52 weeks, or 2,160 hours';
+  end if;
+  if coalesce(a ->> 'from', 'today') not in ('today', 'due_date', 'start_date') then
+    return label || ': count from today, the due date, or the start date';
+  end if;
+  if unit = 'hours' and coalesce(a ->> 'from', 'today') <> 'today' then
+    return label || ': hours count from now';
+  end if;
+  if a ? 'business_days' and jsonb_typeof(a -> 'business_days') <> 'boolean' then
+    return label || ': business days is on or off';
+  end if;
+  if unit <> 'days' and coalesce((a ->> 'business_days')::boolean, false) then
+    return label || ': business days count in days';
+  end if;
+  return null;
+end;
+$$;
+
+-- validate_rule runs as the person saving the rule.
+revoke all on function public.rule_date_action_problem(jsonb, text) from public, anon;
+grant execute on function public.rule_date_action_problem(jsonb, text) to authenticated;
+
+-- Runs a Set due date (which = 'due') or Set start date (which = 'start') action on a task and says
+-- what happened: { outcome, result, input }. The start date never ends up after the due date: setting
+-- the due date before the start clears the start; setting the start after the due date moves the due
+-- date to the start. Hours set a time (now + N hours) in the task's time zone (the rule's when the task
+-- has no times yet). Milestones have no start date.
+create or replace function public.rule_set_task_date(r public.rules, target_task uuid, a jsonb, which text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  t public.tasks;
+  mode text := coalesce(a ->> 'mode', 'relative');
+  unit text := coalesce(a ->> 'unit', 'days');
+  n integer := coalesce((a ->> 'days')::numeric::integer, 0);
+  business boolean := coalesce((a ->> 'business_days')::boolean, false);
+  label text := case which when 'start' then 'start date' else 'due date' end;
+  base date;
+  new_day date;
+  new_at timestamptz;
+  zone text;
+  input jsonb;
+  changed boolean;
+begin
+  select * into t from public.tasks where id = target_task;
+  zone := case when t.due_at is null and t.start_at is null
+    then public.safe_timezone(coalesce(nullif(r.trigger_config ->> 'timezone', ''), 'UTC'))
+    else public.safe_timezone(t.time_zone) end;
+
+  if mode = 'clear' then
+    input := jsonb_build_object('mode', 'clear');
+    if which = 'start' then
+      update public.tasks set start_on = null where id = target_task and start_on is not null;
+    else
+      update public.tasks set due_on = null where id = target_task and due_on is not null;
+    end if;
+    return jsonb_build_object('input', input) || case when found
+      then jsonb_build_object('outcome', 'done', 'result', initcap(left(label, 1)) || substr(label, 2) || ' cleared')
+      else jsonb_build_object('outcome', 'unchanged', 'result', 'Already has no ' || label) end;
+  end if;
+
+  if which = 'start' and t.kind = 'milestone' then
+    return jsonb_build_object('outcome', 'unchanged', 'result', 'Milestones have no start date', 'input', jsonb_build_object('mode', mode));
+  end if;
+
+  if mode = 'date' then
+    new_day := (a ->> 'date')::date;
+    input := jsonb_build_object('date', a ->> 'date');
+  else
+    base := case coalesce(a ->> 'from', 'today')
+      when 'due_date' then coalesce(t.due_on, public.rule_local_today(r))
+      when 'start_date' then coalesce(t.start_on, public.rule_local_today(r))
+      else public.rule_local_today(r)
+    end;
+    if unit = 'hours' then
+      new_at := date_trunc('minute', now()) + make_interval(hours => n);
+      new_day := (new_at at time zone zone)::date;
+    elsif unit = 'weeks' then
+      new_day := base + n * 7;
+    else
+      new_day := public.rule_add_days(base, n, business, public.project_work_week(r.project_id));
+    end if;
+    input := jsonb_build_object('days', n, 'unit', unit, 'business_days', business, 'from', coalesce(a ->> 'from', 'today'));
+  end if;
+
+  if which = 'due' then
+    if new_at is not null then
+      update public.tasks
+      set due_at = new_at,
+          time_zone = zone,
+          start_on = case when start_on > new_day then null else start_on end,
+          start_at = case when start_on > new_day or start_at > new_at then null else start_at end
+      where id = target_task and due_at is distinct from new_at;
+    else
+      update public.tasks
+      set due_on = new_day,
+          start_on = case when start_on > new_day then null else start_on end,
+          start_at = case when start_on > new_day then null else start_at end
+      where id = target_task and due_on is distinct from new_day;
+    end if;
+  else
+    if new_at is not null then
+      update public.tasks
+      set start_at = new_at,
+          time_zone = zone,
+          due_at = case when due_at < new_at then null else due_at end,
+          due_on = case when due_on < new_day then new_day else due_on end
+      where id = target_task and start_at is distinct from new_at;
+    else
+      update public.tasks
+      set start_on = new_day,
+          start_at = null,
+          due_at = case when due_on < new_day then null else due_at end,
+          due_on = case when due_on < new_day then new_day else due_on end
+      where id = target_task and start_on is distinct from new_day;
+    end if;
+  end if;
+  changed := found;
+  if not changed then
+    return jsonb_build_object('outcome', 'unchanged', 'input', input, 'result',
+      'Already ' || case which when 'start' then 'starts ' else 'due ' end
+      || case when new_at is not null then to_char(new_at at time zone zone, 'Mon FMDD, YYYY HH12:MI AM') else to_char(new_day, 'Mon FMDD, YYYY') end);
+  end if;
+  return jsonb_build_object('outcome', 'done', 'input', input, 'result',
+    initcap(left(label, 1)) || substr(label, 2) || ' set to '
+    || case when new_at is not null then to_char(new_at at time zone zone, 'Dy, Mon FMDD, YYYY HH12:MI AM') else to_char(new_day, 'Dy, Mon FMDD, YYYY') end
+    || case when which = 'start' and t.due_on < new_day then ' (the due date moved with it)'
+            when which = 'due' and t.start_on > new_day then ' (the start date was cleared)' else '' end);
+end;
+$$;
+
+revoke all on function public.rule_set_task_date(public.rules, uuid, jsonb, text) from public, anon, authenticated;
+
+-- =============================================================================================
 -- 3. Conditions
 
 -- One condition against one task (the engine and the dry run share it). `section` is the task's
@@ -317,6 +607,15 @@ begin
       return t.due_on is not null and t.due_on between today and today + coalesce((c ->> 'days')::numeric::integer, 0);
     when 'has_due_date' then return t.due_on is not null;
     when 'no_due_date' then return t.due_on is null;
+    -- Batch B: start dates and absolute dates.
+    when 'has_start_date' then return t.start_on is not null;
+    when 'no_start_date' then return t.start_on is null;
+    when 'has_started' then return t.start_on is not null and t.start_on <= today;
+    when 'start_within' then
+      return t.start_on is not null and t.start_on between today and today + coalesce((c ->> 'days')::numeric::integer, 0);
+    when 'date_compare' then
+      return public.rule_date_matches(case c ->> 'date' when 'start' then t.start_on else t.due_on end,
+        c ->> 'op', c ->> 'value', c ->> 'to');
     when 'task_type_is' then return t.kind = c ->> 'kind';
     when 'has_open_subtasks' then
       return exists (select 1 from public.tasks s where s.parent_task_id = t.id and s.deleted_at is null and s.completed_at is null);
@@ -391,6 +690,16 @@ begin
             return false;
           end if;
           return case op when 'before' then current_text::date < wanted_text::date else current_text::date > wanted_text::date end;
+        when 'between', 'not_between' then
+          -- Batch B: a number or date field between two values (both included, in either order).
+          if jsonb_typeof(current_value) = 'number' and jsonb_typeof(wanted) = 'number' and jsonb_typeof(c -> 'to') = 'number' then
+            return ((current_value #>> '{}')::numeric between least((wanted #>> '{}')::numeric, (c ->> 'to')::numeric)
+              and greatest((wanted #>> '{}')::numeric, (c ->> 'to')::numeric)) = (op = 'between');
+          end if;
+          if current_text ~ '^\d{4}-\d{2}-\d{2}$' then
+            return public.rule_date_matches(current_text::date, op, wanted_text, c ->> 'to');
+          end if;
+          return false;
         else
           return false;
       end case;
@@ -435,9 +744,14 @@ begin
         raise exception 'The section-bound Status field changes with sections: use the “Section changed” trigger'
           using errcode = 'check_violation';
       end if;
-    when 'due_approaching', 'task_overdue' then
-      if cfg ? 'days' and (coalesce(jsonb_typeof(cfg -> 'days'), 'missing') <> 'number' or (cfg ->> 'days')::numeric not between 0 and 30) then
-        raise exception 'Days must be between 0 and 30' using errcode = 'check_violation';
+    when 'due_approaching', 'task_overdue', 'start_approaching', 'start_reached' then
+      -- Batch B: an offset in hours, days, or weeks (or the older { days }).
+      if public.rule_offset_problem(cfg, 30) is not null then
+        raise exception '%', public.rule_offset_problem(cfg, 30) using errcode = 'check_violation';
+      end if;
+    when 'due_date_changed', 'start_date_changed' then
+      if cfg ? 'change' and coalesce(cfg ->> 'change', '') not in ('any', 'set', 'cleared') then
+        raise exception 'Choose any change, a new date, or cleared' using errcode = 'check_violation';
       end if;
     when 'approval_decided' then
       if cfg ? 'statuses' and (
@@ -472,6 +786,27 @@ begin
       end if;
       if cfg ? 'weekday' and (jsonb_typeof(cfg -> 'weekday') <> 'number' or (cfg ->> 'weekday') !~ '^[0-6]$') then
         raise exception 'Choose a day of the week' using errcode = 'check_violation';
+      end if;
+      -- Batch B: minutes, every N days / weeks (counted from an anchor day), several weekdays.
+      if cfg ? 'minute' and (jsonb_typeof(cfg -> 'minute') <> 'number' or (cfg ->> 'minute') !~ '^[0-5]?[0-9]$') then
+        raise exception 'The minute is a whole number from 0 to 59' using errcode = 'check_violation';
+      end if;
+      if cfg ? 'interval' and (
+        jsonb_typeof(cfg -> 'interval') <> 'number' or (cfg ->> 'interval') !~ '^[0-9]{1,3}$'
+        or (cfg ->> 'interval')::integer not between 1 and case cfg ->> 'frequency' when 'weekly' then 52 else 365 end
+        or (cfg ->> 'frequency' not in ('daily', 'weekly') and (cfg ->> 'interval')::integer <> 1)
+      ) then
+        raise exception 'Every N: up to 365 days or 52 weeks' using errcode = 'check_violation';
+      end if;
+      if cfg ? 'weekdays' and (
+        coalesce(jsonb_typeof(cfg -> 'weekdays'), 'missing') <> 'array' or jsonb_array_length(cfg -> 'weekdays') not between 1 and 7
+        or exists (select 1 from jsonb_array_elements(cfg -> 'weekdays') w where jsonb_typeof(w) <> 'number' or (w #>> '{}') !~ '^[0-6]$')
+        or (select count(distinct w #>> '{}') from jsonb_array_elements(cfg -> 'weekdays') w) <> jsonb_array_length(cfg -> 'weekdays')
+      ) then
+        raise exception 'Choose one or more days of the week' using errcode = 'check_violation';
+      end if;
+      if cfg ? 'anchor' and not public.rule_is_day(cfg -> 'anchor') then
+        raise exception 'The schedule''s first day is not a date' using errcode = 'check_violation';
       end if;
       if cfg ? 'month_day' and (jsonb_typeof(cfg -> 'month_day') <> 'number' or (cfg ->> 'month_day') !~ '^([1-9]|1[0-9]|2[0-8])$') then
         raise exception 'The day of the month is from 1 to 28' using errcode = 'check_violation';
@@ -513,6 +848,11 @@ begin
         or (not field.bound_to_sections and (
           (field.field_type = 'number' and op in ('gt', 'gte', 'lt', 'lte', 'not_equals') and jsonb_typeof(item -> 'value') = 'number')
           or (field.field_type = 'date' and op in ('before', 'after', 'not_equals') and (item ->> 'value') ~ '^\d{4}-\d{2}-\d{2}$')
+          -- Batch B: between two numbers or two dates.
+          or (field.field_type = 'number' and op in ('between', 'not_between') and jsonb_typeof(item -> 'value') = 'number'
+              and jsonb_typeof(item -> 'to') = 'number')
+          or (field.field_type = 'date' and op in ('between', 'not_between') and public.rule_is_day(item -> 'value')
+              and public.rule_is_day(item -> 'to'))
           or (field.field_type = 'text' and op in ('contains', 'not_contains', 'not_equals') and jsonb_typeof(item -> 'value') = 'string')
           or (field.field_type = 'single_select' and op = 'not_equals')
           or (field.field_type = 'multi_select' and op in ('contains', 'not_contains'))
@@ -551,9 +891,21 @@ begin
       if not public.rule_tag_ok(new.project_id, item ->> 'tag_id', true) then
         raise exception 'Choose a tag of this workspace for the condition' using errcode = 'check_violation';
       end if;
-    elsif kind = 'due_within' then
+    elsif kind in ('due_within', 'start_within') then
       if coalesce(jsonb_typeof(item -> 'days'), 'missing') <> 'number' or (item ->> 'days') !~ '^[0-9]{1,3}$' or (item ->> 'days')::integer > 365 then
-        raise exception 'Due within: choose 0 to 365 days' using errcode = 'check_violation';
+        raise exception '%: choose 0 to 365 days', case kind when 'due_within' then 'Due within' else 'Starts within' end
+          using errcode = 'check_violation';
+      end if;
+    elsif kind = 'date_compare' then
+      if coalesce(item ->> 'date', '') not in ('due', 'start') then
+        raise exception 'Date is: choose the due date or the start date' using errcode = 'check_violation';
+      end if;
+      if coalesce(item ->> 'op', '') not in ('before', 'after', 'on', 'on_or_before', 'on_or_after', 'between', 'not_between') then
+        raise exception 'Date is: choose before, after, on, or between' using errcode = 'check_violation';
+      end if;
+      if not public.rule_is_day(item -> 'value') or (item ->> 'op' in ('between', 'not_between') and not public.rule_is_day(item -> 'to')) then
+        raise exception 'Date is: choose the date%', case when item ->> 'op' in ('between', 'not_between') then 's' else '' end
+          using errcode = 'check_violation';
       end if;
     elsif kind = 'task_type_is' then
       if coalesce(item ->> 'kind', '') not in ('task', 'milestone', 'approval') then
@@ -568,7 +920,9 @@ begin
       end if;
     elsif kind is null or kind not in (
       'assignee_is_set', 'assignee_is_empty', 'is_complete', 'is_incomplete', 'is_overdue',
-      'has_due_date', 'no_due_date', 'has_open_subtasks', 'all_subtasks_done'
+      'has_due_date', 'no_due_date', 'has_open_subtasks', 'all_subtasks_done',
+      -- Batch B
+      'has_start_date', 'no_start_date', 'has_started'
     ) then
       raise exception 'Unknown condition %', coalesce(kind, '(none)') using errcode = 'check_violation';
     end if;
@@ -667,18 +1021,11 @@ begin
         end if;
       when 'complete_task', 'reopen_task' then
         null;
-      when 'set_due_date' then
-        if coalesce(item ->> 'mode', 'relative') = 'clear' then
-          null;
-        elsif item ->> 'mode' is distinct from 'relative' and item ? 'mode' then
-          raise exception 'Set due date: choose a date or clear it' using errcode = 'check_violation';
-        elsif coalesce(jsonb_typeof(item -> 'days'), 'missing') <> 'number' or (item ->> 'days') !~ '^-?[0-9]{1,3}$'
-              or abs((item ->> 'days')::integer) > 365 then
-          raise exception 'Set due date: choose −365 to 365 days' using errcode = 'check_violation';
-        elsif coalesce(item ->> 'from', 'today') not in ('today', 'due_date', 'start_date') then
-          raise exception 'Set due date: count from today, the due date, or the start date' using errcode = 'check_violation';
-        elsif item ? 'business_days' and jsonb_typeof(item -> 'business_days') <> 'boolean' then
-          raise exception 'Set due date: business days is on or off' using errcode = 'check_violation';
+      when 'set_due_date', 'set_start_date' then
+        -- Batch B: an absolute date, weeks, and hours too (rule_date_action_problem).
+        if public.rule_date_action_problem(item, case kind when 'set_due_date' then 'Set due date' else 'Set start date' end) is not null then
+          raise exception '%', public.rule_date_action_problem(item, case kind when 'set_due_date' then 'Set due date' else 'Set start date' end)
+            using errcode = 'check_violation';
         end if;
       when 'add_tag', 'remove_tag' then
         if not public.rule_tag_ok(new.project_id, item ->> 'tag_id', kind = 'remove_tag') then
@@ -1022,39 +1369,12 @@ begin
             result := 'Reopened';
           end if;
 
-        when 'set_due_date' then
-          if coalesce(a ->> 'mode', 'relative') = 'clear' then
-            input := jsonb_build_object('mode', 'clear');
-            update public.tasks set due_on = null where id = target_task and due_on is not null;
-            if not found then
-              outcome := 'unchanged';
-              result := 'Already has no due date';
-            else
-              result := 'Due date cleared';
-            end if;
-          else
-            base := case coalesce(a ->> 'from', 'today')
-              when 'due_date' then coalesce(t.due_on, public.rule_local_today(r))
-              when 'start_date' then coalesce(t.start_on, public.rule_local_today(r))
-              else public.rule_local_today(r)
-            end;
-            new_due := public.rule_add_days(base, (a ->> 'days')::integer, coalesce((a ->> 'business_days')::boolean, false),
-              public.project_work_week(r.project_id));
-            input := jsonb_build_object('days', a -> 'days', 'business_days', coalesce((a ->> 'business_days')::boolean, false),
-              'from', coalesce(a ->> 'from', 'today'));
-            -- A start date after the new due date would break the date order, so it is cleared.
-            update public.tasks
-            set due_on = new_due,
-                start_on = case when start_on > new_due then null else start_on end,
-                start_at = case when start_on > new_due then null else start_at end
-            where id = target_task and due_on is distinct from new_due;
-            if not found then
-              outcome := 'unchanged';
-              result := 'Already due ' || to_char(new_due, 'Mon FMDD, YYYY');
-            else
-              result := 'Due date set to ' || to_char(new_due, 'Dy, Mon FMDD, YYYY');
-            end if;
-          end if;
+        when 'set_due_date', 'set_start_date' then
+          -- Batch B: one helper for both dates (absolute dates, weeks, and hours too).
+          elem := public.rule_set_task_date(r, target_task, a, case a ->> 'type' when 'set_start_date' then 'start' else 'due' end);
+          outcome := elem ->> 'outcome';
+          result := elem ->> 'result';
+          input := coalesce(elem -> 'input', '{}'::jsonb);
 
         when 'add_tag', 'remove_tag' then
           select * into tag_row from public.tags tg where tg.id::text = a ->> 'tag_id' and tg.deleted_at is null;
@@ -1241,6 +1561,10 @@ begin
     -- Automations V3 trigger filters.
     continue when trigger_kind = 'follower_added' and cfg ? 'people'
       and not coalesce((event ->> 'profile_id')::uuid = any (public.rule_people(cfg -> 'people', target_task)), false);
+    continue when trigger_kind in ('due_date_changed', 'start_date_changed') and (
+      (cfg ->> 'change' = 'set' and (event ->> (case trigger_kind when 'due_date_changed' then 'due_on' else 'start_on' end)) is null)
+      or (cfg ->> 'change' = 'cleared' and (event ->> (case trigger_kind when 'due_date_changed' then 'due_on' else 'start_on' end)) is not null)
+    );
     -- "Also run when another rule makes the change" off: only people's changes fire it.
     continue when public.rule_context_id() is not null and not r.run_on_rule_changes;
     perform public.run_rule(r, target_task, event);
@@ -1280,3 +1604,311 @@ revoke all on function public.rules_on_follower_added() from public, anon, authe
 create or replace trigger task_followers_zz_rules
 after insert or update of deleted_at on public.task_followers
 for each row execute function public.rules_on_follower_added();
+
+-- =============================================================================================
+-- 8. Dates (batch B): where the start date triggers fire, schedules, and the scheduler
+
+-- Same as Automations V2's, plus "Start date changes" (not for dates set in the transaction that made
+-- the task, like due dates).
+create or replace function public.rules_on_task_update()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  parent public.tasks;
+begin
+  if new.deleted_at is null and new.parent_task_id is null then
+    if new.assignee_id is distinct from old.assignee_id then
+      perform public.fire_rules('assignee_changed', new.id, null, jsonb_build_object('assignee_id', new.assignee_id));
+    end if;
+    if old.completed_at is null and new.completed_at is not null then
+      perform public.fire_rules('task_completed', new.id, null, jsonb_build_object('completed_at', new.completed_at));
+    elsif old.completed_at is not null and new.completed_at is null then
+      perform public.fire_rules('task_reopened', new.id, null, '{}'::jsonb);
+    end if;
+    -- Like section and field changes: not for dates set in the transaction that made the task.
+    if new.due_on is distinct from old.due_on
+       and (public.rule_context_id() is not null or new.created_at <> now()) then
+      perform public.fire_rules('due_date_changed', new.id, null, jsonb_build_object(
+        'due_on', new.due_on, 'from_due_on', old.due_on
+      ));
+    end if;
+    if new.start_on is distinct from old.start_on
+       and (public.rule_context_id() is not null or new.created_at <> now()) then
+      perform public.fire_rules('start_date_changed', new.id, null, jsonb_build_object(
+        'start_on', new.start_on, 'from_start_on', old.start_on
+      ));
+    end if;
+  end if;
+
+  -- A subtask was finished: when it was the parent's last open one, "all subtasks done" fires on the
+  -- (top-level) parent. Subtasks finished together fire once (the last of them by id).
+  if new.parent_task_id is not null and new.deleted_at is null
+     and old.completed_at is null and new.completed_at is not null then
+    select * into parent from public.tasks
+    where id = new.parent_task_id and deleted_at is null and parent_task_id is null;
+    if found
+       and not exists (
+         select 1 from public.tasks s where s.parent_task_id = parent.id and s.deleted_at is null and s.completed_at is null
+       )
+       and new.id = (
+         select s.id from public.tasks s
+         where s.parent_task_id = parent.id and s.deleted_at is null and s.completed_at = new.completed_at
+         order by s.id desc limit 1
+       ) then
+      perform public.fire_rules('subtasks_completed', parent.id, null, jsonb_build_object('subtask_id', new.id));
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.rules_on_task_update() from public, anon, authenticated;
+
+create or replace trigger tasks_rules
+after update of assignee_id, completed_at, due_on, start_on on public.tasks
+for each row execute function public.rules_on_task_update();
+
+-- The next time a scheduled rule runs after `after_time` (same signature, grants, and callers as
+-- Automations V2's). At `hour`:`minute` (9:00 by default) in the rule's time zone:
+--   daily     every day, or every `interval` days counted from `anchor`
+--   workdays  the workspace's workweek
+--   weekly    on `weekdays` (or the older single `weekday`; Sunday by default), every `interval` weeks
+--             counted from `anchor`'s week (weeks start on Sunday)
+--   monthly   on `month_day` (1–28)
+-- A rule saved without the new keys runs exactly as before.
+create or replace function public.rule_schedule_next_at(cfg jsonb, work_week smallint[], after_time timestamptz)
+returns timestamptz
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  frequency text := cfg ->> 'frequency';
+  hour integer := case when jsonb_typeof(cfg -> 'hour') = 'number' then (cfg ->> 'hour')::numeric::integer else 9 end;
+  minute integer := case when jsonb_typeof(cfg -> 'minute') = 'number' then (cfg ->> 'minute')::numeric::integer else 0 end;
+  every integer := greatest(case when jsonb_typeof(cfg -> 'interval') = 'number' then (cfg ->> 'interval')::numeric::integer else 1 end, 1);
+  month_day integer := case when jsonb_typeof(cfg -> 'month_day') = 'number' then (cfg ->> 'month_day')::numeric::integer else 1 end;
+  zone text := public.safe_timezone(coalesce(nullif(cfg ->> 'timezone', ''), 'UTC'));
+  anchor date := case when (cfg ->> 'anchor') ~ '^\d{4}-\d{2}-\d{2}$' then (cfg ->> 'anchor')::date else date '2026-01-04' end;
+  days smallint[];
+  first_day date;
+  on_day date;
+  candidate timestamptz;
+  ok boolean;
+begin
+  if coalesce(frequency, '') not in ('daily', 'workdays', 'weekly', 'monthly') or hour not between 0 and 23 or minute not between 0 and 59 then
+    return null;
+  end if;
+  if frequency = 'weekly' then
+    if jsonb_typeof(cfg -> 'weekdays') = 'array' and jsonb_array_length(cfg -> 'weekdays') > 0 then
+      select array_agg((w #>> '{}')::smallint) into days from jsonb_array_elements(cfg -> 'weekdays') w;
+    else
+      days := array[case when jsonb_typeof(cfg -> 'weekday') = 'number' then (cfg ->> 'weekday')::numeric::smallint else 0 end];
+    end if;
+  elsif frequency = 'workdays' then
+    days := case when work_week is not null and cardinality(work_week) between 1 and 6 then work_week else array[0, 1, 2, 3, 4, 5, 6]::smallint[] end;
+  end if;
+
+  first_day := (after_time at time zone zone)::date;
+  for i in 0 .. 800 loop
+    on_day := first_day + i;
+    ok := case frequency
+      when 'daily' then ((on_day - anchor) % every + every) % every = 0
+      when 'workdays' then extract(dow from on_day)::smallint = any (days)
+      when 'weekly' then extract(dow from on_day)::smallint = any (days)
+        and ((((on_day - extract(dow from on_day)::integer) - (anchor - extract(dow from anchor)::integer)) / 7) % every + every) % every = 0
+      else extract(day from on_day)::integer = month_day
+    end;
+    if ok then
+      candidate := (on_day + make_time(hour, minute, 0)) at time zone zone;
+      if candidate > after_time then
+        return candidate;
+      end if;
+    end if;
+  end loop;
+  return null;
+end;
+$$;
+
+revoke all on function public.rule_schedule_next_at(jsonb, smallint[], timestamptz) from public, anon;
+grant execute on function public.rule_schedule_next_at(jsonb, smallint[], timestamptz) to authenticated;
+
+-- The date triggers of one rule for the scheduler: "Due date is approaching", "Task becomes overdue",
+-- "Start date is approaching", and "Start date arrives" (batch B), each with an offset in days, weeks
+-- (whole dates in the rule's time zone, as before), or hours (from the task's due / start time: a due
+-- date without a time counts as the end of that day, a start date without one as its start). Each runs
+-- once per task and date (or time); overdue and arrived catch up for two days so a missed tick still
+-- fires. Returns how many runs happened.
+create or replace function public.rule_date_tick(r public.rules)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  kind text := r.trigger_type;
+  amount integer;
+  unit text;
+  n integer;
+  today date := public.rule_local_today(r);
+  zone text := public.safe_timezone(coalesce(nullif(r.trigger_config ->> 'timezone', ''), 'UTC'));
+  span interval;
+  t record;
+  outcome text;
+  ran integer := 0;
+  is_due boolean := kind in ('due_approaching', 'task_overdue');
+  ahead boolean := kind in ('due_approaching', 'start_approaching');
+begin
+  select o.amount, o.unit into amount, unit
+  from public.rule_trigger_offset(r.trigger_config, case when kind = 'start_reached' then 0 else 1 end) o;
+
+  if unit in ('days', 'weeks') then
+    n := amount * case when unit = 'weeks' then 7 else 1 end;
+    if kind = 'task_overdue' then
+      n := greatest(n, 1);
+    end if;
+    for t in
+      select tk.id, case when is_due then tk.due_on else tk.start_on end as on_day
+      from public.tasks tk
+      join public.task_projects tp on tp.task_id = tk.id and tp.project_id = r.project_id and tp.deleted_at is null
+      where tk.deleted_at is null and tk.completed_at is null and tk.parent_task_id is null
+        and case
+          when ahead then (case when is_due then tk.due_on else tk.start_on end) = today + n
+          else (case when is_due then tk.due_on else tk.start_on end) between today - n - 2 and today - n
+        end
+    loop
+      outcome := public.run_rule(r, t.id,
+        case when is_due then jsonb_build_object('due_on', t.on_day) else jsonb_build_object('start_on', t.on_day) end, null,
+        case kind when 'due_approaching' then 'due:' when 'task_overdue' then 'overdue:' when 'start_approaching' then 'start:' else 'started:' end
+          || t.on_day::text);
+      if outcome in ('succeeded', 'scheduled') then
+        ran := ran + 1;
+      end if;
+    end loop;
+    return ran;
+  end if;
+
+  -- Hours.
+  span := make_interval(hours => greatest(amount, 1));
+  for t in
+    select x.id, x.moment from (
+      select tk.id,
+        case when is_due then coalesce(tk.due_at, ((tk.due_on + 1)::timestamp at time zone zone))
+          else coalesce(tk.start_at, (tk.start_on::timestamp at time zone zone)) end as moment
+      from public.tasks tk
+      join public.task_projects tp on tp.task_id = tk.id and tp.project_id = r.project_id and tp.deleted_at is null
+      where tk.deleted_at is null and tk.completed_at is null and tk.parent_task_id is null
+        and (case when is_due then tk.due_on else tk.start_on end)
+          between today - 3 - case when ahead then 0 else amount / 24 end and today + 2 + case when ahead then amount / 24 else 0 end
+    ) x
+    where case
+      when ahead then now() >= x.moment - span and now() < x.moment
+      else now() >= x.moment + span and now() < x.moment + span + interval '2 days'
+    end
+  loop
+    outcome := public.run_rule(r, t.id, jsonb_build_object('at', t.moment), null,
+      case kind when 'due_approaching' then 'due_h:' when 'task_overdue' then 'overdue_h:' when 'start_approaching' then 'start_h:' else 'started_h:' end
+        || to_char(t.moment at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI'));
+    if outcome in ('succeeded', 'scheduled') then
+      ran := ran + 1;
+    end if;
+  end loop;
+  return ran;
+end;
+$$;
+
+revoke all on function public.rule_date_tick(public.rules) from public, anon, authenticated;
+
+-- The scheduler (same signature, grants, and callers): delayed actions, the date triggers (through
+-- rule_date_tick), and scheduled rules.
+create or replace function public.workflow_tick()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  job public.scheduled_rule_actions;
+  r public.rules;
+  t record;
+  delayed integer := 0;
+  due integer := 0;
+  overdue integer := 0;
+  starts integer := 0;
+  scheduled integer := 0;
+  ran integer;
+  outcome text;
+  slot timestamptz;
+begin
+  for job in
+    select * from public.scheduled_rule_actions
+    where status = 'pending' and run_at <= now() and deleted_at is null
+    order by run_at
+    limit 500
+    for update skip locked
+  loop
+    select * into r from public.rules where id = job.rule_id;
+    if not r.enabled or r.deleted_at is not null
+       or exists (select 1 from public.projects ap where ap.id = r.project_id and ap.archived_at is not null)
+       or not exists (select 1 from public.tasks tk where tk.id = job.task_id and tk.deleted_at is null) then
+      update public.scheduled_rule_actions set status = 'cancelled', completed_at = now() where id = job.id;
+      continue;
+    end if;
+    outcome := public.run_rule(r, job.task_id, job.event, job.actions);
+    update public.scheduled_rule_actions
+    set status = case when outcome = 'failed' then 'failed' when outcome = 'conditions' then 'cancelled' else 'done' end,
+        completed_at = now()
+    where id = job.id;
+    delayed := delayed + 1;
+  end loop;
+
+  for r in
+    select ru.* from public.rules ru
+    join public.projects p on p.id = ru.project_id and p.deleted_at is null and p.archived_at is null
+    where ru.enabled and ru.deleted_at is null
+      and ru.trigger_type in ('due_approaching', 'task_overdue', 'start_approaching', 'start_reached')
+  loop
+    ran := public.rule_date_tick(r);
+    case r.trigger_type
+      when 'due_approaching' then due := due + ran;
+      when 'task_overdue' then overdue := overdue + ran;
+      else starts := starts + ran;
+    end case;
+  end loop;
+
+  -- Scheduled rules: at each run, every open top-level task of the project that passes the rule's
+  -- conditions (at most 500 per run; once per task and run).
+  for r in
+    select ru.* from public.rules ru
+    join public.projects p on p.id = ru.project_id and p.deleted_at is null and p.archived_at is null
+    where ru.enabled and ru.deleted_at is null and ru.trigger_type = 'scheduled' and ru.next_run_at <= now()
+    order by ru.next_run_at
+    limit 50
+    for update of ru skip locked
+  loop
+    slot := r.next_run_at;
+    for t in
+      select tk.id from public.tasks tk
+      join public.task_projects tp on tp.task_id = tk.id and tp.project_id = r.project_id and tp.deleted_at is null
+      where tk.deleted_at is null and tk.completed_at is null and tk.parent_task_id is null
+      order by tp.sort_order, tk.created_at
+      limit 500
+    loop
+      outcome := public.run_rule(r, t.id, jsonb_build_object('scheduled_for', slot), null,
+        'schedule:' || to_char(slot at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI'));
+      if outcome in ('succeeded', 'scheduled') then
+        scheduled := scheduled + 1;
+      end if;
+    end loop;
+    update public.rules
+    set next_run_at = public.rule_schedule_next_at(r.trigger_config, public.project_work_week(r.project_id), greatest(now(), slot))
+    where id = r.id;
+  end loop;
+
+  return jsonb_build_object('delayed_actions', delayed, 'due_rules', due, 'overdue_rules', overdue,
+    'start_rules', starts, 'scheduled_rules', scheduled);
+end;
+$$;

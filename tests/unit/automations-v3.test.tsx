@@ -2,8 +2,8 @@
 // database side (validation and the engine) runs in suite zz30.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeAction, describeCondition, describeTrigger, needsUpdate, personName, personOptions, ruleSentence, type RuleContext } from "@/components/rules/rule-shared";
-import { fieldOfSlot, fieldSlot, type RuleAction, type RuleCondition } from "@/lib/rules";
+import { describeAction, describeCondition, describeTrigger, needsUpdate, personName, personOptions, ruleSentence, scheduleLabel, scheduleWeekdays, type RuleContext } from "@/components/rules/rule-shared";
+import { fieldOfSlot, fieldSlot, triggerOffset, type RuleAction, type RuleCondition } from "@/lib/rules";
 import type { FieldDef } from "@/lib/fields";
 
 const field = (id: string, name: string, fieldType: string): FieldDef =>
@@ -77,4 +77,47 @@ test("V3 vocabulary is disabled until the database update is applied", () => {
   assert.ok(needsUpdate({ ...ctx, v3: false })("remove_followers"));
   assert.equal(needsUpdate(ctx)("remove_followers"), null);
   assert.ok(needsUpdate({ ...ctx, v2: false })("task_completed"), "V2's still apply");
+});
+
+// ---------------------------------------------------------------------------------------------
+// Batch B: dates
+// ---------------------------------------------------------------------------------------------
+
+test("date triggers read their offsets in hours, days, or weeks", () => {
+  assert.deepEqual(triggerOffset({ days: 3 }), { amount: 3, unit: "days" });
+  assert.deepEqual(triggerOffset({ amount: 4, unit: "hours" }), { amount: 4, unit: "hours" });
+  assert.deepEqual(triggerOffset({}, 0), { amount: 0, unit: "days" });
+  assert.equal(describeTrigger({ triggerType: "due_approaching", triggerConfig: { amount: 4, unit: "hours" } }, ctx), "A task is due in 4 hours");
+  assert.equal(describeTrigger({ triggerType: "due_approaching", triggerConfig: { days: 0 } }, ctx), "A task is due today");
+  assert.equal(describeTrigger({ triggerType: "start_approaching", triggerConfig: { amount: 1, unit: "weeks" } }, ctx), "A task starts in 1 week");
+  assert.equal(describeTrigger({ triggerType: "start_reached", triggerConfig: {} }, ctx), "A task’s start date arrives");
+  assert.equal(describeTrigger({ triggerType: "start_reached", triggerConfig: { amount: 2, unit: "days" } }, ctx), "A task started 2 days ago");
+  assert.equal(describeTrigger({ triggerType: "task_overdue", triggerConfig: { days: 1 } }, ctx), "A task becomes overdue");
+  assert.equal(describeTrigger({ triggerType: "task_overdue", triggerConfig: { amount: 6, unit: "hours" } }, ctx), "A task is 6 hours overdue");
+  assert.equal(describeTrigger({ triggerType: "start_date_changed", triggerConfig: { change: "cleared" } }, ctx), "A start date is cleared");
+  assert.equal(describeTrigger({ triggerType: "due_date_changed", triggerConfig: {} }, ctx), "A due date changes");
+});
+
+test("schedules read with minutes, every N, and several weekdays", () => {
+  assert.equal(scheduleLabel({ frequency: "daily", hour: 9 }), "Every day at 9:00 AM");
+  assert.equal(scheduleLabel({ frequency: "daily", hour: 14, minute: 30, interval: 3 }), "Every 3 days at 2:30 PM");
+  assert.equal(scheduleLabel({ frequency: "weekly", weekdays: [4, 1], interval: 2, hour: 8 }), "Every 2 weeks on Monday and Thursday at 8:00 AM");
+  assert.equal(scheduleLabel({ frequency: "weekly", weekday: 0 }), "Every week on Sunday at 9:00 AM");
+  assert.deepEqual(scheduleWeekdays({ weekdays: [3, 1, 3] }), [1, 3]);
+});
+
+test("date conditions and actions read as sentences", () => {
+  assert.equal(
+    describeCondition(condition({ type: "date_compare", date: "start", op: "between", value: "2026-11-01", to: "2026-11-30" }), ctx),
+    "the start date is between Nov 1, 2026 and Nov 30, 2026",
+  );
+  assert.equal(describeCondition(condition({ type: "date_compare", date: "due", op: "before", value: "2026-12-24" }), ctx), "the due date is before Dec 24, 2026");
+  assert.equal(describeCondition(condition({ type: "has_started" }), ctx), "its start date has arrived");
+  assert.equal(describeCondition(condition({ type: "start_within", days: 0 }), ctx), "starts today");
+  assert.equal(describeAction(action({ type: "set_start_date", mode: "date", date: "2026-11-02" }), ctx), "set the start date to Nov 2, 2026");
+  assert.equal(describeAction(action({ type: "set_start_date", days: 0, from: "today" }), ctx), "set the start date to today");
+  assert.equal(describeAction(action({ type: "set_due_date", days: 2, unit: "weeks", from: "start_date" }), ctx), "set the due date to 2 weeks from the start date");
+  assert.equal(describeAction(action({ type: "set_due_date", days: 4, unit: "hours" }), ctx), "set the due date to 4 hours from now");
+  assert.equal(describeAction(action({ type: "set_due_date", days: 1, business_days: true }), ctx), "set the due date to 1 business day from today");
+  assert.equal(describeAction(action({ type: "set_start_date", mode: "clear" }), ctx), "clear the start date");
 });

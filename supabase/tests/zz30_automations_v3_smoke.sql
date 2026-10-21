@@ -316,6 +316,194 @@ begin
   update public.tasks set source = 'manual' where id = t;
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- Batch B: dates
+-- ---------------------------------------------------------------------------------------------
+
+-- Schedules: minutes, every N days / weeks, several weekdays (Oct 19, 2026 is a Monday; UTC).
+do $$
+declare
+  sun_thu smallint[] := '{0,1,2,3,4}';
+begin
+  assert public.rule_schedule_next_at('{"frequency":"daily","hour":9,"minute":30,"timezone":"UTC"}', sun_thu, '2026-10-19 09:15+00')
+    = '2026-10-19 09:30+00', 'a time of day with minutes';
+  assert public.rule_schedule_next_at('{"frequency":"daily","interval":3,"anchor":"2026-10-19","hour":9,"timezone":"UTC"}', sun_thu,
+    '2026-10-19 10:00+00') = '2026-10-22 09:00+00', 'every 3 days from the anchor';
+  assert public.rule_schedule_next_at('{"frequency":"weekly","weekdays":[1,3],"hour":9,"timezone":"UTC"}', sun_thu,
+    '2026-10-19 10:00+00') = '2026-10-21 09:00+00', 'Monday and Wednesday: Wednesday next';
+  assert public.rule_schedule_next_at('{"frequency":"weekly","weekdays":[1],"interval":2,"anchor":"2026-10-19","hour":9,"timezone":"UTC"}',
+    sun_thu, '2026-10-19 10:00+00') = '2026-11-02 09:00+00', 'every other Monday';
+  assert public.rule_schedule_next_at('{"frequency":"weekly","weekday":0,"hour":9,"timezone":"UTC"}', sun_thu, '2026-10-19 10:00+00')
+    = '2026-10-25 09:00+00', 'the older single weekday still works';
+  assert public.rule_schedule_next_at('{"frequency":"daily","hour":9,"minute":0,"timezone":"Asia/Jerusalem"}', sun_thu,
+    '2026-10-19 10:00+00') = '2026-10-20 06:00+00', 'in the rule''s time zone';
+
+  assert public.rule_date_matches('2026-10-20', 'between', '2026-10-25', '2026-10-19'), 'between, either order';
+  assert not public.rule_date_matches('2026-10-26', 'between', '2026-10-19', '2026-10-25'), 'outside';
+  assert public.rule_date_matches('2026-10-26', 'not_between', '2026-10-19', '2026-10-25'), 'not between';
+  assert public.rule_date_matches('2026-10-19', 'on_or_before', '2026-10-19', null), 'on or before';
+  assert not public.rule_date_matches(null, 'not_between', '2026-10-19', '2026-10-25'), 'no date never matches';
+end $$;
+
+-- Validation of the new shapes.
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+  spec jsonb;
+begin
+  for spec in select (value #>> '{}')::jsonb from jsonb_array_elements(jsonb_build_array(
+    '{"trigger_type": "start_approaching", "trigger_config": {"amount": 4, "unit": "hours"}}',
+    '{"trigger_type": "start_reached", "trigger_config": {"amount": 0, "unit": "days"}}',
+    '{"trigger_type": "due_approaching", "trigger_config": {"amount": 2, "unit": "weeks"}}',
+    '{"trigger_type": "task_overdue", "trigger_config": {"amount": 6, "unit": "hours"}}',
+    '{"trigger_type": "start_date_changed", "trigger_config": {"change": "cleared"}}',
+    '{"trigger_type": "scheduled", "trigger_config": {"frequency": "weekly", "weekdays": [0, 2, 4], "interval": 2, "anchor": "2026-10-18", "hour": 8, "minute": 45}}',
+    '{"conditions": [{"type": "date_compare", "date": "start", "op": "between", "value": "2026-11-01", "to": "2026-11-30"}]}',
+    '{"conditions": [{"type": "start_within", "days": 3}, {"type": "has_started"}, {"type": "no_start_date"}]}',
+    '{"actions": [{"type": "set_start_date", "mode": "date", "date": "2026-11-02"}]}',
+    '{"actions": [{"type": "set_start_date", "days": 2, "unit": "weeks", "from": "due_date"}]}',
+    '{"actions": [{"type": "set_due_date", "days": 4, "unit": "hours"}]}',
+    '{"actions": [{"type": "set_due_date", "days": 1, "business_days": true}]}'
+  )) loop
+    insert into public.rules (project_id, name, trigger_type, trigger_config, conditions, actions)
+    values (p, 'Good', coalesce(spec ->> 'trigger_type', 'manual'), coalesce(spec -> 'trigger_config', '{}'),
+      coalesce(spec -> 'conditions', '[]'), coalesce(spec -> 'actions', '[{"type": "complete_task"}]'));
+  end loop;
+
+  for spec in select (value #>> '{}')::jsonb from jsonb_array_elements(jsonb_build_array(
+    '{"trigger_type": "start_approaching", "trigger_config": {"amount": 4, "unit": "minutes"}}',
+    '{"trigger_type": "due_approaching", "trigger_config": {"amount": 13, "unit": "weeks"}}',
+    '{"trigger_type": "due_date_changed", "trigger_config": {"change": "moved"}}',
+    '{"trigger_type": "scheduled", "trigger_config": {"frequency": "weekly", "weekdays": [1, 1]}}',
+    '{"trigger_type": "scheduled", "trigger_config": {"frequency": "monthly", "interval": 2}}',
+    '{"trigger_type": "scheduled", "trigger_config": {"frequency": "daily", "minute": 75}}',
+    '{"conditions": [{"type": "date_compare", "date": "due", "op": "between", "value": "2026-11-01"}]}',
+    '{"conditions": [{"type": "date_compare", "date": "due", "op": "on", "value": "2026-02-30"}]}',
+    '{"conditions": [{"type": "date_compare", "date": "created", "op": "on", "value": "2026-02-03"}]}',
+    '{"actions": [{"type": "set_start_date", "mode": "date"}]}',
+    '{"actions": [{"type": "set_due_date", "days": 4, "unit": "hours", "from": "due_date"}]}',
+    '{"actions": [{"type": "set_due_date", "days": 2, "unit": "weeks", "business_days": true}]}'
+  )) loop
+    begin
+      insert into public.rules (project_id, name, trigger_type, trigger_config, conditions, actions)
+      values (p, 'Bad', coalesce(spec ->> 'trigger_type', 'manual'), coalesce(spec -> 'trigger_config', '{}'),
+        coalesce(spec -> 'conditions', '[]'), coalesce(spec -> 'actions', '[{"type": "complete_task"}]'));
+      raise exception 'should have been refused: %', spec;
+    exception when check_violation then null;
+    end;
+  end loop;
+end $$;
+
+-- Set start date / Set due date: absolute dates, weeks, the order of the two dates, hours.
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+  t uuid;
+  r uuid;
+  out jsonb;
+begin
+  t := public.create_task(p, pg_temp.av3('intake'), 'Campaign');
+  update public.tasks set due_on = '2026-11-10' where id = t;
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values (p, 'Start Nov 2', true, 'manual', '{"timezone": "UTC"}', '[{"type": "set_start_date", "mode": "date", "date": "2026-11-02"}]')
+  returning id into r;
+  out := public.run_manual_rule(r, t);
+  assert out ->> 'status' = 'succeeded', format('ran: %s', out);
+  assert (select start_on from public.tasks where id = t) = '2026-11-02', 'an absolute start date';
+
+  -- A start after the due date moves the due date with it.
+  update public.rules set actions = '[{"type": "set_start_date", "mode": "date", "date": "2026-11-20"}]' where id = r;
+  perform public.run_manual_rule(r, t);
+  assert (select (start_on, due_on) = (date '2026-11-20', date '2026-11-20') from public.tasks where id = t),
+    'the due date moved to the new start';
+
+  -- Two weeks after the start date.
+  update public.rules set actions = '[{"type": "set_due_date", "days": 2, "unit": "weeks", "from": "start_date"}]' where id = r;
+  perform public.run_manual_rule(r, t);
+  assert (select due_on from public.tasks where id = t) = '2026-12-04', 'weeks are calendar weeks';
+
+  -- A due date before the start clears the start.
+  update public.rules set actions = '[{"type": "set_due_date", "mode": "date", "date": "2026-11-01"}]' where id = r;
+  perform public.run_manual_rule(r, t);
+  assert (select (start_on is null and due_on = '2026-11-01') from public.tasks where id = t), 'the start was cleared';
+
+  -- Hours set a time.
+  update public.rules set actions = '[{"type": "set_due_date", "days": 4, "unit": "hours"}]' where id = r;
+  perform public.run_manual_rule(r, t);
+  assert (select due_at between now() + interval '3 hours 58 minutes' and now() + interval '4 hours 1 minute' from public.tasks where id = t),
+    'due in four hours';
+
+  -- Milestones have no start date.
+  update public.tasks set kind = 'milestone', due_at = null where id = t;
+  update public.rules set actions = '[{"type": "set_start_date", "mode": "date", "date": "2026-10-30"}]' where id = r;
+  perform public.run_manual_rule(r, t);
+  assert (select start_on is null from public.tasks where id = t), 'a milestone gets no start date';
+  assert exists (select 1 from public.rule_runs rr where rr.rule_id = r and rr.detail -> 'actions' -> 0 ->> 'result' = 'Milestones have no start date'),
+    'the step says why';
+  update public.tasks set kind = 'task' where id = t;
+  insert into av3_ids values ('t_campaign', t), ('r_dates', r);
+end $$;
+
+-- Start date conditions and Date is.
+do $$
+declare
+  t uuid := pg_temp.av3('t_campaign');
+  r public.rules := (select ru from public.rules ru where ru.id = pg_temp.av3('r_dates'));
+begin
+  update public.tasks set start_on = current_date - 1, due_on = current_date + 5 where id = t;
+  r.conditions := '[{"type": "has_started"}]';
+  assert public.rule_conditions_pass(r, t), 'the start date has arrived';
+  r.conditions := '[{"type": "start_within", "days": 3}]';
+  assert not public.rule_conditions_pass(r, t), 'a start in the past isn''t "within"';
+  r.conditions := jsonb_build_array(jsonb_build_object('type', 'date_compare', 'date', 'due', 'op', 'between',
+    'value', (current_date + 1)::text, 'to', (current_date + 7)::text));
+  assert public.rule_conditions_pass(r, t), 'the due date is between';
+  r.conditions := jsonb_build_array(jsonb_build_object('type', 'date_compare', 'date', 'start', 'op', 'after', 'value', current_date::text));
+  assert not public.rule_conditions_pass(r, t), 'the start isn''t after today';
+  r.conditions := '[{"type": "no_start_date"}]';
+  assert not public.rule_conditions_pass(r, t), 'it has a start date';
+end $$;
+
+-- Start date changes (only to a new date), and the scheduler's start / hour triggers.
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values (p, 'Start set', true, 'start_date_changed', '{"change": "set"}',
+    jsonb_build_array(jsonb_build_object('type', 'add_comment', 'body', 'Start moved')));
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values (p, 'Starts today', true, 'start_reached', '{"amount": 0, "unit": "days", "timezone": "UTC"}',
+    jsonb_build_array(jsonb_build_object('type', 'move_section', 'section_id', pg_temp.av3('design'))));
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values (p, 'Due in 3 hours', true, 'due_approaching', '{"amount": 3, "unit": "hours", "timezone": "UTC"}',
+    jsonb_build_array(jsonb_build_object('type', 'add_tag', 'tag_id', pg_temp.av3('tag_flag'))));
+  insert into av3_ids values ('t_kickoff', public.create_task(p, pg_temp.av3('intake'), 'Kickoff'));
+  insert into av3_ids values ('t_soon', public.create_task(p, pg_temp.av3('intake'), 'Soon'));
+end $$;
+
+update public.tasks set start_on = (now() at time zone 'UTC')::date where id = pg_temp.av3('t_kickoff');
+update public.tasks set start_on = null where id = pg_temp.av3('t_kickoff');
+update public.tasks set start_on = (now() at time zone 'UTC')::date where id = pg_temp.av3('t_kickoff');
+update public.tasks set due_at = now() + interval '2 hours', time_zone = 'UTC' where id = pg_temp.av3('t_soon');
+
+do $$
+declare
+  k uuid := pg_temp.av3('t_kickoff');
+  out jsonb;
+begin
+  assert (select count(*) from public.comments where task_id = k and body = 'Start moved') = 2,
+    'a new start fires twice, clearing it doesn''t';
+  out := public.workflow_tick();
+  assert (out ->> 'start_rules')::integer >= 1, format('the scheduler ran the start rule: %s', out);
+  assert (select tp.section_id from public.task_projects tp where tp.task_id = k and tp.project_id = pg_temp.av3('p')) = pg_temp.av3('design'),
+    'the task starting today moved to Design';
+  assert exists (select 1 from public.task_tags where task_id = pg_temp.av3('t_soon') and tag_id = pg_temp.av3('tag_flag') and deleted_at is null),
+    'due in 2 hours is within 3 hours';
+  out := public.workflow_tick();
+  assert (out ->> 'start_rules')::integer = 0 and (out ->> 'due_rules')::integer = 0, format('once per task and date: %s', out);
+end $$;
+
 do $$
 begin
   raise notice 'automations v3 smoke: all assertions passed';

@@ -82,7 +82,9 @@ const NEW_CONDITION: RuleCondition = { type: "is_incomplete" };
 
 // Triggers the scheduler or a person starts (run_rule directly, not fire_rules), so "changes made by
 // other rules" never apply to them.
-const NOT_CHANGE_TRIGGERS: ReadonlySet<TriggerType> = new Set(["due_approaching", "task_overdue", "scheduled", "manual"]);
+const NOT_CHANGE_TRIGGERS: ReadonlySet<TriggerType> = new Set([
+  "due_approaching", "task_overdue", "scheduled", "manual", "start_approaching", "start_reached",
+]);
 
 // Asana's rule builder (Asana parity, batch 4): a full-page canvas. The header has the rule's name, an
 // Active toggle, Cancel, and Save, with Build and Activity tabs. The flow reads top to bottom: the scope

@@ -22,13 +22,19 @@ import {
   APPROVAL_DECISIONS,
   ASSIGN_MODES,
   CONDITIONS,
+  DATE_CHANGES,
+  DATE_OPS,
+  DATE_SUBJECTS,
   DUE_FROM,
   EMAIL_RECIPIENTS,
   EMAIL_TEMPLATES,
+  OFFSET_UNITS,
+  RANGE_OPS,
   SCHEDULE_FREQUENCIES,
   TASK_KIND_OPTIONS,
   TASK_SOURCES,
   compareOpsFor,
+  triggerOffset,
   type ActionType,
   type ConditionType,
   type RuleAction,
@@ -42,8 +48,8 @@ import {
   FieldValueInput,
   PeoplePicker,
   PersonSelect,
+  RuleDateInput,
   SectionSelect,
-  hourLabel,
   inputClass,
   labelClass,
   needsUpdate,
@@ -51,9 +57,11 @@ import {
   personCompareVerb,
   ordinal,
   ruleFields,
+  scheduleWeekdays,
   sectionOptions,
   sideOptions,
   tagOptions,
+  timeLabel,
   valueOr,
   type RuleContext,
 } from "./rule-shared";
@@ -79,6 +87,8 @@ export function defaultsFor(type: ActionType): RuleAction {
       return { type, assignee: null };
     case "set_due_date":
       return { type, mode: "relative", days: 2, business_days: true, from: "today" };
+    case "set_start_date":
+      return { type, mode: "relative", days: 0, from: "today" };
     case "create_subtasks":
       return { type, titles: [""] };
     case "set_title":
@@ -94,7 +104,10 @@ export function defaultsFor(type: ActionType): RuleAction {
 export function conditionDefaultsFor(type: ConditionType): RuleCondition {
   switch (type) {
     case "due_within":
+    case "start_within":
       return { type, days: 3 };
+    case "date_compare":
+      return { type, date: "due", op: "before" };
     case "person_compare":
       // "The assignee is the creator" — the most asked-for comparison.
       return { type, left: "assignee", op: "is", people: ["creator"] };
@@ -189,11 +202,17 @@ function useLocalToday(): string | null {
   return useSyncExternalStore(noSubscribe, localToday, () => null) || null;
 }
 
-const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({
-  value: String(h),
-  label: hourLabel(h),
-  keywords: [`${h}:00`, ...(h === 0 ? ["midnight"] : h === 12 ? ["noon"] : [])],
-}));
+// Times of day in quarter hours ("9:30 AM"), searchable by "9:30" or "21:30".
+const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
+  const h = Math.floor(i / 4);
+  const m = (i % 4) * 15;
+  const clock = `${h}:${String(m).padStart(2, "0")}`;
+  return {
+    value: `${h}:${m}`,
+    label: timeLabel(h, m),
+    keywords: [clock, `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`, ...(i === 0 ? ["midnight"] : i === 48 ? ["noon"] : [])],
+  };
+});
 
 const WEEKDAY_OPTIONS = WEEKDAYS.map((d) => ({ value: String(d.value), label: d.label, keywords: [d.short] }));
 
@@ -309,18 +328,24 @@ export function TriggerFields({
         </Row>
       );
     case "due_approaching":
+    case "start_approaching":
+    case "task_overdue":
+    case "start_reached":
+      return <OffsetFields prefix={prefix} triggerType={triggerType} config={triggerConfig} ctx={ctx} onChange={onChange} />;
+    case "due_date_changed":
+    case "start_date_changed":
       return (
-        <label className="flex items-center gap-1.5 text-sm text-zinc-700">
-          <input
-            type="number"
-            min={0}
-            max={30}
-            value={typeof triggerConfig.days === "number" ? triggerConfig.days : 1}
-            onChange={(e) => setConfig({ days: Number(e.currentTarget.value) })}
-            className={`${inputClass} w-16`}
-          />
-          days before it’s due
-        </label>
+        <SmartPicker
+          id={`${prefix}-trigger-change`}
+          label="Which changes"
+          value={str(triggerConfig.change) || "any"}
+          options={DATE_CHANGES.map((d) => ({
+            ...d,
+            ...(d.value !== "any" && ctx.v3 === false ? { disabled: true, disabledReason: "Needs this release’s database update" } : {}),
+          }))}
+          onChange={(v) => setConfig({ change: v === "any" ? undefined : v })}
+          variant="chip"
+        />
       );
     case "approval_decided": {
       const statuses = Array.isArray(triggerConfig.statuses)
@@ -378,26 +403,6 @@ export function TriggerFields({
           emptyText={ctx.tags?.length ? "No tag matches" : "No tags yet"}
         />
       );
-    case "task_overdue": {
-      // `days` = how many days overdue (1 = the day after the due date; missing or 0 counts as 1;
-      // validate_rule allows up to 30), as workflow_tick reads it.
-      const after = Math.max(wholeNumber(triggerConfig.days) ?? 1, 1);
-      return (
-        <span className="flex items-center gap-1.5 text-sm text-zinc-700">
-          <NumberBox
-            id={`${prefix}-trigger-overdue-days`}
-            label="Days after the due date"
-            value={after}
-            min={1}
-            max={30}
-            onCommit={(n) => {
-              if (n !== null) setConfig({ days: Math.min(Math.max(n, 1), 30) });
-            }}
-          />
-          {after === 1 ? "day after it’s due (when it becomes overdue)" : "days after it’s due"}
-        </span>
-      );
-    }
     case "scheduled":
       return <ScheduleFields prefix={prefix} config={triggerConfig} ctx={ctx} setConfig={setConfig} />;
     case "follower_added":
@@ -416,8 +421,90 @@ export function TriggerFields({
   }
 }
 
-// On a schedule: how often, the weekday or day of the month, and the hour (in the rule's time zone,
-// which the canvas saves with the rule).
+// How long before / after a date trigger fires: "[2] [days] before it's due", "[4] [hours] after it
+// starts". Days keep the older { days } shape (so a rule saved before Automations V3 stays the same);
+// hours and weeks write { amount, unit } (rule_trigger_offset).
+function OffsetFields({
+  prefix,
+  triggerType,
+  config,
+  ctx,
+  onChange,
+}: {
+  prefix: string;
+  triggerType: TriggerType;
+  config: Record<string, Json>;
+  ctx: RuleContext;
+  onChange: (config: Record<string, Json>) => void;
+}) {
+  const startArrives = triggerType === "start_reached";
+  const overdue = triggerType === "task_overdue";
+  const { amount, unit } = triggerOffset(config, startArrives ? 0 : 1);
+  const spec = OFFSET_UNITS.find((u) => u.value === unit) ?? OFFSET_UNITS[1];
+  // Days: legacy limits (0–30; overdue at least 1). Hours and weeks: rule_offset_problem's.
+  const min = unit === "days" ? (overdue ? 1 : 0) : spec.min;
+  const max = unit === "days" ? 30 : spec.max;
+  const shown = unit === "days" && overdue ? Math.max(amount, 1) : amount;
+  const base = { ...config };
+  delete base.days;
+  delete base.amount;
+  delete base.unit;
+  function write(nextAmount: number, nextUnit: string) {
+    if (nextUnit === "days") onChange({ ...base, days: nextAmount });
+    else onChange({ ...base, amount: nextAmount, unit: nextUnit });
+  }
+  const tail =
+    triggerType === "due_approaching"
+      ? "before it’s due"
+      : triggerType === "start_approaching"
+        ? "before it starts"
+        : overdue
+          ? unit === "days" && shown === 1
+            ? "after it’s due (when it becomes overdue)"
+            : "after it’s due"
+          : shown === 0
+            ? "after it starts (on the start date)"
+            : "after it starts";
+  return (
+    <span className="flex flex-wrap items-center gap-1.5 text-sm text-zinc-700">
+      <NumberBox
+        id={`${prefix}-trigger-offset`}
+        label={`How many ${spec.label}`}
+        value={shown}
+        min={min}
+        max={max}
+        onCommit={(n) => {
+          if (n !== null) write(Math.min(Math.max(n, min), max), unit);
+        }}
+      />
+      <SmartPicker
+        id={`${prefix}-trigger-unit`}
+        label="Hours, days, or weeks"
+        value={unit}
+        options={OFFSET_UNITS.map((u) => ({
+          value: u.value,
+          label: shown === 1 ? u.one : u.label,
+          description:
+            u.value === "hours" ? "From the time (a date without a time counts from the end of the day)" : u.value === "days" ? "Whole days in the rule’s time zone" : "7 days each",
+          ...(u.value !== "days" && ctx.v3 === false ? { disabled: true, disabledReason: "Needs this release’s database update" } : {}),
+        }))}
+        onChange={(v) => {
+          if (v === unit) return;
+          const s2 = OFFSET_UNITS.find((u) => u.value === v) ?? OFFSET_UNITS[1];
+          const lo = v === "days" ? (overdue ? 1 : 0) : s2.min;
+          const hi = v === "days" ? 30 : s2.max;
+          write(Math.min(Math.max(shown, lo), hi), v);
+        }}
+        variant="chip"
+      />
+      {tail}
+    </span>
+  );
+}
+
+// On a schedule: how often (every N days or weeks), the weekdays or day of the month, and the time (in
+// the rule's time zone, which the canvas saves with the rule). Every N counts from `anchor` (today when
+// it's set).
 function ScheduleFields({
   prefix,
   config,
@@ -429,8 +516,16 @@ function ScheduleFields({
   ctx: RuleContext;
   setConfig: (patch: Record<string, Json | undefined>) => void;
 }) {
+  const today = useLocalToday();
   const frequency = str(config.frequency);
   const workWeek = normalizeWorkWeek(ctx.workWeek ?? DEFAULT_WORK_WEEK);
+  const every = Math.max(wholeNumber(config.interval) ?? 1, 1);
+  const hour = wholeNumber(config.hour) ?? 9;
+  const minute = wholeNumber(config.minute) ?? 0;
+  const v3 = ctx.v3 !== false;
+  const needs = { disabled: true, disabledReason: "Needs this release’s database update" } as const;
+  const repeats = frequency === "daily" || frequency === "weekly";
+  const unitWord = frequency === "weekly" ? (every === 1 ? "week" : "weeks") : every === 1 ? "day" : "days";
   return (
     <Row>
       <SmartPicker
@@ -442,23 +537,61 @@ function ScheduleFields({
           setConfig({
             frequency: v,
             // Weekly starts on the first workday and monthly on the 1st; other frequencies drop them.
-            weekday: v === "weekly" ? (wholeNumber(config.weekday) ?? workWeek[0]) : undefined,
+            // (several weekdays with this release's database; one weekday before it).
+            weekdays: v === "weekly" && v3 ? (frequency === "weekly" ? scheduleWeekdays(config) : [workWeek[0]]) : undefined,
+            weekday: v === "weekly" && !v3 ? (wholeNumber(config.weekday) ?? workWeek[0]) : undefined,
             month_day: v === "monthly" ? (wholeNumber(config.month_day) ?? 1) : undefined,
+            interval: undefined,
+            anchor: undefined,
           })
         }
         variant="chip"
         placeholder="choose how often"
       />
+      {repeats ? (
+        <span className="flex items-center gap-1 text-sm text-zinc-700" data-tooltip={!v3 ? "Every few days or weeks needs this release’s database update" : undefined}>
+          <Word>every</Word>
+          <NumberBox
+            id={`${prefix}-schedule-interval`}
+            label={`Every how many ${frequency === "weekly" ? "weeks" : "days"}`}
+            value={every}
+            min={1}
+            max={frequency === "weekly" ? 52 : 365}
+            onCommit={(n) => {
+              if (n === null || !v3) return;
+              const next = Math.min(Math.max(n, 1), frequency === "weekly" ? 52 : 365);
+              setConfig({ interval: next === 1 ? undefined : next, anchor: next === 1 ? undefined : str(config.anchor) || today || undefined });
+            }}
+          />
+          <Word>{unitWord}</Word>
+        </span>
+      ) : null}
       {frequency === "weekly" ? (
-        <SmartPicker
-          id={`${prefix}-schedule-weekday`}
-          label="Day of the week"
-          value={String(wholeNumber(config.weekday) ?? 0)}
-          options={WEEKDAY_OPTIONS}
-          onChange={(v) => setConfig({ weekday: Number(v) })}
-          variant="chip"
-          renderValue={(chosen) => <span>on {chosen[0]?.label ?? "Sunday"}</span>}
-        />
+        v3 ? (
+          <SmartPicker
+            multiple
+            id={`${prefix}-schedule-weekdays`}
+            label="Days of the week"
+            value={scheduleWeekdays(config).map(String)}
+            options={WEEKDAY_OPTIONS}
+            onChange={(v) => {
+              const days = v.map(Number).filter((d) => d >= 0 && d <= 6).sort((a, b) => a - b);
+              if (days.length) setConfig({ weekdays: days, weekday: undefined });
+            }}
+            variant="chip"
+            renderValue={(chosen) => <span>on {chosen.length === 7 ? "every day" : chosen.map((c) => c.label).join(", ") || "Sunday"}</span>}
+          />
+        ) : (
+          <SmartPicker
+            id={`${prefix}-schedule-weekday`}
+            label="Day of the week"
+            value={String(wholeNumber(config.weekday) ?? 0)}
+            options={WEEKDAY_OPTIONS}
+            onChange={(v) => setConfig({ weekday: Number(v) })}
+            variant="chip"
+            renderValue={(chosen) => <span>on {chosen[0]?.label ?? "Sunday"}</span>}
+          />
+        )
       ) : null}
       {frequency === "monthly" ? (
         <SmartPicker
@@ -473,13 +606,17 @@ function ScheduleFields({
       ) : null}
       {frequency ? (
         <SmartPicker
-          id={`${prefix}-schedule-hour`}
+          id={`${prefix}-schedule-time`}
           label="Time of day"
-          value={String(wholeNumber(config.hour) ?? 9)}
-          options={HOUR_OPTIONS}
-          onChange={(v) => setConfig({ hour: Number(v) })}
+          value={`${hour}:${minute}`}
+          options={TIME_OPTIONS.map((t) => (!v3 && !t.value.endsWith(":0") ? { ...t, ...needs } : t))}
+          onChange={(v) => {
+            const [h, m] = v.split(":").map(Number);
+            setConfig({ hour: h, minute: m ? m : undefined });
+          }}
           variant="chip"
-          renderValue={(chosen) => <span>at {chosen[0]?.label ?? hourLabel(9)}</span>}
+          searchable
+          renderValue={() => <span>at {timeLabel(hour, minute)}</span>}
         />
       ) : null}
       {frequency === "workdays" ? <span className="text-xs text-zinc-500">({describeWorkWeek(workWeek)})</span> : null}
@@ -606,7 +743,7 @@ function V2ConditionFields({
               label="Comparison"
               value={str(condition.op) || null}
               options={ops.map((o) => ({ value: o.value, label: o.label }))}
-              onChange={(v) => onChange({ ...condition, op: v })}
+              onChange={(v) => onChange(RANGE_OPS.has(v) ? { ...condition, op: v } : { ...omit(condition, "to"), op: v })}
               variant="chip"
               placeholder="choose comparison"
             />
@@ -619,6 +756,18 @@ function V2ConditionFields({
               ctx={ctx}
               onChange={(v) => onChange(v === null ? omit(condition, "value") : { ...condition, value: v })}
             />
+          ) : null}
+          {field && RANGE_OPS.has(str(condition.op)) ? (
+            <>
+              <Word>and</Word>
+              <CompareValueInput
+                id={`${prefix}-compare-to`}
+                field={field}
+                value={condition.to}
+                ctx={ctx}
+                onChange={(v) => onChange(v === null ? omit(condition, "to") : { ...condition, to: v })}
+              />
+            </>
           ) : null}
         </>
       );
@@ -649,13 +798,14 @@ function V2ConditionFields({
           onChange={(v) => onChange(v.length ? { ...condition, people: v } : omit(condition, "people"))}
         />
       );
-    case "due_within": {
+    case "due_within":
+    case "start_within": {
       const days = wholeNumber(condition.days);
       return (
         <span className="flex items-center gap-1.5 text-sm text-zinc-700">
           <NumberBox
             id={`${prefix}-days`}
-            label="Due within this many days"
+            label={`${condition.type === "due_within" ? "Due" : "Starts"} within this many days`}
             value={days}
             min={0}
             max={365}
@@ -664,6 +814,47 @@ function V2ConditionFields({
           />
           {days === 1 ? "day" : "days"}
         </span>
+      );
+    }
+    case "date_compare": {
+      const range = RANGE_OPS.has(str(condition.op));
+      return (
+        <>
+          <SmartPicker
+            id={`${prefix}-date-subject`}
+            label="Which date"
+            value={str(condition.date) || "due"}
+            options={DATE_SUBJECTS.map((d) => ({ ...d }))}
+            onChange={(v) => onChange({ ...condition, date: v })}
+            variant="chip"
+          />
+          <SmartPicker
+            id={`${prefix}-date-op`}
+            label="Comparison"
+            value={str(condition.op) || null}
+            options={DATE_OPS.map((o) => ({ ...o }))}
+            onChange={(v) => onChange(RANGE_OPS.has(v) ? { ...condition, op: v } : { ...omit(condition, "to"), op: v })}
+            variant="chip"
+            placeholder="choose comparison"
+          />
+          <RuleDateInput
+            id={`${prefix}-date-value`}
+            label={range ? "From" : "Date"}
+            value={condition.value}
+            onChange={(v) => onChange(v ? { ...condition, value: v } : omit(condition, "value"))}
+          />
+          {range ? (
+            <>
+              <Word>and</Word>
+              <RuleDateInput
+                id={`${prefix}-date-to`}
+                label="To"
+                value={condition.to}
+                onChange={(v) => onChange(v ? { ...condition, to: v } : omit(condition, "to"))}
+              />
+            </>
+          ) : null}
+        </>
       );
     }
     case "task_type_is":
@@ -796,7 +987,7 @@ function CompareValueInput({
         />
       );
     case "date":
-      return <input id={id} aria-label={label} type="date" value={str(value)} onChange={(e) => onChange(e.currentTarget.value || null)} className={inputClass} />;
+      return <RuleDateInput id={id} label={label} value={value} onChange={onChange} />;
     case "single_select":
     case "multi_select":
       return (
@@ -845,6 +1036,8 @@ export const INLINE_ACTION_TYPES: ReadonlySet<string> = new Set([
   "move_section", "set_field", "set_assignee", "add_followers", "remove_followers", "request_approval", "delay",
   // Automations V2 (Mark complete / incomplete have no settings at all).
   "complete_task", "reopen_task", "add_tag", "remove_tag", "add_to_project", "set_due_date", "apply_task_template",
+  // Automations V3.
+  "set_start_date",
 ]);
 // Of those, the ones with more settings below the line too (part = block).
 export const INLINE_AND_BLOCK_ACTION_TYPES: ReadonlySet<string> = new Set(["request_approval"]);
@@ -1080,7 +1273,8 @@ export function ActionFields({
       );
     }
     case "set_due_date":
-      return !inline ? null : <SetDueDateFields prefix={prefix} action={action} ctx={ctx} onChange={onChange} />;
+    case "set_start_date":
+      return !inline ? null : <SetDateFields prefix={prefix} action={action} ctx={ctx} onChange={onChange} />;
     case "apply_task_template": {
       if (!inline) return null;
       const templates = ctx.taskTemplates ?? [];
@@ -1159,9 +1353,10 @@ function SetAssigneeFields({
   );
 }
 
-// Set due date: "to [2] [business days] from [today]" (or "clear it"), with an example in the
-// browser's own calendar.
-function SetDueDateFields({
+// Set due / start date: "to [2] [business days] from [today]", "to [3] [hours] from now", "on [Nov 2]",
+// or "clear it", with an example in the browser's own calendar (mirrors rule_set_task_date). Weeks,
+// hours, and a fixed date arrive with Automations V3's database update.
+function SetDateFields({
   prefix,
   action,
   ctx,
@@ -1173,79 +1368,109 @@ function SetDueDateFields({
   onChange: (next: RuleAction) => void;
 }) {
   const today = useLocalToday();
-  const clear = action.mode === "clear";
+  const mode = action.mode === "clear" || action.mode === "date" ? action.mode : "relative";
   const days = wholeNumber(action.days);
-  const business = action.business_days === true;
+  const unit = action.unit === "weeks" || action.unit === "hours" ? action.unit : "days";
+  const business = action.business_days === true && unit === "days";
   const from = str(action.from) || "today";
   const workWeek = normalizeWorkWeek(ctx.workWeek ?? DEFAULT_WORK_WEEK);
   const plural = days === null || Math.abs(days) !== 1;
+  const what = action.type === "set_start_date" ? "start date" : "due date";
+  const needs = ctx.v3 === false ? ({ disabled: true, disabledReason: "Needs this release’s database update" } as const) : {};
 
   let example: string | null = null;
-  if (!clear && today && days !== null && Math.abs(days) <= 365) {
-    const result = addWorkdays(today, days, business, workWeek);
+  if (mode === "relative" && unit !== "hours" && today && days !== null && Math.abs(days) <= 365) {
+    const result = unit === "weeks" ? addWorkdays(today, days * 7, false, workWeek) : addWorkdays(today, days, business, workWeek);
     const year = Number(today.slice(0, 4));
     const day = (d: string) => `${WEEKDAYS[weekdayOf(d)].short}, ${dayLabel(d, year)}`;
     const start = from === "today" ? "today" : `${from === "due_date" ? "due" : "starting"} ${day(today)}`;
     if (result) example = `e.g. ${start} → ${day(result)}`;
   }
 
+  const unitOptions = [
+    { value: "days", label: plural ? "days" : "day", description: "Every day of the week" },
+    {
+      value: "business",
+      label: plural ? "business days" : "business day",
+      description: `Only workdays (${describeWorkWeek(workWeek)}; Admin console → Organization)`,
+    },
+    { value: "weeks", label: plural ? "weeks" : "week", description: "Calendar weeks (7 days each)", ...needs },
+    { value: "hours", label: plural ? "hours" : "hour", description: "From now; sets a time too", ...needs },
+  ];
+
   return (
     <Row>
       <SmartPicker
-        id={`${prefix}-due-mode`}
-        label="Set or clear the due date"
-        value={clear ? "clear" : "relative"}
+        id={`${prefix}-date-mode`}
+        label={`Set or clear the ${what}`}
+        value={mode}
         options={[
-          { value: "relative", label: "to", description: "A number of days from a date" },
-          { value: "clear", label: "clear it", description: "Removes the due date" },
+          { value: "relative", label: "to", description: "Some days, weeks, or hours from a date" },
+          { value: "date", label: "on", description: "A date you pick", ...needs },
+          { value: "clear", label: "clear it", description: `Removes the ${what}` },
         ]}
         onChange={(v) => {
-          // Picking the current choice again keeps the days, unit, and start.
-          if (v === (clear ? "clear" : "relative")) return;
-          onChange(v === "clear" ? { type: action.type, mode: "clear" } : defaultsFor("set_due_date"));
+          // Picking the current choice again keeps the rest.
+          if (v === mode) return;
+          if (v === "clear") onChange({ type: action.type, mode: "clear" });
+          else if (v === "date") onChange({ type: action.type, mode: "date" });
+          else onChange(defaultsFor(action.type));
         }}
         variant="chip"
       />
-      {clear ? null : (
+      {mode === "date" ? (
+        <RuleDateInput
+          id={`${prefix}-date-day`}
+          label={what === "due date" ? "Due date" : "Start date"}
+          value={action.date}
+          onChange={(v) => onChange(v ? { ...action, date: v } : omit(action, "date"))}
+        />
+      ) : null}
+      {mode === "relative" ? (
         <>
           <NumberBox
-            id={`${prefix}-due-days`}
-            label="Days (negative for earlier)"
+            id={`${prefix}-date-days`}
+            label={unit === "hours" ? "Hours from now" : `${unit === "weeks" ? "Weeks" : "Days"} (negative for earlier)`}
             value={days}
-            min={-365}
-            max={365}
+            min={unit === "hours" ? 1 : unit === "weeks" ? -52 : -365}
+            max={unit === "hours" ? 2160 : unit === "weeks" ? 52 : 365}
             placeholder="2"
             onCommit={(n) => onChange(n === null ? omit(action, "days") : { ...action, days: n })}
           />
           <span data-tooltip={business ? `Business days: ${describeWorkWeek(workWeek)}` : undefined}>
             <SmartPicker
-              id={`${prefix}-due-unit`}
-              label="Count days or business days"
-              value={business ? "business" : "days"}
-              options={[
-                { value: "days", label: plural ? "days" : "day", description: "Every day of the week" },
-                {
-                  value: "business",
-                  label: plural ? "business days" : "business day",
-                  description: `Only workdays (${describeWorkWeek(workWeek)}; Admin console → Organization)`,
-                },
-              ]}
-              onChange={(v) => onChange({ ...action, business_days: v === "business" })}
+              id={`${prefix}-date-unit`}
+              label="Count days, business days, weeks, or hours"
+              value={business ? "business" : unit}
+              options={unitOptions}
+              onChange={(v) => {
+                const base = omit(action, "unit", "business_days");
+                if (v === "business") onChange({ ...base, business_days: true });
+                else if (v === "days") onChange(base);
+                else if (v === "hours") onChange({ ...omit(base, "from"), unit: v, days: Math.max(days ?? 1, 1) });
+                else onChange({ ...base, unit: v });
+              }}
               variant="chip"
             />
           </span>
-          <Word>from</Word>
-          <SmartPicker
-            id={`${prefix}-due-from`}
-            label="Count from"
-            value={from}
-            options={DUE_FROM.map((d) => ({ ...d }))}
-            onChange={(v) => onChange({ ...action, from: v })}
-            variant="chip"
-          />
+          {unit === "hours" ? (
+            <Word>from now</Word>
+          ) : (
+            <>
+              <Word>from</Word>
+              <SmartPicker
+                id={`${prefix}-date-from`}
+                label="Count from"
+                value={from}
+                options={DUE_FROM.map((d) => ({ ...d }))}
+                onChange={(v) => onChange({ ...action, from: v })}
+                variant="chip"
+              />
+            </>
+          )}
           {example ? <span className="text-xs text-zinc-500">{example}</span> : null}
         </>
-      )}
+      ) : null}
     </Row>
   );
 }
