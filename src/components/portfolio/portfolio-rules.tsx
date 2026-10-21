@@ -462,7 +462,7 @@ function FieldPicker({ ctx, value, onChange, options = "all" }: { ctx: Portfolio
   );
 }
 
-function TriggerSettings({
+export function TriggerSettings({
   triggerType,
   config,
   ctx,
@@ -529,7 +529,7 @@ function TriggerSettings({
   }
 }
 
-function ConditionSettings({ c, ctx, onChange }: { c: PortfolioRuleItem; ctx: PortfolioRuleContext; onChange: (next: PortfolioRuleItem) => void }) {
+export function ConditionSettings({ c, ctx, onChange }: { c: PortfolioRuleItem; ctx: PortfolioRuleContext; onChange: (next: PortfolioRuleItem) => void }) {
   switch (c.type) {
     case "status_is":
     case "status_is_not":
@@ -608,7 +608,7 @@ function ConditionSettings({ c, ctx, onChange }: { c: PortfolioRuleItem; ctx: Po
 
 const PLACEHOLDER_HINT = `Placeholders: ${PORTFOLIO_TEXT_PLACEHOLDERS.map((p) => `{{${p.key}}}`).join(", ")}`;
 
-function ActionSettings({ a, ctx, onChange }: { a: PortfolioRuleItem; ctx: PortfolioRuleContext; onChange: (next: PortfolioRuleItem) => void }) {
+export function ActionSettings({ a, ctx, onChange }: { a: PortfolioRuleItem; ctx: PortfolioRuleContext; onChange: (next: PortfolioRuleItem) => void }) {
   switch (a.type) {
     case "set_status":
       return (

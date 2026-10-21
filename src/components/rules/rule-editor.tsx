@@ -2183,19 +2183,21 @@ function IntegrationFields({
           <label htmlFor={`${prefix}-format`} className={`${labelClass} mt-1`}>
             Message style
           </label>
-          <SmartPicker
-            id={`${prefix}-format`}
-            label="Message style"
-            value={action.format === "blocks" ? "blocks" : "text"}
-            options={SLACK_FORMATS.map((f) => ({ value: f.value, label: f.label }))}
-            onChange={(v) => {
-              const next = { ...action };
-              if (v === "blocks") next.format = "blocks";
-              else delete next.format;
-              onChange(next);
-            }}
-            className="w-full max-w-xs"
-          />
+          <ParamSlot param="format">
+            <SmartPicker
+              id={`${prefix}-format`}
+              label="Message style"
+              value={action.format === "blocks" ? "blocks" : "text"}
+              options={SLACK_FORMATS.map((f) => ({ value: f.value, label: f.label }))}
+              onChange={(v) => {
+                const next = { ...action };
+                if (v === "blocks") next.format = "blocks";
+                else delete next.format;
+                onChange(next);
+              }}
+              className="w-full max-w-xs"
+            />
+          </ParamSlot>
           {action.format === "blocks" ? (
             <p className="text-xs text-zinc-500">
               Your message, then a card with the task title (linked), project, assignee, due date, status, and an Open

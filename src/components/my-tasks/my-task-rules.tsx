@@ -162,6 +162,91 @@ export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[]
   );
 }
 
+// A condition's settings (which projects, how many days, which task type).
+export function MyTaskConditionFields({ c, ctx, onChange }: { c: MyTaskRuleItem; ctx: MyTaskRuleContext; onChange: (next: MyTaskRuleItem) => void }) {
+  const projectOptions = ctx.projects.map((p) => ({ value: p.id, label: p.name, icon: <FolderClosed className="size-4" /> }));
+  return (
+    <>
+      {c.type === "in_project" || c.type === "not_in_project" ? (
+        <ParamSlot param="project_ids">
+          <SmartPicker
+            multiple
+            label="Projects"
+            value={strings(c.project_ids)}
+            options={projectOptions}
+            onChange={(v) => onChange({ ...c, project_ids: v })}
+            variant="chip"
+            placeholder="choose projects"
+            searchable
+          />
+        </ParamSlot>
+      ) : null}
+      {c.type === "due_within" ? (
+        <>
+          <ParamSlot param="days">
+            <DaysInput label="Days" value={whole(c.days)} min={0} max={365} onChange={(n) => onChange({ ...c, days: n })} />
+          </ParamSlot>
+          days
+        </>
+      ) : null}
+      {c.type === "task_type_is" ? (
+        <ParamSlot param="kind">
+          <SmartPicker
+            label="Task type"
+            value={typeof c.kind === "string" && c.kind ? c.kind : null}
+            options={[
+              { value: "task", label: "Task" },
+              { value: "milestone", label: "Milestone" },
+              { value: "approval", label: "Approval" },
+            ]}
+            onChange={(v) => onChange({ ...c, kind: v })}
+            variant="chip"
+            placeholder="choose a task type"
+          />
+        </ParamSlot>
+      ) : null}
+    </>
+  );
+}
+
+// An action's settings (which of my sections, how many days).
+export function MyTaskActionFields({ a, ctx, onChange }: { a: MyTaskRuleItem; ctx: MyTaskRuleContext; onChange: (next: MyTaskRuleItem) => void }) {
+  const sectionOptions = ctx.sections.map((s) => ({ value: s.id, label: s.name }));
+  return (
+    <>
+      {a.type === "move_to_section" ? (
+        <ParamSlot param="section_id">
+          <SmartPicker
+            label="Section"
+            value={typeof a.section_id === "string" && a.section_id ? a.section_id : null}
+            options={sectionOptions}
+            onChange={(v) => onChange({ ...a, section_id: v })}
+            variant="chip"
+            placeholder="choose section"
+          />
+        </ParamSlot>
+      ) : null}
+      {a.type === "set_due_date" ? (
+        <>
+          <ParamSlot param="days">
+            <DaysInput label="Days from today" value={whole(a.days)} min={0} max={365} onChange={(n) => onChange({ ...a, days: n })} />
+          </ParamSlot>
+          <SmartPicker
+            label="Days or business days"
+            value={a.business_days === true ? "business" : "days"}
+            options={[
+              { value: "days", label: "days from today" },
+              { value: "business", label: "business days from today" },
+            ]}
+            onChange={(v) => onChange({ ...a, business_days: v === "business" })}
+            variant="chip"
+          />
+        </>
+      ) : null}
+    </>
+  );
+}
+
 export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | null; ctx: MyTaskRuleContext; onDone: () => void }) {
   const notify = useNotify();
   const [pending, run] = useServerAction();
@@ -176,8 +261,6 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
   // Every step's settings (rule-params.ts): Save waits until nothing required is missing.
   const problems = ruleProblems({ triggerType, triggerConfig, conditions, actions }, "my_tasks");
   const blocked = saveBlockedReason(problems);
-  const projectOptions = ctx.projects.map((p) => ({ value: p.id, label: p.name, icon: <FolderClosed className="size-4" /> }));
-  const sectionOptions = ctx.sections.map((s) => ({ value: s.id, label: s.name }));
 
   function save() {
     if (!name.trim()) {
@@ -258,44 +341,7 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
                 variant="chip"
               />
               <StepParams missing={missingKeys(c, CONDITION_SCOPE)}>
-              {c.type === "in_project" || c.type === "not_in_project" ? (
-                <ParamSlot param="project_ids">
-                  <SmartPicker
-                    multiple
-                    label="Projects"
-                    value={strings(c.project_ids)}
-                    options={projectOptions}
-                    onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? { ...c, project_ids: v } : x)))}
-                    variant="chip"
-                    placeholder="choose projects"
-                    searchable
-                  />
-                </ParamSlot>
-              ) : null}
-              {c.type === "due_within" ? (
-                <>
-                  <ParamSlot param="days">
-                    <DaysInput label="Days" value={whole(c.days)} min={0} max={365} onChange={(n) => setConditions(conditions.map((x, j) => (j === i ? { ...c, days: n } : x)))} />
-                  </ParamSlot>
-                  days
-                </>
-              ) : null}
-              {c.type === "task_type_is" ? (
-                <ParamSlot param="kind">
-                  <SmartPicker
-                    label="Task type"
-                    value={typeof c.kind === "string" && c.kind ? c.kind : null}
-                    options={[
-                      { value: "task", label: "Task" },
-                      { value: "milestone", label: "Milestone" },
-                      { value: "approval", label: "Approval" },
-                    ]}
-                    onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? { ...c, kind: v } : x)))}
-                    variant="chip"
-                    placeholder="choose a task type"
-                  />
-                </ParamSlot>
-              ) : null}
+                <MyTaskConditionFields c={c} ctx={ctx} onChange={(next) => setConditions(conditions.map((x, j) => (j === i ? next : x)))} />
               </StepParams>
               <StepPrompt problems={stepProblems(c, CONDITION_SCOPE)} />
               <button type="button" aria-label={`Remove condition ${i + 1}`} data-tooltip="Remove condition" onClick={() => setConditions(conditions.filter((_, j) => j !== i))} className="btn-icon size-6">
@@ -332,35 +378,7 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
                 variant="chip"
               />
               <StepParams missing={missingKeys(a, ACTION_SCOPE)}>
-              {a.type === "move_to_section" ? (
-                <ParamSlot param="section_id">
-                  <SmartPicker
-                    label="Section"
-                    value={typeof a.section_id === "string" && a.section_id ? a.section_id : null}
-                    options={sectionOptions}
-                    onChange={(v) => setActions(actions.map((x, j) => (j === i ? { ...a, section_id: v } : x)))}
-                    variant="chip"
-                    placeholder="choose section"
-                  />
-                </ParamSlot>
-              ) : null}
-              {a.type === "set_due_date" ? (
-                <>
-                  <ParamSlot param="days">
-                    <DaysInput label="Days from today" value={whole(a.days)} min={0} max={365} onChange={(n) => setActions(actions.map((x, j) => (j === i ? { ...a, days: n } : x)))} />
-                  </ParamSlot>
-                  <SmartPicker
-                    label="Days or business days"
-                    value={a.business_days === true ? "business" : "days"}
-                    options={[
-                      { value: "days", label: "days from today" },
-                      { value: "business", label: "business days from today" },
-                    ]}
-                    onChange={(v) => setActions(actions.map((x, j) => (j === i ? { ...a, business_days: v === "business" } : x)))}
-                    variant="chip"
-                  />
-                </>
-              ) : null}
+                <MyTaskActionFields a={a} ctx={ctx} onChange={(next) => setActions(actions.map((x, j) => (j === i ? next : x)))} />
               </StepParams>
               <StepPrompt problems={stepProblems(a, ACTION_SCOPE)} />
               <button
