@@ -16,6 +16,13 @@
 --   approaching / overdue / start triggers and the date actions, and schedules with a time of day,
 --   every N days or weeks, and several weekdays. Business days follow the workspace's workweek
 --   (Sunday–Thursday by default).
+-- Batch C — flow: finish-to-finish and start-to-finish dependencies (all four kinds), the "Task is no
+--   longer blocked" trigger and Is blocked / Isn't blocked conditions, "Create a task" (a task,
+--   milestone, or approval, here or in another project, optionally linked to the triggering task),
+--   "Move to another project" and "Remove from this project", "Set task type" with a "Task type
+--   changes" trigger and "Task type is not", conditions on the approval status, attachments, and
+--   comments, "Set description", "Task moves out of a section", "Section is one of / none of", and
+--   "is one of / none of" for single-choice fields.
 --
 -- fire_rules keeps its import and copy checks first, exactly as they were; notify_with,
 -- notify_message, and add_story are untouched. Every new table has RLS on, no anon privilege, and no
@@ -47,7 +54,8 @@ begin
       'attachment_added', 'tag_added', 'subtasks_completed', 'task_added_from_project', 'scheduled', 'manual',
       -- Automations V3
       'follower_added',
-      'start_date_changed', 'start_approaching', 'start_reached'
+      'start_date_changed', 'start_approaching', 'start_reached',
+      'task_unblocked', 'task_type_changed', 'section_left'
     ));
   end if;
 end $$;
@@ -552,6 +560,165 @@ $$;
 revoke all on function public.rule_set_task_date(public.rules, uuid, jsonb, text) from public, anon, authenticated;
 
 -- =============================================================================================
+-- 2c. Dependencies and flow (batch C)
+
+-- The asserted patch helper (kept on the hosted project; see AGENTS.md → Conventions).
+create or replace function public.alhc_patch_function(target regprocedure, variadic edits text[])
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare
+  def text := pg_get_functiondef(target);
+  hits integer;
+begin
+  if coalesce(array_length(edits, 1), 0) = 0 or array_length(edits, 1) % 2 <> 0 then
+    raise exception 'alhc_patch_function(%): pass (old, new) text pairs', target;
+  end if;
+  for i in 1 .. array_length(edits, 1) / 2 loop
+    if coalesce(edits[2 * i - 1], '') = '' then
+      raise exception 'alhc_patch_function(%): edit % has no text to replace', target, i;
+    end if;
+    hits := (length(def) - length(replace(def, edits[2 * i - 1], ''))) / length(edits[2 * i - 1]);
+    if hits <> 1 then
+      raise exception 'alhc_patch_function(%): edit % matched % times (expected exactly once)', target, i, hits;
+    end if;
+    def := replace(def, edits[2 * i - 1], edits[2 * i]);
+  end loop;
+  execute def;
+end;
+$$;
+
+revoke all on function public.alhc_patch_function(regprocedure, text[]) from public, anon, authenticated;
+
+-- All four dependency kinds (the tail retires the old CHECK and renames this one). The successor of
+--   finish_to_start   can't start before the predecessor is done, and can't be completed while it's open
+--   start_to_start    can't start before the predecessor starts (never blocks completion)
+--   finish_to_finish  can't finish before the predecessor is done (blocks completion while it's open)
+--   start_to_finish   can't finish before the predecessor starts (blocks completion until it starts)
+-- A task "starts" on its start date (else its due date; a milestone on its due day) or when it's
+-- completed, whichever comes first.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'task_dependencies_kind_check_v3') then
+    alter table public.task_dependencies add constraint task_dependencies_kind_check_v3
+      check (kind in ('finish_to_start', 'start_to_start', 'finish_to_finish', 'start_to_finish'));
+  end if;
+end $$;
+
+-- Has the task started? (Completed, or its start anchor is today or earlier in its own time zone.)
+create or replace function public.task_has_started(t public.tasks)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select t.completed_at is not null or coalesce(
+    case when t.kind = 'milestone' then t.due_on else coalesce(t.start_on, t.due_on) end,
+    'infinity'::date
+  ) <= (now() at time zone public.safe_timezone(t.time_zone))::date;
+$$;
+
+revoke all on function public.task_has_started(public.tasks) from public, anon, authenticated;
+
+-- Is a link's condition met? Finish kinds wait for the predecessor to be done, start kinds for it to
+-- start. A removed or trashed predecessor holds nothing up.
+create or replace function public.dependency_satisfied(link_kind text, pred public.tasks)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select pred.id is null or pred.deleted_at is not null or case
+    when link_kind in ('start_to_start', 'start_to_finish') then public.task_has_started(pred)
+    else pred.completed_at is not null
+  end;
+$$;
+
+revoke all on function public.dependency_satisfied(text, public.tasks) from public, anon, authenticated;
+
+-- Is the task waiting on anything (any active link of any kind whose condition isn't met)? Engine
+-- only: it sees every link, readable or not, like the completion guard.
+create or replace function public.task_is_blocked(target_task uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.task_dependencies d
+    join public.tasks p on p.id = d.predecessor_id
+    where d.successor_id = target_task and d.deleted_at is null
+      and not public.dependency_satisfied(d.kind, p)
+  );
+$$;
+
+revoke all on function public.task_is_blocked(uuid) from public, anon, authenticated;
+
+-- set_task_dependency takes the two new kinds (once the tail has renamed the wider CHECK; before that
+-- it says so instead of failing on the old CHECK).
+select public.alhc_patch_function('public.set_task_dependency(uuid, uuid, text, integer)',
+$p$  if dependency_kind is null or dependency_kind not in ('finish_to_start', 'start_to_start') then
+    raise exception 'A dependency is finish-to-start or start-to-start' using errcode = 'check_violation';
+  end if;$p$,
+$p$  if dependency_kind is null or dependency_kind not in ('finish_to_start', 'start_to_start', 'finish_to_finish', 'start_to_finish') then
+    raise exception 'A dependency is finish-to-start, start-to-start, finish-to-finish, or start-to-finish' using errcode = 'check_violation';
+  end if;
+  if dependency_kind in ('finish_to_finish', 'start_to_finish') and exists (
+    select 1 from pg_constraint where conname = 'task_dependencies_kind_check_v3'
+  ) then
+    raise exception 'Finish-to-finish and start-to-finish links need this release''s database update' using errcode = 'check_violation';
+  end if;$p$);
+
+-- The completion guard: finish-to-start and finish-to-finish wait for the predecessor to be done,
+-- start-to-finish for it to start; start-to-start never blocks completion.
+select public.alhc_patch_function('public.open_blocker_count(uuid)',
+$p$      and d.kind = 'finish_to_start'
+      and d.deleted_at is null
+      and p.deleted_at is null
+      and p.completed_at is null$p$,
+$p$      and d.kind <> 'start_to_start'
+      and d.deleted_at is null
+      and p.deleted_at is null
+      and not public.dependency_satisfied(d.kind, p)$p$);
+
+-- Critical path: in "days before the finish" terms a finish-to-finish step adds only the lag, and a
+-- start-to-finish step the lag minus the predecessor's duration.
+select public.alhc_patch_function('public.project_critical_path(uuid)',
+$p$    select e.pred, r.days + (b.d - b.s) + e.lag_days - case when e.kind = 'start_to_start' then e.pred_days else 0 end$p$,
+$p$    select e.pred, r.days + case when e.kind in ('finish_to_finish', 'start_to_finish') then 0 else (b.d - b.s) end + e.lag_days
+      - case when e.kind in ('start_to_start', 'start_to_finish') then e.pred_days else 0 end$p$);
+
+-- Auto-shift: start kinds anchor on the predecessor's start, finish kinds on its due date; *_to_finish
+-- links hold the successor's due date (so the start it needs is that minus its length).
+select public.alhc_patch_function('public.preview_dependency_shift(uuid, date, date)',
+$p$      if edge.kind = 'start_to_start' then$p$,
+$p$      if edge.kind in ('start_to_start', 'start_to_finish') then$p$,
+$p$      candidate := new_anchor + edge.lag_days;$p$,
+$p$      candidate := new_anchor + edge.lag_days
+        - case when edge.kind in ('finish_to_finish', 'start_to_finish') then coalesce(t.due_on, cur_start) - cur_start else 0 end;$p$);
+
+select public.alhc_patch_function('public.preview_dependency_shifts(jsonb, boolean)',
+$p$        if edge.kind = 'start_to_start' then$p$,
+$p$        if edge.kind in ('start_to_start', 'start_to_finish') then$p$,
+$p$        new_anchor := case when edge.kind = 'start_to_start'$p$,
+$p$        new_anchor := case when edge.kind in ('start_to_start', 'start_to_finish')$p$,
+$p$      continue when new_anchor is null;$p$,
+$p$      continue when new_anchor is null;
+      new_anchor := new_anchor
+        - case when edge.kind in ('finish_to_finish', 'start_to_finish') then coalesce(t.due_on, cur_start) - cur_start else 0 end;
+      old_anchor := old_anchor
+        - case when edge.kind in ('finish_to_finish', 'start_to_finish') then coalesce(t.due_on, cur_start) - cur_start else 0 end;$p$);
+
+-- Copies (project templates, Duplicate project) keep all four kinds.
+select public.alhc_patch_function('public.instantiate_project_snapshot(jsonb, text, date, uuid, text, jsonb)',
+$p$    case when d ->> 'kind' = 'start_to_start' then 'start_to_start' else 'finish_to_start' end,$p$,
+$p$    case when d ->> 'kind' in ('start_to_start', 'finish_to_finish', 'start_to_finish')
+      and not exists (select 1 from pg_constraint where conname = 'task_dependencies_kind_check_v3')
+      then d ->> 'kind' when d ->> 'kind' = 'start_to_start' then 'start_to_start' else 'finish_to_start' end,$p$);
+
+-- =============================================================================================
 -- 3. Conditions
 
 -- One condition against one task (the engine and the dry run share it). `section` is the task's
@@ -617,6 +784,27 @@ begin
       return public.rule_date_matches(case c ->> 'date' when 'start' then t.start_on else t.due_on end,
         c ->> 'op', c ->> 'value', c ->> 'to');
     when 'task_type_is' then return t.kind = c ->> 'kind';
+    -- Batch C: flow.
+    when 'task_type_is_not' then return t.kind is distinct from c ->> 'kind';
+    when 'section_is_one_of', 'section_is_none_of' then
+      return (c ->> 'type' = 'section_is_one_of') = coalesce(section::text in (select jsonb_array_elements_text(c -> 'section_ids')), false);
+    when 'is_blocked' then return public.task_is_blocked(t.id);
+    when 'is_not_blocked' then return not public.task_is_blocked(t.id);
+    when 'approval_status_is' then
+      -- The latest approval request on the task (cancelled ones don't count); "none" = no request.
+      return coalesce((
+        select ar.status from public.approval_requests ar
+        where ar.task_id = t.id and ar.deleted_at is null and ar.status <> 'cancelled'
+        order by ar.created_at desc limit 1
+      ), 'none') in (select jsonb_array_elements_text(c -> 'statuses'));
+    when 'has_attachment', 'no_attachment' then
+      return (c ->> 'type' = 'has_attachment') = exists (
+        select 1 from public.task_attachments a where a.task_id = t.id and a.deleted_at is null
+      );
+    when 'has_comment', 'no_comment' then
+      return (c ->> 'type' = 'has_comment') = exists (
+        select 1 from public.comments cm where cm.task_id = t.id and cm.deleted_at is null
+      );
     when 'has_open_subtasks' then
       return exists (select 1 from public.tasks s where s.parent_task_id = t.id and s.deleted_at is null and s.completed_at is null);
     when 'all_subtasks_done' then
@@ -690,6 +878,9 @@ begin
             return false;
           end if;
           return case op when 'before' then current_text::date < wanted_text::date else current_text::date > wanted_text::date end;
+        when 'one_of', 'none_of' then
+          -- Batch C: a single-choice field (or the section-bound Status) is one of the options picked.
+          return (op = 'one_of') = coalesce(current_text in (select jsonb_array_elements_text(wanted)), false);
         when 'between', 'not_between' then
           -- Batch B: a number or date field between two values (both included, in either order).
           if jsonb_typeof(current_value) = 'number' and jsonb_typeof(wanted) = 'number' and jsonb_typeof(c -> 'to') = 'number' then
@@ -732,8 +923,24 @@ begin
   end if;
   case new.trigger_type
     when 'section_changed' then
-      if not public.rule_section_ok(new.project_id, cfg ->> 'section_id') then
+      -- Batch C: no section = any section change.
+      if cfg ? 'section_id' and not public.rule_section_ok(new.project_id, cfg ->> 'section_id') then
         raise exception 'Choose a section in this project for the trigger' using errcode = 'check_violation';
+      end if;
+    when 'section_left' then
+      if not public.rule_section_ok(new.project_id, cfg ->> 'section_id') then
+        raise exception 'Choose the section the task moves out of' using errcode = 'check_violation';
+      end if;
+    when 'task_unblocked' then
+      if cfg ? 'kinds' and (
+        coalesce(jsonb_typeof(cfg -> 'kinds'), 'missing') <> 'array' or jsonb_array_length(cfg -> 'kinds') = 0
+        or not '["finish_to_start", "start_to_start", "finish_to_finish", "start_to_finish"]'::jsonb @> (cfg -> 'kinds')
+      ) then
+        raise exception 'Task no longer blocked: choose which kinds of dependency, or any' using errcode = 'check_violation';
+      end if;
+    when 'task_type_changed' then
+      if cfg ? 'kind' and coalesce(cfg ->> 'kind', '') not in ('task', 'milestone', 'approval') then
+        raise exception 'Choose a task type for the trigger' using errcode = 'check_violation';
       end if;
     when 'field_changed' then
       field := public.rule_field(new.project_id, cfg ->> 'field_id');
@@ -853,6 +1060,10 @@ begin
               and jsonb_typeof(item -> 'to') = 'number')
           or (field.field_type = 'date' and op in ('between', 'not_between') and public.rule_is_day(item -> 'value')
               and public.rule_is_day(item -> 'to'))
+          -- Batch C: one of / none of the options (a single-choice field, or the Status's sections).
+          or (op in ('one_of', 'none_of') and (field.field_type = 'single_select' or field.bound_to_sections)
+              and jsonb_typeof(item -> 'value') = 'array' and jsonb_array_length(item -> 'value') between 1 and 100
+              and not exists (select 1 from jsonb_array_elements(item -> 'value') x where jsonb_typeof(x) <> 'string'))
           or (field.field_type = 'text' and op in ('contains', 'not_contains', 'not_equals') and jsonb_typeof(item -> 'value') = 'string')
           or (field.field_type = 'single_select' and op = 'not_equals')
           or (field.field_type = 'multi_select' and op in ('contains', 'not_contains'))
@@ -907,7 +1118,17 @@ begin
         raise exception 'Date is: choose the date%', case when item ->> 'op' in ('between', 'not_between') then 's' else '' end
           using errcode = 'check_violation';
       end if;
-    elsif kind = 'task_type_is' then
+    elsif kind in ('section_is_one_of', 'section_is_none_of') then
+      if coalesce(jsonb_typeof(item -> 'section_ids'), 'missing') <> 'array' or jsonb_array_length(item -> 'section_ids') not between 1 and 50
+         or exists (select 1 from jsonb_array_elements_text(item -> 'section_ids') x where not public.rule_section_ok(new.project_id, x)) then
+        raise exception 'Section is one of: choose sections of this project' using errcode = 'check_violation';
+      end if;
+    elsif kind = 'approval_status_is' then
+      if coalesce(jsonb_typeof(item -> 'statuses'), 'missing') <> 'array' or jsonb_array_length(item -> 'statuses') = 0
+         or not '["none", "pending", "changes_requested", "approved", "rejected"]'::jsonb @> (item -> 'statuses') then
+        raise exception 'Approval status: choose one or more statuses' using errcode = 'check_violation';
+      end if;
+    elsif kind in ('task_type_is', 'task_type_is_not') then
       if coalesce(item ->> 'kind', '') not in ('task', 'milestone', 'approval') then
         raise exception 'Choose a task type' using errcode = 'check_violation';
       end if;
@@ -922,7 +1143,9 @@ begin
       'assignee_is_set', 'assignee_is_empty', 'is_complete', 'is_incomplete', 'is_overdue',
       'has_due_date', 'no_due_date', 'has_open_subtasks', 'all_subtasks_done',
       -- Batch B
-      'has_start_date', 'no_start_date', 'has_started'
+      'has_start_date', 'no_start_date', 'has_started',
+      -- Batch C
+      'is_blocked', 'is_not_blocked', 'has_attachment', 'no_attachment', 'has_comment', 'no_comment'
     ) then
       raise exception 'Unknown condition %', coalesce(kind, '(none)') using errcode = 'check_violation';
     end if;
@@ -1064,6 +1287,71 @@ begin
         ) then
           raise exception 'Apply task template: choose a task template of this project' using errcode = 'check_violation';
         end if;
+      -- Batch C.
+      when 'move_to_project' then
+        if coalesce(item ->> 'project_id', '') !~* '^[0-9a-f-]{36}$' or item ->> 'project_id' = new.project_id::text or not exists (
+          select 1 from public.projects p
+          where p.id::text = item ->> 'project_id' and p.workspace_id = ws and p.deleted_at is null and p.archived_at is null
+        ) then
+          raise exception 'Move to project: choose another active project in this workspace' using errcode = 'check_violation';
+        end if;
+        if not public.has_project_role((item ->> 'project_id')::uuid, 'editor') then
+          raise exception 'Move to project: you need to be an Editor in that project' using errcode = 'insufficient_privilege';
+        end if;
+        if coalesce(item ->> 'section_id', '') <> '' and not public.rule_section_ok((item ->> 'project_id')::uuid, item ->> 'section_id') then
+          raise exception 'Move to project: that section isn''t in the project' using errcode = 'check_violation';
+        end if;
+      when 'remove_from_project' then
+        null;
+      when 'set_task_type' then
+        if coalesce(item ->> 'kind', '') not in ('task', 'milestone', 'approval') then
+          raise exception 'Set task type: choose task, milestone, or approval' using errcode = 'check_violation';
+        end if;
+      when 'set_description' then
+        if coalesce(item ->> 'mode', 'replace') not in ('replace', 'append', 'prepend') then
+          raise exception 'Set description: replace it, or add to the start or the end' using errcode = 'check_violation';
+        end if;
+        if length(coalesce(item ->> 'text', '')) > 10000 or (coalesce(item ->> 'mode', 'replace') <> 'replace' and trim(coalesce(item ->> 'text', '')) = '') then
+          raise exception 'Set description: write the text (up to 10,000 characters)' using errcode = 'check_violation';
+        end if;
+      when 'create_task' then
+        if coalesce(item ->> 'kind', 'task') not in ('task', 'milestone', 'approval') then
+          raise exception 'Create a task: choose a task, a milestone, or an approval' using errcode = 'check_violation';
+        end if;
+        if length(trim(coalesce(item ->> 'title', ''))) not between 1 and 500 then
+          raise exception 'Create a task: write its name' using errcode = 'check_violation';
+        end if;
+        if length(coalesce(item ->> 'notes', '')) > 10000 then
+          raise exception 'Create a task: the description is up to 10,000 characters' using errcode = 'check_violation';
+        end if;
+        if coalesce(item ->> 'project_id', '') <> '' and item ->> 'project_id' <> new.project_id::text then
+          if item ->> 'project_id' !~* '^[0-9a-f-]{36}$' or not exists (
+            select 1 from public.projects p
+            where p.id::text = item ->> 'project_id' and p.workspace_id = ws and p.deleted_at is null and p.archived_at is null
+          ) then
+            raise exception 'Create a task: choose an active project in this workspace' using errcode = 'check_violation';
+          end if;
+          if not public.has_project_role((item ->> 'project_id')::uuid, 'editor') then
+            raise exception 'Create a task: you need to be an Editor in that project' using errcode = 'insufficient_privilege';
+          end if;
+        end if;
+        if coalesce(item ->> 'section_id', '') <> '' and not public.rule_section_ok(
+          coalesce(nullif(item ->> 'project_id', '')::uuid, new.project_id), item ->> 'section_id') then
+          raise exception 'Create a task: that section isn''t in the project' using errcode = 'check_violation';
+        end if;
+        if item ? 'assignee' and item -> 'assignee' <> 'null'::jsonb and not public.rule_person_in_project(new.project_id, item -> 'assignee') then
+          raise exception 'Create a task: choose a person to assign' using errcode = 'check_violation';
+        end if;
+        if item ? 'due_days' and (coalesce(jsonb_typeof(item -> 'due_days'), 'missing') <> 'number' or (item ->> 'due_days') !~ '^[0-9]{1,3}$'
+           or (item ->> 'due_days')::integer > 365) then
+          raise exception 'Create a task: due 0 to 365 days from today' using errcode = 'check_violation';
+        end if;
+        if item ? 'business_days' and jsonb_typeof(item -> 'business_days') <> 'boolean' then
+          raise exception 'Create a task: business days is on or off' using errcode = 'check_violation';
+        end if;
+        if coalesce(item ->> 'link', 'none') not in ('none', 'blocked_by', 'blocking') then
+          raise exception 'Create a task: link it as waiting on this task, holding it up, or not at all' using errcode = 'check_violation';
+        end if;
       else
         raise exception 'Unknown action %', coalesce(kind, '(none)') using errcode = 'check_violation';
     end case;
@@ -1106,6 +1394,8 @@ declare
   elem jsonb;
   n integer;
   counts integer[];
+  made uuid;
+  new_home uuid;
 begin
   for a, idx in select value, ordinality from jsonb_array_elements(rule_actions) with ordinality loop
     select * into t from public.tasks where id = target_task;
@@ -1493,6 +1783,159 @@ begin
             end loop;
             result := 'Applied “' || tpl.name || '”: ' || counts[1] || ' subtasks, ' || counts[2] || ' tags, ' || counts[3] || ' field values';
           end if;
+
+        -- Batch C ------------------------------------------------------------------------------
+        when 'move_to_project' then
+          target_project := (a ->> 'project_id')::uuid;
+          target_section := nullif(a ->> 'section_id', '')::uuid;
+          input := jsonb_build_object(
+            'project', (select pj.name from public.projects pj where pj.id = target_project),
+            'section', (select s.name from public.sections s where s.id = target_section)
+          );
+          if not exists (
+            select 1 from public.projects pj where pj.id = target_project and pj.deleted_at is null and pj.archived_at is null
+          ) then
+            raise exception 'Move to project: that project was removed or archived' using errcode = 'check_violation';
+          end if;
+          if coalesce(public.profile_project_role(coalesce(r.owner_id, r.created_by), target_project), '') not in ('editor', 'admin', 'owner') then
+            raise exception 'Move to project: the rule''s owner can''t add tasks to “%”', coalesce(input ->> 'project', 'that project')
+              using errcode = 'insufficient_privilege';
+          end if;
+          if not exists (select 1 from public.task_projects tp where tp.task_id = target_task and tp.project_id = target_project and tp.deleted_at is null) then
+            insert into public.task_projects (task_id, project_id, section_id, sort_order, deleted_at)
+            values (target_task, target_project, target_section, coalesce((
+              select max(m.sort_order) from public.task_projects m
+              where m.project_id = target_project and m.section_id is not distinct from target_section and m.deleted_at is null
+            ), 0) + 1024, null)
+            on conflict (task_id, project_id) do update
+              set deleted_at = null, section_id = excluded.section_id, sort_order = excluded.sort_order;
+          end if;
+          -- The task leaves this project (its home moves to the new project first).
+          if t.home_project_id = r.project_id then
+            update public.tasks set home_project_id = target_project where id = target_task;
+          end if;
+          update public.task_projects set deleted_at = now()
+          where task_id = target_task and project_id = r.project_id and deleted_at is null;
+          result := 'Moved to “' || coalesce(input ->> 'project', '?') || '”' || coalesce(' in “' || (input ->> 'section') || '”', '');
+
+        when 'remove_from_project' then
+          input := jsonb_build_object('project', (select pj.name from public.projects pj where pj.id = r.project_id));
+          select tp.project_id into new_home
+          from public.task_projects tp
+          join public.projects pj on pj.id = tp.project_id and pj.deleted_at is null
+          where tp.task_id = target_task and tp.project_id <> r.project_id and tp.deleted_at is null
+          order by (tp.project_id = t.home_project_id) desc, tp.created_at
+          limit 1;
+          if new_home is null then
+            outcome := 'only_project';
+            result := 'It’s only in this project, so it stays (a task always lives in a project)';
+          else
+            if t.home_project_id = r.project_id then
+              update public.tasks set home_project_id = new_home where id = target_task;
+            end if;
+            update public.task_projects set deleted_at = now()
+            where task_id = target_task and project_id = r.project_id and deleted_at is null;
+            result := 'Removed from “' || coalesce(input ->> 'project', 'this project') || '” (it stays in “'
+              || coalesce((select pj.name from public.projects pj where pj.id = new_home), '?') || '”)';
+          end if;
+
+        when 'set_task_type' then
+          input := jsonb_build_object('kind', a ->> 'kind');
+          update public.tasks set kind = a ->> 'kind' where id = target_task and kind is distinct from a ->> 'kind';
+          if not found then
+            outcome := 'unchanged';
+            result := 'Already a' || case a ->> 'kind' when 'approval' then 'n approval' when 'milestone' then ' milestone' else ' task' end;
+          else
+            result := 'Now a' || case a ->> 'kind' when 'approval' then 'n approval' when 'milestone' then ' milestone' else ' task' end;
+          end if;
+
+        when 'set_description' then
+          body := left(public.render_rule_text(coalesce(a ->> 'text', ''), target_task, r.project_id, event), 10000);
+          input := jsonb_build_object('mode', coalesce(a ->> 'mode', 'replace'), 'text', left(body, 300));
+          body := case coalesce(a ->> 'mode', 'replace')
+            when 'append' then case when coalesce(t.notes, '') = '' then body else t.notes || E'\n\n' || body end
+            when 'prepend' then case when coalesce(t.notes, '') = '' then body else body || E'\n\n' || t.notes end
+            else body
+          end;
+          if coalesce(a ->> 'mode', 'replace') <> 'replace' and trim(coalesce(input ->> 'text', '')) = '' then
+            outcome := 'empty';
+            result := 'Nothing to add (the text came out empty)';
+          else
+            update public.tasks set notes = nullif(left(body, 20000), '') where id = target_task and notes is distinct from nullif(left(body, 20000), '');
+            if not found then
+              outcome := 'unchanged';
+              result := 'The description was already that';
+            else
+              result := case coalesce(a ->> 'mode', 'replace') when 'append' then 'Added to the end of the description'
+                when 'prepend' then 'Added to the start of the description'
+                else case when body = '' then 'Description cleared' else 'Description set' end end;
+            end if;
+          end if;
+
+        when 'create_task' then
+          target_project := coalesce(nullif(a ->> 'project_id', '')::uuid, r.project_id);
+          target_section := nullif(a ->> 'section_id', '')::uuid;
+          body := left(public.render_rule_text(a ->> 'title', target_task, r.project_id, event), 500);
+          person := case when a ? 'assignee' and a -> 'assignee' <> 'null'::jsonb
+            then public.resolve_rule_person(a -> 'assignee', target_task) end;
+          input := jsonb_build_object(
+            'kind', coalesce(a ->> 'kind', 'task'),
+            'title', body,
+            'project', (select pj.name from public.projects pj where pj.id = target_project),
+            'assignee', public.rule_profile_name(person)
+          );
+          if body = '' then
+            outcome := 'empty';
+            result := 'The name came out empty, so no task was made';
+          else
+            if not exists (
+              select 1 from public.projects pj where pj.id = target_project and pj.deleted_at is null and pj.archived_at is null
+            ) then
+              raise exception 'Create a task: that project was removed or archived' using errcode = 'check_violation';
+            end if;
+            if target_project <> r.project_id
+               and coalesce(public.profile_project_role(coalesce(r.owner_id, r.created_by), target_project), '') not in ('editor', 'admin', 'owner') then
+              raise exception 'Create a task: the rule''s owner can''t add tasks to “%”', coalesce(input ->> 'project', 'that project')
+                using errcode = 'insufficient_privilege';
+            end if;
+            -- Only someone who can open the new task is assigned.
+            if person is not null and public.profile_project_role(person, target_project) is null then
+              person := null;
+              input := input || jsonb_build_object('assignee_skipped', true);
+            end if;
+            insert into public.tasks (home_project_id, title, notes, kind, assignee_id, due_on)
+            values (
+              target_project, body,
+              nullif(left(public.render_rule_text(coalesce(a ->> 'notes', ''), target_task, r.project_id, event), 20000), ''),
+              coalesce(a ->> 'kind', 'task'), person,
+              case when a ? 'due_days' then public.rule_add_days(public.rule_local_today(r), (a ->> 'due_days')::integer,
+                coalesce((a ->> 'business_days')::boolean, false), public.project_work_week(r.project_id)) end
+            )
+            returning id into made;
+            if target_section is not null then
+              update public.task_projects set section_id = target_section where task_id = made and project_id = target_project;
+            end if;
+            if coalesce(a ->> 'link', 'none') <> 'none' then
+              insert into public.task_dependencies (project_id, predecessor_id, successor_id, kind, created_by)
+              values (target_project,
+                case when a ->> 'link' = 'blocked_by' then target_task else made end,
+                case when a ->> 'link' = 'blocked_by' then made else target_task end,
+                'finish_to_start', null);
+            end if;
+            -- The new task's own "task is added" rules run at commit inside this rule's chain (so the
+            -- loop guard and the three-rule limit still apply to rules that make tasks).
+            perform set_config('alhc.rule_made_tasks',
+              (coalesce(nullif(current_setting('alhc.rule_made_tasks', true), ''), '{}')::jsonb
+                || jsonb_build_object(made::text, jsonb_build_object(
+                  'chain', coalesce(current_setting('alhc.rule_chain', true), ''), 'rule', r.id::text)))::text,
+              true);
+            result := 'Created ' || case coalesce(a ->> 'kind', 'task') when 'milestone' then 'milestone' when 'approval' then 'approval' else 'task' end
+              || ' “' || left(body, 200) || '”'
+              || case when target_project <> r.project_id then ' in “' || coalesce(input ->> 'project', '?') || '”' else '' end
+              || coalesce(' for ' || public.rule_profile_name(person), '')
+              || case a ->> 'link' when 'blocked_by' then ' (waiting on this task)' when 'blocking' then ' (this task waits on it)' else '' end;
+            input := input || jsonb_build_object('task_id', made);
+          end if;
       end case;
     exception when others then
       -- Keep the steps that ran (and this one's error) with the failure: run_rule logs them.
@@ -1545,7 +1988,11 @@ begin
     order by ru.sort_order, ru.created_at
   loop
     cfg := r.trigger_config;
-    continue when trigger_kind = 'section_changed' and cfg ->> 'section_id' is distinct from event ->> 'section_id';
+    -- Batch C: a section_changed rule without a section fires on any section change.
+    continue when trigger_kind = 'section_changed' and cfg ? 'section_id' and cfg ->> 'section_id' is distinct from event ->> 'section_id';
+    continue when trigger_kind = 'section_left' and cfg ->> 'section_id' is distinct from event ->> 'from_section_id';
+    continue when trigger_kind = 'task_unblocked' and cfg ? 'kinds' and not (cfg -> 'kinds') ? (event ->> 'kind');
+    continue when trigger_kind = 'task_type_changed' and cfg ? 'kind' and cfg ->> 'kind' is distinct from event ->> 'kind';
     continue when trigger_kind = 'field_changed' and (
       cfg ->> 'field_id' is distinct from event ->> 'field_id'
       or (cfg ? 'option_id' and not coalesce(
@@ -1641,6 +2088,11 @@ begin
         'start_on', new.start_on, 'from_start_on', old.start_on
       ));
     end if;
+    -- Batch C: "Task type changes".
+    if new.kind is distinct from old.kind
+       and (public.rule_context_id() is not null or new.created_at <> now()) then
+      perform public.fire_rules('task_type_changed', new.id, null, jsonb_build_object('kind', new.kind, 'from_kind', old.kind));
+    end if;
   end if;
 
   -- A subtask was finished: when it was the parent's last open one, "all subtasks done" fires on the
@@ -1668,7 +2120,7 @@ $$;
 revoke all on function public.rules_on_task_update() from public, anon, authenticated;
 
 create or replace trigger tasks_rules
-after update of assignee_id, completed_at, due_on, start_on on public.tasks
+after update of assignee_id, completed_at, due_on, start_on, kind on public.tasks
 for each row execute function public.rules_on_task_update();
 
 -- The next time a scheduled rule runs after `after_time` (same signature, grants, and callers as
@@ -1838,6 +2290,7 @@ declare
   due integer := 0;
   overdue integer := 0;
   starts integer := 0;
+  unblocked integer := 0;
   scheduled integer := 0;
   ran integer;
   outcome text;
@@ -1908,7 +2361,215 @@ begin
     where id = r.id;
   end loop;
 
+  -- Batch C: start-kind dependencies released by the calendar.
+  for r in
+    select ru.* from public.rules ru
+    join public.projects p on p.id = ru.project_id and p.deleted_at is null and p.archived_at is null
+    where ru.enabled and ru.deleted_at is null and ru.trigger_type = 'task_unblocked'
+  loop
+    unblocked := unblocked + public.rule_unblock_tick(r);
+  end loop;
+
   return jsonb_build_object('delayed_actions', delayed, 'due_rules', due, 'overdue_rules', overdue,
-    'start_rules', starts, 'scheduled_rules', scheduled);
+    'start_rules', starts, 'unblocked_rules', unblocked, 'scheduled_rules', scheduled);
 end;
 $$;
+
+-- =============================================================================================
+-- 9. Flow (batch C): where its triggers fire
+
+-- "Task moves into a section" (now also for a rule without a section) and "Task moves out of a
+-- section". Same rules as before: not in the transaction that made the task unless a rule did it.
+create or replace function public.rules_on_task_project_update()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.section_id is distinct from old.section_id
+     and new.deleted_at is null
+     and (public.rule_context_id() is not null
+          or not exists (select 1 from public.tasks t where t.id = new.task_id and t.created_at = now())) then
+    if old.section_id is not null then
+      perform public.fire_rules('section_left', new.task_id, new.project_id, jsonb_build_object(
+        'section_id', new.section_id, 'from_section_id', old.section_id
+      ));
+    end if;
+    if new.section_id is not null then
+      perform public.fire_rules('section_changed', new.task_id, new.project_id, jsonb_build_object(
+        'section_id', new.section_id, 'from_section_id', old.section_id
+      ));
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.rules_on_task_project_update() from public, anon, authenticated;
+
+-- "Task is added to this project" at commit (same as before), but a task a rule made runs its rules
+-- inside that rule's chain, so "rules started by rules stop after three" and "a rule never triggers
+-- itself" also hold for Create a task.
+create or replace function public.rules_on_task_created()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  made jsonb := coalesce(nullif(current_setting('alhc.rule_made_tasks', true), ''), '{}')::jsonb -> new.id::text;
+  previous_chain text := coalesce(current_setting('alhc.rule_chain', true), '');
+  previous_rule text := coalesce(current_setting('alhc.rule_id', true), '');
+begin
+  if exists (select 1 from public.tasks t where t.id = new.id and t.deleted_at is null and t.parent_task_id is null) then
+    if made is not null then
+      perform set_config('alhc.rule_chain', coalesce(made ->> 'chain', ''), true);
+      perform set_config('alhc.rule_id', coalesce(made ->> 'rule', ''), true);
+    end if;
+    perform public.fire_rules('task_created', new.id, null, '{}'::jsonb);
+    if made is not null then
+      perform set_config('alhc.rule_chain', previous_chain, true);
+      perform set_config('alhc.rule_id', previous_rule, true);
+    end if;
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.rules_on_task_created() from public, anon, authenticated;
+
+-- "Task is no longer blocked": fires on a (top-level, open) successor when the last link holding it
+-- up is released — its predecessor is completed (finish kinds), starts (start kinds: its start date
+-- arrives, by date change here or by the scheduler below, or it's completed), is trashed, or the link
+-- is removed or changes kind. All four kinds, once per release.
+create or replace function public.rules_release_successors(pred_id uuid, released_kinds text[], released_link uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  s record;
+begin
+  for s in
+    select distinct on (d.successor_id) d.successor_id, d.kind, d.predecessor_id
+    from public.task_dependencies d
+    join public.tasks st on st.id = d.successor_id
+    where (released_link is null and d.predecessor_id = pred_id and d.deleted_at is null and d.kind = any (released_kinds))
+       or (released_link is not null and d.id = released_link)
+    order by d.successor_id, d.kind
+  loop
+    continue when not exists (
+      select 1 from public.tasks st
+      where st.id = s.successor_id and st.deleted_at is null and st.completed_at is null and st.parent_task_id is null
+    );
+    continue when public.task_is_blocked(s.successor_id);
+    perform public.fire_rules('task_unblocked', s.successor_id, null, jsonb_build_object(
+      'predecessor_id', s.predecessor_id, 'kind', s.kind
+    ));
+  end loop;
+end;
+$$;
+
+revoke all on function public.rules_release_successors(uuid, text[], uuid) from public, anon, authenticated;
+
+create or replace function public.rules_on_predecessor_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  kinds text[] := '{}';
+begin
+  -- Finish kinds: done now (or trashed).
+  if (old.completed_at is null and new.completed_at is not null) or (old.deleted_at is null and new.deleted_at is not null) then
+    kinds := array['finish_to_start', 'finish_to_finish'];
+  end if;
+  -- Start kinds: it has started now and hadn't before.
+  if public.task_has_started(new) and not public.task_has_started(old)
+     or (old.deleted_at is null and new.deleted_at is not null and not public.task_has_started(old)) then
+    kinds := kinds || array['start_to_start', 'start_to_finish'];
+  end if;
+  if cardinality(kinds) > 0 then
+    perform public.rules_release_successors(new.id, kinds, null);
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.rules_on_predecessor_change() from public, anon, authenticated;
+
+create or replace trigger tasks_zz_rules_release
+after update of completed_at, start_on, due_on, deleted_at on public.tasks
+for each row execute function public.rules_on_predecessor_change();
+
+-- A link that held its successor up is removed, or changes to a kind that's already met.
+create or replace function public.rules_on_dependency_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  pred public.tasks;
+begin
+  select * into pred from public.tasks where id = old.predecessor_id;
+  if old.deleted_at is null and not public.dependency_satisfied(old.kind, pred)
+     and (new.deleted_at is not null or public.dependency_satisfied(new.kind, pred)) then
+    perform public.rules_release_successors(old.predecessor_id, '{}', new.id);
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.rules_on_dependency_change() from public, anon, authenticated;
+
+create or replace trigger task_dependencies_zz_rules_release
+after update of deleted_at, kind on public.task_dependencies
+for each row execute function public.rules_on_dependency_change();
+
+-- Start kinds released by the calendar (a predecessor's start date arrives with nobody touching it):
+-- the scheduler checks each "Task is no longer blocked" rule's tasks once a day per predecessor start.
+create or replace function public.rule_unblock_tick(r public.rules)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  x record;
+  outcome text;
+  ran integer := 0;
+begin
+  for x in
+    select distinct on (tk.id) tk.id, d.kind, d.predecessor_id, case when p.kind = 'milestone' then p.due_on else coalesce(p.start_on, p.due_on) end as starts
+    from public.tasks tk
+    join public.task_projects tp on tp.task_id = tk.id and tp.project_id = r.project_id and tp.deleted_at is null
+    join public.task_dependencies d on d.successor_id = tk.id and d.deleted_at is null and d.kind in ('start_to_start', 'start_to_finish')
+    join public.tasks p on p.id = d.predecessor_id and p.deleted_at is null and p.completed_at is null
+    where tk.deleted_at is null and tk.completed_at is null and tk.parent_task_id is null
+      and (case when p.kind = 'milestone' then p.due_on else coalesce(p.start_on, p.due_on) end)
+        between (now() at time zone public.safe_timezone(p.time_zone))::date - 2 and (now() at time zone public.safe_timezone(p.time_zone))::date
+      and (not (r.trigger_config ? 'kinds') or (r.trigger_config -> 'kinds') ? d.kind)
+    order by tk.id, d.kind
+  loop
+    continue when public.task_is_blocked(x.id);
+    -- Already fired for this release (the start date was set to today, which fires right away).
+    continue when exists (
+      select 1 from public.rule_runs rr
+      where rr.rule_id = r.id and rr.task_id = x.id and rr.created_at >= x.starts - 1
+        and rr.detail -> 'event' ->> 'predecessor_id' = x.predecessor_id::text
+    );
+    outcome := public.run_rule(r, x.id, jsonb_build_object('predecessor_id', x.predecessor_id, 'kind', x.kind), null,
+      'unblocked:' || x.predecessor_id || ':' || x.starts::text);
+    if outcome in ('succeeded', 'scheduled') then
+      ran := ran + 1;
+    end if;
+  end loop;
+  return ran;
+end;
+$$;
+
+revoke all on function public.rule_unblock_tick(public.rules) from public, anon, authenticated;

@@ -754,7 +754,9 @@ async function listProjectTasksFromRows(projectId: string): Promise<ProjectTask[
       .from("task_dependencies")
       .select("successor_id, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id)")
       .in("successor_id", taskIds)
-      .eq("kind", "finish_to_start")
+      // Links that hold up completing the task while the predecessor is open (start → start never does;
+      // start → finish only until the predecessor starts, which the pane's count and the database check).
+      .in("kind", ["finish_to_start", "finish_to_finish"])
       .is("deleted_at", null)
       .is("predecessor.deleted_at", null)
       .is("predecessor.completed_at", null),
@@ -1430,7 +1432,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   const viewerProjectRole = isProjectRole(role) ? role : null;
   const dependencyRows = rows(dependencies, "dependencies");
   const visibleBlockers = dependencyRows.filter(
-    (d) => d.successor_id === taskId && d.kind === "finish_to_start" && d.predecessor.completed_at === null,
+    (d) => d.successor_id === taskId && (d.kind === "finish_to_start" || d.kind === "finish_to_finish") && d.predecessor.completed_at === null,
   ).length;
   if (comments.error && !rpcMissing(comments.error)) {
     throw new Error(`Failed to load comments: ${comments.error.message}`);

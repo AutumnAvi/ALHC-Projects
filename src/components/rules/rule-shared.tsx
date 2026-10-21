@@ -12,18 +12,22 @@ import type { ProjectIntegrations } from "@/lib/integrations-shared";
 import {
   ACTIONS,
   APPROVAL_DECISIONS,
+  APPROVAL_STATUSES,
   COMPARE_OPS,
+  CREATE_LINKS,
   CONDITIONS,
   DATE_CHANGES,
   DATE_OPS,
   DUE_FROM,
   EMAIL_RECIPIENTS,
+  LIST_OPS,
   OFFSET_UNITS,
   RANGE_OPS,
   PERSON_ROLES,
   PERSON_SIDES,
   TASK_KIND_OPTIONS,
   TRIGGERS,
+  UNBLOCK_KINDS,
   V2_ACTIONS,
   V2_CONDITIONS,
   V2_TRIGGERS,
@@ -264,6 +268,16 @@ export function describeDateAction(a: RuleAction) {
   return `set the ${what} to ${Math.abs(n)} ${word} ${n < 0 ? "before" : "from"} ${from}`;
 }
 
+// "a task", "a milestone", "an approval".
+export function kindArticle(kind: Json | undefined) {
+  return kind === "approval" ? "an approval" : kind === "milestone" ? "a milestone" : "a task";
+}
+
+// What Create a task's link means, as the picker words it.
+export function createLinkLabel(value: Json | undefined) {
+  return CREATE_LINKS.find((l) => l.value === value)?.label ?? CREATE_LINKS[0].label;
+}
+
 // "in any way", "to a new date", "and is cleared" (Due / Start date changes).
 export function dateChangeLabel(value: Json | undefined) {
   return DATE_CHANGES.find((d) => d.value === value)?.label ?? DATE_CHANGES[0].label;
@@ -273,7 +287,15 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
   const cfg = rule.triggerConfig;
   switch (rule.triggerType) {
     case "section_changed":
-      return `A task moves into ${sectionName(ctx, cfg.section_id)}`;
+      return cfg.section_id ? `A task moves into ${sectionName(ctx, cfg.section_id)}` : "A task moves to another section";
+    case "section_left":
+      return `A task moves out of ${sectionName(ctx, cfg.section_id)}`;
+    case "task_unblocked": {
+      const kinds = Array.isArray(cfg.kinds) ? cfg.kinds.map((k) => labelOf(UNBLOCK_KINDS, k).toLowerCase()) : [];
+      return kinds.length ? `A task is no longer blocked (${joinWords(kinds, "or")})` : "A task is no longer blocked";
+    }
+    case "task_type_changed":
+      return cfg.kind ? `A task becomes ${kindArticle(cfg.kind)}` : "A task’s type changes";
     case "field_changed": {
       const base = `${fieldName(ctx, cfg.field_id)} changes`;
       return cfg.option_id ? `${base} to ${fieldValueLabel(ctx, cfg.field_id, cfg.option_id)}` : base;
@@ -365,6 +387,10 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
     case "field_compare": {
       const op = COMPARE_OPS.find((o) => o.value === c.op);
       if (!op) return `${fieldName(ctx, c.field_id)} compares`;
+      if (LIST_OPS.has(op.value)) {
+        const names = Array.isArray(c.value) ? c.value.map((v) => fieldValueLabel(ctx, c.field_id, v)) : [];
+        return `${fieldName(ctx, c.field_id)} ${op.label} ${names.length ? joinWords(names, "or") : "…"}`;
+      }
       if (RANGE_OPS.has(op.value)) {
         return `${fieldName(ctx, c.field_id)} ${op.label} ${compareValueLabel(ctx, c.field_id, c.value)} and ${compareValueLabel(ctx, c.field_id, c.to)}`;
       }
@@ -414,7 +440,34 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
       return RANGE_OPS.has(op.value) ? `${subject} ${op.label} ${first} and ${dayText(c.to)}` : `${subject} ${op.label} ${first}`;
     }
     case "task_type_is":
-      return `task type is ${c.kind ? labelOf(TASK_KIND_OPTIONS, c.kind) : "…"}`;
+    case "task_type_is_not":
+      return `task type ${c.type === "task_type_is" ? "is" : "isn’t"} ${c.kind ? labelOf(TASK_KIND_OPTIONS, c.kind) : "…"}`;
+    case "section_is_one_of":
+    case "section_is_none_of": {
+      const names = Array.isArray(c.section_ids) ? c.section_ids.map((id) => sectionName(ctx, id)) : [];
+      if (!names.length) return `section is ${c.type === "section_is_one_of" ? "one" : "none"} of …`;
+      return c.type === "section_is_one_of"
+        ? `section is ${joinWords(names, "or")}`
+        : names.length === 1
+          ? `section isn’t ${names[0]}`
+          : `section is none of ${joinWords(names, "and")}`;
+    }
+    case "is_blocked":
+      return "is blocked";
+    case "is_not_blocked":
+      return "isn’t blocked";
+    case "approval_status_is": {
+      const names = Array.isArray(c.statuses) ? c.statuses.map((x) => labelOf(APPROVAL_STATUSES, x).toLowerCase()) : [];
+      return names.length ? `approval status is ${joinWords(names, "or")}` : "approval status is …";
+    }
+    case "has_attachment":
+      return "has an attachment";
+    case "no_attachment":
+      return "has no attachment";
+    case "has_comment":
+      return "has a comment";
+    case "no_comment":
+      return "has no comment";
     case "has_open_subtasks":
       return "has open subtasks";
     case "all_subtasks_done":
@@ -493,6 +546,25 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
     case "set_due_date":
     case "set_start_date":
       return describeDateAction(a);
+    case "create_task": {
+      const kind = a.kind === "milestone" || a.kind === "approval" ? a.kind : "task";
+      const project = a.project_id && a.project_id !== "" ? otherProjectOf(ctx, a.project_id) : null;
+      const where = project ? ` in “${project.name}”` : a.project_id ? " in another project" : "";
+      const link = a.link === "blocked_by" ? " waiting on this one" : a.link === "blocking" ? " that this one waits on" : "";
+      const title = str(a.title);
+      return `create ${kindArticle(kind)}${title ? ` “${title}”` : ""}${where}${a.assignee ? ` for ${personName(ctx, a.assignee)}` : ""}${link}`;
+    }
+    case "move_to_project": {
+      const project = otherProjectOf(ctx, a.project_id);
+      const section = project?.sections.find((x) => x.id === a.section_id);
+      return `move to ${project ? `“${project.name}”` : "another project"}${section ? ` in “${section.name}”` : ""}`;
+    }
+    case "remove_from_project":
+      return "remove from this project";
+    case "set_task_type":
+      return a.kind ? `make it ${kindArticle(a.kind)}` : "set the task type";
+    case "set_description":
+      return a.mode === "append" ? "add to the end of the description" : a.mode === "prepend" ? "add to the start of the description" : "set the description";
     case "add_tag":
       return `add tag “${tagName(ctx, a.tag_id)}”`;
     case "remove_tag":

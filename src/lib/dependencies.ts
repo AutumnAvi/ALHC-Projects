@@ -3,11 +3,30 @@ import type { Json } from "@/lib/supabase/database.types";
 // Dependency kinds and lag (mirror task_dependencies_kind_check / task_dependencies_lag_days_check and
 // set_task_dependency()). finish_to_start: the successor starts on or after the predecessor's due date +
 // lag and can't be completed while the predecessor is open. start_to_start: the successor starts on or
-// after the predecessor's start + lag; it never blocks completion.
+// after the predecessor's start + lag; it never blocks completion. Since Automations V3:
+// finish_to_finish: the successor's due date is on or after the predecessor's + lag, and it can't be
+// completed while the predecessor is open; start_to_finish: the successor's due date is on or after the
+// predecessor's start + lag, and it can't be completed until the predecessor starts.
 export const DEPENDENCY_KINDS = [
   { value: "finish_to_start", label: "Finish → start", short: "FS" },
   { value: "start_to_start", label: "Start → start", short: "SS" },
+  { value: "finish_to_finish", label: "Finish → finish", short: "FF" },
+  { value: "start_to_finish", label: "Start → finish", short: "SF" },
 ] as const;
+
+// Kinds that anchor on the predecessor's start, and kinds that hold the successor's due date.
+export function fromPredecessorStart(kind: string) {
+  return kind === "start_to_start" || kind === "start_to_finish";
+}
+export function toSuccessorFinish(kind: string) {
+  return kind === "finish_to_finish" || kind === "start_to_finish";
+}
+
+// Kinds that block completing the successor while the predecessor is open (start_to_finish: until it
+// starts, which the database checks).
+export function blocksCompletion(kind: string) {
+  return kind !== "start_to_start";
+}
 
 export type DependencyKind = (typeof DEPENDENCY_KINDS)[number]["value"];
 
@@ -57,18 +76,20 @@ export function anchorsOf(task: Dated) {
   return { start, due: task.dueOn ?? task.startOn };
 }
 
-// The earliest day the successor may start under this link (null when the predecessor has no dates).
+// The earliest day the successor may start (or, for *_to_finish links, finish) under this link (null
+// when the predecessor has no dates).
 export function earliestStart(pred: Dated, kind: DependencyKind, lagDays: number) {
   const { start, due } = anchorsOf(pred);
-  const anchor = kind === "start_to_start" ? start : due;
+  const anchor = fromPredecessorStart(kind) ? start : due;
   return anchor ? addDays(anchor, lagDays) : null;
 }
 
-// True when the successor starts before the link allows (a red arrow on Timeline).
+// True when the successor starts (or finishes) before the link allows (a red arrow on Timeline).
 export function dependencyConflict(pred: Dated, succ: Dated, kind: DependencyKind, lagDays: number) {
   const earliest = earliestStart(pred, kind, lagDays);
-  const start = anchorsOf(succ).start;
-  return Boolean(earliest && start && start < earliest);
+  const anchors = anchorsOf(succ);
+  const held = toSuccessorFinish(kind) ? anchors.due : anchors.start;
+  return Boolean(earliest && held && held < earliest);
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -504,6 +504,196 @@ begin
   assert (out ->> 'start_rules')::integer = 0 and (out ->> 'due_rules')::integer = 0, format('once per task and date: %s', out);
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- Batch C: flow
+-- ---------------------------------------------------------------------------------------------
+
+-- All four dependency kinds; what blocks completion.
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+  a uuid;
+  b uuid;
+  c uuid;
+  d uuid;
+begin
+  assert (select pg_get_constraintdef(oid) like '%start_to_finish%' from pg_constraint where conname = 'task_dependencies_kind_check'),
+    'the tail renamed the wider dependency CHECK';
+  a := public.create_task(p, pg_temp.av3('intake'), 'Copy');
+  b := public.create_task(p, pg_temp.av3('intake'), 'Design FF');
+  c := public.create_task(p, pg_temp.av3('intake'), 'Design SF');
+  d := public.create_task(p, pg_temp.av3('intake'), 'Design SS');
+  insert into av3_ids values ('dep_a', a), ('dep_ff', b), ('dep_sf', c), ('dep_ss', d);
+  perform public.set_task_dependency(a, b, 'finish_to_finish', 0);
+  perform public.set_task_dependency(a, c, 'start_to_finish', 0);
+  perform public.set_task_dependency(a, d, 'start_to_start', 0);
+  assert public.open_blocker_count(b) = 1, 'finish-to-finish blocks completion while the predecessor is open';
+  assert public.open_blocker_count(c) = 1, 'start-to-finish blocks completion until the predecessor starts';
+  assert public.open_blocker_count(d) = 0, 'start-to-start never blocks completion';
+  assert public.task_is_blocked(d), 'but the start-to-start successor is waiting';
+  begin
+    perform public.set_task_dependency(a, b, 'finish_to_middle', 0);
+    raise exception 'unknown kinds are refused';
+  exception when check_violation then null;
+  end;
+end $$;
+
+-- Rules for the flow: no longer blocked, type changes, moved out of a section.
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values (p, 'Unblocked', true, 'task_unblocked', '[{"type": "add_comment", "body": "Ready to go"}]');
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values (p, 'Now a milestone', true, 'task_type_changed', '{"kind": "milestone"}', '[{"type": "add_comment", "body": "Milestone!"}]');
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values (p, 'Left Design', true, 'section_left', jsonb_build_object('section_id', pg_temp.av3('design')),
+    '[{"type": "add_comment", "body": "Out of design"}]');
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values (p, 'Any section', true, 'section_changed', '[{"type": "add_comment", "body": "Moved somewhere"}]');
+end $$;
+
+-- The predecessor starts (its start date is today): the start kinds release their successors.
+update public.tasks set start_on = (now() at time zone 'UTC')::date where id = pg_temp.av3('dep_a');
+do $$
+begin
+  assert exists (select 1 from public.comments where task_id = pg_temp.av3('dep_ss') and body = 'Ready to go'), 'start-to-start released';
+  assert exists (select 1 from public.comments where task_id = pg_temp.av3('dep_sf') and body = 'Ready to go'), 'start-to-finish released';
+  assert not exists (select 1 from public.comments where task_id = pg_temp.av3('dep_ff') and body = 'Ready to go'), 'finish-to-finish still waits';
+  assert (public.workflow_tick() ->> 'unblocked_rules')::integer = 0, 'the scheduler doesn''t fire them again';
+end $$;
+update public.tasks set completed_at = now() where id = pg_temp.av3('dep_a');
+do $$
+begin
+  assert exists (select 1 from public.comments where task_id = pg_temp.av3('dep_ff') and body = 'Ready to go'), 'finish-to-finish released';
+  assert (select count(*) from public.comments where task_id = pg_temp.av3('dep_ss') and body = 'Ready to go') = 1, 'once per release';
+  assert not public.task_is_blocked(pg_temp.av3('dep_ff')), 'nothing holds it up';
+end $$;
+
+update public.tasks set kind = 'milestone' where id = pg_temp.av3('dep_ss');
+update public.task_projects set section_id = pg_temp.av3('design') where task_id = pg_temp.av3('dep_sf') and project_id = pg_temp.av3('p');
+update public.task_projects set section_id = pg_temp.av3('review') where task_id = pg_temp.av3('dep_sf') and project_id = pg_temp.av3('p');
+do $$
+begin
+  assert exists (select 1 from public.comments where task_id = pg_temp.av3('dep_ss') and body = 'Milestone!'), 'Task type changes';
+  assert (select count(*) from public.comments where task_id = pg_temp.av3('dep_sf') and body = 'Out of design') = 1, 'moved out of Design';
+  assert (select count(*) from public.comments where task_id = pg_temp.av3('dep_sf') and body = 'Moved somewhere') = 2, 'any section change';
+end $$;
+update public.rules set enabled = false where project_id = pg_temp.av3('p') and name in ('Unblocked', 'Now a milestone', 'Left Design', 'Any section');
+
+-- Create a task (in another project, linked), Move to project, Remove from project, Set task type,
+-- Set description.
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+  q uuid := pg_temp.av3('q');
+  t uuid;
+  r uuid;
+  made uuid;
+begin
+  t := public.create_task(p, pg_temp.av3('intake'), 'Event brief');
+  update public.tasks set assignee_id = pg_temp.av3('dana') where id = t;
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values (p, 'Spawn', true, 'manual', '{"timezone": "UTC"}', jsonb_build_array(jsonb_build_object(
+    'type', 'create_task', 'kind', 'milestone', 'title', 'Launch: {{task.name}}', 'project_id', q,
+    'assignee', 'creator', 'due_days', 3, 'link', 'blocked_by', 'notes', 'From {{task.name}}'
+  ))) returning id into r;
+  perform public.run_manual_rule(r, t);
+  select tk.id into made from public.tasks tk where tk.title = 'Launch: Event brief';
+  assert made is not null, format('the task was made: %s', (select rr.detail from public.rule_runs rr where rr.rule_id = r order by rr.created_at desc limit 1));
+  assert (select (kind, home_project_id, assignee_id, due_on, notes) = ('milestone', q, pg_temp.av3('ava'), current_date + 3, 'From Event brief')
+          from public.tasks where id = made), 'kind, project, assignee, due date, and description';
+  assert exists (select 1 from public.task_dependencies d where d.predecessor_id = t and d.successor_id = made and d.deleted_at is null),
+    'it waits on the triggering task';
+
+  -- Validation.
+  begin
+    insert into public.rules (project_id, name, trigger_type, actions)
+    values (p, 'Bad create', 'manual', '[{"type": "create_task", "title": ""}]');
+    raise exception 'a task needs a name';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.rules (project_id, name, trigger_type, actions)
+    values (p, 'Bad link', 'manual', '[{"type": "create_task", "title": "x", "link": "sideways"}]');
+    raise exception 'unknown link';
+  exception when check_violation then null;
+  end;
+
+  -- Set task type and Set description.
+  update public.rules set actions = '[{"type": "set_task_type", "kind": "approval"}, {"type": "set_description", "mode": "append", "text": "Approved by {{task.assignee}}"}]'
+  where id = r;
+  update public.tasks set notes = 'Brief' where id = t;
+  perform public.run_manual_rule(r, t);
+  assert (select kind from public.tasks where id = t) = 'approval', 'Set task type';
+  assert (select notes from public.tasks where id = t) like E'Brief\n\nApproved by %', 'appended to the description';
+
+  -- Remove from project: it's only in P, so it stays.
+  update public.rules set actions = '[{"type": "remove_from_project"}]' where id = r;
+  perform public.run_manual_rule(r, t);
+  assert exists (select 1 from public.task_projects where task_id = t and project_id = p and deleted_at is null), 'a task always keeps a project';
+
+  -- Move to Q: home moves, P's membership goes.
+  update public.rules set actions = jsonb_build_array(jsonb_build_object('type', 'move_to_project', 'project_id', q)) where id = r;
+  perform public.run_manual_rule(r, t);
+  assert (select home_project_id from public.tasks where id = t) = q, 'the home moved';
+  assert not exists (select 1 from public.task_projects where task_id = t and project_id = p and deleted_at is null), 'out of P';
+end $$;
+
+-- A rule that makes a task when a task is added stops at its own chain (no runaway).
+do $$
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values (pg_temp.av3('p'), 'Echo', true, 'task_created', '[{"type": "create_task", "title": "Echo of {{task.name}}"}]');
+end $$;
+select public.create_task(pg_temp.av3('p'), pg_temp.av3('intake'), 'Seed') is not null as ok \gset
+do $$
+begin
+  assert (select count(*) from public.tasks where title like 'Echo of %') = 1, 'one echo: the made task doesn''t re-trigger the rule';
+  assert exists (select 1 from public.rule_runs rr join public.rules ru on ru.id = rr.rule_id
+                 where ru.name = 'Echo' and rr.status = 'skipped' and rr.detail ->> 'reason' = 'loop'), 'the loop was refused';
+  update public.rules set enabled = false where name = 'Echo';
+end $$;
+
+-- Conditions: blocked, approval status, attachments, comments, type is not, section one of, field one of.
+do $$
+declare
+  p uuid := pg_temp.av3('p');
+  r public.rules := (select ru from public.rules ru where ru.id = pg_temp.av3('r_dates'));
+  t uuid;
+  f uuid;
+begin
+  t := public.create_task(p, pg_temp.av3('intake'), 'Checks');
+  r.conditions := '[{"type": "is_not_blocked"}, {"type": "no_attachment"}, {"type": "no_comment"}, {"type": "task_type_is_not", "kind": "approval"}]';
+  assert public.rule_conditions_pass(r, t), 'a fresh task';
+  r.conditions := '[{"type": "approval_status_is", "statuses": ["none"]}]';
+  assert public.rule_conditions_pass(r, t), 'no approval yet';
+  perform public.request_approval(t, pg_temp.av3('eli'), null, false, null);
+  r.conditions := '[{"type": "approval_status_is", "statuses": ["pending", "changes_requested"]}]';
+  assert public.rule_conditions_pass(r, t), 'pending';
+  insert into public.comments (task_id, author_id, body) values (t, pg_temp.av3('ava'), 'Hi');
+  r.conditions := '[{"type": "has_comment"}]';
+  assert public.rule_conditions_pass(r, t), 'has a comment';
+  r.conditions := jsonb_build_array(jsonb_build_object('type', 'section_is_one_of', 'section_ids', jsonb_build_array(pg_temp.av3('design'), pg_temp.av3('intake'))));
+  assert public.rule_conditions_pass(r, t), 'section is one of';
+  r.conditions := jsonb_build_array(jsonb_build_object('type', 'section_is_none_of', 'section_ids', jsonb_build_array(pg_temp.av3('intake'))));
+  assert not public.rule_conditions_pass(r, t), 'section is none of';
+
+  insert into public.custom_fields (project_id, name, field_type, options)
+  values (p, 'Channel', 'single_select', '[{"id": "o-web", "name": "Web", "color": "blue"}, {"id": "o-print", "name": "Print", "color": "red"}, {"id": "o-tv", "name": "TV", "color": "green"}]')
+  returning id into f;
+  insert into public.task_field_values (task_id, field_id, value) values (t, f, '"o-print"');
+  r.conditions := jsonb_build_array(jsonb_build_object('type', 'field_compare', 'field_id', f, 'op', 'one_of', 'value', '["o-web", "o-print"]'::jsonb));
+  assert public.rule_conditions_pass(r, t), 'field is one of';
+  r.conditions := jsonb_build_array(jsonb_build_object('type', 'field_compare', 'field_id', f, 'op', 'none_of', 'value', '["o-print"]'::jsonb));
+  assert not public.rule_conditions_pass(r, t), 'field is none of';
+  -- Saving a one-of comparison validates its shape.
+  insert into public.rules (project_id, name, trigger_type, conditions, actions)
+  values (p, 'One of', 'manual', jsonb_build_array(jsonb_build_object('type', 'field_compare', 'field_id', f, 'op', 'one_of', 'value', '["o-tv"]'::jsonb)),
+    '[{"type": "complete_task"}]');
+end $$;
+
 do $$
 begin
   raise notice 'automations v3 smoke: all assertions passed';

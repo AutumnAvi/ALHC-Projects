@@ -82,7 +82,7 @@ begin
   exception when check_violation then null;
   end;
   begin
-    perform public.set_task_dependency(a, c, 'finish_to_finish', 0);
+    perform public.set_task_dependency(a, c, 'finish_to_middle', 0);
     raise exception 'unknown kinds are rejected';
   exception when check_violation then null;
   end;

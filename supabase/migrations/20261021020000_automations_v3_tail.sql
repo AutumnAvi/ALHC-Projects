@@ -8,3 +8,7 @@
 alter table public.rules drop constraint if exists rules_trigger_type_check;
 alter table public.rules drop constraint if exists rules_trigger_type_check_v2;
 alter table public.rules rename constraint rules_trigger_type_check_v3 to rules_trigger_type_check;
+
+-- Dependency kinds: all four (finish-to-finish and start-to-finish, batch C).
+alter table public.task_dependencies drop constraint if exists task_dependencies_kind_check;
+alter table public.task_dependencies rename constraint task_dependencies_kind_check_v3 to task_dependencies_kind_check;

@@ -8,7 +8,7 @@ import { displayName } from "@/components/avatar";
 import { useCan } from "@/components/project/project-access";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { EMPTY_CRITICAL_PATH, slackLabel, type CriticalPath, type TaskSchedule } from "@/lib/critical-path";
-import { dependencyConflict } from "@/lib/dependencies";
+import { dependencyConflict, fromPredecessorStart, toSuccessorFinish } from "@/lib/dependencies";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectDependency, ProjectTask, Section } from "@/lib/data";
 import { displayTaskTitle } from "@/lib/request-numbers";
@@ -214,14 +214,18 @@ export function TimelineView({
     if (predEnd <= 0 || daysBetween(start, a.start) >= days || succStart >= days || daysBetween(start, b.end) < 0) return [];
     // Finish-to-start leaves the predecessor's end; start-to-start leaves its start (both enter the
     // successor's start). Red when the successor starts before the link (kind + lag) allows.
-    const fromStart = dep.kind === "start_to_start";
+    const fromStart = fromPredecessorStart(dep.kind);
     const x1 = fromStart
       ? Math.max(daysBetween(start, a.start), 0) * dayWidth
       : Math.min(predEnd, days) * dayWidth;
-    const x2 = Math.max(succStart, 0) * dayWidth;
+    // *_to_finish links enter the successor's end (from the right).
+    const toEnd = toSuccessorFinish(dep.kind);
+    const x2 = toEnd ? Math.min(daysBetween(start, b.end) + 1, days) * dayWidth : Math.max(succStart, 0) * dayWidth;
     const pad = 8;
     const out = fromStart ? x1 - pad : x1 + pad;
-    const path = fromStart
+    const path = toEnd
+      ? `M${x1},${y1} H${Math.max(out, x2 + pad)} V${y2} H${x2}`
+      : fromStart
       ? `M${x1},${y1} H${Math.min(out, x2 - pad)} V${y2} H${x2}`
       : x2 - x1 >= 2 * pad
         ? `M${x1},${y1} H${out} V${y2} H${x2}`

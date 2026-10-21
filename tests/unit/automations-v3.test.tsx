@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { describeAction, describeCondition, describeTrigger, needsUpdate, personName, personOptions, ruleSentence, scheduleLabel, scheduleWeekdays, type RuleContext } from "@/components/rules/rule-shared";
 import { fieldOfSlot, fieldSlot, triggerOffset, type RuleAction, type RuleCondition } from "@/lib/rules";
 import type { FieldDef } from "@/lib/fields";
+import { dependencyConflict, earliestStart } from "@/lib/dependencies";
 
 const field = (id: string, name: string, fieldType: string): FieldDef =>
   ({ id, name, fieldType, boundToSections: false, options: [], showInViews: false }) as unknown as FieldDef;
@@ -120,4 +121,39 @@ test("date conditions and actions read as sentences", () => {
   assert.equal(describeAction(action({ type: "set_due_date", days: 4, unit: "hours" }), ctx), "set the due date to 4 hours from now");
   assert.equal(describeAction(action({ type: "set_due_date", days: 1, business_days: true }), ctx), "set the due date to 1 business day from today");
   assert.equal(describeAction(action({ type: "set_start_date", mode: "clear" }), ctx), "clear the start date");
+});
+
+// ---------------------------------------------------------------------------------------------
+// Batch C: flow
+// ---------------------------------------------------------------------------------------------
+
+test("flow triggers, conditions, and actions read as sentences", () => {
+  assert.equal(describeTrigger({ triggerType: "task_unblocked", triggerConfig: {} }, ctx), "A task is no longer blocked");
+  assert.equal(
+    describeTrigger({ triggerType: "task_unblocked", triggerConfig: { kinds: ["start_to_start", "finish_to_finish"] } }, ctx),
+    "A task is no longer blocked (start → start or finish → finish)",
+  );
+  assert.equal(describeTrigger({ triggerType: "section_changed", triggerConfig: {} }, ctx), "A task moves to another section");
+  assert.equal(describeTrigger({ triggerType: "section_left", triggerConfig: { section_id: "s-intake" } }, ctx), "A task moves out of Intake");
+  assert.equal(describeTrigger({ triggerType: "task_type_changed", triggerConfig: { kind: "approval" } }, ctx), "A task becomes an approval");
+  assert.equal(describeCondition(condition({ type: "section_is_none_of", section_ids: ["s-intake"] }), ctx), "section isn’t Intake");
+  assert.equal(describeCondition(condition({ type: "approval_status_is", statuses: ["none", "rejected"] }), ctx), "approval status is no approval or rejected");
+  assert.equal(describeCondition(condition({ type: "task_type_is_not", kind: "milestone" }), ctx), "task type isn’t Milestone");
+  assert.equal(describeCondition(condition({ type: "is_blocked" }), ctx), "is blocked");
+  assert.equal(
+    describeAction(action({ type: "create_task", kind: "milestone", title: "Launch", assignee: "creator", link: "blocked_by" }), ctx),
+    "create a milestone “Launch” for the task creator waiting on this one",
+  );
+  assert.equal(describeAction(action({ type: "set_task_type", kind: "approval" }), ctx), "make it an approval");
+  assert.equal(describeAction(action({ type: "set_description", mode: "append", text: "x" }), ctx), "add to the end of the description");
+  assert.equal(describeAction(action({ type: "remove_from_project" }), ctx), "remove from this project");
+});
+
+test("all four dependency kinds", () => {
+  const pred = { startOn: "2026-11-02", dueOn: "2026-11-06" };
+  assert.equal(earliestStart(pred, "finish_to_finish", 1), "2026-11-07");
+  assert.equal(earliestStart(pred, "start_to_finish", 0), "2026-11-02");
+  assert.ok(dependencyConflict(pred, { startOn: "2026-11-01", dueOn: "2026-11-05" }, "finish_to_finish", 0), "finishes before");
+  assert.ok(!dependencyConflict(pred, { startOn: "2026-11-01", dueOn: "2026-11-06" }, "finish_to_finish", 0), "finishes the same day");
+  assert.ok(!dependencyConflict(pred, { startOn: "2026-10-20", dueOn: "2026-11-02" }, "start_to_finish", 0), "start → finish");
 });

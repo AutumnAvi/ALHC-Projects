@@ -20,7 +20,12 @@ import {
 import { SmartPicker } from "@/components/smart-picker";
 import {
   APPROVAL_DECISIONS,
+  APPROVAL_STATUSES,
   ASSIGN_MODES,
+  CREATE_LINKS,
+  DESCRIPTION_MODES,
+  LIST_OPS,
+  UNBLOCK_KINDS,
   CONDITIONS,
   DATE_CHANGES,
   DATE_OPS,
@@ -93,6 +98,10 @@ export function defaultsFor(type: ActionType): RuleAction {
       return { type, titles: [""] };
     case "set_title":
       return { type, title: "{task}" };
+    case "create_task":
+      return { type, kind: "task", title: "Follow up on {{task.name}}" };
+    case "set_description":
+      return { type, text: "" };
     case "remove_followers":
       return { type, people: [] };
     default:
@@ -108,6 +117,8 @@ export function conditionDefaultsFor(type: ConditionType): RuleCondition {
       return { type, days: 3 };
     case "date_compare":
       return { type, date: "due", op: "before" };
+    case "approval_status_is":
+      return { type, statuses: ["approved"] };
     case "person_compare":
       // "The assignee is the creator" — the most asked-for comparison.
       return { type, left: "assignee", op: "is", people: ["creator"] };
@@ -294,12 +305,63 @@ export function TriggerFields({
   switch (triggerType) {
     case "section_changed":
       return (
-        <SectionSelect
+        <SmartPicker
           id={`${prefix}-trigger-section`}
           label="Section"
+          value={str(triggerConfig.section_id)}
+          options={[
+            {
+              value: "",
+              label: "any section",
+              description: "Whichever section it moves to",
+              ...(ctx.v3 === false ? { disabled: true, disabledReason: "Needs this release’s database update" } : {}),
+            },
+            ...sectionOptions(ctx),
+          ]}
+          onChange={(v) => setConfig({ section_id: v })}
+          variant="chip"
+          // A new rule starts without a section: before V3's database that has to be picked.
+          placeholder="choose section"
+          renderValue={triggerConfig.section_id || ctx.v3 !== false ? valueOr(triggerConfig.section_id ? "a removed section" : "any section") : undefined}
+          emptyText={ctx.sections.length ? "No section matches" : "This project has no sections yet"}
+        />
+      );
+    case "section_left":
+      return (
+        <SectionSelect
+          id={`${prefix}-trigger-section-left`}
+          label="Section it leaves"
           value={triggerConfig.section_id}
           ctx={ctx}
           onChange={(v) => setConfig({ section_id: v })}
+        />
+      );
+    case "task_unblocked": {
+      const kinds = Array.isArray(triggerConfig.kinds) ? triggerConfig.kinds.filter((v): v is string => typeof v === "string") : [];
+      return (
+        <SmartPicker
+          multiple
+          id={`${prefix}-trigger-kinds`}
+          label="Which dependencies"
+          value={kinds}
+          options={UNBLOCK_KINDS.map((k) => ({ ...k }))}
+          onChange={(next) => setConfig({ kinds: next.length ? next : undefined })}
+          variant="chip"
+          placeholder="by any dependency"
+          renderValue={(chosen) => (chosen.length ? <span>by {chosen.map((c) => c.label).join(" or ")} dependencies</span> : undefined)}
+        />
+      );
+    }
+    case "task_type_changed":
+      return (
+        <SmartPicker
+          id={`${prefix}-trigger-kind`}
+          label="Changes to"
+          value={str(triggerConfig.kind)}
+          options={[{ value: "", label: "to any type" }, ...TASK_KIND_OPTIONS.map((k) => ({ value: k.value, label: `to ${k.label.toLowerCase()}` }))]}
+          onChange={(v) => setConfig({ kind: v })}
+          variant="chip"
+          renderValue={valueOr("to any type")}
         />
       );
     case "field_changed":
@@ -743,12 +805,32 @@ function V2ConditionFields({
               label="Comparison"
               value={str(condition.op) || null}
               options={ops.map((o) => ({ value: o.value, label: o.label }))}
-              onChange={(v) => onChange(RANGE_OPS.has(v) ? { ...condition, op: v } : { ...omit(condition, "to"), op: v })}
+              onChange={(v) => {
+                // A list of options and a single value don't carry over into each other.
+                const list = LIST_OPS.has(v) !== LIST_OPS.has(str(condition.op));
+                const base = list ? omit(condition, "value", "to") : RANGE_OPS.has(v) ? condition : omit(condition, "to");
+                onChange({ ...base, op: v });
+              }}
               variant="chip"
               placeholder="choose comparison"
             />
           ) : null}
-          {field ? (
+          {field && LIST_OPS.has(str(condition.op)) ? (
+            <SmartPicker
+              multiple
+              id={`${prefix}-compare-values`}
+              label={`${field.name} values`}
+              value={Array.isArray(condition.value) ? condition.value.filter((v): v is string => typeof v === "string") : []}
+              options={
+                field.boundToSections
+                  ? sectionOptions(ctx)
+                  : field.options.map((o) => ({ value: o.id, label: o.name, icon: optionDot(o.color) }))
+              }
+              onChange={(v) => onChange(v.length ? { ...condition, value: v } : omit(condition, "value"))}
+              variant="chip"
+              placeholder="choose options"
+            />
+          ) : field ? (
             <CompareValueInput
               id={`${prefix}-compare-value`}
               field={field}
@@ -857,7 +939,40 @@ function V2ConditionFields({
         </>
       );
     }
+    case "section_is_one_of":
+    case "section_is_none_of": {
+      const ids = Array.isArray(condition.section_ids) ? condition.section_ids.filter((v): v is string => typeof v === "string") : [];
+      return (
+        <SmartPicker
+          multiple
+          id={`${prefix}-sections`}
+          label="Sections"
+          value={ids}
+          options={sectionOptions(ctx)}
+          onChange={(v) => onChange(v.length ? { ...condition, section_ids: v } : omit(condition, "section_ids"))}
+          variant="chip"
+          placeholder="choose sections"
+          emptyText={ctx.sections.length ? "No section matches" : "This project has no sections yet"}
+        />
+      );
+    }
+    case "approval_status_is": {
+      const statuses = Array.isArray(condition.statuses) ? condition.statuses.filter((v): v is string => typeof v === "string") : [];
+      return (
+        <SmartPicker
+          multiple
+          id={`${prefix}-approval-statuses`}
+          label="Approval statuses"
+          value={statuses}
+          options={APPROVAL_STATUSES.map((x) => ({ ...x }))}
+          onChange={(v) => onChange(v.length ? { ...condition, statuses: v } : omit(condition, "statuses"))}
+          variant="chip"
+          placeholder="choose statuses"
+        />
+      );
+    }
     case "task_type_is":
+    case "task_type_is_not":
       return (
         <SmartPicker
           id={`${prefix}-kind`}
@@ -1037,10 +1152,10 @@ export const INLINE_ACTION_TYPES: ReadonlySet<string> = new Set([
   // Automations V2 (Mark complete / incomplete have no settings at all).
   "complete_task", "reopen_task", "add_tag", "remove_tag", "add_to_project", "set_due_date", "apply_task_template",
   // Automations V3.
-  "set_start_date",
+  "set_start_date", "move_to_project", "remove_from_project", "set_task_type", "set_description", "create_task",
 ]);
 // Of those, the ones with more settings below the line too (part = block).
-export const INLINE_AND_BLOCK_ACTION_TYPES: ReadonlySet<string> = new Set(["request_approval"]);
+export const INLINE_AND_BLOCK_ACTION_TYPES: ReadonlySet<string> = new Set(["request_approval", "set_description", "create_task"]);
 
 // An action's settings. The sentence builder draws short ones on the action's line (part = inline: a
 // section, a field and its value, a person, hours) and the rest below it (part = block: messages,
@@ -1214,7 +1329,50 @@ export function ActionFields({
       );
     case "complete_task":
     case "reopen_task":
+    case "remove_from_project":
       return null;
+    case "set_task_type":
+      return !inline ? null : (
+        <SmartPicker
+          id={`${prefix}-set-kind`}
+          label="Task type"
+          value={str(action.kind) || null}
+          options={TASK_KIND_OPTIONS.map((k) => ({ value: k.value, label: k.label.toLowerCase() }))}
+          onChange={(v) => onChange({ ...action, kind: v })}
+          variant="chip"
+          placeholder="choose type"
+          renderValue={(chosen) => (chosen[0] ? <span>to {chosen[0].label}</span> : undefined)}
+        />
+      );
+    case "set_description": {
+      const mode = (
+          <SmartPicker
+            id={`${prefix}-description-mode`}
+            label="Replace or add"
+            value={str(action.mode) || "replace"}
+            options={DESCRIPTION_MODES.map((m) => ({ ...m }))}
+            onChange={(v) => onChange(v === "replace" ? omit(action, "mode") : { ...action, mode: v })}
+            variant="chip"
+          />
+      );
+      const body = text("text", "Description", { multiline: true, placeholder: "Brief from {{form.field.Details}}", maxLength: 10000 });
+      if (part === "inline") return mode;
+      if (part === "block") return body;
+      return (
+        <div className="space-y-2">
+          {mode}
+          {body}
+        </div>
+      );
+    }
+    case "create_task":
+      if (part) return <CreateTaskFields prefix={prefix} action={action} ctx={ctx} onChange={onChange} part={part} text={text} />;
+      return (
+        <div className="space-y-2">
+          <CreateTaskFields prefix={prefix} action={action} ctx={ctx} onChange={onChange} part="inline" text={text} />
+          <CreateTaskFields prefix={prefix} action={action} ctx={ctx} onChange={onChange} part="block" text={text} />
+        </div>
+      );
     case "add_tag":
     case "remove_tag":
       return !inline ? null : (
@@ -1230,7 +1388,8 @@ export function ActionFields({
           emptyText={ctx.tags?.length ? "No tag matches" : "No tags yet"}
         />
       );
-    case "add_to_project": {
+    case "add_to_project":
+    case "move_to_project": {
       if (!inline) return null;
       const projects = ctx.otherProjects ?? [];
       const project = projects.find((p) => p.id === action.project_id);
@@ -1298,6 +1457,134 @@ export function ActionFields({
     default:
       return null;
   }
+}
+
+// Create a task: "[a milestone] in [this project] › [section]" on the line, then its name, description,
+// assignee, due date, and link to this task below (mirrors execute_rule_actions' create_task).
+function CreateTaskFields({
+  prefix,
+  action,
+  ctx,
+  onChange,
+  part,
+  text,
+}: {
+  prefix: string;
+  action: RuleAction;
+  ctx: RuleContext;
+  onChange: (next: RuleAction) => void;
+  part?: "inline" | "block";
+  text: (key: string, label: string, opts?: { multiline?: boolean; placeholder?: string; maxLength?: number }) => React.ReactNode;
+}) {
+  const projects = ctx.otherProjects ?? [];
+  const projectId = str(action.project_id);
+  const other = projects.find((p) => p.id === projectId);
+  const sections = projectId ? (other?.sections ?? []) : ctx.sections;
+  const dueDays = wholeNumber(action.due_days);
+  if (part !== "block") {
+    return (
+      <Row>
+        <SmartPicker
+          id={`${prefix}-create-kind`}
+          label="What to create"
+          value={str(action.kind) || "task"}
+          options={TASK_KIND_OPTIONS.map((k) => ({ value: k.value, label: k.value === "approval" ? "an approval" : `a ${k.label.toLowerCase()}` }))}
+          onChange={(v) => onChange({ ...action, kind: v })}
+          variant="chip"
+        />
+        <Word>in</Word>
+        <SmartPicker
+          id={`${prefix}-create-project`}
+          label="Project"
+          value={projectId}
+          options={[
+            { value: "", label: ctx.projectName ? `this project (${ctx.projectName})` : "this project", icon: <FolderClosed className="size-4" /> },
+            ...projects.map((p) => ({ value: p.id, label: p.name, icon: <FolderClosed className="size-4" /> })),
+          ]}
+          onChange={(v) => {
+            if (v !== projectId) onChange(v ? { ...omit(action, "section_id"), project_id: v } : omit(action, "project_id", "section_id"));
+          }}
+          variant="chip"
+          renderValue={valueOr(projectId ? "a project you can’t edit" : "this project")}
+          searchable
+        />
+        <SmartPicker
+          id={`${prefix}-create-section`}
+          label="Section"
+          value={str(action.section_id)}
+          options={[{ value: "", label: "no section", description: "Listed under “No section”" }, ...sectionOptions({ ...ctx, sections })]}
+          onChange={(v) => onChange(v ? { ...action, section_id: v } : omit(action, "section_id"))}
+          variant="chip"
+          renderValue={valueOr("no section")}
+        />
+      </Row>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {text("title", "Name of the new task", { placeholder: "Design for {{task.name}}", maxLength: 500 })}
+      {text("notes", "Description (optional)", { multiline: true, maxLength: 10000 })}
+      <Row>
+        <Word>{action.kind === "approval" ? "approver" : "assigned to"}</Word>
+        <PersonSelect
+          id={`${prefix}-create-assignee`}
+          label={action.kind === "approval" ? "Approver" : "Assignee"}
+          value={action.assignee ?? null}
+          ctx={ctx}
+          allowNone="Nobody"
+          onChange={(v) => onChange(v ? { ...action, assignee: v } : omit(action, "assignee"))}
+        />
+        <Word>due</Word>
+        <SmartPicker
+          id={`${prefix}-create-due`}
+          label="Due date"
+          value={dueDays === null ? "none" : "days"}
+          options={[
+            { value: "none", label: "no due date" },
+            { value: "days", label: "some days from today" },
+          ]}
+          onChange={(v) => onChange(v === "none" ? omit(action, "due_days", "business_days") : { ...action, due_days: dueDays ?? 3, business_days: true })}
+          variant="chip"
+        />
+        {dueDays !== null ? (
+          <>
+            <NumberBox
+              id={`${prefix}-create-due-days`}
+              label="Days from today"
+              value={dueDays}
+              min={0}
+              max={365}
+              onCommit={(n) => {
+                if (n !== null) onChange({ ...action, due_days: Math.min(Math.max(n, 0), 365) });
+              }}
+            />
+            <SmartPicker
+              id={`${prefix}-create-due-unit`}
+              label="Days or business days"
+              value={action.business_days === true ? "business" : "days"}
+              options={[
+                { value: "days", label: dueDays === 1 ? "day" : "days" },
+                { value: "business", label: dueDays === 1 ? "business day" : "business days" },
+              ]}
+              onChange={(v) => onChange({ ...action, business_days: v === "business" })}
+              variant="chip"
+            />
+          </>
+        ) : null}
+      </Row>
+      <Row>
+        <Word>and</Word>
+        <SmartPicker
+          id={`${prefix}-create-link`}
+          label="Link to this task"
+          value={str(action.link) || "none"}
+          options={CREATE_LINKS.map((l) => ({ ...l }))}
+          onChange={(v) => onChange(v === "none" ? omit(action, "link") : { ...action, link: v })}
+          variant="chip"
+        />
+      </Row>
+    </div>
+  );
 }
 
 // Set assignee: "[to] [Dana]", "[round robin among] [Dana, Sam]", or "[to the least busy of] […]"
