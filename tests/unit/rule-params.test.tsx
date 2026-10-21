@@ -42,6 +42,7 @@ import {
   type StepKind,
   type StepScope,
 } from "@/lib/rule-params";
+import { RULE_TEMPLATES } from "@/lib/rule-templates";
 import { compareOpsFor, type RuleDef, type TriggerType } from "@/lib/rules";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -582,6 +583,27 @@ test("each editor kind shows its placeholder when empty, saves a choice, and rel
       for (const { value: type } of STEP_TYPES[system][kind]) {
         for (const p of stepParams(type, { system, kind }) ?? []) assert.ok(covered.has(p.editor), `editor “${p.editor}” (${type}.${p.key}) has a render test`);
       }
+    }
+  }
+});
+
+test("rule templates: a ready template passes the check, and one with slots to fill is held", () => {
+  const empty = { sections: [], fields: [], tags: [], otherProjects: [] };
+  const full = {
+    sections: ["Intake", "Video", "In progress", "Review", "Approved", "Done", "At risk"].map((name, i) => ({ id: `s${i}`, name })),
+    fields: [
+      { id: "f-type", name: "Request type", fieldType: "single_select", boundToSections: false, options: [{ id: "o-video", name: "Video" }] },
+      { id: "f-pri", name: "Priority", fieldType: "single_select", boundToSections: false, options: [{ id: "o-low", name: "Low" }, { id: "o-high", name: "High" }] },
+    ],
+    tags: [{ id: "t-urgent", name: "Urgent", archived: false }],
+    otherProjects: [{ id: "p-cal", name: "Creative calendar" }],
+  };
+  for (const template of RULE_TEMPLATES) {
+    for (const world of [empty, full]) {
+      const built = template.build(world);
+      const problems = ruleProblems(built, "project");
+      if (built.missing.length === 0) assert.deepEqual(problems, [], `${template.key}: ready, so nothing to choose`);
+      else assert.ok(problems.length > 0, `${template.key}: still to pick ${built.missing.join(", ")}, so Save waits`);
     }
   }
 });

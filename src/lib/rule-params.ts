@@ -480,13 +480,14 @@ export function hasValue(value: Json | undefined, param: Pick<RuleParam, "nullab
   return true;
 }
 
-// Settings of this step that are missing — required and unset, or (for an optional list such as
-// "which dependencies") present but emptied, which the database refuses.
+// Settings of this step that are missing — required and unset, or optional but present and empty
+// ("" for a section, [] for "which dependencies"), which the database refuses: an optional setting is
+// either left out or set. Free text may be left empty.
 export function missingParams(step: RuleStep, scope: StepScope): RuleParam[] {
   return activeParams(step, scope).filter((p) => {
     const value = step[p.key];
     if (isRequired(p, step, scope)) return !hasValue(value, p);
-    return Array.isArray(value) && value.length === 0;
+    return p.editor !== "text" && p.editor !== "titles" && value !== undefined && !hasValue(value, p);
   });
 }
 
