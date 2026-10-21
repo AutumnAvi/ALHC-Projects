@@ -92,6 +92,10 @@ function describe(item: InboxItem) {
     const value = dataText(item.data, "value_text");
     return { ruleName, verb: `changed ${fieldName} on`, detail: value ? `${fieldName}: ${value}` : `${fieldName} was cleared` };
   }
+  // A portfolio rule's status reminder (Automations V3) asks for an update.
+  if (item.project && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.status_reminder === true) {
+    return { ruleName, verb: "asks for a status update on", detail: item.commentBody };
+  }
   if (item.statusUpdate) {
     const status = STATUS_LABELS[item.statusUpdate.status] ?? item.statusUpdate.status;
     const lines = [item.statusUpdate.title ? `${status} · ${item.statusUpdate.title}` : status, item.commentBody];
@@ -107,6 +111,8 @@ function describe(item: InboxItem) {
 function pausedRuleHref(item: InboxItem): string | null {
   const d = item.data;
   if (item.kind !== "rule" || !d || typeof d !== "object" || Array.isArray(d) || d.rule_paused !== true) return null;
+  // A portfolio rule (Automations V3) links to the portfolio's rule.
+  if (isUuid(d.portfolio_id) && isUuid(d.portfolio_rule_id)) return `/portfolios/${d.portfolio_id}/rules/${d.portfolio_rule_id}`;
   return isUuid(d.project_id) && isUuid(d.rule_id) ? `/projects/${d.project_id}/rules/${d.rule_id}` : null;
 }
 
@@ -125,6 +131,8 @@ export function inboxItemHref(item: InboxItem, taskHref: (taskId: string) => str
     return `/teams/${item.teamMessage.teamId}/messages/${item.teamMessage.threadId}#message-${item.teamMessage.id}`;
   }
   if (item.statusUpdate) return `/projects/${item.statusUpdate.projectId}/overview`;
+  // An item about a project (a portfolio rule's notification or status reminder): its Overview.
+  if (item.project) return `/projects/${item.project.id}/overview`;
   return taskHref(item.taskId ?? "");
 }
 
@@ -168,7 +176,7 @@ export function InboxCard({
   const { read, archived, bookmarked } = state;
   const compact = density === "compact";
   // A task item opens in this page's pane; messages and status updates are links to other pages.
-  const taskCard = !item.message && !item.teamMessage && !item.statusUpdate;
+  const taskCard = !item.message && !item.teamMessage && !item.statusUpdate && !item.project;
   const linkClass = `block text-sm text-zinc-700 outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-accent-400 ${
     compact ? "truncate" : ""
   }`;

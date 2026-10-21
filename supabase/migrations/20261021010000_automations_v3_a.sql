@@ -2291,6 +2291,7 @@ declare
   overdue integer := 0;
   starts integer := 0;
   unblocked integer := 0;
+  portfolio integer := 0;
   scheduled integer := 0;
   ran integer;
   outcome text;
@@ -2361,6 +2362,9 @@ begin
     where id = r.id;
   end loop;
 
+  -- Batch D: portfolio rules (due soon, overdue, scheduled).
+  portfolio := public.portfolio_rules_tick();
+
   -- Batch C: start-kind dependencies released by the calendar.
   for r in
     select ru.* from public.rules ru
@@ -2371,7 +2375,7 @@ begin
   end loop;
 
   return jsonb_build_object('delayed_actions', delayed, 'due_rules', due, 'overdue_rules', overdue,
-    'start_rules', starts, 'unblocked_rules', unblocked, 'scheduled_rules', scheduled);
+    'start_rules', starts, 'unblocked_rules', unblocked, 'scheduled_rules', scheduled, 'portfolio_rules', portfolio);
 end;
 $$;
 
@@ -2573,3 +2577,1207 @@ end;
 $$;
 
 revoke all on function public.rule_unblock_tick(public.rules) from public, anon, authenticated;
+
+-- =============================================================================================
+-- 10. Portfolio rules (batch D)
+--
+-- Rules on a portfolio act on its items (the projects directly in it). A portfolio's Admins+ manage
+-- them, its Viewers+ read them. Triggers: a project is added to / removed from the portfolio, its status
+-- changes, its owner changes, a portfolio field changes, its due date changes, the due date is
+-- approaching or past, on a schedule, or by hand. Conditions: status, owner, due date, portfolio
+-- fields, archived. Actions: set the status, a status reminder or a notification (Inbox items about the
+-- project), set the owner, the due date, the name, a portfolio field, add / remove members, archive,
+-- and move between portfolios. Every action runs with the rule owner's own access (the RPCs people use,
+-- with request.jwt.claim.sub set to the owner for the run), so a rule can do nothing its owner couldn't.
+
+-- 10a. Inbox items about a project (status reminders and portfolio rule notifications).
+alter table public.inbox_items add column if not exists project_id uuid references public.projects (id);
+create index if not exists inbox_items_project_idx on public.inbox_items (project_id) where project_id is not null;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'inbox_items_target_check_v3') then
+    alter table public.inbox_items add constraint inbox_items_target_check_v3 check (
+      task_id is not null or message_id is not null or team_message_id is not null or status_update_id is not null
+      or project_id is not null
+    );
+  end if;
+end $$;
+
+-- Project items while the recipient can read the project (the other kinds exactly as before; one
+-- policy per command, as suite zz07 requires).
+alter policy inbox_items_select_own_viewer on public.inbox_items
+  using (
+    recipient_id = (select auth.uid())
+    and (
+      (task_id is not null and (select public.has_task_role(inbox_items.task_id, 'viewer')))
+      or (task_id is null and exists (
+        select 1 from public.project_messages m
+        where m.id = inbox_items.message_id and (select public.has_project_role(m.project_id, 'viewer'))
+      ))
+      or (task_id is null and exists (
+        select 1 from public.team_messages m
+        where m.id = inbox_items.team_message_id and (select public.can_read_team(m.team_id))
+      ))
+      or (task_id is null and exists (
+        select 1 from public.project_status_updates u
+        where u.id = inbox_items.status_update_id and (select public.has_project_role(u.project_id, 'viewer'))
+      ))
+      or (task_id is null and project_id is not null and (select public.has_project_role(inbox_items.project_id, 'viewer')))
+    )
+  );
+alter policy inbox_items_update_own_viewer on public.inbox_items
+  using (
+    recipient_id = (select auth.uid())
+    and (
+      (task_id is not null and (select public.has_task_role(inbox_items.task_id, 'viewer')))
+      or (task_id is null and exists (
+        select 1 from public.project_messages m
+        where m.id = inbox_items.message_id and (select public.has_project_role(m.project_id, 'viewer'))
+      ))
+      or (task_id is null and exists (
+        select 1 from public.team_messages m
+        where m.id = inbox_items.team_message_id and (select public.can_read_team(m.team_id))
+      ))
+      or (task_id is null and exists (
+        select 1 from public.project_status_updates u
+        where u.id = inbox_items.status_update_id and (select public.has_project_role(u.project_id, 'viewer'))
+      ))
+      or (task_id is null and project_id is not null and (select public.has_project_role(inbox_items.project_id, 'viewer')))
+    )
+  )
+  with check (
+    recipient_id = (select auth.uid())
+    and (
+      (task_id is not null and (select public.has_task_role(inbox_items.task_id, 'viewer')))
+      or (task_id is null and exists (
+        select 1 from public.project_messages m
+        where m.id = inbox_items.message_id and (select public.has_project_role(m.project_id, 'viewer'))
+      ))
+      or (task_id is null and exists (
+        select 1 from public.team_messages m
+        where m.id = inbox_items.team_message_id and (select public.can_read_team(m.team_id))
+      ))
+      or (task_id is null and exists (
+        select 1 from public.project_status_updates u
+        where u.id = inbox_items.status_update_id and (select public.has_project_role(u.project_id, 'viewer'))
+      ))
+      or (task_id is null and project_id is not null and (select public.has_project_role(inbox_items.project_id, 'viewer')))
+    )
+  );
+
+-- One Inbox item about a project (kind rule, from a rule: no actor): only for allowlisted people who
+-- can open the project, muted for imports and copies. The rule's owner hears about it too (the run acts
+-- as them, but they didn't do it by hand). Before the tail renames the wider target CHECK the
+-- old one refuses it, and nothing is sent (the run says so).
+create or replace function public.notify_about_project(recipient uuid, target_project uuid, payload jsonb)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  p public.projects;
+begin
+  if public.import_context_id() is not null or public.copy_context_id() is not null then
+    return false;
+  end if;
+  if recipient is null then
+    return false;
+  end if;
+  select * into p from public.projects x where x.id = target_project and x.deleted_at is null;
+  if not found or not public.profile_is_allowlisted(recipient) or public.profile_project_role(recipient, p.id) is null then
+    return false;
+  end if;
+  begin
+    insert into public.inbox_items (recipient_id, actor_id, task_id, project_id, kind, data)
+    values (recipient, null, null, p.id, 'rule', jsonb_strip_nulls(payload || jsonb_build_object('project_id', p.id, 'project_name', p.name)));
+  exception when check_violation then
+    return false;
+  end;
+  return true;
+end;
+$$;
+
+revoke all on function public.notify_about_project(uuid, uuid, jsonb) from public, anon, authenticated;
+
+-- The Inbox page and the unread count read project items too.
+select public.alhc_patch_function('public.inbox_page(text)',
+$p$  merged as ($p$,
+$p$  project_raw as materialized (
+    select i.id, i.kind, i.data, i.actor_id, i.read_at, i.archived_at, i.bookmarked_at, i.created_at,
+           p.id as project_id, p.name as project_name
+    from public.inbox_items i
+    join public.projects p on p.id = i.project_id and p.deleted_at is null
+    where i.task_id is null
+      and i.project_id is not null
+      and i.recipient_id = me
+      and i.project_id in (select project_id from readable)
+      and case inbox_tab
+        when 'archive' then i.archived_at is not null
+        when 'bookmarks' then i.bookmarked_at is not null
+        when 'mentioned' then i.kind = 'mention'
+        else i.archived_at is null
+      end
+    order by i.created_at desc, i.id desc
+    limit 100
+  ),
+  merged as ($p$,
+$p$    from status_raw s
+  )$p$,
+$p$    from status_raw s
+    union all
+    select pr.created_at, pr.id, jsonb_build_object(
+      'id', pr.id, 'kind', pr.kind, 'data', pr.data, 'actor_id', pr.actor_id,
+      'read_at', pr.read_at, 'archived_at', pr.archived_at, 'bookmarked_at', pr.bookmarked_at,
+      'created_at', pr.created_at, 'task_id', null, 'task_title', pr.project_name,
+      'parent_title', null, 'comment_body', pr.data ->> 'message', 'email_from', null,
+      'message', null, 'team_message', null, 'status_update', null, 'approval', null,
+      'project', jsonb_build_object('id', pr.project_id, 'name', pr.project_name)
+    )
+    from project_raw pr
+  )$p$);
+
+select public.alhc_patch_function('public.inbox_unread_count()',
+$p$          where u.id = i.status_update_id
+            and u.project_id in (select project_id from readable)
+        )
+      )$p$,
+$p$          where u.id = i.status_update_id
+            and u.project_id in (select project_id from readable)
+        )
+      )
+      or (
+        i.task_id is null
+        and i.project_id is not null
+        and i.project_id in (select project_id from readable)
+      )$p$);
+
+-- 10b. The rules and their run log.
+create table if not exists public.portfolio_rules (
+  id uuid primary key default gen_random_uuid(),
+  portfolio_id uuid not null references public.portfolios (id),
+  name text not null check (char_length(btrim(name)) between 1 and 200),
+  enabled boolean not null default false,
+  trigger_type text not null check (trigger_type in (
+    'item_added', 'item_removed', 'status_changed', 'owner_changed', 'field_changed', 'due_date_changed',
+    'due_approaching', 'item_overdue', 'scheduled', 'manual'
+  )),
+  trigger_config jsonb not null default '{}'::jsonb check (jsonb_typeof(trigger_config) = 'object'),
+  conditions jsonb not null default '[]'::jsonb check (jsonb_typeof(conditions) = 'array'),
+  actions jsonb not null default '[]'::jsonb check (jsonb_typeof(actions) = 'array'),
+  owner_id uuid references public.profiles (id),
+  created_by uuid default auth.uid() references public.profiles (id),
+  last_edited_by uuid references public.profiles (id),
+  last_edited_at timestamptz,
+  sort_order double precision not null default 0,
+  next_run_at timestamptz,
+  paused_at timestamptz,
+  pause_reason text check (length(pause_reason) <= 500),
+  consecutive_failures integer not null default 0 check (consecutive_failures >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+
+create index if not exists portfolio_rules_portfolio_idx on public.portfolio_rules (portfolio_id, sort_order) where deleted_at is null;
+create index if not exists portfolio_rules_owner_idx on public.portfolio_rules (owner_id);
+create index if not exists portfolio_rules_created_by_idx on public.portfolio_rules (created_by);
+create index if not exists portfolio_rules_last_edited_by_idx on public.portfolio_rules (last_edited_by);
+create index if not exists portfolio_rules_scheduled_idx on public.portfolio_rules (next_run_at)
+  where trigger_type = 'scheduled' and enabled and deleted_at is null;
+
+create table if not exists public.portfolio_rule_runs (
+  id uuid primary key default gen_random_uuid(),
+  rule_id uuid not null references public.portfolio_rules (id),
+  portfolio_id uuid not null references public.portfolios (id),
+  project_id uuid references public.projects (id),
+  trigger_type text not null,
+  status text not null check (status in ('succeeded', 'failed', 'skipped')),
+  detail jsonb not null default '{}'::jsonb,
+  dedupe_key text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists portfolio_rule_runs_rule_idx on public.portfolio_rule_runs (rule_id, created_at desc);
+create index if not exists portfolio_rule_runs_portfolio_idx on public.portfolio_rule_runs (portfolio_id, created_at desc);
+create index if not exists portfolio_rule_runs_project_idx on public.portfolio_rule_runs (project_id);
+create index if not exists portfolio_rule_runs_dedupe_idx on public.portfolio_rule_runs (rule_id, project_id, dedupe_key) where dedupe_key is not null;
+
+alter table public.portfolio_rules enable row level security;
+alter table public.portfolio_rule_runs enable row level security;
+revoke all on public.portfolio_rules from anon, authenticated;
+revoke all on public.portfolio_rule_runs from anon, authenticated;
+select public.alhc_revoke_anon_grants(array['portfolio_rules', 'portfolio_rule_runs']);
+select public.alhc_revoke_client_truncate(array['portfolio_rules', 'portfolio_rule_runs']);
+
+grant select on public.portfolio_rules to authenticated;
+grant insert (portfolio_id, name, enabled, trigger_type, trigger_config, conditions, actions, owner_id, sort_order)
+  on public.portfolio_rules to authenticated;
+grant update (name, enabled, trigger_type, trigger_config, conditions, actions, owner_id, sort_order, deleted_at)
+  on public.portfolio_rules to authenticated;
+grant select on public.portfolio_rule_runs to authenticated;
+
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'portfolio_rules' and policyname = 'portfolio_rules_select_viewer') then
+    create policy portfolio_rules_select_viewer on public.portfolio_rules for select to authenticated
+      using ((select public.has_portfolio_role(portfolio_id, 'viewer')));
+    create policy portfolio_rules_insert_admin on public.portfolio_rules for insert to authenticated
+      with check (created_by = (select auth.uid()) and (select public.has_portfolio_role(portfolio_id, 'admin')));
+    create policy portfolio_rules_update_admin on public.portfolio_rules for update to authenticated
+      using ((select public.has_portfolio_role(portfolio_id, 'admin')))
+      with check ((select public.has_portfolio_role(portfolio_id, 'admin')));
+    create policy portfolio_rule_runs_select_viewer on public.portfolio_rule_runs for select to authenticated
+      using ((select public.has_portfolio_role(portfolio_id, 'viewer'))
+        and (project_id is null or (select public.has_project_role(project_id, 'viewer'))));
+  end if;
+end $$;
+
+comment on table public.portfolio_rules is
+  'Automations V3 (batch D): rules on a portfolio''s projects. Viewers+ of the portfolio read, Admins+ manage; actions run with the owner''s access.';
+comment on table public.portfolio_rule_runs is
+  'Automations V3 (batch D): portfolio rule runs (per project). Engine-written; readable with the portfolio and the project.';
+
+-- People write the name, trigger, conditions, actions, on / off, and owner; the database keeps the
+-- rest. The owner must be a member of the portfolio. Turning a paused rule back on resumes it.
+create or replace function public.guard_portfolio_rule()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if public.is_client_role() then
+      new.created_by := auth.uid();
+      new.owner_id := coalesce(new.owner_id, auth.uid());
+      new.paused_at := null;
+      new.pause_reason := null;
+      new.consecutive_failures := 0;
+      new.last_edited_by := auth.uid();
+      new.last_edited_at := now();
+      new.created_at := now();
+    else
+      new.owner_id := coalesce(new.owner_id, new.created_by);
+    end if;
+  else
+    if new.portfolio_id is distinct from old.portfolio_id then
+      raise exception 'A rule stays in its portfolio' using errcode = 'check_violation';
+    end if;
+    if old.deleted_at is not null and new.deleted_at is null then
+      raise exception 'A removed rule stays removed' using errcode = 'check_violation';
+    end if;
+    if public.is_client_role() then
+      new.created_by := old.created_by;
+      new.created_at := old.created_at;
+      new.paused_at := old.paused_at;
+      new.pause_reason := old.pause_reason;
+      new.consecutive_failures := old.consecutive_failures;
+      new.last_edited_by := auth.uid();
+      new.last_edited_at := now();
+      if new.enabled and not old.enabled then
+        new.paused_at := null;
+        new.pause_reason := null;
+        new.consecutive_failures := 0;
+      end if;
+    end if;
+    new.updated_at := now();
+  end if;
+  if public.is_client_role() and new.owner_id is not null
+     and (tg_op = 'INSERT' or new.owner_id is distinct from old.owner_id)
+     and public.profile_portfolio_role(new.owner_id, new.portfolio_id) is null then
+    raise exception 'The rule’s owner must be a member of this portfolio' using errcode = 'check_violation';
+  end if;
+  -- The next run of a scheduled rule (the workspace's workweek for "every workday").
+  if new.trigger_type = 'scheduled' and new.enabled and new.deleted_at is null then
+    if tg_op = 'INSERT' or new.trigger_config is distinct from old.trigger_config or new.enabled is distinct from old.enabled
+       or new.trigger_type is distinct from old.trigger_type or (new.next_run_at is null and not public.is_client_role()) then
+      new.next_run_at := public.rule_schedule_next_at(new.trigger_config,
+        (select w.work_week from public.portfolios pf join public.workspaces w on w.id = pf.workspace_id where pf.id = new.portfolio_id), now());
+    elsif public.is_client_role() then
+      new.next_run_at := old.next_run_at;
+    end if;
+  else
+    new.next_run_at := null;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.guard_portfolio_rule() from public, anon;
+grant execute on function public.guard_portfolio_rule() to authenticated;
+
+create or replace trigger portfolio_rules_05_guard
+before insert or update on public.portfolio_rules
+for each row execute function public.guard_portfolio_rule();
+
+-- The vocabulary (mirrored by src/lib/portfolio-rules.ts):
+--   triggers   item_added, item_removed, status_changed { statuses? }, owner_changed,
+--              field_changed { field_id, option_id? }, due_date_changed, due_approaching { days 0–60 },
+--              item_overdue { days 1–60 }, scheduled (the project rules' schedule), manual
+--   conditions status_is / status_is_not { statuses }, owner_is / owner_is_not { people },
+--              has_due_date, no_due_date, is_overdue, due_within { days },
+--              date_compare { op, value, to? }, field_equals { field_id, value }, field_is_set /
+--              field_is_empty { field_id }, is_archived, is_not_archived
+--   actions    set_status { status, note? }, status_reminder { message? }, notify { people, message },
+--              set_owner { person }, set_due_date { mode: clear | date | relative, date?, days?,
+--              business_days? }, set_name { name }, set_field { field_id, value }, add_members
+--              { people, role }, remove_members { people }, archive_project, remove_from_portfolio,
+--              add_to_portfolio { portfolio_id }
+-- People: profile ids, or "owner" / "members" (the project's) where several can be named.
+create or replace function public.portfolio_rule_people_ok(people jsonb, allow_roles boolean)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select coalesce(jsonb_typeof(people), 'missing') = 'array' and jsonb_array_length(people) between 1 and 50
+    and not exists (
+      select 1 from jsonb_array_elements(people) x
+      where jsonb_typeof(x) <> 'string' or not (
+        (allow_roles and x #>> '{}' in ('owner', 'members'))
+        or exists (select 1 from public.profiles p where p.id::text = x #>> '{}')
+      )
+    );
+$$;
+
+revoke all on function public.portfolio_rule_people_ok(jsonb, boolean) from public, anon;
+grant execute on function public.portfolio_rule_people_ok(jsonb, boolean) to authenticated;
+
+create or replace function public.validate_portfolio_rule()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  cfg jsonb := new.trigger_config;
+  item jsonb;
+  kind text;
+  field public.portfolio_fields;
+  statuses jsonb := '["on_track", "at_risk", "off_track", "on_hold", "complete"]'::jsonb;
+  ws uuid := (select pf.workspace_id from public.portfolios pf where pf.id = new.portfolio_id);
+begin
+  if new.deleted_at is not null and tg_op = 'UPDATE' and old.deleted_at is null then
+    return new;
+  end if;
+  if cfg ? 'timezone' and (jsonb_typeof(cfg -> 'timezone') <> 'string' or length(cfg ->> 'timezone') > 64) then
+    raise exception 'The rule''s time zone is not valid' using errcode = 'check_violation';
+  end if;
+  case new.trigger_type
+    when 'status_changed' then
+      if cfg ? 'statuses' and (coalesce(jsonb_typeof(cfg -> 'statuses'), 'missing') <> 'array'
+         or jsonb_array_length(cfg -> 'statuses') = 0 or not statuses @> (cfg -> 'statuses')) then
+        raise exception 'Status changes: choose statuses, or any' using errcode = 'check_violation';
+      end if;
+    when 'field_changed' then
+      select * into field from public.portfolio_fields f
+      where f.id::text = cfg ->> 'field_id' and f.portfolio_id = new.portfolio_id and f.deleted_at is null;
+      if field.id is null then
+        raise exception 'Choose a field of this portfolio for the trigger' using errcode = 'check_violation';
+      end if;
+      if cfg ? 'option_id' and not (field.options @> jsonb_build_array(jsonb_build_object('id', cfg ->> 'option_id'))) then
+        raise exception 'Choose one of the field''s options' using errcode = 'check_violation';
+      end if;
+    when 'due_approaching', 'item_overdue' then
+      if cfg ? 'days' and (coalesce(jsonb_typeof(cfg -> 'days'), 'missing') <> 'number' or (cfg ->> 'days') !~ '^[0-9]{1,2}$'
+         or (cfg ->> 'days')::integer > 60 or (new.trigger_type = 'item_overdue' and (cfg ->> 'days')::integer < 1)) then
+        raise exception 'Days must be between % and 60', case new.trigger_type when 'item_overdue' then 1 else 0 end
+          using errcode = 'check_violation';
+      end if;
+    when 'scheduled' then
+      if coalesce(cfg ->> 'frequency', '') not in ('daily', 'workdays', 'weekly', 'monthly') then
+        raise exception 'Choose how often the rule runs' using errcode = 'check_violation';
+      end if;
+      if public.rule_schedule_next_at(cfg, '{0,1,2,3,4}', now()) is null then
+        raise exception 'That schedule never runs' using errcode = 'check_violation';
+      end if;
+    else
+      null;
+  end case;
+
+  if jsonb_array_length(new.conditions) > 20 then
+    raise exception 'Up to 20 conditions' using errcode = 'check_violation';
+  end if;
+  for item in select value from jsonb_array_elements(new.conditions) loop
+    kind := item ->> 'type';
+    if kind in ('status_is', 'status_is_not') then
+      if coalesce(jsonb_typeof(item -> 'statuses'), 'missing') <> 'array' or jsonb_array_length(item -> 'statuses') = 0
+         or not statuses @> (item -> 'statuses') then
+        raise exception 'Status is: choose one or more statuses' using errcode = 'check_violation';
+      end if;
+    elsif kind in ('owner_is', 'owner_is_not') then
+      if not public.portfolio_rule_people_ok(item -> 'people', false) then
+        raise exception 'Owner is: choose one or more people' using errcode = 'check_violation';
+      end if;
+    elsif kind = 'due_within' then
+      if coalesce(jsonb_typeof(item -> 'days'), 'missing') <> 'number' or (item ->> 'days') !~ '^[0-9]{1,3}$' or (item ->> 'days')::integer > 365 then
+        raise exception 'Due within: choose 0 to 365 days' using errcode = 'check_violation';
+      end if;
+    elsif kind = 'date_compare' then
+      if coalesce(item ->> 'op', '') not in ('before', 'after', 'on', 'on_or_before', 'on_or_after', 'between', 'not_between')
+         or not public.rule_is_day(item -> 'value')
+         or (item ->> 'op' in ('between', 'not_between') and not public.rule_is_day(item -> 'to')) then
+        raise exception 'Due date is: choose how it compares, and the date' using errcode = 'check_violation';
+      end if;
+    elsif kind in ('field_equals', 'field_is_set', 'field_is_empty') then
+      if not exists (
+        select 1 from public.portfolio_fields f
+        where f.id::text = item ->> 'field_id' and f.portfolio_id = new.portfolio_id and f.deleted_at is null
+      ) then
+        raise exception 'A condition refers to a field outside this portfolio' using errcode = 'check_violation';
+      end if;
+      if kind = 'field_equals' and (not (item ? 'value') or item -> 'value' = 'null'::jsonb) then
+        raise exception 'Field is: choose a value' using errcode = 'check_violation';
+      end if;
+    elsif kind is null or kind not in ('has_due_date', 'no_due_date', 'is_overdue', 'is_archived', 'is_not_archived') then
+      raise exception 'Unknown condition %', coalesce(kind, '(none)') using errcode = 'check_violation';
+    end if;
+  end loop;
+
+  if jsonb_array_length(new.actions) not between 1 and 10 then
+    raise exception 'A rule has 1 to 10 actions' using errcode = 'check_violation';
+  end if;
+  for item in select value from jsonb_array_elements(new.actions) loop
+    kind := item ->> 'type';
+    case kind
+      when 'set_status' then
+        if not statuses ? coalesce(item ->> 'status', '') then
+          raise exception 'Set status: choose a status' using errcode = 'check_violation';
+        end if;
+        if length(coalesce(item ->> 'note', '')) > 2000 then
+          raise exception 'Set status: the note is up to 2,000 characters' using errcode = 'check_violation';
+        end if;
+      when 'status_reminder' then
+        if length(coalesce(item ->> 'message', '')) > 1000 then
+          raise exception 'Status reminder: the message is up to 1,000 characters' using errcode = 'check_violation';
+        end if;
+      when 'notify' then
+        if not public.portfolio_rule_people_ok(item -> 'people', true) then
+          raise exception 'Notify: choose who' using errcode = 'check_violation';
+        end if;
+        if length(trim(coalesce(item ->> 'message', ''))) not between 1 and 1000 then
+          raise exception 'Notify: write a message' using errcode = 'check_violation';
+        end if;
+      when 'set_owner' then
+        if not exists (select 1 from public.profiles p where p.id::text = item ->> 'person') then
+          raise exception 'Set owner: choose a person' using errcode = 'check_violation';
+        end if;
+      when 'set_due_date' then
+        if public.rule_date_action_problem(item - 'unit', 'Set due date') is not null or coalesce(item ->> 'unit', 'days') <> 'days' then
+          raise exception '%', coalesce(public.rule_date_action_problem(item - 'unit', 'Set due date'), 'Set due date: count days')
+            using errcode = 'check_violation';
+        end if;
+      when 'set_name' then
+        if length(trim(coalesce(item ->> 'name', ''))) not between 1 and 200 then
+          raise exception 'Rename: write the new name' using errcode = 'check_violation';
+        end if;
+      when 'set_field' then
+        if not exists (
+          select 1 from public.portfolio_fields f
+          where f.id::text = item ->> 'field_id' and f.portfolio_id = new.portfolio_id and f.deleted_at is null
+        ) then
+          raise exception 'Set field: choose a field of this portfolio' using errcode = 'check_violation';
+        end if;
+      when 'add_members' then
+        if not public.portfolio_rule_people_ok(item -> 'people', false) then
+          raise exception 'Add members: choose people' using errcode = 'check_violation';
+        end if;
+        if coalesce(item ->> 'role', 'editor') not in ('admin', 'editor', 'commenter', 'viewer') then
+          raise exception 'Add members: choose Admin, Editor, Commenter, or Viewer' using errcode = 'check_violation';
+        end if;
+      when 'remove_members' then
+        if not public.portfolio_rule_people_ok(item -> 'people', false) then
+          raise exception 'Remove members: choose people' using errcode = 'check_violation';
+        end if;
+      when 'archive_project', 'remove_from_portfolio' then
+        null;
+      when 'add_to_portfolio' then
+        if item ->> 'portfolio_id' = new.portfolio_id::text or not exists (
+          select 1 from public.portfolios pf
+          where pf.id::text = item ->> 'portfolio_id' and pf.workspace_id = ws and pf.deleted_at is null
+        ) or not public.has_portfolio_role((item ->> 'portfolio_id')::uuid, 'editor') then
+          raise exception 'Add to portfolio: choose another portfolio where you''re an Editor' using errcode = 'check_violation';
+        end if;
+      else
+        raise exception 'Unknown action %', coalesce(kind, '(none)') using errcode = 'check_violation';
+    end case;
+  end loop;
+  return new;
+end;
+$$;
+
+revoke all on function public.validate_portfolio_rule() from public, anon;
+grant execute on function public.validate_portfolio_rule() to authenticated;
+
+create or replace trigger portfolio_rules_10_validate
+before insert or update on public.portfolio_rules
+for each row execute function public.validate_portfolio_rule();
+
+-- 10c. The engine.
+
+-- The project's owners (active).
+create or replace function public.project_owner_ids(target_project uuid)
+returns uuid[]
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(array_agg(m.profile_id order by m.created_at), '{}')
+  from public.project_members m
+  where m.project_id = target_project and m.deleted_at is null and m.role = 'owner';
+$$;
+
+revoke all on function public.project_owner_ids(uuid) from public, anon, authenticated;
+
+-- "Today" for a portfolio rule (its time zone, else UTC).
+create or replace function public.portfolio_rule_today(r public.portfolio_rules)
+returns date
+language sql
+stable
+set search_path = ''
+as $$
+  select (now() at time zone public.safe_timezone(coalesce(nullif(r.trigger_config ->> 'timezone', ''), 'UTC')))::date;
+$$;
+
+revoke all on function public.portfolio_rule_today(public.portfolio_rules) from public, anon, authenticated;
+
+-- Placeholders in portfolio rule text: {{project.name}}, {{project.status}}, {{project.due_date}},
+-- {{project.owner}}, {{project.url}}, {{portfolio.name}} (unknown ones come out empty).
+create or replace function public.portfolio_rule_text(template text, r public.portfolio_rules, target_project uuid)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  p public.projects;
+  out text := coalesce(template, '');
+  m text[];
+  val text;
+begin
+  select * into p from public.projects where id = target_project;
+  loop
+    m := regexp_match(out, '\{\{\s*([A-Za-z_.]+)\s*\}\}');
+    exit when m is null;
+    val := case lower(m[1])
+      when 'project.name' then p.name
+      when 'project.status' then initcap(replace(p.status, '_', ' '))
+      when 'project.due_date' then to_char(p.due_on, 'Mon FMDD, YYYY')
+      when 'project.owner' then public.rule_profile_name((public.project_owner_ids(p.id))[1])
+      when 'project.url' then 'alhc-link:/projects/' || p.id || '/overview'
+      when 'portfolio.name' then (select pf.name from public.portfolios pf where pf.id = r.portfolio_id)
+      else ''
+    end;
+    out := regexp_replace(out, '\{\{\s*' || m[1] || '\s*\}\}', replace(coalesce(val, ''), '\', '\\'));
+  end loop;
+  return trim(out);
+end;
+$$;
+
+revoke all on function public.portfolio_rule_text(text, public.portfolio_rules, uuid) from public, anon, authenticated;
+
+create or replace function public.portfolio_rule_condition_ok(r public.portfolio_rules, c jsonb, p public.projects)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  today date := public.portfolio_rule_today(r);
+  v jsonb;
+begin
+  case c ->> 'type'
+    when 'status_is' then return (c -> 'statuses') ? p.status;
+    when 'status_is_not' then return not (c -> 'statuses') ? p.status;
+    when 'owner_is' then
+      return public.project_owner_ids(p.id) && array(select x::uuid from jsonb_array_elements_text(c -> 'people') x where x ~* '^[0-9a-f-]{36}$');
+    when 'owner_is_not' then
+      return not (public.project_owner_ids(p.id) && array(select x::uuid from jsonb_array_elements_text(c -> 'people') x where x ~* '^[0-9a-f-]{36}$'));
+    when 'has_due_date' then return p.due_on is not null;
+    when 'no_due_date' then return p.due_on is null;
+    when 'is_overdue' then return p.due_on < today and p.status <> 'complete';
+    when 'due_within' then return p.due_on between today and today + coalesce((c ->> 'days')::integer, 0);
+    when 'date_compare' then return public.rule_date_matches(p.due_on, c ->> 'op', c ->> 'value', c ->> 'to');
+    when 'is_archived' then return p.archived_at is not null;
+    when 'is_not_archived' then return p.archived_at is null;
+    when 'field_equals', 'field_is_set', 'field_is_empty' then
+      select fv.value into v from public.portfolio_field_values fv
+      where fv.field_id::text = c ->> 'field_id' and fv.project_id = p.id;
+      if v = 'null'::jsonb or v = '""'::jsonb then v := null; end if;
+      return case c ->> 'type'
+        when 'field_is_set' then v is not null
+        when 'field_is_empty' then v is null
+        else coalesce(v = c -> 'value', false)
+      end;
+    else
+      return false;
+  end case;
+end;
+$$;
+
+revoke all on function public.portfolio_rule_condition_ok(public.portfolio_rules, jsonb, public.projects) from public, anon, authenticated;
+
+-- Runs the actions (as the rule's owner: run_portfolio_rule_engine sets the claim) and logs each step.
+create or replace function public.execute_portfolio_rule_actions(r public.portfolio_rules, target_project uuid, event jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  a jsonb;
+  idx bigint;
+  log jsonb := '[]'::jsonb;
+  outcome text;
+  result text;
+  input jsonb;
+  p public.projects;
+  person uuid;
+  body text;
+  n integer;
+  new_day date;
+  x text;
+  email text;
+  pf_name text := (select pf.name from public.portfolios pf where pf.id = r.portfolio_id);
+begin
+  for a, idx in select value, ordinality from jsonb_array_elements(r.actions) with ordinality loop
+    select * into p from public.projects where id = target_project;
+    outcome := 'done';
+    result := null;
+    input := '{}'::jsonb;
+    begin
+      case a ->> 'type'
+        when 'set_status' then
+          input := jsonb_build_object('status', a ->> 'status');
+          if p.status = a ->> 'status' and coalesce(a ->> 'note', '') = '' then
+            outcome := 'unchanged';
+            result := 'Already ' || replace(a ->> 'status', '_', ' ');
+          else
+            perform public.set_project_status(target_project, a ->> 'status',
+              nullif(public.portfolio_rule_text(a ->> 'note', r, target_project), ''));
+            result := 'Status set to ' || replace(a ->> 'status', '_', ' ');
+          end if;
+
+        when 'status_reminder', 'notify' then
+          body := case when a ->> 'type' = 'status_reminder'
+            then coalesce(nullif(public.portfolio_rule_text(a ->> 'message', r, target_project), ''),
+              'Time for a status update on “' || p.name || '”.')
+            else public.portfolio_rule_text(a ->> 'message', r, target_project) end;
+          input := jsonb_build_object('message', left(body, 300));
+          n := 0;
+          for person in
+            select distinct u.person from (
+              select unnest(public.project_owner_ids(target_project)) as person
+              where a ->> 'type' = 'status_reminder' or (a -> 'people') ? 'owner'
+              union all
+              select m.profile_id from public.project_members m
+              where (a -> 'people') ? 'members' and m.project_id = target_project and m.deleted_at is null
+              union all
+              select x2::uuid from jsonb_array_elements_text(coalesce(a -> 'people', '[]'::jsonb)) x2 where x2 ~* '^[0-9a-f-]{36}$'
+            ) u
+          loop
+            if public.notify_about_project(person, target_project, jsonb_build_object(
+              'message', body, 'rule_name', r.name, 'portfolio_rule_id', r.id, 'portfolio_id', r.portfolio_id,
+              'portfolio_name', pf_name, 'status_reminder', case when a ->> 'type' = 'status_reminder' then true end
+            )) then
+              n := n + 1;
+            end if;
+          end loop;
+          if n = 0 then
+            outcome := 'no_recipient';
+            result := 'Nobody to notify (people must be able to open the project)';
+          else
+            result := case a ->> 'type' when 'status_reminder' then 'Reminded ' else 'Notified ' end
+              || n || case when n = 1 then ' person' else ' people' end;
+          end if;
+
+        when 'set_owner' then
+          person := (a ->> 'person')::uuid;
+          input := jsonb_build_object('person', public.rule_profile_name(person));
+          if person = any (public.project_owner_ids(target_project)) then
+            outcome := 'unchanged';
+            result := 'Already owned by ' || coalesce(public.rule_profile_name(person), '?');
+          else
+            if public.profile_project_role(person, target_project) is null then
+              select pr.email into email from public.profiles pr where pr.id = person;
+              perform public.add_project_member(target_project, email, 'editor');
+            end if;
+            perform public.transfer_project_ownership(target_project, person);
+            result := 'Owner set to ' || coalesce(public.rule_profile_name(person), '?');
+          end if;
+
+        when 'set_due_date' then
+          if not public.has_project_role(target_project, 'admin') then
+            raise exception 'Set due date: the rule''s owner isn''t an Admin of “%”', p.name using errcode = 'insufficient_privilege';
+          end if;
+          new_day := case coalesce(a ->> 'mode', 'relative')
+            when 'clear' then null
+            when 'date' then (a ->> 'date')::date
+            else public.rule_add_days(
+              case coalesce(a ->> 'from', 'today') when 'due_date' then coalesce(p.due_on, public.portfolio_rule_today(r)) else public.portfolio_rule_today(r) end,
+              coalesce((a ->> 'days')::integer, 0), coalesce((a ->> 'business_days')::boolean, false),
+              (select w.work_week from public.workspaces w where w.id = p.workspace_id))
+          end;
+          input := jsonb_build_object('due_on', new_day);
+          update public.projects set due_on = new_day where id = target_project and due_on is distinct from new_day;
+          if not found then
+            outcome := 'unchanged';
+            result := case when new_day is null then 'Already has no due date' else 'Already due ' || to_char(new_day, 'Mon FMDD, YYYY') end;
+          else
+            result := case when new_day is null then 'Due date cleared' else 'Due date set to ' || to_char(new_day, 'Dy, Mon FMDD, YYYY') end;
+          end if;
+
+        when 'set_name' then
+          if not public.has_project_role(target_project, 'admin') then
+            raise exception 'Rename: the rule''s owner isn''t an Admin of “%”', p.name using errcode = 'insufficient_privilege';
+          end if;
+          body := left(public.portfolio_rule_text(a ->> 'name', r, target_project), 100);
+          input := jsonb_build_object('name', body);
+          if body = '' then
+            outcome := 'empty';
+            result := 'The new name came out empty, so the name was kept';
+          else
+            update public.projects set name = body where id = target_project and name is distinct from body;
+            if not found then outcome := 'unchanged'; result := 'Already named “' || body || '”';
+            else result := 'Renamed to “' || body || '”'; end if;
+          end if;
+
+        when 'set_field' then
+          if not public.has_portfolio_role(r.portfolio_id, 'editor') or not public.has_project_role(target_project, 'viewer') then
+            raise exception 'Set field: the rule''s owner can''t change this portfolio''s fields' using errcode = 'insufficient_privilege';
+          end if;
+          input := jsonb_build_object('field', (select f.name from public.portfolio_fields f where f.id::text = a ->> 'field_id'));
+          insert into public.portfolio_field_values (portfolio_id, field_id, project_id, value, updated_by)
+          values (r.portfolio_id, (a ->> 'field_id')::uuid, target_project, a -> 'value', auth.uid())
+          on conflict (field_id, project_id) do update set value = excluded.value, updated_by = excluded.updated_by
+          where public.portfolio_field_values.value is distinct from excluded.value;
+          if not found then outcome := 'unchanged'; result := '“' || (input ->> 'field') || '” was already that';
+          else result := '“' || (input ->> 'field') || '” set'; end if;
+
+        when 'add_members', 'remove_members' then
+          n := 0;
+          for x in select jsonb_array_elements_text(a -> 'people') loop
+            person := x::uuid;
+            if a ->> 'type' = 'add_members' then
+              continue when public.profile_project_role(person, target_project) is not null;
+              select pr.email into email from public.profiles pr where pr.id = person;
+              continue when email is null;
+              perform public.add_project_member(target_project, email, coalesce(a ->> 'role', 'editor'));
+            else
+              continue when public.profile_project_role(person, target_project) is null;
+              continue when person = any (public.project_owner_ids(target_project));
+              perform public.remove_project_member(target_project, person);
+            end if;
+            n := n + 1;
+          end loop;
+          input := jsonb_build_object('count', jsonb_array_length(a -> 'people'), 'role', a ->> 'role');
+          if n = 0 then
+            outcome := 'unchanged';
+            result := case a ->> 'type' when 'add_members' then 'Everyone was already a member' else 'Nobody to remove (owners stay)' end;
+          else
+            result := case a ->> 'type' when 'add_members' then 'Added ' else 'Removed ' end || n
+              || case when n = 1 then ' member' else ' members' end;
+          end if;
+
+        when 'archive_project' then
+          if p.archived_at is not null then
+            outcome := 'unchanged';
+            result := 'Already archived';
+          else
+            perform public.set_project_archived(target_project, true);
+            result := 'Archived “' || p.name || '”';
+          end if;
+
+        when 'remove_from_portfolio' then
+          perform public.remove_portfolio_project(r.portfolio_id, target_project);
+          result := 'Removed from “' || coalesce(pf_name, 'this portfolio') || '”';
+
+        when 'add_to_portfolio' then
+          input := jsonb_build_object('portfolio', (select pf.name from public.portfolios pf where pf.id::text = a ->> 'portfolio_id'));
+          if exists (
+            select 1 from public.portfolio_projects pp
+            where pp.portfolio_id::text = a ->> 'portfolio_id' and pp.project_id = target_project and pp.deleted_at is null
+          ) then
+            outcome := 'unchanged';
+            result := 'Already in “' || coalesce(input ->> 'portfolio', '?') || '”';
+          else
+            perform public.add_portfolio_project((a ->> 'portfolio_id')::uuid, target_project);
+            result := 'Added to “' || coalesce(input ->> 'portfolio', '?') || '”';
+          end if;
+      end case;
+    exception when others then
+      log := log || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+        'step', idx, 'type', a ->> 'type', 'outcome', 'error', 'error', sqlerrm, 'input', nullif(input, '{}'::jsonb)
+      )));
+      raise exception using message = sqlerrm, errcode = sqlstate, detail = log::text;
+    end;
+    log := log || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+      'step', idx, 'type', a ->> 'type', 'outcome', outcome, 'result', result, 'input', nullif(input, '{}'::jsonb)
+    )));
+  end loop;
+  return log;
+end;
+$$;
+
+revoke all on function public.execute_portfolio_rule_actions(public.portfolio_rules, uuid, jsonb) from public, anon, authenticated;
+
+-- One run on one project: loop guard (a rule never re-enters its own chain; chains stop at three),
+-- 20 runs an hour per project, 1,000 an hour per rule, conditions (all must pass), the actions as the
+-- owner, the log, and auto-pause after five failures in a row (the owner hears about it).
+create or replace function public.run_portfolio_rule_engine(r public.portfolio_rules, target_project uuid, event jsonb, dedupe text default null)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  chain text := coalesce(current_setting('alhc.portfolio_rule_chain', true), '');
+  previous_sub text := coalesce(current_setting('request.jwt.claim.sub', true), '');
+  depth integer := case when chain = '' then 0 else array_length(string_to_array(chain, ','), 1) end;
+  p public.projects;
+  c jsonb;
+  log jsonb;
+  steps jsonb;
+  run_status text;
+  error_message text;
+  error_detail text;
+  failures integer;
+  still_on boolean;
+  actor uuid := coalesce(r.owner_id, r.created_by);
+begin
+  select * into p from public.projects where id = target_project and deleted_at is null;
+  if not found then
+    return 'missing';
+  end if;
+  if dedupe is not null and exists (
+    select 1 from public.portfolio_rule_runs rr where rr.rule_id = r.id and rr.project_id = target_project and rr.dedupe_key = dedupe
+  ) then
+    return 'duplicate';
+  end if;
+  if position(r.id::text in chain) > 0 or depth >= 3 then
+    insert into public.portfolio_rule_runs (rule_id, portfolio_id, project_id, trigger_type, status, detail)
+    values (r.id, r.portfolio_id, target_project, r.trigger_type, 'skipped', jsonb_build_object(
+      'reason', case when position(r.id::text in chain) > 0 then 'loop' else 'depth_limit' end));
+    return 'skipped';
+  end if;
+  if (select count(*) from public.portfolio_rule_runs rr
+      where rr.rule_id = r.id and rr.created_at > now() - interval '1 hour' and rr.status <> 'skipped') >= 1000
+     or (select count(*) from public.portfolio_rule_runs rr
+      where rr.rule_id = r.id and rr.project_id = target_project and rr.status = 'succeeded' and rr.created_at > now() - interval '1 hour') >= 20 then
+    insert into public.portfolio_rule_runs (rule_id, portfolio_id, project_id, trigger_type, status, detail)
+    values (r.id, r.portfolio_id, target_project, r.trigger_type, 'skipped', jsonb_build_object('reason', 'throttled'));
+    return 'skipped';
+  end if;
+  for c in select value from jsonb_array_elements(r.conditions) loop
+    if not public.portfolio_rule_condition_ok(r, c, p) then
+      return 'conditions';
+    end if;
+  end loop;
+
+  perform set_config('alhc.portfolio_rule_chain', case when chain = '' then r.id::text else chain || ',' || r.id::text end, true);
+  begin
+    if actor is null or not public.profile_is_allowlisted(actor) then
+      raise exception 'The rule''s owner is no longer in the workspace' using errcode = 'insufficient_privilege';
+    end if;
+    perform set_config('request.jwt.claim.sub', actor::text, true);
+    log := public.execute_portfolio_rule_actions(r, target_project, event);
+    perform set_config('request.jwt.claim.sub', previous_sub, true);
+    run_status := 'succeeded';
+  exception when others then
+    get stacked diagnostics error_message = message_text, error_detail = pg_exception_detail;
+    log := jsonb_build_object('error', error_message);
+    begin
+      steps := case when left(coalesce(error_detail, ''), 1) = '[' then error_detail::jsonb end;
+    exception when others then
+      steps := null;
+    end;
+    run_status := 'failed';
+  end;
+  perform set_config('request.jwt.claim.sub', previous_sub, true);
+  perform set_config('alhc.portfolio_rule_chain', chain, true);
+
+  insert into public.portfolio_rule_runs (rule_id, portfolio_id, project_id, trigger_type, status, detail, dedupe_key)
+  values (r.id, r.portfolio_id, target_project, r.trigger_type, run_status,
+    jsonb_build_object('actions', log, 'event', coalesce(event, '{}'::jsonb))
+      || case when steps is not null then jsonb_build_object('steps', steps) else '{}'::jsonb end,
+    dedupe);
+
+  if run_status = 'failed' then
+    update public.portfolio_rules set consecutive_failures = consecutive_failures + 1 where id = r.id
+    returning consecutive_failures, enabled into failures, still_on;
+    if failures >= 5 and still_on then
+      update public.portfolio_rules
+      set enabled = false, paused_at = now(), pause_reason = left(coalesce(error_message, 'Failed'), 500)
+      where id = r.id;
+      perform public.notify_about_project(actor, target_project, jsonb_build_object(
+        'message', 'Portfolio rule “' || r.name || '” was paused after ' || failures || ' failed runs in a row: '
+          || left(coalesce(error_message, 'it failed'), 300) || '. Fix it, then turn it back on.',
+        'rule_paused', true, 'portfolio_rule_id', r.id, 'portfolio_id', r.portfolio_id
+      ));
+    end if;
+  else
+    update public.portfolio_rules set consecutive_failures = 0 where id = r.id and consecutive_failures > 0;
+  end if;
+  return run_status;
+end;
+$$;
+
+revoke all on function public.run_portfolio_rule_engine(public.portfolio_rules, uuid, jsonb, text) from public, anon, authenticated;
+
+-- Fires the enabled rules of `trigger_kind` on a project: of one portfolio, or of every portfolio the
+-- project is in. Imports and copies fire nothing; archived projects only fire item_removed.
+create or replace function public.fire_portfolio_rules(trigger_kind text, target_project uuid, target_portfolio uuid, event jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.portfolio_rules;
+  cfg jsonb;
+begin
+  if public.import_context_id() is not null or public.copy_context_id() is not null then
+    return;
+  end if;
+  for r in
+    select ru.* from public.portfolio_rules ru
+    join public.portfolios pf on pf.id = ru.portfolio_id and pf.deleted_at is null
+    where ru.enabled and ru.deleted_at is null and ru.trigger_type = trigger_kind
+      and (target_portfolio is null or ru.portfolio_id = target_portfolio)
+      and (trigger_kind = 'item_removed' or exists (
+        select 1 from public.portfolio_projects pp
+        where pp.portfolio_id = ru.portfolio_id and pp.project_id = target_project and pp.deleted_at is null
+      ))
+    order by ru.sort_order, ru.created_at
+  loop
+    cfg := r.trigger_config;
+    continue when trigger_kind = 'status_changed' and cfg ? 'statuses' and not (cfg -> 'statuses') ? (event ->> 'status');
+    continue when trigger_kind = 'field_changed' and (
+      cfg ->> 'field_id' is distinct from event ->> 'field_id'
+      or (cfg ? 'option_id' and (event -> 'value') is distinct from (cfg -> 'option_id'))
+    );
+    perform public.run_portfolio_rule_engine(r, target_project, event);
+  end loop;
+end;
+$$;
+
+revoke all on function public.fire_portfolio_rules(text, uuid, uuid, jsonb) from public, anon, authenticated;
+
+-- 10d. Where portfolio rules fire.
+create or replace function public.portfolio_rules_on_item()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.deleted_at is null and (tg_op = 'INSERT' or old.deleted_at is not null) then
+    perform public.fire_portfolio_rules('item_added', new.project_id, new.portfolio_id, '{}'::jsonb);
+  elsif tg_op = 'UPDATE' and new.deleted_at is not null and old.deleted_at is null then
+    perform public.fire_portfolio_rules('item_removed', new.project_id, new.portfolio_id, '{}'::jsonb);
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.portfolio_rules_on_item() from public, anon, authenticated;
+
+create or replace trigger portfolio_projects_zz_rules
+after insert or update of deleted_at on public.portfolio_projects
+for each row execute function public.portfolio_rules_on_item();
+
+create or replace function public.portfolio_rules_on_project()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.deleted_at is null then
+    if new.status is distinct from old.status then
+      perform public.fire_portfolio_rules('status_changed', new.id, null, jsonb_build_object('status', new.status, 'from_status', old.status));
+    end if;
+    if new.due_on is distinct from old.due_on then
+      perform public.fire_portfolio_rules('due_date_changed', new.id, null, jsonb_build_object('due_on', new.due_on, 'from_due_on', old.due_on));
+    end if;
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.portfolio_rules_on_project() from public, anon, authenticated;
+
+create or replace trigger projects_zz_portfolio_rules
+after update of status, due_on on public.projects
+for each row execute function public.portfolio_rules_on_project();
+
+create or replace function public.portfolio_rules_on_owner()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.role = 'owner' and new.deleted_at is null
+     and (tg_op = 'INSERT' or old.role is distinct from 'owner' or old.deleted_at is not null)
+     and not exists (select 1 from public.projects p where p.id = new.project_id and p.created_at = now()) then
+    perform public.fire_portfolio_rules('owner_changed', new.project_id, null, jsonb_build_object('owner_id', new.profile_id));
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.portfolio_rules_on_owner() from public, anon, authenticated;
+
+create or replace trigger project_members_zz_portfolio_rules
+after insert or update of role, deleted_at on public.project_members
+for each row execute function public.portfolio_rules_on_owner();
+
+create or replace function public.portfolio_rules_on_field()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' or new.value is distinct from old.value then
+    perform public.fire_portfolio_rules('field_changed', new.project_id, new.portfolio_id, jsonb_build_object(
+      'field_id', new.field_id, 'value', new.value
+    ));
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.portfolio_rules_on_field() from public, anon, authenticated;
+
+create or replace trigger portfolio_field_values_zz_rules
+after insert or update of value on public.portfolio_field_values
+for each row execute function public.portfolio_rules_on_field();
+
+-- 10e. The scheduler's part: due soon, overdue (once per project and due date), and scheduled rules
+-- (every project of the portfolio that passes the conditions, once per run). Called by workflow_tick.
+create or replace function public.portfolio_rules_tick()
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.portfolio_rules;
+  x record;
+  ran integer := 0;
+  days integer;
+  today date;
+  slot timestamptz;
+begin
+  for r in
+    select ru.* from public.portfolio_rules ru
+    join public.portfolios pf on pf.id = ru.portfolio_id and pf.deleted_at is null
+    where ru.enabled and ru.deleted_at is null and ru.trigger_type in ('due_approaching', 'item_overdue')
+  loop
+    days := coalesce((r.trigger_config ->> 'days')::integer, 1);
+    today := public.portfolio_rule_today(r);
+    for x in
+      select p.id, p.due_on from public.projects p
+      join public.portfolio_projects pp on pp.project_id = p.id and pp.portfolio_id = r.portfolio_id and pp.deleted_at is null
+      where p.deleted_at is null and p.archived_at is null and p.status <> 'complete'
+        and case when r.trigger_type = 'due_approaching' then p.due_on = today + days
+          else p.due_on between today - greatest(days, 1) - 2 and today - greatest(days, 1) end
+    loop
+      if public.run_portfolio_rule_engine(r, x.id, jsonb_build_object('due_on', x.due_on),
+           case when r.trigger_type = 'due_approaching' then 'due:' else 'overdue:' end || x.due_on::text) = 'succeeded' then
+        ran := ran + 1;
+      end if;
+    end loop;
+  end loop;
+
+  for r in
+    select ru.* from public.portfolio_rules ru
+    join public.portfolios pf on pf.id = ru.portfolio_id and pf.deleted_at is null
+    where ru.enabled and ru.deleted_at is null and ru.trigger_type = 'scheduled' and ru.next_run_at <= now()
+    order by ru.next_run_at
+    limit 50
+    for update of ru skip locked
+  loop
+    slot := r.next_run_at;
+    for x in
+      select p.id from public.projects p
+      join public.portfolio_projects pp on pp.project_id = p.id and pp.portfolio_id = r.portfolio_id and pp.deleted_at is null
+      where p.deleted_at is null and p.archived_at is null
+      order by pp.sort_order
+      limit 500
+    loop
+      if public.run_portfolio_rule_engine(r, x.id, jsonb_build_object('scheduled_for', slot),
+           'schedule:' || to_char(slot at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI')) = 'succeeded' then
+        ran := ran + 1;
+      end if;
+    end loop;
+    update public.portfolio_rules
+    set next_run_at = public.rule_schedule_next_at(r.trigger_config,
+      (select w.work_week from public.portfolios pf join public.workspaces w on w.id = pf.workspace_id where pf.id = r.portfolio_id),
+      greatest(now(), slot))
+    where id = r.id;
+  end loop;
+  return ran;
+end;
+$$;
+
+revoke all on function public.portfolio_rules_tick() from public, anon, authenticated;
+
+-- 10f. Run a "Run manually" portfolio rule on one of its projects (Editors+ of the portfolio). Pinned in
+-- suite 60.
+create or replace function public.run_portfolio_rule(target_rule uuid, target_project uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.portfolio_rules;
+  status text;
+  last_run public.portfolio_rule_runs;
+begin
+  select * into r from public.portfolio_rules where id = target_rule and deleted_at is null;
+  if not found or not public.has_portfolio_role(r.portfolio_id, 'viewer') then
+    raise exception 'Rule not found' using errcode = 'no_data_found';
+  end if;
+  if r.trigger_type <> 'manual' then
+    raise exception 'Only “Run manually” rules can be run by hand' using errcode = 'check_violation';
+  end if;
+  if not r.enabled then
+    raise exception 'This rule is off' using errcode = 'check_violation';
+  end if;
+  if not public.has_portfolio_role(r.portfolio_id, 'editor') then
+    raise exception 'Your role in this portfolio doesn’t allow running rules' using errcode = 'insufficient_privilege';
+  end if;
+  if not exists (
+    select 1 from public.portfolio_projects pp
+    where pp.portfolio_id = r.portfolio_id and pp.project_id = target_project and pp.deleted_at is null
+  ) or not public.has_project_role(target_project, 'viewer') then
+    raise exception 'That project isn’t in this portfolio' using errcode = 'check_violation';
+  end if;
+  status := public.run_portfolio_rule_engine(r, target_project, jsonb_build_object('run_by', auth.uid()));
+  select * into last_run from public.portfolio_rule_runs rr
+  where rr.rule_id = r.id and rr.project_id = target_project
+  order by rr.created_at desc limit 1;
+  return jsonb_build_object('status', status, 'run_id', last_run.id, 'detail', last_run.detail);
+end;
+$$;
+
+revoke all on function public.run_portfolio_rule(uuid, uuid) from public, anon;
+grant execute on function public.run_portfolio_rule(uuid, uuid) to authenticated;
+
+select public.alhc_revoke_anon_execute(array[
+  'notify_about_project(uuid, uuid, jsonb)', 'guard_portfolio_rule()', 'portfolio_rule_people_ok(jsonb, boolean)',
+  'validate_portfolio_rule()', 'project_owner_ids(uuid)', 'portfolio_rule_today(public.portfolio_rules)',
+  'portfolio_rule_text(text, public.portfolio_rules, uuid)',
+  'portfolio_rule_condition_ok(public.portfolio_rules, jsonb, public.projects)',
+  'execute_portfolio_rule_actions(public.portfolio_rules, uuid, jsonb)',
+  'run_portfolio_rule_engine(public.portfolio_rules, uuid, jsonb, text)',
+  'fire_portfolio_rules(text, uuid, uuid, jsonb)', 'portfolio_rules_on_item()', 'portfolio_rules_on_project()',
+  'portfolio_rules_on_owner()', 'portfolio_rules_on_field()', 'portfolio_rules_tick()', 'run_portfolio_rule(uuid, uuid)'
+]);

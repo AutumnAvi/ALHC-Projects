@@ -55,6 +55,7 @@ import {
 } from "@/lib/forms";
 import { branchProblem, isTriggerType, runReason, splitBranches, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { parseRuleTestResult, type RuleTestResult } from "@/lib/rule-steps";
+import { isPortfolioTrigger } from "@/lib/portfolio-rules";
 import { isUuid } from "@/lib/ids";
 import { normalizeWorkWeek } from "@/lib/workdays";
 import { isReactionKey } from "@/lib/reactions";
@@ -5379,4 +5380,114 @@ export async function deleteStatusTemplate(templateId: string): Promise<ActionRe
     if (missingReal4(result.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
     checkUpdated(result, "Only project editors and above can remove status templates");
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Portfolio rules (Automations V3, batch D). RLS: the portfolio's Admins+ write; the database
+// validates the vocabulary (validate_portfolio_rule) and runs the rules with the owner's access.
+// ---------------------------------------------------------------------------------------------
+
+export type PortfolioRuleInput = {
+  name: string;
+  enabled: boolean;
+  triggerType: string;
+  triggerConfig: Record<string, Json>;
+  conditions: Record<string, Json>[];
+  actions: Record<string, Json>[];
+  ownerId?: string | null;
+  timeZone?: string;
+};
+
+const PORTFOLIO_RULES_MISSING = "Portfolio rules need this release’s database update";
+
+function portfolioRuleRow(input: PortfolioRuleInput) {
+  if (!isPortfolioTrigger(input.triggerType)) throw new InputError("Choose a trigger");
+  const triggerConfig: Record<string, Json> = { ...(input.triggerConfig ?? {}) };
+  // Dates and schedules count in the browser's time zone (like project rules).
+  if (input.timeZone && input.timeZone.length <= 64) triggerConfig.timezone = input.timeZone;
+  return {
+    name: text(input.name, "Rule name", { max: 200 }),
+    enabled: Boolean(input.enabled),
+    trigger_type: input.triggerType,
+    trigger_config: triggerConfig,
+    conditions: Array.isArray(input.conditions) ? input.conditions : [],
+    actions: Array.isArray(input.actions) ? input.actions : [],
+    ...(input.ownerId ? { owner_id: id(input.ownerId, "owner") } : {}),
+  };
+}
+
+function portfolioRuleError(result: DbResult) {
+  if (result.error && (result.error.code === "PGRST205" || result.error.code === "42P01")) throw new InputError(PORTFOLIO_RULES_MISSING);
+  check(result, "Only portfolio admins and owners change its rules");
+}
+
+export async function createPortfolioRule(portfolioId: string, input: PortfolioRuleInput): Promise<ActionResult & { ruleId?: string }> {
+  let ruleId: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const inserted = await supabase
+      .from("portfolio_rules")
+      .insert({ portfolio_id: id(portfolioId, "portfolio"), ...portfolioRuleRow(input), sort_order: Date.now() / 1000 })
+      .select("id")
+      .single();
+    portfolioRuleError(inserted);
+    ruleId = inserted.data?.id;
+  });
+  return result.error ? result : { ruleId };
+}
+
+export async function updatePortfolioRule(ruleId: string, input: PortfolioRuleInput): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const updated = await supabase.from("portfolio_rules").update(portfolioRuleRow(input)).eq("id", id(ruleId, "rule")).select("id");
+    portfolioRuleError(updated);
+    checkUpdated(updated, "Only portfolio admins and owners change its rules");
+  });
+}
+
+export async function setPortfolioRuleEnabled(ruleId: string, enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const updated = await supabase.from("portfolio_rules").update({ enabled: Boolean(enabled) }).eq("id", id(ruleId, "rule")).select("id");
+    portfolioRuleError(updated);
+    checkUpdated(updated, "Only portfolio admins and owners change its rules");
+  });
+}
+
+export async function deletePortfolioRule(ruleId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const updated = await supabase
+      .from("portfolio_rules")
+      .update({ deleted_at: now(), enabled: false })
+      .eq("id", id(ruleId, "rule"))
+      .select("id");
+    portfolioRuleError(updated);
+    checkUpdated(updated, "Only portfolio admins and owners change its rules");
+  });
+}
+
+// Run a "Run manually" portfolio rule on one of its projects (Editors+ of the portfolio).
+export async function runPortfolioRule(ruleId: string, projectId: string): Promise<ActionResult & { status?: string; summary: string[] }> {
+  let status: string | undefined;
+  let summary: string[] = [];
+  let failure: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const ran = await supabase.rpc("run_portfolio_rule", { target_rule: id(ruleId, "rule"), target_project: id(projectId, "project") });
+    if (ran.error?.code === "PGRST202") throw new InputError(PORTFOLIO_RULES_MISSING);
+    check(ran);
+    const data = (ran.data ?? {}) as { status?: unknown; detail?: Json | null };
+    status = typeof data.status === "string" ? data.status : "failed";
+    const detail = data.detail && typeof data.detail === "object" && !Array.isArray(data.detail) ? data.detail : null;
+    if (Array.isArray(detail?.actions)) {
+      summary = detail.actions.flatMap((step) =>
+        step && typeof step === "object" && typeof (step as { result?: unknown }).result === "string" ? [(step as { result: string }).result] : [],
+      );
+    } else if (detail?.actions && typeof detail.actions === "object" && typeof (detail.actions as { error?: unknown }).error === "string") {
+      failure = (detail.actions as { error: string }).error;
+    }
+  });
+  if (result.error) return { ...result, summary };
+  return failure ? { status, summary, error: failure } : { status, summary };
 }

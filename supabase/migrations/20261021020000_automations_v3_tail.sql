@@ -12,3 +12,7 @@ alter table public.rules rename constraint rules_trigger_type_check_v3 to rules_
 -- Dependency kinds: all four (finish-to-finish and start-to-finish, batch C).
 alter table public.task_dependencies drop constraint if exists task_dependencies_kind_check;
 alter table public.task_dependencies rename constraint task_dependencies_kind_check_v3 to task_dependencies_kind_check;
+
+-- Inbox items about a project (portfolio rule notifications and status reminders, batch D).
+alter table public.inbox_items drop constraint if exists inbox_items_target_check;
+alter table public.inbox_items rename constraint inbox_items_target_check_v3 to inbox_items_target_check;

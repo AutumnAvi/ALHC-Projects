@@ -694,6 +694,153 @@ begin
     '[{"type": "complete_task"}]');
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- Batch D: portfolio rules
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  assert has_function_privilege('authenticated', 'public.run_portfolio_rule(uuid, uuid)', 'execute'), 'manual runs are an RPC';
+  assert not has_function_privilege('anon', 'public.run_portfolio_rule(uuid, uuid)', 'execute'), 'nothing for anon';
+  assert not has_function_privilege('authenticated', 'public.run_portfolio_rule_engine(public.portfolio_rules, uuid, jsonb, text)', 'execute'),
+    'the engine is internal';
+  assert not has_table_privilege('authenticated', 'public.portfolio_rule_runs', 'insert'), 'runs: no client writes';
+  assert not has_table_privilege('anon', 'public.portfolio_rules', 'select'), 'rules: nothing for anon';
+  assert (select relrowsecurity from pg_class where oid = 'public.portfolio_rules'::regclass), 'RLS on';
+  assert (select pg_get_constraintdef(oid) like '%project_id%' from pg_constraint where conname = 'inbox_items_target_check'),
+    'the tail renamed the wider Inbox target CHECK';
+end $$;
+
+-- Ava owns portfolio PF with P (hers) and a new project R (hers too); Eli is a portfolio Editor.
+do $$
+declare
+  pf uuid;
+  r uuid;
+  f uuid;
+begin
+  insert into public.portfolios (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'AV3 Campaigns') returning id into pf;
+  insert into av3_ids values ('pf', pf);
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'AV3 Spring launch') returning id into r;
+  insert into av3_ids values ('proj_r', r);
+  perform public.add_portfolio_member(pf, 'av3-eli@example.com', 'editor');
+  perform public.add_project_member(r, 'av3-eli@example.com', 'editor');
+  insert into public.portfolio_fields (portfolio_id, name, field_type, options)
+  values (pf, 'Budget', 'single_select', '[{"id": "o-ok", "name": "OK", "color": "green"}, {"id": "o-over", "name": "Over", "color": "red"}]')
+  returning id into f;
+  insert into av3_ids values ('pf_budget', f);
+
+  -- When a project is added: remind its owner to post a status. When Budget becomes Over: mark it at risk.
+  insert into public.portfolio_rules (portfolio_id, name, enabled, trigger_type, actions)
+  values (pf, 'Welcome', true, 'item_added', '[{"type": "status_reminder", "message": "Post a kickoff status for {{project.name}} in {{portfolio.name}}"}]');
+  insert into public.portfolio_rules (portfolio_id, name, enabled, trigger_type, trigger_config, actions)
+  values (pf, 'Over budget', true, 'field_changed', jsonb_build_object('field_id', f, 'option_id', 'o-over'),
+    '[{"type": "set_status", "status": "at_risk", "note": "Over budget"}]');
+  -- When a project goes off track or at risk: add Vera as a viewer (once).
+  insert into public.portfolio_rules (portfolio_id, name, enabled, trigger_type, trigger_config, conditions, actions)
+  values (pf, 'Watch risky', true, 'status_changed', '{"statuses": ["at_risk", "off_track"]}', '[{"type": "is_not_archived"}]',
+    jsonb_build_array(jsonb_build_object('type', 'add_members', 'people', jsonb_build_array(pg_temp.av3('vera')), 'role', 'viewer')));
+
+  perform public.add_portfolio_project(pf, r);
+end $$;
+
+do $$
+declare
+  r uuid := pg_temp.av3('proj_r');
+begin
+  assert exists (
+    select 1 from public.inbox_items i
+    where i.recipient_id = pg_temp.av3('ava') and i.project_id = r and i.kind = 'rule'
+      and i.data ->> 'message' = 'Post a kickoff status for AV3 Spring launch in AV3 Campaigns'
+  ), 'item added: the owner got a status reminder about the project';
+  assert exists (select 1 from jsonb_array_elements(public.inbox_page('activity')) x where x -> 'project' ->> 'id' = r::text),
+    'the Inbox page lists items about a project';
+  assert public.inbox_unread_count() >= 1, 'and counts them';
+end $$;
+
+-- Budget → Over: status at risk, which adds Vera (a chain of two portfolio rules).
+select public.set_portfolio_field_value(pg_temp.av3('pf_budget'), pg_temp.av3('proj_r'), '"o-over"') is null as ok \gset
+do $$
+declare
+  r uuid := pg_temp.av3('proj_r');
+begin
+  assert (select status from public.projects where id = r) = 'at_risk', 'field changed → status set';
+  assert public.profile_project_role(pg_temp.av3('vera'), r) = 'viewer', 'status changed → Vera added as a viewer';
+  assert (select count(*) from public.portfolio_rule_runs rr where rr.project_id = r and rr.status = 'succeeded') = 3, 'three runs logged';
+end $$;
+
+-- A manual rule with conditions, the due date, a rename, and a notification; then one that acts with
+-- Eli's access (an Editor of R can't archive it).
+do $$
+declare
+  pf uuid := pg_temp.av3('pf');
+  r uuid := pg_temp.av3('proj_r');
+  rule uuid;
+  out jsonb;
+begin
+  insert into public.portfolio_rules (portfolio_id, name, enabled, trigger_type, conditions, actions)
+  values (pf, 'Plan it', true, 'manual', '[{"type": "status_is", "statuses": ["at_risk"]}, {"type": "no_due_date"}]',
+    '[{"type": "set_due_date", "mode": "date", "date": "2026-12-15"}, {"type": "set_name", "name": "{{project.name}} (watch)"},
+      {"type": "notify", "people": ["members"], "message": "{{project.name}} is due {{project.due_date}}"}]')
+  returning id into rule;
+  out := public.run_portfolio_rule(rule, r);
+  assert out ->> 'status' = 'succeeded', format('ran: %s', out);
+  assert (select (due_on, name) = (date '2026-12-15', 'AV3 Spring launch (watch)') from public.projects where id = r), 'due date and name';
+  assert exists (select 1 from public.inbox_items i where i.recipient_id = pg_temp.av3('eli') and i.project_id = r
+    and i.data ->> 'message' = 'AV3 Spring launch (watch) is due Dec 15, 2026'), 'members were notified';
+  out := public.run_portfolio_rule(rule, r);
+  assert out ->> 'status' = 'conditions', 'it has a due date now';
+
+  insert into public.portfolio_rules (portfolio_id, name, enabled, trigger_type, owner_id, actions)
+  values (pf, 'Archive', true, 'manual', pg_temp.av3('eli'), '[{"type": "archive_project"}]') returning id into rule;
+  out := public.run_portfolio_rule(rule, r);
+  assert out ->> 'status' = 'failed', 'the owner''s own access decides';
+  assert (select archived_at is null from public.projects where id = r), 'not archived';
+
+  -- Validation.
+  begin
+    insert into public.portfolio_rules (portfolio_id, name, trigger_type, actions)
+    values (pf, 'Bad', 'manual', '[{"type": "delete_everything"}]');
+    raise exception 'unknown actions are refused';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.portfolio_rules (portfolio_id, name, trigger_type, trigger_config, actions)
+    values (pf, 'Bad field', 'field_changed', jsonb_build_object('field_id', pg_temp.av3('designer')), '[{"type": "archive_project"}]');
+    raise exception 'a project field isn''t a portfolio field';
+  exception when check_violation then null;
+  end;
+end $$;
+
+-- Eli (a portfolio Editor) reads the rules but can't change them; Vera (not in the portfolio) sees none.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a3030030-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  assert (select count(*) from public.portfolio_rules where portfolio_id = pg_temp.av3('pf')) >= 4, 'Editors read the rules';
+  update public.portfolio_rules set enabled = false where portfolio_id = pg_temp.av3('pf');
+  assert not found, 'only Admins change them';
+end $$;
+select set_config('request.jwt.claim.sub', 'a3030030-0000-4000-8000-000000000005', false) is not null as ok \gset
+do $$
+begin
+  assert not exists (select 1 from public.portfolio_rules where portfolio_id = pg_temp.av3('pf')), 'non-members see nothing';
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', 'a3030030-0000-4000-8000-000000000001', false) is not null as ok \gset
+
+-- Due soon (the scheduler).
+do $$
+declare
+  pf uuid := pg_temp.av3('pf');
+  r uuid := pg_temp.av3('proj_r');
+begin
+  update public.projects set due_on = current_date + 3 where id = r;
+  insert into public.portfolio_rules (portfolio_id, name, enabled, trigger_type, trigger_config, actions)
+  values (pf, 'Due soon', true, 'due_approaching', '{"days": 3, "timezone": "UTC"}', '[{"type": "status_reminder"}]');
+  assert (public.workflow_tick() ->> 'portfolio_rules')::integer = 1, 'the scheduler ran it';
+  assert (public.workflow_tick() ->> 'portfolio_rules')::integer = 0, 'once per project and due date';
+end $$;
+
 do $$
 begin
   raise notice 'automations v3 smoke: all assertions passed';
