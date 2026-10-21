@@ -2980,7 +2980,11 @@ begin
   end if;
   if public.is_client_role() and new.owner_id is not null
      and (tg_op = 'INSERT' or new.owner_id is distinct from old.owner_id)
-     and public.profile_portfolio_role(new.owner_id, new.portfolio_id) is null then
+     -- Runs as the person saving (a portfolio Admin+, so RLS lets them read the members).
+     and not exists (
+       select 1 from public.portfolio_members m
+       where m.portfolio_id = new.portfolio_id and m.profile_id = new.owner_id and m.deleted_at is null
+     ) then
     raise exception 'The rule’s owner must be a member of this portfolio' using errcode = 'check_violation';
   end if;
   -- The next run of a scheduled rule (the workspace's workweek for "every workday").
