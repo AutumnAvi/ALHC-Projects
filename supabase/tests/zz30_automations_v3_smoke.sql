@@ -984,6 +984,21 @@ begin
 end $$;
 reset role;
 
+-- rules_param_fix_a: a portfolio rule is validated when what it does changes, never on the engine's
+-- own updates (the scheduler has nobody signed in, so the "you edit that portfolio" check would fail).
+do $$
+begin
+  assert (
+    select pg_get_triggerdef(t.oid) from pg_trigger t
+    where t.tgname = 'portfolio_rules_10_validate' and t.tgrelid = 'public.portfolio_rules'::regclass
+  ) like '%UPDATE OF portfolio_id, trigger_type, trigger_config, conditions, actions%',
+    'portfolio rules are validated only when their trigger, conditions, or actions change';
+  -- The engine's bookkeeping saves with nobody signed in.
+  perform set_config('request.jwt.claim.sub', '', true);
+  update public.portfolio_rules set next_run_at = now() + interval '1 hour' where name = 'As Ava: portfolio';
+  assert found, 'the scheduler can move a portfolio rule''s next run';
+end $$;
+
 do $$
 begin
   raise notice 'automations v3 smoke: all assertions passed';
