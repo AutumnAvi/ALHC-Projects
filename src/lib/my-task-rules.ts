@@ -103,13 +103,14 @@ export function describeMyTaskCondition(c: MyTaskRuleItem, ctx: MyTaskRuleContex
     case "in_project":
     case "not_in_project": {
       const names = strings(c.project_ids).map((id) => ctx.projects.find((p) => p.id === id)?.name ?? "a project");
-      return `it’s ${c.type === "in_project" ? "in" : "not in"} ${names.length ? joinOr(names.map((x) => `“${x}”`)) : "…"}`;
+      return `it’s ${c.type === "in_project" ? "in" : "not in"} ${names.length ? joinOr(names.map((x) => `“${x}”`)) : "(choose projects)"}`;
     }
     case "due_within": {
       const n = whole(c.days);
-      return n === null ? "it’s due soon" : n === 0 ? "it’s due today" : `it’s due within ${n} day${n === 1 ? "" : "s"}`;
+      return n === null ? "it’s due within (enter a number of days)" : n === 0 ? "it’s due today" : `it’s due within ${n} day${n === 1 ? "" : "s"}`;
     }
     case "task_type_is":
+      if (c.kind !== "task" && c.kind !== "milestone" && c.kind !== "approval") return "it’s (choose a task type)";
       return `it’s a${c.kind === "approval" ? "n approval" : c.kind === "milestone" ? " milestone" : " task"}`;
     case "has_due_date":
       return "it has a due date";
@@ -125,9 +126,11 @@ export function describeMyTaskCondition(c: MyTaskRuleItem, ctx: MyTaskRuleContex
 export function describeMyTaskAction(a: MyTaskRuleItem, ctx: MyTaskRuleContext) {
   switch (a.type) {
     case "move_to_section":
+      if (typeof a.section_id !== "string" || !a.section_id) return "move it to (choose one of your sections)";
       return `move it to “${ctx.sections.find((s) => s.id === a.section_id)?.name ?? "a removed section"}”`;
     case "set_due_date": {
-      const n = whole(a.days) ?? 0;
+      const n = whole(a.days);
+      if (n === null) return "set its due date to (enter a number of days)";
       const unit = `${a.business_days === true ? "business " : ""}day${n === 1 ? "" : "s"}`;
       return n === 0 ? "set its due date to today" : `set its due date to ${n} ${unit} from today`;
     }

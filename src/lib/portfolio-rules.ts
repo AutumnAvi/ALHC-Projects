@@ -214,6 +214,19 @@ export function portfolioFieldValueLabel(ctx: PortfolioRuleContext, fieldId: Jso
 
 const statuses = (value: Json | undefined) => strings(value).map((s) => label(PROJECT_STATUSES, s).toLowerCase());
 
+// Is a setting given (not missing, not empty)? A missing one reads "(choose …)" in the sentence.
+function given(value: Json | undefined) {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string") return value.trim() !== "";
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
+function quote(value: Json | undefined) {
+  const text = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  return `“${text.length > 40 ? `${text.slice(0, 39)}…` : text}”`;
+}
+
 export function describePortfolioTrigger(rule: Pick<PortfolioRuleDef, "triggerType" | "triggerConfig">, ctx: PortfolioRuleContext) {
   const cfg = rule.triggerConfig;
   switch (rule.triggerType) {
@@ -223,13 +236,13 @@ export function describePortfolioTrigger(rule: Pick<PortfolioRuleDef, "triggerTy
       return "A project is removed from this portfolio";
     case "status_changed": {
       const s = statuses(cfg.statuses);
-      return s.length ? `A project’s status changes to ${joinWords(s, "or")}` : "A project’s status changes";
+      return s.length ? `A project’s status changes to ${joinWords(s, "or")}` : "A project’s status changes to any status";
     }
     case "owner_changed":
       return "A project gets a new owner";
     case "field_changed": {
       const field = fieldOf(ctx, cfg.field_id);
-      const base = `${field ? field.name : "A removed field"} changes`;
+      const base = `${field ? field.name : given(cfg.field_id) ? "A removed field" : "(choose the field that changes)"} changes`;
       return cfg.option_id ? `${base} to ${portfolioFieldValueLabel(ctx, cfg.field_id, cfg.option_id)}` : base;
     }
     case "due_date_changed":
@@ -243,7 +256,7 @@ export function describePortfolioTrigger(rule: Pick<PortfolioRuleDef, "triggerTy
       return n === 1 ? "A project becomes overdue" : `A project is ${n} days overdue`;
     }
     case "scheduled":
-      return "On a schedule";
+      return given(cfg.frequency) ? "On a schedule" : "On a schedule (choose how often)";
     case "manual":
       return "Someone runs it on a project";
     default:
@@ -251,21 +264,25 @@ export function describePortfolioTrigger(rule: Pick<PortfolioRuleDef, "triggerTy
   }
 }
 
+function fieldName(ctx: PortfolioRuleContext, id: Json | undefined) {
+  return fieldOf(ctx, id)?.name ?? (given(id) ? "a removed field" : "(choose a field)");
+}
+
 export function describePortfolioCondition(c: PortfolioRuleItem, ctx: PortfolioRuleContext) {
   switch (c.type) {
     case "status_is":
     case "status_is_not": {
       const s = statuses(c.statuses);
-      return `status ${c.type === "status_is" ? "is" : "isn’t"} ${s.length ? joinWords(s, "or") : "…"}`;
+      return `status ${c.type === "status_is" ? "is" : "isn’t"} ${s.length ? joinWords(s, "or") : "(choose statuses)"}`;
     }
     case "owner_is":
     case "owner_is_not": {
       const names = strings(c.people).map((p) => portfolioPersonName(ctx, p));
-      return `owner ${c.type === "owner_is" ? "is" : "isn’t"} ${names.length ? joinWords(names, "or") : "…"}`;
+      return `owner ${c.type === "owner_is" ? "is" : "isn’t"} ${names.length ? joinWords(names, "or") : "(choose people)"}`;
     }
     case "due_within": {
       const n = whole(c.days);
-      return n === null ? "is due within a few days" : n === 0 ? "is due today" : `is due within ${n} day${n === 1 ? "" : "s"}`;
+      return n === null ? "is due within (enter a number of days)" : n === 0 ? "is due today" : `is due within ${n} day${n === 1 ? "" : "s"}`;
     }
     case "date_compare": {
       const op = String(c.op ?? "");
@@ -274,7 +291,8 @@ export function describePortfolioCondition(c: PortfolioRuleItem, ctx: PortfolioR
         between: "is between", not_between: "isn’t between",
       };
       const range = op === "between" || op === "not_between";
-      return `the due date ${words[op] ?? "is"} ${day(c.value)}${range ? ` and ${day(c.to)}` : ""}`;
+      const date = (v: Json | undefined, ask: string) => (given(v) ? day(v) : ask);
+      return `the due date ${words[op] ?? "(choose a comparison)"} ${date(c.value, "(choose a date)")}${range ? ` and ${date(c.to, "(choose the end date)")}` : ""}`;
     }
     case "is_archived":
       return "it’s archived";
@@ -287,10 +305,10 @@ export function describePortfolioCondition(c: PortfolioRuleItem, ctx: PortfolioR
     case "is_overdue":
       return "it’s overdue";
     case "field_equals":
-      return `${fieldOf(ctx, c.field_id)?.name ?? "a removed field"} is ${portfolioFieldValueLabel(ctx, c.field_id, c.value)}`;
+      return `${fieldName(ctx, c.field_id)} is ${given(c.value) ? portfolioFieldValueLabel(ctx, c.field_id, c.value) : "(choose a value)"}`;
     case "field_is_set":
     case "field_is_empty":
-      return `${fieldOf(ctx, c.field_id)?.name ?? "a removed field"} is ${c.type === "field_is_set" ? "set" : "empty"}`;
+      return `${fieldName(ctx, c.field_id)} is ${c.type === "field_is_set" ? "set" : "empty"}`;
     default:
       return label(PORTFOLIO_CONDITIONS, c.type).toLowerCase();
   }
@@ -299,31 +317,31 @@ export function describePortfolioCondition(c: PortfolioRuleItem, ctx: PortfolioR
 export function describePortfolioAction(a: PortfolioRuleItem, ctx: PortfolioRuleContext) {
   switch (a.type) {
     case "set_status":
-      return `set the status to ${label(PROJECT_STATUSES, a.status).toLowerCase()}`;
+      return given(a.status) ? `set the status to ${label(PROJECT_STATUSES, a.status).toLowerCase()}` : "set the status to (choose a status)";
     case "status_reminder":
       return "remind the owner to post a status update";
     case "notify": {
       const names = strings(a.people).map((p) => portfolioPersonName(ctx, p));
-      return `notify ${names.length ? joinWords(names, "and") : "…"}`;
+      return `notify ${names.length ? joinWords(names, "and") : "(choose who to notify)"}: ${given(a.message) ? quote(a.message) : "(write the message)"}`;
     }
     case "set_owner":
-      return `make ${portfolioPersonName(ctx, a.person)} the owner`;
+      return `make ${given(a.person) ? portfolioPersonName(ctx, a.person) : "(choose the new owner)"} the owner`;
     case "set_due_date": {
       if (a.mode === "clear") return "clear the due date";
-      if (a.mode === "date") return `set the due date to ${day(a.date)}`;
+      if (a.mode === "date") return `set the due date to ${given(a.date) ? day(a.date) : "(choose a date)"}`;
       const n = whole(a.days);
-      if (n === null) return "set the due date";
+      if (n === null) return "set the due date to (enter a number of days)";
       const unit = `${a.business_days === true ? "business " : ""}day${Math.abs(n) === 1 ? "" : "s"}`;
       return n === 0 ? "set the due date to today" : `set the due date to ${Math.abs(n)} ${unit} ${n < 0 ? "before" : "from"} today`;
     }
     case "set_name":
-      return `rename to “${typeof a.name === "string" ? a.name : ""}”`;
+      return `rename to ${given(a.name) ? quote(a.name) : "(write the new name)"}`;
     case "set_field":
-      return `set ${fieldOf(ctx, a.field_id)?.name ?? "a removed field"} to ${portfolioFieldValueLabel(ctx, a.field_id, a.value)}`;
+      return `set ${fieldName(ctx, a.field_id)} to ${portfolioFieldValueLabel(ctx, a.field_id, a.value)}`;
     case "add_members":
     case "remove_members": {
       const names = strings(a.people).map((p) => portfolioPersonName(ctx, p));
-      const who = names.length ? joinWords(names, "and") : "…";
+      const who = names.length ? joinWords(names, "and") : a.type === "add_members" ? "(choose people to add)" : "(choose people to remove)";
       return a.type === "add_members" ? `add ${who} as ${label(MEMBER_ROLES, a.role ?? "editor").toLowerCase()}` : `remove ${who}`;
     }
     case "archive_project":
@@ -331,6 +349,7 @@ export function describePortfolioAction(a: PortfolioRuleItem, ctx: PortfolioRule
     case "remove_from_portfolio":
       return "remove it from this portfolio";
     case "add_to_portfolio":
+      if (!given(a.portfolio_id)) return "add it to (choose a portfolio)";
       return `add it to “${ctx.otherPortfolios.find((p) => p.id === a.portfolio_id)?.name ?? "another portfolio"}”`;
     default:
       return label(PORTFOLIO_ACTIONS, a.type).toLowerCase();

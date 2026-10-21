@@ -7,7 +7,9 @@
 import { useState } from "react";
 import { FolderClosed, Pencil, Plus, Trash2, X, Zap } from "lucide-react";
 import { Dialog } from "@/components/dialog";
+import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import { MISSING_INPUT } from "@/components/rules/rule-shared";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteMyTaskRule, saveMyTaskRule, setMyTaskRuleEnabled } from "@/lib/actions";
 import {
@@ -22,7 +24,17 @@ import {
   type MyTaskRuleItem,
   type MyTaskTrigger,
 } from "@/lib/my-task-rules";
+import { missingParams, ruleProblems, saveBlockedReason, stepProblems, type StepScope } from "@/lib/rule-params";
 import type { Json } from "@/lib/supabase/database.types";
+
+const TRIGGER_SCOPE: StepScope = { system: "my_tasks", kind: "trigger" };
+const CONDITION_SCOPE: StepScope = { system: "my_tasks", kind: "condition" };
+const ACTION_SCOPE: StepScope = { system: "my_tasks", kind: "action" };
+
+// The keys a step is still missing (its editors are highlighted).
+function missingKeys(step: MyTaskRuleItem, scope: StepScope) {
+  return missingParams(step, scope).map((p) => p.key);
+}
 
 const INPUT = "control h-auto min-h-7 py-0.5";
 
@@ -46,10 +58,13 @@ function actionDefaults(type: MyTaskAction, ctx: MyTaskRuleContext): MyTaskRuleI
 }
 
 function DaysInput({ label, value, min, max, onChange }: { label: string; value: number | null; min: number; max: number; onChange: (n: number) => void }) {
+  const slot = useParamSlot<number>(onChange);
+  const missing = slot.missing && value === null;
   return (
     <input
       type="number"
       aria-label={label}
+      aria-invalid={missing || undefined}
       min={min}
       max={max}
       value={value ?? ""}
@@ -57,7 +72,7 @@ function DaysInput({ label, value, min, max, onChange }: { label: string; value:
         const n = Number(e.currentTarget.value);
         if (e.currentTarget.value !== "" && Number.isFinite(n)) onChange(Math.min(Math.max(Math.trunc(n), min), max));
       }}
-      className={`${INPUT} w-16`}
+      className={`${INPUT} w-16 ${missing ? MISSING_INPUT : ""}`}
     />
   );
 }
@@ -158,12 +173,19 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
     rule?.actions ?? [actionDefaults("move_to_section", ctx)],
   );
   const days = whole(triggerConfig.days);
+  // Every step's settings (rule-params.ts): Save waits until nothing required is missing.
+  const problems = ruleProblems({ triggerType, triggerConfig, conditions, actions }, "my_tasks");
+  const blocked = saveBlockedReason(problems);
   const projectOptions = ctx.projects.map((p) => ({ value: p.id, label: p.name, icon: <FolderClosed className="size-4" /> }));
   const sectionOptions = ctx.sections.map((s) => ({ value: s.id, label: s.name }));
 
   function save() {
     if (!name.trim()) {
       notify("Give the rule a name");
+      return;
+    }
+    if (blocked) {
+      notify(blocked);
       return;
     }
     run(async () => {
@@ -206,18 +228,23 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
             }}
             variant="chip"
           />
+          <StepParams missing={missingKeys({ type: triggerType, ...triggerConfig }, TRIGGER_SCOPE)}>
           {triggerType !== "assigned" ? (
             <>
-              <DaysInput
-                label="Days"
-                value={days ?? 1}
-                min={triggerType === "task_overdue" ? 1 : 0}
-                max={60}
-                onChange={(n) => setTriggerConfig({ ...triggerConfig, days: n })}
-              />
+              <ParamSlot param="days">
+                <DaysInput
+                  label="Days"
+                  value={days ?? 1}
+                  min={triggerType === "task_overdue" ? 1 : 0}
+                  max={60}
+                  onChange={(n) => setTriggerConfig({ ...triggerConfig, days: n })}
+                />
+              </ParamSlot>
               {triggerType === "due_approaching" ? "days before it’s due" : "days after it’s due"}
             </>
           ) : null}
+          </StepParams>
+          <StepPrompt problems={stepProblems({ type: triggerType, ...triggerConfig }, TRIGGER_SCOPE)} />
         </div>
         <div className="flex flex-col gap-1.5">
           {conditions.map((c, i) => (
@@ -230,37 +257,47 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
                 onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? conditionDefaults(v as MyTaskCondition) : x)))}
                 variant="chip"
               />
+              <StepParams missing={missingKeys(c, CONDITION_SCOPE)}>
               {c.type === "in_project" || c.type === "not_in_project" ? (
-                <SmartPicker
-                  multiple
-                  label="Projects"
-                  value={strings(c.project_ids)}
-                  options={projectOptions}
-                  onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? { ...c, project_ids: v } : x)))}
-                  variant="chip"
-                  placeholder="choose projects"
-                  searchable
-                />
+                <ParamSlot param="project_ids">
+                  <SmartPicker
+                    multiple
+                    label="Projects"
+                    value={strings(c.project_ids)}
+                    options={projectOptions}
+                    onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? { ...c, project_ids: v } : x)))}
+                    variant="chip"
+                    placeholder="choose projects"
+                    searchable
+                  />
+                </ParamSlot>
               ) : null}
               {c.type === "due_within" ? (
                 <>
-                  <DaysInput label="Days" value={whole(c.days)} min={0} max={365} onChange={(n) => setConditions(conditions.map((x, j) => (j === i ? { ...c, days: n } : x)))} />
+                  <ParamSlot param="days">
+                    <DaysInput label="Days" value={whole(c.days)} min={0} max={365} onChange={(n) => setConditions(conditions.map((x, j) => (j === i ? { ...c, days: n } : x)))} />
+                  </ParamSlot>
                   days
                 </>
               ) : null}
               {c.type === "task_type_is" ? (
-                <SmartPicker
-                  label="Task type"
-                  value={typeof c.kind === "string" ? c.kind : "task"}
-                  options={[
-                    { value: "task", label: "Task" },
-                    { value: "milestone", label: "Milestone" },
-                    { value: "approval", label: "Approval" },
-                  ]}
-                  onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? { ...c, kind: v } : x)))}
-                  variant="chip"
-                />
+                <ParamSlot param="kind">
+                  <SmartPicker
+                    label="Task type"
+                    value={typeof c.kind === "string" && c.kind ? c.kind : null}
+                    options={[
+                      { value: "task", label: "Task" },
+                      { value: "milestone", label: "Milestone" },
+                      { value: "approval", label: "Approval" },
+                    ]}
+                    onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? { ...c, kind: v } : x)))}
+                    variant="chip"
+                    placeholder="choose a task type"
+                  />
+                </ParamSlot>
               ) : null}
+              </StepParams>
+              <StepPrompt problems={stepProblems(c, CONDITION_SCOPE)} />
               <button type="button" aria-label={`Remove condition ${i + 1}`} data-tooltip="Remove condition" onClick={() => setConditions(conditions.filter((_, j) => j !== i))} className="btn-icon size-6">
                 <X className="size-3.5" />
               </button>
@@ -294,19 +331,24 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
                 onChange={(v) => setActions(actions.map((x, j) => (j === i ? actionDefaults(v as MyTaskAction, ctx) : x)))}
                 variant="chip"
               />
+              <StepParams missing={missingKeys(a, ACTION_SCOPE)}>
               {a.type === "move_to_section" ? (
-                <SmartPicker
-                  label="Section"
-                  value={typeof a.section_id === "string" && a.section_id ? a.section_id : null}
-                  options={sectionOptions}
-                  onChange={(v) => setActions(actions.map((x, j) => (j === i ? { ...a, section_id: v } : x)))}
-                  variant="chip"
-                  placeholder="choose section"
-                />
+                <ParamSlot param="section_id">
+                  <SmartPicker
+                    label="Section"
+                    value={typeof a.section_id === "string" && a.section_id ? a.section_id : null}
+                    options={sectionOptions}
+                    onChange={(v) => setActions(actions.map((x, j) => (j === i ? { ...a, section_id: v } : x)))}
+                    variant="chip"
+                    placeholder="choose section"
+                  />
+                </ParamSlot>
               ) : null}
               {a.type === "set_due_date" ? (
                 <>
-                  <DaysInput label="Days from today" value={whole(a.days)} min={0} max={365} onChange={(n) => setActions(actions.map((x, j) => (j === i ? { ...a, days: n } : x)))} />
+                  <ParamSlot param="days">
+                    <DaysInput label="Days from today" value={whole(a.days)} min={0} max={365} onChange={(n) => setActions(actions.map((x, j) => (j === i ? { ...a, days: n } : x)))} />
+                  </ParamSlot>
                   <SmartPicker
                     label="Days or business days"
                     value={a.business_days === true ? "business" : "days"}
@@ -319,6 +361,8 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
                   />
                 </>
               ) : null}
+              </StepParams>
+              <StepPrompt problems={stepProblems(a, ACTION_SCOPE)} />
               <button
                 type="button"
                 aria-label={`Remove action ${i + 1}`}
@@ -349,11 +393,22 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
           ) : null}
         </div>
       </div>
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        {blocked ? (
+          <span id="my-task-rule-save-blocked" role="status" className="mr-auto text-xs text-amber-800" title={problems.join("\n")}>
+            {blocked}
+          </span>
+        ) : null}
         <button type="button" onClick={onDone} className="btn-secondary">
           Cancel
         </button>
-        <button type="button" onClick={save} disabled={pending} className="btn-primary">
+        <button
+          type="button"
+          onClick={save}
+          disabled={pending || Boolean(blocked)}
+          aria-describedby={blocked ? "my-task-rule-save-blocked" : undefined}
+          className="btn-primary"
+        >
           {pending ? "Saving…" : rule ? "Save" : "Create rule"}
         </button>
       </div>
