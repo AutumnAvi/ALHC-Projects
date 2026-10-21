@@ -2,7 +2,7 @@ import type { Json } from "@/lib/supabase/database.types";
 import { dayLabel } from "@/lib/date-input";
 
 // Portfolio rules (Automations V3, batch D; mirrors validate_portfolio_rule() and the engine in
-// 20261021010000_automations_v3_a.sql). A portfolio rule acts on the projects directly in the portfolio,
+// automations_v3_a.sql). A portfolio rule acts on the projects directly in the portfolio,
 // with its owner's own access. Each entry has a group, a description, and search keywords for the
 // builder's picker (like src/lib/rules.ts).
 

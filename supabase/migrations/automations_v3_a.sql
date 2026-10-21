@@ -1,10 +1,10 @@
 -- ALHC Projects — Automations V3 (docs/AUTOMATIONS-GAP-CHECK.md §8–10, batches A–E).
 --
--- Additive only: nothing above or below needs a statement the hosted connector refuses. The three
--- wider CHECKs (rule trigger types, dependency kinds, Inbox targets) land next to the old ones as
--- …_v3 / …_v2; 20261021020000_automations_v3_tail.sql (applied by hand) retires the old ones and
--- renames the new ones. Until then the new triggers, the new dependency kinds, and Inbox items about a
--- project are refused (the builder and the app say so) while everything else works.
+-- Additive only: nothing here needs a statement the hosted connector refuses. The three wider CHECKs
+-- (rule trigger types, dependency kinds, Inbox targets) land next to the old ones as …_v3;
+-- automations_v3_tail.sql (DROP only, applied by hand) retires the old ones, and the …_v3 ones keep
+-- their names. Until then the new triggers, the new dependency kinds, and Inbox items about a project
+-- are refused (the builder and the app say so) while everything else works.
 --
 -- Batch A — people and routing: round robin and load-balanced "Set assignee", People fields as person
 --   slots everywhere (assignee, subtasks, approvers, followers, notifications, conditions), "Remove
@@ -597,7 +597,7 @@ $$;
 
 revoke all on function public.alhc_patch_function(regprocedure, text[]) from public, anon, authenticated;
 
--- All four dependency kinds (the tail retires the old CHECK and renames this one). The successor of
+-- All four dependency kinds (the tail retires the old two-kind CHECK; this one keeps its name). The successor of
 --   finish_to_start   can't start before the predecessor is done, and can't be completed while it's open
 --   start_to_start    can't start before the predecessor starts (never blocks completion)
 --   finish_to_finish  can't finish before the predecessor is done (blocks completion while it's open)
@@ -671,8 +671,9 @@ $p$  if dependency_kind is null or dependency_kind not in ('finish_to_start', 's
 $p$  if dependency_kind is null or dependency_kind not in ('finish_to_start', 'start_to_start', 'finish_to_finish', 'start_to_finish') then
     raise exception 'A dependency is finish-to-start, start-to-start, finish-to-finish, or start-to-finish' using errcode = 'check_violation';
   end if;
+  -- The tail drops the old two-kind CHECK; while it's there the new kinds can't be stored.
   if dependency_kind in ('finish_to_finish', 'start_to_finish') and exists (
-    select 1 from pg_constraint where conname = 'task_dependencies_kind_check_v3'
+    select 1 from pg_constraint where conname = 'task_dependencies_kind_check' and conrelid = 'public.task_dependencies'::regclass
   ) then
     raise exception 'Finish-to-finish and start-to-finish links need this release''s database update' using errcode = 'check_violation';
   end if;$p$);
@@ -721,7 +722,7 @@ $p$      continue when new_anchor is null;
 select public.alhc_patch_function('public.instantiate_project_snapshot(jsonb, text, date, uuid, text, jsonb)',
 $p$    case when d ->> 'kind' = 'start_to_start' then 'start_to_start' else 'finish_to_start' end,$p$,
 $p$    case when d ->> 'kind' in ('start_to_start', 'finish_to_finish', 'start_to_finish')
-      and not exists (select 1 from pg_constraint where conname = 'task_dependencies_kind_check_v3')
+      and not exists (select 1 from pg_constraint where conname = 'task_dependencies_kind_check' and conrelid = 'public.task_dependencies'::regclass)
       then d ->> 'kind' when d ->> 'kind' = 'start_to_start' then 'start_to_start' else 'finish_to_start' end,$p$);
 
 -- =============================================================================================

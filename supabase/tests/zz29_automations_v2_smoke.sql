@@ -70,7 +70,8 @@ begin
   assert not has_function_privilege('authenticated', 'public.rule_condition_ok(public.rules, jsonb, public.tasks, uuid)', 'execute'),
     'condition checks are internal';
   assert not has_function_privilege('authenticated', 'public.rule_people(jsonb, uuid)', 'execute'), 'people resolution is internal';
-  assert (select count(*) from pg_constraint where conname = 'rules_trigger_type_check') = 1
+  -- (Automations V3's tail replaces it with its wider rules_trigger_type_check_v3.)
+  assert (select count(*) from pg_constraint where conname in ('rules_trigger_type_check', 'rules_trigger_type_check_v3')) = 1
     and not exists (select 1 from pg_constraint where conname = 'rules_trigger_type_check_v2'),
     'the tail renamed the wider trigger CHECK';
 end $$;

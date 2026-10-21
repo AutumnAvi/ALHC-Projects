@@ -1,7 +1,7 @@
 import type { Json } from "@/lib/supabase/database.types";
 
 // My Tasks rules (Automations V3, batch E; mirrors guard_my_task_rule() and run_my_task_rule() in
-// 20261021010000_automations_v3_a.sql): each person's own rules on the tasks assigned to them.
+// automations_v3_a.sql): each person's own rules on the tasks assigned to them.
 
 export const MY_TASK_TRIGGERS = [
   { value: "assigned", label: "A task is assigned to me", description: "Right when someone (or a rule) assigns it to you.", keywords: ["new", "assign"] },

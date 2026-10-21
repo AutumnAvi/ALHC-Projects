@@ -1,4 +1,4 @@
--- Automations V3 (20261021010000_automations_v3_a.sql + 20261021020000_automations_v3_tail.sql).
+-- Automations V3 (automations_v3_a.sql + automations_v3_tail.sql).
 -- Batch A: People-field person slots, round robin / load-balanced Set assignee, Remove followers, the
 -- "Collaborator is added" trigger, Compare people, and "Task came from" a picked form.
 --   a3030030…01 av3-owner@example.com   Ava Owner (owns P)
@@ -50,9 +50,9 @@ begin
   assert not has_table_privilege('authenticated', 'public.rule_assignment_cursors', 'select'), 'cursors: no client reads';
   assert not has_table_privilege('anon', 'public.rule_assignment_cursors', 'select'), 'cursors: nothing for anon';
   assert (select relrowsecurity from pg_class where oid = 'public.rule_assignment_cursors'::regclass), 'cursors: RLS on';
-  assert (select count(*) from pg_constraint where conname = 'rules_trigger_type_check') = 1
-    and not exists (select 1 from pg_constraint where conname in ('rules_trigger_type_check_v2', 'rules_trigger_type_check_v3')),
-    'the V3 tail renamed the wider trigger CHECK';
+  assert (select count(*) from pg_constraint where conname = 'rules_trigger_type_check_v3') = 1
+    and not exists (select 1 from pg_constraint where conname in ('rules_trigger_type_check', 'rules_trigger_type_check_v2')),
+    'the V3 tail dropped the narrower trigger CHECKs';
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
@@ -517,8 +517,9 @@ declare
   c uuid;
   d uuid;
 begin
-  assert (select pg_get_constraintdef(oid) like '%start_to_finish%' from pg_constraint where conname = 'task_dependencies_kind_check'),
-    'the tail renamed the wider dependency CHECK';
+  assert (select pg_get_constraintdef(oid) like '%start_to_finish%' from pg_constraint where conname = 'task_dependencies_kind_check_v3')
+    and not exists (select 1 from pg_constraint where conname = 'task_dependencies_kind_check'),
+    'the tail dropped the two-kind dependency CHECK';
   a := public.create_task(p, pg_temp.av3('intake'), 'Copy');
   b := public.create_task(p, pg_temp.av3('intake'), 'Design FF');
   c := public.create_task(p, pg_temp.av3('intake'), 'Design SF');
@@ -707,8 +708,9 @@ begin
   assert not has_table_privilege('authenticated', 'public.portfolio_rule_runs', 'insert'), 'runs: no client writes';
   assert not has_table_privilege('anon', 'public.portfolio_rules', 'select'), 'rules: nothing for anon';
   assert (select relrowsecurity from pg_class where oid = 'public.portfolio_rules'::regclass), 'RLS on';
-  assert (select pg_get_constraintdef(oid) like '%project_id%' from pg_constraint where conname = 'inbox_items_target_check'),
-    'the tail renamed the wider Inbox target CHECK';
+  assert (select pg_get_constraintdef(oid) like '%project_id%' from pg_constraint where conname = 'inbox_items_target_check_v3')
+    and not exists (select 1 from pg_constraint where conname = 'inbox_items_target_check'),
+    'the tail dropped the narrower Inbox target CHECK';
 end $$;
 
 -- Ava owns portfolio PF with P (hers) and a new project R (hers too); Eli is a portfolio Editor.

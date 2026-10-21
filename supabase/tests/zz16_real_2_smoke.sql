@@ -94,7 +94,8 @@ begin
     and (select relrowsecurity from pg_class where oid = 'public.team_message_reactions'::regclass)
     and (select relrowsecurity from pg_class where oid = 'public.team_message_followers'::regclass)
     and (select relrowsecurity from pg_class where oid = 'public.notification_settings'::regclass), 'RLS is on';
-  assert exists (select 1 from pg_constraint where conname = 'inbox_items_target_check'
+  -- (Automations V3's tail replaces the target CHECK with its wider inbox_items_target_check_v3.)
+  assert exists (select 1 from pg_constraint where conname in ('inbox_items_target_check', 'inbox_items_target_check_v3')
                    and pg_get_constraintdef(oid) like '%team_message_id%')
     and exists (select 1 from pg_constraint where conname = 'inbox_items_kind_check'
                    and pg_get_constraintdef(oid) like '%status_update%')

@@ -25,7 +25,7 @@ export const TRIGGERS = [
   { value: "task_overdue", label: "Task becomes overdue", group: "Dates", description: "Fires once per open task the day after its due date (or later).", keywords: ["late", "missed", "past due"] },
   { value: "scheduled", label: "On a schedule", group: "Flow", description: "Runs every day, workday, week, or month for the open tasks that match.", keywords: ["cron", "daily", "weekly", "every", "recurring", "time"] },
   { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks it from a task's … menu (Run a rule).", keywords: ["button", "on demand", "by hand", "click"] },
-  // Automations V3 (20261021010000_automations_v3_a.sql).
+  // Automations V3 (automations_v3_a.sql).
   { value: "follower_added", label: "A collaborator is added", group: "People", description: "Fires when someone starts following a task (anyone, or people you pick).", keywords: ["follower", "collaborator", "watch", "follow"] },
   // Batch B: start dates.
   { value: "start_date_changed", label: "Start date changes", group: "Dates", description: "Fires when a task's start date is set, moved, or cleared.", keywords: ["begin", "kickoff", "reschedule"] },
