@@ -8,8 +8,8 @@
 --     1,000 characters (an <img> source everyone's browser loads).
 --   * sync_profile_for_user (every sign-in that updates auth metadata, e.g. Google) only fills a name or
 --     picture the person hasn't set, so an edit survives the next sign-in.
---   * A public "avatars" bucket (2 MB, PNG / JPEG / WebP / GIF) with storage.objects policies: pictures are
---     public URLs, workspace members list the bucket; allowlisted people insert / update / delete only <their id>/… . Created
+--   * A public "avatars" bucket (2 MB, PNG / JPEG / WebP / GIF) with storage.objects policies: public
+--     select; allowlisted people insert / update / delete only <their id>/… . Created
 --     with CREATE POLICY only (storage.objects can't be ALTERed); if the hosted migration role is refused
 --     ("must be owner of table objects", as for the email logo policy), run that block as the storage
 --     owner.
@@ -106,18 +106,17 @@ insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_typ
 values ('avatars', 'avatars', true, 2097152, array['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 on conflict (id) do nothing;
 
--- Its policies: pictures are read through public URLs; signed-in workspace members list the bucket; each
--- allowlisted person writes only their own folder (avatars/<user id>/…).
+-- Its policies: public select; each allowlisted person writes only their own folder (avatars/<user id>/…).
 -- Each is created once (no DROP above the tail, so a re-run skips existing ones).
 do $$
 begin
   if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects'
                  and policyname = 'avatars_objects_select_public') then
-    -- Picture URLs are public without any policy (a public bucket); listing stays with people signed in
-    -- to the workspace, because anon reads nothing in Storage (pinned by zz15).
+    -- Public select, avatars bucket only (profile pictures are public files). The one Storage read anon
+    -- has; zz15 pins that it stays limited to this bucket.
     create policy avatars_objects_select_public on storage.objects
-      for select to authenticated
-      using (bucket_id = 'avatars' and (select public.is_allowlisted()));
+      for select to anon, authenticated
+      using (bucket_id = 'avatars');
   end if;
   if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects'
                  and policyname = 'avatars_objects_insert_own') then

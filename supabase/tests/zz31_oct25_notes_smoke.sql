@@ -51,21 +51,17 @@ begin
           and policyname like 'avatars_objects_%') = 4, 'four avatar policies, from the migration';
 end $$;
 
--- Pictures are public URLs (a public bucket); listing is for people signed in to the workspace, and anon
--- reads nothing in Storage (zz15).
+-- Public select on the avatars bucket (and nothing else in Storage for anon).
 insert into storage.objects (bucket_id, name) values ('avatars', 'a1a19025-0000-4000-8000-000000000003/seen.png');
+insert into storage.objects (bucket_id, name) values ('task-attachments', 'a1a19025-0000-4000-8000-000000000003/secret.pdf');
 set role anon;
 do $$
 begin
-  assert not exists (select 1 from storage.objects where bucket_id = 'avatars'), 'anon lists nothing';
-end $$;
-set role authenticated;
-select set_config('request.jwt.claim.sub', 'a1a19025-0000-4000-8000-000000000002', false) is not null as ok \gset
-do $$
-begin
-  assert exists (select 1 from storage.objects where bucket_id = 'avatars' and name like '%/seen.png'), 'members see pictures';
+  assert exists (select 1 from storage.objects where bucket_id = 'avatars' and name like '%/seen.png'), 'public select';
+  assert not exists (select 1 from storage.objects where bucket_id <> 'avatars'), 'only the avatars bucket';
 end $$;
 reset role;
+delete from storage.objects where name like 'a1a19025-0000-4000-8000-000000000003/secret.pdf';
 delete from storage.objects where bucket_id = 'avatars' and name like '%/seen.png';
 
 set role authenticated;

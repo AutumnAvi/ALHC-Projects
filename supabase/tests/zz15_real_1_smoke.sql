@@ -55,9 +55,11 @@ begin
     select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects'
       and policyname = 'task_attachments_objects_insert_form_upload' and roles = '{anon}' and cmd = 'INSERT'
   ), 'anon may only insert form uploads';
+  -- Oct 25 notes: the one exception is public select on profile pictures (avatars bucket only).
   assert not exists (
     select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects' and 'anon' = any (roles) and cmd <> 'INSERT'
-  ), 'anon reads nothing in Storage';
+      and not (policyname = 'avatars_objects_select_public' and cmd = 'SELECT' and qual = '(bucket_id = ''avatars''::text)')
+  ), 'anon reads nothing in Storage but profile pictures';
   assert not has_function_privilege('authenticated', 'public.post_email_forward(text, text, boolean, text, text, text)', 'execute')
     and not has_function_privilege('anon', 'public.post_email_forward(text, text, boolean, text, text, text)', 'execute')
     and has_function_privilege('service_role', 'public.post_email_forward(text, text, boolean, text, text, text)', 'execute'),
