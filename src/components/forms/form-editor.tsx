@@ -32,6 +32,7 @@ import {
 import { FormQuestionField } from "@/components/forms/public-form";
 import { FieldTypeIcon } from "@/components/project/field-editor";
 import { Popover } from "@/components/popover";
+import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteForm, updateForm } from "@/lib/actions";
 import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
@@ -85,6 +86,7 @@ function typeAvailable(type: QuestionType, batch4: boolean, real1: boolean) {
 
 const LABEL = "block text-xs font-medium text-zinc-600";
 const INPUT = "field h-8 w-full";
+const PICKER = "mt-1 h-8 w-full";
 // The drag data type of a question card's handle (native drag and drop, like the pane's subtasks).
 const QUESTION_DRAG = "application/x-alhc-form-question";
 
@@ -957,23 +959,21 @@ function QuestionCard({
               <label htmlFor={`${prefix}-type`} className={LABEL}>
                 Type
               </label>
-              <select
+              <SmartPicker
                 id={`${prefix}-type`}
+                label="Type"
                 value={question.type}
-                onChange={(e) => {
-                  const type = e.currentTarget.value as QuestionType;
+                onChange={(value) => {
+                  const type = value as QuestionType;
                   const next: FormQuestion = { ...question, type };
                   if (isChoice(type) && !next.options?.length) next.options = [{ id: newId(), label: "Option 1" }];
                   onChange(next);
                 }}
-                className={`${INPUT} mt-1`}
-              >
-                {QUESTION_TYPES.filter((t) => typeAvailable(t.value, batch4, real1) || t.value === question.type).map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
+                className={PICKER}
+                options={QUESTION_TYPES.filter((t) => typeAvailable(t.value, batch4, real1) || t.value === question.type).map(
+                  (t) => ({ value: t.value, label: t.label }),
+                )}
+              />
             </div>
             {isAnswerable(question) ? (
               <label className="mt-5 flex items-center gap-2 text-sm text-zinc-700">
@@ -1111,22 +1111,17 @@ function OptionsEditor({
           Add option
         </button>
         {sources.length ? (
-          <select
-            aria-label="Copy options from"
-            value=""
-            onChange={(e) => {
-              const source = sources.find((s) => s.key === e.currentTarget.value);
+          <SmartPicker
+            label="Copy options from"
+            placeholder="Copy options from…"
+            value={null}
+            onChange={(value) => {
+              const source = sources.find((s) => s.key === value);
               if (source) set(source.options);
             }}
-            className="control h-7 text-xs"
-          >
-            <option value="">Copy options from…</option>
-            {sources.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+            className="h-7 text-xs"
+            options={sources.map((s) => ({ value: s.key, label: s.label }))}
+          />
         ) : null}
       </div>
     </fieldset>
@@ -1151,31 +1146,31 @@ function MappingSelect({
       <label htmlFor={`${prefix}-map`} className={LABEL}>
         Fills in
       </label>
-      <select
+      <SmartPicker
         id={`${prefix}-map`}
+        label="Fills in"
         value={value}
-        onChange={(e) => {
-          const v = e.currentTarget.value;
+        onChange={(v) => {
           const next = { ...question };
           if (!v) delete next.maps_to;
           else if (v.startsWith("field:")) next.maps_to = { target: "field", field_id: v.slice(6) };
           else next.maps_to = { target: v as "title" | "notes" | "due_on" | "section" };
           onChange(next);
         }}
-        className={`${INPUT} mt-1`}
-      >
-        <option value="">Nothing (listed in the description)</option>
-        <option value="title">Task name</option>
-        <option value="notes">Description</option>
-        {question.type === "date" ? <option value="due_on">Due date</option> : null}
-        {question.type === "single_select" ? <option value="section">Section</option> : null}
-        {mappable.map((f) => (
-          <option key={f.id} value={`field:${f.id}`}>
-            Field: {f.name}
-            {f.boundToSections ? " (moves the section)" : ""}
-          </option>
-        ))}
-      </select>
+        className={PICKER}
+        searchable={mappable.length > 4}
+        options={[
+          { value: "", label: "Nothing (listed in the description)" },
+          { value: "title", label: "Task name" },
+          { value: "notes", label: "Description" },
+          ...(question.type === "date" ? [{ value: "due_on", label: "Due date" }] : []),
+          ...(question.type === "single_select" ? [{ value: "section", label: "Section" }] : []),
+          ...mappable.map((f) => ({
+            value: `field:${f.id}`,
+            label: `Field: ${f.name}${f.boundToSections ? " (moves the section)" : ""}`,
+          })),
+        ]}
+      />
       {question.maps_to?.target === "section" || (question.maps_to?.target === "field" && isChoice(question.type)) ? (
         <p className="mt-1 text-xs text-zinc-500">Options match by id first, then by name.</p>
       ) : null}
@@ -1388,14 +1383,14 @@ function SettingsTab({
         <label htmlFor="form-destination" className={LABEL}>
           New tasks land in
         </label>
-        <select id="form-destination" value={destination} onChange={(e) => setDestination(e.currentTarget.value)} className={`${INPUT} mt-1`}>
-          <option value="">No section</option>
-          {sections.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+        <SmartPicker
+          id="form-destination"
+          label="New tasks land in"
+          value={destination}
+          onChange={setDestination}
+          className={PICKER}
+          options={[{ value: "", label: "No section" }, ...sections.map((s) => ({ value: s.id, label: s.name }))]}
+        />
         <p className="mt-1 text-xs text-zinc-500">A question that fills in the section (or a Status field) wins over this.</p>
       </div>
       <Setting

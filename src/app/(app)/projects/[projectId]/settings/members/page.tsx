@@ -3,7 +3,16 @@ import { notFound } from "next/navigation";
 import { MembersManager } from "@/components/project/members-manager";
 import { requireMember } from "@/lib/auth";
 import { isEmailConfigured } from "@/lib/email";
-import { getProject, getProjectRole, hasReal1Schema, listPendingInvites, listProjectMembers, listTeams, commenterRoleAllowed } from "@/lib/data";
+import {
+  commenterRoleAllowed,
+  getProject,
+  getProjectRole,
+  hasOct25Schema,
+  hasReal1Schema,
+  listPendingInvites,
+  listProjectMembers,
+  listTeams,
+} from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 
 export async function generateMetadata({
@@ -18,7 +27,7 @@ export default async function ProjectMembersPage({
   params,
 }: PageProps<"/projects/[projectId]/settings/members">) {
   const { projectId } = await params;
-  const [viewer, project, role, members, invites, resendable, allowCommenter] = await Promise.all([
+  const [viewer, project, role, members, invites, resendable, allowCommenter, defaultRoles] = await Promise.all([
     requireMember(),
     getProject(projectId),
     getProjectRole(projectId),
@@ -26,6 +35,7 @@ export default async function ProjectMembersPage({
     listPendingInvites("project", projectId),
     hasReal1Schema(),
     commenterRoleAllowed(),
+    hasOct25Schema(),
   ]);
   if (!project || !role) notFound();
   // Group invite (Admin+): the team directory is workspace-wide, so any team can be added.
@@ -41,6 +51,7 @@ export default async function ProjectMembersPage({
       invites={invites}
       resendable={resendable && isEmailConfigured()}
       allowCommenter={allowCommenter}
+      defaultRoles={defaultRoles}
     />
   );
 }

@@ -51,6 +51,16 @@ type CommonProps = {
   emptyText?: string;
   // Width of the list (at least the button's width).
   panelWidth?: number;
+  // Shown under the options (a note or a link, e.g. where to turn a greyed-out option on).
+  footer?: ReactNode;
+  // Submitted with a surrounding <form> under this name (a hidden input; several values for multiple).
+  name?: string;
+  // The id of an element that describes the picker (help text, an error).
+  "aria-describedby"?: string;
+  // Called first for keys on the closed button (e.g. Escape to close the form around it); call
+  // preventDefault() to stop the picker handling the key.
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  title?: string;
 };
 
 type SingleProps = CommonProps & {
@@ -97,6 +107,8 @@ export function SmartPicker(props: SingleProps | MultiProps) {
     className = "",
     emptyText = "Nothing matches",
     panelWidth = 300,
+    footer,
+    name,
   } = props;
   // "" counts as a choice when an option has that value ("Any form", "any tag", "Nobody").
   const selected = useMemo<string[]>(
@@ -120,6 +132,7 @@ export function SmartPicker(props: SingleProps | MultiProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
   const typed = useRef<{ buffer: string; at: number }>({ buffer: "", at: 0 });
 
   const [open, setOpen] = useState(false);
@@ -216,6 +229,27 @@ export function SmartPicker(props: SingleProps | MultiProps) {
   }, [open, active, listId]);
 
   function onListKey(e: ReactKeyboardEvent) {
+    // The footer (a link): Tab from the list reaches it; from there Tab leaves and Escape closes, and
+    // every other key is the link's own.
+    const inFooter = footerRef.current?.contains(e.target as Node) ?? false;
+    if (inFooter) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      } else if (e.key === "Tab") {
+        close(false);
+      }
+      return;
+    }
+    if (e.key === "Tab" && !e.shiftKey) {
+      const target = footerRef.current?.querySelector<HTMLElement>("a[href], button:not([disabled])");
+      if (target) {
+        e.preventDefault();
+        target.focus();
+        return;
+      }
+    }
     // Escape is handled here so the page around (the rule canvas, the task pane) leaves it alone.
     const result = pickerKey({ open, active, query }, e.key, visible);
     if (!result.handled && !searchable && isPrintableKey(e.key, { ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey })) {
@@ -242,7 +276,8 @@ export function SmartPicker(props: SingleProps | MultiProps) {
   }
 
   function onButtonKey(e: ReactKeyboardEvent<HTMLButtonElement>) {
-    if (disabled || open) return;
+    props.onKeyDown?.(e);
+    if (e.defaultPrevented || disabled || open) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       openList();
@@ -292,6 +327,8 @@ export function SmartPicker(props: SingleProps | MultiProps) {
         aria-controls={open ? listId : undefined}
         disabled={disabled}
         aria-invalid={slot.missing || undefined}
+        aria-describedby={props["aria-describedby"]}
+        title={props.title}
         data-picker-empty={empty || undefined}
         onClick={() => (open ? close() : openList())}
         onKeyDown={onButtonKey}
@@ -302,6 +339,8 @@ export function SmartPicker(props: SingleProps | MultiProps) {
         {display}
         {variant === "control" ? <ChevronDown className="ml-auto size-3.5 shrink-0 text-zinc-400" aria-hidden /> : null}
       </button>
+      {name ? selected.map((value) => <input key={value} type="hidden" name={name} value={value} />) : null}
+      {name && selected.length === 0 && !props.multiple ? <input type="hidden" name={name} value="" /> : null}
       {open
         ? createPortal(
             <div
@@ -404,6 +443,11 @@ export function SmartPicker(props: SingleProps | MultiProps) {
                   })
                 )}
               </ul>
+              {footer ? (
+                <div ref={footerRef} className="shrink-0 border-t border-zinc-100 px-2.5 py-2 text-xs leading-snug text-zinc-500">
+                  {footer}
+                </div>
+              ) : null}
             </div>,
             document.body,
           )

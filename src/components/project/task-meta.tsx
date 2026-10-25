@@ -88,7 +88,7 @@ export function Assignee({
   const name = displayName(profile);
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
-      <Avatar name={name} />
+      <Avatar name={name} src={profile.avatar_url} profileId={profile.id} />
       {showName ? <span className="truncate text-xs text-zinc-600">{name}</span> : null}
       <span className="sr-only">Assigned to {name}</span>
     </span>

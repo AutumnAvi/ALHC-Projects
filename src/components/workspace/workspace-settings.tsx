@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { History, ImageUp, Trash2 } from "lucide-react";
+import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -167,27 +168,12 @@ export function GeneralSettings({
             <label htmlFor="workspace-default-team-select" className={LABEL}>
               Team
             </label>
-            <select
-              id="workspace-default-team-select"
+            <DefaultTeamPicker
               key={workspace.defaultTeamId ?? ""}
-              defaultValue={workspace.defaultTeamId ?? ""}
-              onChange={(e) => {
-                const select = e.currentTarget;
-                if (!select.value) return;
-                run(async () => {
-                  const result = await updateWorkspaceSettings({ defaultTeamId: select.value });
-                  if (result.error) select.value = workspace.defaultTeamId ?? "";
-                  return result;
-                });
-              }}
-              className="field"
-            >
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name}
-                </option>
-              ))}
-            </select>
+              saved={workspace.defaultTeamId ?? ""}
+              teams={teams}
+              run={run}
+            />
           </div>
           <Link href={isAdmin ? "/admin/teams" : "/settings/workspace/teams"} className="btn-ghost h-9">
             Manage teams
@@ -231,5 +217,37 @@ export function GeneralSettings({
         )}
       </SettingsCard>
     </>
+  );
+}
+
+// The default team, saved as soon as it's picked; the saved one comes back if the database refuses.
+function DefaultTeamPicker({
+  saved,
+  teams,
+  run,
+}: {
+  saved: string;
+  teams: { id: string; name: string }[];
+  run: ReturnType<typeof useServerAction>[1];
+}) {
+  const [value, setValue] = useState(saved);
+  return (
+    <SmartPicker
+      id="workspace-default-team-select"
+      label="Default team"
+      value={value}
+      searchable
+      className="h-9"
+      options={teams.map((team) => ({ value: team.id, label: team.name }))}
+      onChange={(next) => {
+        if (!next || next === value) return;
+        setValue(next);
+        run(async () => {
+          const result = await updateWorkspaceSettings({ defaultTeamId: next });
+          if (result.error) setValue(saved);
+          return result;
+        });
+      }}
+    />
   );
 }

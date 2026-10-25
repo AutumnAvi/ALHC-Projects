@@ -68,7 +68,7 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
     <main className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-auto">
         <header className="flex flex-wrap items-start gap-4 border-b border-zinc-200 px-gutter py-6">
-          <Avatar name={person.name} size="lg" />
+          <Avatar name={person.name} profileId={person.id} size="xl" />
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-xl font-semibold tracking-tight text-zinc-900">
               {person.name}

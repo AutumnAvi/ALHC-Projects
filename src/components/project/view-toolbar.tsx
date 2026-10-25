@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { useCan } from "@/components/project/project-access";
 import { useViewConfig } from "@/components/project/view-config";
@@ -49,7 +50,6 @@ import { ExportLink } from "@/components/reports/report-chrome";
 // Shared with every view layout (List, Board, Calendar, Timeline) so the chrome reads as one product.
 const toolButton = "btn-ghost";
 const activeTool = "text-accent-700 hover:text-accent-800";
-const selectClass = "control px-1.5";
 const menuRow = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100";
 
 // Asana's one-line toolbar: the blue split "Add task" on the left; Filter, Sort, Group, Options, and a
@@ -161,38 +161,37 @@ export function ViewToolbar({
                         <label className="sr-only" htmlFor={`sort-key-${index}`}>
                           Sort by
                         </label>
-                        <select
+                        <SmartPicker
                           id={`sort-key-${index}`}
+                          label="Sort by"
                           value={sort.key}
-                          onChange={(e) => {
+                          onChange={(value) => {
                             const next = [...sorts];
-                            next[index] = { ...sort, key: e.currentTarget.value as SortKey };
+                            next[index] = { ...sort, key: value as SortKey };
                             apply({ ...current, sort: next });
                           }}
-                          className={`${selectClass} min-w-0 flex-1`}
-                        >
-                          {sortChoices.map((s) => (
-                            <option key={s.value} value={s.value}>
-                              {s.label}
-                            </option>
-                          ))}
-                        </select>
+                          className="min-w-0 flex-1 px-1.5"
+                          options={sortChoices.map((s) => ({ value: s.value, label: s.label }))}
+                        />
                         <label className="sr-only" htmlFor={`sort-dir-${index}`}>
                           Direction
                         </label>
-                        <select
+                        <SmartPicker
                           id={`sort-dir-${index}`}
+                          label="Direction"
                           value={sort.dir}
-                          onChange={(e) => {
+                          onChange={(value) => {
                             const next = [...sorts];
-                            next[index] = { ...sort, dir: e.currentTarget.value === "desc" ? "desc" : "asc" };
+                            next[index] = { ...sort, dir: value === "desc" ? "desc" : "asc" };
                             apply({ ...current, sort: next });
                           }}
-                          className={selectClass}
-                        >
-                          <option value="asc">Ascending</option>
-                          <option value="desc">Descending</option>
-                        </select>
+                          className="w-auto px-1.5"
+                          panelWidth={160}
+                          options={[
+                            { value: "asc", label: "Ascending" },
+                            { value: "desc", label: "Descending" },
+                          ]}
+                        />
                         {sorts.length > 1 ? (
                           <button
                             type="button"

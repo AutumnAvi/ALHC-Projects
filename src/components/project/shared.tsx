@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
+import { SmartPicker } from "@/components/smart-picker";
 import { useCan } from "@/components/project/project-access";
 import { useTaskTemplates } from "@/components/project/task-templates-context";
 import { useServerAction } from "@/components/toast";
@@ -373,24 +374,21 @@ export function AddTaskInput({
           variant === "card" ? "shadow-xs" : ""
         }`}
       />
-      <label className="sr-only" htmlFor={`add-task-kind-${sectionId ?? "none"}-${variant}${idSuffix}`}>
-        Type of the new task
-      </label>
-      <select
+      <SmartPicker
         id={`add-task-kind-${sectionId ?? "none"}-${variant}${idSuffix}`}
+        label="Type of the new task"
         value={kind}
-        onChange={(e) => setKind(parseTaskKind(e.currentTarget.value))}
+        onChange={(value) => setKind(parseTaskKind(value))}
         onKeyDown={(e) => {
-          if (e.key === "Escape") close();
+          if (e.key === "Escape") {
+            e.preventDefault();
+            close();
+          }
         }}
-        className="control h-8 w-auto shrink-0 text-xs"
-      >
-        {TASK_KINDS.map((k) => (
-          <option key={k} value={k}>
-            {TASK_KIND_LABELS[k]}
-          </option>
-        ))}
-      </select>
+        panelWidth={180}
+        className="h-8 w-auto shrink-0 text-xs"
+        options={TASK_KINDS.map((k) => ({ value: k, label: TASK_KIND_LABELS[k] }))}
+      />
       {templates.length > 0 ? (
         <Popover
           label="Add from a task template"

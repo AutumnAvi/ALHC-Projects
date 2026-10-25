@@ -5,6 +5,7 @@ import { useState } from "react";
 import { LayoutTemplate, ListPlus, Pencil, Plus, Trash2 } from "lucide-react";
 import { DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { ReadOnlyNotice, useCan } from "@/components/project/project-access";
+import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import {
@@ -134,19 +135,17 @@ function SaveProjectTemplate({
               <label htmlFor="template-replace" className={DIALOG_LABEL}>
                 Save as
               </label>
-              <select
+              <SmartPicker
                 id="template-replace"
+                label="Save as"
                 value={replaceId}
-                onChange={(e) => setReplaceId(e.target.value)}
-                className="control mt-1"
-              >
-                <option value="">A new template</option>
-                {replaceable.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    Replace “{t.name}”{t.isExample ? " (example)" : ""}
-                  </option>
-                ))}
-              </select>
+                onChange={setReplaceId}
+                className="mt-1 h-8 w-auto max-w-full"
+                options={[
+                  { value: "", label: "A new template" },
+                  ...replaceable.map((t) => ({ value: t.id, label: `Replace “${t.name}”${t.isExample ? " (example)" : ""}` })),
+                ]}
+              />
               <p className={DIALOG_HINT}>
                 Replacing overwrites that template’s content with this project; projects already made from it don’t
                 change.

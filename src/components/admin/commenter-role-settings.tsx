@@ -34,8 +34,8 @@ export function CommenterRoleSettings({ allowed, commenters }: { allowed: boolea
         <span>
           <span className="block text-sm font-medium text-zinc-900">Allow Commenter role</span>
           <span className="block text-sm text-zinc-600">
-            Commenters can read a project and comment, but not edit tasks. While this is off, Commenter isn’t offered when
-            sharing a project or inviting people. People who already have it keep it.
+            Commenters can read a project, comment, and decide approvals, but not edit tasks or fields. While this is off,
+            Commenter shows greyed out when sharing a project or inviting people. People who already have it keep it.
           </span>
         </span>
       </label>

@@ -6,6 +6,8 @@ import { Clock, Globe, Link2, Lock, Mail, UserMinus, Users, X } from "lucide-rea
 import { Avatar } from "@/components/avatar";
 import { Dialog } from "@/components/dialog";
 import { ResendInviteButton } from "@/components/people/pending-invites";
+import { MemberRolePicker, RolePicker, TeamRolePicker, projectRoleOptions } from "@/components/role-picker";
+import { SmartPicker } from "@/components/smart-picker";
 import { copyProjectLink } from "@/components/project/project-page-context";
 import { useShell } from "@/components/shell/shell-context";
 import { useNotify } from "@/components/toast";
@@ -20,7 +22,7 @@ import {
 } from "@/lib/actions";
 import type { ShareData, ShareMember, SharePerson, ShareTeam } from "@/lib/project-page";
 import { loadProjectShare } from "@/lib/project-page-actions";
-import { ROLE_DESCRIPTIONS, ROLE_LABELS, assignableRoles, hasRole, isProjectRole } from "@/lib/roles";
+import { PERSON_DEFAULT_ROLE, ROLE_DESCRIPTIONS, ROLE_LABELS, assignableRoles, hasRole, isProjectRole } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
 import {
   EMAIL_PATTERN,
@@ -167,7 +169,9 @@ function InviteForm({
   const [open, setOpen] = useState(false);
   // Inviting as Owner isn't offered (owners promote someone from the list below instead).
   const roles = assignableRoles(data.viewerRole, data.allowCommenter).filter((r) => r !== "owner");
-  const [role, setRole] = useState(roles.includes("editor") ? "editor" : (roles[0] ?? "viewer"));
+  const [role, setRole] = useState<string>(
+    data.defaultRoles ? PERSON_DEFAULT_ROLE : roles.includes("editor") ? "editor" : (roles[0] ?? "viewer"),
+  );
 
   const memberIds = new Set(data.members.map((m) => m.profileId));
   const knownEmails = new Set([...data.members, ...data.invites].map((m) => m.email.toLowerCase()));
@@ -227,7 +231,7 @@ function InviteForm({
       let joinedWorkspace = 0;
       for (const target of all) {
         if (target.kind === "team") {
-          if (!isTeamProjectRole(role)) continue;
+          if (!isTeamProjectRole(role) && role !== PERSON_DEFAULT_ROLE) continue;
           const outcome = await addTeamToProject(projectId, target.team.id, role);
           if (outcome.error) problems.push(`${target.team.name}: ${outcome.error}`);
           else {
@@ -285,7 +289,7 @@ function InviteForm({
                 ) : target.kind === "email" ? (
                   <Mail className="size-3.5 text-zinc-500" aria-hidden />
                 ) : (
-                  <Avatar name={target.person.name} />
+                  <Avatar name={target.person.name} profileId={target.person.id} />
                 )}
                 <span className="truncate">{labelOf(target)}</span>
                 <button
@@ -364,7 +368,7 @@ function InviteForm({
                 >
                   {option.kind === "person" ? (
                     <>
-                      <Avatar name={option.person.name} size="md" />
+                      <Avatar name={option.person.name} profileId={option.person.id} size="md" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-zinc-900">{option.person.name}</span>
                         <span className="block truncate text-xs text-zinc-500">{option.person.email}</span>
@@ -393,21 +397,18 @@ function InviteForm({
             </ul>
           ) : null}
         </div>
-        <label htmlFor={`${listId}-role`} className="sr-only">
-          Role for the people you invite
-        </label>
-        <select
+        <RolePicker
           id={`${listId}-role`}
+          label="Role for the people you invite"
           value={role}
-          onChange={(e) => setRole(e.currentTarget.value as typeof role)}
-          className="field w-auto shrink-0"
-        >
-          {roles.map((r) => (
-            <option key={r} value={r}>
-              {ROLE_LABELS[r]}
-            </option>
-          ))}
-        </select>
+          onChange={setRole}
+          options={projectRoleOptions({
+            grantable: roles,
+            allowCommenter: data.allowCommenter,
+            includeDefault: data.defaultRoles,
+            inviting: true,
+          })}
+        />
         <button
           type="submit"
           disabled={pending || (targets.length === 0 && !typedTarget)}
@@ -457,28 +458,20 @@ function ProjectAccess({
         <div className="min-w-0 flex-1">
           {canManage ? (
             <>
-              <label htmlFor="share-visibility" className="sr-only">
-                Who can find this project
-              </label>
-              <select
-                id="share-visibility"
+              <VisibilityPicker
                 key={data.visibility}
-                defaultValue={data.visibility}
+                saved={data.visibility}
+                label={label}
                 disabled={pending}
-                onChange={(e) => {
-                  const select = e.currentTarget;
+                onPick={(next, revert) =>
                   change(async () => {
-                    const result = await updateProjectTeam(projectId, { visibility: select.value });
+                    const result = await updateProjectTeam(projectId, { visibility: next });
                     // Refused: show the saved value again (the reload doesn't change it).
-                    if (result.error) select.value = data.visibility;
+                    if (result.error) revert();
                     return result;
-                  });
-                }}
-                className="control h-8 w-auto max-w-full font-medium"
-              >
-                <option value="private">{label("private")}</option>
-                <option value="team">{label("team")}</option>
-              </select>
+                  })
+                }
+              />
             </>
           ) : (
             <p className="text-sm font-medium text-zinc-900">{label(data.visibility)}</p>
@@ -487,6 +480,37 @@ function ProjectAccess({
         </div>
       </div>
     </section>
+  );
+}
+
+function VisibilityPicker({
+  saved,
+  label,
+  disabled,
+  onPick,
+}: {
+  saved: ProjectVisibility;
+  label: (v: ProjectVisibility) => string;
+  disabled: boolean;
+  onPick: (next: ProjectVisibility, revert: () => void) => void;
+}) {
+  const [shown, setShown] = useState<ProjectVisibility>(saved);
+  return (
+    <SmartPicker
+      id="share-visibility"
+      label="Who can find this project"
+      value={shown}
+      disabled={disabled}
+      panelWidth={260}
+      className="h-8 w-auto max-w-full font-medium"
+      options={(["private", "team"] as const).map((v) => ({ value: v, label: label(v), description: VISIBILITY_DESCRIPTIONS[v] }))}
+      onChange={(value) => {
+        const next: ProjectVisibility = value === "team" ? "team" : "private";
+        if (next === shown) return;
+        setShown(next);
+        onPick(next, () => setShown(saved));
+      }}
+    />
   );
 }
 
@@ -538,35 +562,25 @@ function WhoHasAccess({
             </div>
             {canManage && isTeamProjectRole(team.role) ? (
               <>
-                <label htmlFor={`share-team-${team.id}`} className="sr-only">
-                  Role for people added from {team.name}
-                </label>
-                <select
-                  id={`share-team-${team.id}`}
-                  key={team.role}
-                  defaultValue={team.role}
+                <TeamRolePicker
+                  key={`${team.role}-${team.usesDefaultRoles}`}
+                  team={team}
+                  grantable={grantable.filter((r) => r !== "owner")}
+                  allowCommenter={data.allowCommenter}
+                  defaultRoles={data.defaultRoles}
                   disabled={pending}
-                  title="Adds anyone on the team who isn’t here yet with this role. People already here keep their own role."
-                  onChange={(e) => {
-                    const select = e.currentTarget;
-                    change(async () => {
-                      const outcome = await addTeamToProject(projectId, team.id, select.value);
-                      if (outcome.error) select.value = team.role;
-                      if (outcome.result) notify(describeTeamInvite(team.name, outcome.result));
-                      return outcome;
-                    });
+                  run={change}
+                  save={async (next) => {
+                    const outcome = await addTeamToProject(projectId, team.id, next);
+                    if (outcome.result) notify(describeTeamInvite(team.name, outcome.result));
+                    return outcome;
                   }}
-                  className="control h-7 w-28 shrink-0 text-xs"
-                >
-                  {grantable.filter(isTeamProjectRole).map((r) => (
-                    <option key={r} value={r}>
-                      {ROLE_LABELS[r]}
-                    </option>
-                  ))}
-                </select>
+                />
               </>
             ) : (
-              <span className="w-28 shrink-0 text-xs text-zinc-600">{isProjectRole(team.role) ? ROLE_LABELS[team.role] : team.role}</span>
+              <span className="w-32 shrink-0 text-xs text-zinc-600">
+                {team.usesDefaultRoles ? "Their default role" : isProjectRole(team.role) ? ROLE_LABELS[team.role] : team.role}
+              </span>
             )}
             <span aria-hidden className="w-12 shrink-0" />
           </li>
@@ -579,6 +593,7 @@ function WhoHasAccess({
             manageable={canManage && (member.role !== "owner" || isOwner)}
             lastOwner={member.role === "owner" && ownerCount === 1}
             grantable={grantable}
+            allowCommenter={data.allowCommenter}
             pending={pending}
             projectId={projectId}
             change={change}
@@ -635,6 +650,7 @@ function MemberRow({
   manageable,
   lastOwner,
   grantable,
+  allowCommenter,
   pending,
   projectId,
   change,
@@ -644,14 +660,14 @@ function MemberRow({
   manageable: boolean;
   lastOwner: boolean;
   grantable: ReturnType<typeof assignableRoles>;
+  allowCommenter: boolean;
   pending: boolean;
   projectId: string;
   change: Change;
 }) {
-  const options = grantable.includes(member.role) ? grantable : [member.role, ...grantable];
   return (
     <li className="flex items-center gap-2.5 py-1.5">
-      <Avatar name={member.name} size="md" />
+      <Avatar name={member.name} profileId={member.profileId} size="md" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-zinc-900">
           {member.name}
@@ -660,35 +676,20 @@ function MemberRow({
         {member.name !== member.email ? <p className="truncate text-xs text-zinc-500">{member.email}</p> : null}
       </div>
       {manageable ? (
-        <>
-          <label htmlFor={`share-role-${member.profileId}`} className="sr-only">
-            Role for {member.name}
-          </label>
-          <select
-            id={`share-role-${member.profileId}`}
-            key={member.role}
-            defaultValue={member.role}
-            disabled={pending || lastOwner}
-            title={lastOwner ? "A project needs at least one owner" : ROLE_DESCRIPTIONS[member.role]}
-            onChange={(e) => {
-              const select = e.currentTarget;
-              change(async () => {
-                const result = await changeProjectMemberRole(projectId, member.profileId, select.value);
-                if (result.error) select.value = member.role;
-                return result;
-              });
-            }}
-            className="control h-7 w-28 shrink-0 text-xs"
-          >
-            {options.map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABELS[r]}
-              </option>
-            ))}
-          </select>
-        </>
+        <MemberRolePicker
+          key={member.role}
+          id={`share-role-${member.profileId}`}
+          label={`Role for ${member.name}`}
+          role={member.role}
+          grantable={grantable}
+          allowCommenter={allowCommenter}
+          disabled={pending || lastOwner}
+          title={lastOwner ? "A project needs at least one owner" : undefined}
+          run={change}
+          save={(next) => changeProjectMemberRole(projectId, member.profileId, next)}
+        />
       ) : (
-        <span className="w-28 shrink-0 text-xs text-zinc-600" title={ROLE_DESCRIPTIONS[member.role]}>
+        <span className="w-32 shrink-0 text-xs text-zinc-600" title={ROLE_DESCRIPTIONS[member.role]}>
           {ROLE_LABELS[member.role]}
         </span>
       )}

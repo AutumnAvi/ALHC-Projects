@@ -93,8 +93,13 @@ export function Popover({
 
   useEffect(() => {
     if (!open) return;
+    // A SmartPicker opened from the panel draws its list on document.body: clicks and scrolls in it
+    // belong to the panel.
+    const inPicker = (target: EventTarget | null) =>
+      target instanceof Element && target.closest("[data-smart-picker]") !== null;
     const onPointer = (e: MouseEvent) => {
       const target = e.target as Node;
+      if (inPicker(e.target)) return;
       if (!panelRef.current?.contains(target) && !buttonRef.current?.contains(target)) setPosition(null);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -106,6 +111,7 @@ export function Popover({
       }
     };
     const onScroll = (e: Event) => {
+      if (inPicker(e.target)) return;
       if (!panelRef.current?.contains(e.target as Node)) setPosition(null);
     };
     const onResize = () => setPosition(null);

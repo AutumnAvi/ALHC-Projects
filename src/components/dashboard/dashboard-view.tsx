@@ -5,6 +5,7 @@ import { useState } from "react";
 import { ArrowRight, ChartColumn, ChevronDown, ChevronUp, Hash, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
+import { SmartPicker } from "@/components/smart-picker";
 import { FilterChips, FilterEditor, type FilterContext } from "@/components/project/filter-editor";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -299,23 +300,18 @@ function WidgetEditor({
             className="rounded-md border border-zinc-200 px-2 py-1.5 text-sm font-normal text-zinc-900 focus:border-accent-500 focus:outline-none"
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
-          Type
-          <select
+        <div className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
+          <span aria-hidden>Type</span>
+          <SmartPicker
+            label="Type"
             value={kind}
-            onChange={(e) => {
-              const value = e.currentTarget.value;
+            onChange={(value) => {
               if (isWidgetKind(value)) setKind(value);
             }}
-            className="rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm font-normal text-zinc-900 focus:border-accent-500 focus:outline-none"
-          >
-            {WIDGET_KINDS.map((k) => (
-              <option key={k.value} value={k.value}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            className="h-8 text-sm font-normal text-zinc-900"
+            options={WIDGET_KINDS.map((k) => ({ value: k.value, label: k.label }))}
+          />
+        </div>
       </div>
       <div className="rounded-lg border border-zinc-200 p-3">
         <FilterEditor filters={filters} onChange={setFilters} context={context} idPrefix={prefix} showText />

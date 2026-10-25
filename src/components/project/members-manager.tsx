@@ -6,6 +6,8 @@ import { Crown, LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { personHref } from "@/lib/people";
 import { PendingInvites } from "@/components/people/pending-invites";
+import { MemberRolePicker, RolePicker, projectRoleOptions } from "@/components/role-picker";
+import { SmartPicker } from "@/components/smart-picker";
 import { useShell } from "@/components/shell/shell-context";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
@@ -18,6 +20,8 @@ import {
 } from "@/lib/actions";
 import type { ProjectMember } from "@/lib/data";
 import {
+  COMMENTER_SWITCH_HREF,
+  PERSON_DEFAULT_ROLE,
   PROJECT_ROLES,
   ROLE_DESCRIPTIONS,
   ROLE_LABELS,
@@ -44,6 +48,7 @@ export function MembersManager({
   invites,
   resendable,
   allowCommenter = true,
+  defaultRoles = false,
 }: {
   projectId: string;
   members: ProjectMember[];
@@ -56,14 +61,16 @@ export function MembersManager({
   resendable: boolean;
   // The workspace offers the Commenter role (Admin console → Security).
   allowCommenter?: boolean;
+  // "Their default role" can be picked (the Oct 25 notes' database update is applied).
+  defaultRoles?: boolean;
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
   const { isWorkspaceAdmin } = useShell();
   const [teamId, setTeamId] = useState("");
-  const [teamRole, setTeamRole] = useState<ProjectRole>("editor");
+  const [teamRole, setTeamRole] = useState<string>(defaultRoles ? PERSON_DEFAULT_ROLE : "editor");
   const emailRef = useRef<HTMLInputElement>(null);
-  const [inviteRole, setInviteRole] = useState<ProjectRole>("editor");
+  const [inviteRole, setInviteRole] = useState<string>(defaultRoles ? PERSON_DEFAULT_ROLE : "editor");
   const canManage = hasRole(viewerRole, "admin");
   const isOwner = viewerRole === "owner";
   const grantable = assignableRoles(viewerRole, allowCommenter);
@@ -113,21 +120,21 @@ export function MembersManager({
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label htmlFor="invite-role" className="text-xs font-medium text-zinc-600">
+              <span id="invite-role-label" className="text-xs font-medium text-zinc-600">
                 Role
-              </label>
-              <select
+              </span>
+              <RolePicker
                 id="invite-role"
+                label="Role for the person you invite"
                 value={inviteRole}
-                onChange={(e) => setInviteRole(e.currentTarget.value as ProjectRole)}
-                className={inputClass}
-              >
-                {grantable.map((role) => (
-                  <option key={role} value={role}>
-                    {ROLE_LABELS[role]}
-                  </option>
-                ))}
-              </select>
+                onChange={setInviteRole}
+                options={projectRoleOptions({
+                  grantable: grantable.filter((r) => r !== "owner"),
+                  allowCommenter,
+                  includeDefault: defaultRoles,
+                  inviting: true,
+                })}
+              />
             </div>
             <button
               type="submit"
@@ -165,7 +172,7 @@ export function MembersManager({
               onSubmit={(e) => {
                 e.preventDefault();
                 const team = teams.find((t) => t.id === teamId);
-                if (!team || !isTeamProjectRole(teamRole)) return;
+                if (!team || (!isTeamProjectRole(teamRole) && teamRole !== PERSON_DEFAULT_ROLE)) return;
                 run(async () => {
                   const outcome = await addTeamToProject(projectId, team.id, teamRole);
                   if (outcome.result) {
@@ -177,40 +184,37 @@ export function MembersManager({
               }}
             >
               <div className="flex min-w-56 flex-1 flex-col gap-1">
-                <label htmlFor="add-team" className="text-xs font-medium text-zinc-600">
-                  Team
-                </label>
-                <select
+                <span className="text-xs font-medium text-zinc-600">Team</span>
+                <SmartPicker
                   id="add-team"
-                  required
+                  label="Team"
+                  placeholder="Choose a team…"
                   value={teamId}
-                  onChange={(e) => setTeamId(e.currentTarget.value)}
-                  className={inputClass}
-                >
-                  <option value="">Choose a team…</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.memberCount} {t.memberCount === 1 ? "person" : "people"})
-                    </option>
-                  ))}
-                </select>
+                  onChange={setTeamId}
+                  searchable
+                  className="h-9 w-full"
+                  options={teams.map((t) => ({
+                    value: t.id,
+                    label: t.name,
+                    description: `${t.memberCount} ${t.memberCount === 1 ? "person" : "people"}`,
+                  }))}
+                />
               </div>
               <div className="flex flex-col gap-1">
-                <label htmlFor="add-team-role" className="text-xs font-medium text-zinc-600">
-                  Role
-                </label>
-                <select
+                <span className="text-xs font-medium text-zinc-600">Role</span>
+                <RolePicker
                   id="add-team-role"
+                  label="Role for people added from the team"
                   value={teamRole}
-                  onChange={(e) => setTeamRole(e.currentTarget.value as ProjectRole)}
-                  className={inputClass}
-                >
-                  {grantable.filter(isTeamProjectRole).map((role) => (
-                    <option key={role} value={role}>
-                      {ROLE_LABELS[role]}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setTeamRole}
+                  options={projectRoleOptions({
+                    grantable: grantable.filter((r) => r !== "owner"),
+                    allowCommenter,
+                    includeDefault: defaultRoles,
+                    defaultDescription: "Each team member joins with their own default project role",
+                    inviting: true,
+                  })}
+                />
               </div>
               <button
                 type="submit"
@@ -245,11 +249,10 @@ export function MembersManager({
             const name = member.name;
             // Admins manage everyone except owners; owners manage everyone. The SQL RPCs enforce the same.
             const manageable = canManage && (member.role !== "owner" || isOwner);
-            const options = grantable.includes(member.role) ? grantable : [member.role, ...grantable];
             const lastOwner = member.role === "owner" && ownerCount === 1;
             return (
               <li key={member.profileId} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                <Avatar name={name} size="md" />
+                <Avatar name={name} profileId={member.profileId} size="md" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-zinc-900">
                     <Link href={personHref(member.profileId)} className="hover:underline">
@@ -261,31 +264,18 @@ export function MembersManager({
                 </div>
                 {manageable ? (
                   <>
-                    <label htmlFor={`role-${member.profileId}`} className="sr-only">
-                      Role for {name}
-                    </label>
-                    <select
-                      id={`role-${member.profileId}`}
+                    <MemberRolePicker
                       key={member.role}
-                      defaultValue={member.role}
+                      id={`role-${member.profileId}`}
+                      label={`Role for ${name}`}
+                      role={member.role}
+                      grantable={grantable}
+                      allowCommenter={allowCommenter}
                       disabled={pending || lastOwner}
-                      title={lastOwner ? "A project needs at least one owner" : ROLE_DESCRIPTIONS[member.role]}
-                      onChange={(e) => {
-                        const select = e.currentTarget;
-                        run(async () => {
-                          const result = await changeProjectMemberRole(projectId, member.profileId, select.value);
-                          if (result.error) select.value = member.role;
-                          return result;
-                        });
-                      }}
-                      className={inputClass}
-                    >
-                      {options.map((role) => (
-                        <option key={role} value={role}>
-                          {ROLE_LABELS[role]}
-                        </option>
-                      ))}
-                    </select>
+                      title={lastOwner ? "A project needs at least one owner" : undefined}
+                      run={run}
+                      save={(next) => changeProjectMemberRole(projectId, member.profileId, next)}
+                    />
                   </>
                 ) : (
                   <span
@@ -370,7 +360,22 @@ export function MembersManager({
               <dt className="font-medium text-zinc-800">{ROLE_LABELS[role]}</dt>
               <dd className="text-zinc-600">
                 {ROLE_DESCRIPTIONS[role]}
-                {role === "commenter" && !allowCommenter ? " (not offered in this workspace)" : ""}
+                {role === "commenter" && !allowCommenter ? (
+                  <>
+                    {" "}
+                    (turned off in this workspace —{" "}
+                    {isWorkspaceAdmin ? (
+                      <Link href={COMMENTER_SWITCH_HREF} className="text-accent-700 hover:underline">
+                        turn on in Admin console → Security
+                      </Link>
+                    ) : (
+                      "a workspace admin can turn it on in Admin console → Security"
+                    )}
+                    )
+                  </>
+                ) : (
+                  ""
+                )}
               </dd>
             </div>
           ))}

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
+import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { cancelApproval, decideApproval, requestApproval, resubmitApproval } from "@/lib/actions";
@@ -47,6 +48,10 @@ export function TaskApprovals({
   const approvals = task.approvals.filter((a) => a.id !== excludeId);
   // Requesting/cancelling needs Editor; an approver needs at least Commenter to be able to decide.
   const canEdit = hasRole(task.viewerRole, "editor");
+  // The approver picker takes focus when the form opens (the old select's autoFocus).
+  useEffect(() => {
+    if (open && canEdit) document.getElementById("approval-approver")?.focus();
+  }, [open, canEdit]);
   const approvers = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter"));
   const nameOf = (profileId: string | null) => {
     const profile = profileId ? profilesById.get(profileId) : undefined;
@@ -98,21 +103,20 @@ export function TaskApprovals({
             <label htmlFor="approval-approver" className="text-xs font-medium text-zinc-600">
               Approver
             </label>
-            <select
+            <SmartPicker
               id="approval-approver"
-              autoFocus
+              label="Approver"
+              placeholder="Choose a person…"
               value={approverId}
-              onChange={(e) => setApproverId(e.currentTarget.value)}
-              className={`${inputClass} mt-1`}
-              required
-            >
-              <option value="">Choose a person…</option>
-              {approvers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {displayName(p)}
-                </option>
-              ))}
-            </select>
+              onChange={setApproverId}
+              searchable
+              className="mt-1 h-9 w-full"
+              options={approvers.map((p) => ({
+                value: p.id,
+                label: displayName(p),
+                icon: <Avatar name={displayName(p)} src={p.avatar_url} profileId={p.id} />,
+              }))}
+            />
           </div>
           <div>
             <label htmlFor="approval-note" className="text-xs font-medium text-zinc-600">
@@ -195,7 +199,7 @@ function ApprovalItem({
     <li className="rounded-md border border-zinc-200 p-3" data-approval-status={approval.status}>
       <div className="flex items-center gap-2">
         <ShieldCheck className="size-4 text-zinc-400" aria-hidden />
-        <Avatar name={approverName} />
+        <Avatar name={approverName} profileId={approval.approverId} />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900">{approverName}</span>
         <span className={`rounded px-1.5 py-0.5 text-2xs font-medium ${status.className}`}>{status.label}</span>
       </div>

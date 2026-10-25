@@ -365,7 +365,7 @@ function personItem(person: QuickPerson): Item {
     href: quickPersonHref(person),
     render: () => (
       <>
-        <Avatar name={person.name} />
+        <Avatar name={person.name} profileId={person.id} />
         <span className="min-w-0 flex-1 truncate text-zinc-900">{person.name}</span>
         <span className="max-w-[45%] shrink-0 truncate text-xs text-zinc-500">{person.email}</span>
       </>

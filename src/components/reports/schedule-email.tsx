@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { CalendarClock, Mail, Pause, Pencil, Play, Search, Trash2, X } from "lucide-react";
 import { Dialog } from "@/components/dialog";
+import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
   createReportSchedule,
@@ -232,52 +233,47 @@ export function ScheduleEmailDialog({
         <fieldset className="flex flex-col gap-2">
           <legend className={LABEL}>When</legend>
           <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-600">
-            <select
-              className="control w-auto"
-              aria-label="How often"
+            <SmartPicker
+              className="w-auto"
+              label="How often"
               value={frequency}
-              onChange={(e) => setFrequency(e.target.value as ScheduleFrequency)}
-            >
-              {SCHEDULE_FREQUENCIES.map((f) => (
-                <option key={f.value} value={f.value}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setFrequency(v as ScheduleFrequency)}
+              options={SCHEDULE_FREQUENCIES.map((f) => ({ value: f.value, label: f.label }))}
+            />
             {frequency === "weekly" ? (
-              <label className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5">
                 on
-                <select className="control w-auto" value={weekday} onChange={(e) => setWeekday(Number(e.target.value))}>
-                  {WEEKDAYS.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <SmartPicker
+                  className="w-auto"
+                  label="Weekday"
+                  value={String(weekday)}
+                  onChange={(v) => setWeekday(Number(v))}
+                  options={WEEKDAYS.map((day, index) => ({ value: String(index), label: day }))}
+                />
+              </span>
             ) : null}
             {frequency === "monthly" ? (
-              <label className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5">
                 on the
-                <select className="control w-auto" value={monthDay} onChange={(e) => setMonthDay(Number(e.target.value))}>
-                  {MONTH_DAYS.map((day) => (
-                    <option key={day} value={day}>
-                      {ordinal(day)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <SmartPicker
+                  className="w-auto"
+                  label="Day of the month"
+                  value={String(monthDay)}
+                  onChange={(v) => setMonthDay(Number(v))}
+                  options={MONTH_DAYS.map((day) => ({ value: String(day), label: ordinal(day) }))}
+                />
+              </span>
             ) : null}
-            <label className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5">
               at
-              <select className="control w-auto" value={hour} onChange={(e) => setHour(Number(e.target.value))}>
-                {HOURS.map((h) => (
-                  <option key={h} value={h}>
-                    {hourLabel(h)}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <SmartPicker
+                className="w-auto"
+                label="Hour"
+                value={String(hour)}
+                onChange={(v) => setHour(Number(v))}
+                options={HOURS.map((h) => ({ value: String(h), label: hourLabel(h) }))}
+              />
+            </span>
           </div>
           <p className="text-xs text-zinc-500">
             {schedule ? "In its time zone" : "In your time zone"} ({zone.replace(/_/g, " ")}). Monthly emails go out on days

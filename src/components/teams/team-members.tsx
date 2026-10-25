@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { RoleChangePicker, RolePicker, teamRoleOptions } from "@/components/role-picker";
 import { PendingInvites } from "@/components/people/pending-invites";
 import { useShell } from "@/components/shell/shell-context";
 import { Timestamp } from "@/components/timestamp";
@@ -12,7 +13,7 @@ import { EmptyState } from "@/components/ui";
 import { addTeamMember, changeTeamMemberRole, removeTeamMember } from "@/lib/actions";
 import type { TeamPerson } from "@/lib/data";
 import { personHref } from "@/lib/people";
-import { TEAM_ROLES, TEAM_ROLE_LABELS, isTeamRole, type TeamRole } from "@/lib/teams";
+import { TEAM_ROLE_LABELS, isTeamRole, type TeamRole } from "@/lib/teams";
 import { describePendingInvite, inviteHelp, type PendingInvite } from "@/lib/workspace";
 
 const CARD = "rounded-lg border border-zinc-200 bg-white";
@@ -99,21 +100,14 @@ export function TeamMembers({
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label htmlFor="team-member-role" className="text-xs font-medium text-zinc-600">
-                Role
-              </label>
-              <select
+              <span className="text-xs font-medium text-zinc-600">Role</span>
+              <RolePicker
                 id="team-member-role"
+                label="Team role for the person you add"
                 value={inviteRole}
-                onChange={(e) => setInviteRole(e.currentTarget.value as TeamRole)}
-                className="control"
-              >
-                {TEAM_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {TEAM_ROLE_LABELS[r]}
-                  </option>
-                ))}
-              </select>
+                onChange={(next) => setInviteRole(next as TeamRole)}
+                options={teamRoleOptions()}
+              />
             </div>
             <button type="submit" disabled={pending} className="btn-primary">
               <UserPlus className="size-3.5" aria-hidden />
@@ -135,7 +129,7 @@ export function TeamMembers({
               const lastLead = m.role === "lead" && leadCount === 1;
               return (
                 <li key={m.profileId} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                  <Avatar name={m.name} size="md" />
+                  <Avatar name={m.name} profileId={m.profileId} size="md" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-zinc-900">
                       <Link href={personHref(m.profileId)} className="hover:underline">
@@ -149,31 +143,17 @@ export function TeamMembers({
                   </div>
                   {canManage ? (
                     <>
-                      <label htmlFor={`team-role-${m.profileId}`} className="sr-only">
-                        Role for {m.name}
-                      </label>
-                      <select
-                        id={`team-role-${m.profileId}`}
+                      <RoleChangePicker
                         key={m.role}
-                        defaultValue={m.role}
+                        id={`team-role-${m.profileId}`}
+                        label={`Team role for ${m.name}`}
+                        role={m.role}
+                        options={teamRoleOptions()}
                         disabled={pending || lastLead}
                         title={lastLead ? "A team needs at least one lead. Make someone else a lead first." : undefined}
-                        onChange={(e) => {
-                          const select = e.currentTarget;
-                          run(async () => {
-                            const result = await changeTeamMemberRole(teamId, m.profileId, select.value);
-                            if (result.error) select.value = m.role;
-                            return result;
-                          });
-                        }}
-                        className="control"
-                      >
-                        {TEAM_ROLES.map((r) => (
-                          <option key={r} value={r}>
-                            {TEAM_ROLE_LABELS[r]}
-                          </option>
-                        ))}
-                      </select>
+                        run={run}
+                        save={(next) => changeTeamMemberRole(teamId, m.profileId, next)}
+                      />
                     </>
                   ) : (
                     <span className="chip">{TEAM_ROLE_LABELS[m.role]}</span>

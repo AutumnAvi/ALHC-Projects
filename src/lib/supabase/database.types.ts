@@ -18,6 +18,7 @@ export type Database = {
           invited_at: string | null;
           removed_at: string | null;
           removed_by: string | null;
+          default_project_role: string | null;
         };
         Insert: {
           email: string;
@@ -27,6 +28,7 @@ export type Database = {
           invited_at?: string | null;
           removed_at?: string | null;
           removed_by?: string | null;
+          default_project_role?: string | null;
         };
         Update: {
           email?: string;
@@ -36,6 +38,7 @@ export type Database = {
           invited_at?: string | null;
           removed_at?: string | null;
           removed_by?: string | null;
+          default_project_role?: string | null;
         };
         Relationships: [
           {
@@ -3526,6 +3529,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          uses_default_roles: boolean;
         };
         Insert: {
           id?: string;
@@ -3536,6 +3540,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          uses_default_roles?: boolean;
         };
         Update: {
           id?: string;
@@ -3546,6 +3551,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          uses_default_roles?: boolean;
         };
         Relationships: [
           {
@@ -5768,6 +5774,10 @@ export type Database = {
       set_project_starred: {
         Args: { target_project: string; starred: boolean };
         Returns: boolean;
+      };
+      set_default_project_role: {
+        Args: { member_email: string; new_role: string | null };
+        Returns: string;
       };
       set_project_archived: {
         Args: { target_project: string; archive: boolean };

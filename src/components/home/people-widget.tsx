@@ -66,7 +66,7 @@ export function PeopleWidget({ collaborators }: { collaborators: Collaborator[] 
                 data-tooltip={`${person.name}’s profile`}
                 className="flex h-full flex-col items-center gap-2 rounded-lg px-2 py-3 text-center hover:bg-zinc-50 focus-visible:bg-zinc-50"
               >
-                <Avatar name={person.name || person.email} size="lg" />
+                <Avatar name={person.name || person.email} profileId={person.id} size="lg" />
                 <span className="w-full min-w-0">
                   <span className="block truncate text-sm font-medium text-zinc-900" title={person.email}>
                     {person.name || person.email}

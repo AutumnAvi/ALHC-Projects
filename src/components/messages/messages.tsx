@@ -247,7 +247,7 @@ function ThreadList({
           {threads.map((t) => (
             <li key={t.id} className="hover:bg-zinc-50">
               <Link href={`${basePath(scope)}/${t.id}`} className="flex gap-3 px-4 py-3">
-                <Avatar name={nameOf(t.authorId)} size="md" />
+                <Avatar name={nameOf(t.authorId)} profileId={t.authorId} size="md" />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-zinc-900">{t.title}</span>
@@ -457,7 +457,7 @@ function FollowControl({
           <span className="flex -space-x-1.5" aria-hidden>
             {shown.slice(0, 4).map((id) => (
               <span key={id} className="rounded-full ring-2 ring-white">
-                <Avatar name={id === memberId ? nameOf(memberId) : nameOf(id)} />
+                <Avatar name={nameOf(id)} profileId={id} />
               </span>
             ))}
           </span>
@@ -527,7 +527,7 @@ function MessageItem({
 
   return (
     <div className="group flex gap-2.5">
-      <Avatar name={author} size="md" />
+      <Avatar name={author} profileId={message.authorId} size="md" />
       <div className="min-w-0 flex-1">
         {isThread && !draft ? (
           <h1 id="thread-title" className="text-base font-semibold text-zinc-900">

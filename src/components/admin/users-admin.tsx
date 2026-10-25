@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Ellipsis, RotateCcw, Search, Send, UserMinus, UserPlus, Users } from "lucide-react";
 import { AdminPage } from "@/components/admin/admin-chrome";
 import { InviteUsersDialog } from "@/components/admin/invite-users-dialog";
 import { Avatar } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
+import { RolePicker } from "@/components/role-picker";
+import { SmartPicker } from "@/components/smart-picker";
+import { ProjectAccessPanel, ProjectAccessToggle } from "@/components/workspace/project-access";
+import { RolesExplainer } from "@/components/workspace/roles-explainer";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -17,7 +21,16 @@ import {
   removeWorkspaceAdmin,
   removeWorkspaceMember,
   resendWorkspaceInvite,
+  setDefaultProjectRole,
 } from "@/lib/actions";
+import {
+  COMMENTER_OFF_REASON,
+  DEFAULT_PROJECT_ROLES,
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
+  effectiveDefaultRole,
+  isDefaultProjectRole,
+} from "@/lib/roles";
 import { MEMBER_STATUS_LABELS, USER_TABS, isUserTab, type UserTab } from "@/lib/admin";
 import type { MemberActivity } from "@/lib/data";
 import { personHref } from "@/lib/people";
@@ -36,6 +49,9 @@ const STATUS_DOT: Record<MemberStatus, string> = {
 };
 
 const LAST_ADMIN_NOTE = "A workspace needs at least one admin. Make someone else an admin first.";
+const DEFAULT_ROLE_HELP =
+  "The project role someone gets when they’re added to a project with “Their default role” (Share, a project’s Members page, or a team added that way).";
+const DEFAULTS_MISSING = "Default project roles need this release’s database update";
 const NO_ACTIVITY_NOTE = "Last activity shows once this release’s database update is applied";
 const SIGN_IN_ONLY_NOTE = "Only sign-ins are known until this release’s database update is applied";
 const ACTIVITY_HELP =
@@ -70,6 +86,7 @@ export function UsersAdmin({
   timeZone,
   emailConfigured,
   signupUrl,
+  allowCommenter,
 }: {
   members: WorkspaceMember[];
   // Last sign-in and last activity per lowercased address; null when the database can't tell at all.
@@ -79,6 +96,8 @@ export function UsersAdmin({
   timeZone: string;
   emailConfigured: boolean;
   signupUrl: string;
+  // The workspace offers the Commenter role (Admin console → Security).
+  allowCommenter: boolean;
 }) {
   const router = useRouter();
   const notify = useNotify();
@@ -90,6 +109,8 @@ export function UsersAdmin({
   const tab: UserTab = isUserTab(requested) ? requested : "all";
   const [query, setQuery] = useState("");
   const [inviting, setInviting] = useState(false);
+  const [openAccess, setOpenAccess] = useState<string | null>(null);
+  const defaultsAvailable = members.some((m) => m.defaultProjectRole !== undefined);
 
   const adminCount = members.filter((m) => m.role === "admin" && m.status === "active").length;
   const inTab = (m: WorkspaceMember, t: UserTab) => t === "all" || m.status === t;
@@ -120,6 +141,15 @@ export function UsersAdmin({
         return result;
       }
       notify(next === "admin" ? `${m.name} is now a workspace admin` : `${m.name} is now a member`);
+      return result;
+    });
+  }
+
+  // A person's default project role (Viewer / Commenter / Editor): what "Their default role" adds them as.
+  function changeDefaultRole(m: WorkspaceMember, next: string) {
+    run(async () => {
+      const result = await setDefaultProjectRole(m.email, next === "editor" ? null : next);
+      if (!result.error) notify(`${m.name}’s default project role is now ${ROLE_LABELS[next as "editor"] ?? next}`);
       return result;
     });
   }
@@ -166,6 +196,9 @@ export function UsersAdmin({
       }
     >
       <div>
+        <div className="mb-5">
+          <RolesExplainer isAdmin allowCommenter={allowCommenter} />
+        </div>
         <div className="flex flex-wrap items-end gap-3">
           <div role="tablist" aria-label="Show" className="tab-strip min-w-0 flex-1 gap-4">
             {USER_TABS.map((t) => {
@@ -224,7 +257,7 @@ export function UsersAdmin({
             )
           ) : (
             <div className="overflow-x-auto rounded-lg border border-zinc-200">
-              <table className="w-full min-w-[56rem] border-collapse text-sm">
+              <table className="w-full min-w-[66rem] border-collapse text-sm">
                 <caption className="sr-only">People on the workspace’s allowlist</caption>
                 <thead>
                   <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-500">
@@ -233,6 +266,11 @@ export function UsersAdmin({
                     </th>
                     <th scope="col" className="w-32 px-3 py-2 font-medium">
                       Role
+                    </th>
+                    <th scope="col" className="w-40 px-3 py-2 font-medium">
+                      <span tabIndex={0} data-tooltip={DEFAULT_ROLE_HELP}>
+                        Default project role<span className="sr-only">: {DEFAULT_ROLE_HELP}</span>
+                      </span>
                     </th>
                     <th scope="col" className="w-48 px-3 py-2 font-medium">
                       Status
@@ -254,21 +292,46 @@ export function UsersAdmin({
                   </tr>
                 </thead>
                 <tbody>
-                  {shown.map((m) => (
-                    <UserRow
-                      key={m.email}
-                      member={m}
-                      self={m.profileId === viewerId}
-                      lastAdmin={m.role === "admin" && adminCount <= 1}
-                      activity={activity}
-                      timeZone={timeZone}
-                      pending={pending}
-                      onRole={(next, revert) => changeRole(m, next, revert)}
-                      onResend={() => resend(m)}
-                      onRemove={() => remove(m)}
-                      onAddBack={() => addBack(m)}
-                    />
-                  ))}
+                  {shown.map((m) => {
+                    const accessId = `project-access-${m.email.replace(/[^a-z0-9]/gi, "-")}`;
+                    const accessOpen = openAccess === m.email;
+                    return (
+                      <Fragment key={m.email}>
+                        <UserRow
+                          member={m}
+                          self={m.profileId === viewerId}
+                          lastAdmin={m.role === "admin" && adminCount <= 1}
+                          activity={activity}
+                          timeZone={timeZone}
+                          pending={pending}
+                          allowCommenter={allowCommenter}
+                          defaultsAvailable={defaultsAvailable}
+                          accessToggle={
+                            m.status === "removed" ? null : (
+                              <ProjectAccessToggle
+                                open={accessOpen}
+                                onToggle={() => setOpenAccess(accessOpen ? null : m.email)}
+                                name={m.name}
+                                controls={accessId}
+                              />
+                            )
+                          }
+                          onRole={(next, revert) => changeRole(m, next, revert)}
+                          onDefaultRole={(next) => changeDefaultRole(m, next)}
+                          onResend={() => resend(m)}
+                          onRemove={() => remove(m)}
+                          onAddBack={() => addBack(m)}
+                        />
+                        {accessOpen ? (
+                          <tr className="border-b border-zinc-100 bg-zinc-50/60">
+                            <td colSpan={8} className="px-12 pb-3">
+                              <ProjectAccessPanel id={accessId} person={{ email: m.email, profileId: m.profileId, name: m.name }} />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -295,7 +358,11 @@ function UserRow({
   activity,
   timeZone,
   pending,
+  allowCommenter,
+  defaultsAvailable,
+  accessToggle,
   onRole,
+  onDefaultRole,
   onResend,
   onRemove,
   onAddBack,
@@ -306,7 +373,11 @@ function UserRow({
   activity: { byEmail: Record<string, MemberActivity>; activityTracked: boolean } | null;
   timeZone: string;
   pending: boolean;
+  allowCommenter: boolean;
+  defaultsAvailable: boolean;
+  accessToggle: ReactNode;
   onRole: (role: WorkspaceRole, revert: () => void) => void;
+  onDefaultRole: (role: string) => void;
   onResend: () => void;
   onRemove: () => void;
   onAddBack: () => void;
@@ -321,7 +392,7 @@ function UserRow({
     <tr className="border-b border-zinc-100 last:border-b-0 hover:bg-zinc-50">
       <td className="px-3 py-2">
         <div className="flex min-w-0 items-center gap-2.5">
-          <Avatar name={m.name} size="md" />
+          <Avatar name={m.name} profileId={m.profileId} size="md" />
           <div className="min-w-0">
             <p className="truncate font-medium text-zinc-900">
               {m.profileId ? (
@@ -334,12 +405,25 @@ function UserRow({
               {self ? <span className="font-normal text-zinc-500"> (you)</span> : null}
             </p>
             {m.name !== m.email ? <p className="truncate text-xs text-zinc-500">{m.email}</p> : null}
+            {accessToggle ? <div className="-ml-1.5 mt-0.5">{accessToggle}</div> : null}
           </div>
         </div>
       </td>
 
       <td className="px-3 py-2">
         <RoleCell member={m} self={self} lastAdmin={lastAdmin} pending={pending} onRole={onRole} />
+      </td>
+
+      <td className="px-3 py-2">
+        {!defaultsAvailable ? (
+          <span tabIndex={0} data-tooltip={DEFAULTS_MISSING} className="text-xs text-zinc-400">
+            —<span className="sr-only">{DEFAULTS_MISSING}</span>
+          </span>
+        ) : m.status === "removed" ? (
+          <span className="text-xs text-zinc-400">—</span>
+        ) : (
+          <DefaultRoleCell member={m} allowCommenter={allowCommenter} pending={pending} onChange={onDefaultRole} />
+        )}
       </td>
 
       <td className="px-3 py-2">
@@ -428,31 +512,71 @@ function RoleCell({
     );
   }
   return (
-    <select
+    <SmartPicker
       key={m.role}
-      aria-label={`Workspace role for ${m.name}`}
-      defaultValue={m.role}
+      label={`Workspace role for ${m.name}`}
+      value={m.role}
       disabled={pending}
-      onChange={(e) => {
-        const select = e.currentTarget;
-        const next = select.value as WorkspaceRole;
+      className="h-7 w-28 text-xs"
+      panelWidth={280}
+      renderValue={(chosen) => (chosen[0] ? <span className="truncate">{chosen[0].label}</span> : null)}
+      options={[
+        { value: "admin", label: WORKSPACE_ROLE_LABELS.admin, description: "Runs the workspace: people, teams, settings" },
+        { value: "member", label: WORKSPACE_ROLE_LABELS.member, description: "Uses the workspace; project roles decide the rest" },
+      ]}
+      onChange={(value) => {
+        const next = value as WorkspaceRole;
+        if (next === m.role) return;
         if (
           next === "member" &&
           self &&
           !window.confirm("Stop being a workspace admin? You’ll leave the Admin console, and another admin will have to make you one again.")
         ) {
-          select.value = m.role;
           return;
         }
-        onRole(next, () => {
-          select.value = m.role;
-        });
+        onRole(next, () => {});
       }}
-      className="control"
-    >
-      <option value="admin">{WORKSPACE_ROLE_LABELS.admin}</option>
-      <option value="member">{WORKSPACE_ROLE_LABELS.member}</option>
-    </select>
+    />
+  );
+}
+
+// The person's default project role: Editor (no default set), Commenter, or Viewer. Commenter is greyed
+// out while the workspace has it off (a Commenter default then adds them as a Viewer).
+function DefaultRoleCell({
+  member: m,
+  allowCommenter,
+  pending,
+  onChange,
+}: {
+  member: WorkspaceMember;
+  allowCommenter: boolean;
+  pending: boolean;
+  onChange: (role: string) => void;
+}) {
+  const stored = isDefaultProjectRole(m.defaultProjectRole) ? m.defaultProjectRole : "editor";
+  const effective = effectiveDefaultRole(m.defaultProjectRole, allowCommenter);
+  return (
+    <div>
+      <RolePicker
+        key={stored}
+        label={`Default project role for ${m.name}`}
+        value={stored}
+        compact
+        disabled={pending}
+        onChange={(next) => {
+          if (next !== stored) onChange(next);
+        }}
+        options={DEFAULT_PROJECT_ROLES.map((role) => ({
+          value: role,
+          label: ROLE_LABELS[role],
+          description: ROLE_DESCRIPTIONS[role],
+          ...(role === "commenter" && !allowCommenter && stored !== "commenter"
+            ? { disabled: true, disabledReason: COMMENTER_OFF_REASON }
+            : {}),
+        }))}
+      />
+      {effective !== stored ? <p className="mt-0.5 text-2xs text-amber-700">Added as Viewer while Commenter is off</p> : null}
+    </div>
   );
 }
 

@@ -362,7 +362,7 @@ export function RuleCanvas({
               id="rule-owner"
               label={`Owner: ${ownerName}`}
               value={ownerId}
-              options={(ctx.members ?? ctx.people).map((p) => ({ value: p.id, label: p.name, icon: <Avatar name={p.name} /> }))}
+              options={(ctx.members ?? ctx.people).map((p) => ({ value: p.id, label: p.name, icon: <Avatar name={p.name} profileId={p.id} /> }))}
               onChange={(v) => {
                 setOwnerId(v);
                 setDirty(true);
@@ -376,7 +376,7 @@ export function RuleCanvas({
               renderValue={(chosen) =>
                 chosen[0] ? (
                   <>
-                    <Avatar name={chosen[0].label} />
+                    <Avatar name={chosen[0].label} profileId={chosen[0].value} />
                     <span className="hidden truncate md:inline">{chosen[0].label}</span>
                   </>
                 ) : (

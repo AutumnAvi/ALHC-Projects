@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { CalendarDays, ChevronRight, Repeat } from "lucide-react";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { setTaskRecurrence } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
@@ -71,29 +72,21 @@ function RecurrenceEditor({ task }: { task: TaskDetail }) {
 
   return (
     <div className="mt-1.5 flex flex-col gap-2 px-1 text-sm text-zinc-700">
-      <label className="sr-only" htmlFor="task-repeat">
-        Repeats
-      </label>
-      <select
+      <SmartPicker
         id="task-repeat"
+        label="Repeats"
         value={rule?.freq ?? ""}
-        onChange={(e) => {
-          const freq = e.target.value;
+        onChange={(freq) => {
+          if (freq === (rule?.freq ?? "")) return;
           save(
             isFrequency(freq)
               ? { freq, interval: rule?.interval ?? 1, weekdays: [], ends: rule?.ends ?? { type: "never" } }
               : null,
           );
         }}
-        className="control h-8 w-full"
-      >
-        <option value="">Does not repeat</option>
-        {FREQUENCIES.map((f) => (
-          <option key={f} value={f}>
-            {FREQUENCY_LABELS[f]}
-          </option>
-        ))}
-      </select>
+        className="h-8 w-full"
+        options={[{ value: "", label: "Does not repeat" }, ...FREQUENCIES.map((f) => ({ value: f, label: FREQUENCY_LABELS[f] }))]}
+      />
 
       {rule ? (
         <>
@@ -148,23 +141,25 @@ function RecurrenceEditor({ task }: { task: TaskDetail }) {
 
           <div className="flex flex-wrap items-center gap-2">
             <label htmlFor="task-repeat-ends">Ends</label>
-            <select
+            <SmartPicker
               id="task-repeat-ends"
+              label="Ends"
               value={rule.ends.type}
-              onChange={(e) => {
-                const type = e.target.value;
+              onChange={(type) => {
+                if (type === rule.ends.type) return;
                 if (type === "after") setEnds({ type: "after", count: 5 });
                 else if (type === "until") {
                   setEnds({ type: "until", until: task.dueOn ?? new Date().toISOString().slice(0, 10) });
                   setPickingUntil(true);
                 } else setEnds({ type: "never" });
               }}
-              className="control"
-            >
-              <option value="never">Never</option>
-              <option value="after">After</option>
-              <option value="until">On date</option>
-            </select>
+              className="w-28"
+              options={[
+                { value: "never", label: "Never" },
+                { value: "after", label: "After" },
+                { value: "until", label: "On date" },
+              ]}
+            />
             {rule.ends.type === "after" ? (
               <>
                 <label htmlFor="task-repeat-count" className="sr-only">

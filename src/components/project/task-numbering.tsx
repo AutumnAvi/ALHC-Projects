@@ -4,6 +4,7 @@ import { useState, useSyncExternalStore } from "react";
 import { Hash } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useCan } from "@/components/project/project-access";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { saveTaskNumbering } from "@/lib/actions";
 import type { FieldDef } from "@/lib/fields";
@@ -253,34 +254,38 @@ export function TaskNumberingForm({
               <label htmlFor="req-scope" className="text-xs font-medium text-zinc-600">
                 What gets numbered
               </label>
-              <select
+              <SmartPicker
                 id="req-scope"
+                label="What gets numbered"
                 value={draft.numberScope}
                 disabled={!canEdit}
-                onChange={(e) => setDraft({ ...draft, numberScope: e.currentTarget.value as NumberScope })}
-                className="field mt-1"
-              >
-                <option value="all_tasks">All tasks</option>
-                <option value="form_submissions">Only tasks created by forms</option>
-                <option value="sections">Only tasks in chosen sections</option>
-                <option value="kinds">Only chosen task types</option>
-              </select>
+                onChange={(value) => setDraft({ ...draft, numberScope: value as NumberScope })}
+                className="mt-1 h-9 w-full"
+                options={[
+                  { value: "all_tasks", label: "All tasks" },
+                  { value: "form_submissions", label: "Only tasks created by forms" },
+                  { value: "sections", label: "Only tasks in chosen sections" },
+                  { value: "kinds", label: "Only chosen task types" },
+                ]}
+              />
             </div>
             <div>
               <label htmlFor="req-reset" className="text-xs font-medium text-zinc-600">
                 Reset the counter
               </label>
-              <select
+              <SmartPicker
                 id="req-reset"
+                label="Reset the counter"
                 value={draft.resetPeriod}
                 disabled={!canEdit}
-                onChange={(e) => setDraft({ ...draft, resetPeriod: e.currentTarget.value as ResetPeriod })}
-                className="field mt-1"
-              >
-                <option value="never">Never</option>
-                <option value="yearly">Every year</option>
-                <option value="monthly">Every month</option>
-              </select>
+                onChange={(value) => setDraft({ ...draft, resetPeriod: value as ResetPeriod })}
+                className="mt-1 h-9 w-full"
+                options={[
+                  { value: "never", label: "Never" },
+                  { value: "yearly", label: "Every year" },
+                  { value: "monthly", label: "Every month" },
+                ]}
+              />
             </div>
           </div>
           {draft.numberScope === "sections" ? (
@@ -335,39 +340,34 @@ export function TaskNumberingForm({
             <label htmlFor="req-field" className="text-xs font-medium text-zinc-600">
               Separate counters per field value
             </label>
-            <select
+            <SmartPicker
               id="req-field"
+              label="Separate counters per field value"
               value={draft.counterFieldId ?? ""}
               disabled={!canEdit}
-              onChange={(e) => setDraft({ ...draft, counterFieldId: e.currentTarget.value || null })}
-              className="field mt-1"
-            >
-              <option value="">One counter for the project</option>
-              {singleSelects.map((field) => (
-                <option key={field.id} value={field.id}>
-                  {field.name}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setDraft({ ...draft, counterFieldId: value || null })}
+              className="mt-1 h-9 w-full"
+              options={[
+                { value: "", label: "One counter for the project" },
+                ...singleSelects.map((field) => ({ value: field.id, label: field.name })),
+              ]}
+            />
             <p className="mt-1 text-xs text-zinc-500">Each option of one single-select field gets its own counter.</p>
           </div>
           <div className="max-w-xs">
             <label htmlFor="req-zone" className="text-xs font-medium text-zinc-600">
               Time zone
             </label>
-            <select
+            <SmartPicker
               id="req-zone"
+              label="Time zone"
               value={draft.timeZone}
               disabled={!canEdit}
-              onChange={(e) => setDraft({ ...draft, timeZone: e.currentTarget.value })}
-              className="field mt-1"
-            >
-              {timeZones.map((zone) => (
-                <option key={zone} value={zone}>
-                  {zone.replaceAll("_", " ")}
-                </option>
-              ))}
-            </select>
+              searchable
+              onChange={(value) => setDraft({ ...draft, timeZone: value })}
+              className="mt-1 h-9 w-full"
+              options={timeZones.map((zone) => ({ value: zone, label: zone.replaceAll("_", " "), keywords: [zone] }))}
+            />
             <p className="mt-1 text-xs text-zinc-500">The day a task is created in, for {"{yyyy}"} {"{yy}"} {"{mm}"} and resets.</p>
           </div>
           <label className="flex items-center gap-2 text-sm text-zinc-800">
@@ -384,17 +384,19 @@ export function TaskNumberingForm({
             <label htmlFor="req-sep" className="text-xs font-medium text-zinc-600">
               Subtask separator
             </label>
-            <select
+            <SmartPicker
               id="req-sep"
+              label="Subtask separator"
               value={draft.subtaskSeparator}
               disabled={!canEdit || !draft.numberSubtasks}
-              onChange={(e) => setDraft({ ...draft, subtaskSeparator: e.currentTarget.value as SubtaskSeparator })}
-              className="field mt-1"
-            >
-              <option value=".">Period (484.1)</option>
-              <option value="-">Dash (484-1)</option>
-              <option value="/">Slash (484/1)</option>
-            </select>
+              onChange={(value) => setDraft({ ...draft, subtaskSeparator: value as SubtaskSeparator })}
+              className="mt-1 h-9 w-full"
+              options={[
+                { value: ".", label: "Period (484.1)" },
+                { value: "-", label: "Dash (484-1)" },
+                { value: "/", label: "Slash (484/1)" },
+              ]}
+            />
           </div>
           <label className="flex items-center gap-2 text-sm text-zinc-800">
             <input

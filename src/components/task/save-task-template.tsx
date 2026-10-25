@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
+import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { saveTaskAsTemplate } from "@/lib/actions";
 
@@ -69,18 +70,14 @@ export function SaveTaskTemplateDialog({
             <label htmlFor="task-template-project" className={DIALOG_LABEL}>
               Project
             </label>
-            <select
+            <SmartPicker
               id="task-template-project"
+              label="Project"
               value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              className="field mt-1 w-full"
-            >
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              onChange={setProjectId}
+              className="mt-1 h-9 w-full"
+              options={projects.map((p) => ({ value: p.id, label: p.name }))}
+            />
             <p className={DIALOG_HINT}>The template is listed under that project’s Add task.</p>
           </div>
         ) : null}

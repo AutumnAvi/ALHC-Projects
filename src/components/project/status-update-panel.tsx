@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
+import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { setProjectStatus } from "@/lib/actions";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, type ProjectStatus } from "@/lib/portfolios";
@@ -113,19 +114,15 @@ export function StatusUpdatePanel({
                 <label htmlFor="status-update-template" className="block text-xs font-medium text-zinc-600">
                   Template
                 </label>
-                <select
+                <SmartPicker
                   id="status-update-template"
+                  label="Template"
                   value={templateId}
-                  onChange={(e) => applyTemplate(e.currentTarget.value)}
-                  className="field mt-1 w-full"
-                >
-                  <option value="">No template</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
+                  disabled={pending}
+                  onChange={applyTemplate}
+                  className="mt-1 h-9 w-full"
+                  options={[{ value: "", label: "No template" }, ...templates.map((t) => ({ value: t.id, label: t.name }))]}
+                />
               </div>
             ) : null}
             <div>

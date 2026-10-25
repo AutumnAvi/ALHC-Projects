@@ -7,7 +7,10 @@ import { Avatar } from "@/components/avatar";
 import { personHref } from "@/lib/people";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
+import { ProjectAccessPanel, ProjectAccessToggle } from "@/components/workspace/project-access";
+import { RolesExplainer } from "@/components/workspace/roles-explainer";
 import { AdminOnlyNote, SettingsCard } from "@/components/workspace/settings-chrome";
+import { ROLE_LABELS, effectiveDefaultRole } from "@/lib/roles";
 import { WORKSPACE_ROLE_LABELS, type MemberStatus, type WorkspaceMember } from "@/lib/workspace";
 
 const FILTERS: { key: MemberStatus; label: string }[] = [
@@ -28,13 +31,22 @@ const EMPTY: Record<MemberStatus, { title: string; body: string }> = {
 // Settings → Workspace → Members (members, read-only): everyone on the workspace's allowlist with their
 // role, whether they've signed in, and their teams, plus who the workspace admins are. Workspace admins
 // invite, resend, remove, add back, and change roles in Admin console → Users (components/admin/users-admin.tsx).
-export function MembersSettings({ members, viewerId }: { members: WorkspaceMember[]; viewerId: string }) {
+export function MembersSettings({
+  members,
+  viewerId,
+  allowCommenter,
+}: {
+  members: WorkspaceMember[];
+  viewerId: string;
+  allowCommenter: boolean;
+}) {
   const [filter, setFilter] = useState<MemberStatus>("active");
   const shown = members.filter((m) => m.status === filter);
   const admins = members.filter((m) => m.role === "admin" && m.status === "active");
 
   return (
     <>
+      <RolesExplainer isAdmin={false} allowCommenter={allowCommenter} />
       <SettingsCard
         id="workspace-invite"
         title="Invite people"
@@ -84,7 +96,7 @@ export function MembersSettings({ members, viewerId }: { members: WorkspaceMembe
         ) : (
           <ul className="divide-y divide-zinc-100">
             {shown.map((m) => (
-              <MemberRow key={m.email} member={m} self={m.profileId === viewerId} />
+              <MemberRow key={m.email} member={m} self={m.profileId === viewerId} allowCommenter={allowCommenter} />
             ))}
           </ul>
         )}
@@ -93,10 +105,12 @@ export function MembersSettings({ members, viewerId }: { members: WorkspaceMembe
   );
 }
 
-function MemberRow({ member: m, self }: { member: WorkspaceMember; self: boolean }) {
+function MemberRow({ member: m, self, allowCommenter }: { member: WorkspaceMember; self: boolean; allowCommenter: boolean }) {
+  const [open, setOpen] = useState(false);
+  const panelId = `project-access-${m.email.replace(/[^a-z0-9]/gi, "-")}`;
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3">
-      <Avatar name={m.name} size="md" />
+      <Avatar name={m.name} profileId={m.profileId} size="md" />
       <div className="min-w-48 flex-1">
         <p className="truncate text-sm font-medium text-zinc-900">
           {m.profileId ? (
@@ -140,11 +154,23 @@ function MemberRow({ member: m, self }: { member: WorkspaceMember; self: boolean
         ) : null}
       </div>
 
+      {m.defaultProjectRole !== undefined && m.status !== "removed" ? (
+        <span className="text-xs text-zinc-500" data-tooltip="The project role they get when someone adds them with “Their default role”">
+          Default project role:{" "}
+          <span className="font-medium text-zinc-700">{ROLE_LABELS[effectiveDefaultRole(m.defaultProjectRole, allowCommenter)]}</span>
+        </span>
+      ) : null}
       {m.status === "active" ? (
         <span className={`chip ${m.role === "admin" ? "bg-accent-50 text-accent-700" : ""}`}>{WORKSPACE_ROLE_LABELS[m.role]}</span>
       ) : (
         <span className="chip">{m.status === "invited" ? "Invited" : "Removed"}</span>
       )}
+      {m.status !== "removed" ? (
+        <div className="basis-full">
+          <ProjectAccessToggle open={open} onToggle={() => setOpen((v) => !v)} name={m.name} controls={panelId} />
+          {open ? <ProjectAccessPanel id={panelId} person={{ email: m.email, profileId: m.profileId, name: m.name }} /> : null}
+        </div>
+      ) : null}
     </li>
   );
 }

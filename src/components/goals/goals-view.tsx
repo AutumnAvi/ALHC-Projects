@@ -8,6 +8,7 @@ import { Avatar } from "@/components/avatar";
 import { GoalStatusBadge } from "@/components/goals/goal-status-badge";
 import { NewGoalDialog, type PersonOption, type TeamOption } from "@/components/goals/new-goal-dialog";
 import { ProgressBar } from "@/components/portfolio/progress-bar";
+import { SmartPicker } from "@/components/smart-picker";
 import { EmptyState } from "@/components/ui";
 import {
   NO_PROGRESS,
@@ -140,7 +141,7 @@ export function GoalsView({
             {periodLabel(goal.periodStart, goal.periodEnd)}
           </span>
           <span className="hidden w-32 items-center gap-1.5 md:flex" title={owner ?? "No owner"}>
-            {owner ? <Avatar name={owner} /> : null}
+            {owner ? <Avatar name={owner} profileId={goal.ownerId} /> : null}
             <span className="truncate text-xs text-zinc-600">{owner ?? "No owner"}</span>
           </span>
           <span className="flex w-36 items-center gap-2">
@@ -173,40 +174,36 @@ export function GoalsView({
           <label htmlFor="goals-team" className="text-xs font-medium text-zinc-600">
             Team
           </label>
-          <select
+          <SmartPicker
             id="goals-team"
+            label="Team"
             value={filters.team}
-            onChange={(e) => setFilter("team", e.currentTarget.value)}
-            className="control"
-          >
-            <option value="">All teams</option>
-            <option value="none">No team</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setFilter("team", value)}
+            className="w-48"
+            options={[
+              { value: "", label: "All teams" },
+              { value: "none", label: "No team" },
+              ...teams.map((t) => ({ value: t.id, label: t.name })),
+            ]}
+          />
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="goals-period" className="text-xs font-medium text-zinc-600">
             Time period
           </label>
-          <select
+          <SmartPicker
             id="goals-period"
+            label="Time period"
             value={filters.period}
-            onChange={(e) => setFilter("period", e.currentTarget.value)}
-            className="control"
-          >
-            <option value="">All periods</option>
-            <option value="current">Current (includes today)</option>
-            <option value="none">No time period</option>
-            {periods.map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setFilter("period", value)}
+            className="w-56"
+            options={[
+              { value: "", label: "All periods" },
+              { value: "current", label: "Current (includes today)" },
+              { value: "none", label: "No time period" },
+              ...periods.map(([key, label]) => ({ value: key, label })),
+            ]}
+          />
         </div>
         <button type="button" onClick={() => setCreating(true)} className="btn-primary ml-auto">
           <Plus className="size-3.5" aria-hidden />

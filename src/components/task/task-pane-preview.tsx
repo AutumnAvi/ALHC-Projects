@@ -59,7 +59,7 @@ export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
           <dd className="flex min-h-8 min-w-0 items-center gap-2 px-1">
             {seed.assignee ? (
               <>
-                <Avatar name={seed.assignee.name} />
+                <Avatar name={seed.assignee.name} profileId={seed.assignee.id} />
                 <span className="truncate text-zinc-800">{seed.assignee.name}</span>
               </>
             ) : seed.assignee === null ? (

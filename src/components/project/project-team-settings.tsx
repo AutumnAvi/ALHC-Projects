@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { updateProjectTeam } from "@/lib/actions";
 import { PROJECT_VISIBILITIES, VISIBILITY_DESCRIPTIONS, VISIBILITY_LABELS, type ProjectVisibility } from "@/lib/workspace";
@@ -33,55 +35,43 @@ export function ProjectTeamSettings({
             <label htmlFor="project-team" className="text-xs font-medium text-zinc-600">
               Team
             </label>
-            <select
-              id="project-team"
+            <SavedPicker
               key={teamId}
-              defaultValue={teamId}
+              id="project-team"
+              label="Team"
+              saved={teamId}
               disabled={pending}
-              onChange={(e) => {
-                const select = e.currentTarget;
+              searchable
+              options={teams.map((t) => ({ value: t.id, label: `${t.name}${t.isDefault ? " (default)" : ""}` }))}
+              onSave={(next, revert) =>
                 run(async () => {
-                  const result = await updateProjectTeam(projectId, { teamId: select.value });
-                  if (result.error) select.value = teamId;
+                  const result = await updateProjectTeam(projectId, { teamId: next });
+                  if (result.error) revert();
                   return result;
-                });
-              }}
-              className="field"
-            >
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                  {t.isDefault ? " (default)" : ""}
-                </option>
-              ))}
-            </select>
+                })
+              }
+            />
           </div>
           <div className="flex flex-col gap-1">
             <label htmlFor="project-visibility" className="text-xs font-medium text-zinc-600">
               Privacy
             </label>
-            <select
-              id="project-visibility"
+            <SavedPicker
               key={visibility}
-              defaultValue={visibility}
+              id="project-visibility"
+              label="Privacy"
+              saved={visibility}
               disabled={pending}
-              aria-describedby="project-visibility-hint"
-              onChange={(e) => {
-                const select = e.currentTarget;
+              describedBy="project-visibility-hint"
+              options={PROJECT_VISIBILITIES.map((v) => ({ value: v, label: VISIBILITY_LABELS[v], description: VISIBILITY_DESCRIPTIONS[v] }))}
+              onSave={(next, revert) =>
                 run(async () => {
-                  const result = await updateProjectTeam(projectId, { visibility: select.value });
-                  if (result.error) select.value = visibility;
+                  const result = await updateProjectTeam(projectId, { visibility: next });
+                  if (result.error) revert();
                   return result;
-                });
-              }}
-              className="field"
-            >
-              {PROJECT_VISIBILITIES.map((v) => (
-                <option key={v} value={v}>
-                  {VISIBILITY_LABELS[v]}
-                </option>
-              ))}
-            </select>
+                })
+              }
+            />
             <p id="project-visibility-hint" className="text-xs text-zinc-500">
               {VISIBILITY_DESCRIPTIONS[visibility]}
             </p>
@@ -89,5 +79,45 @@ export function ProjectTeamSettings({
         </div>
       </section>
     </div>
+  );
+}
+
+// Shows the choice at once and puts the saved value back when the database refuses it.
+function SavedPicker({
+  id,
+  label,
+  saved,
+  options,
+  disabled,
+  searchable,
+  describedBy,
+  onSave,
+}: {
+  id: string;
+  label: string;
+  saved: string;
+  options: SmartOption[];
+  disabled: boolean;
+  searchable?: boolean;
+  describedBy?: string;
+  onSave: (next: string, revert: () => void) => void;
+}) {
+  const [shown, setShown] = useState(saved);
+  return (
+    <SmartPicker
+      id={id}
+      label={label}
+      value={shown}
+      disabled={disabled}
+      searchable={searchable}
+      aria-describedby={describedBy}
+      className="h-9 w-full"
+      options={options}
+      onChange={(next) => {
+        if (next === shown) return;
+        setShown(next);
+        onSave(next, () => setShown(saved));
+      }}
+    />
   );
 }

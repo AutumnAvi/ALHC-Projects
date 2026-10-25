@@ -21,7 +21,7 @@ export function ProfileCard({ person, detail }: { person: MentionPerson; detail:
   const name = displayName(person);
   return (
     <div className="flex w-64 items-start gap-3 p-3" data-profile-card>
-      <Avatar name={name} size="lg" />
+      <Avatar name={name} profileId={person.id} size="lg" />
       <div className="min-w-0 pt-0.5">
         <p className="truncate text-sm font-semibold text-zinc-900">{name}</p>
         <p className="truncate text-xs text-zinc-600">{person.email}</p>
@@ -150,7 +150,7 @@ export function TeamCard({ team }: { team: MentionTeam }) {
         <ul className="mt-2.5 space-y-1.5">
           {shown.map((m) => (
             <li key={m.id} className="flex items-center gap-2">
-              <Avatar name={m.name} size="sm" />
+              <Avatar name={m.name} profileId={m.id} size="sm" />
               <span className="min-w-0 truncate text-xs text-zinc-700">{m.name}</span>
             </li>
           ))}

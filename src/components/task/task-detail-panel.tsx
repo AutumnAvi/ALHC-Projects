@@ -109,7 +109,7 @@ export function TaskDetailPanel({
   }
 
   const face = assignee ? (
-    <Avatar name={assigneeName ?? ""} size="md" />
+    <Avatar name={assigneeName ?? ""} src={assignee.avatar_url} profileId={assignee.id} size="md" />
   ) : (
     <span className="inline-flex size-7 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-400">
       <UserRound className="size-3.5" aria-hidden />
@@ -277,7 +277,7 @@ export function TaskDetailPanel({
                     buttonClassName="inline-flex h-8 min-w-0 max-w-full items-center gap-2 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
                     button={
                       <>
-                        {assignee ? <Avatar name={assigneeName ?? ""} /> : (
+                        {assignee ? <Avatar name={assigneeName ?? ""} src={assignee.avatar_url} profileId={assignee.id} /> : (
                           <span className="inline-flex size-6 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-400">
                             <UserRound className="size-3.5" aria-hidden />
                           </span>
@@ -300,7 +300,7 @@ export function TaskDetailPanel({
                 </div>
               ) : (
                 <span className="flex min-h-8 items-center gap-2 px-1 text-sm">
-                  {assignee ? <Avatar name={assigneeName ?? ""} /> : null}
+                  {assignee ? <Avatar name={assigneeName ?? ""} src={assignee.avatar_url} profileId={assignee.id} /> : null}
                   <span className={assignee ? "text-zinc-800" : "text-zinc-500"}>{assigneeName ?? "No assignee"}</span>
                 </span>
               )}

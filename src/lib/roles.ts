@@ -82,3 +82,31 @@ export function assignablePortfolioRoles(role: PortfolioRole | null | undefined)
   if (role === "admin") return PORTFOLIO_ROLES.filter((r) => r !== "owner");
   return [];
 }
+
+// Each person's default project role (Oct 25 notes; allowed_emails.default_project_role, null = Editor),
+// used when they're added to a project with the role "default" (PERSON_DEFAULT_ROLE): directly, as a
+// pending invite, or through a team. Mirrors set_default_project_role() / default_project_role_for().
+export const DEFAULT_PROJECT_ROLES = ["editor", "commenter", "viewer"] as const;
+export type DefaultProjectRole = (typeof DEFAULT_PROJECT_ROLES)[number];
+export const PERSON_DEFAULT_ROLE = "default";
+
+export function isDefaultProjectRole(value: unknown): value is DefaultProjectRole {
+  return typeof value === "string" && (DEFAULT_PROJECT_ROLES as readonly string[]).includes(value);
+}
+
+// What "default" adds someone as: their default, Editor without one, Viewer for a Commenter default while
+// the workspace's Commenter role is off.
+export function effectiveDefaultRole(role: string | null | undefined, allowCommenter: boolean): DefaultProjectRole {
+  const chosen = isDefaultProjectRole(role) ? role : "editor";
+  return chosen === "commenter" && !allowCommenter ? "viewer" : chosen;
+}
+
+// Where the Commenter switch lives (Admin console → Security → Project roles).
+export const COMMENTER_SWITCH_HREF = "/admin/security#admin-project-roles-heading";
+export const COMMENTER_OFF_REASON = "Turned off in this workspace. Turn on in Admin console → Security.";
+
+// Team roles (lead / member), for the same picker on team member lists.
+export const TEAM_ROLE_DESCRIPTIONS: Record<"lead" | "member", string> = {
+  lead: "Manages the team: its name, members, and curated work",
+  member: "Belongs to the team and sees its messages and work",
+};

@@ -59,7 +59,7 @@ export function TeamMembersCard({
                 href={personHref(m.profileId)}
                 className="flex min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-zinc-50"
               >
-                <Avatar name={m.name} size="md" />
+                <Avatar name={m.name} profileId={m.profileId} size="md" />
                 <span className="min-w-0">
                   <span className="block truncate text-sm text-zinc-900">
                     {m.name}

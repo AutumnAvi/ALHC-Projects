@@ -368,7 +368,7 @@ function SubtaskAssignee({
   const assignee = people.find((p) => p.id === subtask.assigneeId);
   const name = assignee ? displayName(assignee) : null;
   const face = name ? (
-    <Avatar name={name} />
+    <Avatar name={name} src={assignee?.avatar_url} profileId={assignee?.id} />
   ) : (
     <span className="inline-flex size-5 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-400">
       <UserRound className="size-3" aria-hidden />

@@ -149,7 +149,7 @@ export function MentionTextarea({
               onMouseEnter={() => setActive(index)}
               className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-sm text-zinc-800 aria-selected:bg-accent-50 aria-selected:text-accent-900"
             >
-              <Avatar name={displayName(profile)} />
+              <Avatar name={displayName(profile)} src={profile.avatar_url} profileId={profile.id} />
               <span className="min-w-0 flex-1 truncate">{displayName(profile)}</span>
               {profile.full_name ? <span className="truncate text-xs text-zinc-500">{profile.email}</span> : null}
             </li>

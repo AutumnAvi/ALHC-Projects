@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { Crown, LogOut, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { RoleChangePicker, RolePicker, portfolioRoleOptions } from "@/components/role-picker";
 import { personHref } from "@/lib/people";
 import { PendingInvites } from "@/components/people/pending-invites";
 import { useShell } from "@/components/shell/shell-context";
@@ -111,21 +112,16 @@ export function PortfolioMembersManager({
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label htmlFor="invite-role" className="text-xs font-medium text-zinc-600">
-                Role
-              </label>
-              <select
+              <span className="text-xs font-medium text-zinc-600">Role</span>
+              <RolePicker
                 id="invite-role"
+                label="Role for the person you invite"
                 value={inviteRole}
-                onChange={(e) => setInviteRole(e.currentTarget.value as PortfolioRole)}
-                className={inputClass}
-              >
-                {grantable.map((role) => (
-                  <option key={role} value={role}>
-                    {PORTFOLIO_ROLE_LABELS[role]}
-                  </option>
-                ))}
-              </select>
+                onChange={(next) => setInviteRole(next as PortfolioRole)}
+                options={portfolioRoleOptions({ grantable: grantable.filter((r) => r !== "owner") }).map((o) =>
+                  o.value === "owner" ? { ...o, disabledReason: "Add them first, then make them an owner from the list" } : o,
+                )}
+              />
             </div>
             <button
               type="submit"
@@ -159,11 +155,10 @@ export function PortfolioMembersManager({
             const self = member.profileId === viewerId;
             const name = memberName(member);
             const manageable = canManage && (member.role !== "owner" || isOwner);
-            const options = grantable.includes(member.role) ? grantable : [member.role, ...grantable];
             const lastOwner = member.role === "owner" && ownerCount === 1;
             return (
               <li key={member.profileId} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                <Avatar name={name} size="md" />
+                <Avatar name={name} profileId={member.profileId} size="md" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-zinc-900">
                     <Link href={personHref(member.profileId)} className="hover:underline">
@@ -175,31 +170,17 @@ export function PortfolioMembersManager({
                 </div>
                 {manageable ? (
                   <>
-                    <label htmlFor={`role-${member.profileId}`} className="sr-only">
-                      Role for {name}
-                    </label>
-                    <select
-                      id={`role-${member.profileId}`}
+                    <RoleChangePicker
                       key={member.role}
-                      defaultValue={member.role}
+                      id={`role-${member.profileId}`}
+                      label={`Role for ${name}`}
+                      role={member.role}
+                      options={portfolioRoleOptions({ grantable, current: member.role })}
                       disabled={pending || lastOwner}
-                      title={lastOwner ? "A portfolio needs at least one owner" : PORTFOLIO_ROLE_DESCRIPTIONS[member.role]}
-                      onChange={(e) => {
-                        const select = e.currentTarget;
-                        run(async () => {
-                          const result = await changePortfolioMemberRole(portfolioId, member.profileId, select.value);
-                          if (result.error) select.value = member.role;
-                          return result;
-                        });
-                      }}
-                      className={inputClass}
-                    >
-                      {options.map((role) => (
-                        <option key={role} value={role}>
-                          {PORTFOLIO_ROLE_LABELS[role]}
-                        </option>
-                      ))}
-                    </select>
+                      title={lastOwner ? "A portfolio needs at least one owner" : undefined}
+                      run={run}
+                      save={(next) => changePortfolioMemberRole(portfolioId, member.profileId, next)}
+                    />
                   </>
                 ) : (
                   <span

@@ -413,7 +413,7 @@ const statusOptions = PROJECT_STATUSES.map((s) => ({ value: s.value, label: s.la
 function peopleOptions(ctx: PortfolioRuleContext, roles: boolean): SmartOption[] {
   return [
     ...(roles ? PROJECT_PEOPLE_ROLES.map((r) => ({ value: r.value as string, label: r.label, group: "On the project", icon: <UserRound className="size-4" /> })) : []),
-    ...ctx.people.map((p) => ({ value: p.id, label: p.name, group: "People", icon: <Avatar name={p.name} /> })),
+    ...ctx.people.map((p) => ({ value: p.id, label: p.name, group: "People", icon: <Avatar name={p.name} profileId={p.id} /> })),
   ];
 }
 
@@ -845,7 +845,7 @@ export function PortfolioRuleBuilder({
         <SmartPicker
           label={`Owner: ${owner?.name ?? (ownerId ? "someone removed" : rule ? "the rule’s creator" : "you")}`}
           value={ownerId}
-          options={ctx.members.map((m) => ({ value: m.id, label: m.name, icon: <Avatar name={m.name} /> }))}
+          options={ctx.members.map((m) => ({ value: m.id, label: m.name, icon: <Avatar name={m.name} profileId={m.id} /> }))}
           onChange={setOwnerId}
           variant="ghost"
           searchable
@@ -853,7 +853,7 @@ export function PortfolioRuleBuilder({
           className="h-8 max-w-48 px-1.5"
           renderValue={() => (
             <>
-              {owner ? <Avatar name={owner.name} /> : <UserRound className="size-4" aria-hidden />}
+              {owner ? <Avatar name={owner.name} profileId={owner.id} /> : <UserRound className="size-4" aria-hidden />}
               <span className="hidden truncate md:inline">{owner?.name ?? (rule ? "Creator" : "You")}</span>
             </>
           )}

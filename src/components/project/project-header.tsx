@@ -463,7 +463,7 @@ function MemberStack({ members, onOpen }: { members: HeaderMember[]; onOpen: () 
       <span className="flex -space-x-1">
         {shown.map((m) => (
           <span key={m.profileId} className="rounded-full ring-2 ring-white">
-            <Avatar name={m.name} size="md" />
+            <Avatar name={m.name} profileId={m.profileId} size="md" />
           </span>
         ))}
       </span>

@@ -5,6 +5,7 @@ import { useOptimistic, useState, useTransition, type DragEvent } from "react";
 import { Gauge, X } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Popover } from "@/components/popover";
+import { SmartPicker } from "@/components/smart-picker";
 import { PeriodNav, Segmented } from "@/components/project/view-chrome";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -164,20 +165,18 @@ export function WorkloadView({
         onToday={() => navigate({ d: null })}
       >
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1.5 text-sm text-zinc-600">
-            Measure
-            <select
+          <span className="flex items-center gap-1.5 text-sm text-zinc-600">
+            <span aria-hidden>Measure</span>
+            <SmartPicker
+              label="Measure"
               value={measure}
-              onChange={(e) => navigate({ m: e.target.value })}
-              className="control h-7"
-            >
-              {measures.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={(m) => {
+                if (m !== measure) navigate({ m });
+              }}
+              className="h-7 w-44"
+              options={measures.map((m) => ({ value: m.value, label: m.label }))}
+            />
+          </span>
           <Segmented label="Columns" options={WORKLOAD_ZOOMS} value={zoom} onChange={(wl) => navigate({ wl })} />
         </div>
       </PeriodNav>
@@ -224,7 +223,7 @@ export function WorkloadView({
                 <tr key={person.id}>
                   <th scope="row" className="sticky left-0 z-10 border-b border-r border-zinc-100 bg-white px-3 py-1.5 text-left font-normal">
                     <span className="flex items-center gap-2">
-                      <Avatar name={person.name} />
+                      <Avatar name={person.name} profileId={person.id} />
                       <span className="min-w-0 flex-1 truncate text-zinc-900">{person.name}</span>
                       <CapacityControl
                         scope={scope}

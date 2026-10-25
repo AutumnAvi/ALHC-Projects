@@ -83,7 +83,7 @@ import {
 } from "@/lib/duplicate-task";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
-import { hasRole, isPortfolioRole, isProjectRole } from "@/lib/roles";
+import { PERSON_DEFAULT_ROLE, hasRole, isDefaultProjectRole, isPortfolioRole, isProjectRole } from "@/lib/roles";
 import {
   EMAIL_PATTERN,
   LOGO_MAX_BYTES,
@@ -96,6 +96,7 @@ import {
   type ProjectVisibility,
 } from "@/lib/workspace";
 import { isGoalStatus, isProgressMode } from "@/lib/goals";
+import { AVATARS_BUCKET, AVATAR_TYPES, avatarFileProblem, ownAvatarPath, profileNameProblem } from "@/lib/profile";
 import { isNotificationChannel, isNotificationKind } from "@/lib/notifications";
 import {
   MAX_RECIPIENTS,
@@ -558,6 +559,13 @@ function role(value: unknown): string {
   return value;
 }
 
+// A role to add someone with: a project role, or "default" (each person's default project role).
+function addRole(value: unknown): string {
+  return value === PERSON_DEFAULT_ROLE ? PERSON_DEFAULT_ROLE : role(value);
+}
+
+const DEFAULT_ROLES_MISSING = "“Their default role” needs this release’s database update. Choose a role instead.";
+
 // pending: they haven't signed in yet — the membership waits for their first sign-in. emailed: this call
 // queued an invite email with a sign-up link and an email provider is set up (Real features 1; never
 // before this release's database update, for a re-invite, or past the per-address cap). alreadyInvited:
@@ -624,10 +632,18 @@ export async function inviteProjectMember(
   const result = await run(async () => {
     const address = inviteAddress(email);
     const project = id(projectId);
-    const memberRoleValue = role(memberRole);
-    outcome = await inviteByEmail(address, { column: "project_id", id: project }, (supabase) =>
-      supabase.rpc("add_project_member", { target_project: project, member_email: address, member_role: memberRoleValue }),
-    );
+    const memberRoleValue = addRole(memberRole);
+    outcome = await inviteByEmail(address, { column: "project_id", id: project }, async (supabase) => {
+      const added = await supabase.rpc("add_project_member", {
+        target_project: project,
+        member_email: address,
+        member_role: memberRoleValue,
+      });
+      if (memberRoleValue === PERSON_DEFAULT_ROLE && added.error?.message === "Unknown role") {
+        throw new InputError(DEFAULT_ROLES_MISSING);
+      }
+      return added;
+    });
   });
   return { ...result, ...outcome };
 }
@@ -2982,6 +2998,19 @@ export async function setWorkspaceLogo(path: string | null, size?: number): Prom
   });
 }
 
+// A person's default project role (Admin console → Users; workspace admins only — the database checks):
+// Viewer, Commenter, or Editor, or null to go back to Editor.
+export async function setDefaultProjectRole(email: string, newRole: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const address = inviteAddress(email);
+    if (newRole !== null && !isDefaultProjectRole(newRole)) throw new InputError("Choose Viewer, Commenter, or Editor");
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_default_project_role", { member_email: address, new_role: newRole });
+    if (result.error?.code === "PGRST202") throw new InputError("Default project roles need this release’s database update");
+    check(result, WORKSPACE_ADMINS_ONLY);
+  });
+}
+
 // The Commenter project role (Admin console → Security; workspace admins, RLS and the column grant
 // decide). Turning it off never changes anyone's role.
 export async function setCommenterRoleAllowed(allowed: boolean): Promise<ActionResult> {
@@ -3182,13 +3211,18 @@ export async function addTeamToProject(
 ): Promise<ActionResult & { result?: TeamInviteResult }> {
   let result: TeamInviteResult | undefined;
   const outcome = await run(async () => {
-    if (!isTeamProjectRole(memberRole)) throw new InputError("Choose admin, editor, commenter, or viewer");
+    if (!isTeamProjectRole(memberRole) && memberRole !== PERSON_DEFAULT_ROLE) {
+      throw new InputError("Choose admin, editor, commenter, viewer, or each person’s default");
+    }
     const supabase = await createClient();
     const response = await supabase.rpc("add_team_to_project", {
       target_project: id(projectId),
       target_team: id(teamId, "team"),
       member_role: memberRole,
     });
+    if (memberRole === PERSON_DEFAULT_ROLE && response.error?.code === "23514" && /Choose admin/.test(response.error.message)) {
+      throw new InputError(DEFAULT_ROLES_MISSING);
+    }
     check(response);
     result = parseTeamInviteResult(response.data);
   });
@@ -3727,6 +3761,97 @@ export async function setEmailComments(enabled: boolean): Promise<ActionResult> 
       await supabase.from("profiles").update({ email_comments: enabled === true }).eq("id", user.id).select("id"),
       "Couldn’t save your notification setting",
     );
+  });
+}
+
+// Settings → Profile (Oct 25 notes): your own name. The column grant and profiles_update_own keep it to
+// your own row's name, picture, and comment email switch.
+export async function updateMyProfile({ fullName }: { fullName: string }): Promise<ActionResult> {
+  return run(async () => {
+    const name = typeof fullName === "string" ? fullName.trim() : "";
+    const problem = profileNameProblem(name);
+    if (problem) throw new InputError(problem);
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to change this");
+    checkUpdated(
+      await supabase.from("profiles").update({ full_name: name }).eq("id", user.id).select("id"),
+      "Couldn’t save your name",
+    );
+  });
+}
+
+// The image's first bytes must match its declared type (the bucket checks the type it's told).
+function looksLikeImage(bytes: Uint8Array, type: string): boolean {
+  const ascii = (from: number, to: number) => String.fromCharCode(...bytes.slice(from, to));
+  if (type === "image/png") return bytes[0] === 0x89 && ascii(1, 4) === "PNG";
+  if (type === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (type === "image/gif") return ascii(0, 4) === "GIF8";
+  if (type === "image/webp") return ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP";
+  return false;
+}
+
+// Settings → Profile: upload a new picture into your own folder of the public avatars bucket
+// (<your id>/<random>.<ext>, the Storage policies' rule), point your profile at it, then remove the old
+// file. Returns the new public URL.
+export async function uploadMyAvatar(formData: FormData): Promise<ActionResult & { avatarUrl?: string }> {
+  let avatarUrl: string | undefined;
+  const result = await run(async () => {
+    const file = formData.get("file");
+    if (!(file instanceof File)) throw new InputError("Choose a picture to upload");
+    const problem = avatarFileProblem(file);
+    if (problem) throw new InputError(problem);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!looksLikeImage(bytes, file.type)) throw new InputError("That file isn’t a PNG, JPEG, WebP, or GIF image");
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to change this");
+    const previous = await supabase.from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
+    check(previous);
+    const path = `${user.id}/${crypto.randomUUID()}.${AVATAR_TYPES[file.type]}`;
+    const upload = await supabase.storage
+      .from(AVATARS_BUCKET)
+      .upload(path, bytes, { contentType: file.type, upsert: false, cacheControl: "31536000" });
+    if (upload.error) {
+      throw new DbError(
+        /row-level security|not authorized|unauthorized/i.test(upload.error.message)
+          ? "Uploading pictures needs this release’s storage update"
+          : "Couldn’t upload the picture. Try again.",
+      );
+    }
+    const url = supabase.storage.from(AVATARS_BUCKET).getPublicUrl(path).data.publicUrl;
+    const saved = await supabase.from("profiles").update({ avatar_url: url }).eq("id", user.id).select("id");
+    if (saved.error || !saved.data?.length) {
+      await supabase.storage.from(AVATARS_BUCKET).remove([path]);
+      checkUpdated(saved, "Couldn’t save your picture");
+    }
+    const old = ownAvatarPath(previous.data?.avatar_url, user.id);
+    if (old && old !== path) await supabase.storage.from(AVATARS_BUCKET).remove([old]);
+    avatarUrl = url;
+  });
+  return result.error ? result : { avatarUrl };
+}
+
+// Settings → Profile: remove your picture (and its file, when it's one you uploaded).
+export async function removeMyAvatar(): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to change this");
+    const previous = await supabase.from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
+    check(previous);
+    checkUpdated(
+      await supabase.from("profiles").update({ avatar_url: null }).eq("id", user.id).select("id"),
+      "Couldn’t remove your picture",
+    );
+    const old = ownAvatarPath(previous.data?.avatar_url, user.id);
+    if (old) await supabase.storage.from(AVATARS_BUCKET).remove([old]);
   });
 }
 

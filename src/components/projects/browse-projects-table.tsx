@@ -244,7 +244,7 @@ export function BrowseProjectsTable({
                           <span className="flex -space-x-1" aria-hidden>
                             {shownMembers.map((id) => (
                               <span key={id} className="rounded-full ring-2 ring-white">
-                                <Avatar name={names.get(id) ?? "?"} size="md" />
+                                <Avatar name={names.get(id) ?? "?"} profileId={id} size="md" />
                               </span>
                             ))}
                           </span>

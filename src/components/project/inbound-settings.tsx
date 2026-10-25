@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { CheckCircle2, Copy, Inbox, KeyRound, RotateCcw, ShieldCheck, Trash2, XCircle } from "lucide-react";
+import { Avatar } from "@/components/avatar";
+import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -223,35 +225,30 @@ function EndpointFields({
       </label>
       <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600" htmlFor={`${idPrefix}-section`}>
         Section
-        <select
+        <SmartPicker
           id={`${idPrefix}-section`}
+          label="Section"
           value={value.sectionId ?? ""}
-          onChange={(e) => onChange({ ...value, sectionId: e.currentTarget.value || null })}
-          className={inputClass}
-        >
-          <option value="">No section</option>
-          {sections.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+          onChange={(next) => onChange({ ...value, sectionId: next || null })}
+          searchable
+          className="h-9 w-full font-normal"
+          options={[{ value: "", label: "No section" }, ...sections.map((s) => ({ value: s.id, label: s.name }))]}
+        />
       </label>
       <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600" htmlFor={`${idPrefix}-assignee`}>
         Default assignee
-        <select
+        <SmartPicker
           id={`${idPrefix}-assignee`}
+          label="Default assignee"
           value={value.assigneeId ?? ""}
-          onChange={(e) => onChange({ ...value, assigneeId: e.currentTarget.value || null })}
-          className={inputClass}
-        >
-          <option value="">Unassigned</option>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </select>
+          onChange={(next) => onChange({ ...value, assigneeId: next || null })}
+          searchable
+          className="h-9 w-full font-normal"
+          options={[
+            { value: "", label: "Unassigned" },
+            ...members.map((m) => ({ value: m.id, label: m.name, icon: <Avatar name={m.name} profileId={m.id} /> })),
+          ]}
+        />
       </label>
       <fieldset className="flex flex-col gap-1">
         <legend className="text-xs font-medium text-zinc-600">Default tags</legend>

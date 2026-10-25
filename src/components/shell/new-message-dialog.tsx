@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
+import { SmartPicker } from "@/components/smart-picker";
 import { createMessageThread } from "@/lib/actions";
 import { loadMessageProjects } from "@/lib/shell-actions";
 
@@ -66,18 +67,15 @@ export function NewMessageDialog({ onClose }: { onClose: () => void }) {
             <label htmlFor="new-message-project" className={DIALOG_LABEL}>
               Project
             </label>
-            <select
+            <SmartPicker
               id="new-message-project"
+              label="Project"
               value={projectId}
-              onChange={(e) => setProjectId(e.currentTarget.value)}
-              className="field mt-1 w-full"
-            >
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              onChange={setProjectId}
+              searchable
+              className="mt-1 h-9 w-full"
+              options={projects.map((p) => ({ value: p.id, label: p.name }))}
+            />
           </div>
           <div>
             <label htmlFor="new-message-title" className={DIALOG_LABEL}>

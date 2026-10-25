@@ -97,7 +97,7 @@ function TeamCard({ team, viewerId, isDefault }: { team: Team; viewerId: string;
           <span className="flex shrink-0 -space-x-1">
             {shown.map((m) => (
               <span key={m.profileId} className="rounded-full ring-2 ring-white">
-                <Avatar name={m.name} size="sm" />
+                <Avatar name={m.name} profileId={m.profileId} size="sm" />
               </span>
             ))}
           </span>

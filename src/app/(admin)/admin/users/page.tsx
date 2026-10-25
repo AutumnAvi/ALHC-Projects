@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { UsersAdmin } from "@/components/admin/users-admin";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
-import { listMemberLastActivity, listWorkspaceMembers } from "@/lib/data";
+import { commenterRoleAllowed, listMemberLastActivity, listWorkspaceMembers } from "@/lib/data";
 import { isEmailConfigured } from "@/lib/email";
 import { requestOrigin } from "@/lib/origin";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -13,11 +13,12 @@ export const metadata: Metadata = { title: "Users · Admin console" };
 // and Admin / Member roles.
 export default async function AdminUsersPage() {
   const member = await requireWorkspaceAdmin();
-  const [members, activity, timeZone, origin] = await Promise.all([
+  const [members, activity, timeZone, origin, allowCommenter] = await Promise.all([
     listWorkspaceMembers(),
     listMemberLastActivity(),
     getViewerTimeZone(),
     requestOrigin(),
+    commenterRoleAllowed(),
   ]);
 
   return (
@@ -29,6 +30,7 @@ export default async function AdminUsersPage() {
       timeZone={timeZone}
       emailConfigured={isEmailConfigured()}
       signupUrl={`${origin}/signup`}
+      allowCommenter={allowCommenter}
     />
   );
 }

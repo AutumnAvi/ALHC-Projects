@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CheckCircle2, Circle, EyeOff, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { Segmented } from "@/components/project/view-chrome";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { removeTaskDependency, setTaskDependency } from "@/lib/actions";
 import { slackLabel } from "@/lib/critical-path";
@@ -134,22 +135,17 @@ function LinkOptions({ task, item }: { task: TaskDetail; item: TaskDependency })
             <label htmlFor={`dep-kind-${item.id}`} className="text-xs font-medium text-zinc-600">
               Type
             </label>
-            <select
+            <SmartPicker
               id={`dep-kind-${item.id}`}
+              label="Type"
               value={item.kind}
               disabled={pending}
-              onChange={(e) => {
-                const kind = e.currentTarget.value;
-                if (isDependencyKind(kind)) change(kind, item.lagDays);
+              onChange={(kind) => {
+                if (kind !== item.kind && isDependencyKind(kind)) change(kind, item.lagDays);
               }}
-              className="control mt-1 w-full"
-            >
-              {DEPENDENCY_KINDS.map((k) => (
-                <option key={k.value} value={k.value}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
+              className="mt-1 w-full"
+              options={DEPENDENCY_KINDS.map((k) => ({ value: k.value, label: k.label }))}
+            />
           </div>
           <div>
             <label htmlFor={`dep-lag-${item.id}`} className="text-xs font-medium text-zinc-600">

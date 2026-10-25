@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
+import { AvatarDirectoryProvider } from "@/components/avatar-face";
 import { AdminTopBar } from "@/components/admin/admin-chrome";
 import { AdminNav } from "@/components/admin/admin-nav";
 import { SetupRequired } from "@/components/setup-required";
@@ -10,7 +11,7 @@ import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { ToastProvider } from "@/components/toast";
 import { TooltipLayer } from "@/components/tooltip-layer";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
-import { getWorkspace } from "@/lib/data";
+import { getWorkspace, listProfileAvatars } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/env";
 import { SIDEBAR_COOKIE, parseSidebarPrefs } from "@/lib/sidebar-prefs";
 
@@ -23,29 +24,31 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   if (!isSupabaseConfigured()) return <SetupRequired />;
 
   const member = await requireWorkspaceAdmin();
-  const [workspace, cookieStore] = await Promise.all([getWorkspace(), cookies()]);
+  const [workspace, cookieStore, avatars] = await Promise.all([getWorkspace(), cookies(), listProfileAvatars()]);
   const shownWorkspace = { name: workspace?.name ?? "ALHC Projects", logoUrl: workspace?.logoUrl ?? null };
 
   return (
     <ToastProvider>
-      {/* The shell's dialogs (Create team, Invite, Settings) work here too. */}
-      <ShellProvider
-        member={{ id: member.id, name: member.name, email: member.email }}
-        isWorkspaceAdmin
-        workspace={shownWorkspace}
-        initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
-      >
-        <TimeZoneCookie />
-        <div className="flex h-full flex-col">
-          <AdminTopBar workspace={shownWorkspace} />
-          <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-            <AdminNav />
-            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white">{children}</main>
+      <AvatarDirectoryProvider avatars={avatars}>
+        {/* The shell's dialogs (Create team, Invite, Settings) work here too. */}
+        <ShellProvider
+          member={{ id: member.id, name: member.name, email: member.email }}
+          isWorkspaceAdmin
+          workspace={shownWorkspace}
+          initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
+        >
+          <TimeZoneCookie />
+          <div className="flex h-full flex-col">
+            <AdminTopBar workspace={shownWorkspace} />
+            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <AdminNav />
+              <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white">{children}</main>
+            </div>
           </div>
-        </div>
-        <ShellDialogs />
-        <TooltipLayer />
-      </ShellProvider>
+          <ShellDialogs />
+          <TooltipLayer />
+        </ShellProvider>
+      </AvatarDirectoryProvider>
     </ToastProvider>
   );
 }

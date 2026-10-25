@@ -43,12 +43,14 @@ export type ShareData = {
   // provider is set up).
   resendable: boolean;
   // Teams added with a group invite (a record of the invite; the people are ordinary members).
-  addedTeams: (ShareTeam & { role: string })[];
+  addedTeams: (ShareTeam & { role: string; usesDefaultRoles: boolean })[];
   // The invite search: people in the workspace and every team.
   people: SharePerson[];
   teams: ShareTeam[];
   // The workspace offers the Commenter role (off by default; existing Commenters keep it).
   allowCommenter: boolean;
+  // "Their default role" can be picked (the Oct 25 notes' database update is applied).
+  defaultRoles: boolean;
 };
 
 // The Overview tab's activity timeline (newest first): status updates, people joining, the project

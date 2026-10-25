@@ -1,6 +1,7 @@
 "use client";
 
 import { useServerAction } from "@/components/toast";
+import { SmartPicker } from "@/components/smart-picker";
 import { setPortfolioFieldValue } from "@/lib/actions";
 import { formatDueDate } from "@/lib/dates";
 import type { PortfolioField } from "@/lib/data";
@@ -50,20 +51,16 @@ export function PortfolioFieldInput({
 
   if (field.fieldType === "single_select") {
     return (
-      <select
-        aria-label={label}
+      <SmartPicker
+        label={label}
         value={field.options.some((o) => o.id === current) ? current : ""}
         disabled={pending}
-        onChange={(e) => save(e.currentTarget.value || null)}
-        className={CONTROL}
-      >
-        <option value="">—</option>
-        {field.options.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.name}
-          </option>
-        ))}
-      </select>
+        onChange={(next) => {
+          if (next !== current) save(next || null);
+        }}
+        className="h-7 w-full min-w-0 text-xs"
+        options={[{ value: "", label: "—" }, ...field.options.map((o) => ({ value: o.id, label: o.name }))]}
+      />
     );
   }
   if (field.fieldType === "date") {

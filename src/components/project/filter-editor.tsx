@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
+import { SmartPicker } from "@/components/smart-picker";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile, Section } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
@@ -27,9 +28,8 @@ export type FilterContext = {
   tags?: Tag[];
 };
 
-const selectClass =
-  "control h-8 w-full";
-const inputClass = selectClass;
+const inputClass = "control h-8 w-full";
+const pickerClass = "h-8 w-full";
 
 // ---------------------------------------------------------------------------------------------
 // Chips: one removable chip per active filter
@@ -274,16 +274,18 @@ export function FilterEditor({
         <label htmlFor={`${idPrefix}-completion`} className="sr-only">
           Completion
         </label>
-        <select
+        <SmartPicker
           id={`${idPrefix}-completion`}
+          label="Completion"
           value={completion}
-          onChange={(e) => setCompletion(e.currentTarget.value as Completion)}
-          className={selectClass}
-        >
-          <option value="incomplete">Incomplete tasks</option>
-          <option value="completed">Completed tasks</option>
-          <option value="all">All tasks</option>
-        </select>
+          onChange={(value) => setCompletion(value as Completion)}
+          className={pickerClass}
+          options={[
+            { value: "incomplete", label: "Incomplete tasks" },
+            { value: "completed", label: "Completed tasks" },
+            { value: "all", label: "All tasks" },
+          ]}
+        />
         {completion === "completed" ? (
           <label className="mt-2 flex items-center gap-2 text-sm text-zinc-700">
             <span className="shrink-0">Completed in the last</span>
@@ -309,19 +311,14 @@ export function FilterEditor({
         <label htmlFor={`${idPrefix}-due`} className="sr-only">
           Due date
         </label>
-        <select
+        <SmartPicker
           id={`${idPrefix}-due`}
+          label="Due date"
           value={filters.due?.kind ?? ""}
-          onChange={(e) => setDueKind(e.currentTarget.value as DueKind | "")}
-          className={selectClass}
-        >
-          <option value="">Any due date</option>
-          {DUE_KINDS.map((k) => (
-            <option key={k.value} value={k.value}>
-              {k.label}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => setDueKind(value as DueKind | "")}
+          className={pickerClass}
+          options={[{ value: "", label: "Any due date" }, ...DUE_KINDS.map((k) => ({ value: k.value, label: k.label }))]}
+        />
         {filters.due?.kind === "upcoming" ? (
           <label className="mt-2 flex items-center gap-2 text-sm text-zinc-700">
             <span className="shrink-0">Next</span>
@@ -438,25 +435,21 @@ export function FilterEditor({
               ) : null;
             })}
             {addableFields.length > 0 && (filters.fields?.length ?? 0) < 20 ? (
-              <label className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
                 <Plus className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
-                <span className="sr-only">Add a field filter</span>
-                <select
+                <SmartPicker
+                  label="Add a field filter"
+                  placeholder="Add a field filter…"
                   value=""
-                  onChange={(e) => {
-                    const field = context.fields.find((f) => f.id === e.currentTarget.value);
+                  searchable
+                  onChange={(value) => {
+                    const field = context.fields.find((f) => f.id === value);
                     if (field) onChange({ ...filters, fields: [...(filters.fields ?? []), initialFieldFilter(field, context)] });
                   }}
-                  className={selectClass}
-                >
-                  <option value="">Add a field filter…</option>
-                  {addableFields.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  className={pickerClass}
+                  options={addableFields.map((f) => ({ value: f.id, label: f.name }))}
+                />
+              </div>
             ) : null}
           </div>
         </Group>
@@ -532,18 +525,15 @@ function FieldFilterRow({
         <label htmlFor={`${idPrefix}-op`} className="sr-only">
           {field.name} condition
         </label>
-        <select
+        <SmartPicker
           id={`${idPrefix}-op`}
+          label={`${field.name} condition`}
           value={filter.op}
-          onChange={(e) => setOp(e.currentTarget.value as FieldOp)}
-          className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-xs focus:border-accent-500 focus:outline-none"
-        >
-          {ops.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => setOp(value as FieldOp)}
+          className="h-6 w-auto text-xs"
+          panelWidth={200}
+          options={ops.map((o) => ({ value: o.value, label: o.label }))}
+        />
         <button
           type="button"
           onClick={() => onChange(null)}
@@ -570,15 +560,16 @@ function FieldFilterRow({
         </div>
       ) : null}
       {filter.op === "equals" && field.fieldType === "boolean" ? (
-        <select
-          aria-label={`${field.name} value`}
+        <SmartPicker
+          label={`${field.name} value`}
           value={filter.value === false ? "false" : "true"}
-          onChange={(e) => onChange({ ...filter, value: e.currentTarget.value === "true" })}
-          className={`mt-1.5 ${selectClass}`}
-        >
-          <option value="true">Checked</option>
-          <option value="false">Unchecked</option>
-        </select>
+          onChange={(value) => onChange({ ...filter, value: value === "true" })}
+          className={`mt-1.5 ${pickerClass}`}
+          options={[
+            { value: "true", label: "Checked" },
+            { value: "false", label: "Unchecked" },
+          ]}
+        />
       ) : null}
       {filter.op === "equals" && field.fieldType !== "boolean" ? (
         <div className="mt-1.5">

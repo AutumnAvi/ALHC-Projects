@@ -5,6 +5,7 @@ import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
 import { useCan } from "@/components/project/project-access";
+import { SmartPicker } from "@/components/smart-picker";
 import { useViewConfig } from "@/components/project/view-config";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { TaskLink } from "@/components/task/task-link";
@@ -450,21 +451,18 @@ function TaskCard({
 
       {moveOptions.length > 0 ? (
         <>
-          <label className="sr-only" htmlFor={`move-${task.id}`}>
-            Move “{task.title}” to
-          </label>
-          <select
+          <SmartPicker
             id={`move-${task.id}`}
+            label={`Move “${task.title}” to`}
             value={groupKey}
-            onChange={(e) => onMove(e.target.value)}
-            className="absolute right-2 top-2 max-w-28 rounded border border-zinc-200 bg-white py-0.5 pl-1 text-xs text-zinc-600 opacity-0 shadow-xs focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-          >
-            {moveOptions.map((option) => (
-              <option key={option.key} value={option.key}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => {
+              if (value !== groupKey) onMove(value);
+            }}
+            searchable={moveOptions.length > 7}
+            panelWidth={220}
+            className="absolute right-2 top-2 h-6 min-h-6 max-w-28 text-xs text-zinc-600 opacity-0 shadow-xs focus:opacity-100 aria-expanded:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+            options={moveOptions.map((option) => ({ value: option.key, label: option.label }))}
+          />
         </>
       ) : null}
     </article>
