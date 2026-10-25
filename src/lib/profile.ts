@@ -1,6 +1,6 @@
 // Your own name and picture (Oct 25 notes, note 1). Mirrors 20261025010000_oct25_notes_a.sql:
 // profiles.full_name is null or 1–100 characters once trimmed; pictures live in the public avatars
-// bucket at <your user id>/<random>.<ext> (supabase/manual/20261025010000_avatar_policies.sql).
+// bucket at <your user id>/<random>.<ext> (the migration's storage policies).
 
 export const AVATARS_BUCKET = "avatars";
 export const AVATAR_MAX_BYTES = 2 * 1024 * 1024;

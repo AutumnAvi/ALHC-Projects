@@ -8,9 +8,11 @@
 --     1,000 characters (an <img> source everyone's browser loads).
 --   * sync_profile_for_user (every sign-in that updates auth metadata, e.g. Google) only fills a name or
 --     picture the person hasn't set, so an edit survives the next sign-in.
---   * A public "avatars" bucket (2 MB, PNG / JPEG / WebP / GIF). Its storage.objects policies (each
---     person writes only <their id>/…) are in supabase/manual/20261025010000_avatar_policies.sql: the
---     migration role can't create policies on storage.objects (see supabase/manual/*).
+--   * A public "avatars" bucket (2 MB, PNG / JPEG / WebP / GIF) with storage.objects policies: pictures are
+--     public URLs, workspace members list the bucket; allowlisted people insert / update / delete only <their id>/… . Created
+--     with CREATE POLICY only (storage.objects can't be ALTERed); if the hosted migration role is refused
+--     ("must be owner of table objects", as for the email logo policy), run that block as the storage
+--     owner.
 --
 -- Note 2: role clarity. Each person gets a default project role (allowed_emails.default_project_role,
 -- set by workspace admins through set_default_project_role — the one new client definer, pinned in
@@ -99,11 +101,60 @@ comment on column public.profiles.avatar_url is
   'Public URL of the person''s picture (their file in the avatars bucket, or the sign-in provider''s picture '
   'while they have none). https only.';
 
--- Profile pictures: a public bucket (every avatar is shown to everyone signed in through its public URL).
--- Policies: supabase/manual/20261025010000_avatar_policies.sql.
+-- Profile pictures: a public bucket (every avatar is shown through its public URL).
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('avatars', 'avatars', true, 2097152, array['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 on conflict (id) do nothing;
+
+-- Its policies: pictures are read through public URLs; signed-in workspace members list the bucket; each
+-- allowlisted person writes only their own folder (avatars/<user id>/…).
+-- Each is created once (no DROP above the tail, so a re-run skips existing ones).
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects'
+                 and policyname = 'avatars_objects_select_public') then
+    -- Picture URLs are public without any policy (a public bucket); listing stays with people signed in
+    -- to the workspace, because anon reads nothing in Storage (pinned by zz15).
+    create policy avatars_objects_select_public on storage.objects
+      for select to authenticated
+      using (bucket_id = 'avatars' and (select public.is_allowlisted()));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects'
+                 and policyname = 'avatars_objects_insert_own') then
+    create policy avatars_objects_insert_own on storage.objects
+      for insert to authenticated
+      with check (
+        bucket_id = 'avatars'
+        and (storage.foldername(name))[1] = (select auth.uid())::text
+        and (select public.is_allowlisted())
+      );
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects'
+                 and policyname = 'avatars_objects_update_own') then
+    create policy avatars_objects_update_own on storage.objects
+      for update to authenticated
+      using (
+        bucket_id = 'avatars'
+        and (storage.foldername(name))[1] = (select auth.uid())::text
+        and (select public.is_allowlisted())
+      )
+      with check (
+        bucket_id = 'avatars'
+        and (storage.foldername(name))[1] = (select auth.uid())::text
+        and (select public.is_allowlisted())
+      );
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects'
+                 and policyname = 'avatars_objects_delete_own') then
+    create policy avatars_objects_delete_own on storage.objects
+      for delete to authenticated
+      using (
+        bucket_id = 'avatars'
+        and (storage.foldername(name))[1] = (select auth.uid())::text
+        and (select public.is_allowlisted())
+      );
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Note 2: a default project role per person

@@ -1,4 +1,4 @@
--- Oct 25 test notes (20261025010000_oct25_notes_a.sql, supabase/manual/20261025010000_avatar_policies.sql).
+-- Oct 25 test notes (20261025010000_oct25_notes_a.sql).
 -- 1. Everyone edits their own name and picture: only full_name / avatar_url / email_comments are
 --    writable, only on their own row; the checks; the sign-in sync only fills empty fields; the avatars
 --    bucket and its own-folder policies.
@@ -47,7 +47,26 @@ begin
   assert (select file_size_limit from storage.buckets where id = 'avatars') = 2097152, '2 MB';
   assert (select allowed_mime_types from storage.buckets where id = 'avatars')
     = array['image/png', 'image/jpeg', 'image/webp', 'image/gif'], 'images only';
+  assert (select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects'
+          and policyname like 'avatars_objects_%') = 4, 'four avatar policies, from the migration';
 end $$;
+
+-- Pictures are public URLs (a public bucket); listing is for people signed in to the workspace, and anon
+-- reads nothing in Storage (zz15).
+insert into storage.objects (bucket_id, name) values ('avatars', 'a1a19025-0000-4000-8000-000000000003/seen.png');
+set role anon;
+do $$
+begin
+  assert not exists (select 1 from storage.objects where bucket_id = 'avatars'), 'anon lists nothing';
+end $$;
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1a19025-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  assert exists (select 1 from storage.objects where bucket_id = 'avatars' and name like '%/seen.png'), 'members see pictures';
+end $$;
+reset role;
+delete from storage.objects where bucket_id = 'avatars' and name like '%/seen.png';
 
 set role authenticated;
 select set_config('request.jwt.claim.sub', 'a1a19025-0000-4000-8000-000000000001', false) is not null as ok \gset
