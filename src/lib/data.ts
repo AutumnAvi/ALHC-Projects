@@ -4239,21 +4239,33 @@ export const listProjectGoalLinks = cache(async (projectId: string): Promise<Pro
   );
 });
 
-export type ProjectTeamAccess = { teamId: string; name: string; role: string };
+export type ProjectTeamAccess = { teamId: string; name: string; role: string; usesDefaultRoles: boolean };
 
 // Teams added to the project with a group invite (team_projects: a record of the invite, readable with
 // the project). The people themselves are ordinary members.
 export const listProjectTeamAccess = cache(async (projectId: string): Promise<ProjectTeamAccess[]> => {
   const supabase = await createClient();
-  const result = await supabase
-    .from("team_projects")
-    .select("team_id, role, team:teams!team_projects_team_id_fkey(name, deleted_at)")
-    .eq("project_id", projectId)
-    .is("deleted_at", null)
-    .order("created_at");
-  return rows(result, "teams on the project").flatMap((r): ProjectTeamAccess[] =>
-    r.team && r.team.deleted_at === null ? [{ teamId: r.team_id, name: r.team.name, role: r.role }] : [],
+  const query = (columns: string) =>
+    supabase.from("team_projects").select(columns).eq("project_id", projectId).is("deleted_at", null).order("created_at");
+  type Row = { team_id: string; role: string; uses_default_roles?: boolean; team: { name: string; deleted_at: string | null } | null };
+  const base = "team_id, role, team:teams!team_projects_team_id_fkey(name, deleted_at)";
+  // uses_default_roles comes with the Oct 25 notes' database update.
+  let result = await query(`${base}, uses_default_roles`);
+  if (result.error && isMissingColumn(result.error)) result = await query(base);
+  return rows(result as unknown as { data: Row[] | null; error: typeof result.error }, "teams on the project").flatMap(
+    (r): ProjectTeamAccess[] =>
+      r.team && r.team.deleted_at === null
+        ? [{ teamId: r.team_id, name: r.team.name, role: r.role, usesDefaultRoles: r.uses_default_roles === true }]
+        : [],
   );
+});
+
+// The Oct 25 notes' database update (default project roles) is applied: allowed_emails.default_project_role
+// is readable.
+export const hasOct25Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const { error } = await supabase.from("allowed_emails").select("default_project_role").limit(1);
+  return !error;
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -4664,7 +4676,7 @@ export const canManageTeam = cache(async (teamId: string): Promise<boolean> => {
 export const listWorkspaceMembers = cache(async (): Promise<WorkspaceMember[]> => {
   const supabase = await createClient();
   const workspace = await getWorkspace();
-  const [allowed, profiles, admins, teamRows, invites] = await Promise.all([
+  const [allowed, profiles, admins, teamRows, invites, defaults] = await Promise.all([
     supabase
       .from("allowed_emails")
       .select("email, invited_at, removed_at, created_at, inviter:profiles!allowed_emails_invited_by_fkey(full_name)")
@@ -4685,7 +4697,12 @@ export const listWorkspaceMembers = cache(async (): Promise<WorkspaceMember[]> =
       .eq("payload->>kind", "invite")
       .order("created_at", { ascending: false })
       .limit(500),
+    // Oct 25 notes: each person's default project role (an error = a database without the update).
+    supabase.from("allowed_emails").select("email, default_project_role"),
   ]);
+  const defaultRoles = defaults.error
+    ? null
+    : new Map((defaults.data ?? []).map((d) => [d.email, d.default_project_role] as const));
   const byEmail = new Map(rows(profiles, "people").map((p) => [p.email.toLowerCase(), p] as const));
   const adminIds = new Set(rows(admins, "workspace admins").map((a) => a.profile_id));
   const teamsByProfile = new Map<string, { id: string; name: string }[]>();
@@ -4717,6 +4734,7 @@ export const listWorkspaceMembers = cache(async (): Promise<WorkspaceMember[]> =
         addedAt: a.created_at,
         removedAt: a.removed_at,
         inviteEmail: latestInvite.get(a.email) ?? null,
+        defaultProjectRole: defaultRoles ? (defaultRoles.get(a.email) ?? null) : undefined,
       };
     })
     .sort((x, y) => Number(y.role === "admin") - Number(x.role === "admin") || x.name.localeCompare(y.name));

@@ -83,7 +83,7 @@ import {
 } from "@/lib/duplicate-task";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
-import { hasRole, isPortfolioRole, isProjectRole } from "@/lib/roles";
+import { PERSON_DEFAULT_ROLE, hasRole, isDefaultProjectRole, isPortfolioRole, isProjectRole } from "@/lib/roles";
 import {
   EMAIL_PATTERN,
   LOGO_MAX_BYTES,
@@ -559,6 +559,13 @@ function role(value: unknown): string {
   return value;
 }
 
+// A role to add someone with: a project role, or "default" (each person's default project role).
+function addRole(value: unknown): string {
+  return value === PERSON_DEFAULT_ROLE ? PERSON_DEFAULT_ROLE : role(value);
+}
+
+const DEFAULT_ROLES_MISSING = "“Their default role” needs this release’s database update. Choose a role instead.";
+
 // pending: they haven't signed in yet — the membership waits for their first sign-in. emailed: this call
 // queued an invite email with a sign-up link and an email provider is set up (Real features 1; never
 // before this release's database update, for a re-invite, or past the per-address cap). alreadyInvited:
@@ -625,10 +632,18 @@ export async function inviteProjectMember(
   const result = await run(async () => {
     const address = inviteAddress(email);
     const project = id(projectId);
-    const memberRoleValue = role(memberRole);
-    outcome = await inviteByEmail(address, { column: "project_id", id: project }, (supabase) =>
-      supabase.rpc("add_project_member", { target_project: project, member_email: address, member_role: memberRoleValue }),
-    );
+    const memberRoleValue = addRole(memberRole);
+    outcome = await inviteByEmail(address, { column: "project_id", id: project }, async (supabase) => {
+      const added = await supabase.rpc("add_project_member", {
+        target_project: project,
+        member_email: address,
+        member_role: memberRoleValue,
+      });
+      if (memberRoleValue === PERSON_DEFAULT_ROLE && added.error?.message === "Unknown role") {
+        throw new InputError(DEFAULT_ROLES_MISSING);
+      }
+      return added;
+    });
   });
   return { ...result, ...outcome };
 }
@@ -2983,6 +2998,19 @@ export async function setWorkspaceLogo(path: string | null, size?: number): Prom
   });
 }
 
+// A person's default project role (Admin console → Users; workspace admins only — the database checks):
+// Viewer, Commenter, or Editor, or null to go back to Editor.
+export async function setDefaultProjectRole(email: string, newRole: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const address = inviteAddress(email);
+    if (newRole !== null && !isDefaultProjectRole(newRole)) throw new InputError("Choose Viewer, Commenter, or Editor");
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_default_project_role", { member_email: address, new_role: newRole });
+    if (result.error?.code === "PGRST202") throw new InputError("Default project roles need this release’s database update");
+    check(result, WORKSPACE_ADMINS_ONLY);
+  });
+}
+
 // The Commenter project role (Admin console → Security; workspace admins, RLS and the column grant
 // decide). Turning it off never changes anyone's role.
 export async function setCommenterRoleAllowed(allowed: boolean): Promise<ActionResult> {
@@ -3183,13 +3211,18 @@ export async function addTeamToProject(
 ): Promise<ActionResult & { result?: TeamInviteResult }> {
   let result: TeamInviteResult | undefined;
   const outcome = await run(async () => {
-    if (!isTeamProjectRole(memberRole)) throw new InputError("Choose admin, editor, commenter, or viewer");
+    if (!isTeamProjectRole(memberRole) && memberRole !== PERSON_DEFAULT_ROLE) {
+      throw new InputError("Choose admin, editor, commenter, viewer, or each person’s default");
+    }
     const supabase = await createClient();
     const response = await supabase.rpc("add_team_to_project", {
       target_project: id(projectId),
       target_team: id(teamId, "team"),
       member_role: memberRole,
     });
+    if (memberRole === PERSON_DEFAULT_ROLE && response.error?.code === "23514" && /Choose admin/.test(response.error.message)) {
+      throw new InputError(DEFAULT_ROLES_MISSING);
+    }
     check(response);
     result = parseTeamInviteResult(response.data);
   });

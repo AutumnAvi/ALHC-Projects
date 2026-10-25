@@ -47,6 +47,9 @@ export type InviteEmailStatus = {
 };
 
 export type WorkspaceMember = {
+  // Oct 25 notes: the project role "default" adds them as (null = Editor; undefined = a database without
+  // the update).
+  defaultProjectRole?: string | null;
   email: string;
   profileId: string | null;
   name: string;
