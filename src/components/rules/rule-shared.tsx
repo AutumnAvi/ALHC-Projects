@@ -702,7 +702,7 @@ export function personOptions(ctx: RuleContext, opts: { none?: string; many?: bo
       icon: <Contact className="size-4" />,
       ...(ctx.v3 === false ? { disabled: true, disabledReason: NEEDS_UPDATE } : {}),
     })),
-    ...ctx.people.map((p) => ({ value: p.id, label: p.name, group: "People", icon: <Avatar name={p.name} /> })),
+    ...ctx.people.map((p) => ({ value: p.id, label: p.name, group: "People", icon: <Avatar name={p.name} profileId={p.id} /> })),
   ];
 }
 

@@ -135,7 +135,7 @@ export function TeamMembers({
               const lastLead = m.role === "lead" && leadCount === 1;
               return (
                 <li key={m.profileId} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                  <Avatar name={m.name} size="md" />
+                  <Avatar name={m.name} profileId={m.profileId} size="md" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-zinc-900">
                       <Link href={personHref(m.profileId)} className="hover:underline">

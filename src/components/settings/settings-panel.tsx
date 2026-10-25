@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUpRight, Reply, Webhook } from "lucide-react";
+import { Avatar } from "@/components/avatar";
 import { Segmented } from "@/components/project/view-chrome";
 import { CalendarSyncSettings } from "@/components/settings/calendar-sync";
 import { EmailDigestSettings } from "@/components/settings/email-digest-settings";
@@ -14,9 +15,12 @@ import {
 } from "@/components/settings/notification-settings";
 import { useShell } from "@/components/shell/shell-context";
 import { setPaneExpanded, usePaneExpanded } from "@/components/task/pane-size";
+import { useNotify, useServerAction } from "@/components/toast";
 import { Skeleton } from "@/components/ui";
+import { removeMyAvatar, updateMyProfile, uploadMyAvatar } from "@/lib/actions";
 import type { MySettings } from "@/lib/data";
 import { MY_TASKS_LAYOUT_COOKIE, type MyTasksLayout } from "@/lib/my-tasks";
+import { AVATAR_ACCEPT, MAX_PROFILE_NAME, avatarFileProblem, profileNameProblem } from "@/lib/profile";
 import { projectColorClass } from "@/lib/project-colors";
 import { SETTINGS_TABS, type EmailSetup, type SettingsTab } from "@/lib/shell";
 import { WORKSPACE_ROLE_LABELS } from "@/lib/workspace";
@@ -165,25 +169,19 @@ const TERM = "text-sm text-zinc-500";
 const HEADING = "text-sm font-semibold text-zinc-900";
 const CARD = "rounded-lg border border-zinc-200 px-4 py-3";
 
-function initials(name: string) {
-  const parts = name.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
-}
-
 function ProfileTab({ data }: { data: MySettings }) {
   const role = data.isWorkspaceAdmin ? "admin" : "member";
+  // Saved here, so the tab keeps showing them (the modal's data was loaded when it opened).
+  const [savedName, setSavedName] = useState(data.fullName ?? "");
+  const [avatarUrl, setAvatarUrl] = useState(data.avatarUrl);
+  const shownName = savedName.trim() || data.name;
   return (
     <div>
-      <div className="flex items-center gap-3">
-        <span
-          aria-hidden
-          className="flex size-14 shrink-0 items-center justify-center rounded-full bg-accent-100 text-lg font-semibold text-accent-700"
-        >
-          {initials(data.name)}
-        </span>
-        <div className="min-w-0">
-          <p className="truncate text-lg font-semibold text-zinc-900">{data.name}</p>
-          <p className="truncate text-sm text-zinc-500">{data.email}</p>
+      <div className="flex items-start gap-4">
+        <ProfilePicture name={shownName} url={avatarUrl} onChange={setAvatarUrl} />
+        <div className="min-w-0 flex-1">
+          <ProfileName initial={data.fullName ?? ""} fallback={data.name} onSaved={setSavedName} />
+          <p className="mt-1 truncate text-sm text-zinc-500">{data.email}</p>
         </div>
       </div>
       <dl className="mt-4 divide-y divide-zinc-100 border-y border-zinc-100">
@@ -221,7 +219,7 @@ function ProfileTab({ data }: { data: MySettings }) {
         </div>
       </dl>
       <p className="mt-3 text-xs text-zinc-500">
-        Your name comes from your sign-in account.{" "}
+        Everyone in the workspace sees your name and picture.{" "}
         {data.isWorkspaceAdmin ? (
           <Link href="/admin" className="text-accent-700 hover:underline">
             Open the admin console
@@ -232,6 +230,155 @@ function ProfileTab({ data }: { data: MySettings }) {
           </Link>
         )}
       </p>
+    </div>
+  );
+}
+
+// Your name: edited in place, saved with Save (or Enter); Escape puts the saved one back.
+function ProfileName({
+  initial,
+  fallback,
+  onSaved,
+}: {
+  initial: string;
+  fallback: string;
+  onSaved: (name: string) => void;
+}) {
+  const [saved, setSaved] = useState(initial);
+  const [draft, setDraft] = useState(initial || fallback);
+  const [pending, runAction] = useServerAction();
+  const trimmed = draft.trim();
+  const problem = draft === (saved || fallback) ? null : profileNameProblem(trimmed);
+  const changed = trimmed !== (saved || fallback).trim();
+
+  function save() {
+    if (!changed || problem) return;
+    runAction(async () => {
+      const result = await updateMyProfile({ fullName: trimmed });
+      if (!result.error) {
+        setSaved(trimmed);
+        setDraft(trimmed);
+        onSaved(trimmed);
+      }
+      return result;
+    });
+  }
+
+  return (
+    <form
+      className="flex flex-col gap-1"
+      onSubmit={(event) => {
+        event.preventDefault();
+        save();
+      }}
+    >
+      <label htmlFor="profile-name" className="text-xs font-medium text-zinc-500">
+        Your name
+      </label>
+      <div className="flex items-center gap-2">
+        <input
+          id="profile-name"
+          value={draft}
+          maxLength={MAX_PROFILE_NAME + 20}
+          autoComplete="name"
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? "profile-name-problem" : undefined}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && changed) {
+              event.preventDefault();
+              event.stopPropagation();
+              setDraft(saved || fallback);
+            }
+          }}
+          className="field min-w-0 flex-1 text-base font-semibold text-zinc-900"
+        />
+        <button type="submit" disabled={!changed || Boolean(problem) || pending} className="btn-primary">
+          {pending ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {problem ? (
+        <p id="profile-name-problem" className="text-xs text-red-600">
+          {problem}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+// Your picture: Upload (or Change) a PNG / JPEG / WebP / GIF up to 2 MB, or Remove it.
+function ProfilePicture({
+  name,
+  url,
+  onChange,
+}: {
+  name: string;
+  url: string | null;
+  onChange: (url: string | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const notify = useNotify();
+  const [pending, runAction] = useServerAction();
+
+  function upload(file: File) {
+    const problem = avatarFileProblem(file);
+    if (problem) {
+      notify(problem);
+      return;
+    }
+    const form = new FormData();
+    form.set("file", file);
+    runAction(async () => {
+      const result = await uploadMyAvatar(form);
+      if (!result.error && result.avatarUrl) onChange(result.avatarUrl);
+      return result;
+    });
+  }
+
+  return (
+    <div className="flex shrink-0 flex-col items-center gap-1.5">
+      <Avatar name={name} src={url} size="xl" />
+      <input
+        ref={inputRef}
+        type="file"
+        accept={AVATAR_ACCEPT}
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) upload(file);
+        }}
+      />
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => inputRef.current?.click()}
+          className="btn-ghost h-6 px-1.5 text-xs"
+        >
+          {pending ? "Saving…" : url ? "Change" : "Upload"}
+          <span className="sr-only"> profile picture</span>
+        </button>
+        {url ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              runAction(async () => {
+                const result = await removeMyAvatar();
+                if (!result.error) onChange(null);
+                return result;
+              })
+            }
+            className="btn-ghost h-6 px-1.5 text-xs text-zinc-500 hover:text-red-600"
+          >
+            Remove
+            <span className="sr-only"> profile picture</span>
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

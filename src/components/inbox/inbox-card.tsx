@@ -238,7 +238,7 @@ export function InboxCard({
           className={`size-2 shrink-0 rounded-full ${read ? "" : "bg-accent-500"} ${compact ? "" : "mt-2.5"}`}
         />
         {actor || !ruleName ? (
-          <Avatar name={actorName} size={compact ? "sm" : "md"} />
+          <Avatar name={actorName} src={actor?.avatar_url} profileId={actor?.id} size={compact ? "sm" : "md"} />
         ) : (
           <span
             aria-hidden

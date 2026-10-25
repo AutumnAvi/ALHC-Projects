@@ -96,6 +96,7 @@ import {
   type ProjectVisibility,
 } from "@/lib/workspace";
 import { isGoalStatus, isProgressMode } from "@/lib/goals";
+import { AVATARS_BUCKET, AVATAR_TYPES, avatarFileProblem, ownAvatarPath, profileNameProblem } from "@/lib/profile";
 import { isNotificationChannel, isNotificationKind } from "@/lib/notifications";
 import {
   MAX_RECIPIENTS,
@@ -3727,6 +3728,97 @@ export async function setEmailComments(enabled: boolean): Promise<ActionResult> 
       await supabase.from("profiles").update({ email_comments: enabled === true }).eq("id", user.id).select("id"),
       "Couldn’t save your notification setting",
     );
+  });
+}
+
+// Settings → Profile (Oct 25 notes): your own name. The column grant and profiles_update_own keep it to
+// your own row's name, picture, and comment email switch.
+export async function updateMyProfile({ fullName }: { fullName: string }): Promise<ActionResult> {
+  return run(async () => {
+    const name = typeof fullName === "string" ? fullName.trim() : "";
+    const problem = profileNameProblem(name);
+    if (problem) throw new InputError(problem);
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to change this");
+    checkUpdated(
+      await supabase.from("profiles").update({ full_name: name }).eq("id", user.id).select("id"),
+      "Couldn’t save your name",
+    );
+  });
+}
+
+// The image's first bytes must match its declared type (the bucket checks the type it's told).
+function looksLikeImage(bytes: Uint8Array, type: string): boolean {
+  const ascii = (from: number, to: number) => String.fromCharCode(...bytes.slice(from, to));
+  if (type === "image/png") return bytes[0] === 0x89 && ascii(1, 4) === "PNG";
+  if (type === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (type === "image/gif") return ascii(0, 4) === "GIF8";
+  if (type === "image/webp") return ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP";
+  return false;
+}
+
+// Settings → Profile: upload a new picture into your own folder of the public avatars bucket
+// (<your id>/<random>.<ext>, the Storage policies' rule), point your profile at it, then remove the old
+// file. Returns the new public URL.
+export async function uploadMyAvatar(formData: FormData): Promise<ActionResult & { avatarUrl?: string }> {
+  let avatarUrl: string | undefined;
+  const result = await run(async () => {
+    const file = formData.get("file");
+    if (!(file instanceof File)) throw new InputError("Choose a picture to upload");
+    const problem = avatarFileProblem(file);
+    if (problem) throw new InputError(problem);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!looksLikeImage(bytes, file.type)) throw new InputError("That file isn’t a PNG, JPEG, WebP, or GIF image");
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to change this");
+    const previous = await supabase.from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
+    check(previous);
+    const path = `${user.id}/${crypto.randomUUID()}.${AVATAR_TYPES[file.type]}`;
+    const upload = await supabase.storage
+      .from(AVATARS_BUCKET)
+      .upload(path, bytes, { contentType: file.type, upsert: false, cacheControl: "31536000" });
+    if (upload.error) {
+      throw new DbError(
+        /row-level security|not authorized|unauthorized/i.test(upload.error.message)
+          ? "Uploading pictures needs this release’s storage update"
+          : "Couldn’t upload the picture. Try again.",
+      );
+    }
+    const url = supabase.storage.from(AVATARS_BUCKET).getPublicUrl(path).data.publicUrl;
+    const saved = await supabase.from("profiles").update({ avatar_url: url }).eq("id", user.id).select("id");
+    if (saved.error || !saved.data?.length) {
+      await supabase.storage.from(AVATARS_BUCKET).remove([path]);
+      checkUpdated(saved, "Couldn’t save your picture");
+    }
+    const old = ownAvatarPath(previous.data?.avatar_url, user.id);
+    if (old && old !== path) await supabase.storage.from(AVATARS_BUCKET).remove([old]);
+    avatarUrl = url;
+  });
+  return result.error ? result : { avatarUrl };
+}
+
+// Settings → Profile: remove your picture (and its file, when it's one you uploaded).
+export async function removeMyAvatar(): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in again to change this");
+    const previous = await supabase.from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
+    check(previous);
+    checkUpdated(
+      await supabase.from("profiles").update({ avatar_url: null }).eq("id", user.id).select("id"),
+      "Couldn’t remove your picture",
+    );
+    const old = ownAvatarPath(previous.data?.avatar_url, user.id);
+    if (old) await supabase.storage.from(AVATARS_BUCKET).remove([old]);
   });
 }
 

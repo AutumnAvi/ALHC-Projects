@@ -259,7 +259,7 @@ export function GoalDetail({
                   </select>
                 ) : (
                   <p id="goal-owner" className="mt-1 flex items-center gap-1.5 text-sm text-zinc-900">
-                    {goal.ownerId && names.get(goal.ownerId) ? <Avatar name={names.get(goal.ownerId)!} /> : null}
+                    {goal.ownerId && names.get(goal.ownerId) ? <Avatar name={names.get(goal.ownerId)!} profileId={goal.ownerId} /> : null}
                     {(goal.ownerId && names.get(goal.ownerId)) || "No owner"}
                   </p>
                 )}
@@ -735,7 +735,7 @@ function UpdatesCard({
           {updates.map((update) => (
             <li key={update.id} className="px-4 py-3">
               <div className="flex flex-wrap items-center gap-2">
-                <Avatar name={update.authorName} />
+                <Avatar name={update.authorName} profileId={update.authorId} />
                 <span className="text-sm font-medium text-zinc-900">{update.authorName}</span>
                 <GoalStatusBadge status={update.status} />
                 <span className="text-xs text-zinc-500">

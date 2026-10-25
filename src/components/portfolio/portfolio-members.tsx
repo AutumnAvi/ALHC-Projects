@@ -163,7 +163,7 @@ export function PortfolioMembersManager({
             const lastOwner = member.role === "owner" && ownerCount === 1;
             return (
               <li key={member.profileId} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                <Avatar name={name} size="md" />
+                <Avatar name={name} profileId={member.profileId} size="md" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-zinc-900">
                     <Link href={personHref(member.profileId)} className="hover:underline">

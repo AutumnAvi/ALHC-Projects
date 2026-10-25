@@ -96,7 +96,7 @@ export function MembersSettings({ members, viewerId }: { members: WorkspaceMembe
 function MemberRow({ member: m, self }: { member: WorkspaceMember; self: boolean }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3">
-      <Avatar name={m.name} size="md" />
+      <Avatar name={m.name} profileId={m.profileId} size="md" />
       <div className="min-w-48 flex-1">
         <p className="truncate text-sm font-medium text-zinc-900">
           {m.profileId ? (

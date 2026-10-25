@@ -140,7 +140,7 @@ export function GoalsView({
             {periodLabel(goal.periodStart, goal.periodEnd)}
           </span>
           <span className="hidden w-32 items-center gap-1.5 md:flex" title={owner ?? "No owner"}>
-            {owner ? <Avatar name={owner} /> : null}
+            {owner ? <Avatar name={owner} profileId={goal.ownerId} /> : null}
             <span className="truncate text-xs text-zinc-600">{owner ?? "No owner"}</span>
           </span>
           <span className="flex w-36 items-center gap-2">

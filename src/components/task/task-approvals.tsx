@@ -195,7 +195,7 @@ function ApprovalItem({
     <li className="rounded-md border border-zinc-200 p-3" data-approval-status={approval.status}>
       <div className="flex items-center gap-2">
         <ShieldCheck className="size-4 text-zinc-400" aria-hidden />
-        <Avatar name={approverName} />
+        <Avatar name={approverName} profileId={approval.approverId} />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900">{approverName}</span>
         <span className={`rounded px-1.5 py-0.5 text-2xs font-medium ${status.className}`}>{status.label}</span>
       </div>

@@ -555,6 +555,15 @@ export const listProfiles = cache(async (): Promise<Profile[]> => {
   return rows(result, "people");
 });
 
+// Everyone's picture by profile id (Oct 25 notes), for the shared Avatar wherever a person shows up.
+// Only people who have one; everyone allowlisted reads every profile.
+export const listProfileAvatars = cache(async (): Promise<Record<string, string>> => {
+  const supabase = await createClient();
+  const result = await supabase.from("profiles").select("id, avatar_url").not("avatar_url", "is", null);
+  if (result.error) return {};
+  return Object.fromEntries((result.data ?? []).flatMap((p) => (p.avatar_url ? [[p.id, p.avatar_url]] : [])));
+});
+
 export const listSections = cache(async (projectId: string): Promise<Section[]> => {
   const supabase = await createClient();
   const result = await supabase
@@ -3489,6 +3498,9 @@ export const getEmailCommentsSetting = cache(async (profileId: string): Promise<
 // workspace role, teams, the comment-email switch, when they joined, and how they sign in.
 export type MySettings = {
   name: string;
+  // The name you set yourself (Settings → Profile), or null while it comes from your sign-in account.
+  fullName: string | null;
+  avatarUrl: string | null;
   email: string;
   isWorkspaceAdmin: boolean;
   workspaceName: string;
@@ -3548,7 +3560,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
   if (!user || !allowlisted) return null;
   const supabase = await createClient();
   const [profile, admin, teams, workspace, cookieStore, notificationRows, emailPreferences] = await Promise.all([
-    supabase.from("profiles").select("full_name, email_comments, joined_at").eq("id", user.id).maybeSingle(),
+    supabase.from("profiles").select("full_name, avatar_url, email_comments, joined_at").eq("id", user.id).maybeSingle(),
     isWorkspaceAdmin(),
     listTeams(),
     getWorkspace(),
@@ -3565,6 +3577,8 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
   const providers = (user.app_metadata?.providers as string[] | undefined) ?? [user.app_metadata?.provider as string];
   return {
     name,
+    fullName: row?.full_name?.trim() || null,
+    avatarUrl: row?.avatar_url ?? null,
     email,
     isWorkspaceAdmin: admin,
     workspaceName: workspace?.name ?? "ALHC Projects",

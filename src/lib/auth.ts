@@ -45,10 +45,19 @@ export const requireMember = cache(async (): Promise<Member> => {
 
   const meta = user.user_metadata ?? {};
   const email = user.email ?? "";
+  // The name and picture the person set (Settings → Profile), else the sign-in account's.
+  const supabase = await createClient();
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, avatar_url")
+    .eq("id", user.id)
+    .maybeSingle();
   return {
     id: user.id,
     email,
-    name: (meta.full_name as string | undefined) ?? (meta.name as string | undefined) ?? email,
-    avatarUrl: (meta.avatar_url as string | undefined) ?? (meta.picture as string | undefined) ?? null,
+    name:
+      profile?.full_name?.trim() || (meta.full_name as string | undefined) || (meta.name as string | undefined) || email,
+    avatarUrl:
+      profile?.avatar_url ?? (meta.avatar_url as string | undefined) ?? (meta.picture as string | undefined) ?? null,
   };
 });

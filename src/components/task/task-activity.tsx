@@ -559,7 +559,7 @@ function CommentItem({
   if (comment.deleted) {
     return (
       <li className="flex gap-2.5">
-        <Avatar name={authorName} size="md" />
+        <Avatar name={authorName} profileId={comment.ruleName ? null : comment.authorId} size="md" />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-medium text-zinc-500">{authorName}</span>
@@ -606,7 +606,7 @@ function CommentItem({
     const received = comment.email.direction === "received";
     return (
       <li className="group flex gap-2.5" data-comment-id={sending ? undefined : comment.id} aria-busy={sending || undefined}>
-        {received ? <MailAvatar /> : <Avatar name={authorName} size="md" />}
+        {received ? <MailAvatar /> : <Avatar name={authorName} profileId={comment.ruleName ? null : comment.authorId} size="md" />}
         <div className="min-w-0 flex-1">
           <EmailCommentHeader email={comment.email} authorName={authorName} createdAt={comment.createdAt} actions={controls} />
           <EmailCard
@@ -626,7 +626,7 @@ function CommentItem({
 
   return (
     <li className="group flex gap-2.5" data-comment-id={sending ? undefined : comment.id} aria-busy={sending || undefined}>
-      <Avatar name={authorName} size="md" />
+      <Avatar name={authorName} profileId={comment.ruleName ? null : comment.authorId} size="md" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-medium text-zinc-900">{authorName}</span>
@@ -862,7 +862,7 @@ export function TaskPaneFooter({
     <div className="shrink-0 border-t border-zinc-200 bg-white px-gutter pb-2 pt-2.5 print:hidden">
       {canComment ? (
         <div className="flex items-start gap-2">
-          <Avatar name={me ? displayName(me) : "You"} size="md" />
+          <Avatar name={me ? displayName(me) : "You"} src={me?.avatar_url} profileId={me?.id} size="md" />
           <div
             onFocus={() => setFocused(true)}
             onBlur={(e) => {
@@ -931,7 +931,7 @@ export function TaskPaneFooter({
         <span className="flex -space-x-1" aria-label={`Collaborators: ${followers.map(displayName).join(", ") || "none"}`}>
           {followers.slice(0, 8).map((p) => (
             <span key={p.id} className="rounded-full ring-2 ring-white" data-tooltip={displayName(p)}>
-              <Avatar name={displayName(p)} />
+              <Avatar name={displayName(p)} src={p.avatar_url} profileId={p.id} />
             </span>
           ))}
         </span>

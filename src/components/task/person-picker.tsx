@@ -141,7 +141,7 @@ export function PeopleList({
                 onMouseMove={() => i !== index && setActive(i)}
                 className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left ${i === index ? "bg-zinc-100" : ""}`}
               >
-                <Avatar name={name} size="md" />
+                <Avatar name={name} src={person.avatar_url} profileId={person.id} size="md" />
                 <span className="min-w-0 flex-1 leading-tight">
                   <span className="block truncate text-sm text-zinc-900">{name}</span>
                   {name !== person.email ? <span className="block truncate text-xs text-zinc-500">{person.email}</span> : null}

@@ -224,7 +224,7 @@ export function WorkloadView({
                 <tr key={person.id}>
                   <th scope="row" className="sticky left-0 z-10 border-b border-r border-zinc-100 bg-white px-3 py-1.5 text-left font-normal">
                     <span className="flex items-center gap-2">
-                      <Avatar name={person.name} />
+                      <Avatar name={person.name} profileId={person.id} />
                       <span className="min-w-0 flex-1 truncate text-zinc-900">{person.name}</span>
                       <CapacityControl
                         scope={scope}

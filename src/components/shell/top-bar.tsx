@@ -138,12 +138,12 @@ function AvatarMenu() {
       align="end"
       panelClassName="w-72 p-1.5"
       buttonClassName="inline-flex size-8 items-center justify-center rounded-full hover:ring-2 hover:ring-white/20 aria-expanded:ring-2 aria-expanded:ring-white/30"
-      button={<Avatar name={name} size="md" />}
+      button={<Avatar name={name} profileId={member.id} size="md" />}
     >
       {(close) => (
         <>
           <div className="flex items-center gap-2.5 px-2 py-2">
-            <Avatar name={name} size="md" />
+            <Avatar name={name} profileId={member.id} size="md" />
             <div className="min-w-0 leading-tight">
               <p className="truncate text-sm font-medium text-zinc-900">{name}</p>
               {/* The whole address, once: it wraps after the @ (or anywhere, if still too long). */}

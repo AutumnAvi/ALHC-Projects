@@ -143,7 +143,7 @@ function ProjectRoles({ members }: { members: OverviewMember[] }) {
         </li>
         {shown.map((m) => (
           <li key={m.profileId} className="flex min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5">
-            <Avatar name={m.name} size="md" />
+            <Avatar name={m.name} profileId={m.profileId} size="md" />
             <span className="min-w-0">
               <span className="block truncate text-sm text-zinc-900">{m.name}</span>
               <span className="block truncate text-xs text-zinc-500">{m.role === "owner" ? "Project owner" : ROLE_LABELS[m.role]}</span>

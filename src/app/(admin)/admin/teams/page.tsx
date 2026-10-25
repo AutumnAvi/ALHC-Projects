@@ -100,7 +100,7 @@ export default async function AdminTeamsPage() {
                           <span className="flex -space-x-1" aria-hidden>
                             {shown.map((m) => (
                               <span key={m.profileId} className="rounded-full ring-2 ring-white">
-                                <Avatar name={m.name} />
+                                <Avatar name={m.name} profileId={m.profileId} />
                               </span>
                             ))}
                           </span>

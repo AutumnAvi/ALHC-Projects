@@ -285,7 +285,7 @@ function InviteForm({
                 ) : target.kind === "email" ? (
                   <Mail className="size-3.5 text-zinc-500" aria-hidden />
                 ) : (
-                  <Avatar name={target.person.name} />
+                  <Avatar name={target.person.name} profileId={target.person.id} />
                 )}
                 <span className="truncate">{labelOf(target)}</span>
                 <button
@@ -364,7 +364,7 @@ function InviteForm({
                 >
                   {option.kind === "person" ? (
                     <>
-                      <Avatar name={option.person.name} size="md" />
+                      <Avatar name={option.person.name} profileId={option.person.id} size="md" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-zinc-900">{option.person.name}</span>
                         <span className="block truncate text-xs text-zinc-500">{option.person.email}</span>
@@ -651,7 +651,7 @@ function MemberRow({
   const options = grantable.includes(member.role) ? grantable : [member.role, ...grantable];
   return (
     <li className="flex items-center gap-2.5 py-1.5">
-      <Avatar name={member.name} size="md" />
+      <Avatar name={member.name} profileId={member.profileId} size="md" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-zinc-900">
           {member.name}

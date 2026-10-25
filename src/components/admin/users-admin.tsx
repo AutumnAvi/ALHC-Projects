@@ -321,7 +321,7 @@ function UserRow({
     <tr className="border-b border-zinc-100 last:border-b-0 hover:bg-zinc-50">
       <td className="px-3 py-2">
         <div className="flex min-w-0 items-center gap-2.5">
-          <Avatar name={m.name} size="md" />
+          <Avatar name={m.name} profileId={m.profileId} size="md" />
           <div className="min-w-0">
             <p className="truncate font-medium text-zinc-900">
               {m.profileId ? (

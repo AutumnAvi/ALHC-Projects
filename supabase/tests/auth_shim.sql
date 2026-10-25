@@ -52,6 +52,15 @@ alter table storage.objects enable row level security;
 grant all on storage.objects to anon, authenticated, service_role;
 grant select on storage.buckets to anon, authenticated, service_role;
 
+-- Supabase's helper: an object name's folders (every path segment but the file name).
+create function storage.foldername(name text) returns text[]
+language sql
+immutable
+as $$
+  select (string_to_array(name, '/'))[1:greatest(array_length(string_to_array(name, '/'), 1) - 1, 0)]
+$$;
+grant execute on function storage.foldername(text) to anon, authenticated, service_role;
+
 -- pg_cron stand-in: just enough for migrations that schedule a job by name (cron.schedule upserts by
 -- job name, like pg_cron) and for suites that check the job exists. Nothing ever runs it.
 -- pg_extension has no pg_cron row, so migrations that check for the extension still skip.

@@ -129,7 +129,7 @@ export function MyTasksWidget({
       header={
         <>
           <div className="flex items-center gap-3">
-            <Avatar name={member.name || member.email} size="lg" />
+            <Avatar name={member.name || member.email} profileId={member.id} size="lg" />
             <WidgetTitle id="home-my-tasks">
               <Link href="/my-tasks" className="hover:underline">
                 My tasks
