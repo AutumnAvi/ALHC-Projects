@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { ColorPicker } from "@/components/color-picker";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { createField, deleteField, loadFieldLibrary, updateField } from "@/lib/actions";
@@ -388,24 +389,21 @@ function FieldForm({
             Status from sections
           </p>
         ) : (
-          <div className="relative mt-1">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-              <FieldTypeIcon field={{ fieldType: draft.fieldType, boundToSections: false }} />
-            </span>
-            <select
+          <div className="mt-1">
+            <SmartPicker
               id={`${prefix}-type`}
+              label="Field type"
               value={draft.fieldType}
               disabled={!creating}
               aria-describedby={creating ? undefined : `${prefix}-type-hint`}
-              onChange={(e) => set("fieldType", e.currentTarget.value as FieldType)}
-              className="field w-full pl-9"
-            >
-              {FIELD_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => set("fieldType", value as FieldType)}
+              className="h-9 w-full"
+              options={FIELD_TYPES.map((t) => ({
+                value: t.value,
+                label: t.label,
+                icon: <FieldTypeIcon field={{ fieldType: t.value, boundToSections: false }} />,
+              }))}
+            />
           </div>
         )}
         {!creating && !bound ? (

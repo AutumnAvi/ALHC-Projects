@@ -57,6 +57,10 @@ type CommonProps = {
   name?: string;
   // The id of an element that describes the picker (help text, an error).
   "aria-describedby"?: string;
+  // Called first for keys on the closed button (e.g. Escape to close the form around it); call
+  // preventDefault() to stop the picker handling the key.
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  title?: string;
 };
 
 type SingleProps = CommonProps & {
@@ -272,7 +276,8 @@ export function SmartPicker(props: SingleProps | MultiProps) {
   }
 
   function onButtonKey(e: ReactKeyboardEvent<HTMLButtonElement>) {
-    if (disabled || open) return;
+    props.onKeyDown?.(e);
+    if (e.defaultPrevented || disabled || open) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       openList();
@@ -323,6 +328,7 @@ export function SmartPicker(props: SingleProps | MultiProps) {
         disabled={disabled}
         aria-invalid={slot.missing || undefined}
         aria-describedby={props["aria-describedby"]}
+        title={props.title}
         data-picker-empty={empty || undefined}
         onClick={() => (open ? close() : openList())}
         onKeyDown={onButtonKey}

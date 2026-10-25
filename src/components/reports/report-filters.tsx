@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import { ChevronDown, X } from "lucide-react";
 import { Popover } from "@/components/popover";
+import { SmartPicker } from "@/components/smart-picker";
 import {
   REPORT_STATUSES,
   filtersToParams,
@@ -157,24 +158,19 @@ export function ReportFilterFields({
         />
       </label>
       {showStatus ? (
-        <label className={FIELD_LABEL} htmlFor={`${idPrefix}-status`}>
-          Status
-          <select
+        <div className={FIELD_LABEL}>
+          <span aria-hidden>Status</span>
+          <SmartPicker
             id={`${idPrefix}-status`}
+            label="Status"
             value={value.status ?? "all"}
-            onChange={(e) => {
-              const status = e.currentTarget.value;
+            onChange={(status) => {
               if (isReportStatus(status)) set({ status });
             }}
-            className="control font-normal"
-          >
-            {REPORT_STATUSES.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            className="font-normal"
+            options={REPORT_STATUSES.map((s) => ({ value: s.value, label: s.label }))}
+          />
+        </div>
       ) : null}
       <label className="flex h-7 items-center gap-2 text-sm text-zinc-700">
         <input

@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
+import { SmartPicker } from "@/components/smart-picker";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { useNotify } from "@/components/toast";
 import { beginLocalMutation, dropTokenTasks, endLocalMutation, failMutation } from "@/lib/optimistic-session";
@@ -593,13 +594,14 @@ function FieldPicker({
       <label htmlFor="bulk-field" className="text-xs font-medium text-zinc-500">
         Field
       </label>
-      <select id="bulk-field" value={fieldId} onChange={(e) => setFieldId(e.target.value)} className="control w-full">
-        {fields.map((f) => (
-          <option key={f.id} value={f.id}>
-            {f.name}
-          </option>
-        ))}
-      </select>
+      <SmartPicker
+        id="bulk-field"
+        label="Field"
+        value={fieldId}
+        onChange={setFieldId}
+        className="w-full"
+        options={fields.map((f) => ({ value: f.id, label: f.name }))}
+      />
       {field ? <FieldValueInput key={field.id} field={field} people={people} onPick={(v) => onPick(field.id, v)} /> : null}
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
+import { SmartPicker } from "@/components/smart-picker";
 import { listProjectTeamChoices } from "@/lib/actions";
 import { PROJECT_VISIBILITIES, VISIBILITY_DESCRIPTIONS, VISIBILITY_LABELS, type ProjectVisibility } from "@/lib/workspace";
 
@@ -53,22 +54,18 @@ export function ProjectPlacementFields({
         <label htmlFor={`${idPrefix}-team`} className={DIALOG_LABEL}>
           Team
         </label>
-        <select
+        <SmartPicker
           id={`${idPrefix}-team`}
+          label="Team"
           name="team"
           value={value.teamId}
           disabled={!teams}
-          onChange={(e) => onChange({ ...value, teamId: e.currentTarget.value })}
-          className="field mt-1 w-full"
-        >
-          {!teams ? <option value="">Loading teams…</option> : null}
-          {teams?.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-              {t.isDefault ? " (default)" : ""}
-            </option>
-          ))}
-        </select>
+          placeholder={teams ? "Choose a team…" : "Loading teams…"}
+          searchable={teams ? teams.length > 7 : false}
+          onChange={(teamId) => onChange({ ...value, teamId })}
+          className="mt-1 h-9 w-full"
+          options={(teams ?? []).map((t) => ({ value: t.id, label: `${t.name}${t.isDefault ? " (default)" : ""}` }))}
+        />
         <p className={DIALOG_HINT}>Every project belongs to a team. You can pick the default team or one you’re on.</p>
       </div>
       <fieldset>

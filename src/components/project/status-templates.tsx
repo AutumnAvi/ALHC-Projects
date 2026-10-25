@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { ArrowDown, ArrowUp, FileText, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
+import { SmartPicker } from "@/components/smart-picker";
 import { useCan } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { createStatusTemplate, deleteStatusTemplate, updateStatusTemplate } from "@/lib/actions";
@@ -203,19 +204,21 @@ function StatusTemplateDialog({
               <label htmlFor={`${idPrefix}-status`} className="block text-xs font-medium text-zinc-600">
                 Status
               </label>
-              <select
+              <SmartPicker
                 id={`${idPrefix}-status`}
+                label="Status"
                 value={status ?? ""}
-                onChange={(e) => setStatus(isProjectStatus(e.currentTarget.value) ? e.currentTarget.value : null)}
-                className="field mt-1 w-full"
-              >
-                <option value="">Keep the status picked</option>
-                {PROJECT_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {PROJECT_STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </select>
+                onChange={(next) => setStatus(isProjectStatus(next) ? next : null)}
+                className="mt-1 h-9 w-full"
+                options={[
+                  { value: "", label: "Keep the status picked" },
+                  ...PROJECT_STATUSES.map((s) => ({
+                    value: s,
+                    label: PROJECT_STATUS_LABELS[s],
+                    icon: <span className={`size-2 rounded-full ${PROJECT_STATUS_DOT[s]}`} />,
+                  })),
+                ]}
+              />
             </div>
             <div>
               <label htmlFor={`${idPrefix}-title`} className="block text-xs font-medium text-zinc-600">

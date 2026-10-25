@@ -2,6 +2,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { Segmented } from "@/components/project/view-chrome";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { setEmailDigest, setReportEmails } from "@/lib/actions";
 import {
@@ -105,38 +106,30 @@ export function EmailDigestSettings({
           }}
         />
         {values.digest === "weekly" ? (
-          <label className="flex items-center gap-1.5 text-sm text-zinc-600">
+          <span className="flex items-center gap-1.5 text-sm text-zinc-600">
             on
-            <select
-              className="control w-auto"
-              value={values.weekday}
+            <SmartPicker
+              className="w-auto"
+              label="Digest weekday"
+              value={String(values.weekday)}
               disabled={pending}
-              onChange={(e) => save({ digest: values.digest, hour: values.hour, weekday: Number(e.target.value) })}
-            >
-              {WEEKDAYS.map((day, index) => (
-                <option key={day} value={index}>
-                  {day}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={(v) => save({ digest: values.digest, hour: values.hour, weekday: Number(v) })}
+              options={WEEKDAYS.map((day, index) => ({ value: String(index), label: day }))}
+            />
+          </span>
         ) : null}
         {values.digest !== "off" ? (
-          <label className="flex items-center gap-1.5 text-sm text-zinc-600">
+          <span className="flex items-center gap-1.5 text-sm text-zinc-600">
             at
-            <select
-              className="control w-auto"
-              value={values.hour}
+            <SmartPicker
+              className="w-auto"
+              label="Digest hour"
+              value={String(values.hour)}
               disabled={pending}
-              onChange={(e) => save({ digest: values.digest, hour: Number(e.target.value), weekday: values.weekday })}
-            >
-              {HOURS.map((hour) => (
-                <option key={hour} value={hour}>
-                  {hourLabel(hour)}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={(v) => save({ digest: values.digest, hour: Number(v), weekday: values.weekday })}
+              options={HOURS.map((hour) => ({ value: String(hour), label: hourLabel(hour) }))}
+            />
+          </span>
         ) : null}
       </div>
       {values.digest !== "off" ? (

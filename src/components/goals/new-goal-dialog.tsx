@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { DIALOG_HINT, DIALOG_LABEL, Dialog } from "@/components/dialog";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { createGoal } from "@/lib/actions";
 import {
@@ -119,37 +120,29 @@ export function NewGoalDialog({
             <label htmlFor={`${formId}-team`} className={DIALOG_LABEL}>
               Team
             </label>
-            <select
+            <SmartPicker
               id={`${formId}-team`}
+              label="Team"
               value={teamId}
-              onChange={(e) => setTeamId(e.currentTarget.value)}
-              className="control mt-1 w-full"
-            >
-              <option value="">No team</option>
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+              onChange={setTeamId}
+              className="mt-1 w-full"
+              options={[{ value: "", label: "No team" }, ...teams.map((t) => ({ value: t.id, label: t.name }))]}
+            />
           </div>
           <div>
             <label htmlFor={`${formId}-owner`} className={DIALOG_LABEL}>
               Owner
             </label>
-            <select
+            <SmartPicker
               id={`${formId}-owner`}
+              label="Owner"
               value={canPickOwner ? ownerId : viewer.id}
               disabled={!canPickOwner}
-              onChange={(e) => setOwnerId(e.currentTarget.value)}
-              className="control mt-1 w-full disabled:opacity-60"
-            >
-              {people.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.id === viewer.id ? `${p.name} (you)` : p.name}
-                </option>
-              ))}
-            </select>
+              onChange={setOwnerId}
+              searchable
+              className="mt-1 w-full disabled:opacity-60"
+              options={people.map((p) => ({ value: p.id, label: p.id === viewer.id ? `${p.name} (you)` : p.name }))}
+            />
             {!canPickOwner ? <p className={DIALOG_HINT}>Team leads and workspace admins can pick someone else.</p> : null}
           </div>
         </div>
@@ -159,19 +152,15 @@ export function NewGoalDialog({
             <label htmlFor={`${formId}-parent`} className={DIALOG_LABEL}>
               Parent goal
             </label>
-            <select
+            <SmartPicker
               id={`${formId}-parent`}
+              label="Parent goal"
               value={parentId}
-              onChange={(e) => setParentId(e.currentTarget.value)}
-              className="control mt-1 w-full"
-            >
-              <option value="">None (top-level goal)</option>
-              {parents.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.title}
-                </option>
-              ))}
-            </select>
+              onChange={setParentId}
+              searchable
+              className="mt-1 w-full"
+              options={[{ value: "", label: "None (top-level goal)" }, ...parents.map((g) => ({ value: g.id, label: g.title }))]}
+            />
             <p className={DIALOG_HINT}>Only goals you can edit are listed.</p>
           </div>
         ) : null}
@@ -180,20 +169,18 @@ export function NewGoalDialog({
           <label htmlFor={`${formId}-period`} className={DIALOG_LABEL}>
             Time period
           </label>
-          <select
+          <SmartPicker
             id={`${formId}-period`}
+            label="Time period"
             value={period}
-            onChange={(e) => setPeriod(e.currentTarget.value)}
-            className="control mt-1 w-full"
-          >
-            <option value="">No time period</option>
-            {presets.map((p) => (
-              <option key={p.label} value={`${p.start}_${p.end}`}>
-                {p.label}
-              </option>
-            ))}
-            <option value="custom">Custom dates…</option>
-          </select>
+            onChange={setPeriod}
+            className="mt-1 w-full"
+            options={[
+              { value: "", label: "No time period" },
+              ...presets.map((p) => ({ value: `${p.start}_${p.end}`, label: p.label })),
+              { value: "custom", label: "Custom dates…" },
+            ]}
+          />
           {period === "custom" ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <label className="sr-only" htmlFor={`${formId}-start`}>

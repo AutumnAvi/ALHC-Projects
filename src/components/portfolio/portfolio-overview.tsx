@@ -7,6 +7,7 @@ import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { usePortfolioCan } from "@/components/portfolio/portfolio-access";
 import { PortfolioFieldDisplay, PortfolioFieldInput } from "@/components/portfolio/portfolio-field-value";
 import { ProgressBar } from "@/components/portfolio/progress-bar";
+import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import {
@@ -30,9 +31,6 @@ type Card = {
   latest: ProjectStatusUpdate | null;
 };
 type Nested = PortfolioChild & { total: number; completed: number };
-
-const inputClass =
-  "field h-auto py-1.5";
 
 export function PortfolioOverview({
   portfolio,
@@ -146,18 +144,15 @@ export function PortfolioOverview({
                   <label htmlFor="add-project" className="text-xs font-medium text-zinc-600">
                     Add a project you’re a member of
                   </label>
-                  <select
+                  <SmartPicker
                     id="add-project"
+                    label="Add a project you’re a member of"
                     value={choice}
-                    onChange={(e) => setSelected(e.currentTarget.value)}
-                    className={`${inputClass} max-w-64`}
-                  >
-                    {candidates.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setSelected}
+                    searchable
+                    className="h-9 w-64 max-w-64"
+                    options={candidates.map((c) => ({ value: c.id, label: c.name }))}
+                  />
                 </div>
                 <button
                   type="submit"
@@ -304,18 +299,15 @@ export function PortfolioOverview({
                   <label htmlFor="add-portfolio" className="text-xs font-medium text-zinc-600">
                     Add a portfolio you’re a member of
                   </label>
-                  <select
+                  <SmartPicker
                     id="add-portfolio"
+                    label="Add a portfolio you’re a member of"
                     value={childChoice}
-                    onChange={(e) => setSelectedChild(e.currentTarget.value)}
-                    className={`${inputClass} max-w-64`}
-                  >
-                    {nestCandidates.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setSelectedChild}
+                    searchable
+                    className="h-9 w-64 max-w-64"
+                    options={nestCandidates.map((c) => ({ value: c.id, label: c.name }))}
+                  />
                 </div>
                 <button
                   type="submit"

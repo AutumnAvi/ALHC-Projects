@@ -8,6 +8,7 @@ import { GoalStatusBadge } from "@/components/goals/goal-status-badge";
 import { NewGoalDialog, type PersonOption, type TeamOption } from "@/components/goals/new-goal-dialog";
 import { ProgressBar } from "@/components/portfolio/progress-bar";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
+import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, HEADER_TITLE_INPUT } from "@/components/ui";
@@ -84,8 +85,13 @@ export function GoalDetail({
   const linkedProjects = new Set(links.filter((l) => l.kind === "project").map((l) => l.targetId));
   const linkedPortfolios = new Set(links.filter((l) => l.kind === "portfolio").map((l) => l.targetId));
 
-  function save(patch: Parameters<typeof updateGoal>[1]) {
-    run(() => updateGoal(goal.id, patch));
+  // revert: puts a picker back on its saved value when the database refuses.
+  function save(patch: Parameters<typeof updateGoal>[1], revert?: () => void) {
+    run(async () => {
+      const result = await updateGoal(goal.id, patch);
+      if (result.error) revert?.();
+      return result;
+    });
   }
 
   return (
@@ -229,13 +235,19 @@ export function GoalDetail({
                   Owner
                 </label>
                 {editable ? (
-                  <select
+                  <SavedPicker
                     id="goal-owner"
                     key={goal.ownerId ?? ""}
-                    defaultValue={goal.ownerId ?? ""}
+                    label="Owner"
+                    value={goal.ownerId ?? ""}
                     disabled={pending}
-                    onChange={(e) => {
-                      const next = e.currentTarget.value || null;
+                    searchable
+                    options={[
+                      { value: "", label: "No owner" },
+                      ...people.map((p) => ({ value: p.id, label: p.name, icon: <Avatar name={p.name} profileId={p.id} /> })),
+                    ]}
+                    onPick={(value, revert) => {
+                      const next = value || null;
                       // Handing a goal to someone else can take away your own edit rights.
                       if (
                         next !== viewer.id &&
@@ -243,20 +255,12 @@ export function GoalDetail({
                         !goalEditable({ ownerId: next, teamId: goal.teamId }, viewer) &&
                         !window.confirm("Give this goal away? You won’t be able to edit it afterwards.")
                       ) {
-                        e.currentTarget.value = goal.ownerId ?? "";
+                        revert();
                         return;
                       }
-                      save({ ownerId: next });
+                      save({ ownerId: next }, revert);
                     }}
-                    className="control mt-1 w-full"
-                  >
-                    <option value="">No owner</option>
-                    {people.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 ) : (
                   <p id="goal-owner" className="mt-1 flex items-center gap-1.5 text-sm text-zinc-900">
                     {goal.ownerId && names.get(goal.ownerId) ? <Avatar name={names.get(goal.ownerId)!} profileId={goal.ownerId} /> : null}
@@ -270,21 +274,15 @@ export function GoalDetail({
                   Team
                 </label>
                 {editable ? (
-                  <select
+                  <SavedPicker
                     id="goal-team"
                     key={goal.teamId ?? ""}
-                    defaultValue={goal.teamId ?? ""}
+                    label="Team"
+                    value={goal.teamId ?? ""}
                     disabled={pending}
-                    onChange={(e) => save({ teamId: e.currentTarget.value || null })}
-                    className="control mt-1 w-full"
-                  >
-                    <option value="">No team</option>
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
+                    options={[{ value: "", label: "No team" }, ...teams.map((t) => ({ value: t.id, label: t.name }))]}
+                    onPick={(value, revert) => save({ teamId: value || null }, revert)}
+                  />
                 ) : (
                   <p id="goal-team" className="mt-1 text-sm text-zinc-900">
                     {goal.teamId && teamName ? (
@@ -338,20 +336,19 @@ export function GoalDetail({
                   Progress
                 </label>
                 {editable ? (
-                  <select
+                  <SavedPicker
                     id="goal-mode"
                     key={goal.progressMode}
-                    defaultValue={goal.progressMode}
+                    label="Progress"
+                    value={goal.progressMode}
                     disabled={pending}
-                    onChange={(e) => save({ progressMode: e.currentTarget.value as ProgressMode })}
-                    className="control mt-1 w-full"
-                  >
-                    {PROGRESS_MODES.map((m) => (
-                      <option key={m} value={m}>
-                        {PROGRESS_MODE_LABELS[m]}
-                      </option>
-                    ))}
-                  </select>
+                    options={PROGRESS_MODES.map((m) => ({
+                      value: m,
+                      label: PROGRESS_MODE_LABELS[m],
+                      description: PROGRESS_MODE_DESCRIPTIONS[m],
+                    }))}
+                    onPick={(value, revert) => save({ progressMode: value as ProgressMode }, revert)}
+                  />
                 ) : (
                   <p id="goal-mode" className="mt-1 text-sm text-zinc-900">
                     {PROGRESS_MODE_LABELS[goal.progressMode]}
@@ -364,24 +361,20 @@ export function GoalDetail({
                   Parent goal
                 </label>
                 {editable ? (
-                  <select
+                  <SavedPicker
                     id="goal-parent"
                     key={goal.parentId ?? ""}
-                    defaultValue={goal.parentId ?? ""}
+                    label="Parent goal"
+                    value={goal.parentId ?? ""}
                     disabled={pending}
-                    onChange={(e) => save({ parentId: e.currentTarget.value || null })}
-                    className="control mt-1 w-full"
-                  >
-                    <option value="">None (top-level goal)</option>
-                    {parent && !parentChoices.some((g) => g.id === parent.id) ? (
-                      <option value={parent.id}>{parent.title}</option>
-                    ) : null}
-                    {parentChoices.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.title}
-                      </option>
-                    ))}
-                  </select>
+                    searchable
+                    options={[
+                      { value: "", label: "None (top-level goal)" },
+                      ...(parent && !parentChoices.some((g) => g.id === parent.id) ? [{ value: parent.id, label: parent.title }] : []),
+                      ...parentChoices.map((g) => ({ value: g.id, label: g.title })),
+                    ]}
+                    onPick={(value, revert) => save({ parentId: value || null }, revert)}
+                  />
                 ) : (
                   <p id="goal-parent" className="mt-1 text-sm text-zinc-900">
                     {parent ? (
@@ -610,32 +603,19 @@ function LinksCard({
             <label htmlFor="goal-link-choice" className="text-xs font-medium text-zinc-600">
               Link a project or portfolio you can open
             </label>
-            <select
+            <SmartPicker
               id="goal-link-choice"
+              label="Link a project or portfolio you can open"
+              placeholder="Choose…"
               value={choice}
-              onChange={(e) => setChoice(e.currentTarget.value)}
-              className="control w-full"
-            >
-              <option value="">Choose…</option>
-              {projects.length ? (
-                <optgroup label="Projects">
-                  {projects.map((p) => (
-                    <option key={p.id} value={`project:${p.id}`}>
-                      {p.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ) : null}
-              {portfolios.length ? (
-                <optgroup label="Portfolios">
-                  {portfolios.map((p) => (
-                    <option key={p.id} value={`portfolio:${p.id}`}>
-                      {p.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ) : null}
-            </select>
+              onChange={setChoice}
+              searchable
+              className="w-full"
+              options={[
+                ...projects.map((p) => ({ value: `project:${p.id}`, label: p.name, group: "Projects" })),
+                ...portfolios.map((p) => ({ value: `portfolio:${p.id}`, label: p.name, group: "Portfolios" })),
+              ]}
+            />
           </div>
           <button type="submit" disabled={pending || !choice} className="btn-secondary">
             <Link2 className="size-3.5" aria-hidden />
@@ -689,18 +669,14 @@ function UpdatesCard({
               <label htmlFor="goal-update-status" className="text-xs font-medium text-zinc-600">
                 Status
               </label>
-              <select
+              <SmartPicker
                 id="goal-update-status"
+                label="Status"
                 value={status}
-                onChange={(e) => setStatus(e.currentTarget.value as GoalStatus)}
-                className="control"
-              >
-                {GOAL_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {GOAL_STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => setStatus(value as GoalStatus)}
+                className="w-40"
+                options={GOAL_STATUSES.map((s) => ({ value: s, label: GOAL_STATUS_LABELS[s] }))}
+              />
             </div>
             <p className="pb-1.5 text-xs text-zinc-500">Posting sets the goal’s status.</p>
           </div>
@@ -764,5 +740,43 @@ function UpdatesCard({
         </ol>
       )}
     </section>
+  );
+}
+
+// A detail picker that saves on change: shows the new value at once and goes back to the saved one when
+// the change is refused (or not confirmed). Remounted with key= the saved value after a refresh.
+function SavedPicker({
+  id,
+  label,
+  value,
+  options,
+  disabled,
+  searchable,
+  onPick,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  options: SmartOption[];
+  disabled?: boolean;
+  searchable?: boolean;
+  onPick: (next: string, revert: () => void) => void;
+}) {
+  const [shown, setShown] = useState(value);
+  return (
+    <SmartPicker
+      id={id}
+      label={label}
+      value={shown}
+      options={options}
+      disabled={disabled}
+      searchable={searchable}
+      className="mt-1 w-full"
+      onChange={(next) => {
+        if (next === shown) return;
+        setShown(next);
+        onPick(next, () => setShown(value));
+      }}
+    />
   );
 }

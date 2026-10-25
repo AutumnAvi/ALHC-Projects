@@ -20,6 +20,7 @@ import { MenuItem, Popover } from "@/components/popover";
 import { OverdueTable, type OverdueRow } from "@/components/reports/report-blocks";
 import { ReportFilterFields, type FilterOption } from "@/components/reports/report-filters";
 import { SeriesChart, type SeriesDatum } from "@/components/reports/series-chart";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, HEADER_TITLE_INPUT } from "@/components/ui";
 import {
@@ -372,35 +373,32 @@ function WidgetEditor({
             className="control font-normal"
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
-          Type
-          <select
+        <div className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
+          <span aria-hidden>Type</span>
+          <SmartPicker
+            label="Type"
             value={kind}
-            onChange={(e) => {
-              const value = e.currentTarget.value;
+            onChange={(value) => {
               if (isPersonalWidgetKind(value)) setKind(value);
             }}
-            className="control font-normal"
-          >
-            {PERSONAL_WIDGET_KINDS.map((k) => (
-              <option key={k.value} value={k.value}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            className="font-normal"
+            options={PERSONAL_WIDGET_KINDS.map((k) => ({ value: k.value, label: k.label }))}
+          />
+        </div>
         {kind === "completed_series" ? (
-          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
-            Completed per
-            <select
+          <div className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
+            <span aria-hidden>Completed per</span>
+            <SmartPicker
+              label="Completed per"
               value={interval}
-              onChange={(e) => setSeriesInterval(e.currentTarget.value === "day" ? "day" : "week")}
-              className="control font-normal"
-            >
-              <option value="week">Week</option>
-              <option value="day">Day</option>
-            </select>
-          </label>
+              onChange={(value) => setSeriesInterval(value === "day" ? "day" : "week")}
+              className="font-normal"
+              options={[
+                { value: "week", label: "Week" },
+                { value: "day", label: "Day" },
+              ]}
+            />
+          </div>
         ) : null}
       </div>
       <div className="rounded-lg border border-zinc-200 p-3">

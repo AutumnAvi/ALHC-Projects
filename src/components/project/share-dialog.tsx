@@ -7,6 +7,7 @@ import { Avatar } from "@/components/avatar";
 import { Dialog } from "@/components/dialog";
 import { ResendInviteButton } from "@/components/people/pending-invites";
 import { MemberRolePicker, RolePicker, TeamRolePicker, projectRoleOptions } from "@/components/role-picker";
+import { SmartPicker } from "@/components/smart-picker";
 import { copyProjectLink } from "@/components/project/project-page-context";
 import { useShell } from "@/components/shell/shell-context";
 import { useNotify } from "@/components/toast";
@@ -457,28 +458,20 @@ function ProjectAccess({
         <div className="min-w-0 flex-1">
           {canManage ? (
             <>
-              <label htmlFor="share-visibility" className="sr-only">
-                Who can find this project
-              </label>
-              <select
-                id="share-visibility"
+              <VisibilityPicker
                 key={data.visibility}
-                defaultValue={data.visibility}
+                saved={data.visibility}
+                label={label}
                 disabled={pending}
-                onChange={(e) => {
-                  const select = e.currentTarget;
+                onPick={(next, revert) =>
                   change(async () => {
-                    const result = await updateProjectTeam(projectId, { visibility: select.value });
+                    const result = await updateProjectTeam(projectId, { visibility: next });
                     // Refused: show the saved value again (the reload doesn't change it).
-                    if (result.error) select.value = data.visibility;
+                    if (result.error) revert();
                     return result;
-                  });
-                }}
-                className="control h-8 w-auto max-w-full font-medium"
-              >
-                <option value="private">{label("private")}</option>
-                <option value="team">{label("team")}</option>
-              </select>
+                  })
+                }
+              />
             </>
           ) : (
             <p className="text-sm font-medium text-zinc-900">{label(data.visibility)}</p>
@@ -487,6 +480,37 @@ function ProjectAccess({
         </div>
       </div>
     </section>
+  );
+}
+
+function VisibilityPicker({
+  saved,
+  label,
+  disabled,
+  onPick,
+}: {
+  saved: ProjectVisibility;
+  label: (v: ProjectVisibility) => string;
+  disabled: boolean;
+  onPick: (next: ProjectVisibility, revert: () => void) => void;
+}) {
+  const [shown, setShown] = useState<ProjectVisibility>(saved);
+  return (
+    <SmartPicker
+      id="share-visibility"
+      label="Who can find this project"
+      value={shown}
+      disabled={disabled}
+      panelWidth={260}
+      className="h-8 w-auto max-w-full font-medium"
+      options={(["private", "team"] as const).map((v) => ({ value: v, label: label(v), description: VISIBILITY_DESCRIPTIONS[v] }))}
+      onChange={(value) => {
+        const next: ProjectVisibility = value === "team" ? "team" : "private";
+        if (next === shown) return;
+        setShown(next);
+        onPick(next, () => setShown(saved));
+      }}
+    />
   );
 }
 

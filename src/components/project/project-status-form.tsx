@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
+import { SmartPicker } from "@/components/smart-picker";
 import { ReadOnlyNotice, useCan } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
@@ -54,18 +55,15 @@ export function ProjectStatusForm({ project }: { project: Project }) {
               <label htmlFor="project-status" className="text-xs font-medium text-zinc-600">
                 Status
               </label>
-              <select
+              <SmartPicker
                 id="project-status"
+                label="Status"
                 value={status}
-                onChange={(e) => setStatus(e.currentTarget.value as ProjectStatus)}
-                className={inputClass}
-              >
-                {PROJECT_STATUSES.map((value) => (
-                  <option key={value} value={value}>
-                    {PROJECT_STATUS_LABELS[value]}
-                  </option>
-                ))}
-              </select>
+                disabled={!canEdit || pending}
+                onChange={(next) => setStatus(next as ProjectStatus)}
+                className="h-9"
+                options={PROJECT_STATUSES.map((value) => ({ value, label: PROJECT_STATUS_LABELS[value] }))}
+              />
             </div>
             <div className="flex flex-col gap-1">
               <label htmlFor="project-status-note" className="text-xs font-medium text-zinc-600">

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { convertToSubtask, convertToTask } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
@@ -59,34 +60,30 @@ export function ConvertTaskDialog({ task, onClose }: { task: TaskDetail; onClose
               <label htmlFor="convert-project" className={DIALOG_LABEL}>
                 Project
               </label>
-              <select
+              <SmartPicker
                 id="convert-project"
+                label="Project"
                 value={project.projectId}
-                onChange={(e) => {
-                  setProjectId(e.currentTarget.value);
+                onChange={(value) => {
+                  setProjectId(value);
                   setSectionId("");
                 }}
-                className="field mt-1 w-full"
-              >
-                {editable.map((m) => (
-                  <option key={m.projectId} value={m.projectId}>
-                    {m.projectName}
-                  </option>
-                ))}
-              </select>
+                className="mt-1 h-9 w-full"
+                options={editable.map((m) => ({ value: m.projectId, label: m.projectName }))}
+              />
             </div>
             <div>
               <label htmlFor="convert-section" className={DIALOG_LABEL}>
                 Section
               </label>
-              <select id="convert-section" value={sectionId} onChange={(e) => setSectionId(e.currentTarget.value)} className="field mt-1 w-full">
-                <option value="">No section</option>
-                {project.sections.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              <SmartPicker
+                id="convert-section"
+                label="Section"
+                value={sectionId}
+                onChange={setSectionId}
+                className="mt-1 h-9 w-full"
+                options={[{ value: "", label: "No section" }, ...project.sections.map((s) => ({ value: s.id, label: s.name }))]}
+              />
             </div>
             <div className="flex justify-end gap-2">
               <button type="button" className="btn-ghost" onClick={onClose}>
@@ -122,25 +119,17 @@ export function ConvertTaskDialog({ task, onClose }: { task: TaskDetail; onClose
           <label htmlFor="convert-parent" className={DIALOG_LABEL}>
             Parent task
           </label>
-          <select
+          <SmartPicker
             id="convert-parent"
+            label="Parent task"
+            placeholder={!extras ? "Loading tasks…" : parents.length ? "Choose a task…" : "No tasks you edit"}
             value={parentId}
-            onChange={(e) => setParentId(e.currentTarget.value)}
+            onChange={setParentId}
             disabled={!extras || parents.length === 0}
-            className="field mt-1 w-full"
-            required
-          >
-            <option value="">{!extras ? "Loading tasks…" : parents.length ? "Choose a task…" : "No tasks you edit"}</option>
-            {parents.map((group) => (
-              <optgroup key={group.key} label={group.label}>
-                {group.tasks.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+            searchable
+            className="mt-1 h-9 w-full"
+            options={parents.flatMap((group) => group.tasks.map((t) => ({ value: t.id, label: t.title, group: group.label })))}
+          />
           <p className={DIALOG_HINT}>Tasks of projects you edit.</p>
         </div>
         <div className="flex justify-end gap-2">

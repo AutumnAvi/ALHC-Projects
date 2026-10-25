@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Check, Copy, Forward, Mail, RefreshCw } from "lucide-react";
 import { Timestamp } from "@/components/timestamp";
+import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { rotateForwardingAddress, setForwardingProject } from "@/lib/actions";
 import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
@@ -101,12 +102,19 @@ function ReadyForwarding({
         <label htmlFor="forwarding-project" className="text-xs font-medium text-zinc-600">
           New tasks go to
         </label>
-        <select
+        <SmartPicker
           id="forwarding-project"
+          label="New tasks go to"
           value={projectId}
           disabled={pending}
-          onChange={(e) => {
-            const next = e.currentTarget.value;
+          searchable
+          options={[
+            { value: MY_TASKS, label: "My tasks (private to you)" },
+            ...forwarding.projects.map((p) => ({ value: p.id, label: p.name })),
+            ...(!listed ? [{ value: projectId, label: "A project you can’t add tasks to anymore" }] : []),
+          ]}
+          onChange={(next) => {
+            if (next === projectId) return;
             const previous = projectId;
             // Shown right away (outside the action's transition, like Notifications), put back if refused.
             setProjectId(next);
@@ -116,16 +124,8 @@ function ReadyForwarding({
               return result;
             });
           }}
-          className="field mt-1 w-full"
-        >
-          <option value={MY_TASKS}>My tasks (private to you)</option>
-          {forwarding.projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-          {!listed ? <option value={projectId}>A project you can’t add tasks to anymore</option> : null}
-        </select>
+          className="mt-1 h-9 w-full"
+        />
         <p className="mt-1 text-xs text-zinc-500">
           Projects you can add tasks to. If you can’t add tasks to it anymore when an email arrives, the task goes to My
           tasks instead.

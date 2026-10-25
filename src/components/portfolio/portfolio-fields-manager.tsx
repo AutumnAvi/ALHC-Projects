@@ -4,6 +4,7 @@ import { ColorPicker } from "@/components/color-picker";
 import { useState } from "react";
 import { ListPlus, Plus, Trash2, X } from "lucide-react";
 import { EmptyState } from "@/components/ui";
+import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { createPortfolioField, deletePortfolioField, updatePortfolioField } from "@/lib/actions";
 import type { PortfolioField } from "@/lib/data";
@@ -80,21 +81,15 @@ export function PortfolioFieldsManager({
               <label htmlFor="new-portfolio-field-type" className="text-xs font-medium text-zinc-600">
                 Type
               </label>
-              <select
+              <SmartPicker
                 id="new-portfolio-field-type"
+                label="Type"
                 value={fieldType}
-                onChange={(e) => {
-                  const value = e.currentTarget.value;
+                onChange={(value) => {
                   if (isPortfolioFieldType(value)) setFieldType(value);
                 }}
-                className="control"
-              >
-                {PORTFOLIO_FIELD_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
+                options={PORTFOLIO_FIELD_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+              />
             </div>
             <button type="submit" disabled={pending || !name.trim()} className="btn-primary">
               <Plus className="size-4" aria-hidden />
