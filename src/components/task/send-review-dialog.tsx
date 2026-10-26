@@ -25,6 +25,7 @@ export function SendReviewDialog({ task, onClose }: { task: TaskDetail; onClose:
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
+  const [suppressed, setSuppressed] = useState(false);
   const [pending, start] = useTransition();
 
   function toggle(id: string) {
@@ -56,6 +57,7 @@ export function SendReviewDialog({ task, onClose }: { task: TaskDetail; onClose:
         onClose();
       } else {
         setLink(result.link ?? null);
+        setSuppressed(Boolean(result.suppressed));
       }
     });
   }
@@ -64,8 +66,10 @@ export function SendReviewDialog({ task, onClose }: { task: TaskDetail; onClose:
     return (
       <Dialog title="Review check created" onClose={onClose}>
         <p className="text-sm text-zinc-700">
-          No email could be sent from here, so send this link to {email.trim()} yourself. It’s shown only now, and anyone with
-          it can respond.
+          {suppressed
+            ? `${email.trim()} bounced or marked an earlier email as spam, so no email was sent (Admin console → Email).`
+            : "No email could be sent from here."}{" "}
+          Send this link to {email.trim()} yourself. It’s shown only now, and anyone with it can respond.
         </p>
         <div className="mt-3 flex gap-2">
           <input readOnly value={link} aria-label="Review link" className="field h-9 min-w-0 flex-1 font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />

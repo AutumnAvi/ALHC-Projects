@@ -100,8 +100,9 @@ export async function finishReviewUpload(token: string, fileId: string): Promise
   if (result.error) return { error: result.error };
   const answer = result.answer!;
   if (answer.status !== "ok") {
-    // A file Storage took but the database refused (too large) doesn't stay in the task's folder.
-    if (answer.status === "too_large" && answer.path) {
+    // A file Storage took but the database refused (too large, or a blocked type) doesn't stay in the
+    // task's folder.
+    if ((answer.status === "too_large" || answer.status === "blocked_type") && answer.path) {
       await createAdminClient()?.storage.from(ATTACHMENTS_BUCKET).remove([answer.path]);
     }
     return { error: refusal(answer.status) };

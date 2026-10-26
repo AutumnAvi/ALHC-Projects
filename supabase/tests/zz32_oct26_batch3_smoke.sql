@@ -470,9 +470,16 @@ begin
   assert public.review_check_upload_finish(token, (started ->> 'file_id')::uuid) ->> 'status' = 'missing', 'not there yet';
 
   assert public.review_check_decide(token, 'changes_requested') ->> 'status' = 'empty', 'feedback needs words';
-  assert public.review_check_decide(token, 'changes_requested', null,
-    jsonb_build_array(jsonb_build_object('asset_id', gen_random_uuid(), 'x', 0.5, 'y', 0.5, 'body', 'x'))) ->> 'status' = 'invalid',
+  assert public.review_check_decide(token, 'changes_requested', null, jsonb_build_array(
+    jsonb_build_object('asset_id', asset, 'x', 0.5, 'y', 0.5, 'body', 'fine'),
+    jsonb_build_object('asset_id', gen_random_uuid(), 'x', 0.5, 'y', 0.5, 'body', 'x'))) ->> 'status' = 'invalid',
     'a pin on someone else''s file is refused';
+  assert public.review_check_decide(token, 'changes_requested', null,
+    jsonb_build_array(jsonb_build_object('asset_id', repeat('-', 36), 'x', 0.5, 'y', 0.5, 'body', 'x'))) ->> 'status' = 'invalid',
+    'a malformed id is refused, not an error';
+  assert public.review_check_decide(token, 'changes_requested', null,
+    jsonb_build_array(jsonb_build_object('asset_id', asset, 'page', 'two', 'x', 0.5, 'y', 0.5, 'body', 'x'))) ->> 'status' = 'invalid',
+    'a page that isn''t a number is refused';
   assert public.review_check_decide(token, 'changes_requested', null,
     jsonb_build_array(jsonb_build_object('asset_id', asset, 'x', 1.5, 'y', 0.5, 'body', 'x'))) ->> 'status' = 'invalid',
     'a pin outside the file is refused';
@@ -524,7 +531,10 @@ begin
   assert c.body like 'Requested changes (review v1)%' and c.body like '%1. poster.png: Make this bigger%'
     and c.body like '%2. poster.png, page 2: Typo here%' and c.body like '%3. poster.png at 0:12: Cut here%'
     and c.body like '%Files sent back: Final poster.png%', format('pins summarized: %s', c.body);
-  assert (select count(*) from public.review_check_pins where review_id = rc) = 3, 'three pins';
+  assert (select count(*) from public.review_check_pins where review_id = rc) = 3,
+    'three pins (the refused attempts left none behind)';
+  assert public.review_time_label(170) = '2:50' and public.review_time_label(12.4) = '0:12'
+    and public.review_time_label(3725) = '1:02:05', 'video times';
   assert (select comment_id from public.review_checks where id = rc) = c.id, 'linked';
   assert exists (
     select 1 from public.inbox_items i
@@ -567,6 +577,10 @@ do $$
 begin
   assert public.review_check_decide((select token from b3_tokens where name = 'v2'), 'approved') ->> 'status' = 'closed',
     'a superseded round can''t be answered';
+  assert public.review_check_view((select token from b3_tokens where name = 'v2')) ->> 'status' = 'superseded',
+    'a superseded round says only that';
+  assert public.review_check_file((select token from b3_tokens where name = 'v2'), (select id from b3_ids where name = 'asset1')) ->> 'status' = 'unknown',
+    'and serves no files';
   assert public.review_check_view((select token from b3_tokens where name = 'v3')) ->> 'status' = 'unknown', 'the replaced link is dead';
   assert public.review_check_view((select token from b3_tokens where name = 'v3b')) ->> 'status' = 'ok', 'the new one works';
 end $$;
@@ -591,6 +605,28 @@ begin
 end $$;
 reset role;
 
+-- Withdrawn: the link says so and shows nothing else.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+select public.create_review_check((select id from b3_ids where name = 'rt'), array[(select id from b3_ids where name = 'a1')], 'client@example.org') ->> 'token' as withdrawn_token \gset
+select public.cancel_review_check((select id from public.review_checks where task_id = (select id from b3_ids where name = 'rt') and status = 'pending')) = 'cancelled' as ok \gset
+reset role;
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+select public.review_check_view(:'withdrawn_token') ->> 'status' = 'withdrawn' as ok \gset
+\if :ok
+\else
+  \echo 'expected withdrawn'
+  select 1/0;
+\endif
+select public.review_check_decide(:'withdrawn_token', 'approved') ->> 'status' = 'closed' as ok \gset
+\if :ok
+\else
+  \echo 'a withdrawn round takes no decision'
+  select 1/0;
+\endif
+reset role;
+
 -- An approval: approved status, a comment, rules fire like an approval decision.
 set role authenticated;
 select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
@@ -608,7 +644,7 @@ reset role;
 do $$
 begin
   assert exists (select 1 from public.comments c join public.review_checks r on r.comment_id = c.id
-    where r.status = 'approved' and c.body like 'Approved (review v4)%Looks great%'), 'the approval is on the task';
+    where r.status = 'approved' and c.body like 'Approved (review v5)%Looks great%'), 'the approval is on the task';
 end $$;
 
 do $$ begin raise notice 'oct 26 batch 3 smoke: all assertions passed'; end $$;

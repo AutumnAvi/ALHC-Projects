@@ -5,8 +5,9 @@
 --    owners (and older Admins) get an Inbox item they can approve or decline.
 --      * project_access_requests (the requester and the project's admins+ read; written only by the
 --        definer functions below).
---      * project_access_status(project): member | can_request | requested | archived | missing — a
---        deleted or unknown project stays "missing" (a real Not found). Says nothing else about it.
+--      * project_access_status(project): member | can_request | requested | missing — a deleted or
+--        unknown project stays "missing" (a real Not found). Says nothing else about it (an archived
+--        project reads as can_request; asking it is refused).
 --      * request_project_access(project): one open request per person and project, at most 10 requests
 --        an hour per person and 3 per project a week; notifies owners / admins (kind rule, project item).
 --      * decide_project_access_request(request, decision, role): Admin+ of the project; approving goes
@@ -146,9 +147,7 @@ begin
   if public.profile_project_role(me, p.id) is not null then
     return 'member';
   end if;
-  if p.archived_at is not null then
-    return 'archived';
-  end if;
+  -- An archived project isn't singled out (that would say something about it): asking is refused later.
   if exists (
     select 1 from public.project_access_requests r
     where r.project_id = p.id and r.requester_id = me and r.status = 'pending'
@@ -210,7 +209,8 @@ begin
     return 'member';
   end if;
   if p.archived_at is not null then
-    raise exception 'This project is archived, so nobody can be added to it right now' using errcode = 'check_violation';
+    raise exception 'This project can''t take requests right now' using errcode = 'check_violation',
+      hint = 'Ask one of its owners directly.';
   end if;
   if exists (
     select 1 from public.project_access_requests r
@@ -900,7 +900,11 @@ begin
   from public.task_attachments a
   where a.id = any(picked);
 
-  return jsonb_build_object('id', r.id, 'round', r.round, 'token', token, 'expires_at', r.expires_at);
+  return jsonb_build_object(
+    'id', r.id, 'round', r.round, 'token', token, 'expires_at', r.expires_at,
+    -- The address bounced or complained before (Admin console → Email): the app doesn't email it.
+    'suppressed', exists (select 1 from public.email_suppressions s where s.email = address and s.cleared_at is null)
+  );
 end;
 $$;
 
@@ -933,7 +937,10 @@ begin
   set token_hash = public.inbound_token_hash(token), token_hint = '…' || right(token, 4),
       expires_at = now() + interval '30 days', hits = 0, hits_window_started_at = null, updated_at = now()
   where x.id = r.id;
-  return jsonb_build_object('id', r.id, 'round', r.round, 'token', token, 'expires_at', now() + interval '30 days');
+  return jsonb_build_object(
+    'id', r.id, 'round', r.round, 'token', token, 'expires_at', now() + interval '30 days',
+    'suppressed', exists (select 1 from public.email_suppressions s where s.email = r.recipient_email and s.cleared_at is null)
+  );
 end;
 $$;
 
@@ -986,6 +993,13 @@ declare
 begin
   if gate is not null then
     return jsonb_build_object('status', gate);
+  end if;
+  -- A withdrawn round, or one a newer round replaced, shows nothing but that.
+  if r.status = 'cancelled' then
+    return jsonb_build_object('status', 'withdrawn');
+  end if;
+  if r.status = 'superseded' then
+    return jsonb_build_object('status', 'superseded');
   end if;
   select * into t from public.tasks x where x.id = r.task_id;
   select coalesce(nullif(btrim(p.full_name), ''), p.email) into sender from public.profiles p where p.id = r.created_by;
@@ -1041,6 +1055,9 @@ declare
 begin
   if gate is not null then
     return jsonb_build_object('status', gate);
+  end if;
+  if r.status in ('cancelled', 'superseded') then
+    return jsonb_build_object('status', 'unknown');
   end if;
   select ta.storage_path as path, ta.file_name as name, ta.content_type into found_file
   from public.review_check_assets a
@@ -1098,8 +1115,11 @@ begin
   if file_size > 26214400 then
     return jsonb_build_object('status', 'too_large');
   end if;
-  if (select count(*) from public.review_check_files x where x.review_id = r.id) >= 20
-     or (select coalesce(sum(coalesce(x.size_bytes, 26214400)), 0) from public.review_check_files x where x.review_id = r.id) + file_size > 524288000 then
+  -- Finished files, and uploads started in the last hour (one that never finished stops counting).
+  if (select count(*) from public.review_check_files x
+      where x.review_id = r.id and (x.status = 'ready' or x.created_at > now() - interval '1 hour')) >= 20
+     or (select coalesce(sum(coalesce(x.size_bytes, 26214400)), 0) from public.review_check_files x
+         where x.review_id = r.id and (x.status = 'ready' or x.created_at > now() - interval '1 hour')) + file_size > 524288000 then
     return jsonb_build_object('status', 'too_many');
   end if;
   safe := right(regexp_replace(clean, '[^A-Za-z0-9._-]+', '_', 'g'), 100);
@@ -1144,6 +1164,10 @@ begin
   if stored_size > 26214400 then
     return jsonb_build_object('status', 'too_large', 'path', f.storage_path);
   end if;
+  -- The type Storage saw, not just the one the browser claimed.
+  if lower(coalesce(stored.metadata ->> 'mimetype', '')) ~ '^(text/html|image/svg\+xml|application/(x-msdownload|x-msdos-program|x-dosexec|x-executable|x-sh|javascript|x-javascript|hta|java-archive))' then
+    return jsonb_build_object('status', 'blocked_type', 'path', f.storage_path);
+  end if;
   update public.review_check_files x
   set status = 'ready', ready_at = now(), size_bytes = stored_size,
       content_type = coalesce(nullif(left(lower(btrim(coalesce(stored.metadata ->> 'mimetype', ''))), 255), ''), x.content_type)
@@ -1162,7 +1186,7 @@ set search_path = ''
 as $$
   select case
     when seconds >= 3600 then to_char(make_interval(secs => floor(seconds)), 'FMHH24:MI:SS')
-    else (floor(seconds) / 60)::integer::text || ':' || lpad((floor(seconds)::integer % 60)::text, 2, '0')
+    else floor(seconds / 60)::integer::text || ':' || lpad((floor(seconds)::integer % 60)::text, 2, '0')
   end;
 $$;
 
@@ -1222,37 +1246,58 @@ begin
   end if;
   select * into t from public.tasks x where x.id = r.task_id;
 
+  -- Every pin is checked before any is written, so a bad one changes nothing (the reviewer can fix it and
+  -- send again).
   for pin in select value from jsonb_array_elements(coalesce(pins, '[]'::jsonb))
   loop
-    if jsonb_typeof(pin) <> 'object' or coalesce(pin ->> 'asset_id', '') !~ '^[0-9a-f-]{36}$'
-       or nullif(btrim(coalesce(pin ->> 'body', '')), '') is null then
+    if jsonb_typeof(pin) <> 'object'
+       or coalesce(pin ->> 'asset_id', '') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       or nullif(btrim(coalesce(pin ->> 'body', '')), '') is null
+       or char_length(btrim(pin ->> 'body')) > 2000
+       or (pin ? 'page' and jsonb_typeof(pin -> 'page') not in ('number', 'null'))
+       or (pin ? 'x' and jsonb_typeof(pin -> 'x') not in ('number', 'null'))
+       or (pin ? 'y' and jsonb_typeof(pin -> 'y') not in ('number', 'null'))
+       or (pin ? 'time' and jsonb_typeof(pin -> 'time') not in ('number', 'null')) then
       return jsonb_build_object('status', 'invalid');
     end if;
+    if not exists (
+      select 1 from public.review_check_assets a where a.id = (pin ->> 'asset_id')::uuid and a.review_id = r.id
+    ) then
+      return jsonb_build_object('status', 'invalid');
+    end if;
+    if jsonb_typeof(pin -> 'page') = 'number' and ((pin ->> 'page')::numeric < 1 or (pin ->> 'page')::numeric > 5000) then
+      return jsonb_build_object('status', 'invalid');
+    end if;
+    if jsonb_typeof(pin -> 'time') = 'number' and ((pin ->> 'time')::numeric < 0 or (pin ->> 'time')::numeric > 86400) then
+      return jsonb_build_object('status', 'invalid');
+    end if;
+    if (jsonb_typeof(pin -> 'x') = 'number') <> (jsonb_typeof(pin -> 'y') = 'number')
+       or (jsonb_typeof(pin -> 'x') = 'number' and ((pin ->> 'x')::numeric not between 0 and 1 or (pin ->> 'y')::numeric not between 0 and 1))
+       or (jsonb_typeof(pin -> 'x') is distinct from 'number' and jsonb_typeof(pin -> 'time') is distinct from 'number') then
+      return jsonb_build_object('status', 'invalid');
+    end if;
+  end loop;
+
+  for pin in select value from jsonb_array_elements(coalesce(pins, '[]'::jsonb))
+  loop
     select ta.file_name into asset_name
     from public.review_check_assets a
     join public.task_attachments ta on ta.id = a.attachment_id
     where a.id = (pin ->> 'asset_id')::uuid and a.review_id = r.id;
-    if not found then
-      return jsonb_build_object('status', 'invalid');
-    end if;
     n := n + 1;
-    begin
-      insert into public.review_check_pins (review_id, task_id, asset_id, number, page, x, y, time_seconds, body)
-      values (
-        r.id, r.task_id, (pin ->> 'asset_id')::uuid, n,
-        case when jsonb_typeof(pin -> 'page') = 'number' then (pin ->> 'page')::numeric::integer end,
-        case when jsonb_typeof(pin -> 'x') = 'number' then (pin ->> 'x')::double precision end,
-        case when jsonb_typeof(pin -> 'y') = 'number' then (pin ->> 'y')::double precision end,
-        case when jsonb_typeof(pin -> 'time') = 'number' then (pin ->> 'time')::double precision end,
-        left(btrim(pin ->> 'body'), 2000)
-      );
-    exception when check_violation or numeric_value_out_of_range or invalid_text_representation then
-      return jsonb_build_object('status', 'invalid');
-    end;
+    insert into public.review_check_pins (review_id, task_id, asset_id, number, page, x, y, time_seconds, body)
+    values (
+      r.id, r.task_id, (pin ->> 'asset_id')::uuid, n,
+      case when jsonb_typeof(pin -> 'page') = 'number' then round((pin ->> 'page')::numeric)::integer end,
+      case when jsonb_typeof(pin -> 'x') = 'number' then (pin ->> 'x')::double precision end,
+      case when jsonb_typeof(pin -> 'y') = 'number' then (pin ->> 'y')::double precision end,
+      case when jsonb_typeof(pin -> 'time') = 'number' then (pin ->> 'time')::double precision end,
+      btrim(pin ->> 'body')
+    );
     where_text := asset_name
-      || case when jsonb_typeof(pin -> 'page') = 'number' then ', page ' || (pin ->> 'page')::numeric::integer::text else '' end
+      || case when jsonb_typeof(pin -> 'page') = 'number' then ', page ' || round((pin ->> 'page')::numeric)::integer::text else '' end
       || case when jsonb_typeof(pin -> 'time') = 'number' then ' at ' || public.review_time_label((pin ->> 'time')::double precision) else '' end;
-    lines := lines || (n::text || '. ' || where_text || ': ' || left(btrim(pin ->> 'body'), 2000));
+    lines := lines || (n::text || '. ' || where_text || ': ' || btrim(pin ->> 'body'));
   end loop;
 
   update public.review_checks x

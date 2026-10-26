@@ -27,8 +27,10 @@ type Supabase = Awaited<ReturnType<typeof createClient>>;
 export type SendReviewResult = {
   error?: string;
   round?: number;
-  // The email went out (false: no email provider here, or sending failed).
+  // The email went out (false: no email provider here, sending failed, or the address is suppressed).
   emailed?: boolean;
+  // The address bounced or marked an earlier email as spam (Admin console → Email): no email was sent.
+  suppressed?: boolean;
   // Only when the email didn't go out: the link, shown once so the sender can pass it on themselves.
   link?: string;
 };
@@ -127,8 +129,12 @@ export async function sendReviewCheck(input: {
     review_message: message,
   });
   if (error) return { error: dbError(error) };
-  const created = data as { id?: string; round?: number; token?: string } | null;
+  const created = data as { id?: string; round?: number; token?: string; suppressed?: boolean } | null;
   if (!created?.id || !isReviewToken(created.token)) return { error: "Couldn’t create the review check" };
+  if (created.suppressed) {
+    refresh();
+    return { round: created.round, emailed: false, suppressed: true, link: reviewUrls(await requestOrigin(), created.token).page };
+  }
   const sent = await emailRound(
     supabase,
     input.taskId,
@@ -151,8 +157,13 @@ export async function resendReviewCheck(reviewId: string): Promise<SendReviewRes
   if (!review) return { error: "Review check not found" };
   const { data, error } = await supabase.rpc("rotate_review_check_token", { target_review: reviewId });
   if (error) return { error: dbError(error) };
-  const token = (data as { token?: string } | null)?.token;
+  const rotated = data as { token?: string; suppressed?: boolean } | null;
+  const token = rotated?.token;
   if (!isReviewToken(token)) return { error: "Couldn’t make a new link" };
+  if (rotated?.suppressed) {
+    refresh();
+    return { round: review.round, emailed: false, suppressed: true, link: reviewUrls(await requestOrigin(), token).page };
+  }
   const sent = await emailRound(
     supabase,
     review.task_id,

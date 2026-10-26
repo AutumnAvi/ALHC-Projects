@@ -265,6 +265,12 @@ test("unsafe files are noted, never saved", () => {
       ["run", "blocked_type"],
     ],
   );
+  const sneaky = normalizeReceivedFiles([
+    { id: "7", filename: "photo.jpg", content_type: "Text/HTML; charset=utf-8" },
+    { id: "8", filename: "logo.png", content_type: "image/svg+xml; charset=utf-8" },
+  ]);
+  assert.deepEqual(sneaky.map((f) => f.contentType), ["text/html", "image/svg+xml"], "parameters dropped, lowercased");
+  assert.ok(sneaky.every(unsafeReceivedFile), "a safe-looking name doesn't hide an unsafe type");
   const html = renderToStaticMarkup(<EmailFiles files={[]} skipped={[{ name: "setup.exe", reason: "blocked_type" }]} />);
   assert.match(html, /setup.exe \(this kind of file isn’t saved from email\)/);
 });
@@ -273,6 +279,9 @@ test("with inline images saved, Gmail's and Outlook's placeholders come out what
   const text = "See below\n[image: Screenshot 2026-10-26 at 9.41.png]\n[cid:ii_m1x2y3]\nThanks [draft.jpg]";
   assert.equal(stripAttachmentPlaceholders(text, [], { inlineImages: true }), "See below\n\nThanks [draft.jpg]");
   assert.equal(stripAttachmentPlaceholders(text, []), text, "nothing removed without inline images");
+  const attachedOnly = normalizeReceivedFiles([{ id: "9", filename: "photo.jpg", content_type: "image/jpeg", content_disposition: "attachment" }]);
+  const plan = planReceivedFiles(attachedOnly, { rawText: text, keptText: text });
+  assert.equal(plansInlineImage(attachedOnly, plan), false, "an attached (not inline) image keeps the sender's own [image: …] text");
 });
 
 test("copying reuses the list the route already read", async () => {

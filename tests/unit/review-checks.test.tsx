@@ -60,6 +60,10 @@ test("the public actions refuse a malformed link before touching the database", 
 test("parsing what review_check_view returns", () => {
   assert.deepEqual(parsePublicReview({ status: "expired" }), { status: "expired" });
   assert.deepEqual(parsePublicReview({ status: "rate_limited" }), { status: "rate_limited" });
+  assert.deepEqual(parsePublicReview({ status: "withdrawn" }), { status: "withdrawn" });
+  assert.deepEqual(parsePublicReview({ status: "superseded" }), { status: "superseded" });
+  assert.match(REVIEW_REFUSALS.withdrawn, /withdrawn/);
+  assert.match(REVIEW_REFUSALS.superseded, /newer version/);
   assert.deepEqual(parsePublicReview({ status: "weird" }), { status: "unknown" });
   assert.deepEqual(parsePublicReview(null), { status: "unknown" });
   const parsed = parsePublicReview({

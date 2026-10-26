@@ -109,7 +109,9 @@ export type PublicReview = {
 
 export type PublicReviewResult =
   | { status: "ok"; review: PublicReview }
-  | { status: "unknown" | "expired" | "rate_limited" };
+  | { status: "unknown" | "expired" | "rate_limited" | "withdrawn" | "superseded" };
+
+const VIEW_REFUSALS = ["expired", "rate_limited", "withdrawn", "superseded"] as const;
 
 const obj = (v: unknown): Record<string, unknown> | null =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -140,7 +142,7 @@ export function parsePublicReview(value: unknown): PublicReviewResult {
   const o = obj(value);
   const status = o?.status;
   if (status !== "ok") {
-    return { status: status === "expired" || status === "rate_limited" ? status : "unknown" };
+    return { status: (VIEW_REFUSALS as readonly unknown[]).includes(status) ? (status as (typeof VIEW_REFUSALS)[number]) : "unknown" };
   }
   const r = obj(o?.review);
   if (!r || !str(r.id) || !isReviewStatus(r.status)) return { status: "unknown" };
@@ -173,6 +175,8 @@ export const REVIEW_REFUSALS: Record<string, string> = {
   unknown: "This review link isn’t valid any more. Ask for a new one.",
   expired: "This review link has expired. Ask for a new one.",
   rate_limited: "Too many requests on this link just now. Wait a few minutes and try again.",
+  withdrawn: "This review was withdrawn by the team that sent it.",
+  superseded: "A newer version was sent for review. Use the link in the latest email.",
   closed: "This review is already closed.",
   invalid: "Something in the feedback wasn’t right. Check the pins and try again.",
   empty: "Add a note or at least one pin so they know what to change.",

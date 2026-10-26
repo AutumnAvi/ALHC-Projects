@@ -44,7 +44,8 @@ const BLOCKED_TYPES = /^(application\/(x-msdownload|x-msdos-program|x-dosexec|x-
 export function unsafeReceivedFile(file: Pick<ReceivedFile, "filename" | "contentType">): boolean {
   const ext = file.filename.match(/\.([A-Za-z0-9]{1,10})$/)?.[1]?.toLowerCase();
   if (ext && BLOCKED_EXTENSIONS.has(ext)) return true;
-  return file.contentType !== null && BLOCKED_TYPES.test(file.contentType);
+  const type = file.contentType?.split(";")[0].trim().toLowerCase() ?? null;
+  return type !== null && BLOCKED_TYPES.test(type);
 }
 
 export type ReceivedFilePlan = { copy: ReceivedFile[]; skipped: SkippedFile[]; ignored: ReceivedFile[] };
@@ -81,8 +82,9 @@ export function normalizeReceivedFiles(raw: unknown): ReceivedFile[] {
     const o = item as Record<string, unknown>;
     if (typeof o.id !== "string" || !o.id) return [];
     const filename = typeof o.filename === "string" && o.filename.trim() ? o.filename.trim().slice(0, 255) : "attachment";
-    const contentType =
-      typeof o.content_type === "string" && CONTENT_TYPE.test(o.content_type) ? o.content_type.toLowerCase().slice(0, 255) : null;
+    // The base type only ("text/html; charset=utf-8" → "text/html"), lowercased.
+    const baseType = typeof o.content_type === "string" ? o.content_type.split(";")[0].trim().toLowerCase() : "";
+    const contentType = CONTENT_TYPE.test(baseType) ? baseType.slice(0, 255) : null;
     const contentId =
       typeof o.content_id === "string" && o.content_id.trim() ? o.content_id.trim().replace(/^<|>$/g, "") || null : null;
     const size = typeof o.size === "number" && Number.isFinite(o.size) && o.size >= 0 ? o.size : null;
@@ -178,8 +180,11 @@ export function plannedFiles(files: ReceivedFile[], plan: ReceivedFilePlan): Rec
   return files.filter((f) => !ignored.has(f.id));
 }
 
-// Whether a plan saves (or notes) an inline image: then generic image placeholders come out too.
+// Whether a plan saves (or notes) an inline image (one shown in the body: inline, or with a content id):
+// then generic image placeholders come out too.
 export function plansInlineImage(files: ReceivedFile[], plan: ReceivedFilePlan): boolean {
   const ignored = new Set(plan.ignored.map((f) => f.id));
-  return files.some((f) => !ignored.has(f.id) && f.contentType?.startsWith("image/") === true);
+  return files.some(
+    (f) => !ignored.has(f.id) && (f.inline || f.contentId !== null) && f.contentType?.startsWith("image/") === true,
+  );
 }

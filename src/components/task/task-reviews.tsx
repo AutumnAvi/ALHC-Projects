@@ -115,7 +115,11 @@ function RoundCard({
       else if (result.emailed) notify(`Sent again to ${round.recipientEmail}. The earlier link no longer works.`);
       else if (result.link) {
         void navigator.clipboard?.writeText(result.link).catch(() => undefined);
-        notify("No email could be sent from here: the new link was copied. Send it yourself.");
+        notify(
+          result.suppressed
+            ? `${round.recipientEmail} bounced or marked an email as spam, so no email was sent: the new link was copied. Send it yourself.`
+            : "No email could be sent from here: the new link was copied. Send it yourself.",
+        );
       }
       onChanged();
     });
