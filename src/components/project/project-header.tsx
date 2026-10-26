@@ -112,7 +112,7 @@ export function ProjectHeader({
   starred: boolean;
   members: HeaderMember[];
   // Oct 26 notes (batch 4): fixed tabs Editors+ hid, the default view Owners picked, and whether this
-  // database has personal views.
+  // database has this release (personal views, hiding tabs, the default view).
   hiddenTabs?: FixedTab[];
   defaultViewId?: string | null;
   personalViews?: boolean;
@@ -199,7 +199,7 @@ export function ProjectHeader({
             tab={overviewTab}
             active={pathname === overviewHref}
             isHidden={hidden.has("overview")}
-            canHide={canEditViews}
+            canHide={canEditViews && personalViews}
           />
         ) : null}
         {shared.map((view, index) => (
@@ -238,7 +238,7 @@ export function ProjectHeader({
             tab={tab}
             active={isActive(tab.href)}
             isHidden={hidden.has(tab.key)}
-            canHide={canEditViews}
+            canHide={canEditViews && personalViews}
           />
         ))}
         <AddTabMenu
@@ -820,7 +820,7 @@ function ViewTab({
                   <UserRound className="size-4 text-zinc-500" /> Make my own copy
                 </MenuItem>
               ) : null}
-              {!mine && isOwner ? (
+              {!mine && isOwner && personalViews ? (
                 <MenuItem
                   disabled={isDefault}
                   onClick={() => {
