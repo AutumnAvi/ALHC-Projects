@@ -67,7 +67,9 @@ export async function LayoutRoute({
   layout: ViewLayout;
   searchParams: SearchParams;
 }) {
-  const view = (await listProjectViews(projectId)).find((v) => v.layout === layout);
+  // A shared tab first; the viewer's own view of that layout only when no shared one exists.
+  const views = await listProjectViews(projectId);
+  const view = views.find((v) => v.layout === layout && v.ownerId === null) ?? views.find((v) => v.layout === layout);
   if (view) redirect(`/projects/${projectId}/views/${view.id}${queryString(searchParams)}`);
   return <ProjectViewPage projectId={projectId} view={null} layout={layout} searchParams={searchParams} />;
 }

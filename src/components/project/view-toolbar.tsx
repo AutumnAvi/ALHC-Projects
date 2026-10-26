@@ -21,10 +21,10 @@ import {
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
-import { useServerAction } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useViewConfig } from "@/components/project/view-config";
-import { createSection, createTask, createView, updateView } from "@/lib/actions";
+import { createSection, createTask, createView, saveViewChanges } from "@/lib/actions";
 import { requestAddTask } from "./shared";
 import {
   columnsOf,
@@ -70,19 +70,25 @@ export function ViewToolbar({
   const router = useRouter();
   const viewConfig = useViewConfig();
   const [pending, run] = useServerAction();
-  // Below Editor, filters still work as an unsaved ?f= draft; only saving is hidden.
-  const canSave = useProjectPermissions().canEdit;
+  const notify = useNotify();
+  const { canEdit, isOwner } = useProjectPermissions();
+  // Adding tasks and sections is Editor+.
+  const canSave = canEdit;
   const tagsOn = useTagsEnabled();
   if (!viewConfig) return null;
   const { current, base, isDraft, apply, urlFor } = viewConfig;
   const filters = current.filters ?? {};
   const setFilters = (next: ViewFilters) => apply(withFilters(current, next));
+  // Oct 26 notes (batch 4): Save view works for everyone. Your own view, or a shared one when you own the
+  // project, saves in place; anyone else's changes to a shared view become their own copy of it.
+  const savesInPlace = Boolean(view && (view.ownerId !== null || isOwner));
 
   function save() {
     if (!view) return;
     run(async () => {
-      const result = await updateView(view.id, { config: current });
-      if (!result.error) router.replace(urlFor(null), { scroll: false });
+      const result = await saveViewChanges(view.id, current);
+      if (!result.error && !result.copied) router.replace(urlFor(null), { scroll: false });
+      if (!result.error && result.copied) notify("Saved as your own view. The shared view stays as it was.");
       return result;
     });
   }
@@ -112,8 +118,14 @@ export function ViewToolbar({
               <button type="button" onClick={() => apply(base)} className="btn-ghost">
                 Reset
               </button>
-              {view && canSave ? (
-                <button type="button" disabled={pending} onClick={save} className="btn-secondary">
+              {view ? (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={save}
+                  data-tooltip={savesInPlace ? undefined : "Saves your own copy of this view. Only you see it."}
+                  className="btn-secondary"
+                >
                   Save view
                 </button>
               ) : null}
@@ -320,6 +332,8 @@ function OptionsMenu({
   const viewConfig = useViewConfig();
   const [, run] = useServerAction();
   const [page, setPage] = useState<"main" | "columns" | "save">("main");
+  // Editors+ may add a shared tab; anyone can save a view of their own (Oct 26 notes, batch 4).
+  const [personal, setPersonal] = useState(!canSave);
   const tagsOn = useTagsEnabled();
   if (!viewConfig) return null;
   const { current, apply } = viewConfig;
@@ -371,7 +385,7 @@ function OptionsMenu({
           const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
           if (!name) return;
           close();
-          run(() => createView(projectId, { name, layout, config: current }));
+          run(() => createView(projectId, { name, layout, config: current, personal: personal || !canSave }));
         }}
       >
         <SubHeader title="Save as new view" onBack={() => setPage("main")} />
@@ -388,8 +402,31 @@ function OptionsMenu({
             placeholder="e.g. Incomplete by assignee"
             className="control w-full"
           />
+          {canSave ? (
+            <div role="radiogroup" aria-label="Who sees it" className="grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-0.5">
+              {[
+                { value: false, label: "Everyone" },
+                { value: true, label: "Only me" },
+              ].map((choice) => (
+                <button
+                  key={choice.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={personal === choice.value}
+                  onClick={() => setPersonal(choice.value)}
+                  className={`rounded px-2 py-1 text-xs font-medium ${
+                    personal === choice.value ? "bg-white text-zinc-900 shadow-xs" : "text-zinc-600 hover:text-zinc-900"
+                  }`}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <p className="text-2xs text-zinc-500">
-            A new tab with {isDraft ? "these" : "the current"} filters, sorting, grouping, and columns.
+            {personal || !canSave
+              ? `Your own view with ${isDraft ? "these" : "the current"} filters, sorting, grouping, and columns. Only you see it, next to the project's tabs.`
+              : `A new tab for everyone with ${isDraft ? "these" : "the current"} filters, sorting, grouping, and columns.`}
           </p>
           <button type="submit" className="btn-primary w-full">
             Create view
@@ -445,16 +482,12 @@ function OptionsMenu({
           />
         </div>
       ) : null}
-      {canSave ? (
-        <>
-          <div role="separator" className="my-1 border-t border-zinc-100" />
-          <button type="button" onClick={() => setPage("save")} className={menuRow}>
-            <LayoutList className="size-4 text-zinc-500" aria-hidden />
-            <span className="flex-1">Save as new view…</span>
-            <ChevronRight className="size-3.5 text-zinc-400" aria-hidden />
-          </button>
-        </>
-      ) : null}
+      <div role="separator" className="my-1 border-t border-zinc-100" />
+      <button type="button" onClick={() => setPage("save")} className={menuRow}>
+        <LayoutList className="size-4 text-zinc-500" aria-hidden />
+        <span className="flex-1">Save as new view…</span>
+        <ChevronRight className="size-3.5 text-zinc-400" aria-hidden />
+      </button>
     </div>
   );
 }

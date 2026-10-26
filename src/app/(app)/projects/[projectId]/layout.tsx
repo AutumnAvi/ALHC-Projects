@@ -20,6 +20,8 @@ import {
   listSections,
   listStarredProjectIds,
   getRequestSequence,
+  getProjectViewSettings,
+  hasOct26Batch4Schema,
   listStatusTemplates,
   listTaskTemplates,
 } from "@/lib/data";
@@ -52,6 +54,8 @@ export default async function ProjectLayout({
     real4,
     statusTemplates,
     numbering,
+    viewSettings,
+    batch4Schema,
   ] = await Promise.all([
       getProject(projectId),
       listProjectViews(projectId),
@@ -68,6 +72,8 @@ export default async function ProjectLayout({
       hasReal4Schema(),
       listStatusTemplates(projectId),
       getRequestSequence(projectId),
+      getProjectViewSettings(projectId),
+      hasOct26Batch4Schema(),
     ]);
   if (!project || !role) {
     // A layout doesn't stop its pages from rendering, so the request page is a route of its own.
@@ -114,6 +120,9 @@ export default async function ProjectLayout({
               customize={customize}
               starred={starredIds.includes(project.id)}
               members={headerMembers}
+              hiddenTabs={viewSettings.hiddenTabs}
+              defaultViewId={viewSettings.defaultViewId}
+              personalViews={batch4Schema}
             />
             {project.archived_at ? <ArchivedProjectBanner projectId={project.id} canUnarchive={canArchive} /> : null}
             {children}

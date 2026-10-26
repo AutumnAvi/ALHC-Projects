@@ -17,7 +17,7 @@ import { useShell } from "@/components/shell/shell-context";
 import { setPaneExpanded, usePaneExpanded } from "@/components/task/pane-size";
 import { useNotify, useServerAction } from "@/components/toast";
 import { Skeleton } from "@/components/ui";
-import { removeMyAvatar, updateMyProfile, uploadMyAvatar } from "@/lib/actions";
+import { removeMyAvatar, setOpenPersonalView, updateMyProfile, uploadMyAvatar } from "@/lib/actions";
 import type { MySettings } from "@/lib/data";
 import { MY_TASKS_LAYOUT_COOKIE, type MyTasksLayout } from "@/lib/my-tasks";
 import { AVATAR_ACCEPT, MAX_PROFILE_NAME, avatarFileProblem, profileNameProblem } from "@/lib/profile";
@@ -567,6 +567,7 @@ function DisplayTab({ data }: { data: MySettings }) {
             />
           </dd>
         </div>
+        <OpenPersonalViewRow saved={data.openPersonalView} />
         <div className={ROW}>
           <dt className={TERM}>Time zone</dt>
           <dd>
@@ -577,7 +578,46 @@ function DisplayTab({ data }: { data: MySettings }) {
           </dd>
         </div>
       </dl>
-      <p className="mt-3 text-xs text-zinc-500">Display settings are saved in this browser.</p>
+      <p className="mt-3 text-xs text-zinc-500">
+        Display settings are saved in this browser, except “Open my saved view by default”, which follows you everywhere.
+      </p>
+    </div>
+  );
+}
+
+// Oct 26 notes (batch 4): open a project on your own saved view (when you have one there) instead of the
+// project's default view. Saved on your account.
+function OpenPersonalViewRow({ saved }: { saved: boolean | null }) {
+  const [pending, run] = useServerAction();
+  const [on, setOn] = useState(Boolean(saved));
+  return (
+    <div className={`${ROW} items-center`}>
+      <dt className={TERM}>Projects open on</dt>
+      <dd>
+        <label className="flex items-center gap-2 text-sm text-zinc-900">
+          <input
+            type="checkbox"
+            className="size-3.5 accent-accent-600"
+            checked={on}
+            disabled={saved === null || pending}
+            onChange={(e) => {
+              const next = e.currentTarget.checked;
+              setOn(next);
+              run(async () => {
+                const result = await setOpenPersonalView(next);
+                if (result.error) setOn(!next);
+                return result;
+              });
+            }}
+          />
+          Open my saved view by default
+        </label>
+        <p className="mt-1 text-xs text-zinc-500">
+          {saved === null
+            ? "Needs this release’s database update."
+            : "When you’ve saved a view of your own in a project, it opens first. Otherwise the project’s default view does."}
+        </p>
+      </dd>
     </div>
   );
 }

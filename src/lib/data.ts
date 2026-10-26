@@ -132,6 +132,8 @@ import {
   type SeriesInterval,
 } from "@/lib/reports";
 import {
+  NO_VIEW_SETTINGS,
+  isFixedTab,
   isViewLayout,
   isWidgetKind,
   parseFilters,
@@ -139,6 +141,7 @@ import {
   toJson,
   type DashboardWidget,
   type ProjectView,
+  type ProjectViewSettings,
   type ViewFilters,
   type ViewSort,
 } from "@/lib/views";
@@ -3634,6 +3637,8 @@ export type MySettings = {
   signInMethod: "google" | "password";
   // How My tasks opens (the my_tasks_layout cookie), for Settings → Display.
   myTasksLayout: MyTasksLayout;
+  // Oct 26 notes (batch 4): open my own saved view of a project first (null = a database without it).
+  openPersonalView: boolean | null;
 };
 
 // The person's forwarding address row (made on first use) and their latest forwarded emails (Real
@@ -3679,7 +3684,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
   const supabase = await createClient();
-  const [profile, admin, teams, workspace, cookieStore, notificationRows, emailPreferences] = await Promise.all([
+  const [profile, admin, teams, workspace, cookieStore, notificationRows, emailPreferences, preferences] = await Promise.all([
     supabase.from("profiles").select("full_name, avatar_url, email_comments, joined_at").eq("id", user.id).maybeSingle(),
     isWorkspaceAdmin(),
     listTeams(),
@@ -3687,6 +3692,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     cookies(),
     supabase.from("notification_settings").select("kind, inbox, email"),
     getMyEmailPreferences(),
+    getProfilePreferences(),
   ]);
   const layout = cookieStore.get(MY_TASKS_LAYOUT_COOKIE)?.value;
   const row = maybe(profile, "profile");
@@ -3714,6 +3720,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     joinedAt: row?.joined_at ?? null,
     signInMethod: providers.includes("google") ? "google" : "password",
     myTasksLayout: isMyTasksLayout(layout) ? layout : "sections",
+    openPersonalView: preferences.available ? preferences.openPersonalView : null,
   };
 });
 
@@ -3835,6 +3842,7 @@ function toProjectView(row: Tables<"project_views">): ProjectView {
     layout: isViewLayout(row.layout) ? row.layout : "list",
     config: parseViewConfig(row.config),
     sortOrder: row.sort_order,
+    ownerId: row.owner_id ?? null,
   };
 }
 
@@ -3857,6 +3865,43 @@ export const getProjectView = cache(async (viewId: string): Promise<ProjectView 
     "view",
   );
   return row ? toProjectView(row) : null;
+});
+
+// Oct 26 notes (batch 4): this release's database (profile_preferences is readable; its grant is the
+// migration's last statement). Without it there are no personal views, hidden tabs, or default view.
+export const hasOct26Batch4Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const { error } = await supabase.from("profile_preferences").select("profile_id").limit(1);
+  return !error;
+});
+
+// The project's hidden tabs and default view (project Viewers+ read it; nothing set = everything shown).
+export const getProjectViewSettings = cache(async (projectId: string): Promise<ProjectViewSettings> => {
+  if (!(await hasOct26Batch4Schema())) return NO_VIEW_SETTINGS;
+  const supabase = await createClient();
+  const row = maybe(
+    await supabase
+      .from("project_view_settings")
+      .select("default_view_id, hidden_tabs")
+      .eq("project_id", projectId)
+      .maybeSingle(),
+    "tab settings",
+  );
+  if (!row) return NO_VIEW_SETTINGS;
+  return { defaultViewId: row.default_view_id, hiddenTabs: (row.hidden_tabs ?? []).filter(isFixedTab) };
+});
+
+// The signed-in person's own app preferences.
+export const getProfilePreferences = cache(async (): Promise<{ openPersonalView: boolean; available: boolean }> => {
+  if (!(await hasOct26Batch4Schema())) return { openPersonalView: false, available: false };
+  const supabase = await createClient();
+  const { user } = await getViewer();
+  if (!user) return { openPersonalView: false, available: true };
+  const row = maybe(
+    await supabase.from("profile_preferences").select("open_personal_view").eq("profile_id", user.id).maybeSingle(),
+    "preferences",
+  );
+  return { openPersonalView: row?.open_personal_view ?? false, available: true };
 });
 
 // Ids of the project's tasks that match a view filter, evaluated by filter_project_tasks() under RLS.
