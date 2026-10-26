@@ -2736,6 +2736,42 @@ export type Database = {
           },
         ];
       };
+      project_access_requests: {
+        Row: {
+          id: string;
+          project_id: string;
+          requester_id: string;
+          status: string;
+          granted_role: string | null;
+          decided_by: string | null;
+          decided_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          requester_id: string;
+          status?: string;
+          granted_role?: string | null;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          requester_id?: string;
+          status?: string;
+          granted_role?: string | null;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       project_stars: {
         Row: {
           id: string;
@@ -5774,6 +5810,18 @@ export type Database = {
       set_project_starred: {
         Args: { target_project: string; starred: boolean };
         Returns: boolean;
+      };
+      project_access_status: {
+        Args: { target_project: string };
+        Returns: string;
+      };
+      request_project_access: {
+        Args: { target_project: string };
+        Returns: string;
+      };
+      decide_project_access_request: {
+        Args: { target_request: string; decision: string; member_role?: string };
+        Returns: string;
       };
       set_default_project_role: {
         Args: { member_email: string; new_role: string | null };

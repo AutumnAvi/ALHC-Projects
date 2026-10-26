@@ -1,12 +1,14 @@
 import { notFound } from "next/navigation";
 import { ArchivedProjectBanner } from "@/components/project/archived-banner";
 import { ProjectAccessProvider } from "@/components/project/project-access";
+import { NoProjectAccess } from "@/components/project/no-project-access";
 import { ProjectHeader } from "@/components/project/project-header";
 import { ProjectPageProvider } from "@/components/project/project-page-context";
 import { RecordRecent } from "@/components/shell/shell-context";
 import { TaskTemplatesProvider } from "@/components/project/task-templates-context";
 import {
   getProject,
+  getProjectAccessStatus,
   getProjectRole,
   hasBatch4Schema,
   hasReal4Schema,
@@ -27,7 +29,8 @@ import { permissionsFor } from "@/lib/permissions";
 import { compareMembers, hasRole } from "@/lib/roles";
 import { ruleBranchCount, triggerLabel } from "@/lib/rules";
 
-// Non-members get a plain 404: RLS hides the project row, so nothing about it is revealed.
+// Non-members (Oct 26 notes, batch 3) get "You're not part of this project" with Request to be added;
+// a deleted or unknown project is still a plain 404 (project_access_status says only which).
 export default async function ProjectLayout({
   children,
   params,
@@ -67,7 +70,11 @@ export default async function ProjectLayout({
       listStatusTemplates(projectId),
       getRequestSequence(projectId),
     ]);
-  if (!project || !role) notFound();
+  if (!project || !role) {
+    const access = await getProjectAccessStatus(projectId);
+    if (access === "missing" || access === "member") notFound();
+    return <NoProjectAccess projectId={projectId} status={access} />;
+  }
   // An archived project caps every role at Viewer (role); archiving is decided by the member's own role.
   const canArchive = hasRole(ownRoles.get(projectId), "admin");
   // What the Customize panel shows (its views edit through the usual actions and pages). Oct 26 notes

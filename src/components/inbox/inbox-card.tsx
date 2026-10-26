@@ -23,6 +23,8 @@ import { TaskLink } from "@/components/task/task-link";
 import { Timestamp } from "@/components/timestamp";
 import type { InboxItem, Profile } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
+import { accessRequestOf, isAccessGranted } from "@/lib/access-requests";
+import { AccessRequestDecision } from "@/components/inbox/access-request-decision";
 import { isFieldChange, type InboxDensity } from "@/lib/inbox";
 import { seedFromTitle } from "@/lib/task-seed";
 
@@ -92,6 +94,9 @@ function describe(item: InboxItem) {
     const value = dataText(item.data, "value_text");
     return { ruleName, verb: `changed ${fieldName} on`, detail: value ? `${fieldName}: ${value}` : `${fieldName} was cleared` };
   }
+  // Oct 26 notes (batch 3): someone asked to be added to a project, or an owner added them.
+  if (accessRequestOf(item.data)) return { ruleName: null, verb: "asked to be added to", detail: null };
+  if (isAccessGranted(item.data)) return { ruleName: null, verb: "added you to", detail: null };
   // A portfolio rule's status reminder (Automations V3) asks for an update.
   if (item.project && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.status_reminder === true) {
     return { ruleName, verb: "asks for a status update on", detail: item.commentBody };
@@ -184,7 +189,8 @@ export function InboxCard({
   // A form submitter's emailed reply has no actor: name the address it came from.
   const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? "Someone");
   const ruleHref = pausedRuleHref(item);
-  const Icon = ruleHref ? CirclePause : KIND[item.kind].icon;
+  const accessRequest = accessRequestOf(item.data);
+  const Icon = ruleHref ? CirclePause : accessRequest || isAccessGranted(item.data) ? UserPlus : KIND[item.kind].icon;
   const strong = read ? "font-medium text-zinc-800" : "font-semibold text-zinc-900";
   const linkText = (
     <>
@@ -255,6 +261,7 @@ export function InboxCard({
           {/* Under the title in both densities (like the approver's buttons): at the right end of a
               compact row the hover / focus actions would cover it. */}
           {openRule ? <p className="mt-1">{openRule}</p> : null}
+          {accessRequest ? <AccessRequestDecision request={accessRequest} compact={compact} /> : null}
           {decides && item.approval?.status === "pending" ? (
             <div className="relative z-10 mt-2 flex flex-wrap gap-1.5" role="group" aria-label={`Decide on “${item.taskTitle}”`}>
               <button type="button" onClick={() => onDecide("approved")} className="btn-primary h-6 px-2 text-xs">

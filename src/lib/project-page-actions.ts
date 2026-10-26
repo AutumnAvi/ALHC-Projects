@@ -18,6 +18,7 @@ import {
   listInboundEndpoints,
   listIntegrationDeliveries,
   listPendingInvites,
+  listProjectAccessRequests,
   listProjectMembers,
   listProjectTeamAccess,
   listTeams,
@@ -33,7 +34,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
   if (!isUuid(projectId)) return null;
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
-  const [project, role, members, invites, teamAccess, teams, people, resendable, allowCommenter, defaultRoles] = await Promise.all([
+  const [project, role, members, invites, teamAccess, teams, people, resendable, allowCommenter, defaultRoles, accessRequests] = await Promise.all([
     getProject(projectId),
     getProjectRole(projectId),
     listProjectMembers(projectId),
@@ -44,6 +45,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     hasReal1Schema(),
     commenterRoleAllowed(),
     hasOct25Schema(),
+    listProjectAccessRequests(projectId),
   ]);
   if (!project || !role) return null;
   const teamsById = new Map(teams.map((t) => [t.id, { id: t.id, name: t.name, memberCount: t.members.length }] as const));
@@ -66,6 +68,7 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     teams: [...teamsById.values()],
     allowCommenter,
     defaultRoles,
+    accessRequests: hasRole(role, "admin") ? accessRequests : [],
   };
 }
 

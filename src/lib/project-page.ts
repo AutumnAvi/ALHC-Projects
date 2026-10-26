@@ -2,6 +2,7 @@
 // the Share dialog's data, and the Overview's activity. The database decides everything for real
 // (set_project_status / post_project_status_update, add_project_member, add_team_to_project, RLS).
 
+import type { ProjectAccessRequest } from "@/lib/access-requests";
 import type { ProjectIntegrations } from "@/lib/integrations-shared";
 import type { ProjectRole } from "@/lib/roles";
 import type { PendingInvite, ProjectVisibility } from "@/lib/workspace";
@@ -51,6 +52,8 @@ export type ShareData = {
   allowCommenter: boolean;
   // "Their default role" can be picked (the Oct 25 notes' database update is applied).
   defaultRoles: boolean;
+  // Oct 26 notes (batch 3): people asking to be added (read by the project's admins+; empty otherwise).
+  accessRequests: ProjectAccessRequest[];
 };
 
 // The Overview tab's activity timeline (newest first): status updates, people joining, the project

@@ -58,6 +58,7 @@ import { branchProblem, isTriggerType, runReason, splitBranches, type RuleAction
 import { parseRuleTestResult, type RuleTestResult } from "@/lib/rule-steps";
 import { isPortfolioTrigger } from "@/lib/portfolio-rules";
 import { isUuid } from "@/lib/ids";
+import { isAccessGrantRole, type AccessGrantRole } from "@/lib/access-requests";
 import { normalizeWorkWeek } from "@/lib/workdays";
 import { isReactionKey } from "@/lib/reactions";
 import {
@@ -4258,6 +4259,43 @@ export async function setFormLive(formId: string, live: boolean): Promise<Action
       await supabase.from("forms").update({ accepting_responses: Boolean(live) }).eq("id", id(formId)).select("id"),
     );
   });
+}
+
+// Oct 26 notes (batch 3): the not-a-member page's "Request to be added to this project" and the owners'
+// Approve / Decline (Inbox, Share). The database decides who may do either.
+export async function requestProjectAccess(projectId: string): Promise<ActionResult & { status?: string }> {
+  let status: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("request_project_access", { target_project: id(projectId, "project") });
+    if (error?.code === "PGRST202") throw new InputError("Asking for access needs this release’s database update");
+    if (error?.code === "P0002") throw new InputError("This project doesn’t exist any more");
+    check({ error });
+    status = typeof data === "string" ? data : undefined;
+  });
+  return { ...result, status };
+}
+
+export async function decideAccessRequest(
+  requestId: string,
+  decision: "approve" | "decline",
+  role: AccessGrantRole = "default",
+): Promise<ActionResult & { status?: string }> {
+  let status: string | undefined;
+  const result = await run(async () => {
+    if (decision !== "approve" && decision !== "decline") throw new InputError("Approve or decline the request");
+    if (!isAccessGrantRole(role)) throw new InputError("Choose a role");
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("decide_project_access_request", {
+      target_request: id(requestId, "request"),
+      decision,
+      member_role: role,
+    });
+    if (error?.code === "P0002") throw new InputError("This request isn’t there any more, or you can’t decide it");
+    check({ error });
+    status = typeof data === "string" ? data : undefined;
+  });
+  return { ...result, status };
 }
 
 export async function deleteForm(formId: string, projectId: string): Promise<ActionResult> {

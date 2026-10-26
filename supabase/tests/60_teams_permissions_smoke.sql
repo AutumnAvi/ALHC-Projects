@@ -576,14 +576,16 @@ begin
   -- test_rule (the dry run; Admin+ of the rule's project; always rolled back). Automations V3:
   -- run_portfolio_rule ("Run manually" portfolio rules on one of its projects; Editor+ of the portfolio).
   -- Oct 25 notes: set_default_project_role (workspace admins: each person's default project role; the
-  -- allowlist has no client write path). default_project_role_for is internal.
+  -- allowlist has no client write path). default_project_role_for is internal. Oct 26 notes (batch 3):
+  -- project_access_status / request_project_access / decide_project_access_request (the not-a-member
+  -- page: a status word only, one request per person, decided by the project's own admins).
   assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
     'apply_task_numbering,assign_request_number,browse_project_people,browse_projects,can_manage_project_template,cancel_approval,cancel_integration_delivery,clear_email_suppression,convert_commenter_members,create_project_from_template,custom_field_has_role,'
-    'decide_approval,delete_project_template,duplicate_project,finish_import_run,'
+    'decide_approval,decide_project_access_request,delete_project_template,duplicate_project,finish_import_run,'
     'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,move_portfolio_project,'
-    'my_task_cards,my_tasks_layout,open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_role,project_schedule_cards,project_section_task_counts,project_task_card_page,project_task_cards,'
+    'my_task_cards,my_tasks_layout,open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_access_status,project_role,project_schedule_cards,project_section_task_counts,project_task_card_page,project_task_cards,'
     'receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,remove_workspace_member,'
-    'request_approval,resend_workspace_invite,restore_task,resubmit_approval,retry_email_delivery,retry_integration_delivery,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,set_default_project_role,set_project_archived,set_project_integration,set_project_status,set_submitter_thread_closed,set_task_dependency,start_import_run,submit_form,submitter_thread_status,'
+    'request_approval,request_project_access,resend_workspace_invite,restore_task,resubmit_approval,retry_email_delivery,retry_integration_delivery,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,set_default_project_role,set_project_archived,set_project_integration,set_project_status,set_submitter_thread_closed,set_task_dependency,start_import_run,submit_form,submitter_thread_status,'
     'sync_my_task_placements,task_comment_page,task_role,test_rule,transfer_portfolio_ownership,transfer_project_ownership,'
     'update_portfolio_member_role,update_project_member_role,update_project_template,workspace_email_summary,workspace_hidden_project_count',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);

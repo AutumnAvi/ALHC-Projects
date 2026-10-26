@@ -15,12 +15,14 @@ import {
   addTeamToProject,
   cancelPendingInvite,
   changeProjectMemberRole,
+  decideAccessRequest,
   inviteProjectMember,
   leaveProject,
   removeProjectMember,
   updateProjectTeam,
 } from "@/lib/actions";
 import type { ShareData, ShareMember, SharePerson, ShareTeam } from "@/lib/project-page";
+import { isAccessGrantRole } from "@/lib/access-requests";
 import { loadProjectShare } from "@/lib/project-page-actions";
 import { PERSON_DEFAULT_ROLE, ROLE_DESCRIPTIONS, ROLE_LABELS, assignableRoles, hasRole, isProjectRole } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
@@ -121,6 +123,10 @@ export function ShareDialog({
           ) : null}
 
           <ProjectAccess data={data} canManage={canManage} pending={pending} projectId={projectId} change={change} />
+
+          {canManage && data.accessRequests.length ? (
+            <AccessRequests data={data} pending={pending} change={change} />
+          ) : null}
 
           <WhoHasAccess data={data} canManage={canManage} pending={pending} projectId={projectId} change={change} notify={notify} />
 
@@ -631,6 +637,66 @@ function WhoHasAccess({
             )}
           </li>
         ))}
+      </ul>
+    </section>
+  );
+}
+
+// Oct 26 notes (batch 3): people who opened a link to the project and asked to be added. Pick a role
+// (their own default unless you choose) and Add, or Decline.
+function AccessRequests({ data, pending, change }: { data: ShareData; pending: boolean; change: Change }) {
+  const [roles, setRoles] = useState<Record<string, string>>({});
+  const grantable = assignableRoles(data.viewerRole, data.allowCommenter).filter((r) => r !== "owner");
+  const options = projectRoleOptions({
+    grantable,
+    allowCommenter: data.allowCommenter,
+    includeDefault: data.defaultRoles,
+    inviting: true,
+  });
+  return (
+    <section aria-labelledby="share-requests-heading" className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
+      <h3 id="share-requests-heading" className="text-xs font-medium text-zinc-800">
+        Asked to be added <span className="font-normal tabular-nums text-zinc-500">· {people(data.accessRequests.length)}</span>
+      </h3>
+      <ul className="mt-1 flex flex-col">
+        {data.accessRequests.map((request) => {
+          const role = roles[request.id] ?? (data.defaultRoles ? PERSON_DEFAULT_ROLE : "editor");
+          return (
+            <li key={request.id} className="flex items-center gap-2.5 py-1.5">
+              <Avatar name={request.name} profileId={request.profileId} size="md" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm text-zinc-900">{request.name}</p>
+                <p className="truncate text-xs text-zinc-500">{request.email}</p>
+              </div>
+              <RolePicker
+                compact
+                label={`Role for ${request.name}`}
+                value={role}
+                options={options}
+                disabled={pending}
+                onChange={(next) => setRoles((current) => ({ ...current, [request.id]: next }))}
+              />
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => change(() => decideAccessRequest(request.id, "approve", isAccessGrantRole(role) ? role : "default"))}
+                className="btn-primary h-7 px-2 text-xs"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => change(() => decideAccessRequest(request.id, "decline"))}
+                aria-label={`Decline ${request.name}'s request`}
+                data-tooltip="Decline"
+                className="btn-icon size-7 hover:bg-red-50 hover:text-red-700"
+              >
+                <X className="size-3.5" />
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

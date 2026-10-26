@@ -5,6 +5,7 @@ import { displayName } from "@/components/avatar";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
+import { parseAccessStatus, type ProjectAccessRequest, type ProjectAccessStatus } from "@/lib/access-requests";
 import type { MentionTeam } from "@/lib/mentions";
 import {
   DESIGN_COLUMNS,
@@ -4324,6 +4325,44 @@ export const listProjectTeamAccess = cache(async (projectId: string): Promise<Pr
         ? [{ teamId: r.team_id, name: r.team.name, role: r.role, usesDefaultRoles: r.uses_default_roles === true }]
         : [],
   );
+});
+
+// Oct 26 notes (batch 3): what someone who isn't a member sees on a project link. Without this
+// release's database (or on any error) it's "missing": the old plain Not found.
+export const getProjectAccessStatus = cache(async (projectId: string): Promise<ProjectAccessStatus> => {
+  if (!isUuid(projectId)) return "missing";
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("project_access_status", { target_project: projectId });
+  return error ? "missing" : parseAccessStatus(data);
+});
+
+// Open requests to join a project (RLS: the project's admins+ and each requester; Share shows them to
+// the people who can decide). Empty without this release's database.
+export const listProjectAccessRequests = cache(async (projectId: string): Promise<ProjectAccessRequest[]> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("project_access_requests")
+    .select("id, requester_id, created_at")
+    .eq("project_id", projectId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error || !data?.length) return [];
+  const people = await supabase
+    .from("profiles")
+    .select("id, full_name, email")
+    .in("id", [...new Set(data.map((r) => r.requester_id))]);
+  const byId = new Map((people.data ?? []).map((p) => [p.id, p] as const));
+  return data.map((r) => {
+    const person = byId.get(r.requester_id);
+    return {
+      id: r.id,
+      profileId: r.requester_id,
+      name: person?.full_name?.trim() || person?.email || "Someone",
+      email: person?.email ?? "",
+      requestedAt: r.created_at,
+    };
+  });
 });
 
 // The Oct 25 notes' database update (default project roles) is applied: allowed_emails.default_project_role
