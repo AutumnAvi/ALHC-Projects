@@ -1,5 +1,6 @@
 // Team roles and the group-invite result, mirrored from 20261006050000_goals_teams.sql. A team never
 // grants project access; the group invite adds ordinary project members.
+import type { RequestLabel } from "@/lib/request-numbers";
 
 export const TEAM_ROLES = ["lead", "member"] as const;
 export type TeamRole = (typeof TEAM_ROLES)[number];
@@ -109,6 +110,9 @@ export type TeamCalendarTask = {
   projectId: string;
   projectName: string;
   canEdit: boolean;
+  // Oct 26 notes (batch 4): the task's number (when its project numbers tasks), drawn as a tiny badge
+  // after the name; `title` is the bare name.
+  requestLabel: RequestLabel | null;
 };
 
 // The most tasks the team Calendar loads for one period.

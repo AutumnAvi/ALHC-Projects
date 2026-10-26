@@ -33,6 +33,7 @@ import {
 import { DEFAULT_WORK_WEEK, normalizeWorkWeek } from "@/lib/workdays";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import {
+  bareTaskTitle,
   displayTaskTitle,
   requestLabelFrom,
   templateFromPrefix,
@@ -110,6 +111,13 @@ import {
 } from "@/lib/workspace";
 import { toTag, type Tag } from "@/lib/tags";
 import { isCalendarFeedScope, type CalendarFeed } from "@/lib/calendar-feeds";
+import {
+  CALENDAR_EVENT_LIMIT,
+  compareEvents,
+  toCalendarEvent,
+  type CalendarEvent,
+  type CalendarEventScope,
+} from "@/lib/calendar-events";
 import { toStatusTemplate, type StatusTemplate } from "@/lib/status-templates";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import { isInboundCallStatus, type InboundCall, type InboundEndpoint } from "@/lib/inbound-shared";
@@ -5544,16 +5552,56 @@ export async function listTeamCalendarTasks(
       projectId: row.project_id,
       projectName: project?.name ?? "Project",
       canEdit,
+      requestLabel: null,
     });
   }
+  // Oct 26 notes (batch 4): the number is drawn as a tiny badge after the name, so the bar keeps the
+  // bare name (a label baked into an older title is taken off) and the label travels next to it.
   const labels = await visibleRequestLabels([...tasks.keys()]);
   for (const task of tasks.values()) {
-    task.title = displayTaskTitle(task.title, labels.get(task.id) ?? null);
+    const label = labels.get(task.id) ?? null;
+    task.requestLabel = label;
+    task.title = bareTaskTitle(task.title, label);
   }
   const sorted = [...tasks.values()].sort(
     (a, b) => (a.startOn ?? a.dueOn).localeCompare(b.startOn ?? b.dueOn) || a.dueOn.localeCompare(b.dueOn) || a.title.localeCompare(b.title),
   );
   return { tasks: sorted, projectCount: projects.length, capped: list.length >= TEAM_CALENDAR_LIMIT };
+}
+
+// Oct 26 notes (batch 4): the events (not tasks) of a project or team Calendar whose days touch `from` to
+// `to` (inclusive), in the order a day lists them. RLS decides who reads them (project Viewers+; a team's
+// readers). Null on a database without calendar_events (20261026020000_oct26_batch4_a.sql), so the
+// Calendar draws its tasks and offers no Add event.
+export async function listCalendarEvents(
+  scope: CalendarEventScope,
+  from: string,
+  to: string,
+): Promise<CalendarEvent[] | null> {
+  const supabase = await createClient();
+  const query = supabase
+    .from("calendar_events")
+    .select("id, title, notes, start_on, end_on, start_at, end_at, time_zone, created_by, created_at")
+    .is("deleted_at", null)
+    .lte("start_on", to)
+    .gte("end_on", from);
+  const scoped = "projectId" in scope ? query.eq("project_id", scope.projectId) : query.eq("team_id", scope.teamId);
+  const result = await scoped
+    .order("start_on")
+    .order("start_at", { ascending: true, nullsFirst: true })
+    .order("created_at")
+    .limit(CALENDAR_EVENT_LIMIT);
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
+  const list = rows(result, "calendar events");
+  const creatorIds = [...new Set(list.flatMap((row) => (row.created_by ? [row.created_by] : [])))];
+  const names = new Map<string, string>();
+  if (creatorIds.length > 0) {
+    const people = await supabase.from("profiles").select("id, full_name, email").in("id", creatorIds);
+    for (const person of people.data ?? []) names.set(person.id, displayName(person));
+  }
+  return list
+    .map((row) => toCalendarEvent(row, row.created_by ? (names.get(row.created_by) ?? null) : null))
+    .sort(compareEvents);
 }
 
 // When each allowlisted address last signed in (Admin console → Users). Null when the viewer isn't a
