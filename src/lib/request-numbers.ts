@@ -149,6 +149,23 @@ export function displayTaskTitle(
   return shown ? `${shown} ${bare}` : bare;
 }
 
+/** The task's name without its number (for screens that draw the number as a separate badge). */
+export function bareTaskTitle(title: string, label: RequestLabel | null | undefined): string {
+  return stripBakedLabel(title, label?.text);
+}
+
+/** Does a search box's text name this task's number? "12", "#12", "Task #12", "task 12". */
+export function matchesRequestLabel(label: RequestLabel | null | undefined, query: string): boolean {
+  const text = label?.text.trim().toLowerCase();
+  const q = query.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!text || !q) return false;
+  if (text.includes(q)) return true;
+  const digits = q.replace(/^[^0-9]*#?\s*/, "");
+  if (!/^[0-9][0-9.\-/]*$/.test(digits)) return false;
+  const numbers = text.match(/[0-9][0-9.\-/]*/g) ?? [];
+  return numbers.some((n) => n === digits || n.startsWith(`${digits}.`));
+}
+
 function stripBakedLabel(title: string, label: string | null | undefined): string {
   if (!label) return title;
   const bracketed = `[${label}] `;
