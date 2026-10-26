@@ -26,7 +26,7 @@ import {
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
-import { deleteTask, setReplyThreadClosed, setTaskKind } from "@/lib/actions";
+import { deleteTask, restoreTask, setReplyThreadClosed, setTaskKind } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
 import { describeRecurrence } from "@/lib/recurrence";
 import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/task-kinds";
@@ -127,7 +127,14 @@ export function TaskMoreMenu({
     if (!ok) return;
     run(async () => {
       const result = await deleteTask(task.id);
-      if (!result.error) onDeleted();
+      if (!result.error) {
+        onDeleted();
+        // Oct 26 notes (batch 4): Undo puts it straight back where it was (and logs "restored").
+        notify(task.isSubtask ? "Subtask moved to the Trash" : "Task moved to the Trash", {
+          label: "Undo",
+          onClick: () => run(() => restoreTask(task.id)),
+        });
+      }
       return result;
     });
   }

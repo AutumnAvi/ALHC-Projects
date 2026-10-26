@@ -1752,6 +1752,9 @@ export async function restoreTask(taskId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.rpc("restore_task", { target_task: id(taskId) }));
+    // Oct 26 notes (batch 4): the task is back in every project, My tasks, and search, so drop the
+    // browser's cached copies of those pages too (going back to the List shows it at once).
+    revalidatePath("/", "layout");
   });
 }
 

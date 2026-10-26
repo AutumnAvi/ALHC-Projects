@@ -362,3 +362,18 @@ export async function loadCalendarFeeds(): Promise<CalendarFeed[] | null> {
   if (!(await signedIn())) return null;
   return listMyCalendarFeeds();
 }
+
+// Oct 26 notes (batch 4): a task the pane can't open may be in the Trash. Trashed tasks are readable only
+// by Editors+ of one of their projects (RLS), who can also restore them, so a row here means "show
+// Restore". Null for anything else (missing, or no access): the pane says Not found as before.
+export async function loadTrashedTask(taskId: string): Promise<{ id: string; title: string; deletedAt: string } | null> {
+  if (!(await signedIn()) || !isUuid(taskId)) return null;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("tasks")
+    .select("id, title, deleted_at")
+    .eq("id", taskId)
+    .not("deleted_at", "is", null)
+    .maybeSingle();
+  return data?.deleted_at ? { id: data.id, title: data.title, deletedAt: data.deleted_at } : null;
+}

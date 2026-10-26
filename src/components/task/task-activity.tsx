@@ -398,6 +398,8 @@ export function TaskActivity({
       }
       case "converted_to_task":
         return <>made this subtask a task in {str(d, "project_name")}</>;
+      case "deleted":
+        return "moved this task to the Trash";
       case "restored":
         return "restored this task from the Trash";
       case "kind_changed":
