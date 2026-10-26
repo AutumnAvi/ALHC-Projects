@@ -23,6 +23,7 @@ import {
   listTaskTemplates,
 } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
+import { permissionsFor } from "@/lib/permissions";
 import { compareMembers, hasRole } from "@/lib/roles";
 import { ruleBranchCount, triggerLabel } from "@/lib/rules";
 
@@ -69,8 +70,10 @@ export default async function ProjectLayout({
   if (!project || !role) notFound();
   // An archived project caps every role at Viewer (role); archiving is decided by the member's own role.
   const canArchive = hasRole(ownRoles.get(projectId), "admin");
-  // What the Customize panel shows (its views edit through the usual actions and pages).
-  const customize = {
+  // What the Customize panel shows (its views edit through the usual actions and pages). Oct 26 notes
+  // (batch 3): below Editor there is no Customize at all (nothing in it is theirs to change), so its
+  // summary isn't even sent to the browser.
+  const customize = !permissionsFor(role).canEdit ? null : {
     fields,
     sectionNames: sections.map((s) => s.name),
     forms: forms.map((f) => ({ id: f.id, title: f.title, open: f.acceptingResponses, sendsConfirmation: f.sendConfirmation })),
