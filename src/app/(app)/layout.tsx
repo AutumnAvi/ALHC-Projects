@@ -16,6 +16,7 @@ import {
   isWorkspaceAdmin,
   listProfileAvatars,
   listProjects,
+  listSidebarFolders,
   listStarredProjectIds,
   tagsEnabled,
 } from "@/lib/data";
@@ -27,7 +28,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!isSupabaseConfigured()) return <SetupRequired />;
 
   const member = await requireMember();
-  const [workspace, projects, starredIds, unreadCount, admin, cookieStore, avatars, tagsOn] = await Promise.all([
+  const [workspace, projects, starredIds, unreadCount, admin, cookieStore, avatars, tagsOn, folders] = await Promise.all([
     getWorkspace(),
     listProjects(),
     listStarredProjectIds(),
@@ -36,6 +37,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     cookies(),
     listProfileAvatars(),
     tagsEnabled(),
+    listSidebarFolders(),
   ]);
 
   return (
@@ -53,6 +55,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <AppShell
               projects={projects.map(({ id, name }) => ({ id, name }))}
               starredIds={starredIds}
+              folders={folders}
               unreadCount={unreadCount}
             >
               {children}

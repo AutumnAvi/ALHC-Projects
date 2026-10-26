@@ -59,6 +59,7 @@ import { parseRuleTestResult, type RuleTestResult } from "@/lib/rule-steps";
 import { isPortfolioTrigger } from "@/lib/portfolio-rules";
 import { isUuid } from "@/lib/ids";
 import { isAccessGrantRole, type AccessGrantRole } from "@/lib/access-requests";
+import { FOLDER_STEP, folderNameProblem } from "@/lib/sidebar-folders";
 import { normalizeWorkWeek } from "@/lib/workdays";
 import { isReactionKey } from "@/lib/reactions";
 import {
@@ -1404,6 +1405,97 @@ export async function setProjectStarred(projectId: string, starred: boolean): Pr
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.rpc("set_project_starred", { target_project: id(projectId, "project"), starred: starred === true }));
+  });
+}
+
+// Oct 26 notes (batch 3): personal sidebar folders (own rows only; RLS and the guard triggers decide).
+const FOLDER_UNAVAILABLE = "Sidebar folders need this release’s database update";
+
+function folderError(result: DbResult) {
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") throw new InputError(FOLDER_UNAVAILABLE);
+  check(result, "That folder isn’t yours");
+}
+
+export async function createSidebarFolder(
+  name: string,
+  sortOrder: number,
+  projectId?: string,
+): Promise<ActionResult & { folderId?: string }> {
+  let folderId: string | undefined;
+  const result = await run(async () => {
+    const problem = folderNameProblem(typeof name === "string" ? name : "");
+    if (problem) throw new InputError(problem);
+    if (!Number.isFinite(sortOrder)) throw new InputError("Invalid position");
+    const supabase = await createClient();
+    const inserted = await supabase.from("sidebar_folders").insert({ name: name.trim(), sort_order: sortOrder }).select("id").single();
+    folderError(inserted);
+    folderId = inserted.data!.id;
+    if (projectId) await placeProject(supabase, id(projectId, "project"), folderId, FOLDER_STEP);
+  });
+  return { ...result, folderId };
+}
+
+export async function updateSidebarFolder(
+  folderId: string,
+  patch: { name?: string; collapsed?: boolean; sortOrder?: number },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: { name?: string; collapsed?: boolean; sort_order?: number } = {};
+    if (patch.name !== undefined) {
+      const problem = folderNameProblem(patch.name);
+      if (problem) throw new InputError(problem);
+      update.name = patch.name.trim();
+    }
+    if (patch.collapsed !== undefined) update.collapsed = patch.collapsed === true;
+    if (patch.sortOrder !== undefined) {
+      if (!Number.isFinite(patch.sortOrder)) throw new InputError("Invalid position");
+      update.sort_order = patch.sortOrder;
+    }
+    const supabase = await createClient();
+    const result = await supabase.from("sidebar_folders").update(update).eq("id", id(folderId, "folder")).is("deleted_at", null).select("id");
+    folderError(result);
+    if (!result.data?.length) throw new InputError("That folder isn’t there any more");
+  });
+}
+
+// Removing a folder puts its projects back under Projects (the database does it).
+export async function deleteSidebarFolder(folderId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("sidebar_folders")
+      .update({ deleted_at: now() })
+      .eq("id", id(folderId, "folder"))
+      .is("deleted_at", null)
+      .select("id");
+    folderError(result);
+  });
+}
+
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+async function placeProject(supabase: Supabase, projectId: string, folderId: string | null, sortOrder: number) {
+  const existing = await supabase.from("sidebar_folder_projects").select("id").eq("project_id", projectId).maybeSingle();
+  folderError(existing);
+  if (existing.data) {
+    folderError(
+      await supabase.from("sidebar_folder_projects").update({ folder_id: folderId, sort_order: sortOrder }).eq("id", existing.data.id),
+    );
+  } else if (folderId) {
+    const inserted = await supabase
+      .from("sidebar_folder_projects")
+      .insert({ project_id: projectId, folder_id: folderId, sort_order: sortOrder });
+    if (inserted.error?.code === "42501") throw new InputError("You can only file projects you can open");
+    folderError(inserted);
+  }
+}
+
+// Moves a project into one of the person's folders (at sortOrder), or back under Projects (null).
+export async function fileSidebarProject(projectId: string, folderId: string | null, sortOrder = FOLDER_STEP): Promise<ActionResult> {
+  return run(async () => {
+    if (!Number.isFinite(sortOrder)) throw new InputError("Invalid position");
+    const supabase = await createClient();
+    await placeProject(supabase, id(projectId, "project"), folderId ? id(folderId, "folder") : null, sortOrder);
   });
 }
 

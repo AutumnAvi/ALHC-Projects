@@ -228,4 +228,100 @@ begin
 end $$;
 reset role;
 
+-- ---------------------------------------------------------------------------------------------
+-- 5. Personal sidebar folders: private to each person
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  assert (select relrowsecurity from pg_class where oid = 'public.sidebar_folders'::regclass), 'RLS on folders';
+  assert (select relrowsecurity from pg_class where oid = 'public.sidebar_folder_projects'::regclass), 'RLS on placements';
+  assert not has_table_privilege('anon', 'public.sidebar_folders', 'SELECT'), 'nothing for anon';
+  assert not has_table_privilege('authenticated', 'public.sidebar_folders', 'DELETE'), 'no hard deletes';
+  assert not has_table_privilege('authenticated', 'public.sidebar_folder_projects', 'DELETE'), 'no hard deletes';
+  assert not has_column_privilege('authenticated', 'public.sidebar_folders', 'profile_id', 'UPDATE'), 'the owner is fixed';
+  assert not has_column_privilege('authenticated', 'public.sidebar_folder_projects', 'project_id', 'UPDATE'), 'the project is fixed';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  f uuid;
+  p uuid := (select id from b3_ids where name = 'p');
+begin
+  insert into public.sidebar_folders (name, sort_order) values ('  Clients  ', 1024) returning id into f;
+  insert into b3_ids values ('folder', f);
+  assert (select name from public.sidebar_folders where id = f) = 'Clients', 'names are trimmed';
+  assert (select profile_id from public.sidebar_folders where id = f) = 'b3b30026-0000-4000-8000-000000000001', 'mine';
+  insert into public.sidebar_folder_projects (folder_id, project_id, sort_order) values (f, p, 1024);
+  update public.sidebar_folders set collapsed = true, name = 'Client work' where id = f;
+  assert (select collapsed from public.sidebar_folders where id = f), 'collapsed';
+end $$;
+
+-- Another person (a member of the same project) sees and changes nothing of it.
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  f uuid := (select id from b3_ids where name = 'folder');
+  p uuid := (select id from b3_ids where name = 'p');
+  n integer;
+begin
+  assert not exists (select 1 from public.sidebar_folders), 'someone else''s folders are invisible';
+  assert not exists (select 1 from public.sidebar_folder_projects), 'and so are their placements';
+  update public.sidebar_folders set name = 'Hijacked' where id = f;
+  get diagnostics n = row_count;
+  assert n = 0, 'nobody renames someone else''s folder';
+  update public.sidebar_folders set deleted_at = now() where id = f;
+  get diagnostics n = row_count;
+  assert n = 0, 'or removes it';
+  begin
+    insert into public.sidebar_folder_projects (folder_id, project_id) values (f, p);
+    raise exception 'filing into someone else''s folder should be refused';
+  exception when no_data_found then null;
+  end;
+  begin
+    insert into public.sidebar_folders (profile_id, name) values ('b3b30026-0000-4000-8000-000000000001', 'Planted');
+    raise exception 'a folder can''t be made for someone else';
+  exception when insufficient_privilege then null;
+  end;
+  -- Their own folder for the same project is theirs alone.
+  insert into public.sidebar_folders (name) values ('Mine too') returning id into f;
+  insert into public.sidebar_folder_projects (folder_id, project_id) values (f, p);
+  assert (select count(*) from public.sidebar_folder_projects) = 1, 'one placement of their own';
+end $$;
+
+-- Not a member: a project they can't open can't be filed.
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000004', false) is not null as ok \gset
+do $$
+begin
+  insert into public.sidebar_folder_projects (project_id) values ((select id from b3_ids where name = 'p'));
+  raise exception 'a project you can''t open can''t be filed';
+exception when insufficient_privilege then null;
+end $$;
+
+-- Removing a folder puts its projects back under Projects; the other person's folder is untouched.
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  f uuid := (select id from b3_ids where name = 'folder');
+begin
+  update public.sidebar_folders set deleted_at = now() where id = f;
+  assert (select folder_id from public.sidebar_folder_projects where project_id = (select id from b3_ids where name = 'p')) is null,
+    'the project is back under Projects';
+  begin
+    update public.sidebar_folders set deleted_at = null where id = f;
+    raise exception 'a removed folder stays removed';
+  exception when check_violation then null;
+  end;
+end $$;
+reset role;
+do $$
+begin
+  assert (select count(*) from public.sidebar_folders where name = 'Mine too' and deleted_at is null) = 1,
+    'the other person''s folder is untouched';
+  assert (select folder_id from public.sidebar_folder_projects
+    where profile_id = 'b3b30026-0000-4000-8000-000000000002') is not null, 'and so is their placement';
+end $$;
+
 do $$ begin raise notice 'oct 26 batch 3 smoke: all assertions passed'; end $$;

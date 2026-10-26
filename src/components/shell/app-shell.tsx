@@ -10,6 +10,7 @@ import { useShell } from "@/components/shell/shell-context";
 import { SidebarContent, type SidebarProject } from "@/components/shell/sidebar";
 import { sharedClientModules } from "@/components/shell/shared-chunks";
 import { TopBar } from "@/components/shell/top-bar";
+import { EMPTY_FOLDER_STATE, type SidebarFolderState } from "@/lib/sidebar-folders";
 
 void sharedClientModules;
 
@@ -19,16 +20,18 @@ void sharedClientModules;
 export function AppShell({
   projects,
   starredIds,
+  folders = EMPTY_FOLDER_STATE,
   unreadCount,
   children,
 }: {
   projects: SidebarProject[];
   starredIds: string[];
+  folders?: SidebarFolderState;
   unreadCount: number;
   children: ReactNode;
 }) {
   const { sidebar, drawerOpen } = useShell();
-  const sidebarProps = { projects, starredIds, unreadCount };
+  const sidebarProps = { projects, starredIds, folders, unreadCount };
 
   return (
     // One right-side panel at a time across the app: the task pane, Customize, the status sheet.

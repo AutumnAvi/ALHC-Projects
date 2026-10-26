@@ -18,6 +18,11 @@
 --    task links, rules, and views keep their data and come back when it's turned on. Search stops
 --    matching tag names while it's off (search_tasks, asserted patch).
 --
+-- 5. Personal sidebar folders: each person groups their sidebar projects into folders they name,
+--    collapse, reorder, and remove (sidebar_folders, sidebar_folder_projects). Own rows only — nobody
+--    else, workspace admins included, sees or changes them. Putting a project in a folder needs Viewer+
+--    (like starring). Removing a folder puts its projects back under Projects.
+--
 -- Additive: no tail.
 
 create or replace function public.alhc_patch_function(target regprocedure, variadic edits text[])
@@ -369,3 +374,178 @@ $p$        join public.tags g on g.id = tt.tag_id and g.deleted_at is null
 $p$        join public.tags g on g.id = tt.tag_id and g.deleted_at is null
         join public.workspaces tw on tw.id = g.workspace_id and tw.tags_enabled
         where tt.task_id = t.id$p$);
+
+-- ---------------------------------------------------------------------------
+-- 5. Personal sidebar folders
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.sidebar_folders (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null default auth.uid() references public.profiles (id),
+  name text not null check (char_length(btrim(name)) between 1 and 60),
+  sort_order double precision not null default 0,
+  collapsed boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+
+create index if not exists sidebar_folders_profile_idx on public.sidebar_folders (profile_id) where deleted_at is null;
+
+-- One row per person and project; folder_id null = not in a folder (rows move, they aren't removed).
+create table if not exists public.sidebar_folder_projects (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null default auth.uid() references public.profiles (id),
+  folder_id uuid references public.sidebar_folders (id),
+  project_id uuid not null references public.projects (id),
+  sort_order double precision not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (profile_id, project_id)
+);
+
+create index if not exists sidebar_folder_projects_folder_idx on public.sidebar_folder_projects (folder_id) where folder_id is not null;
+create index if not exists sidebar_folder_projects_project_idx on public.sidebar_folder_projects (project_id);
+
+alter table public.sidebar_folders enable row level security;
+alter table public.sidebar_folder_projects enable row level security;
+revoke all on public.sidebar_folders from anon, authenticated;
+revoke all on public.sidebar_folder_projects from anon, authenticated;
+select public.alhc_revoke_anon_grants(array['sidebar_folders', 'sidebar_folder_projects']);
+select public.alhc_revoke_client_truncate(array['sidebar_folders', 'sidebar_folder_projects']);
+grant select on public.sidebar_folders to authenticated;
+grant insert (name, sort_order, collapsed) on public.sidebar_folders to authenticated;
+grant update (name, sort_order, collapsed, deleted_at) on public.sidebar_folders to authenticated;
+grant select on public.sidebar_folder_projects to authenticated;
+grant insert (folder_id, project_id, sort_order) on public.sidebar_folder_projects to authenticated;
+grant update (folder_id, sort_order) on public.sidebar_folder_projects to authenticated;
+
+comment on table public.sidebar_folders is
+  'Oct 26 notes (batch 3): a person''s own sidebar folders. Own rows only (RLS); never shared.';
+comment on table public.sidebar_folder_projects is
+  'Oct 26 notes (batch 3): which of a person''s sidebar folders a project sits in (folder_id null = none). '
+  'Own rows only; adding a project needs Viewer+ on it.';
+
+create policy sidebar_folders_select_own on public.sidebar_folders
+  for select to authenticated
+  using (profile_id = (select auth.uid()) and (select public.is_allowlisted()));
+create policy sidebar_folders_insert_own on public.sidebar_folders
+  for insert to authenticated
+  with check (profile_id = (select auth.uid()) and (select public.is_allowlisted()));
+create policy sidebar_folders_update_own on public.sidebar_folders
+  for update to authenticated
+  using (profile_id = (select auth.uid()) and (select public.is_allowlisted()))
+  with check (profile_id = (select auth.uid()));
+
+create policy sidebar_folder_projects_select_own on public.sidebar_folder_projects
+  for select to authenticated
+  using (profile_id = (select auth.uid()) and (select public.is_allowlisted()));
+create policy sidebar_folder_projects_insert_own_viewer on public.sidebar_folder_projects
+  for insert to authenticated
+  with check (
+    profile_id = (select auth.uid())
+    and (select public.is_allowlisted())
+    and (select public.has_project_role(project_id, 'viewer'))
+  );
+create policy sidebar_folder_projects_update_own on public.sidebar_folder_projects
+  for update to authenticated
+  using (profile_id = (select auth.uid()) and (select public.is_allowlisted()))
+  with check (profile_id = (select auth.uid()));
+
+-- Folders: the owner is the caller, at most 50 live ones, a removed folder stays removed (and its
+-- projects go back under Projects), names are trimmed.
+create or replace function public.guard_sidebar_folder()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.name := btrim(new.name);
+  if tg_op = 'INSERT' then
+    if public.is_client_role() then
+      new.profile_id := auth.uid();
+    end if;
+    new.created_at := now();
+    new.deleted_at := null;
+    if (select count(*) from public.sidebar_folders f where f.profile_id = new.profile_id and f.deleted_at is null) >= 50 then
+      raise exception 'You can have up to 50 sidebar folders' using errcode = 'check_violation';
+    end if;
+  else
+    if new.profile_id is distinct from old.profile_id or new.created_at is distinct from old.created_at then
+      raise exception 'A folder can''t be moved to someone else' using errcode = 'insufficient_privilege';
+    end if;
+    if old.deleted_at is not null then
+      raise exception 'This folder was removed' using errcode = 'check_violation';
+    end if;
+    if new.deleted_at is not null then
+      new.deleted_at := now();
+    end if;
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+select public.alhc_revoke_anon_execute(array['guard_sidebar_folder()']);
+grant execute on function public.guard_sidebar_folder() to authenticated;
+
+create trigger sidebar_folders_05_guard
+  before insert or update on public.sidebar_folders
+  for each row execute function public.guard_sidebar_folder();
+
+-- A removed folder's projects go back under Projects (own rows, so invoker is enough).
+create or replace function public.on_sidebar_folder_removed()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if old.deleted_at is null and new.deleted_at is not null then
+    update public.sidebar_folder_projects fp set folder_id = null
+    where fp.folder_id = new.id and fp.profile_id = new.profile_id;
+  end if;
+  return new;
+end;
+$$;
+
+select public.alhc_revoke_anon_execute(array['on_sidebar_folder_removed()']);
+grant execute on function public.on_sidebar_folder_removed() to authenticated;
+
+create trigger sidebar_folders_after_removed
+  after update of deleted_at on public.sidebar_folders
+  for each row execute function public.on_sidebar_folder_removed();
+
+-- Placements: the owner is the caller and never changes, the project never changes, and a folder must
+-- be the owner's own live folder (so nobody files into someone else's folder, even knowing its id).
+create or replace function public.guard_sidebar_folder_project()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if public.is_client_role() then
+      new.profile_id := auth.uid();
+    end if;
+    new.created_at := now();
+  elsif new.profile_id is distinct from old.profile_id or new.project_id is distinct from old.project_id
+        or new.created_at is distinct from old.created_at then
+    raise exception 'A sidebar placement can''t be moved to someone else' using errcode = 'insufficient_privilege';
+  end if;
+  if new.folder_id is not null and not exists (
+    select 1 from public.sidebar_folders f
+    where f.id = new.folder_id and f.profile_id = new.profile_id and f.deleted_at is null
+  ) then
+    raise exception 'Folder not found' using errcode = 'no_data_found';
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+select public.alhc_revoke_anon_execute(array['guard_sidebar_folder_project()']);
+grant execute on function public.guard_sidebar_folder_project() to authenticated;
+
+create trigger sidebar_folder_projects_05_guard
+  before insert or update on public.sidebar_folder_projects
+  for each row execute function public.guard_sidebar_folder_project();

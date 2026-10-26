@@ -6,6 +6,7 @@ import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
 import { parseAccessStatus, type ProjectAccessRequest, type ProjectAccessStatus } from "@/lib/access-requests";
+import type { SidebarFolderState } from "@/lib/sidebar-folders";
 import type { MentionTeam } from "@/lib/mentions";
 import {
   DESIGN_COLUMNS,
@@ -438,6 +439,25 @@ export const listStarredProjectIds = cache(async (): Promise<string[]> => {
     return [];
   }
   return (result.data ?? []).map((row) => row.project_id);
+});
+
+// Oct 26 notes (batch 3): the viewer's own sidebar folders and where their projects sit (RLS: own rows
+// only). A missing table (a preview before this release's database update) reads as no folders.
+export const listSidebarFolders = cache(async (): Promise<SidebarFolderState> => {
+  const supabase = await createClient();
+  const [folders, placements] = await Promise.all([
+    supabase.from("sidebar_folders").select("id, name, collapsed, sort_order").is("deleted_at", null).order("sort_order"),
+    supabase.from("sidebar_folder_projects").select("project_id, folder_id, sort_order").not("folder_id", "is", null),
+  ]);
+  if (folders.error || placements.error) {
+    const error = folders.error ?? placements.error;
+    if (error?.code !== "PGRST205" && error?.code !== "42P01") console.error(`[sidebar] couldn't load folders: ${error?.message}`);
+    return { folders: [], placements: [] };
+  }
+  return {
+    folders: (folders.data ?? []).map((f) => ({ id: f.id, name: f.name, collapsed: f.collapsed, sortOrder: f.sort_order })),
+    placements: (placements.data ?? []).map((p) => ({ projectId: p.project_id, folderId: p.folder_id, sortOrder: p.sort_order })),
+  };
 });
 
 export const listArchivedProjects = cache(async (): Promise<Project[]> =>

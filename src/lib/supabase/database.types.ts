@@ -2772,6 +2772,69 @@ export type Database = {
         };
         Relationships: [];
       };
+      sidebar_folders: {
+        Row: {
+          id: string;
+          profile_id: string;
+          name: string;
+          sort_order: number;
+          collapsed: boolean;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          name: string;
+          sort_order?: number;
+          collapsed?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          name?: string;
+          sort_order?: number;
+          collapsed?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      sidebar_folder_projects: {
+        Row: {
+          id: string;
+          profile_id: string;
+          folder_id: string | null;
+          project_id: string;
+          sort_order: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          folder_id?: string | null;
+          project_id: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          folder_id?: string | null;
+          project_id?: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       project_stars: {
         Row: {
           id: string;
