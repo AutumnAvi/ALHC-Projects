@@ -8,13 +8,18 @@ import { portfolioRoleOptions, projectRoleOptions, teamRoleOptions } from "@/com
 import { SmartPicker } from "@/components/smart-picker";
 import { COMMENTER_OFF_REASON, ROLE_DESCRIPTIONS, assignableRoles, effectiveDefaultRole, PERSON_DEFAULT_ROLE } from "@/lib/roles";
 
-test("every project role is listed, highest first, each with its description", () => {
+test("the four project roles are listed, highest first, each with a one-line hint (Oct 26 notes)", () => {
   const options = projectRoleOptions({ grantable: assignableRoles("owner", true), allowCommenter: true });
-  assert.deepEqual(options.map((o) => o.value), ["owner", "admin", "editor", "commenter", "viewer"]);
+  assert.deepEqual(options.map((o) => o.value), ["owner", "editor", "commenter", "viewer"]);
   for (const o of options) {
     assert.equal(o.description, ROLE_DESCRIPTIONS[o.value as keyof typeof ROLE_DESCRIPTIONS]);
+    assert.ok(o.description && !o.description.includes("\n"), `${o.value} has a one-line hint`);
     assert.ok(!o.disabled, `${o.value} is offered to an owner`);
   }
+  // Admin is no longer handed out; someone who already has it still sees it as their current role.
+  assert.ok(!assignableRoles("owner", true).includes("admin"));
+  const older = projectRoleOptions({ grantable: assignableRoles("owner", true), allowCommenter: true, current: "admin" });
+  assert.deepEqual(older.map((o) => o.value), ["owner", "admin", "editor", "commenter", "viewer"]);
 });
 
 test("Commenter is greyed out (not hidden) while the workspace has it off", () => {
@@ -23,7 +28,7 @@ test("Commenter is greyed out (not hidden) while the workspace has it off", () =
   assert.ok(commenter, "still listed");
   assert.equal(commenter.disabled, true);
   assert.equal(commenter.disabledReason, COMMENTER_OFF_REASON);
-  assert.match(COMMENTER_OFF_REASON, /Admin console → Security/);
+  assert.equal(COMMENTER_OFF_REASON, "Turn on in Admin console → Security");
   // Someone who already is a Commenter keeps it selectable.
   const current = projectRoleOptions({ grantable: assignableRoles("owner", false), allowCommenter: false, current: "commenter" });
   assert.ok(!current.find((o) => o.value === "commenter")?.disabled);

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Bell, BellOff, ChevronLeft, MessagesSquare, Pencil, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { MentionTextarea } from "@/components/task/mention-textarea";
 import { COMMENT_INPUT, MentionText, ReactionBar } from "@/components/task/task-activity";
 import { Timestamp } from "@/components/timestamp";
@@ -105,7 +105,7 @@ export function MessageThreadList(props: {
   profiles: Profile[];
   candidates: Profile[];
 }) {
-  const canPost = useCan("commenter");
+  const canPost = useProjectPermissions().canComment;
   return (
     <ThreadList
       scope={{ kind: "project", id: props.projectId }}
@@ -278,7 +278,7 @@ export function MessageThreadView(props: {
   candidates: Profile[];
   memberId: string;
 }) {
-  const canPost = useCan("commenter");
+  const canPost = useProjectPermissions().canComment;
   return (
     <ThreadView
       scope={{ kind: "project", id: props.thread.projectId }}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { LayoutTemplate, ListPlus, Pencil, Plus, Trash2 } from "lucide-react";
 import { DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
-import { ReadOnlyNotice, useCan } from "@/components/project/project-access";
+import { ReadOnlyNotice, useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -47,7 +47,7 @@ function SaveProjectTemplate({
   project: { id: string; name: string };
   replaceable: { id: string; name: string; isExample: boolean }[];
 }) {
-  const canSave = useCan("admin");
+  const canSave = useProjectPermissions().canManage;
   const notify = useNotify();
   const [pending, run] = useServerAction();
   const [name, setName] = useState(project.name);
@@ -181,7 +181,7 @@ function TaskTemplates({
   templates: TaskTemplate[];
   profiles: Profile[];
 }) {
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const [pending, run] = useServerAction();
   const [creating, setCreating] = useState(false);
 
@@ -263,7 +263,7 @@ function TaskTemplateRow({
   profiles: Profile[];
   canEdit: boolean;
 }) {
-  const canDelete = useCan("admin");
+  const canDelete = useProjectPermissions().canManage;
   const [pending, run] = useServerAction();
   const [editing, setEditing] = useState(false);
   const assignee = template.assigneeId ? profiles.find((p) => p.id === template.assigneeId) : null;

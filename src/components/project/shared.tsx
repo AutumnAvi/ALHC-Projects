@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useTaskTemplates } from "@/components/project/task-templates-context";
 import { useServerAction } from "@/components/toast";
 import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
@@ -44,7 +44,7 @@ export function SectionTitle({
   count: number;
 }) {
   const [, run] = useServerAction();
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
 
   if (!canEdit) {
     return (
@@ -109,7 +109,7 @@ export function SectionActions({
   onMoveUp?: () => void;
   onMoveDown?: () => void;
 }) {
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   if (!canEdit) return null;
   const reveal = "opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100 group-focus-within/section:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100";
   return (
@@ -312,7 +312,7 @@ export function AddTaskInput({
   const [open, setOpen] = useState(defaultOpen);
   const [kind, setKind] = useState<TaskKind>(defaultKind);
   const inputRef = useRef<HTMLInputElement>(null);
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const templates = useTaskTemplates();
 
   if (!canEdit) return null;
@@ -437,7 +437,7 @@ export function AddSection({ projectId, variant }: { projectId: string; variant:
   const [pending, run] = useServerAction();
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
 
   if (!canEdit) return null;
   if (!open) {

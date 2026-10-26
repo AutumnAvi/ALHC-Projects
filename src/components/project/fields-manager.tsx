@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Columns3, Plus, SlidersHorizontal } from "lucide-react";
 import { FieldEditorDialog, FieldList } from "@/components/project/field-editor";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -24,7 +24,7 @@ export function FieldsManager({
 }) {
   const [pending, run] = useServerAction();
   const { batch4 } = useProjectPage();
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const [adding, setAdding] = useState(false);
   const hasBound = fields.some((f) => f.boundToSections);
 

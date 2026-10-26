@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ExternalLink, FileInput, Plus } from "lucide-react";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { createForm } from "@/lib/actions";
@@ -21,7 +21,7 @@ export function FormsList({
   origin: string;
 }) {
   const [pending, run] = useServerAction();
-  const canEdit = useCan("admin");
+  const canEdit = useProjectPermissions().canManage;
   const add = () => run(() => createForm(projectId, "New form"));
 
   return (

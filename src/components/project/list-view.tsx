@@ -21,7 +21,7 @@ import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
 import { useViewConfig } from "@/components/project/view-config";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
@@ -149,7 +149,7 @@ export function ListView({
   const notify = useNotify();
   const [, startTransition] = useTransition();
   const bulkEdit = useBulkEdit();
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const who = canEdit ? "editor" : "viewer";
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const pages = useGroupPages();
@@ -1125,7 +1125,8 @@ function TaskRow({
         <CompleteToggle
           kind={task.kind}
           completed={completed}
-          disabled={!canEdit || (task.kind === "approval" && approvalOpen(task.approvalStatus))}
+          readOnly={!canEdit}
+          disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
           onToggle={() => onToggle(task)}
           label={kindToggleLabel(task.kind, task.title, completed)}
         />
@@ -1159,21 +1160,21 @@ function TaskRow({
         if (column === "assignee") {
           return (
             <div key={column} className={CELL}>
-              {assignee ? <Assignee profile={assignee} showName /> : <EmptyCellHint kind="person" />}
+              {assignee ? <Assignee profile={assignee} showName /> : <EmptyCellHint kind="person" hidden={!canEdit} />}
             </div>
           );
         }
         if (column === "due") {
           return (
             <div key={column} className={CELL}>
-              {task.dueOn ? <DueDate task={task} /> : <EmptyCellHint kind="date" />}
+              {task.dueOn ? <DueDate task={task} /> : <EmptyCellHint kind="date" hidden={!canEdit} />}
             </div>
           );
         }
         if (column === "start") {
           return (
             <div key={column} className={CELL}>
-              {task.startOn ? <StartDate task={task} /> : <EmptyCellHint kind="date" />}
+              {task.startOn ? <StartDate task={task} /> : <EmptyCellHint kind="date" hidden={!canEdit} />}
             </div>
           );
         }
@@ -1258,7 +1259,8 @@ function SubtaskRows({
                   size="sm"
                   kind={subtask.kind}
                   completed={completed}
-                  disabled={!canEdit || subtask.kind === "approval"}
+                  readOnly={!canEdit}
+                  disabled={subtask.kind === "approval"}
                   onToggle={() => onToggle(subtask)}
                   label={kindToggleLabel(subtask.kind, subtask.title, completed)}
                 />
@@ -1286,12 +1288,12 @@ function SubtaskRows({
                     subtask.assigneeId && profilesById.get(subtask.assigneeId) ? (
                       <Assignee profile={profilesById.get(subtask.assigneeId)} showName />
                     ) : (
-                      <EmptyCellHint kind="person" />
+                      <EmptyCellHint kind="person" hidden={!canEdit} />
                     )
                   ) : column === "due" ? (
-                    subtask.dueOn ? <DueDate task={subtask} /> : <EmptyCellHint kind="date" />
+                    subtask.dueOn ? <DueDate task={subtask} /> : <EmptyCellHint kind="date" hidden={!canEdit} />
                   ) : column === "start" ? (
-                    subtask.startOn ? <StartDate task={subtask} /> : <EmptyCellHint kind="date" />
+                    subtask.startOn ? <StartDate task={subtask} /> : <EmptyCellHint kind="date" hidden={!canEdit} />
                   ) : null}
                 </div>
               ))}

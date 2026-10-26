@@ -5,7 +5,7 @@ import { useState, useTransition, type DragEvent } from "react";
 import { Inbox } from "lucide-react";
 import { CALENDAR_DRAG_TYPE, CalendarGrid, type CalendarDrag, type CalendarItem } from "@/components/calendar/calendar-grid";
 import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink } from "@/components/task/task-link";
@@ -89,7 +89,7 @@ export function CalendarView({
   const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const shift = useDependencyShift();
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const [drag, setDrag] = useState<CalendarDrag | null>(null);
   const [overTray, setOverTray] = useState(false);
 

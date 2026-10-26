@@ -19,6 +19,7 @@ import {
 import { canRespondToSubmitter, submitterResponseSubject } from "@/lib/comment-email";
 import { mentionSegments } from "@/lib/mentions";
 import { mergePendingComments, type PendingComment } from "@/lib/pending-comments";
+import { taskPermissions } from "@/lib/permissions";
 import { ROLE_LABELS } from "@/lib/roles";
 import { EmailCard, EmailCommentHeader, EmailFiles, MailAvatar, MentionText, type DescribePerson } from "./comment-parts";
 import {
@@ -32,7 +33,6 @@ import {
 import { REACTIONS, reactionOf, type ReactionKey } from "@/lib/reactions";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile, TaskComment, TaskDetail, TaskStory } from "@/lib/data";
-import { hasRole } from "@/lib/roles";
 import { fieldChips } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { useRealtimeRefresh } from "@/lib/realtime";
@@ -140,7 +140,7 @@ export function TaskActivity({
 
   const tab = useActivityTab();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
-  const canComment = hasRole(task.viewerRole, "commenter");
+  const canComment = taskPermissions(task).canComment;
   const candidates = mentionCandidates(task, profiles, memberId);
   const nameOf = (profileId: string | null) => {
     const profile = profileId ? profilesById.get(profileId) : undefined;
@@ -805,7 +805,7 @@ export function TaskPaneFooter({
   const followers = followerIds
     .map((followerId) => profiles.find((p) => p.id === followerId))
     .filter((p): p is Profile => Boolean(p));
-  const canComment = hasRole(task.viewerRole, "commenter");
+  const canComment = taskPermissions(task).canComment;
   const submitterEmail = canRespondToSubmitter(task) ? (task.submission?.email ?? null) : null;
   const open = focused || draft.trim() !== "" || toSubmitter;
 

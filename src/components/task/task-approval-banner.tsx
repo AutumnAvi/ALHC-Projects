@@ -7,7 +7,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { decideApproval, requestApproval, resubmitApproval } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
-import { hasRole } from "@/lib/roles";
+import { taskPermissions } from "@/lib/permissions";
 import { approvalTaskRequest, parseApprovalTaskStatus } from "@/lib/task-kinds";
 import { ApprovalStatusBadge } from "@/components/project/task-meta";
 
@@ -28,10 +28,12 @@ export function ApprovalTaskBanner({
   const [note, setNote] = useState("");
   const request = approvalTaskRequest(task.kind, task.assigneeId, task.approvals);
   const status = parseApprovalTaskStatus(request?.status);
-  const canEdit = hasRole(task.viewerRole, "editor");
+  const canEdit = taskPermissions(task).canEdit;
   const assignee = profiles.find((p) => p.id === task.assigneeId);
   const assigneeName = assignee ? displayName(assignee) : "The assignee";
   const isApprover = Boolean(request) && request?.approverId === memberId;
+  // Deciding needs Commenter+ (decide_approval refuses a Viewer who is still the named approver).
+  const canDecide = taskPermissions(task).canComment;
   const completed = Boolean(task.completedAt);
 
   let message: string;
@@ -64,7 +66,7 @@ export function ApprovalTaskBanner({
         </p>
       ) : null}
 
-      {status === "pending" && isApprover ? (
+      {status === "pending" && isApprover && canDecide ? (
         <div className="mt-2 space-y-2">
           <label htmlFor="approval-task-note" className="sr-only">
             Note for your decision

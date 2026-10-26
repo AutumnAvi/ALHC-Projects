@@ -221,6 +221,7 @@ export function MyTasksWidget({
                   <CompleteToggle
                     kind={task.kind}
                     completed={done}
+                    readOnly={!task.canEdit}
                     onToggle={() => toggle(task)}
                     label={kindToggleLabel(task.kind, task.title, done)}
                   />

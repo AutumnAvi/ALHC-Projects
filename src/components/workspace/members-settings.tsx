@@ -154,12 +154,6 @@ function MemberRow({ member: m, self, allowCommenter }: { member: WorkspaceMembe
         ) : null}
       </div>
 
-      {m.defaultProjectRole !== undefined && m.status !== "removed" ? (
-        <span className="text-xs text-zinc-500" data-tooltip="The project role they get when someone adds them with “Their default role”">
-          Default project role:{" "}
-          <span className="font-medium text-zinc-700">{ROLE_LABELS[effectiveDefaultRole(m.defaultProjectRole, allowCommenter)]}</span>
-        </span>
-      ) : null}
       {m.status === "active" ? (
         <span className={`chip ${m.role === "admin" ? "bg-accent-50 text-accent-700" : ""}`}>{WORKSPACE_ROLE_LABELS[m.role]}</span>
       ) : (
@@ -167,8 +161,18 @@ function MemberRow({ member: m, self, allowCommenter }: { member: WorkspaceMembe
       )}
       {m.status !== "removed" ? (
         <div className="basis-full">
-          <ProjectAccessToggle open={open} onToggle={() => setOpen((v) => !v)} name={m.name} controls={panelId} />
-          {open ? <ProjectAccessPanel id={panelId} person={{ email: m.email, profileId: m.profileId, name: m.name }} /> : null}
+          <ProjectAccessToggle open={open} onToggle={() => setOpen((v) => !v)} name={m.name} controls={panelId} label="Details" />
+          {open ? (
+            <div id={panelId} className="space-y-2 pt-1">
+              {m.defaultProjectRole !== undefined ? (
+                <p className="text-xs text-zinc-500">
+                  Role when added to new projects:{" "}
+                  <span className="font-medium text-zinc-700">{ROLE_LABELS[effectiveDefaultRole(m.defaultProjectRole, allowCommenter)]}</span>
+                </p>
+              ) : null}
+              <ProjectAccessPanel id={`${panelId}-projects`} person={{ email: m.email, profileId: m.profileId, name: m.name }} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </li>

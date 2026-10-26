@@ -20,7 +20,7 @@ import { Avatar } from "@/components/avatar";
 import { GoalStatusBadge } from "@/components/goals/goal-status-badge";
 import { Popover } from "@/components/popover";
 import { PROJECT_STATUS_CLASS, PROJECT_STATUS_DOT, ProjectStatusBadge } from "@/components/project-status-badge";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
@@ -90,7 +90,7 @@ export function ProjectOverview({
 
 function Description({ projectId, description }: { projectId: string; description: string | null }) {
   const [, run] = useServerAction();
-  const canEdit = useCan("admin");
+  const canEdit = useProjectPermissions().canManage;
   return (
     <section aria-labelledby="overview-description">
       <h2 id="overview-description" className={SECTION_TITLE}>
@@ -295,7 +295,7 @@ function StatusSummary({
   dueOn: string | null;
 }) {
   const { openStatusUpdate } = useProjectPage();
-  const canPost = useCan("editor");
+  const canPost = useProjectPermissions().canEdit;
   const current = statusSet && isProjectStatus(status) ? status : null;
   return (
     <section aria-labelledby="overview-status">
@@ -347,7 +347,7 @@ function StatusSummary({
 
 function DueDate({ projectId, dueOn, complete }: { projectId: string; dueOn: string | null; complete: boolean }) {
   const [pending, run] = useServerAction();
-  const canEdit = useCan("admin");
+  const canEdit = useProjectPermissions().canManage;
   const today = useToday();
   const overdue = Boolean(dueOn && today && !complete && dueOn < today);
   const year = today ? Number(today.slice(0, 4)) : undefined;

@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useRef, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
 import { Inbox, Route } from "lucide-react";
 import { displayName } from "@/components/avatar";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { EMPTY_CRITICAL_PATH, slackLabel, type CriticalPath, type TaskSchedule } from "@/lib/critical-path";
 import { dependencyConflict, fromPredecessorStart, toSuccessorFinish } from "@/lib/dependencies";
@@ -93,7 +93,7 @@ export function TimelineView({
   const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const shift = useDependencyShift();
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const [trayDragging, setTrayDragging] = useState<{ taskId: string; x: number; y: number } | null>(null);
   const [dropDay, setDropDay] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -472,7 +472,7 @@ export function TimelineView({
                 draggable={false}
                 {...trayHandlers(task)}
                 aria-current={openTaskId === task.id ? "true" : undefined}
-                className={`flex min-w-0 cursor-grab touch-pan-y items-center gap-1.5 rounded-md border bg-white px-1.5 py-1.5 text-xs shadow-xs select-none hover:border-zinc-300 ${
+                className={`flex min-w-0 ${canEdit ? "cursor-grab" : "cursor-pointer"} touch-pan-y items-center gap-1.5 rounded-md border bg-white px-1.5 py-1.5 text-xs shadow-xs select-none hover:border-zinc-300 ${
                   openTaskId === task.id ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200"
                 } ${trayDragging?.taskId === task.id ? "opacity-40" : ""}`}
               >

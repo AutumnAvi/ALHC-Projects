@@ -142,6 +142,7 @@ test("My tasks, subtasks, and title-only links seed the pane too", () => {
     projectName: null,
     kind: "task",
     parentTitle: null,
+    canEdit: true,
     requestLabel: { text: "Task #4", wrap: false },
   };
   const seed = seedFromMyTask(mine, { id: "me", name: "Me" });

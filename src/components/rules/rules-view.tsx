@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Fragment, useId, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronRight, Copy, GitBranch, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { Segmented } from "@/components/project/view-chrome";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -102,7 +102,7 @@ export function RulesView({
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
-  const canEdit = useCan("admin");
+  const canEdit = useProjectPermissions().canManage;
   // Turning a rule on also clears an auto-pause (the database's guard does the same).
   const [optimisticRules, setOptimistic] = useOptimistic(rules, (current, patch: { id: string; enabled: boolean }) =>
     current.map((r) =>

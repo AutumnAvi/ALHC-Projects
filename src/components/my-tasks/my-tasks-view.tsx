@@ -190,10 +190,13 @@ export function MyTasksView({
     groups.flatMap((g) => shownIds(g.key, g.tasks)),
     groups.filter((g) => !collapsed.has(g.key)).flatMap((g) => shownIds(g.key, g.tasks)),
   );
+  // Shortcuts act only on tasks the viewer can edit (a Viewer's or Commenter's task has no checkbox,
+  // and ⌘/Ctrl+Enter or Tab→M leaves it alone instead of failing).
   const targets = () => {
-    if (selection.selected.length) return selection.selected;
+    const editable = (id: string) => tasksById.get(id)?.canEdit === true;
+    if (selection.selected.length) return selection.selected.filter(editable);
     const one = openTaskId && tasksById.has(openTaskId) ? openTaskId : selection.active;
-    return one ? [one] : [];
+    return one && editable(one) ? [one] : [];
   };
 
   useListKeys({
@@ -470,8 +473,9 @@ export function MyTasksView({
         </TaskGroup>
       ) : null}
       <BulkBar
-        selected={selection.selected}
-        completedCount={selection.selected.filter((id) => {
+        // A Shift-range can span read-only rows; the bar only ever acts on tasks the viewer can edit.
+        selected={selection.selected.filter((id) => tasksById.get(id)?.canEdit === true)}
+        completedCount={selection.selected.filter((id) => tasksById.get(id)?.canEdit === true).filter((id) => {
           const task = tasksById.get(id);
           return task ? isDone(task) : false;
         }).length}
@@ -842,22 +846,28 @@ function MyTaskRow({
         dragging ? "opacity-40" : ""
       } ${onDragStart ? "cursor-grab active:cursor-grabbing" : ""}`}
     >
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={() => undefined}
-        onClick={(e) => {
-          e.stopPropagation();
-          selection.toggle(task.id, e.shiftKey);
-        }}
-        aria-label={`Select “${task.title}”`}
-        className={`-mr-1 size-3.5 shrink-0 rounded border-zinc-300 accent-accent-600 ${
-          selected || selecting ? "" : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-        }`}
-      />
+      {task.canEdit ? (
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+            selection.toggle(task.id, e.shiftKey);
+          }}
+          aria-label={`Select “${task.title}”`}
+          className={`-mr-1 size-3.5 shrink-0 rounded border-zinc-300 accent-accent-600 ${
+            selected || selecting ? "" : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+          }`}
+        />
+      ) : (
+        // A task the viewer can only read (Viewer / Commenter in its projects): nothing to select or tick.
+        <span aria-hidden className="-mr-1 size-3.5 shrink-0" />
+      )}
       <CompleteToggle
         kind={task.kind}
         completed={done}
+        readOnly={!task.canEdit}
         onToggle={() => onToggle(task)}
         label={kindToggleLabel(task.kind, task.title, done)}
       />
@@ -897,7 +907,7 @@ function MyTaskRow({
         </span>
       )}
       <span className={`flex w-16 shrink-0 justify-end text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
-        {task.dueOn ? formatDueDate(task.dueOn, today ? Number(today.slice(0, 4)) : undefined) : <EmptyCellHint kind="date" />}
+        {task.dueOn ? formatDueDate(task.dueOn, today ? Number(today.slice(0, 4)) : undefined) : <EmptyCellHint kind="date" hidden={!task.canEdit} />}
       </span>
     </li>
   );

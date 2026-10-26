@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
-import { ReadOnlyNotice, useCan } from "@/components/project/project-access";
+import { ReadOnlyNotice, useProjectPermissions } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { setProjectStatus } from "@/lib/actions";
@@ -16,7 +16,7 @@ const inputClass =
 // Editors and above set the status (set_project_status); it shows as a badge on portfolio cards.
 export function ProjectStatusForm({ project }: { project: Project }) {
   const [pending, run] = useServerAction();
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const [status, setStatus] = useState<ProjectStatus>(isProjectStatus(project.status) ? project.status : "on_track");
   const [note, setNote] = useState(project.status_note ?? "");
 
