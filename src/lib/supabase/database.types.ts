@@ -1836,6 +1836,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          owner_id: string | null;
         };
         Insert: {
           id?: string;
@@ -1848,6 +1849,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          owner_id?: string | null;
         };
         Update: {
           id?: string;
@@ -1860,6 +1862,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          owner_id?: string | null;
         };
         Relationships: [];
       };
@@ -2770,6 +2773,165 @@ export type Database = {
           granted_role?: string | null;
           decided_by?: string | null;
           decided_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      team_join_requests: {
+        Row: {
+          id: string;
+          team_id: string;
+          requester_id: string;
+          status: string;
+          granted_role: string | null;
+          decided_by: string | null;
+          decided_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          team_id: string;
+          requester_id: string;
+          status?: string;
+          granted_role?: string | null;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          team_id?: string;
+          requester_id?: string;
+          status?: string;
+          granted_role?: string | null;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      calendar_events: {
+        Row: {
+          id: string;
+          project_id: string | null;
+          team_id: string | null;
+          title: string;
+          notes: string | null;
+          start_on: string;
+          end_on: string;
+          start_at: string | null;
+          end_at: string | null;
+          time_zone: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id?: string | null;
+          team_id?: string | null;
+          title: string;
+          notes?: string | null;
+          start_on: string;
+          end_on?: string;
+          start_at?: string | null;
+          end_at?: string | null;
+          time_zone?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string | null;
+          team_id?: string | null;
+          title?: string;
+          notes?: string | null;
+          start_on?: string;
+          end_on?: string;
+          start_at?: string | null;
+          end_at?: string | null;
+          time_zone?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      list_collapsed_groups: {
+        Row: {
+          profile_id: string;
+          project_id: string;
+          group_keys: string[];
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          profile_id?: string;
+          project_id: string;
+          group_keys?: string[];
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          profile_id?: string;
+          project_id?: string;
+          group_keys?: string[];
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      project_view_settings: {
+        Row: {
+          project_id: string;
+          default_view_id: string | null;
+          hidden_tabs: string[];
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          project_id: string;
+          default_view_id?: string | null;
+          hidden_tabs?: string[];
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          project_id?: string;
+          default_view_id?: string | null;
+          hidden_tabs?: string[];
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      profile_preferences: {
+        Row: {
+          profile_id: string;
+          open_personal_view: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          profile_id?: string;
+          open_personal_view?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          profile_id?: string;
+          open_personal_view?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -5957,6 +6119,30 @@ export type Database = {
       project_access_status: {
         Args: { target_project: string };
         Returns: string;
+      };
+      can_view_team: {
+        Args: { target_team: string };
+        Returns: boolean;
+      };
+      team_access_status: {
+        Args: { target_team: string };
+        Returns: string;
+      };
+      request_team_join: {
+        Args: { target_team: string };
+        Returns: string;
+      };
+      decide_team_join_request: {
+        Args: { target_request: string; decision: string; member_role?: string };
+        Returns: string;
+      };
+      set_list_collapsed_groups: {
+        Args: { target_project: string; keys: string[] };
+        Returns: string[];
+      };
+      set_open_personal_view: {
+        Args: { enabled: boolean };
+        Returns: boolean;
       };
       request_project_access: {
         Args: { target_project: string };

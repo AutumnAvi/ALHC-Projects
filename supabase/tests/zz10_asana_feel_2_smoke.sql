@@ -275,8 +275,9 @@ do $$
 begin
   assert not exists (select 1 from public.pending_memberships where project_id = (select id from af2_ids where name = 'p_private')),
     'non-members don''t see a project''s pending invites';
-  assert exists (select 1 from public.pending_memberships where team_id = (select id from af2_ids where name = 'other_team')),
-    'team invites are visible like the team';
+  -- Since Oct 26 notes, batch 4 a team's invites (like its members) are visible inside the team only.
+  assert not exists (select 1 from public.pending_memberships where team_id = (select id from af2_ids where name = 'other_team')),
+    'team invites are visible to the team, not to people outside it';
   assert not exists (select 1 from public.email_outbox where to_email = 'af2-new@example.com'), 'members can''t read invite emails';
   begin
     perform public.invite_to_workspace('someone@example.com');

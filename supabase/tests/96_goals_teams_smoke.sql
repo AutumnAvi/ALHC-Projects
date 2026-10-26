@@ -73,7 +73,8 @@ reset role;
 delete from public.allowed_emails where email = 'gone@example.com';
 set role authenticated;
 
--- The directory is readable by everyone allowlisted; only leads and workspace admins manage ---------
+-- The directory is readable by everyone allowlisted (since Oct 26 notes, batch 4, its members only by the
+-- team's own members and workspace admins); only leads and workspace admins manage ---------
 
 select set_config('request.jwt.claim.sub', '44444444-4444-4444-8444-444444444444', false) is not null as ok \gset
 do $$
@@ -82,7 +83,8 @@ declare
   n int;
 begin
   assert exists (select 1 from public.teams where id = team), 'anyone allowlisted sees the team';
-  assert (select count(*) from public.team_members where team_id = team and deleted_at is null) = 5, 'and its members';
+  assert (select count(*) from public.team_members where team_id = team and deleted_at is null) = 0,
+    'but not who is in it (Oct 26 notes, batch 4: only its members and workspace admins do)';
   update public.teams set name = 'Hijacked' where id = team;
   get diagnostics n = row_count;
   assert n = 0, 'non-members can''t rename a team';
@@ -218,6 +220,19 @@ begin
 exception when insufficient_privilege then null;
 end $$;
 
+-- Since Oct 26 notes, batch 4 a team's members are visible only inside it, so a project admin can add only
+-- a team they're in (adding it would show who is in it): Ada isn't in Design yet.
+select set_config('request.jwt.claim.sub', '88888888-8888-4888-8888-888888888888', false) is not null as ok \gset
+do $$
+begin
+  perform public.add_team_to_project((select id from gt_ids where name = 'target'), (select id from gt_ids where name = 'design'), 'viewer');
+  raise exception 'a project admin outside the team can''t add it';
+exception when no_data_found then null;
+end $$;
+
+select set_config('request.jwt.claim.sub', '77777777-7777-4777-8777-777777777777', false) is not null as ok \gset
+select public.add_team_member((select id from gt_ids where name = 'design'), 'admin@example.com', 'member') is not null as ok \gset
+
 select set_config('request.jwt.claim.sub', '88888888-8888-4888-8888-888888888888', false) is not null as ok \gset
 do $$
 declare
@@ -235,7 +250,7 @@ begin
   assert (select array_agg(x ->> 'name' order by x ->> 'name') from jsonb_array_elements(result -> 'added') x)
     = array['Nora Nonmember', 'Vera Viewer'], format('adds the people not yet in the project: %s', result);
   assert (select array_agg(x ->> 'name' order by x ->> 'name') from jsonb_array_elements(result -> 'unchanged') x)
-    = array['Cora Commenter', 'Eddie Editor'], 'people already in the project are left alone';
+    = array['Ada Admin', 'Cora Commenter', 'Eddie Editor'], 'people already in the project are left alone';
   assert jsonb_array_length(result -> 'skipped') = 1
     and result -> 'skipped' -> 0 ->> 'name' = 'Gary Gone'
     and result -> 'skipped' -> 0 ->> 'reason' like '%in this workspace%', format('someone no longer allowlisted is skipped: %s', result);
