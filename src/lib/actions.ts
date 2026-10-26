@@ -4249,6 +4249,17 @@ export async function updateForm(
   });
 }
 
+// Oct 26 notes (batch 3): the form editor's Live / Off switch saves at once (Admin+ by forms RLS; a
+// refused update reads as "Your role … doesn't allow that" instead of silently doing nothing).
+export async function setFormLive(formId: string, live: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("forms").update({ accepting_responses: Boolean(live) }).eq("id", id(formId)).select("id"),
+    );
+  });
+}
+
 export async function deleteForm(formId: string, projectId: string): Promise<ActionResult> {
   const result = await run(async () => {
     const supabase = await createClient();
