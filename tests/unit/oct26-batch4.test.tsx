@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 import { ConfirmProvider } from "@/components/confirm";
-import { ListView } from "@/components/project/list-view";
+import { ListView, scopedKeys, withScopedKeys } from "@/components/project/list-view";
 import { ProjectAccessProvider } from "@/components/project/project-access";
 import { TimelineView } from "@/components/project/timeline-view";
 import { BrowseProjectsTable, type BrowseRow } from "@/components/projects/browse-projects-table";
@@ -93,6 +93,10 @@ test("task numbers: a muted badge, and the dependency picker finds a task by its
   assert.equal(matchesRequestLabel(label, "task #12"), true);
   assert.equal(matchesRequestLabel(label, "[Task #12]"), true);
   assert.equal(matchesRequestLabel(label, "13"), false);
+  assert.equal(matchesRequestLabel(label, "1"), false, "a number matches whole, not as a substring");
+  assert.equal(matchesRequestLabel(label, "s"), false, "a word without a number never matches every task");
+  assert.equal(matchesRequestLabel(label, "task"), false);
+  assert.equal(matchesRequestLabel(label, "Bug #12"), false, "another label's words");
   assert.equal(matchesRequestLabel({ text: "Req #484.1", wrap: false }, "484"), true, "a subtask under 484");
   assert.equal(matchesRequestLabel(null, "12"), false, "no number, no match");
   assert.equal(bareTaskTitle("[Task #12] Logo", label), "Logo", "an old baked-in label comes off the name");
@@ -143,9 +147,17 @@ test("List groups you collapsed stay collapsed when the List opens again", () =>
   const open = render(<ListView {...listProps} />);
   assert.match(open, /Write the brief/);
   assert.match(open, /aria-label="Collapse group"/);
-  const collapsed = render(<ListView {...listProps} collapsedGroups={["section-s1"]} />);
+  const collapsed = render(<ListView {...listProps} collapsedGroups={["section::section-s1"]} />);
   assert.ok(!collapsed.includes("Write the brief"), "the collapsed section's tasks aren't drawn");
   assert.match(collapsed, /aria-label="Expand group"/);
+  // Kept per grouping: a key saved while grouped by assignee doesn't collapse the section.
+  const other = render(<ListView {...listProps} collapsedGroups={["assignee::section-s1"]} />);
+  assert.match(other, /Write the brief/);
+  assert.deepEqual([...scopedKeys(new Set(["section::a", "assignee::b"]), "section::")], ["a"]);
+  assert.deepEqual(
+    [...withScopedKeys(new Set(["section::a", "assignee::b"]), "section::", new Set(["c"]))].sort(),
+    ["assignee::b", "section::c"],
+  );
 });
 
 test("Timeline: number badges on rows, and Draw dependencies for Editors only", () => {

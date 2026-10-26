@@ -88,7 +88,10 @@ export function ViewToolbar({
     run(async () => {
       const result = await saveViewChanges(view.id, current);
       if (!result.error && !result.copied) router.replace(urlFor(null), { scroll: false });
-      if (!result.error && result.copied) notify("Saved as your own view. The shared view stays as it was.");
+      if (!result.error && result.copied && result.viewId) {
+        notify("Saved as your own view. The shared view stays as it was.");
+        router.push(`/projects/${projectId}/views/${result.viewId}`);
+      }
       return result;
     });
   }

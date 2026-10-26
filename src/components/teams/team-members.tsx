@@ -42,6 +42,7 @@ export function TeamMembers({
   invites,
   resendable,
   candidates = [],
+  waitingEmails = [],
   requests = [],
 }: {
   teamId: string;
@@ -55,6 +56,8 @@ export function TeamMembers({
   resendable: boolean;
   // People in the workspace who aren't on the team yet (the add-member picker; managers only).
   candidates?: TeamCandidate[];
+  // Allowlisted addresses that haven't signed in yet (managers add them as pending invites).
+  waitingEmails?: string[];
   // Oct 26 notes (batch 4): people asking to join (managers only).
   requests?: TeamJoinRequest[];
 }) {
@@ -121,6 +124,7 @@ export function TeamMembers({
                 onChange={setPick}
                 allowNewEmail={isWorkspaceAdmin}
                 takenEmails={takenEmails}
+                waitingEmails={waitingEmails}
                 disabled={pending}
               />
             </div>

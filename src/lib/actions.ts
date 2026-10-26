@@ -4910,7 +4910,9 @@ async function nextOrder(table: "project_views" | "dashboard_widgets", projectId
 export async function createView(
   projectId: string,
   input: { name?: string; layout: string; config?: ViewConfig; personal?: boolean },
-): Promise<ActionResult> {
+  // false = return the new view's id instead of opening it (the caller navigates, e.g. after a toast).
+  open = true,
+): Promise<ActionResult & { viewId?: string }> {
   let viewId: string | null = null;
   const result = await run(async () => {
     if (!isViewLayout(input.layout)) throw new InputError("Unknown view layout");
@@ -4937,8 +4939,8 @@ export async function createView(
     check(inserted, input.personal ? NOT_ALLOWED : "Only Editors and up add tabs to a project. Save it as your own view instead.");
     viewId = inserted.data!.id;
   });
-  if (viewId && !result.error) redirect(`/projects/${projectId}/views/${viewId}`);
-  return result;
+  if (viewId && !result.error && open) redirect(`/projects/${projectId}/views/${viewId}`);
+  return { ...result, viewId: viewId ?? undefined };
 }
 
 const SHARED_VIEW_OWNERS_ONLY = "Only the project’s owners can change a shared view. Save it as your own view instead.";
@@ -4962,23 +4964,25 @@ export async function updateView(
 
 // Saves a view's unsaved changes: into the view itself when it's yours or you own the project, else as
 // your own copy of it (the shared view stays as everyone sees it), which then opens.
-export async function saveViewChanges(viewId: string, config: ViewConfig): Promise<ActionResult & { copied?: boolean }> {
+export async function saveViewChanges(
+  viewId: string,
+  config: ViewConfig,
+): Promise<ActionResult & { copied?: boolean; viewId?: string }> {
   const supabase = await createClient();
   const { data: view } = await supabase
     .from("project_views")
-    .select("project_id, name, layout, owner_id")
+    .select("*")
     .eq("id", id(viewId))
     .is("deleted_at", null)
     .maybeSingle();
   if (!view) return { error: "This view no longer exists" };
   const role = await getProjectRole(view.project_id);
   if (view.owner_id || role === "owner") return updateView(viewId, { config });
-  const result = await createView(view.project_id, {
-    name: personalCopyName(view.name),
-    layout: view.layout,
-    config,
-    personal: true,
-  });
+  const result = await createView(
+    view.project_id,
+    { name: personalCopyName(view.name), layout: view.layout, config, personal: true },
+    false,
+  );
   return { ...result, copied: true };
 }
 
@@ -4986,7 +4990,7 @@ export async function duplicateView(viewId: string): Promise<ActionResult> {
   const supabase = await createClient();
   const { data: view } = await supabase
     .from("project_views")
-    .select("project_id, name, layout, config, owner_id")
+    .select("*")
     .eq("id", id(viewId))
     .is("deleted_at", null)
     .maybeSingle();
@@ -5005,19 +5009,21 @@ export async function deleteView(viewId: string): Promise<ActionResult> {
     const supabase = await createClient();
     const { data: view } = await supabase
       .from("project_views")
-      .select("project_id, owner_id")
+      .select("*")
       .eq("id", id(viewId))
       .is("deleted_at", null)
       .maybeSingle();
     if (!view) throw new InputError("This view no longer exists");
-    // A project always keeps one shared tab; your own views come and go freely.
+    // A project always keeps one shared tab; your own views come and go freely. (A database without
+    // personal views has no owner_id: every view there is shared.)
     if (!view.owner_id) {
-      const { count } = await supabase
+      const personal = "owner_id" in view;
+      const query = supabase
         .from("project_views")
         .select("id", { count: "exact", head: true })
         .eq("project_id", view.project_id)
-        .is("owner_id", null)
         .is("deleted_at", null);
+      const { count } = await (personal ? query.is("owner_id", null) : query);
       if ((count ?? 0) <= 1) throw new InputError("A project needs at least one view");
     }
     checkUpdated(await supabase.from("project_views").update({ deleted_at: now() }).eq("id", viewId).select("id"));
@@ -5035,7 +5041,7 @@ async function moveRow(table: "project_views" | "dashboard_widgets", rowId: stri
   if (table === "project_views") {
     const { data: row } = await supabase
       .from("project_views")
-      .select("project_id, owner_id")
+      .select("*")
       .eq("id", id(rowId))
       .is("deleted_at", null)
       .maybeSingle();
@@ -5045,9 +5051,8 @@ async function moveRow(table: "project_views" | "dashboard_widgets", rowId: stri
       .select("id, sort_order")
       .eq("project_id", row.project_id)
       .is("deleted_at", null);
-    const { data } = await (row.owner_id ? query.eq("owner_id", row.owner_id) : query.is("owner_id", null))
-      .order("sort_order")
-      .order("created_at");
+    const kind = !("owner_id" in row) ? query : row.owner_id ? query.eq("owner_id", row.owner_id) : query.is("owner_id", null);
+    const { data } = await kind.order("sort_order").order("created_at");
     siblings = data ?? [];
   } else {
     const { data: row } = await supabase
@@ -5109,10 +5114,16 @@ export async function setProjectTabHidden(projectId: string, tab: string, hidden
         "Only Editors and up change a project’s tabs",
       );
     } else {
-      check(
-        await supabase.from("project_view_settings").insert({ project_id: project, hidden_tabs: hiddenTabs }),
-        "Only Editors and up change a project’s tabs",
-      );
+      const inserted = await supabase.from("project_view_settings").insert({ project_id: project, hidden_tabs: hiddenTabs });
+      // Someone else made the row a moment ago: change theirs instead.
+      if (inserted.error?.code === "23505") {
+        checkUpdated(
+          await supabase.from("project_view_settings").update({ hidden_tabs: hiddenTabs }).eq("project_id", project).select("project_id"),
+          "Only Editors and up change a project’s tabs",
+        );
+      } else {
+        check(inserted, "Only Editors and up change a project’s tabs");
+      }
     }
   });
 }
@@ -5135,7 +5146,15 @@ export async function setDefaultView(projectId: string, viewId: string | null): 
         notAllowed,
       );
     } else {
-      check(await supabase.from("project_view_settings").insert({ project_id: project, default_view_id: view }), notAllowed);
+      const inserted = await supabase.from("project_view_settings").insert({ project_id: project, default_view_id: view });
+      if (inserted.error?.code === "23505") {
+        checkUpdated(
+          await supabase.from("project_view_settings").update({ default_view_id: view }).eq("project_id", project).select("project_id"),
+          notAllowed,
+        );
+      } else {
+        check(inserted, notAllowed);
+      }
     }
   });
 }

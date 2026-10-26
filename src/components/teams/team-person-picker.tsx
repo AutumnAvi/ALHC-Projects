@@ -8,8 +8,9 @@ import { EMAIL_PATTERN } from "@/lib/workspace";
 
 export type TeamCandidate = { id: string; name: string; email: string };
 
-// Who the Members tab adds: someone in the workspace, or (workspace admins only) a new address.
-export type TeamPick = { kind: "person"; person: TeamCandidate } | { kind: "email"; email: string };
+// Who the Members tab adds: someone in the workspace, an allowlisted address that hasn't signed in yet
+// (a pending invite; `waiting`), or (workspace admins only) a new address.
+export type TeamPick = { kind: "person"; person: TeamCandidate } | { kind: "email"; email: string; waiting?: boolean };
 
 type Row = TeamPick;
 
@@ -18,15 +19,26 @@ type Row = TeamPick;
 export function teamPickRows(
   people: readonly TeamCandidate[],
   query: string,
-  { allowNewEmail, takenEmails = [] }: { allowNewEmail: boolean; takenEmails?: readonly string[] },
+  {
+    allowNewEmail,
+    takenEmails = [],
+    waitingEmails = [],
+  }: { allowNewEmail: boolean; takenEmails?: readonly string[]; waitingEmails?: readonly string[] },
 ): Row[] {
   const q = query.trim().toLowerCase();
   const matches: Row[] = people
     .filter((p) => !q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q))
     .slice(0, 50)
     .map((person) => ({ kind: "person", person }));
-  const known = new Set([...people.map((p) => p.email.toLowerCase()), ...takenEmails.map((e) => e.toLowerCase())]);
-  if (allowNewEmail && EMAIL_PATTERN.test(q) && !known.has(q)) matches.push({ kind: "email", email: q });
+  const taken = new Set(takenEmails.map((e) => e.toLowerCase()));
+  const known = new Set([...people.map((p) => p.email.toLowerCase()), ...taken]);
+  // Allowlisted addresses that haven't signed in yet: any manager can add them (a pending invite).
+  const waiting = q
+    ? waitingEmails.filter((e) => !known.has(e.toLowerCase()) && e.toLowerCase().includes(q)).slice(0, 10)
+    : [];
+  for (const email of waiting) matches.push({ kind: "email", email: email.toLowerCase(), waiting: true });
+  const listed = new Set([...known, ...waiting.map((e) => e.toLowerCase())]);
+  if (allowNewEmail && EMAIL_PATTERN.test(q) && !listed.has(q)) matches.push({ kind: "email", email: q });
   return matches;
 }
 
@@ -40,6 +52,7 @@ export function TeamPersonPicker({
   onChange,
   allowNewEmail,
   takenEmails,
+  waitingEmails,
   disabled = false,
 }: {
   id: string;
@@ -49,6 +62,8 @@ export function TeamPersonPicker({
   allowNewEmail: boolean;
   // Addresses already on the team or invited (never offered as "Invite …").
   takenEmails?: readonly string[];
+  // Allowlisted addresses that haven't signed in yet.
+  waitingEmails?: readonly string[];
   disabled?: boolean;
 }) {
   const chosen = value?.kind === "person" ? value.person.name : value?.email ?? null;
@@ -83,6 +98,7 @@ export function TeamPersonPicker({
           people={people}
           allowNewEmail={allowNewEmail}
           takenEmails={takenEmails}
+          waitingEmails={waitingEmails}
           onPick={(pick) => {
             close();
             onChange(pick);
@@ -97,16 +113,18 @@ function PickList({
   people,
   allowNewEmail,
   takenEmails,
+  waitingEmails,
   onPick,
 }: {
   people: readonly TeamCandidate[];
   allowNewEmail: boolean;
   takenEmails?: readonly string[];
+  waitingEmails?: readonly string[];
   onPick: (pick: TeamPick) => void;
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const rows = teamPickRows(people, query, { allowNewEmail, takenEmails });
+  const rows = teamPickRows(people, query, { allowNewEmail, takenEmails, waitingEmails });
   const index = Math.min(active, rows.length - 1);
   const q = query.trim().toLowerCase();
   const typedNewEmail = EMAIL_PATTERN.test(q) && rows.length === 0;
@@ -164,7 +182,11 @@ function PickList({
                   </span>
                   <span className="min-w-0 flex-1 leading-tight">
                     <span className="block truncate text-sm text-zinc-900">Invite {row.email}</span>
-                    <span className="block truncate text-xs text-zinc-500">New to the workspace: they get an invite email</span>
+                    <span className="block truncate text-xs text-zinc-500">
+                      {row.waiting
+                        ? "In the workspace, hasn’t signed in yet: joins the team on first sign-in"
+                        : "New to the workspace: they get an invite email"}
+                    </span>
                   </span>
                 </>
               )}

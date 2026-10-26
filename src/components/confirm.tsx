@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 // Oct 26 notes, batch 4: the in-app replacement for the browser's confirm() / alert(), which ESLint
@@ -50,6 +51,18 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // A question asked on one page is never answered on another: leaving the page says no.
+  const pathname = usePathname();
+  const askedOn = useRef(pathname);
+  useEffect(() => {
+    if (askedOn.current === pathname) return;
+    askedOn.current = pathname;
+    setQueue((current) => {
+      for (const request of current) request.resolve(null);
+      return [];
+    });
+  }, [pathname]);
+
   const current = queue[0];
   return (
     <ConfirmContext.Provider value={ask}>
@@ -88,6 +101,8 @@ function ConfirmModal({ request, onSettle }: { request: Request; onSettle: (answ
   const inputId = useId();
   const confirmRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // The second click of a double-click lands on the backdrop the first one opened: ignore it.
+  const openedAt = useRef(0);
   const [value, setValue] = useState(request.initialValue ?? "");
   const settleRef = useRef(onSettle);
 
@@ -96,6 +111,7 @@ function ConfirmModal({ request, onSettle }: { request: Request; onSettle: (answ
   }, [onSettle]);
 
   useEffect(() => {
+    openedAt.current = performance.now();
     const returnFocus = document.activeElement as HTMLElement | null;
     (inputRef.current ?? confirmRef.current)?.focus();
     function onKey(e: KeyboardEvent) {
@@ -120,9 +136,9 @@ function ConfirmModal({ request, onSettle }: { request: Request; onSettle: (answ
       className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-900/30 p-4"
       onMouseDown={(e) => {
         e.stopPropagation();
+        if (performance.now() - openedAt.current < 350) return;
         onSettle(null);
       }}
-      // A click inside the modal must never reach a popover's "click outside" handler underneath.
       onClick={(e) => e.stopPropagation()}
     >
       <div

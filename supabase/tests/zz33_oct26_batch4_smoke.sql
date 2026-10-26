@@ -466,5 +466,18 @@ begin
     'the copy has no personal views';
 end $$;
 
+-- Only Owners take away the default view.
+select set_config('request.jwt.claim.sub', 'b4b40026-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  shared uuid := (select id from b4_ids where name = 'shared_view');
+begin
+  begin
+    update public.project_views set deleted_at = now() where id = shared;
+    raise exception 'an Editor can''t remove the default view';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+
 reset role;
 do $$ begin raise notice 'oct 26 batch 4 smoke: all assertions passed'; end $$;

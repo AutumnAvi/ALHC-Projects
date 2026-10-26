@@ -645,6 +645,17 @@ begin
       using errcode = 'insufficient_privilege',
             hint = 'Save it as your own view instead.';
   end if;
+  -- The default view is the Owners' choice, so only they can take it away.
+  if old.owner_id is null and old.deleted_at is null and new.deleted_at is not null
+     and exists (
+       select 1 from public.project_view_settings x
+       where x.project_id = old.project_id and x.default_view_id = old.id
+     )
+     and not public.has_project_role(old.project_id, 'owner') then
+    raise exception 'Only the project''s owners can remove its default view'
+      using errcode = 'insufficient_privilege',
+            hint = 'Ask an owner to choose another default view first.';
+  end if;
   return new;
 end;
 $$;

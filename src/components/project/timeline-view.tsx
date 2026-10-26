@@ -117,6 +117,8 @@ export function TimelineView({
     if (!linking) return;
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      // A dialog, a confirm, or a popover on top handles its own Escape first.
+      if (document.querySelector("[role='dialog'], [role='alertdialog']")) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       setLink(null);
@@ -307,6 +309,13 @@ export function TimelineView({
           if (!overId || overId === fromId) return;
           const from = tasksById.get(fromId);
           const to = tasksById.get(overId);
+          // Drawing a link that's already there would reset its type and lag: leave it as it is.
+          if (dependencies.some((d) => d.predecessorId === fromId && d.successorId === overId)) {
+            if (from && to) {
+              notify(`“${bareTaskTitle(to.title, to.requestLabel)}” already waits on “${bareTaskTitle(from.title, from.requestLabel)}”`);
+            }
+            return;
+          }
           runLink(async () => {
             const result = await setTaskDependency(fromId, overId);
             if (!result.error && from && to) {

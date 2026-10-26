@@ -8,6 +8,7 @@ import {
   getWorkspace,
   hasReal1Schema,
   listActivePeople,
+  listUnjoinedAddresses,
   listPendingInvites,
   listTeamJoinRequests,
 } from "@/lib/data";
@@ -26,7 +27,7 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/me
 export default async function TeamMembersPage({ params }: PageProps<"/teams/[teamId]/members">) {
   const { teamId } = await params;
   await requireTeamView(teamId);
-  const [member, team, canManage, invites, workspace, resendable, people, requests] = await Promise.all([
+  const [member, team, canManage, invites, workspace, resendable, people, requests, waiting] = await Promise.all([
     requireMember(),
     getTeam(teamId),
     canManageTeam(teamId),
@@ -35,6 +36,7 @@ export default async function TeamMembersPage({ params }: PageProps<"/teams/[tea
     hasReal1Schema(),
     listActivePeople(),
     listTeamJoinRequests(teamId),
+    listUnjoinedAddresses(),
   ]);
   if (!team) notFound();
 
@@ -58,6 +60,7 @@ export default async function TeamMembersPage({ params }: PageProps<"/teams/[tea
               )
             : []
         }
+        waitingEmails={canManage ? waiting : []}
         requests={canManage ? requests : []}
       />
     </div>

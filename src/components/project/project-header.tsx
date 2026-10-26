@@ -784,7 +784,8 @@ function ViewTab({
                   </MenuItem>
                   <MenuItem
                     danger
-                    disabled={!canDelete}
+                    // The default view is the Owners' choice; only they can take it away.
+                    disabled={!canDelete || (isDefault && !isOwner)}
                     onClick={async () => {
                       close();
                       if (

@@ -594,6 +594,19 @@ export const listActivePeople = cache(async (): Promise<{ id: string; name: stri
     .map((p) => ({ id: p.id, name: displayName(p), email: p.email }));
 });
 
+// Addresses on the allowlist whose owner hasn't signed in yet (no confirmed first sign-in). Adding one to a
+// team makes a pending invite they join on first sign-in (Oct 26 notes, batch 4: the team member picker).
+export const listUnjoinedAddresses = cache(async (): Promise<string[]> => {
+  const supabase = await createClient();
+  const [allowed, joined] = await Promise.all([
+    supabase.from("allowed_emails").select("email").is("removed_at", null),
+    supabase.from("profiles").select("email").not("joined_at", "is", null),
+  ]);
+  if (allowed.error || joined.error) return [];
+  const signedIn = new Set((joined.data ?? []).map((p) => p.email.toLowerCase()));
+  return (allowed.data ?? []).map((a) => a.email.toLowerCase()).filter((email) => !signedIn.has(email)).sort();
+});
+
 export const listProfiles = cache(async (): Promise<Profile[]> => {
   const supabase = await createClient();
   const result = await supabase
