@@ -15,6 +15,7 @@ import {
   Trash2,
   TrendingUp,
 } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { CountBarChart, type BarDatum } from "@/components/dashboard/bar-chart";
 import { MenuItem, Popover } from "@/components/popover";
 import { OverdueTable, type OverdueRow } from "@/components/reports/report-blocks";
@@ -75,6 +76,7 @@ export function PersonalDashboardView({
   tags?: FilterOption[];
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
 
   function saveName(value: string) {
     const name = value.trim();
@@ -145,9 +147,16 @@ export function PersonalDashboardView({
             {(close) => (
               <MenuItem
                 danger
-                onClick={() => {
+                onClick={async () => {
                   close();
-                  if (window.confirm(`Delete the dashboard “${dashboard.name}”? Only you can see it.`)) {
+                  if (
+                    await confirm({
+                      title: `Delete the dashboard “${dashboard.name}”?`,
+                      message: "Only you can see it.",
+                      confirmLabel: "Delete",
+                      tone: "danger",
+                    })
+                  ) {
                     run(() => deletePersonalDashboard(dashboard.id));
                   }
                 }}
@@ -216,6 +225,7 @@ function WidgetCard({
 }) {
   const { widget, payload } = data;
   const [, run] = useServerAction();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const chips = describeReportFilters(widget.filters, projects, people, tags);
 
@@ -268,9 +278,11 @@ function WidgetCard({
                 </MenuItem>
                 <MenuItem
                   danger
-                  onClick={() => {
+                  onClick={async () => {
                     close();
-                    if (window.confirm(`Remove the widget “${widget.title}”?`)) run(() => deletePersonalWidget(widget.id));
+                    if (await confirm({ title: `Remove the widget “${widget.title}”?`, confirmLabel: "Remove", tone: "danger" })) {
+                      run(() => deletePersonalWidget(widget.id));
+                    }
                   }}
                 >
                   <Trash2 className="size-4" /> Remove

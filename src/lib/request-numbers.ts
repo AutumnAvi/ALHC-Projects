@@ -149,6 +149,28 @@ export function displayTaskTitle(
   return shown ? `${shown} ${bare}` : bare;
 }
 
+/** The task's name without its number (for screens that draw the number as a separate badge). */
+export function bareTaskTitle(title: string, label: RequestLabel | null | undefined): string {
+  return stripBakedLabel(title, label?.text);
+}
+
+/** Does a search box's text name this task's number? "12", "#12", "Task #12", "task 12". */
+// Only a query with a number in it matches (so "s" or "task" never lists every numbered task), and the
+// number must be the task's whole number or a parent of it ("484" finds 484 and 484.1, not 4840); any
+// words in front must be the label's own ("Task #12", not "Bug #12").
+export function matchesRequestLabel(label: RequestLabel | null | undefined, query: string): boolean {
+  const text = label?.text.trim().toLowerCase();
+  const q = query.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!text || !q || !/[0-9]/.test(q)) return false;
+  const match = q.match(/^(.*?)#?\s*([0-9][0-9.\-/]*)$/);
+  if (!match) return false;
+  const [, words, digits] = match;
+  const prefix = words.trim().replace(/#$/, "").trim();
+  if (prefix && !text.startsWith(prefix)) return false;
+  const numbers = text.match(/[0-9][0-9.\-/]*/g) ?? [];
+  return numbers.some((n) => n === digits || n.startsWith(`${digits}.`));
+}
+
 function stripBakedLabel(title: string, label: string | null | undefined): string {
   if (!label) return title;
   const bracketed = `[${label}] `;

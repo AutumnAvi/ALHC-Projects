@@ -29,6 +29,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { FormQuestionField } from "@/components/forms/public-form";
 import { FieldTypeIcon } from "@/components/project/field-editor";
 import { Popover } from "@/components/popover";
@@ -127,6 +128,7 @@ export function FormEditor({
   const notify = useNotify();
   const titleId = useId();
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [title, setTitle] = useState(form.title);
   const [description, setDescription] = useState(form.description ?? "");
   const [destination, setDestination] = useState(form.destinationSectionId ?? "");
@@ -162,8 +164,10 @@ export function FormEditor({
     dirtyRef.current = dirty;
   }, [dirty]);
 
-  function close() {
-    if (dirtyRef.current && !window.confirm("Discard your unsaved changes to this form?")) return;
+  async function close() {
+    if (dirtyRef.current && !(await confirm({ title: "Discard your unsaved changes to this form?", confirmLabel: "Discard", tone: "danger" }))) {
+      return;
+    }
     router.push(closeHref);
   }
   const closeRef = useRef(close);
@@ -1371,6 +1375,7 @@ function SettingsTab({
   onDeleted: () => void;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -1454,8 +1459,14 @@ function SettingsTab({
         <button
           type="button"
           disabled={pending}
-          onClick={() => {
-            if (!window.confirm(`Delete “${title || "this form"}”? Tasks it created stay; the link stops working.`)) return;
+          onClick={async () => {
+            const ok = await confirm({
+              title: `Delete “${title || "this form"}”?`,
+              message: "Tasks it created stay; the link stops working.",
+              confirmLabel: "Delete",
+              tone: "danger",
+            });
+            if (!ok) return;
             onDeleted();
             run(() => deleteForm(formId, projectId));
           }}

@@ -201,7 +201,8 @@ begin
 end $$;
 set role authenticated;
 
--- An outsider reads (the team is visible to everyone) but can't post, reply, or react; they can follow --
+-- An outsider (not on the team): since Oct 26 notes, batch 4 a team's messages are for its members, so
+-- they read nothing of it, and can't post, reply, react, or change a follow --------------------------
 
 select set_config('request.jwt.claim.sub', 'a2a2a2a2-0000-4000-8000-000000000003', false) is not null as ok \gset
 
@@ -210,9 +211,10 @@ declare
   team uuid := (select id from r2_ids where name = 'team');
   m uuid := (select id from r2_ids where name = 'thread');
 begin
-  assert public.can_read_team(team) and not public.can_post_team_message(team), 'reads, doesn''t post';
-  assert exists (select 1 from public.team_messages where id = m), 'the thread is readable';
-  assert exists (select 1 from public.inbox_items where team_message_id = m and kind = 'mention'), 'their own item is readable';
+  assert not public.can_read_team(team) and not public.can_post_team_message(team), 'neither reads nor posts';
+  assert not exists (select 1 from public.team_messages where id = m), 'the thread isn''t readable';
+  assert not exists (select 1 from public.inbox_items where team_message_id = m), 'nor an Inbox item about it';
+  assert not exists (select 1 from public.team_message_followers where thread_id = m), 'nor who follows it';
   begin
     insert into public.team_messages (team_id, title, body) values (team, 'Mine', 'Hello');
     raise exception 'non-members can''t start threads';
@@ -221,27 +223,15 @@ begin
   begin
     insert into public.team_messages (team_id, thread_id, body) values (team, m, 'A reply');
     raise exception 'non-members can''t reply';
-  exception when insufficient_privilege then null;
+  exception when insufficient_privilege or no_data_found then null;
   end;
   begin
     insert into public.team_message_reactions (message_id, emoji) values (m, 'heart');
     raise exception 'non-members can''t react';
-  exception when insufficient_privilege then null;
+  exception when insufficient_privilege or no_data_found then null;
   end;
-  -- Following: unfollow, follow again, never for someone else.
   update public.team_message_followers set deleted_at = now() where thread_id = m and profile_id = auth.uid();
-  assert exists (select 1 from public.team_message_followers where thread_id = m and profile_id = auth.uid() and deleted_at is not null),
-    'unfollowed';
-  update public.team_message_followers set deleted_at = null where thread_id = m and profile_id = auth.uid();
-  assert exists (select 1 from public.team_message_followers where thread_id = m and profile_id = auth.uid() and deleted_at is null),
-    'following again';
-  begin
-    update public.team_message_followers set deleted_at = now()
-    where thread_id = m and profile_id = 'a2a2a2a2-0000-4000-8000-000000000002';
-    assert not found, 'someone else''s follow isn''t theirs to change';
-  end;
-  assert exists (select 1 from public.team_message_followers where thread_id = m
-                   and profile_id = 'a2a2a2a2-0000-4000-8000-000000000002' and deleted_at is null), 'still following';
+  assert not found, 'nor unfollow (they can''t read the thread)';
 end $$;
 
 -- The admin (manages every team) and the lead reply; followers hear about it --------------------------

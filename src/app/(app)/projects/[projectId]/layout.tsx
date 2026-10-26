@@ -20,6 +20,8 @@ import {
   listSections,
   listStarredProjectIds,
   getRequestSequence,
+  getProjectViewSettings,
+  hasOct26Batch4Schema,
   listStatusTemplates,
   listTaskTemplates,
 } from "@/lib/data";
@@ -52,6 +54,8 @@ export default async function ProjectLayout({
     real4,
     statusTemplates,
     numbering,
+    viewSettings,
+    batch4Schema,
   ] = await Promise.all([
       getProject(projectId),
       listProjectViews(projectId),
@@ -68,6 +72,8 @@ export default async function ProjectLayout({
       hasReal4Schema(),
       listStatusTemplates(projectId),
       getRequestSequence(projectId),
+      getProjectViewSettings(projectId),
+      hasOct26Batch4Schema(),
     ]);
   if (!project || !role) {
     // A layout doesn't stop its pages from rendering, so the request page is a route of its own.
@@ -104,7 +110,12 @@ export default async function ProjectLayout({
   return (
     <ProjectAccessProvider role={role}>
       <TaskTemplatesProvider templates={taskTemplates.map(({ id, name, title }) => ({ id, name, title }))}>
-        <ProjectPageProvider project={{ id: project.id, name: project.name }} batch4={batch4} statusTemplates={statusTemplates}>
+        <ProjectPageProvider
+          project={{ id: project.id, name: project.name }}
+          batch4={batch4}
+          archived={project.archived_at !== null}
+          statusTemplates={statusTemplates}
+        >
           <div className="flex min-h-0 flex-1 flex-col">
             <RecordRecent kind="project" id={project.id} />
             <ProjectHeader
@@ -114,8 +125,11 @@ export default async function ProjectLayout({
               customize={customize}
               starred={starredIds.includes(project.id)}
               members={headerMembers}
+              hiddenTabs={viewSettings.hiddenTabs}
+              defaultViewId={viewSettings.defaultViewId}
+              personalViews={batch4Schema}
             />
-            {project.archived_at ? <ArchivedProjectBanner projectId={project.id} canUnarchive={canArchive} /> : null}
+            <ArchivedProjectBanner canUnarchive={canArchive} />
             {children}
           </div>
         </ProjectPageProvider>

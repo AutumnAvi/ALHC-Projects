@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ArrowRight, ChartColumn, ChevronDown, ChevronUp, Hash, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { displayName } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { FilterChips, FilterEditor, type FilterContext } from "@/components/project/filter-editor";
@@ -160,6 +161,7 @@ function WidgetCard({
 }) {
   const { widget } = data;
   const [, run] = useServerAction();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const chart = widget.kind !== "count";
   const total = data.buckets.reduce((sum, b) => sum + b.count, 0);
@@ -216,9 +218,11 @@ function WidgetCard({
                 </MenuItem>
                 <MenuItem
                   danger
-                  onClick={() => {
+                  onClick={async () => {
                     close();
-                    if (window.confirm(`Remove the widget “${widget.title}”?`)) run(() => deleteWidget(widget.id));
+                    if (await confirm({ title: `Remove the widget “${widget.title}”?`, confirmLabel: "Remove", tone: "danger" })) {
+                      run(() => deleteWidget(widget.id));
+                    }
                   }}
                 >
                   <Trash2 className="size-4" /> Remove

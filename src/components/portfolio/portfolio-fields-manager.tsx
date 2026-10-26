@@ -1,6 +1,7 @@
 "use client";
 
 import { ColorPicker } from "@/components/color-picker";
+import { useConfirm } from "@/components/confirm";
 import { useState } from "react";
 import { ListPlus, Plus, Trash2, X } from "lucide-react";
 import { EmptyState } from "@/components/ui";
@@ -104,6 +105,7 @@ export function PortfolioFieldsManager({
 
 function FieldRow({ field, canEdit }: { field: PortfolioField; canEdit: boolean }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [optionName, setOptionName] = useState("");
   const saveOptions = (options: FieldOption[]) => run(() => updatePortfolioField(field.id, { options }));
 
@@ -134,8 +136,15 @@ function FieldRow({ field, canEdit }: { field: PortfolioField; canEdit: boolean 
           <button
             type="button"
             disabled={pending}
-            onClick={() => {
-              if (window.confirm(`Delete the field “${field.name}”? Its values are hidden everywhere.`)) {
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: `Delete the field “${field.name}”?`,
+                  message: "Its values are hidden everywhere.",
+                  confirmLabel: "Delete",
+                  tone: "danger",
+                })
+              ) {
                 run(() => deletePortfolioField(field.id));
               }
             }}

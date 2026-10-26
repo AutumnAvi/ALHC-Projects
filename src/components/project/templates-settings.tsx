@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { LayoutTemplate, ListPlus, Pencil, Plus, Trash2 } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { ReadOnlyNotice, useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
@@ -265,6 +266,7 @@ function TaskTemplateRow({
 }) {
   const canDelete = useProjectPermissions().canManage;
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const assignee = template.assigneeId ? profiles.find((p) => p.id === template.assigneeId) : null;
 
@@ -365,8 +367,15 @@ function TaskTemplateRow({
         <button
           type="button"
           disabled={pending}
-          onClick={() => {
-            if (window.confirm(`Delete the task template “${template.name}”? Tasks made from it are not affected.`)) {
+          onClick={async () => {
+            if (
+              await confirm({
+                title: `Delete the task template “${template.name}”?`,
+                message: "Tasks made from it are not affected.",
+                confirmLabel: "Delete",
+                tone: "danger",
+              })
+            ) {
               run(() => deleteTaskTemplate(template.id));
             }
           }}

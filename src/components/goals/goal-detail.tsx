@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Briefcase, ChevronRight, EyeOff, Link2, MessageSquare, Plus, Target, Trash2, X } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { GoalStatusBadge } from "@/components/goals/goal-status-badge";
 import { NewGoalDialog, type PersonOption, type TeamOption } from "@/components/goals/new-goal-dialog";
 import { ProgressBar } from "@/components/portfolio/progress-bar";
@@ -74,6 +75,7 @@ export function GoalDetail({
   today: string;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [addingSubGoal, setAddingSubGoal] = useState(false);
   const editable = goalEditable(goal, viewer);
   const parent = goal.parentId ? goals.find((g) => g.id === goal.parentId) ?? null : null;
@@ -246,14 +248,19 @@ export function GoalDetail({
                       { value: "", label: "No owner" },
                       ...people.map((p) => ({ value: p.id, label: p.name, icon: <Avatar name={p.name} profileId={p.id} /> })),
                     ]}
-                    onPick={(value, revert) => {
+                    onPick={async (value, revert) => {
                       const next = value || null;
                       // Handing a goal to someone else can take away your own edit rights.
                       if (
                         next !== viewer.id &&
                         goal.ownerId === viewer.id &&
                         !goalEditable({ ownerId: next, teamId: goal.teamId }, viewer) &&
-                        !window.confirm("Give this goal away? You won’t be able to edit it afterwards.")
+                        !(await confirm({
+                          title: "Give this goal away?",
+                          message: "You won’t be able to edit it afterwards.",
+                          confirmLabel: "Give it away",
+                          tone: "danger",
+                        }))
                       ) {
                         revert();
                         return;
@@ -400,9 +407,11 @@ export function GoalDetail({
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => {
-                  const extra = subGoals.length ? " Its sub-goals stay, as top-level goals." : "";
-                  if (window.confirm(`Delete “${goal.title}”?${extra}`)) run(() => deleteGoal(goal.id));
+                onClick={async () => {
+                  const extra = subGoals.length ? "Its sub-goals stay, as top-level goals." : undefined;
+                  if (await confirm({ title: `Delete “${goal.title}”?`, message: extra, confirmLabel: "Delete", tone: "danger" })) {
+                    run(() => deleteGoal(goal.id));
+                  }
                 }}
                 className="btn-ghost w-full justify-center text-zinc-600 hover:bg-red-50 hover:text-red-700"
               >
@@ -642,6 +651,7 @@ function UpdatesCard({
   pending: boolean;
   run: ReturnType<typeof useServerAction>[1];
 }) {
+  const confirm = useConfirm();
   const [status, setStatus] = useState<GoalStatus>(goal.status);
   const [body, setBody] = useState("");
 
@@ -721,8 +731,15 @@ function UpdatesCard({
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => {
-                      if (window.confirm("Delete this status update? The goal keeps its current status.")) {
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: "Delete this status update?",
+                          message: "The goal keeps its current status.",
+                          confirmLabel: "Delete",
+                          tone: "danger",
+                        })
+                      ) {
                         run(() => deleteGoalStatusUpdate(update.id));
                       }
                     }}

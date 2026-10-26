@@ -14,6 +14,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useDependencyShift } from "@/components/task/dependency-shift";
@@ -123,6 +124,7 @@ export function BulkBar({
   const [adding, setAdding] = useState<{ person: BulkPerson; taskIds: string[] } | null>(null);
   const [addPending, startAdd] = useTransition();
   const notify = useNotify();
+  const confirm = useConfirm();
   const memberIds = context.memberIds ? new Set(context.memberIds) : null;
 
   function assign(assigneeId: string | null) {
@@ -411,8 +413,15 @@ export function BulkBar({
           <button
             type="button"
             className={`${BAR_BUTTON} hover:bg-red-600`}
-            onClick={() => {
-              if (window.confirm(`Move ${taskCount(count)} to the Trash? Editors can restore them from Settings → Trash.`)) {
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: `Move ${taskCount(count)} to the Trash?`,
+                  message: "Editors can restore them from Settings → Trash.",
+                  confirmLabel: "Move to Trash",
+                  tone: "danger",
+                })
+              ) {
                 run({ action: "delete" });
               }
             }}

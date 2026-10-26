@@ -13,7 +13,7 @@ export const NOTIFICATION_KINDS = [
   {
     key: "mention",
     label: "@mentions",
-    description: "Someone @mentions you in a comment, a project message, or a team message.",
+    description: "Someone @mentions you in a comment or a project message.",
   },
   {
     key: "comment",
@@ -23,7 +23,7 @@ export const NOTIFICATION_KINDS = [
   {
     key: "message",
     label: "Messages",
-    description: "A new thread in one of your teams, and replies in message threads you follow or took part in.",
+    description: "A reply in a project message thread you started or took part in.",
   },
   {
     key: "status_update",

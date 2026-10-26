@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Bell, BellOff, ChevronLeft, MessagesSquare, Pencil, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { MentionTextarea } from "@/components/task/mention-textarea";
 import { COMMENT_INPUT, MentionText, ReactionBar } from "@/components/task/task-activity";
@@ -511,6 +512,7 @@ function MessageItem({
   canPost: boolean;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<{ title: string; body: string } | null>(null);
   const mine = message.authorId === memberId && canPost;
   const author = nameOf(message.authorId);
@@ -555,8 +557,14 @@ function MessageItem({
                 type="button"
                 aria-label={isThread ? "Delete message and its replies" : "Delete reply"}
                 data-tooltip="Delete"
-                onClick={() => {
-                  if (window.confirm(isThread ? "Delete this message and hide its replies?" : "Delete this reply?")) {
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: isThread ? "Delete this message and hide its replies?" : "Delete this reply?",
+                      confirmLabel: "Delete",
+                      tone: "danger",
+                    })
+                  ) {
                     run(() => actions.remove(message.id, isThread ? scope.id : undefined));
                   }
                 }}

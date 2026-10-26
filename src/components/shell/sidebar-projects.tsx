@@ -18,6 +18,7 @@ import {
   StarOff,
   Trash2,
 } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useShell } from "@/components/shell/shell-context";
 import { DROP_TARGET, Group, NAV_LINK } from "@/components/shell/sidebar-group";
@@ -76,6 +77,7 @@ export function SidebarProjects({
 }) {
   const { openDialog } = useShell();
   const [, run] = useServerAction();
+  const confirm = useConfirm();
   const [state, apply] = useOptimistic<SidebarState, SidebarChange[]>(
     { ...folders, starredIds },
     (current, changes) => changes.reduce(applySidebarChange, current),
@@ -115,8 +117,14 @@ export function SidebarProjects({
     run(() => updateSidebarFolder(folder.id, patch), () => apply([{ type: "folder", folder: { ...folder, ...patch } }]));
   }
 
-  function removeFolder(folder: SidebarFolder) {
-    if (!window.confirm(`Remove the folder “${folder.name}”? Its projects go back under Projects.`)) return;
+  async function removeFolder(folder: SidebarFolder) {
+    const ok = await confirm({
+      title: `Remove the folder “${folder.name}”?`,
+      message: "Its projects go back under Projects.",
+      confirmLabel: "Remove",
+      tone: "danger",
+    });
+    if (!ok) return;
     run(() => deleteSidebarFolder(folder.id), () => apply([{ type: "removeFolder", folderId: folder.id }]));
   }
 

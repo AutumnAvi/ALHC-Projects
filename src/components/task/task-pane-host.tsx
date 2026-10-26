@@ -77,7 +77,7 @@ function PaneForTask({ taskId, serverPane }: { taskId: string; serverPane: Promi
   if (fromServer && (!entry || fromServer.loadedAt >= entry.loadedAt)) detail = fromServer.task;
   const context = cachedContext ?? fromServer?.context ?? null;
 
-  if (detail === null) return <TaskNotFoundPanel />;
+  if (detail === null) return <TaskNotFoundPanel taskId={taskId} />;
   if (!detail || !context) return <PaneFallback taskId={taskId} />;
   return (
     <TaskDetailPanel

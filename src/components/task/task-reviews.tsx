@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { Ban, FileText, Image as ImageIcon, Paperclip, Send, Video } from "lucide-react";
 import { displayName } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { PinList } from "@/components/review/pin-list";
 import { ReviewViewer, type ViewerPin } from "@/components/review/review-viewer";
@@ -99,6 +100,7 @@ function RoundCard({
   onChanged: () => void;
 }) {
   const notify = useNotify();
+  const confirm = useConfirm();
   const [pending, start] = useTransition();
   const [active, setActive] = useState(0);
   const [activePin, setActivePin] = useState<string | null>(null);
@@ -125,8 +127,14 @@ function RoundCard({
     });
   }
 
-  function withdraw() {
-    if (!window.confirm(`Withdraw review v${round.round}? ${round.recipientEmail} won’t be able to answer it.`)) return;
+  async function withdraw() {
+    const ok = await confirm({
+      title: `Withdraw review v${round.round}?`,
+      message: `${round.recipientEmail} won’t be able to answer it.`,
+      confirmLabel: "Withdraw",
+      tone: "danger",
+    });
+    if (!ok) return;
     start(async () => {
       const result = await withdrawReviewCheck(round.id);
       if (result.error) notify(result.error);

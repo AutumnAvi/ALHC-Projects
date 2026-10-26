@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useOptimistic, useState } from "react";
 import { Archive, AtSign, Bookmark, Inbox, ListFilter } from "lucide-react";
+import { useConfirm, usePrompt } from "@/components/confirm";
 import { InboxCard, inboxItemHref, type CardState, type Decision } from "@/components/inbox/inbox-card";
 import { useInboxDensity } from "@/components/inbox/inbox-density";
 import { InboxToolbar } from "@/components/inbox/inbox-toolbar";
@@ -71,6 +72,8 @@ export function InboxView({
   const pages = useGroupPages();
   const density = useInboxDensity();
   const [, run] = useServerAction();
+  const confirm = useConfirm();
+  const prompt = usePrompt();
   const [filter, setFilter] = useState<InboxFilter>(NO_INBOX_FILTER);
   const [sort, setSort] = useState<InboxSort>("newest");
   const [clickedId, setClickedId] = useState<string | null>(null);
@@ -146,13 +149,18 @@ export function InboxView({
     change([item.id], { read }, () => (read ? markInboxRead([item.id]) : markInboxUnread(item.id)));
 
   // The approver decides a pending request right here (decide_approval: approver only, Commenter+).
-  function decide(item: InboxItem, decision: Decision) {
+  async function decide(item: InboxItem, decision: Decision) {
     if (!item.approval) return;
     let note: string | undefined;
     if (decision !== "approved") {
-      const answer = window.prompt(
-        decision === "rejected" ? "Reject — add a note for the requester (optional)" : "What should change? (optional)",
-      );
+      const rejecting = decision === "rejected";
+      const answer = await prompt({
+        title: rejecting ? "Reject this request?" : "Request changes?",
+        label: "Note for the requester (optional)",
+        placeholder: rejecting ? undefined : "What should change?",
+        confirmLabel: rejecting ? "Reject" : "Request changes",
+        tone: rejecting ? "danger" : "default",
+      });
       if (answer === null) return;
       note = answer.trim() || undefined;
     }
@@ -179,12 +187,13 @@ export function InboxView({
                 ? "Archive this notification"
                 : `Archive these ${visible.length} notifications`,
           disabled: (filtering ? visible : tabItems).length === 0,
-          run: () => {
+          run: async () => {
             const ids = (filtering ? visible : tabItems).map((item) => item.id);
             const question = filtering
               ? `Archive the ${ids.length === 1 ? "notification" : `${ids.length} notifications`} that match your filters?`
               : "Archive every notification in Activity?";
-            if (!window.confirm(`${question} You can move them back from the Archive tab.`)) return;
+            const ok = await confirm({ title: question, message: "You can move them back from the Archive tab.", confirmLabel: "Archive" });
+            if (!ok) return;
             change(ids, { archived: true }, () => archiveInboxItems(filtering ? ids : "all", true));
           },
         }
@@ -333,7 +342,7 @@ function TabEmptyState({ tab, bookmarks }: { tab: InboxTab; bookmarks: boolean }
     case "mentioned":
       return (
         <EmptyState icon={AtSign} title="No @mentions yet">
-          When someone @mentions you in a task comment, a project message, or a team message, it shows up here,
+          When someone @mentions you in a task comment or a project message, it shows up here,
           archived or not.
         </EmptyState>
       );

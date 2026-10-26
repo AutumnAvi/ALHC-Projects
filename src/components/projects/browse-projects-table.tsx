@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Check, ChevronDown, FolderKanban, Globe, Lock, Search, X } from "lucide-react";
+import { Archive, ArrowDown, ArrowUp, Check, ChevronDown, FolderKanban, Globe, Lock, Search, X } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { Popover } from "@/components/popover";
@@ -90,6 +90,9 @@ export function BrowseProjectsTable({
   }, [projects, needle, owners, members, teamIds, statuses, sort]);
 
   const filtering = Boolean(needle || owners.length || members.length || teamIds.length || statuses.length);
+  // Oct 26 notes (batch 4): archived projects get their own section under the rest.
+  const activeRows = shown.filter((p) => !p.archived);
+  const archivedRows = shown.filter((p) => p.archived);
 
   function clear() {
     setQuery("");
@@ -172,127 +175,174 @@ export function BrowseProjectsTable({
           </EmptyState>
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200">
-          <table className="w-full min-w-[40rem] border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-500">
-                <th scope="col" aria-sort={sort.key === "name" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className="px-3 py-2 font-medium">
-                  <SortButton label="Name" active={sort.key === "name"} dir={sort.dir} onClick={() => toggleSort("name")} />
-                </th>
-                <th scope="col" className="w-44 px-3 py-2 font-medium">
-                  Members
-                </th>
-                <th
-                  scope="col"
-                  aria-sort={sort.key === "modified" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                  className="w-36 px-3 py-2 font-medium"
-                >
-                  <SortButton label="Last modified" active={sort.key === "modified"} dir={sort.dir} onClick={() => toggleSort("modified")} />
-                </th>
-                <th scope="col" className="w-28 px-3 py-2 font-medium">
-                  <span className="sr-only">Join</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((p) => {
-                const member = p.myRole !== null;
-                const memberIds = p.memberIds ?? [];
-                const shownMembers = memberIds.slice(0, 3);
-                return (
-                  <tr key={p.projectId} className="border-b border-zinc-100 last:border-b-0 hover:bg-zinc-50">
-                    <td className="px-3 py-2">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <span aria-hidden className={`size-4 shrink-0 rounded-[5px] ${projectColorClass(p.projectId)}`} />
-                        <div className="min-w-0">
-                          <p className="flex min-w-0 items-center gap-1.5">
-                            {member ? (
-                              <Link href={`/projects/${p.projectId}`} className="truncate font-medium text-zinc-900 hover:underline">
-                                {p.name}
-                              </Link>
-                            ) : (
-                              <span className="truncate font-medium text-zinc-900">{p.name}</span>
-                            )}
-                            <span className="shrink-0 text-zinc-400" data-tooltip={VISIBILITY_LABELS[p.visibility]}>
-                              {p.visibility === "team" ? <Globe className="size-3.5" aria-hidden /> : <Lock className="size-3.5" aria-hidden />}
-                              <span className="sr-only">{VISIBILITY_LABELS[p.visibility]}</span>
-                            </span>
-                            {p.archived ? <span className="chip shrink-0">Archived</span> : null}
-                            {isProjectStatus(p.status) && !p.archived ? (
-                              <span className="hidden shrink-0 items-center gap-1 text-2xs text-zinc-500 md:inline-flex">
-                                <span aria-hidden className={`size-1.5 rounded-full ${PROJECT_STATUS_DOT[p.status]}`} />
-                                {PROJECT_STATUS_LABELS[p.status]}
-                              </span>
-                            ) : null}
-                          </p>
-                          <p className="truncate text-xs text-zinc-500">
-                            {p.teamName}
-                            {p.description ? ` · ${p.description}` : ""}
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      {p.memberIds ? (
-                        <span
-                          className="inline-flex items-center gap-1.5"
-                          aria-label={`${p.memberCount} ${p.memberCount === 1 ? "member" : "members"}: ${memberIds
-                            .slice(0, 5)
-                            .map((id) => names.get(id) ?? "Someone")
-                            .join(", ")}${memberIds.length > 5 ? ", and others" : ""}`}
-                        >
-                          <span className="flex -space-x-1" aria-hidden>
-                            {shownMembers.map((id) => (
-                              <span key={id} className="rounded-full ring-2 ring-white">
-                                <Avatar name={names.get(id) ?? "?"} profileId={id} size="md" />
-                              </span>
-                            ))}
-                          </span>
-                          {p.memberCount > shownMembers.length ? (
-                            <span aria-hidden className="text-xs tabular-nums text-zinc-500">
-                              +{p.memberCount - shownMembers.length}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : (
-                        <span className="text-xs tabular-nums text-zinc-600">
-                          {p.memberCount} {p.memberCount === 1 ? "member" : "members"}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-zinc-600">
-                      {p.modifiedAt ? <Timestamp iso={p.modifiedAt} /> : <span className="text-zinc-400">—</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {member ? (
-                        <span
-                          className="inline-flex h-7 w-24 items-center justify-center gap-1 rounded-md bg-zinc-100 text-xs font-medium text-zinc-600"
-                          data-tooltip={isProjectRole(p.myRole) ? `Your role: ${ROLE_LABELS[p.myRole]}` : undefined}
-                        >
-                          <Check className="size-3.5" aria-hidden />
-                          Joined
-                        </span>
-                      ) : p.archived ? (
-                        <span className="inline-block w-24 text-center text-xs text-zinc-400">Can’t join</span>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => join(p)}
-                          aria-label={`Join ${p.name}`}
-                          className="btn-secondary h-7 w-24 border-accent-300 text-accent-700 hover:border-accent-400 hover:bg-accent-50"
-                        >
-                          Join
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {activeRows.length > 0 ? (
+            <ProjectTable rows={activeRows} sort={sort} onSort={toggleSort} names={names} pending={pending} onJoin={join} />
+          ) : (
+            <div className="mt-4">
+              <EmptyState icon={Search} title={filtering ? "No active projects match" : "No active projects"} size="inline">
+                {filtering ? "Try another name or remove a filter." : "Every project here is archived."}
+              </EmptyState>
+            </div>
+          )}
+          {archivedRows.length > 0 ? (
+            <section aria-labelledby="browse-archived-heading" className="mt-8">
+              <h2 id="browse-archived-heading" className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+                <Archive className="size-4 text-zinc-500" aria-hidden />
+                Archived
+                <span className="text-xs font-normal tabular-nums text-zinc-500">{archivedRows.length}</span>
+              </h2>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                Read-only for everyone until an admin or owner unarchives them. They’re not in the sidebar, Home, or
+                project pickers.
+              </p>
+              <ProjectTable rows={archivedRows} sort={sort} onSort={toggleSort} names={names} pending={pending} onJoin={join} />
+            </section>
+          ) : null}
+        </>
       )}
+    </div>
+  );
+}
+
+// One table of projects (the active ones, or the Archived section's).
+function ProjectTable({
+  rows,
+  sort,
+  onSort,
+  names,
+  pending,
+  onJoin,
+}: {
+  rows: BrowseRow[];
+  sort: { key: SortKey; dir: "asc" | "desc" };
+  onSort: (key: SortKey) => void;
+  names: Map<string, string>;
+  pending: boolean;
+  onJoin: (project: BrowseRow) => void;
+}) {
+  const toggleSort = onSort;
+  const join = onJoin;
+  return (
+    <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200">
+      <table className="w-full min-w-[40rem] border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-500">
+            <th scope="col" aria-sort={sort.key === "name" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className="px-3 py-2 font-medium">
+              <SortButton label="Name" active={sort.key === "name"} dir={sort.dir} onClick={() => toggleSort("name")} />
+            </th>
+            <th scope="col" className="w-44 px-3 py-2 font-medium">
+              Members
+            </th>
+            <th
+              scope="col"
+              aria-sort={sort.key === "modified" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+              className="w-36 px-3 py-2 font-medium"
+            >
+              <SortButton label="Last modified" active={sort.key === "modified"} dir={sort.dir} onClick={() => toggleSort("modified")} />
+            </th>
+            <th scope="col" className="w-28 px-3 py-2 font-medium">
+              <span className="sr-only">Join</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => {
+            const member = p.myRole !== null;
+            const memberIds = p.memberIds ?? [];
+            const shownMembers = memberIds.slice(0, 3);
+            return (
+              <tr key={p.projectId} className="border-b border-zinc-100 last:border-b-0 hover:bg-zinc-50">
+                <td className="px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span aria-hidden className={`size-4 shrink-0 rounded-[5px] ${projectColorClass(p.projectId)}`} />
+                    <div className="min-w-0">
+                      <p className="flex min-w-0 items-center gap-1.5">
+                        {member ? (
+                          <Link href={`/projects/${p.projectId}`} className="truncate font-medium text-zinc-900 hover:underline">
+                            {p.name}
+                          </Link>
+                        ) : (
+                          <span className="truncate font-medium text-zinc-900">{p.name}</span>
+                        )}
+                        <span className="shrink-0 text-zinc-400" data-tooltip={VISIBILITY_LABELS[p.visibility]}>
+                          {p.visibility === "team" ? <Globe className="size-3.5" aria-hidden /> : <Lock className="size-3.5" aria-hidden />}
+                          <span className="sr-only">{VISIBILITY_LABELS[p.visibility]}</span>
+                        </span>
+                        {p.archived ? <span className="chip shrink-0">Archived</span> : null}
+                        {isProjectStatus(p.status) && !p.archived ? (
+                          <span className="hidden shrink-0 items-center gap-1 text-2xs text-zinc-500 md:inline-flex">
+                            <span aria-hidden className={`size-1.5 rounded-full ${PROJECT_STATUS_DOT[p.status]}`} />
+                            {PROJECT_STATUS_LABELS[p.status]}
+                          </span>
+                        ) : null}
+                      </p>
+                      <p className="truncate text-xs text-zinc-500">
+                        {p.teamName}
+                        {p.description ? ` · ${p.description}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  {p.memberIds ? (
+                    <span
+                      className="inline-flex items-center gap-1.5"
+                      aria-label={`${p.memberCount} ${p.memberCount === 1 ? "member" : "members"}: ${memberIds
+                        .slice(0, 5)
+                        .map((id) => names.get(id) ?? "Someone")
+                        .join(", ")}${memberIds.length > 5 ? ", and others" : ""}`}
+                    >
+                      <span className="flex -space-x-1" aria-hidden>
+                        {shownMembers.map((id) => (
+                          <span key={id} className="rounded-full ring-2 ring-white">
+                            <Avatar name={names.get(id) ?? "?"} profileId={id} size="md" />
+                          </span>
+                        ))}
+                      </span>
+                      {p.memberCount > shownMembers.length ? (
+                        <span aria-hidden className="text-xs tabular-nums text-zinc-500">
+                          +{p.memberCount - shownMembers.length}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <span className="text-xs tabular-nums text-zinc-600">
+                      {p.memberCount} {p.memberCount === 1 ? "member" : "members"}
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-xs text-zinc-600">
+                  {p.modifiedAt ? <Timestamp iso={p.modifiedAt} /> : <span className="text-zinc-400">—</span>}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {member ? (
+                    <span
+                      className="inline-flex h-7 w-24 items-center justify-center gap-1 rounded-md bg-zinc-100 text-xs font-medium text-zinc-600"
+                      data-tooltip={isProjectRole(p.myRole) ? `Your role: ${ROLE_LABELS[p.myRole]}` : undefined}
+                    >
+                      <Check className="size-3.5" aria-hidden />
+                      Joined
+                    </span>
+                  ) : p.archived ? (
+                    <span className="inline-block w-24 text-center text-xs text-zinc-400">Can’t join</span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => join(p)}
+                      aria-label={`Join ${p.name}`}
+                      className="btn-secondary h-7 w-24 border-accent-300 text-accent-700 hover:border-accent-400 hover:bg-accent-50"
+                    >
+                      Join
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

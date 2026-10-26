@@ -19,6 +19,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ColorPicker } from "@/components/color-picker";
+import { useConfirm } from "@/components/confirm";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
@@ -280,6 +281,7 @@ function FieldForm({
   onClose: () => void;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<Draft>(() => draftOf(field));
   const [newOption, setNewOption] = useState("");
   const creating = field === null;
@@ -559,8 +561,14 @@ function FieldForm({
           <button
             type="button"
             disabled={pending}
-            onClick={() => {
-              if (!window.confirm(`Delete the “${field.name}” field? Existing values are kept in the database.`)) return;
+            onClick={async () => {
+              const ok = await confirm({
+                title: `Delete the “${field.name}” field?`,
+                message: "Existing values are kept in the database.",
+                confirmLabel: "Delete",
+                tone: "danger",
+              });
+              if (!ok) return;
               run(async () => {
                 const result = await deleteField(field.id);
                 if (!result.error) onClose();

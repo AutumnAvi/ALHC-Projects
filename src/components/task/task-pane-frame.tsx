@@ -1,10 +1,14 @@
 "use client";
 
 import { usePathname, useSearchParams } from "next/navigation";
-import { createContext, useContext, useEffect, type ReactNode } from "react";
-import { ArrowRightToLine, Maximize2, Minimize2, MoveHorizontal, SearchX, X } from "lucide-react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { ArrowRightToLine, Maximize2, Minimize2, MoveHorizontal, RotateCcw, SearchX, Trash2, X } from "lucide-react";
 import { useTaskPane } from "@/components/shell/right-panel";
+import { useServerAction } from "@/components/toast";
 import { EmptyState, Skeleton } from "@/components/ui";
+import { restoreTask } from "@/lib/actions";
+import { loadTrashedTask } from "@/lib/shell-actions";
+import { ensureTaskPane, invalidateTaskPanes } from "./task-pane-store";
 import { setPaneExpanded, setPaneWide, usePaneExpanded, usePaneWide } from "./pane-size";
 import { PANE_FIELDS } from "./pane-styles";
 
@@ -135,7 +139,25 @@ export function CloseButton() {
 
 export const PANE_HEADER = "flex h-12 shrink-0 items-center gap-2 border-b border-zinc-200 px-3 print:hidden";
 
-export function TaskNotFoundPanel() {
+export function TaskNotFoundPanel({ taskId = null }: { taskId?: string | null }) {
+  // Oct 26 notes (batch 4): a trashed task opened from a link (Inbox, activity, a bookmark) offers
+  // Restore to the people who may restore it (Editors+, the only ones who can read it in the Trash).
+  const [trashed, setTrashed] = useState<{ id: string; title: string; deletedAt: string } | null>(null);
+  const [pending, run] = useServerAction();
+  useEffect(() => {
+    if (!taskId) return;
+    let live = true;
+    loadTrashedTask(taskId).then(
+      (task) => {
+        if (live) setTrashed(task);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [taskId]);
+
   return (
     <PaneShell label="Task details">
       <div className={`${PANE_HEADER} justify-end`}>
@@ -143,9 +165,43 @@ export function TaskNotFoundPanel() {
         <CloseButton />
       </div>
       <div className="p-gutter">
-        <EmptyState icon={SearchX} title="Task not found" size="inline">
-          It may have been deleted, or you no longer have access to its projects.
-        </EmptyState>
+        {trashed ? (
+          <EmptyState
+            icon={Trash2}
+            title="This task is in the Trash"
+            size="inline"
+            action={
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={pending}
+                onClick={() => {
+                  const id = trashed.id;
+                  run(async () => {
+                    const result = await restoreTask(id);
+                    if (!result.error) {
+                      setTrashed(null);
+                      // Fetch it again: the pane opens on the restored task.
+                      invalidateTaskPanes();
+                      ensureTaskPane(id);
+                    }
+                    return result;
+                  });
+                }}
+              >
+                <RotateCcw className="size-3.5" aria-hidden />
+                {pending ? "Restoring…" : "Restore task"}
+              </button>
+            }
+          >
+            “{trashed.title}” was deleted. Restoring it puts it back in every project it was in, with its section,
+            fields, subtasks, and comments.
+          </EmptyState>
+        ) : (
+          <EmptyState icon={SearchX} title="Task not found" size="inline">
+            It may have been deleted, or you no longer have access to its projects.
+          </EmptyState>
+        )}
       </div>
     </PaneShell>
   );

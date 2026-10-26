@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
@@ -192,6 +193,7 @@ function ApprovalItem({
   run: ReturnType<typeof useServerAction>[1];
   pending: boolean;
 }) {
+  const confirm = useConfirm();
   const [decisionNote, setDecisionNote] = useState("");
   const status = APPROVAL_STATUS[approval.status];
   const open = approval.status === "pending" || approval.status === "changes_requested";
@@ -271,8 +273,10 @@ function ApprovalItem({
           <button
             type="button"
             disabled={pending}
-            onClick={() => {
-              if (window.confirm("Cancel this approval request?")) run(() => cancelApproval(approval.id));
+            onClick={async () => {
+              if (await confirm({ title: "Cancel this approval request?", confirmLabel: "Cancel request", cancelLabel: "Keep it", tone: "danger" })) {
+                run(() => cancelApproval(approval.id));
+              }
             }}
             className="rounded-md px-2.5 py-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-50"
           >

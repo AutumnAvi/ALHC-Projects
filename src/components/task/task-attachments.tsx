@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Paperclip, Trash2, X } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { deleteAttachment, registerAttachment } from "@/lib/actions";
@@ -96,6 +97,7 @@ export function TaskAttachments({
   canEdit: boolean;
 }) {
   const [, run] = useServerAction();
+  const confirm = useConfirm();
   // Thumbnails that failed to load (e.g. the route downloaded instead) fall back to the file icon.
   const [brokenIds, setBrokenIds] = useState<ReadonlySet<string>>(() => new Set());
   // Index into `images` of the attachment shown in the lightbox (null = closed).
@@ -182,8 +184,8 @@ export function TaskAttachments({
                     type="button"
                     aria-label={`Remove attachment ${attachment.fileName}`}
                     data-tooltip="Remove"
-                    onClick={() => {
-                      if (window.confirm(`Remove “${attachment.fileName}” from this task?`)) {
+                    onClick={async () => {
+                      if (await confirm({ title: `Remove “${attachment.fileName}” from this task?`, confirmLabel: "Remove", tone: "danger" })) {
                         run(() => deleteAttachment(attachment.id));
                       }
                     }}

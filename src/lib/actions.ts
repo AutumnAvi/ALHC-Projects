@@ -1,9 +1,10 @@
 "use server";
 
-import { refresh } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import {
+  getProjectRole,
   getWorkspace,
   hasBatch4Schema,
   listFieldLibrary,
@@ -114,14 +115,22 @@ import {
 import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
 import { MAX_PORTFOLIO_FIELD_TEXT, isPortfolioFieldType, isProjectStatus } from "@/lib/portfolios";
 import { CALENDAR_FEED_TOKEN, calendarFeedUrls, isCalendarFeedScope } from "@/lib/calendar-feeds";
+import {
+  eventRowFrom,
+  type CalendarEventInput,
+  type CalendarEventRow,
+  type CalendarEventScope,
+} from "@/lib/calendar-events";
 import { requestOrigin } from "@/lib/origin";
 import { statusTemplateProblem, type StatusTemplateSection } from "@/lib/status-templates";
 import { STATUS_TITLE_MAX } from "@/lib/project-page";
 import { MAX_TEMPLATE_SUBTASKS, parseCopyResult, type DuplicateOptions } from "@/lib/templates";
 import {
   VIEW_LAYOUTS,
+  isFixedTab,
   isIsoDate,
   isViewLayout,
+  personalCopyName,
   isWidgetKind,
   parseFilters,
   parseViewConfig,
@@ -762,6 +771,9 @@ export async function setProjectArchived(projectId: string, archived: boolean): 
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.rpc("set_project_archived", { target_project: id(projectId), archive: archived === true }));
+    // Oct 26 notes (batch 4): every page that lists projects (sidebar, Home, Browse, pickers) changes, so
+    // drop the browser's cached copies too, not just this page's.
+    revalidatePath("/", "layout");
   });
 }
 
@@ -1517,6 +1529,23 @@ export async function saveListColumnWidths(projectId: string, widths: ColumnWidt
   }
 }
 
+// Oct 26 notes (batch 4): the List groups the person collapsed in a project, saved quietly (no refresh) so
+// they stay collapsed across visits and reloads.
+export async function saveListCollapsedGroups(projectId: string, keys: string[]): Promise<ActionResult> {
+  try {
+    const cleaned = [...new Set(keys.filter((k) => typeof k === "string" && k.length > 0 && k.length <= 120))].slice(0, 500);
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_list_collapsed_groups", { target_project: id(projectId), keys: cleaned });
+    // A database without this release: collapsing still works for the visit.
+    if (result.error?.code === "PGRST202") return {};
+    check(result);
+    return {};
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+}
+
 // Duplicate a task (duplicate_task): the copy lands where the caller is an Editor (see the migration).
 export async function duplicateTask(
   taskId: string,
@@ -1729,6 +1758,9 @@ export async function restoreTask(taskId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.rpc("restore_task", { target_task: id(taskId) }));
+    // Oct 26 notes (batch 4): the task is back in every project, My tasks, and search, so drop the
+    // browser's cached copies of those pages too (going back to the List shows it at once).
+    revalidatePath("/", "layout");
   });
 }
 
@@ -3313,6 +3345,45 @@ export async function removeTeamMember(teamId: string, profileId: string): Promi
   });
 }
 
+// Oct 26 notes (batch 4): "You're not part of this team" → Join team (the workspace's default team:
+// joined at once, status "member") or Request to join (every other team: "requested"). The database
+// decides; its rate limits come back as the message.
+export async function requestTeamJoin(teamId: string): Promise<ActionResult & { status?: string }> {
+  let status: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("request_team_join", { target_team: id(teamId, "team") });
+    if (error?.code === "PGRST202") throw new InputError("Joining a team needs this release’s database update");
+    if (error?.code === "P0002") throw new InputError("This team doesn’t exist any more");
+    check({ error });
+    status = typeof data === "string" ? data : undefined;
+  });
+  return { ...result, status };
+}
+
+// A team's leads and workspace admins add someone who asked (as a member or a lead) or decline.
+export async function decideTeamJoinRequest(
+  requestId: string,
+  decision: "approve" | "decline",
+  memberRole: string = "member",
+): Promise<ActionResult & { status?: string }> {
+  let status: string | undefined;
+  const result = await run(async () => {
+    if (decision !== "approve" && decision !== "decline") throw new InputError("Add or decline the request");
+    const role = teamRole(memberRole);
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("decide_team_join_request", {
+      target_request: id(requestId, "request"),
+      decision,
+      member_role: role,
+    });
+    if (error?.code === "P0002") throw new InputError("This request isn’t there any more, or you can’t decide it");
+    check({ error }, TEAM_NOT_ALLOWED);
+    status = typeof data === "string" ? data : undefined;
+  });
+  return { ...result, status };
+}
+
 // Group invite: every team member who isn't in the project yet joins it with one role, as ordinary
 // project members. People already in the project keep their role; anyone who can't be added is
 // skipped with a reason.
@@ -4838,13 +4909,18 @@ async function nextOrder(table: "project_views" | "dashboard_widgets", projectId
 
 export async function createView(
   projectId: string,
-  input: { name?: string; layout: string; config?: ViewConfig },
-): Promise<ActionResult> {
+  input: { name?: string; layout: string; config?: ViewConfig; personal?: boolean },
+  // false = return the new view's id instead of opening it (the caller navigates, e.g. after a toast).
+  open = true,
+): Promise<ActionResult & { viewId?: string }> {
   let viewId: string | null = null;
   const result = await run(async () => {
     if (!isViewLayout(input.layout)) throw new InputError("Unknown view layout");
     const fallback = VIEW_LAYOUTS.find((l) => l.value === input.layout)!.label;
     const supabase = await createClient();
+    // Oct 26 notes (batch 4): a personal view is only the creator's (RLS: Viewer+ of the project).
+    const ownerId = input.personal ? ((await supabase.auth.getUser()).data.user?.id ?? null) : null;
+    if (input.personal && !ownerId) throw new InputError("Sign in to save a view");
     const inserted = await supabase
       .from("project_views")
       .insert({
@@ -4853,15 +4929,21 @@ export async function createView(
         layout: input.layout,
         config: toJson(parseViewConfig(input.config ?? {})),
         sort_order: await nextOrder("project_views", projectId),
+        ...(ownerId ? { owner_id: ownerId } : {}),
       })
       .select("id")
       .single();
-    check(inserted);
+    if (input.personal && inserted.error?.code === "PGRST204") {
+      throw new InputError("Saving your own views needs this release’s database update");
+    }
+    check(inserted, input.personal ? NOT_ALLOWED : "Only Editors and up add tabs to a project. Save it as your own view instead.");
     viewId = inserted.data!.id;
   });
-  if (viewId && !result.error) redirect(`/projects/${projectId}/views/${viewId}`);
-  return result;
+  if (viewId && !result.error && open) redirect(`/projects/${projectId}/views/${viewId}`);
+  return { ...result, viewId: viewId ?? undefined };
 }
+
+const SHARED_VIEW_OWNERS_ONLY = "Only the project’s owners can change a shared view. Save it as your own view instead.";
 
 export async function updateView(
   viewId: string,
@@ -4872,15 +4954,43 @@ export async function updateView(
     if (patch.name !== undefined) update.name = text(patch.name, "View name", { max: 100 });
     if (patch.config !== undefined) update.config = toJson(parseViewConfig(patch.config));
     const supabase = await createClient();
-    check(await supabase.from("project_views").update(update).eq("id", id(viewId)));
+    // Since Oct 26 notes (batch 4) only Owners change what a shared view shows (the database says so).
+    checkUpdated(
+      await supabase.from("project_views").update(update).eq("id", id(viewId)).select("id"),
+      patch.config !== undefined ? SHARED_VIEW_OWNERS_ONLY : NOT_ALLOWED,
+    );
   });
+}
+
+// Saves a view's unsaved changes: into the view itself when it's yours or you own the project, else as
+// your own copy of it (the shared view stays as everyone sees it), which then opens.
+export async function saveViewChanges(
+  viewId: string,
+  config: ViewConfig,
+): Promise<ActionResult & { copied?: boolean; viewId?: string }> {
+  const supabase = await createClient();
+  const { data: view } = await supabase
+    .from("project_views")
+    .select("*")
+    .eq("id", id(viewId))
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!view) return { error: "This view no longer exists" };
+  const role = await getProjectRole(view.project_id);
+  if (view.owner_id || role === "owner") return updateView(viewId, { config });
+  const result = await createView(
+    view.project_id,
+    { name: personalCopyName(view.name), layout: view.layout, config, personal: true },
+    false,
+  );
+  return { ...result, copied: true };
 }
 
 export async function duplicateView(viewId: string): Promise<ActionResult> {
   const supabase = await createClient();
   const { data: view } = await supabase
     .from("project_views")
-    .select("project_id, name, layout, config")
+    .select("*")
     .eq("id", id(viewId))
     .is("deleted_at", null)
     .maybeSingle();
@@ -4889,6 +4999,7 @@ export async function duplicateView(viewId: string): Promise<ActionResult> {
     name: `${view.name} copy`.slice(0, 100),
     layout: view.layout,
     config: parseViewConfig(view.config),
+    personal: Boolean(view.owner_id),
   });
 }
 
@@ -4898,42 +5009,69 @@ export async function deleteView(viewId: string): Promise<ActionResult> {
     const supabase = await createClient();
     const { data: view } = await supabase
       .from("project_views")
-      .select("project_id")
+      .select("*")
       .eq("id", id(viewId))
       .is("deleted_at", null)
       .maybeSingle();
     if (!view) throw new InputError("This view no longer exists");
-    const { count } = await supabase
-      .from("project_views")
-      .select("id", { count: "exact", head: true })
-      .eq("project_id", view.project_id)
-      .is("deleted_at", null);
-    if ((count ?? 0) <= 1) throw new InputError("A project needs at least one view");
-    check(await supabase.from("project_views").update({ deleted_at: now() }).eq("id", viewId));
+    // A project always keeps one shared tab; your own views come and go freely. (A database without
+    // personal views has no owner_id: every view there is shared.)
+    if (!view.owner_id) {
+      const personal = "owner_id" in view;
+      const query = supabase
+        .from("project_views")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", view.project_id)
+        .is("deleted_at", null);
+      const { count } = await (personal ? query.is("owner_id", null) : query);
+      if ((count ?? 0) <= 1) throw new InputError("A project needs at least one view");
+    }
+    checkUpdated(await supabase.from("project_views").update({ deleted_at: now() }).eq("id", viewId).select("id"));
     projectId = view.project_id;
   });
   if (projectId && !result.error) redirect(`/projects/${projectId}`);
   return result;
 }
 
-// Swaps a view or widget with its neighbour (direction -1 = earlier, 1 = later).
+// Swaps a view or widget with its neighbour (direction -1 = earlier, 1 = later). Views move among their
+// own kind: shared tabs among shared tabs, your own views among yours.
 async function moveRow(table: "project_views" | "dashboard_widgets", rowId: string, direction: number) {
   const supabase = await createClient();
-  const { data: row } = await supabase
-    .from(table)
-    .select("project_id")
-    .eq("id", id(rowId))
-    .is("deleted_at", null)
-    .maybeSingle();
-  if (!row) throw new InputError("This item no longer exists");
-  const { data: siblings } = await supabase
-    .from(table)
-    .select("id, sort_order")
-    .eq("project_id", row.project_id)
-    .is("deleted_at", null)
-    .order("sort_order")
-    .order("created_at");
-  const list = siblings ?? [];
+  let siblings: { id: string; sort_order: number }[];
+  if (table === "project_views") {
+    const { data: row } = await supabase
+      .from("project_views")
+      .select("*")
+      .eq("id", id(rowId))
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!row) throw new InputError("This item no longer exists");
+    const query = supabase
+      .from("project_views")
+      .select("id, sort_order")
+      .eq("project_id", row.project_id)
+      .is("deleted_at", null);
+    const kind = !("owner_id" in row) ? query : row.owner_id ? query.eq("owner_id", row.owner_id) : query.is("owner_id", null);
+    const { data } = await kind.order("sort_order").order("created_at");
+    siblings = data ?? [];
+  } else {
+    const { data: row } = await supabase
+      .from(table)
+      .select("project_id")
+      .eq("id", id(rowId))
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!row) throw new InputError("This item no longer exists");
+    const { data } = await supabase
+      .from(table)
+      .select("id, sort_order")
+      .eq("project_id", row.project_id)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    siblings = data ?? [];
+  }
+  const list = siblings;
   const index = list.findIndex((s) => s.id === rowId);
   const target = index + (direction < 0 ? -1 : 1);
   if (index === -1 || target < 0 || target >= list.length) return;
@@ -4948,6 +5086,87 @@ async function moveRow(table: "project_views" | "dashboard_widgets", rowId: stri
 
 export async function moveView(viewId: string, direction: -1 | 1): Promise<ActionResult> {
   return run(() => moveRow("project_views", viewId, direction));
+}
+
+// Oct 26 notes (batch 4): hide one of the project's fixed tabs (Overview, Dashboard, Messages, Workload,
+// Files) or add it back. Editors+ (RLS); the tab's page itself stays reachable by its link.
+export async function setProjectTabHidden(projectId: string, tab: string, hidden: boolean): Promise<ActionResult> {
+  return run(async () => {
+    if (!isFixedTab(tab)) throw new InputError("Unknown tab");
+    const project = id(projectId);
+    const supabase = await createClient();
+    const current = await supabase
+      .from("project_view_settings")
+      .select("hidden_tabs")
+      .eq("project_id", project)
+      .maybeSingle();
+    if (current.error?.code === "PGRST205" || current.error?.code === "42P01") {
+      throw new InputError("Hiding tabs needs this release’s database update");
+    }
+    check(current);
+    const set = new Set(current.data?.hidden_tabs ?? []);
+    if (hidden) set.add(tab);
+    else set.delete(tab);
+    const hiddenTabs = [...set].filter(isFixedTab);
+    if (current.data) {
+      checkUpdated(
+        await supabase.from("project_view_settings").update({ hidden_tabs: hiddenTabs }).eq("project_id", project).select("project_id"),
+        "Only Editors and up change a project’s tabs",
+      );
+    } else {
+      const inserted = await supabase.from("project_view_settings").insert({ project_id: project, hidden_tabs: hiddenTabs });
+      // Someone else made the row a moment ago: change theirs instead.
+      if (inserted.error?.code === "23505") {
+        checkUpdated(
+          await supabase.from("project_view_settings").update({ hidden_tabs: hiddenTabs }).eq("project_id", project).select("project_id"),
+          "Only Editors and up change a project’s tabs",
+        );
+      } else {
+        check(inserted, "Only Editors and up change a project’s tabs");
+      }
+    }
+  });
+}
+
+// The view /projects/<id> opens for everyone (Owners only; null = the first tab).
+export async function setDefaultView(projectId: string, viewId: string | null): Promise<ActionResult> {
+  return run(async () => {
+    const project = id(projectId);
+    const view = viewId === null ? null : id(viewId, "view");
+    const supabase = await createClient();
+    const current = await supabase.from("project_view_settings").select("project_id").eq("project_id", project).maybeSingle();
+    if (current.error?.code === "PGRST205" || current.error?.code === "42P01") {
+      throw new InputError("A default view needs this release’s database update");
+    }
+    check(current);
+    const notAllowed = "Only the project’s owners choose its default view";
+    if (current.data) {
+      checkUpdated(
+        await supabase.from("project_view_settings").update({ default_view_id: view }).eq("project_id", project).select("project_id"),
+        notAllowed,
+      );
+    } else {
+      const inserted = await supabase.from("project_view_settings").insert({ project_id: project, default_view_id: view });
+      if (inserted.error?.code === "23505") {
+        checkUpdated(
+          await supabase.from("project_view_settings").update({ default_view_id: view }).eq("project_id", project).select("project_id"),
+          notAllowed,
+        );
+      } else {
+        check(inserted, notAllowed);
+      }
+    }
+  });
+}
+
+// Settings → Display: open my own saved view of a project first (when I have one).
+export async function setOpenPersonalView(enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_open_personal_view", { enabled: Boolean(enabled) });
+    if (result.error?.code === "PGRST202") throw new InputError("This setting needs this release’s database update");
+    check(result);
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -5607,6 +5826,104 @@ export async function revokeCalendarFeed(feedId: string): Promise<ActionResult> 
       .select("id");
     if (missingReal4(result.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
     checkUpdated(result, "This calendar link was already turned off");
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Oct 26 notes (batch 4): calendar events (not tasks) on a project or team Calendar. Project events:
+// Editors+ add, change, and remove them; team events: the team's members, leads, and workspace admins.
+// RLS decides (calendar_events_insert_editor / _update_editor); the guard trigger keeps an event on its
+// calendar, trims it, and sets its days from its times in its own time zone.
+// ---------------------------------------------------------------------------------------------
+
+const EVENTS_SCHEMA_MISSING = "Calendar events need this release’s database update, which isn’t applied yet";
+const TEAM_EVENTS_NOT_ALLOWED = "Your role in this team doesn’t allow that (only its members add or change its events)";
+
+export type CalendarEventResult = ActionResult & { eventId?: string };
+
+function eventScope(scope: unknown): CalendarEventScope {
+  const value = (scope && typeof scope === "object" ? scope : {}) as { projectId?: unknown; teamId?: unknown };
+  if (value.projectId !== undefined && value.teamId === undefined) return { projectId: id(value.projectId, "project") };
+  if (value.teamId !== undefined && value.projectId === undefined) return { teamId: id(value.teamId, "team") };
+  throw new InputError("Choose a project or team calendar");
+}
+
+function eventRow(input: CalendarEventInput): CalendarEventRow {
+  if (!input || typeof input !== "object") throw new InputError("Invalid event");
+  const made = eventRowFrom({
+    title: input.title,
+    notes: input.notes ?? null,
+    startOn: input.startOn,
+    endOn: input.endOn ?? null,
+    startTime: input.startTime ?? null,
+    endTime: input.endTime ?? null,
+    timeZone: input.timeZone,
+  });
+  if ("error" in made) throw new InputError(made.error);
+  return made.row;
+}
+
+// A missing table, a CHECK the input check missed, or RLS: each in plain words.
+function checkEventWrite(result: DbResult, scope: CalendarEventScope) {
+  const code = result.error?.code;
+  if (code === "PGRST205" || code === "42P01" || code === "PGRST204") throw new DbError(EVENTS_SCHEMA_MISSING);
+  const message = result.error?.message ?? "";
+  if (message.includes("calendar_events_title_check")) throw new InputError("Give the event a name.");
+  if (message.includes("calendar_events_dates_check")) throw new InputError("The event can’t end before it starts, or last more than a year.");
+  if (message.includes("calendar_events_times_check")) throw new InputError("The event can’t end before it starts.");
+  check(result, "projectId" in scope ? NOT_ALLOWED : TEAM_EVENTS_NOT_ALLOWED);
+}
+
+export async function createCalendarEvent(
+  scope: CalendarEventScope,
+  input: CalendarEventInput,
+): Promise<CalendarEventResult> {
+  let eventId: string | undefined;
+  const result = await run(async () => {
+    const target = eventScope(scope);
+    const row = eventRow(input);
+    const supabase = await createClient();
+    const inserted = await supabase
+      .from("calendar_events")
+      .insert({
+        ...row,
+        ...("projectId" in target ? { project_id: target.projectId } : { team_id: target.teamId }),
+      })
+      .select("id")
+      .single();
+    checkEventWrite(inserted, target);
+    eventId = inserted.data?.id;
+  });
+  return { ...result, eventId };
+}
+
+export async function updateCalendarEvent(
+  scope: CalendarEventScope,
+  eventId: string,
+  input: CalendarEventInput,
+): Promise<ActionResult> {
+  return run(async () => {
+    const target = eventScope(scope);
+    const row = eventRow(input);
+    const supabase = await createClient();
+    const query = supabase.from("calendar_events").update(row).eq("id", id(eventId, "event"));
+    const scoped = "projectId" in target ? query.eq("project_id", target.projectId) : query.eq("team_id", target.teamId);
+    const updated = await scoped.select("id");
+    checkEventWrite(updated, target);
+    checkUpdated(updated, "projectId" in target ? NOT_ALLOWED : TEAM_EVENTS_NOT_ALLOWED);
+  });
+}
+
+// Removing is final (the row stays, with deleted_at; the database stamps the time).
+export async function deleteCalendarEvent(scope: CalendarEventScope, eventId: string): Promise<ActionResult> {
+  return run(async () => {
+    const target = eventScope(scope);
+    const supabase = await createClient();
+    const query = supabase.from("calendar_events").update({ deleted_at: now() }).eq("id", id(eventId, "event"));
+    const scoped = "projectId" in target ? query.eq("project_id", target.projectId) : query.eq("team_id", target.teamId);
+    const removed = await scoped.select("id");
+    checkEventWrite(removed, target);
+    checkUpdated(removed, "projectId" in target ? NOT_ALLOWED : TEAM_EVENTS_NOT_ALLOWED);
   });
 }
 

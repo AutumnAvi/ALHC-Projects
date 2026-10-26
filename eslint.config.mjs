@@ -17,6 +17,17 @@ const eslintConfig = defineConfig([
           message: "Use SmartPicker (@/components/smart-picker) instead of a native <select>.",
         },
       ],
+      // Oct 26 notes, batch 4: no browser confirm() / alert() / prompt(); use the in-app modal
+      // (useConfirm / useAlert from @/components/confirm).
+      "no-alert": "error",
+      "no-restricted-properties": [
+        "error",
+        { object: "window", property: "confirm", message: "Use useConfirm() from @/components/confirm." },
+        { object: "window", property: "alert", message: "Use useAlert() from @/components/confirm." },
+        { object: "window", property: "prompt", message: "Use an in-app dialog instead of window.prompt()." },
+        { object: "globalThis", property: "confirm", message: "Use useConfirm() from @/components/confirm." },
+        { object: "globalThis", property: "alert", message: "Use useAlert() from @/components/confirm." },
+      ],
     },
   },
   // Override default ignores of eslint-config-next.

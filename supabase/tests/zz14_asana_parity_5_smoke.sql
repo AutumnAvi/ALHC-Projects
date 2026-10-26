@@ -201,9 +201,10 @@ declare
   their_portfolio uuid;
 begin
   assert not public.can_curate_team(team), 'outsiders don''t curate';
-  assert exists (select 1 from public.team_curated_work
+  -- Since Oct 26 notes, batch 4 curated work shows inside the team only, even for a project they can read.
+  assert not exists (select 1 from public.team_curated_work
                  where team_id = team and project_id = (select id from ap5_ids where name = 'p') and deleted_at is null),
-    'a reader of the project sees it on the team page';
+    'someone outside the team doesn''t see its curated work, even a project they can read';
   assert not exists (select 1 from public.team_curated_work where portfolio_id is not null and team_id = team),
     'a portfolio they aren''t in stays invisible';
   assert not exists (select 1 from public.team_curated_work where project_id = (select id from ap5_ids where name = 'mine')),

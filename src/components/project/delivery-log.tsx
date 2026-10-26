@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useSyncExternalStore } from "react";
 import { Ban, CheckCircle2, Clock, Loader2, Mail, RotateCcw, Send, ShieldCheck, XCircle } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -261,6 +262,7 @@ function EmailRow({ projectId, email: e }: { projectId: string; email: EmailDeli
 
 function DeliveryRow({ projectId, delivery: d }: { projectId: string; delivery: IntegrationDelivery }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const channel = d.channel === "slack" ? "Slack message" : "Webhook call";
   const retryLabel = d.status === "pending" ? "Send now" : "Retry";
 
@@ -335,8 +337,16 @@ function DeliveryRow({ projectId, delivery: d }: { projectId: string; delivery: 
             type="button"
             disabled={pending}
             aria-label={`Cancel: ${channel} to ${d.targetHint}`}
-            onClick={() => {
-              if (window.confirm(`Cancel this ${channel.toLowerCase()}? It won’t be sent.`)) {
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: `Cancel this ${channel.toLowerCase()}?`,
+                  message: "It won’t be sent.",
+                  confirmLabel: "Cancel delivery",
+                  cancelLabel: "Keep it",
+                  tone: "danger",
+                })
+              ) {
                 run(() => cancelIntegrationDelivery(d.id));
               }
             }}

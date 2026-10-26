@@ -11,6 +11,7 @@ import { calendarVisibleDays, timelineWindow, type TimelineZoom } from "@/lib/da
 import {
   filterProjectTaskIds,
   getProject,
+  listCalendarEvents,
   listProfiles,
   listProjectDependencies,
   listProjectFields,
@@ -25,6 +26,7 @@ import {
   listSubtaskTrees,
   listVisibleTags,
   tagsEnabled,
+  getListCollapsedGroups,
   getListColumnWidths,
 } from "@/lib/data";
 import { todayIn } from "@/lib/workload";
@@ -67,7 +69,9 @@ export async function LayoutRoute({
   layout: ViewLayout;
   searchParams: SearchParams;
 }) {
-  const view = (await listProjectViews(projectId)).find((v) => v.layout === layout);
+  // A shared tab first; the viewer's own view of that layout only when no shared one exists.
+  const views = await listProjectViews(projectId);
+  const view = views.find((v) => v.layout === layout && v.ownerId === null) ?? views.find((v) => v.layout === layout);
   if (view) redirect(`/projects/${projectId}/views/${view.id}${queryString(searchParams)}`);
   return <ProjectViewPage projectId={projectId} view={null} layout={layout} searchParams={searchParams} />;
 }
@@ -90,6 +94,8 @@ export async function ProjectViewPage({
   // Calendar and Timeline load the visible date window instead of every card.
   const scheduling = layout === "calendar" || layout === "timeline";
 
+  // The List groups this person collapsed here (Oct 26 notes, batch 4), read alongside the rest.
+  const collapsedGroupsLoad = layout === "list" ? getListCollapsedGroups(projectId) : Promise.resolve([]);
   const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, tagsOn, columnWidths, sectionCounts, project] =
     await Promise.all([
     listSections(projectId),
@@ -108,6 +114,7 @@ export async function ProjectViewPage({
     getProject(projectId),
   ]);
 
+  const collapsedGroups = await collapsedGroupsLoad;
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
     fields,
@@ -134,7 +141,7 @@ export async function ProjectViewPage({
       : null;
   // List and Board paint one page per group. Calendar and Timeline load the visible dates (and the
   // undated tray). A missing function falls back to the full card list.
-  const [taskPageResult, scheduleTasks] = await Promise.all([
+  const [taskPageResult, scheduleTasks, calendarEvents] = await Promise.all([
     paging
       ? listProjectTaskPage(
           projectId,
@@ -155,7 +162,14 @@ export async function ProjectViewPage({
           layout === "calendar" ? "calendar" : "timeline",
         )
       : Promise.resolve(null),
+    // Oct 26 notes (batch 4): the Calendar's events (not tasks) for the same visible days.
+    calendarDays
+      ? listCalendarEvents({ projectId }, calendarDays[0], calendarDays[calendarDays.length - 1])
+      : Promise.resolve(null),
   ]);
+  // Events are loaded for the server's window only, so a calendar that pages in the browser (a database
+  // without project_schedule_cards, which has no calendar_events either) shows none.
+  const windowedEvents = scheduleTasks !== null ? calendarEvents : null;
   let taskPage = taskPageResult;
   let everyTask = fullTasks;
   let visible: ProjectTask[];
@@ -205,6 +219,7 @@ export async function ProjectViewPage({
               bulk={bulk}
               subtasks={showSubtasks ? subtasks : null}
               columnWidths={columnWidths}
+              collapsedGroups={collapsedGroups}
               sectionTaskCounts={sectionTaskCounts}
             />
           </div>
@@ -231,6 +246,7 @@ export async function ProjectViewPage({
             anchor={requestedDay}
             mode={calendarMode}
             days={calendarDays}
+            events={windowedEvents}
           />
         ) : null}
         {layout === "timeline" ? (

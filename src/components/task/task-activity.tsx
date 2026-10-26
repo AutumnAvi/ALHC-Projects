@@ -5,6 +5,7 @@ import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
 import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -397,6 +398,8 @@ export function TaskActivity({
       }
       case "converted_to_task":
         return <>made this subtask a task in {str(d, "project_name")}</>;
+      case "deleted":
+        return "moved this task to the Trash";
       case "restored":
         return "restored this task from the Trash";
       case "kind_changed":
@@ -555,6 +558,7 @@ function CommentItem({
   teams: TaskDetail["mentionTeams"];
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<string | null>(null);
   const editing = draft !== null;
   // An emailed comment went out as written: it can be removed, not edited.
@@ -605,8 +609,15 @@ function CommentItem({
           type="button"
           aria-label="Delete comment"
           data-tooltip="Delete"
-          onClick={() => {
-            if (window.confirm(comment.email ? "Delete this comment? The email was already sent." : "Delete this comment?")) {
+          onClick={async () => {
+            if (
+              await confirm({
+                title: "Delete this comment?",
+                message: comment.email ? "The email was already sent." : undefined,
+                confirmLabel: "Delete",
+                tone: "danger",
+              })
+            ) {
               run(() => deleteComment(comment.id));
             }
           }}

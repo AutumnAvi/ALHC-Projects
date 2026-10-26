@@ -28,7 +28,9 @@ export type ShareMember = {
   role: ProjectRole;
 };
 
-export type ShareTeam = { id: string; name: string; memberCount: number };
+// memberCount is null for a team the viewer can't see inside (Oct 26 notes, batch 4: only its members and
+// workspace admins know who is in it).
+export type ShareTeam = { id: string; name: string; memberCount: number | null };
 
 // Everything the Share dialog shows, read with the viewer's own client when it opens.
 export type ShareData = {
@@ -45,7 +47,8 @@ export type ShareData = {
   resendable: boolean;
   // Teams added with a group invite (a record of the invite; the people are ordinary members).
   addedTeams: (ShareTeam & { role: string; usesDefaultRoles: boolean })[];
-  // The invite search: people in the workspace and every team.
+  // The invite search: people in the workspace and the teams the viewer can see inside (their own; every
+  // team for a workspace admin).
   people: SharePerson[];
   teams: ShareTeam[];
   // The workspace offers the Commenter role (off by default; existing Commenters keep it).

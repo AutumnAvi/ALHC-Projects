@@ -1,9 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useOptimistic, useState, type ReactNode } from "react";
 import { StatusUpdatePanel } from "@/components/project/status-update-panel";
 import { useRightPanel } from "@/components/shell/right-panel";
+import { useServerAction } from "@/components/toast";
+import { setProjectArchived } from "@/lib/actions";
 
 // Share is a large dialog opened from the header. Leave it out of the project page chunk until then.
 const ShareDialog = dynamic(() => import("@/components/project/share-dialog").then((m) => m.ShareDialog));
@@ -20,6 +22,11 @@ type ProjectPage = {
   // notifications, rule branches, Heading / Email form questions): false on a preview deployed before
   // 20261011040000_asana_parity_4.sql is applied, so those controls stay hidden there.
   batch4: boolean;
+  // Oct 26 notes (batch 4): whether the project is archived, flipped at once by archive / unarchive (the
+  // header's menu and the banner follow it without waiting for the page to reload).
+  archived: boolean;
+  archivePending: boolean;
+  setArchived: (archived: boolean) => void;
 };
 
 const ProjectPageContext = createContext<ProjectPage | null>(null);
@@ -27,11 +34,13 @@ const ProjectPageContext = createContext<ProjectPage | null>(null);
 export function ProjectPageProvider({
   project,
   batch4,
+  archived: savedArchived = false,
   statusTemplates = [],
   children,
 }: {
   project: { id: string; name: string };
   batch4: boolean;
+  archived?: boolean;
   // Real features 4: Customize → Status templates, offered in the status update panel.
   statusTemplates?: StatusTemplate[];
   children: ReactNode;
@@ -41,6 +50,16 @@ export function ProjectPageProvider({
   // The status update sheet is a right-side panel: it takes the app's one slot (closing the task pane
   // and Customize), and opening a task closes it. Share is a centered dialog and stays over the page.
   const { open: statusOpen, setOpen: setStatusOpen } = useRightPanel(`status:${project.id}`);
+  const [archivePending, run] = useServerAction();
+  const [archived, showArchived] = useOptimistic(savedArchived);
+  const setArchived = useCallback(
+    (next: boolean) =>
+      run(
+        () => setProjectArchived(project.id, next),
+        () => showArchived(next),
+      ),
+    [run, project.id, showArchived],
+  );
   const value = useMemo<ProjectPage>(
     () => ({
       openShare: () => setSharing(true),
@@ -49,8 +68,11 @@ export function ProjectPageProvider({
         setStatusOpen(true);
       },
       batch4,
+      archived,
+      archivePending,
+      setArchived,
     }),
-    [batch4, setStatusOpen],
+    [batch4, setStatusOpen, archived, archivePending, setArchived],
   );
 
   return (

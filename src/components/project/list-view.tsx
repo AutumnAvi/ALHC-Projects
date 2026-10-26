@@ -30,7 +30,7 @@ import { useOpenTaskId } from "@/components/shell/right-panel";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { placeSection, placeTask, saveListColumnWidths, setTaskCompleted, updateTask } from "@/lib/actions";
+import { placeSection, placeTask, saveListCollapsedGroups, saveListColumnWidths, setTaskCompleted, updateTask } from "@/lib/actions";
 import {
   MAX_COLUMN_WIDTH,
   clampColumnWidth,
@@ -83,6 +83,8 @@ type Props = {
   tags: Tag[];
   // The viewer's own saved column widths for this project (list_column_widths).
   columnWidths?: ColumnWidths;
+  // Group keys this person collapsed in this project (kept per person; Oct 26 notes, batch 4).
+  collapsedGroups?: string[];
   // Every task per section, whatever the view shows (a section can be deleted only when empty).
   sectionTaskCounts?: Record<string, number>;
 };
@@ -135,6 +137,7 @@ export function ListView({
   subtasks = null,
   tags,
   columnWidths = {},
+  collapsedGroups = [],
   sectionTaskCounts = {},
 }: Props) {
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
@@ -153,7 +156,37 @@ export function ListView({
   const bulkEdit = useBulkEdit();
   const canEdit = useProjectPermissions().canEdit;
   const who = canEdit ? "editor" : "viewer";
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Every collapse / expand is kept for this person (saved a moment after the last change, and right
+  // away when the List goes away; no refresh), so groups stay collapsed across visits and reloads. Keys
+  // are kept per grouping ("assignee::assignee-none"), so collapsing "No Priority" in one view doesn't
+  // collapse "No Status" in another.
+  const [collapsedAll, setCollapsedAll] = useState<Set<string>>(() => new Set(collapsedGroups));
+  const scope = collapseScope(config);
+  const collapsed = scopedKeys(collapsedAll, scope);
+  const setCollapsed = (update: (current: Set<string>) => Set<string>) =>
+    setCollapsedAll((all) => withScopedKeys(all, scope, update(scopedKeys(all, scope))));
+  const savedCollapsed = useRef(collapsedAll);
+  const unsavedCollapsed = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (savedCollapsed.current === collapsedAll) return;
+    unsavedCollapsed.current = collapsedAll;
+    const timer = setTimeout(() => {
+      savedCollapsed.current = collapsedAll;
+      unsavedCollapsed.current = null;
+      startTransition(async () => {
+        const result = await saveListCollapsedGroups(projectId, [...collapsedAll]);
+        if (result.error) notify(result.error);
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [collapsedAll, projectId, notify]);
+  useEffect(
+    () => () => {
+      // Leaving within the moment before a save: save now (fire and forget).
+      if (unsavedCollapsed.current) void saveListCollapsedGroups(projectId, [...unsavedCollapsed.current]);
+    },
+    [projectId],
+  );
   const pages = useGroupPages();
   const showMorePage = usePagedShowMore();
   const [quickAdd, setQuickAdd] = useState<{ groupKey: string; nonce: number } | null>(null);
@@ -1319,4 +1352,19 @@ function SubtaskRows({
       })}
     </ul>
   );
+}
+
+// Oct 26 notes (batch 4): collapsed List groups are stored as "<grouping>::<group key>".
+export function collapseScope(config: ViewConfig): string {
+  return `${groupOf(config)}::`;
+}
+
+export function scopedKeys(all: Set<string>, scope: string): Set<string> {
+  return new Set([...all].filter((k) => k.startsWith(scope)).map((k) => k.slice(scope.length)));
+}
+
+export function withScopedKeys(all: Set<string>, scope: string, keys: Set<string>): Set<string> {
+  const next = new Set([...all].filter((k) => !k.startsWith(scope)));
+  for (const key of keys) next.add(`${scope}${key}`);
+  return next;
 }

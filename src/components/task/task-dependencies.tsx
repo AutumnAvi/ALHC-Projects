@@ -13,6 +13,8 @@ import type { TaskDependency, TaskDetail } from "@/lib/data";
 import { useTaskExtras } from "./task-pane-store";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
+import { bareTaskTitle, matchesRequestLabel } from "@/lib/request-numbers";
+import { TaskNumberBadge } from "./task-number";
 
 type Relation = TaskDependency["relation"];
 const RELATION_LABELS: Record<Relation, string> = { blocked_by: "Blocked by", blocking: "Blocking" };
@@ -207,7 +209,10 @@ function AddDependency({ task }: { task: TaskDetail }) {
   const groups = (extras?.dependencyCandidates ?? [])
     .map((g) => ({
       ...g,
-      tasks: g.tasks.filter((t) => !linked.has(t.id) && (!q || t.title.toLowerCase().includes(q))).slice(0, 30),
+      // A task's number finds it too ("12", "#12", "Task #12"; Oct 26 notes, batch 4).
+      tasks: g.tasks
+        .filter((t) => !linked.has(t.id) && (!q || t.title.toLowerCase().includes(q) || matchesRequestLabel(t.label, q)))
+        .slice(0, 30),
     }))
     .filter((g) => g.tasks.length > 0);
 
@@ -249,8 +254,8 @@ function AddDependency({ task }: { task: TaskDetail }) {
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.currentTarget.value)}
-              aria-label="Find a task"
-              placeholder="Find a task"
+              aria-label="Find a task by name or number"
+              placeholder="Find a task by name or number"
               className="h-9 min-w-0 flex-1 border-0 bg-transparent p-0 text-sm shadow-none outline-none focus-visible:shadow-none"
             />
           </div>
@@ -272,7 +277,8 @@ function AddDependency({ task }: { task: TaskDetail }) {
                         className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-800 hover:bg-zinc-100"
                       >
                         <Circle className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
-                        <span className="truncate">{t.title}</span>
+                        <TaskNumberBadge label={t.label} projectName={t.projectName} />
+                        <span className="min-w-0 flex-1 truncate">{bareTaskTitle(t.title, t.label)}</span>
                       </button>
                     </li>
                   ))}

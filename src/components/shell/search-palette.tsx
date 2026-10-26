@@ -7,6 +7,7 @@ import { Avatar } from "@/components/avatar";
 import { readRecents, recordRecent, useShell } from "@/components/shell/shell-context";
 import { isMac } from "@/components/shortcuts/keyboard";
 import { projectColorClass } from "@/lib/project-colors";
+import { TaskNumberBadge } from "@/components/task/task-number";
 import { quickSearch, resolveRecents } from "@/lib/shell-actions";
 import {
   EMPTY_RESULTS,
@@ -319,6 +320,7 @@ function taskItem(task: QuickTask, recent: boolean): Item {
           className={`size-4 shrink-0 ${task.completed ? "text-green-600" : "text-zinc-300"}`}
           aria-label={task.completed ? "Completed" : "Open"}
         />
+        <TaskNumberBadge label={task.label} />
         <span className={`min-w-0 flex-1 truncate ${task.completed ? "text-zinc-400 line-through" : "text-zinc-900"}`}>
           {task.title}
         </span>

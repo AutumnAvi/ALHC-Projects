@@ -69,7 +69,51 @@ export type ProjectView = {
   layout: ViewLayout;
   config: ViewConfig;
   sortOrder: number;
+  // Oct 26 notes (batch 4): null = a shared tab everyone in the project sees; set = the person's own saved
+  // view (only they see it; RLS returns only the viewer's own).
+  ownerId: string | null;
 };
+
+// Oct 26 notes (batch 4): the project's fixed tabs, each of which Editors+ can hide and add back.
+export const FIXED_TABS = [
+  { key: "overview", label: "Overview", segment: "overview" },
+  { key: "dashboard", label: "Dashboard", segment: "dashboard" },
+  { key: "messages", label: "Messages", segment: "messages" },
+  { key: "workload", label: "Workload", segment: "workload" },
+  { key: "files", label: "Files", segment: "files" },
+] as const;
+export type FixedTab = (typeof FIXED_TABS)[number]["key"];
+export function isFixedTab(value: unknown): value is FixedTab {
+  return typeof value === "string" && FIXED_TABS.some((t) => t.key === value);
+}
+
+export type ProjectViewSettings = { defaultViewId: string | null; hiddenTabs: FixedTab[] };
+export const NO_VIEW_SETTINGS: ProjectViewSettings = { defaultViewId: null, hiddenTabs: [] };
+
+/** Shared tabs and the viewer's own views, each in tab order. */
+export function splitViews(views: ProjectView[]): { shared: ProjectView[]; mine: ProjectView[] } {
+  return { shared: views.filter((v) => v.ownerId === null), mine: views.filter((v) => v.ownerId !== null) };
+}
+
+/**
+ * The view /projects/<id> opens: the viewer's own first view when they chose "Open my saved view by
+ * default" and have one, else the project's default view (Owners pick it), else the first shared tab,
+ * else their own first view. Null when the project has no views at all.
+ */
+export function openingView(
+  views: ProjectView[],
+  settings: ProjectViewSettings,
+  preferPersonal: boolean,
+): ProjectView | null {
+  const { shared, mine } = splitViews(views);
+  if (preferPersonal && mine.length > 0) return mine[0];
+  return shared.find((v) => v.id === settings.defaultViewId) ?? shared[0] ?? mine[0] ?? null;
+}
+
+/** The name a personal copy of a shared view gets when someone saves their changes to it. */
+export function personalCopyName(name: string): string {
+  return `My ${name}`.slice(0, 100);
+}
 
 export const WIDGET_KINDS = [
   { value: "count", label: "Number" },

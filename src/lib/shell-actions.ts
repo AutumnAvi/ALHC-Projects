@@ -6,7 +6,7 @@
 // project the person can't open is ever returned, workspace admins included.
 
 import { displayName } from "@/components/avatar";
-import { displayTaskTitle } from "@/lib/request-numbers";
+import { bareTaskTitle } from "@/lib/request-numbers";
 import { getViewer } from "@/lib/auth";
 import {
   getGoalViewer,
@@ -84,7 +84,8 @@ export async function quickSearch(query: string, only: SearchKind | null = null)
   const taskLabels = await visibleRequestLabels(taskRows.map((task) => task.id));
   const tasks: QuickTask[] = taskRows.map((t) => ({
           id: t.id,
-          title: displayTaskTitle(t.title, taskLabels.get(t.id) ?? null),
+          title: bareTaskTitle(t.title, taskLabels.get(t.id) ?? null),
+          label: taskLabels.get(t.id) ?? null,
           completed: Boolean(t.completed_at),
           // search_tasks labels every project task with a project the person can read; null = private.
           isPrivate: !t.home_project_id,
@@ -135,6 +136,7 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
   ]);
   const projectsById = new Map(projects.map((p) => [p.id, p] as const));
   const tasks = taskResult && !taskResult.error ? taskResult.data ?? [] : [];
+  const recentLabels = await visibleRequestLabels(tasks.map((t) => t.id));
 
   // A task read through a project other than its home (multi-homed, or a subtask of such a task) is
   // labelled and opened with one of its own (its root's) memberships that RLS shows the person.
@@ -171,7 +173,8 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
       {
         kind: "task",
         id: task.id,
-        title: task.title,
+        title: bareTaskTitle(task.title, recentLabels.get(task.id) ?? null),
+        label: recentLabels.get(task.id) ?? null,
         completed: Boolean(task.completed_at),
         isPrivate,
         projectId: project?.id ?? null,
@@ -361,4 +364,19 @@ export async function loadCalendarFeed(
 export async function loadCalendarFeeds(): Promise<CalendarFeed[] | null> {
   if (!(await signedIn())) return null;
   return listMyCalendarFeeds();
+}
+
+// Oct 26 notes (batch 4): a task the pane can't open may be in the Trash. Trashed tasks are readable only
+// by Editors+ of one of their projects (RLS), who can also restore them, so a row here means "show
+// Restore". Null for anything else (missing, or no access): the pane says Not found as before.
+export async function loadTrashedTask(taskId: string): Promise<{ id: string; title: string; deletedAt: string } | null> {
+  if (!(await signedIn()) || !isUuid(taskId)) return null;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("tasks")
+    .select("id, title, deleted_at")
+    .eq("id", taskId)
+    .not("deleted_at", "is", null)
+    .maybeSingle();
+  return data?.deleted_at ? { id: data.id, title: data.title, deletedAt: data.deleted_at } : null;
 }

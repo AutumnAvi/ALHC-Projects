@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, useId, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronRight, Copy, GitBranch, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { Segmented } from "@/components/project/view-chrome";
 import { Timestamp } from "@/components/timestamp";
@@ -101,6 +102,7 @@ export function RulesView({
   context: RuleContext;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const notify = useNotify();
   const canEdit = useProjectPermissions().canManage;
   // Turning a rule on also clears an auto-pause (the database's guard does the same).
@@ -353,8 +355,10 @@ export function RulesView({
                         aria-label={`Delete ${rule.name}`}
                         data-tooltip="Delete rule"
                         disabled={pending}
-                        onClick={() => {
-                          if (window.confirm(`Delete the rule “${rule.name}”?`)) run(() => deleteRule(rule.id));
+                        onClick={async () => {
+                          if (await confirm({ title: `Delete the rule “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) {
+                            run(() => deleteRule(rule.id));
+                          }
                         }}
                         className="btn-icon hover:bg-red-50 hover:text-red-700"
                       >

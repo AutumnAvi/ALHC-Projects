@@ -33,6 +33,7 @@ import {
 import { DEFAULT_WORK_WEEK, normalizeWorkWeek } from "@/lib/workdays";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import {
+  bareTaskTitle,
   displayTaskTitle,
   requestLabelFrom,
   templateFromPrefix,
@@ -81,11 +82,14 @@ import {
 import {
   TEAM_CALENDAR_LIMIT,
   isTeamRole,
+  parseTeamAccessStatus,
   type CuratedWorkItem,
+  type TeamAccessStatus,
   type TeamCalendarTask,
+  type TeamJoinRequest,
   type TeamRole,
 } from "@/lib/teams";
-import { INBOX_LIMIT, type InboxTab } from "@/lib/inbox";
+import { INBOX_LIMIT, withoutTeamMessages, type InboxTab } from "@/lib/inbox";
 import { toMyTaskRule, type MyTaskRule } from "@/lib/my-task-rules";
 import { toPortfolioRuleDef, type PortfolioRuleDef, type PortfolioRuleRun } from "@/lib/portfolio-rules";
 import { resolveNotificationSettings, type NotificationSettings } from "@/lib/notifications";
@@ -110,6 +114,13 @@ import {
 } from "@/lib/workspace";
 import { toTag, type Tag } from "@/lib/tags";
 import { isCalendarFeedScope, type CalendarFeed } from "@/lib/calendar-feeds";
+import {
+  CALENDAR_EVENT_LIMIT,
+  compareEvents,
+  toCalendarEvent,
+  type CalendarEvent,
+  type CalendarEventScope,
+} from "@/lib/calendar-events";
 import { toStatusTemplate, type StatusTemplate } from "@/lib/status-templates";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import { isInboundCallStatus, type InboundCall, type InboundEndpoint } from "@/lib/inbound-shared";
@@ -132,6 +143,8 @@ import {
   type SeriesInterval,
 } from "@/lib/reports";
 import {
+  NO_VIEW_SETTINGS,
+  isFixedTab,
   isViewLayout,
   isWidgetKind,
   parseFilters,
@@ -139,6 +152,7 @@ import {
   toJson,
   type DashboardWidget,
   type ProjectView,
+  type ProjectViewSettings,
   type ViewFilters,
   type ViewSort,
 } from "@/lib/views";
@@ -298,7 +312,15 @@ export type TaskDependency = {
   isSubtask: boolean;
 };
 
-export type DependencyCandidateGroup = { key: string; label: string; tasks: { id: string; title: string }[] };
+// Each task carries its number (when its project numbers tasks) and, for a project other than the open
+// task's own, the project's name, so the picker can show "Task #12 · Website" (Oct 26 notes, batch 4).
+export type DependencyCandidate = {
+  id: string;
+  title: string;
+  label?: RequestLabel | null;
+  projectName?: string | null;
+};
+export type DependencyCandidateGroup = { key: string; label: string; tasks: DependencyCandidate[] };
 
 // The pane's on-demand part (Oct 19 notes): the tasks the Dependencies picker and Convert offer, and the
 // slack in each project. On a big project these two reads take seconds (row-by-row RLS over every task),
@@ -570,6 +592,19 @@ export const listActivePeople = cache(async (): Promise<{ id: string; name: stri
   return profiles
     .filter((p) => active.has(p.email.toLowerCase()))
     .map((p) => ({ id: p.id, name: displayName(p), email: p.email }));
+});
+
+// Addresses on the allowlist whose owner hasn't signed in yet (no confirmed first sign-in). Adding one to a
+// team makes a pending invite they join on first sign-in (Oct 26 notes, batch 4: the team member picker).
+export const listUnjoinedAddresses = cache(async (): Promise<string[]> => {
+  const supabase = await createClient();
+  const [allowed, joined] = await Promise.all([
+    supabase.from("allowed_emails").select("email").is("removed_at", null),
+    supabase.from("profiles").select("email").not("joined_at", "is", null),
+  ]);
+  if (allowed.error || joined.error) return [];
+  const signedIn = new Set((joined.data ?? []).map((p) => p.email.toLowerCase()));
+  return (allowed.data ?? []).map((a) => a.email.toLowerCase()).filter((email) => !signedIn.has(email)).sort();
 });
 
 export const listProfiles = cache(async (): Promise<Profile[]> => {
@@ -1843,9 +1878,16 @@ async function listDependencyCandidates(
       )
     : [];
   const groups: DependencyCandidateGroup[] = [];
-  if (tree.length) groups.push({ key: "tree", label: "This task’s tree", tasks: tree.slice(0, MAX_DEPENDENCY_CANDIDATES) });
+  const treeGroup: DependencyCandidateGroup = {
+    key: "tree",
+    label: "This task’s tree",
+    tasks: tree.slice(0, MAX_DEPENDENCY_CANDIDATES),
+  };
+  // Oct 26 notes (batch 4): the task's own projects come first (its home project first), then its tree,
+  // then the other projects the viewer edits.
   for (const p of all) {
     const limit = own.includes(p) ? MAX_DEPENDENCY_CANDIDATES : MAX_OTHER_PROJECT_CANDIDATES;
+    if (p === others[0] && treeGroup.tasks.length) groups.push(treeGroup);
     groups.push({
       key: p.id,
       label: own.includes(p) ? p.name : `${p.name} (another project)`,
@@ -1853,10 +1895,14 @@ async function listDependencyCandidates(
         .filter((m) => m.project_id === p.id)
         .sort((a, b) => Number(Boolean(a.task.completed_at)) - Number(Boolean(b.task.completed_at)))
         .slice(0, limit)
-        .map((m) => ({ id: m.task.id, title: m.task.title })),
+        .map((m) => ({ id: m.task.id, title: m.task.title, projectName: own.includes(p) ? null : p.name })),
     });
   }
-  return groups.filter((g) => g.tasks.length > 0);
+  if (others.length === 0 && treeGroup.tasks.length) groups.push(treeGroup);
+  const shown = groups.filter((g) => g.tasks.length > 0);
+  // Numbers for every task offered (labels the viewer may see), so the picker shows and searches them.
+  const labels = await visibleRequestLabels(shown.flatMap((g) => g.tasks.map((t) => t.id)));
+  return shown.map((g) => ({ ...g, tasks: g.tasks.map((t) => ({ ...t, label: labels.get(t.id) ?? null })) }));
 }
 
 // Dependency stories only store the other task's title when every reader of this task can read it
@@ -2490,15 +2536,16 @@ function objectOrNull(value: Json | undefined): Record<string, Json | undefined>
 }
 
 // One Inbox tab, newest first, INBOX_LIMIT items. inbox_page does the four reads in one call.
-// A database without that function uses the row queries.
+// A database without that function uses the row queries. Team message items are left out: teams have
+// no Messages tab since Oct 26 notes (batch 4), so they'd link nowhere (the threads are kept).
 export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<InboxItem[]> => {
   const supabase = await createClient();
   const page = await supabase.rpc("inbox_page", { inbox_tab: tab });
   if (page.error) {
     if (!rpcMissing(page.error)) throw new Error(`Failed to load inbox: ${page.error.message}`);
-    return labelInbox(await listInboxFromRows(tab));
+    return labelInbox(withoutTeamMessages(await listInboxFromRows(tab)));
   }
-  return labelInbox(inboxItemsFromPage(page.data));
+  return labelInbox(withoutTeamMessages(inboxItemsFromPage(page.data)));
 });
 
 async function labelInbox(items: InboxItem[]): Promise<InboxItem[]> {
@@ -3054,6 +3101,9 @@ export const searchTasks = cache(async (query: string) => {
   return found.map((task) => ({
     ...task,
     title: displayTaskTitle(task.title, labels.get(task.id) ?? null),
+    // The name and the number apart, for screens that draw the number as a badge (Oct 26 notes, batch 4).
+    bareTitle: bareTaskTitle(task.title, labels.get(task.id) ?? null),
+    requestLabel: labels.get(task.id) ?? null,
   }));
 });
 
@@ -3634,6 +3684,8 @@ export type MySettings = {
   signInMethod: "google" | "password";
   // How My tasks opens (the my_tasks_layout cookie), for Settings → Display.
   myTasksLayout: MyTasksLayout;
+  // Oct 26 notes (batch 4): open my own saved view of a project first (null = a database without it).
+  openPersonalView: boolean | null;
 };
 
 // The person's forwarding address row (made on first use) and their latest forwarded emails (Real
@@ -3679,7 +3731,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
   const supabase = await createClient();
-  const [profile, admin, teams, workspace, cookieStore, notificationRows, emailPreferences] = await Promise.all([
+  const [profile, admin, teams, workspace, cookieStore, notificationRows, emailPreferences, preferences] = await Promise.all([
     supabase.from("profiles").select("full_name, avatar_url, email_comments, joined_at").eq("id", user.id).maybeSingle(),
     isWorkspaceAdmin(),
     listTeams(),
@@ -3687,6 +3739,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     cookies(),
     supabase.from("notification_settings").select("kind, inbox, email"),
     getMyEmailPreferences(),
+    getProfilePreferences(),
   ]);
   const layout = cookieStore.get(MY_TASKS_LAYOUT_COOKIE)?.value;
   const row = maybe(profile, "profile");
@@ -3714,6 +3767,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     joinedAt: row?.joined_at ?? null,
     signInMethod: providers.includes("google") ? "google" : "password",
     myTasksLayout: isMyTasksLayout(layout) ? layout : "sections",
+    openPersonalView: preferences.available ? preferences.openPersonalView : null,
   };
 });
 
@@ -3835,6 +3889,7 @@ function toProjectView(row: Tables<"project_views">): ProjectView {
     layout: isViewLayout(row.layout) ? row.layout : "list",
     config: parseViewConfig(row.config),
     sortOrder: row.sort_order,
+    ownerId: row.owner_id ?? null,
   };
 }
 
@@ -3857,6 +3912,43 @@ export const getProjectView = cache(async (viewId: string): Promise<ProjectView 
     "view",
   );
   return row ? toProjectView(row) : null;
+});
+
+// Oct 26 notes (batch 4): this release's database (profile_preferences is readable; its grant is the
+// migration's last statement). Without it there are no personal views, hidden tabs, or default view.
+export const hasOct26Batch4Schema = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const { error } = await supabase.from("profile_preferences").select("profile_id").limit(1);
+  return !error;
+});
+
+// The project's hidden tabs and default view (project Viewers+ read it; nothing set = everything shown).
+export const getProjectViewSettings = cache(async (projectId: string): Promise<ProjectViewSettings> => {
+  if (!(await hasOct26Batch4Schema())) return NO_VIEW_SETTINGS;
+  const supabase = await createClient();
+  const row = maybe(
+    await supabase
+      .from("project_view_settings")
+      .select("default_view_id, hidden_tabs")
+      .eq("project_id", projectId)
+      .maybeSingle(),
+    "tab settings",
+  );
+  if (!row) return NO_VIEW_SETTINGS;
+  return { defaultViewId: row.default_view_id, hiddenTabs: (row.hidden_tabs ?? []).filter(isFixedTab) };
+});
+
+// The signed-in person's own app preferences.
+export const getProfilePreferences = cache(async (): Promise<{ openPersonalView: boolean; available: boolean }> => {
+  if (!(await hasOct26Batch4Schema())) return { openPersonalView: false, available: false };
+  const supabase = await createClient();
+  const { user } = await getViewer();
+  if (!user) return { openPersonalView: false, available: true };
+  const row = maybe(
+    await supabase.from("profile_preferences").select("open_personal_view").eq("profile_id", user.id).maybeSingle(),
+    "preferences",
+  );
+  return { openPersonalView: row?.open_personal_view ?? false, available: true };
 });
 
 // Ids of the project's tasks that match a view filter, evaluated by filter_project_tasks() under RLS.
@@ -4755,9 +4847,10 @@ export async function listNumberFields(projectIds: string[]): Promise<FieldDef[]
 }
 
 // ---------------------------------------------------------------------------------------------
-// Teams directory (see 20261006050000_goals_teams.sql). Teams are workspace-level: everyone
-// allowlisted reads them. A team never grants project access; team_projects rows are only visible to
-// people who can already read the project.
+// Teams directory (see 20261006050000_goals_teams.sql). Team names and descriptions are workspace-level:
+// everyone allowlisted reads them. Since Oct 26 notes (batch 4) who is in a team is visible only inside
+// it (its members and workspace admins), so other teams come back with no members. A team never grants
+// project access; team_projects rows are only visible to people who can already read the project.
 // ---------------------------------------------------------------------------------------------
 
 export type TeamPerson = { profileId: string; role: TeamRole; name: string; email: string; addedAt: string };
@@ -4823,6 +4916,55 @@ export const getTeam = cache(async (teamId: string): Promise<Team | null> => {
 export const canManageTeam = cache(async (teamId: string): Promise<boolean> => {
   const supabase = await createClient();
   return maybe(await supabase.rpc("can_manage_team", { target_team: teamId }), "team role") === true;
+});
+
+// Oct 26 notes (batch 4): what the viewer sees on a team link. "member" = they can see inside (a member
+// or a workspace admin); anything unknown, an error, or a database without this release's update is
+// "missing": the plain Not found.
+export const getTeamAccessStatus = cache(async (teamId: string): Promise<TeamAccessStatus> => {
+  if (!isUuid(teamId)) return "missing";
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("team_access_status", { target_team: teamId });
+  // A database without this release has no team_access_status: teams were open to everyone there, so a
+  // team that exists opens as before (a preview deployed ahead of the migration keeps working).
+  if (error?.code === "PGRST202") return (await getTeam(teamId)) ? "member" : "missing";
+  return error ? "missing" : parseTeamAccessStatus(data);
+});
+
+// Teams the viewer can see inside (RLS hides everyone else's memberships): every team for a workspace
+// admin, else the teams they're on. Share and Add a team offer only these.
+export const listViewableTeamIds = cache(async (): Promise<Set<string>> => {
+  const [admin, teams, mine] = await Promise.all([isWorkspaceAdmin(), listTeams(), listMyTeamIds()]);
+  return admin ? new Set(teams.map((t) => t.id)) : mine;
+});
+
+// Open requests to join a team (RLS: the team's leads and workspace admins, and each requester). Empty
+// without this release's database.
+export const listTeamJoinRequests = cache(async (teamId: string): Promise<TeamJoinRequest[]> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("team_join_requests")
+    .select("id, requester_id, created_at")
+    .eq("team_id", teamId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error || !data?.length) return [];
+  const people = await supabase
+    .from("profiles")
+    .select("id, full_name, email")
+    .in("id", [...new Set(data.map((r) => r.requester_id))]);
+  const byId = new Map((people.data ?? []).map((p) => [p.id, p] as const));
+  return data.map((r) => {
+    const person = byId.get(r.requester_id);
+    return {
+      id: r.id,
+      profileId: r.requester_id,
+      name: person?.full_name?.trim() || person?.email || "Someone",
+      email: person?.email ?? "",
+      requestedAt: r.created_at,
+    };
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -5322,6 +5464,20 @@ export const getListColumnWidths = cache(async (projectId: string): Promise<Colu
   return parseColumnWidths(data?.widths);
 });
 
+// Oct 26 notes (batch 4): the List groups (sections, assignees, …) the viewer collapsed in a project, kept
+// per person (list_collapsed_groups, own rows). Empty on a database without this release.
+export const getListCollapsedGroups = cache(async (projectId: string): Promise<string[]> => {
+  if (!isUuid(projectId)) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("list_collapsed_groups")
+    .select("group_keys")
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (error) return [];
+  return (data?.group_keys ?? []).filter((key): key is string => typeof key === "string");
+});
+
 // Files tab: every active attachment on the project's active tasks and their subtasks (read through
 // RLS, so only tasks the viewer can read), newest first.
 export type ProjectFile = {
@@ -5544,16 +5700,56 @@ export async function listTeamCalendarTasks(
       projectId: row.project_id,
       projectName: project?.name ?? "Project",
       canEdit,
+      requestLabel: null,
     });
   }
+  // Oct 26 notes (batch 4): the number is drawn as a tiny badge after the name, so the bar keeps the
+  // bare name (a label baked into an older title is taken off) and the label travels next to it.
   const labels = await visibleRequestLabels([...tasks.keys()]);
   for (const task of tasks.values()) {
-    task.title = displayTaskTitle(task.title, labels.get(task.id) ?? null);
+    const label = labels.get(task.id) ?? null;
+    task.requestLabel = label;
+    task.title = bareTaskTitle(task.title, label);
   }
   const sorted = [...tasks.values()].sort(
     (a, b) => (a.startOn ?? a.dueOn).localeCompare(b.startOn ?? b.dueOn) || a.dueOn.localeCompare(b.dueOn) || a.title.localeCompare(b.title),
   );
   return { tasks: sorted, projectCount: projects.length, capped: list.length >= TEAM_CALENDAR_LIMIT };
+}
+
+// Oct 26 notes (batch 4): the events (not tasks) of a project or team Calendar whose days touch `from` to
+// `to` (inclusive), in the order a day lists them. RLS decides who reads them (project Viewers+; a team's
+// readers). Null on a database without calendar_events (20261026020000_oct26_batch4_a.sql), so the
+// Calendar draws its tasks and offers no Add event.
+export async function listCalendarEvents(
+  scope: CalendarEventScope,
+  from: string,
+  to: string,
+): Promise<CalendarEvent[] | null> {
+  const supabase = await createClient();
+  const query = supabase
+    .from("calendar_events")
+    .select("id, title, notes, start_on, end_on, start_at, end_at, time_zone, created_by, created_at")
+    .is("deleted_at", null)
+    .lte("start_on", to)
+    .gte("end_on", from);
+  const scoped = "projectId" in scope ? query.eq("project_id", scope.projectId) : query.eq("team_id", scope.teamId);
+  const result = await scoped
+    .order("start_on")
+    .order("start_at", { ascending: true, nullsFirst: true })
+    .order("created_at")
+    .limit(CALENDAR_EVENT_LIMIT);
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
+  const list = rows(result, "calendar events");
+  const creatorIds = [...new Set(list.flatMap((row) => (row.created_by ? [row.created_by] : [])))];
+  const names = new Map<string, string>();
+  if (creatorIds.length > 0) {
+    const people = await supabase.from("profiles").select("id, full_name, email").in("id", creatorIds);
+    for (const person of people.data ?? []) names.set(person.id, displayName(person));
+  }
+  return list
+    .map((row) => toCalendarEvent(row, row.created_by ? (names.get(row.created_by) ?? null) : null))
+    .sort(compareEvents);
 }
 
 // When each allowlisted address last signed in (Admin console → Users). Null when the viewer isn't a

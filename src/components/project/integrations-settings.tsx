@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useConfirm } from "@/components/confirm";
 import { useServerAction } from "@/components/toast";
 import { clearProjectSigningSecret, generateProjectSigningSecret, setProjectIntegration } from "@/lib/actions";
 import {
@@ -126,6 +127,7 @@ function SecretSetting({
   onSaved: (settings: ProjectIntegrations) => void;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
   const error = value.trim() ? validate(value.trim()) : null;
@@ -210,8 +212,15 @@ function SecretSetting({
                 type="button"
                 disabled={pending}
                 aria-label={`Clear ${label}`}
-                onClick={() => {
-                  if (window.confirm(`Clear the ${label.toLowerCase()}? Rules that rely on it will fail until it is set again.`)) {
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: `Clear the ${label.toLowerCase()}?`,
+                      message: "Rules that rely on it will fail until it is set again.",
+                      confirmLabel: "Clear",
+                      tone: "danger",
+                    })
+                  ) {
                     save("");
                   }
                 }}
@@ -301,6 +310,7 @@ function SigningSetting({
   onSaved: (settings: ProjectIntegrations) => void;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [revealed, setRevealed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const label = "Signing secret";
@@ -330,10 +340,15 @@ function SigningSetting({
           <button
             type="button"
             disabled={pending}
-            onClick={() => {
+            onClick={async () => {
               if (
                 !settings.signingSecretSet ||
-                window.confirm("Generate a new signing secret? The receiver must switch to the new one: requests queued from now on are signed with it.")
+                (await confirm({
+                  title: "Generate a new signing secret?",
+                  message: "The receiver must switch to the new one: requests queued from now on are signed with it.",
+                  confirmLabel: "Regenerate",
+                  tone: "danger",
+                }))
               ) {
                 generate();
               }
@@ -347,8 +362,15 @@ function SigningSetting({
               type="button"
               disabled={pending}
               aria-label={`Clear ${label}`}
-              onClick={() => {
-                if (window.confirm("Stop signing requests to the project webhook? Receivers that check signatures will reject them.")) {
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: "Stop signing requests to the project webhook?",
+                    message: "Receivers that check signatures will reject them.",
+                    confirmLabel: "Stop signing",
+                    tone: "danger",
+                  })
+                ) {
                   run(async () => {
                     const result = await clearProjectSigningSecret(projectId);
                     if (!result.error && result.settings) {

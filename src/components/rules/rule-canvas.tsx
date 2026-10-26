@@ -20,6 +20,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { StepParams, StepPrompt } from "@/components/param-slot";
 import { PickerHighlightContext, SmartPicker } from "@/components/smart-picker";
 import { missingParams, ruleProblems, saveBlockedReason, stepProblems, type StepScope } from "@/lib/rule-params";
@@ -129,6 +130,7 @@ export function RuleCanvas({
   const notify = useNotify();
   const titleId = useId();
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [name, setName] = useState(rule?.name ?? initial?.name ?? "");
   // A template's rule starts off, so it can be checked (and tested) before it runs.
   const [enabled, setEnabled] = useState(rule ? rule.enabled : !initial);
@@ -164,8 +166,10 @@ export function RuleCanvas({
     testButtonRef.current?.focus();
   }
 
-  function leave() {
-    if (dirtyRef.current && !window.confirm("Discard your changes to this rule?")) return;
+  async function leave() {
+    if (dirtyRef.current && !(await confirm({ title: "Discard your changes to this rule?", confirmLabel: "Discard", tone: "danger" }))) {
+      return;
+    }
     router.push(backHref);
   }
   // Escape closes the Test panel first, then leaves the canvas (pickers handle their own Escape).

@@ -2,8 +2,18 @@ import { notFound } from "next/navigation";
 import { TeamMembers } from "@/components/teams/team-members";
 import { requireMember } from "@/lib/auth";
 import { isEmailConfigured } from "@/lib/email";
-import { canManageTeam, getTeam, getWorkspace, hasReal1Schema, listPendingInvites } from "@/lib/data";
-import { isUuid } from "@/lib/ids";
+import {
+  canManageTeam,
+  getTeam,
+  getWorkspace,
+  hasReal1Schema,
+  listActivePeople,
+  listUnjoinedAddresses,
+  listPendingInvites,
+  listTeamJoinRequests,
+} from "@/lib/data";
+import { teamMemberCandidates } from "@/lib/teams";
+import { requireTeamView } from "../require-team";
 import { teamTitle } from "../team-title";
 
 export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/members">) {
@@ -11,18 +21,22 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/me
   return teamTitle(teamId, "Members");
 }
 
-// Members (everyone allowlisted sees them) and pending invites. Leads and workspace admins add people,
-// change roles, and remove them; anyone can leave.
+// Members (the team's members and workspace admins see them), people asking to join, and pending
+// invites. Leads and workspace admins add people from the workspace, decide on requests, change roles,
+// and remove people; anyone can leave.
 export default async function TeamMembersPage({ params }: PageProps<"/teams/[teamId]/members">) {
   const { teamId } = await params;
-  if (!isUuid(teamId)) notFound();
-  const [member, team, canManage, invites, workspace, resendable] = await Promise.all([
+  await requireTeamView(teamId);
+  const [member, team, canManage, invites, workspace, resendable, people, requests, waiting] = await Promise.all([
     requireMember(),
     getTeam(teamId),
     canManageTeam(teamId),
     listPendingInvites("team", teamId),
     getWorkspace(),
     hasReal1Schema(),
+    listActivePeople(),
+    listTeamJoinRequests(teamId),
+    listUnjoinedAddresses(),
   ]);
   if (!team) notFound();
 
@@ -38,6 +52,16 @@ export default async function TeamMembersPage({ params }: PageProps<"/teams/[tea
         isDefault={workspace?.defaultTeamId === team.id}
         invites={invites}
         resendable={resendable && isEmailConfigured()}
+        candidates={
+          canManage
+            ? teamMemberCandidates(
+                people,
+                team.members.map((m) => m.profileId),
+              )
+            : []
+        }
+        waitingEmails={canManage ? waiting : []}
+        requests={canManage ? requests : []}
       />
     </div>
   );

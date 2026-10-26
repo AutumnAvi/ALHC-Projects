@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { ArrowDown, ArrowUp, Briefcase, EyeOff, FolderClosed, Plus, X } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { usePortfolioCan } from "@/components/portfolio/portfolio-access";
 import { PortfolioFieldDisplay, PortfolioFieldInput } from "@/components/portfolio/portfolio-field-value";
@@ -54,6 +55,7 @@ export function PortfolioOverview({
   values: Record<string, Record<string, Json>>;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const canEdit = usePortfolioCan("editor");
   const [selected, setSelected] = useState("");
   const percent = progressPercent(totals.completed, totals.total);
@@ -261,8 +263,15 @@ export function PortfolioOverview({
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() => {
-                          if (window.confirm(`Remove “${project.name}” from this portfolio? The project itself is not changed.`)) {
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: `Remove “${project.name}” from this portfolio?`,
+                              message: "The project itself is not changed.",
+                              confirmLabel: "Remove",
+                              tone: "danger",
+                            })
+                          ) {
                             run(() => removePortfolioProject(portfolio.id, project.id));
                           }
                         }}
@@ -349,8 +358,15 @@ export function PortfolioOverview({
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() => {
-                          if (window.confirm(`Remove “${child.name}” from this portfolio? The portfolio itself is not changed.`)) {
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: `Remove “${child.name}” from this portfolio?`,
+                              message: "The portfolio itself is not changed.",
+                              confirmLabel: "Remove",
+                              tone: "danger",
+                            })
+                          ) {
                             run(() => removePortfolioChild(portfolio.id, child.id));
                           }
                         }}
