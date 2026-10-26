@@ -11,7 +11,7 @@ import {
   PORTFOLIO_ROLES,
   PORTFOLIO_ROLE_DESCRIPTIONS,
   PORTFOLIO_ROLE_LABELS,
-  PROJECT_ROLES,
+  OFFERED_PROJECT_ROLES,
   ROLE_DESCRIPTIONS,
   ROLE_LABELS,
   TEAM_ROLE_DESCRIPTIONS,
@@ -19,9 +19,10 @@ import {
   type ProjectRole,
 } from "@/lib/roles";
 
-// Every project role, highest first, each with its one-line description. Roles the viewer can't give are
-// listed greyed out with the reason (so nobody wonders where Viewer or Commenter went); the member's
-// current role is always selectable. With includeDefault, "Their default role" comes first.
+// The four project roles (Owner, Editor, Commenter, Viewer), highest first, each with its one-line hint.
+// Roles the viewer can't give are listed greyed out with the reason (so nobody wonders where Viewer or
+// Commenter went); the member's current role is always selectable — an older Admin membership shows as
+// Admin until someone picks another. With includeDefault, "Their default role" comes first.
 export function projectRoleOptions({
   grantable,
   allowCommenter,
@@ -38,7 +39,8 @@ export function projectRoleOptions({
   // Adding people: owners are made from the member list afterwards.
   inviting?: boolean;
 }): SmartOption[] {
-  const roles: SmartOption[] = PROJECT_ROLES.map((role) => {
+  const listed: ProjectRole[] = current === "admin" ? ["owner", "admin", "editor", "commenter", "viewer"] : [...OFFERED_PROJECT_ROLES];
+  const roles: SmartOption[] = listed.map((role) => {
     const base = { value: role, label: ROLE_LABELS[role], description: ROLE_DESCRIPTIONS[role] };
     if (role === current) return base;
     if (role === "commenter" && !allowCommenter) return { ...base, disabled: true, disabledReason: COMMENTER_OFF_REASON };

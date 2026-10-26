@@ -6,13 +6,13 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { convertToSubtask, convertToTask } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
-import { hasRole } from "@/lib/roles";
+import { taskPermissions } from "@/lib/permissions";
 import { useTaskExtras } from "./task-pane-store";
 
 // Whether the "…" menu offers Convert: a subtask can become a task of a project you edit; a task can
 // become a subtask of another task you edit (the dialog lists them, and says so when there are none).
 export function canConvert(task: TaskDetail) {
-  if (!hasRole(task.viewerRole, "editor")) return false;
+  if (!taskPermissions(task).canEdit) return false;
   if (task.isSubtask) return task.memberships.some((m) => task.editableProjectIds.includes(m.projectId));
   return true;
 }

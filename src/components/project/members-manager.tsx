@@ -22,7 +22,7 @@ import type { ProjectMember } from "@/lib/data";
 import {
   COMMENTER_SWITCH_HREF,
   PERSON_DEFAULT_ROLE,
-  PROJECT_ROLES,
+  OFFERED_PROJECT_ROLES,
   ROLE_DESCRIPTIONS,
   ROLE_LABELS,
   assignableRoles,
@@ -355,7 +355,7 @@ export function MembersManager({
           Roles
         </h2>
         <dl className="mt-2 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
-          {PROJECT_ROLES.map((role) => (
+          {OFFERED_PROJECT_ROLES.map((role) => (
             <div key={role} className="contents">
               <dt className="font-medium text-zinc-800">{ROLE_LABELS[role]}</dt>
               <dd className="text-zinc-600">

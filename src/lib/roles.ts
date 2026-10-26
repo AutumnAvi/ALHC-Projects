@@ -12,13 +12,19 @@ export const ROLE_LABELS: Record<ProjectRole, string> = {
   viewer: "Viewer",
 };
 
+// One plain line per role, shown under each option of the role picker (Oct 26 notes).
 export const ROLE_DESCRIPTIONS: Record<ProjectRole, string> = {
-  owner: "Everything, including ownership and deleting the project",
-  admin: "Manage members, rules, forms, and settings",
-  editor: "Create and edit tasks, fields, sections, and views",
-  commenter: "Read, comment, follow, and decide approvals",
-  viewer: "Read only",
+  owner: "Runs the project: people, settings, rules, and every task",
+  admin: "Older role: runs the project like an owner, but can’t change owners",
+  editor: "Adds, changes, and completes tasks",
+  commenter: "Reads and comments, but can’t change tasks",
+  viewer: "Can look, but can’t change or comment",
 };
+
+// The roles the app hands out (Oct 26 notes: simpler roles): Owner, Editor, Commenter, Viewer. Admin is
+// still a stored role — older memberships keep it and the database treats it as before — but nobody is
+// given it any more (Owner is whoever runs the project; a project can have several).
+export const OFFERED_PROJECT_ROLES = ["owner", "editor", "commenter", "viewer"] as const satisfies readonly ProjectRole[];
 
 const RANK: Record<ProjectRole, number> = { viewer: 1, commenter: 2, editor: 3, admin: 4, owner: 5 };
 
@@ -36,11 +42,11 @@ export function compareMembers(a: { role: ProjectRole; name: string }, b: { role
   return RANK[b.role] - RANK[a.role] || a.name.localeCompare(b.name);
 }
 
-// Roles a member with `role` may hand out: admins up to admin, owners anything. Commenter only while the
-// workspace allows it (Admin console → Security; people who already have it keep it — menus show a
-// member's current role either way).
+// Roles a member with `role` may hand out: owners any offered role, admins any but owner. Commenter only
+// while the workspace allows it (Admin console → Security; people who already have it keep it — menus
+// show a member's current role either way).
 export function assignableRoles(role: ProjectRole | null | undefined, allowCommenter = true): ProjectRole[] {
-  const offered = allowCommenter ? [...PROJECT_ROLES] : PROJECT_ROLES.filter((r) => r !== "commenter");
+  const offered: ProjectRole[] = OFFERED_PROJECT_ROLES.filter((r) => allowCommenter || r !== "commenter");
   if (role === "owner") return offered;
   if (role === "admin") return offered.filter((r) => r !== "owner");
   return [];
@@ -103,7 +109,7 @@ export function effectiveDefaultRole(role: string | null | undefined, allowComme
 
 // Where the Commenter switch lives (Admin console → Security → Project roles).
 export const COMMENTER_SWITCH_HREF = "/admin/security#admin-project-roles-heading";
-export const COMMENTER_OFF_REASON = "Turned off in this workspace. Turn on in Admin console → Security.";
+export const COMMENTER_OFF_REASON = "Turn on in Admin console → Security";
 
 // Team roles (lead / member), for the same picker on team member lists.
 export const TEAM_ROLE_DESCRIPTIONS: Record<"lead" | "member", string> = {

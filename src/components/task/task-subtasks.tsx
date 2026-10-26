@@ -10,6 +10,7 @@ import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask }
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, SubtaskItem, TaskDetail } from "@/lib/data";
 import { formatRequestLabel } from "@/lib/request-numbers";
+import { taskPermissions } from "@/lib/permissions";
 import { hasRole } from "@/lib/roles";
 import { MAX_SUBTASK_DEPTH, subtaskOrderBefore } from "@/lib/subtasks";
 import { DateRangePicker } from "./date-picker";
@@ -42,7 +43,7 @@ const REVEAL = "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 aria
 
 // Whether the pane shows the Subtasks section (Editors can always add the first one).
 export function canAddSubtask(task: TaskDetail) {
-  return hasRole(task.viewerRole, "editor") && task.ancestors.length < MAX_SUBTASK_DEPTH;
+  return taskPermissions(task).canEdit && task.ancestors.length < MAX_SUBTASK_DEPTH;
 }
 
 // The pane's Subtasks (Asana parity, batch 3): one line per subtask — complete, rename in place,
@@ -68,14 +69,14 @@ export function TaskSubtasks({
     return seedFromSubtask(
       subtask,
       { title: task.title, projectName: homeProject?.projectName ?? (task.isPrivate ? "Private" : null) },
-      { personName: () => (assignee ? displayName(assignee) : null) },
+      { personName: () => (assignee ? displayName(assignee) : null), canEdit: taskPermissions(task).canEdit },
     );
   };
   const inputRef = useRef<HTMLInputElement>(null);
   const [subtasks, change] = useOptimistic(task.subtasks, applyChange);
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropBefore, setDropBefore] = useState<string | null | undefined>(undefined);
-  const canEdit = hasRole(task.viewerRole, "editor");
+  const canEdit = taskPermissions(task).canEdit;
   const done = subtasks.filter((s) => s.completedAt).length;
   const approvalBySubtask = new Map(task.approvals.filter((a) => a.subtaskId).map((a) => [a.subtaskId!, a] as const));
   // This task's own depth is its number of ancestors (0 = an ordinary task); subtasks sit one below.
@@ -200,7 +201,7 @@ export function TaskSubtasks({
                     size="sm"
                     kind={subtask.kind}
                     completed={completed}
-                    disabled={!canEdit}
+                    readOnly={!canEdit}
                     label={kindToggleLabel(subtask.kind, subtask.title, completed)}
                     onToggle={() =>
                       run(
@@ -210,18 +211,24 @@ export function TaskSubtasks({
                     }
                   />
                 )}
-                <label className="sr-only" htmlFor={`subtask-${subtask.id}`}>
-                  Subtask name
-                </label>
+                {canEdit ? (
+                  <label className="sr-only" htmlFor={`subtask-${subtask.id}`}>
+                    Subtask name
+                  </label>
+                ) : null}
                 {subtask.requestLabel ? (
                   <span className="shrink-0 text-xs font-medium text-zinc-500">
                     {formatRequestLabel(subtask.requestLabel)}
                   </span>
                 ) : null}
+                {!canEdit ? (
+                  <span className={`min-w-0 flex-1 truncate px-1 text-sm ${completed ? "text-zinc-400 line-through" : "text-zinc-800"}`}>
+                    {subtask.title}
+                  </span>
+                ) : (
                 <input
                   id={`subtask-${subtask.id}`}
                   defaultValue={subtask.title}
-                  readOnly={!canEdit}
                   onBlur={(e) => {
                     const title = e.currentTarget.value.trim();
                     if (!title) e.currentTarget.value = subtask.title;
@@ -230,10 +237,11 @@ export function TaskSubtasks({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
                   }}
-                  className={`h-7 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:bg-white focus:outline-none read-only:hover:border-transparent ${
+                  className={`h-7 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:bg-white focus:outline-none ${
                     completed ? "text-zinc-400 line-through" : "text-zinc-800"
                   }`}
                 />
+                )}
                 {subtask.subtaskCount > 0 ? (
                   <span
                     className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500"

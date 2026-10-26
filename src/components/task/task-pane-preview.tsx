@@ -29,14 +29,16 @@ export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
   return (
     <PaneShell label={`Task: ${seed.title}`} paneState="preview" taskId={seed.id}>
       <div className={PANE_HEADER}>
-        <span
-          className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium opacity-60 ${
-            seed.completed ? "border-green-600 bg-green-600 text-white" : "border-zinc-300 bg-white text-zinc-700"
-          }`}
-        >
-          <Check className="size-4" strokeWidth={2.5} aria-hidden />
-          {seed.completed ? "Completed" : seed.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
-        </span>
+        {seed.canEdit === false && !seed.completed ? null : (
+          <span
+            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium opacity-60 ${
+              seed.completed ? "border-green-600 bg-green-600 text-white" : "border-zinc-300 bg-white text-zinc-700"
+            }`}
+          >
+            <Check className="size-4" strokeWidth={2.5} aria-hidden />
+            {seed.completed ? "Completed" : seed.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
+          </span>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <ExpandButton />
           <CloseButton />

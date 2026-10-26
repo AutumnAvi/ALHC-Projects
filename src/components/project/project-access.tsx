@@ -2,6 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import { Eye } from "lucide-react";
+import { permissionsFor, type Permissions } from "@/lib/permissions";
 import { ROLE_LABELS, hasRole, type ProjectRole } from "@/lib/roles";
 
 // The viewer's role in the current project. Only hides controls; RLS enforces the real rules.
@@ -15,8 +16,10 @@ export function useProjectRole() {
   return useContext(ProjectRoleContext);
 }
 
-export function useCan(min: ProjectRole) {
-  return hasRole(useContext(ProjectRoleContext), min);
+// What the viewer may do in this project (src/lib/permissions.ts): canView / canComment / canEdit /
+// canManage / isOwner. Every project view asks this instead of comparing roles itself.
+export function useProjectPermissions(): Permissions {
+  return permissionsFor(useContext(ProjectRoleContext));
 }
 
 // Shown above a page whose controls need a higher role than the viewer has.
@@ -37,7 +40,7 @@ export function ReadOnlyNotice({ need, what }: { need: ProjectRole; what: string
 // Wraps a management page: below `need`, every form control inside is disabled (links still work)
 // and a notice explains why. Saves would be rejected by RLS anyway.
 export function RoleGate({ need, what, children }: { need: ProjectRole; what: string; children: ReactNode }) {
-  const allowed = useCan(need);
+  const allowed = hasRole(useProjectRole(), need);
   return (
     <>
       {allowed ? null : (

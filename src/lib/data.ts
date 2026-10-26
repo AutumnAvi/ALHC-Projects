@@ -53,6 +53,7 @@ import {
   type PortfolioRole,
   type ProjectRole,
 } from "@/lib/roles";
+import { bestRole, permissionsFor } from "@/lib/permissions";
 import { EMPTY_COUNTS, isPortfolioFieldType, type PortfolioCounts, type PortfolioFieldType } from "@/lib/portfolios";
 import type { CriticalPath, TaskSchedule } from "@/lib/critical-path";
 import { parseDependencyKind, type DependencyKind } from "@/lib/dependencies";
@@ -1952,6 +1953,9 @@ export type MyTask = {
   parentTitle: string | null;
   // The request number with its project's bracket setting (task numbering on), else null.
   requestLabel?: RequestLabel | null;
+  // The viewer may edit it (task_role() ≥ Editor; editableTaskIds()). Being assigned only needs read
+  // access, so a Viewer or Commenter sees the task without a checkbox or a clickable complete control.
+  canEdit: boolean;
 };
 
 function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
@@ -1974,6 +1978,7 @@ function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
         projectName: typeof row.project_name === "string" ? row.project_name : null,
         kind: parseTaskKind(row.kind),
         parentTitle: typeof row.parent_title === "string" ? row.parent_title : null,
+        canEdit: true,
       });
     }
     return tasks;
@@ -1982,10 +1987,11 @@ function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
 }
 
 async function labelMyTasks(page: { open: MyTask[]; completed: MyTask[] }) {
-  const labels = await visibleRequestLabels([...page.open, ...page.completed].map((task) => task.id));
+  const ids = [...page.open, ...page.completed].map((task) => task.id);
+  const [labels, editable] = await Promise.all([visibleRequestLabels(ids), editableTaskIds(ids)]);
   const apply = (task: MyTask): MyTask => {
     const label = labels.get(task.id) ?? null;
-    return { ...task, requestLabel: label, title: displayTaskTitle(task.title, label) };
+    return { ...task, requestLabel: label, title: displayTaskTitle(task.title, label), canEdit: editable.has(task.id) };
   };
   return { open: page.open.map(apply), completed: page.completed.map(apply) };
 }
@@ -2063,6 +2069,7 @@ async function listMyTasksFromRows(profileId: string) {
       projectName: projectId ? projectName.get(projectId)! : null,
       kind: parseTaskKind(t.kind),
       parentTitle: t.parent_task_id ? (parentTitle.get(t.parent_task_id) ?? null) : null,
+      canEdit: true,
     };
   };
   const present = (t: MyTask | null): t is MyTask => t !== null;
@@ -2070,6 +2077,65 @@ async function listMyTasksFromRows(profileId: string) {
     open: openRows.map(toMyTask).filter(present),
     completed: doneRows.map(toMyTask).filter(present),
   });
+}
+
+// Which of these tasks the viewer can edit, like task_role() ≥ Editor without a call per task: a task
+// (a subtask through its top-level task) counts the viewer's best role over its home project and its
+// other projects (archived projects count as Viewer — listMyProjectRoles()); a private task is the
+// creator's and the assignee's to edit. Only hides controls: RLS decides every write.
+export async function editableTaskIds(taskIds: string[]): Promise<Set<string>> {
+  const editable = new Set<string>();
+  const ids = [...new Set(taskIds)];
+  if (ids.length === 0) return editable;
+  const { user } = await getViewer();
+  if (!user) return editable;
+  const supabase = await createClient();
+  type Row = { id: string; root_task_id: string | null; home_project_id: string | null; created_by: string | null; assignee_id: string | null };
+  const read = async (want: string[]) => {
+    const found: Row[] = [];
+    for (let i = 0; i < want.length; i += 200) {
+      const result = await supabase
+        .from("tasks")
+        .select("id, root_task_id, home_project_id, created_by, assignee_id")
+        .in("id", want.slice(i, i + 200));
+      found.push(...rows(result, "task access"));
+    }
+    return found;
+  };
+  const tasks = await read(ids);
+  const byId = new Map(tasks.map((t) => [t.id, t] as const));
+  const rootOf = (t: Row) => t.root_task_id ?? t.id;
+  const missingRoots = [...new Set(tasks.map(rootOf))].filter((id) => !byId.has(id));
+  for (const root of await read(missingRoots)) byId.set(root.id, root);
+  const rootIds = [...new Set(tasks.map(rootOf))];
+  const [roles, memberships] = await Promise.all([
+    listMyProjectRoles(),
+    (async () => {
+      const found: { task_id: string; project_id: string }[] = [];
+      for (let i = 0; i < rootIds.length; i += 200) {
+        const result = await supabase
+          .from("task_projects")
+          .select("task_id, project_id")
+          .in("task_id", rootIds.slice(i, i + 200))
+          .is("deleted_at", null);
+        found.push(...rows(result, "task projects"));
+      }
+      return found;
+    })(),
+  ]);
+  const projectsOf = new Map<string, string[]>();
+  for (const m of memberships) projectsOf.set(m.task_id, [...(projectsOf.get(m.task_id) ?? []), m.project_id]);
+  for (const task of tasks) {
+    const root = byId.get(rootOf(task));
+    if (!root) continue;
+    if (root.home_project_id === null) {
+      if (root.created_by === user.id || root.assignee_id === user.id) editable.add(task.id);
+      continue;
+    }
+    const role = bestRole([root.home_project_id, ...(projectsOf.get(root.id) ?? [])].map((p) => roles.get(p)));
+    if (permissionsFor(role).canEdit) editable.add(task.id);
+  }
+  return editable;
 }
 
 // The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()

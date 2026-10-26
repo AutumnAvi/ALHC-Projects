@@ -5,26 +5,55 @@ import type { TaskKind } from "@/lib/task-kinds";
 
 // The completion control for a task row. Milestones get a diamond, approval tasks a thumbs-up (their
 // assignee decides in the pane; the database refuses ticking an open approval task complete).
+// readOnly (people who can't edit the task — Viewers, Commenters): the same shape as a plain status
+// mark, not a button, with no hover and nothing to click (Oct 26 notes).
 export function CompleteToggle({
   completed,
   onToggle,
   label,
   size = "md",
   disabled = false,
+  readOnly = false,
   kind = "task",
 }: {
   completed: boolean;
-  onToggle: () => void;
+  onToggle?: () => void;
   label: string;
   size?: "sm" | "md";
   disabled?: boolean;
+  readOnly?: boolean;
   kind?: TaskKind;
 }) {
   const dimensions = size === "sm" ? "size-4" : "size-[18px]";
   const idle = kind === "approval" ? "border-zinc-300 text-zinc-400" : "border-zinc-300 text-transparent";
   // Asana's completion green: a green check on hover, a filled green circle once done.
-  const hover = disabled ? "" : kind === "milestone" ? "group-hover/toggle:border-green-600 group-hover/toggle:text-green-600" : "hover:border-green-600 hover:text-green-600";
+  const hover = disabled || readOnly ? "" : kind === "milestone" ? "group-hover/toggle:border-green-600 group-hover/toggle:text-green-600" : "hover:border-green-600 hover:text-green-600";
   const colors = completed ? "border-green-600 bg-green-600 text-white" : `${idle} ${hover}`;
+  if (readOnly) {
+    const status = `${kind === "milestone" ? "Milestone" : kind === "approval" ? "Approval" : "Task"} ${completed ? "completed" : "not completed"}`;
+    return (
+      <span
+        role="img"
+        aria-label={status}
+        data-complete-readonly=""
+        className={`${dimensions} inline-flex shrink-0 items-center justify-center`}
+      >
+        {kind === "milestone" ? (
+          <span className={`inline-flex size-[72%] rotate-45 items-center justify-center rounded-[2px] border ${colors}`}>
+            <Check className="size-[85%] -rotate-45" strokeWidth={3} aria-hidden />
+          </span>
+        ) : (
+          <span className={`inline-flex size-full items-center justify-center rounded-full border ${colors}`}>
+            {kind === "approval" ? (
+              <ThumbsUp className="size-[62%]" strokeWidth={2.5} aria-hidden />
+            ) : (
+              <Check className="size-[70%]" strokeWidth={3} aria-hidden />
+            )}
+          </span>
+        )}
+      </span>
+    );
+  }
   if (kind === "milestone") {
     return (
       <button

@@ -50,8 +50,8 @@ const STATUS_DOT: Record<MemberStatus, string> = {
 
 const LAST_ADMIN_NOTE = "A workspace needs at least one admin. Make someone else an admin first.";
 const DEFAULT_ROLE_HELP =
-  "The project role someone gets when they’re added to a project with “Their default role” (Share, a project’s Members page, or a team added that way).";
-const DEFAULTS_MISSING = "Default project roles need this release’s database update";
+  "What they become when someone adds them to a project with “Their default role” (Share, a project’s Members page, or a team added that way).";
+const DEFAULTS_MISSING = "This setting needs this release’s database update.";
 const NO_ACTIVITY_NOTE = "Last activity shows once this release’s database update is applied";
 const SIGN_IN_ONLY_NOTE = "Only sign-ins are known until this release’s database update is applied";
 const ACTIVITY_HELP =
@@ -149,7 +149,7 @@ export function UsersAdmin({
   function changeDefaultRole(m: WorkspaceMember, next: string) {
     run(async () => {
       const result = await setDefaultProjectRole(m.email, next === "editor" ? null : next);
-      if (!result.error) notify(`${m.name}’s default project role is now ${ROLE_LABELS[next as "editor"] ?? next}`);
+      if (!result.error) notify(`${m.name} now joins new projects as ${ROLE_LABELS[next as "editor"] ?? next}`);
       return result;
     });
   }
@@ -257,7 +257,7 @@ export function UsersAdmin({
             )
           ) : (
             <div className="overflow-x-auto rounded-lg border border-zinc-200">
-              <table className="w-full min-w-[66rem] border-collapse text-sm">
+              <table className="w-full min-w-[56rem] border-collapse text-sm">
                 <caption className="sr-only">People on the workspace’s allowlist</caption>
                 <thead>
                   <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-500">
@@ -265,12 +265,7 @@ export function UsersAdmin({
                       Name
                     </th>
                     <th scope="col" className="w-32 px-3 py-2 font-medium">
-                      Role
-                    </th>
-                    <th scope="col" className="w-40 px-3 py-2 font-medium">
-                      <span tabIndex={0} data-tooltip={DEFAULT_ROLE_HELP}>
-                        Default project role<span className="sr-only">: {DEFAULT_ROLE_HELP}</span>
-                      </span>
+                      Workspace role
                     </th>
                     <th scope="col" className="w-48 px-3 py-2 font-medium">
                       Status
@@ -304,8 +299,6 @@ export function UsersAdmin({
                           activity={activity}
                           timeZone={timeZone}
                           pending={pending}
-                          allowCommenter={allowCommenter}
-                          defaultsAvailable={defaultsAvailable}
                           accessToggle={
                             m.status === "removed" ? null : (
                               <ProjectAccessToggle
@@ -313,19 +306,31 @@ export function UsersAdmin({
                                 onToggle={() => setOpenAccess(accessOpen ? null : m.email)}
                                 name={m.name}
                                 controls={accessId}
+                                label="Details"
                               />
                             )
                           }
                           onRole={(next, revert) => changeRole(m, next, revert)}
-                          onDefaultRole={(next) => changeDefaultRole(m, next)}
                           onResend={() => resend(m)}
                           onRemove={() => remove(m)}
                           onAddBack={() => addBack(m)}
                         />
                         {accessOpen ? (
                           <tr className="border-b border-zinc-100 bg-zinc-50/60">
-                            <td colSpan={8} className="px-12 pb-3">
-                              <ProjectAccessPanel id={accessId} person={{ email: m.email, profileId: m.profileId, name: m.name }} />
+                            <td colSpan={7} className="px-12 pb-3">
+                              <div id={accessId} className="space-y-3 pt-1">
+                                <NewProjectRoleSetting
+                                  member={m}
+                                  available={defaultsAvailable}
+                                  allowCommenter={allowCommenter}
+                                  pending={pending}
+                                  onChange={(next) => changeDefaultRole(m, next)}
+                                />
+                                <ProjectAccessPanel
+                                  id={`${accessId}-projects`}
+                                  person={{ email: m.email, profileId: m.profileId, name: m.name }}
+                                />
+                              </div>
                             </td>
                           </tr>
                         ) : null}
@@ -358,11 +363,8 @@ function UserRow({
   activity,
   timeZone,
   pending,
-  allowCommenter,
-  defaultsAvailable,
   accessToggle,
   onRole,
-  onDefaultRole,
   onResend,
   onRemove,
   onAddBack,
@@ -373,11 +375,8 @@ function UserRow({
   activity: { byEmail: Record<string, MemberActivity>; activityTracked: boolean } | null;
   timeZone: string;
   pending: boolean;
-  allowCommenter: boolean;
-  defaultsAvailable: boolean;
   accessToggle: ReactNode;
   onRole: (role: WorkspaceRole, revert: () => void) => void;
-  onDefaultRole: (role: string) => void;
   onResend: () => void;
   onRemove: () => void;
   onAddBack: () => void;
@@ -412,18 +411,6 @@ function UserRow({
 
       <td className="px-3 py-2">
         <RoleCell member={m} self={self} lastAdmin={lastAdmin} pending={pending} onRole={onRole} />
-      </td>
-
-      <td className="px-3 py-2">
-        {!defaultsAvailable ? (
-          <span tabIndex={0} data-tooltip={DEFAULTS_MISSING} className="text-xs text-zinc-400">
-            —<span className="sr-only">{DEFAULTS_MISSING}</span>
-          </span>
-        ) : m.status === "removed" ? (
-          <span className="text-xs text-zinc-400">—</span>
-        ) : (
-          <DefaultRoleCell member={m} allowCommenter={allowCommenter} pending={pending} onChange={onDefaultRole} />
-        )}
       </td>
 
       <td className="px-3 py-2">
@@ -540,43 +527,59 @@ function RoleCell({
   );
 }
 
-// The person's default project role: Editor (no default set), Commenter, or Viewer. Commenter is greyed
-// out while the workspace has it off (a Commenter default then adds them as a Viewer).
-function DefaultRoleCell({
+// In a person's Details panel: the project role they get when someone adds them to a project with "Their
+// default role" — Editor (no default set), Commenter, or Viewer (allowed_emails.default_project_role).
+// Commenter is greyed out while the workspace has it off (a Commenter default then adds them as a Viewer).
+function NewProjectRoleSetting({
   member: m,
+  available,
   allowCommenter,
   pending,
   onChange,
 }: {
   member: WorkspaceMember;
+  available: boolean;
   allowCommenter: boolean;
   pending: boolean;
   onChange: (role: string) => void;
 }) {
   const stored = isDefaultProjectRole(m.defaultProjectRole) ? m.defaultProjectRole : "editor";
   const effective = effectiveDefaultRole(m.defaultProjectRole, allowCommenter);
+  const labelId = `new-project-role-${m.email.replace(/[^a-z0-9]/gi, "-")}`;
   return (
-    <div>
-      <RolePicker
-        key={stored}
-        label={`Default project role for ${m.name}`}
-        value={stored}
-        compact
-        disabled={pending}
-        onChange={(next) => {
-          if (next !== stored) onChange(next);
-        }}
-        options={DEFAULT_PROJECT_ROLES.map((role) => ({
-          value: role,
-          label: ROLE_LABELS[role],
-          description: ROLE_DESCRIPTIONS[role],
-          ...(role === "commenter" && !allowCommenter && stored !== "commenter"
-            ? { disabled: true, disabledReason: COMMENTER_OFF_REASON }
-            : {}),
-        }))}
-      />
-      {effective !== stored ? <p className="mt-0.5 text-2xs text-amber-700">Added as Viewer while Commenter is off</p> : null}
-    </div>
+    <section aria-labelledby={labelId} className="flex flex-wrap items-start gap-x-4 gap-y-1">
+      <div className="min-w-0 flex-1 basis-64">
+        <h3 id={labelId} className="text-xs font-medium text-zinc-800">
+          Role when added to new projects
+        </h3>
+        <p className="text-xs text-zinc-500">{DEFAULT_ROLE_HELP}</p>
+      </div>
+      {available ? (
+        <div>
+          <RolePicker
+            key={stored}
+            label={`Role when ${m.name} is added to new projects`}
+            value={stored}
+            compact
+            disabled={pending}
+            onChange={(next) => {
+              if (next !== stored) onChange(next);
+            }}
+            options={DEFAULT_PROJECT_ROLES.map((role) => ({
+              value: role,
+              label: ROLE_LABELS[role],
+              description: ROLE_DESCRIPTIONS[role],
+              ...(role === "commenter" && !allowCommenter && stored !== "commenter"
+                ? { disabled: true, disabledReason: COMMENTER_OFF_REASON }
+                : {}),
+            }))}
+          />
+          {effective !== stored ? <p className="mt-0.5 text-2xs text-amber-700">Added as Viewer while Commenter is off</p> : null}
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-400">{DEFAULTS_MISSING}</p>
+      )}
+    </section>
   );
 }
 

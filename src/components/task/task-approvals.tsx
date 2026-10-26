@@ -8,6 +8,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { cancelApproval, decideApproval, requestApproval, resubmitApproval } from "@/lib/actions";
 import type { Profile, TaskApproval, TaskDetail } from "@/lib/data";
+import { taskPermissions } from "@/lib/permissions";
 import { hasRole } from "@/lib/roles";
 
 export const APPROVAL_STATUS: Record<TaskApproval["status"], { label: string; className: string }> = {
@@ -47,7 +48,7 @@ export function TaskApprovals({
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const approvals = task.approvals.filter((a) => a.id !== excludeId);
   // Requesting/cancelling needs Editor; an approver needs at least Commenter to be able to decide.
-  const canEdit = hasRole(task.viewerRole, "editor");
+  const canEdit = taskPermissions(task).canEdit;
   // The approver picker takes focus when the form opens (the old select's autoFocus).
   useEffect(() => {
     if (open && canEdit) document.getElementById("approval-approver")?.focus();
@@ -162,7 +163,7 @@ export function TaskApprovals({
               approval={approval}
               approverName={nameOf(approval.approverId)}
               requesterName={approval.ruleName ? `Rule “${approval.ruleName}”` : nameOf(approval.requestedBy)}
-              isApprover={approval.approverId === memberId}
+              isApprover={approval.approverId === memberId && taskPermissions(task).canComment}
               canEdit={canEdit}
               run={run}
               pending={pending}

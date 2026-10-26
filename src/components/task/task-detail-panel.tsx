@@ -11,6 +11,7 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { assignRequestNumber, setTaskCompleted, updateTask } from "@/lib/actions";
 import { approvalOpen, approvalTaskRequest, parseApprovalTaskStatus } from "@/lib/task-kinds";
 import type { Profile, TaskDetail } from "@/lib/data";
+import { taskPermissions } from "@/lib/permissions";
 import { hasRole } from "@/lib/roles";
 import type { Tag } from "@/lib/tags";
 import { ApprovalTaskBanner } from "./task-approval-banner";
@@ -68,7 +69,8 @@ export function TaskDetailPanel({
   const awaitingApproval = !completed && approvalOpen(parseApprovalTaskStatus(approvalRequest?.status));
 
   const memberProjectIds = new Set(task.memberships.map((m) => m.projectId));
-  const canEdit = hasRole(task.viewerRole, "editor");
+  const permissions = taskPermissions(task);
+  const canEdit = permissions.canEdit;
   // Subtasks live in their root task's projects; they're never added to one themselves.
   const addableProjects = canEdit && !task.isSubtask ? projects.filter((p) => p.canAdd && !memberProjectIds.has(p.id)) : [];
   // Only people with access to one of the task's projects can be assigned (others couldn't see it).
@@ -156,7 +158,7 @@ export function TaskDetailPanel({
                 <Check className="size-3.5" aria-hidden /> Completed
               </span>
             ) : null}
-            <span className="truncate">{task.viewerRole === "commenter" ? "You can comment on this task" : "View only"}</span>
+            <span className="truncate">{permissions.readOnlyNote}</span>
           </span>
         )}
         {blocked && canEdit ? (
@@ -171,7 +173,7 @@ export function TaskDetailPanel({
             likeProfileIds={task.likeProfileIds}
             profiles={profiles}
             memberId={memberId}
-            canLike={hasRole(task.viewerRole, "commenter")}
+            canLike={permissions.canComment}
           />
           {canEdit ? (
             <PersonPicker
@@ -230,21 +232,30 @@ export function TaskDetailPanel({
         <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
           {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
-          <label htmlFor="task-title" className="sr-only">
-            Task name
-          </label>
           {task.requestLabel ? (
             <p className="mb-1 text-sm font-medium text-zinc-500">
               {formatRequestLabel(task.requestLabel)}
             </p>
           ) : null}
+          {canEdit ? (
+            <label htmlFor="task-title" className="sr-only">
+              Task name
+            </label>
+          ) : null}
+          {!canEdit ? (
+            // Read-only (Viewer / Commenter): the name as text, not a box that looks editable.
+            <h2
+              id="task-title"
+              className={`break-words py-1 text-2xl font-semibold leading-tight tracking-tight ${completed ? "text-zinc-500" : "text-zinc-900"}`}
+            >
+              {task.title}
+            </h2>
+          ) : (
           <textarea
             id="task-title"
             defaultValue={task.title}
             rows={1}
-            readOnly={!canEdit}
             onBlur={(e) => {
-              if (!canEdit) return;
               const title = e.currentTarget.value.trim();
               if (!title) e.currentTarget.value = task.title;
               else if (title !== task.title) run(() => updateTask(task.id, { title }));
@@ -255,10 +266,11 @@ export function TaskDetailPanel({
                 e.currentTarget.blur();
               }
             }}
-            className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent bg-transparent px-2 py-1 text-2xl font-semibold leading-tight tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent read-only:focus:border-transparent ${
+            className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent bg-transparent px-2 py-1 text-2xl font-semibold leading-tight tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
               completed ? "text-zinc-500" : "text-zinc-900"
             }`}
           />
+          )}
 
           <RequestBadges task={task} />
 

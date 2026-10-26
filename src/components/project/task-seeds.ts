@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { displayName } from "@/components/avatar";
+import { useProjectPermissions } from "@/components/project/project-access";
 import type { Profile, ProjectTask, Section, SubtaskItem } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
 import type { Tag } from "@/lib/tags";
@@ -22,6 +23,7 @@ export function useProjectTaskSeeds({
   fields?: FieldDef[];
   projectName?: string | null;
 }) {
+  const { canEdit } = useProjectPermissions();
   return useMemo(() => {
     const people = new Map(profiles.map((p) => [p.id, displayName(p)]));
     const tagMap = new Map(tags.map((t) => [t.id, { id: t.id, name: t.name, color: t.color }]));
@@ -32,11 +34,12 @@ export function useProjectTaskSeeds({
       projectName: projectName ?? null,
       sectionName: (id) => (id ? (sectionMap.get(id) ?? null) : "No section"),
       fields: fields.filter((f) => f.showInViews),
+      canEdit,
     };
     return {
       task: (task: ProjectTask): TaskSeed => seedFromProjectTask(task, lookups),
       subtask: (subtask: SubtaskItem, parentTitle: string): TaskSeed =>
         seedFromSubtask(subtask, { title: parentTitle, projectName }, lookups),
     };
-  }, [profiles, tags, sections, fields, projectName]);
+  }, [profiles, tags, sections, fields, projectName, canEdit]);
 }

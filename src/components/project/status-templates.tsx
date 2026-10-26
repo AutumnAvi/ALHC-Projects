@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, FileText, Pencil, Plus, Trash2, X } from "lucide-re
 import { Dialog } from "@/components/dialog";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { createStatusTemplate, deleteStatusTemplate, updateStatusTemplate } from "@/lib/actions";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus, type ProjectStatus } from "@/lib/portfolios";
@@ -36,7 +36,7 @@ export function StatusTemplatesView({
   templates: StatusTemplate[];
   available: boolean;
 }) {
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const [pending, run] = useServerAction();
   const [editing, setEditing] = useState<StatusTemplate | "new" | null>(null);
 

@@ -65,7 +65,9 @@ export function StartDate({ task, prefix = "" }: { task: Pick<ProjectTask, "star
 
 // Asana's dashed person / calendar circle in an empty assignee or date cell, shown while the row is
 // hovered (rows carry `group`). Decorative: clicking the row opens the task to set it.
-export function EmptyCellHint({ kind }: { kind: "person" | "date" }) {
+// hidden: people who can't edit the task get no "click to set" hint (Oct 26 notes).
+export function EmptyCellHint({ kind, hidden = false }: { kind: "person" | "date"; hidden?: boolean }) {
+  if (hidden) return null;
   const Icon = kind === "person" ? UserRound : CalendarDays;
   return (
     <span

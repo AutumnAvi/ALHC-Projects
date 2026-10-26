@@ -21,7 +21,7 @@ import {
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useViewConfig } from "@/components/project/view-config";
 import { createSection, createTask, createView, updateView } from "@/lib/actions";
 import { requestAddTask } from "./shared";
@@ -70,7 +70,7 @@ export function ViewToolbar({
   const viewConfig = useViewConfig();
   const [pending, run] = useServerAction();
   // Below Editor, filters still work as an unsaved ?f= draft; only saving is hidden.
-  const canSave = useCan("editor");
+  const canSave = useProjectPermissions().canEdit;
   if (!viewConfig) return null;
   const { current, base, isDraft, apply, urlFor } = viewConfig;
   const filters = current.filters ?? {};

@@ -26,6 +26,8 @@ export type TaskSeed = {
   commentCount?: number;
   // A subtask: its parent's name (the breadcrumb).
   parentTitle?: string | null;
+  // false: the viewer can't edit it, so the preview draws no "Mark complete" (unknown = drawn).
+  canEdit?: boolean;
 };
 
 // Lookups a view already has (people, tags, fields, sections, the project's name).
@@ -36,6 +38,8 @@ export type SeedLookups = {
   sectionName?: (sectionId: string | null) => string | null;
   // Fields pinned as List columns / card chips, with their chip for this task's value.
   fields?: FieldDef[];
+  // The viewer's edit permission in the view's project (useProjectPermissions()).
+  canEdit?: boolean;
 };
 
 function fieldSeeds(fieldValues: Record<string, Json>, lookups: SeedLookups, sectionName: string | null) {
@@ -81,6 +85,7 @@ export function seedFromProjectTask(task: ProjectTask, lookups: SeedLookups = {}
     subtaskCount: task.subtaskCount,
     subtaskDoneCount: task.subtaskDoneCount,
     commentCount: task.commentCount,
+    canEdit: lookups.canEdit,
   };
 }
 
@@ -97,6 +102,7 @@ export function seedFromMyTask(task: MyTask, viewer?: { id: string; name: string
     dueOn: task.dueOn,
     projectName: task.projectName ?? (task.projectId ? undefined : "Private"),
     parentTitle: task.parentTitle,
+    canEdit: task.canEdit,
   };
 }
 
@@ -119,6 +125,7 @@ export function seedFromSubtask(
     subtaskCount: subtask.subtaskCount,
     subtaskDoneCount: subtask.subtaskDoneCount,
     parentTitle: parent.title,
+    canEdit: lookups.canEdit,
   };
 }
 

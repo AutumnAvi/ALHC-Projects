@@ -25,7 +25,7 @@ import {
 import { FieldEditorDialog, FieldList } from "@/components/project/field-editor";
 import { StatusTemplatesView } from "@/components/project/status-templates";
 import { TaskNumberingForm } from "@/components/project/task-numbering";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useRightPanel } from "@/components/shell/right-panel";
 import { useServerAction } from "@/components/toast";
@@ -337,7 +337,7 @@ function ruleHref(base: string, back: string, ruleId: string | "new") {
 }
 
 function RulesView({ base, back, rules }: { base: string; back: string; rules: CustomizeRule[] }) {
-  const canEdit = useCan("admin");
+  const canEdit = useProjectPermissions().canManage;
   const [pending, run] = useServerAction();
   const [shown, setEnabled] = useOptimistic(rules, (current, patch: { id: string; enabled: boolean }) =>
     current.map((r) => (r.id === patch.id ? { ...r, enabled: patch.enabled } : r)),
@@ -394,7 +394,7 @@ function RulesView({ base, back, rules }: { base: string; back: string; rules: C
 }
 
 function FieldsView({ projectId, base, summary }: { projectId: string; base: string; summary: CustomizeSummary }) {
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const { batch4 } = useProjectPage();
   const [adding, setAdding] = useState(false);
   return (
@@ -436,7 +436,7 @@ function FieldsView({ projectId, base, summary }: { projectId: string; base: str
 }
 
 function FormsView({ projectId, base, forms }: { projectId: string; base: string; forms: CustomizeSummary["forms"] }) {
-  const canEdit = useCan("admin");
+  const canEdit = useProjectPermissions().canManage;
   const [pending, run] = useServerAction();
   return (
     <div>
@@ -656,7 +656,7 @@ function AppRow({ href, title, state, on }: { href: string; title: string; state
 }
 
 function TypesView({ base, templates }: { base: string; templates: CustomizeSummary["taskTemplates"] }) {
-  const canSaveProject = useCan("admin");
+  const canSaveProject = useProjectPermissions().canManage;
   const types: { icon: LucideIcon; name: string; body: string }[] = [
     { icon: ListChecks, name: "Task", body: "Ordinary work with an assignee and dates." },
     { icon: Diamond, name: "Milestone", body: "A checkpoint on its due date (a diamond on Timeline). Add task → Add milestone." },

@@ -21,11 +21,13 @@ export function ProjectAccessToggle({
   onToggle,
   name,
   controls,
+  label = "Project access",
 }: {
   open: boolean;
   onToggle: () => void;
   name: string;
   controls: string;
+  label?: string;
 }) {
   return (
     <button
@@ -36,7 +38,7 @@ export function ProjectAccessToggle({
       className="btn-ghost h-6 px-1.5 text-xs text-zinc-600"
     >
       <FolderKanban className="size-3.5" aria-hidden />
-      Project access
+      {label}
       <span className="sr-only"> for {name}</span>
       <ChevronDown className={`size-3 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
     </button>
@@ -183,7 +185,7 @@ export function ProjectAccessPanel({
             compact
             onChange={setAddRole}
             options={projectRoleOptions({
-              grantable: target?.grantable ?? ["admin", "editor", "commenter", "viewer"],
+              grantable: target?.grantable ?? ["editor", "commenter", "viewer"],
               allowCommenter: data.allowCommenter,
               includeDefault: data.defaultRoles,
               inviting: true,

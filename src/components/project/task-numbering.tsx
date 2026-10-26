@@ -3,7 +3,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { Hash } from "lucide-react";
 import { Dialog } from "@/components/dialog";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { saveTaskNumbering } from "@/lib/actions";
@@ -45,8 +45,7 @@ export function TaskNumberingForm({
   sections: { id: string; name: string }[];
   fields: FieldDef[];
 }) {
-  const canEdit = useCan("editor");
-  const canRenumber = useCan("admin");
+  const { canEdit, canManage: canRenumber } = useProjectPermissions();
   const [pending, run] = useServerAction();
   const initial = sequence ?? emptyNumbering();
   const [draft, setDraft] = useState(initial);

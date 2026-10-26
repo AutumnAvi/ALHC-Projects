@@ -44,7 +44,7 @@ import { projectColorClass } from "@/lib/project-colors";
 import { SyncCalendarDialog } from "@/components/calendar/sync-calendar-dialog";
 import { DuplicateProjectDialog } from "@/components/project/duplicate-project-dialog";
 import { CustomizePanel, type CustomizeSummary } from "@/components/project/customize-panel";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { copyProjectLink, useProjectPage } from "@/components/project/project-page-context";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
@@ -97,8 +97,7 @@ export function ProjectHeader({
   const pathname = usePathname();
   const [, run] = useServerAction();
   const { openShare } = useProjectPage();
-  const canEditViews = useCan("editor");
-  const canEditProject = useCan("admin");
+  const { canEdit: canEditViews, canManage: canEditProject } = useProjectPermissions();
   const base = `/projects/${project.id}`;
 
   // Older /list, /board, /calendar, /timeline links render the default config when no saved view exists.
@@ -235,9 +234,7 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
   const router = useRouter();
   const notify = useNotify();
   const [pending, run] = useServerAction();
-  const canEditViews = useCan("editor");
-  const canEditProject = useCan("admin");
-  const canDeleteProject = useCan("owner");
+  const { canEdit: canEditViews, canManage: canEditProject, isOwner: canDeleteProject } = useProjectPermissions();
   const [duplicating, setDuplicating] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const base = `/projects/${project.id}`;
@@ -379,7 +376,7 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
 // sees the pill (it links to the Overview, where the latest update is). A project whose status was never
 // set reads "Set status", like Asana.
 function StatusControl({ project, overviewHref }: { project: Project; overviewHref: string }) {
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const { openStatusUpdate } = useProjectPage();
   const status = isProjectStatus(project.status) ? project.status : null;
   const set = status !== null && project.status_updated_at !== null;

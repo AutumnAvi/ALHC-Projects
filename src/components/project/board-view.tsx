@@ -4,7 +4,7 @@ import { useEffect, useState, type DragEvent } from "react";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
-import { useCan } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useViewConfig } from "@/components/project/view-config";
 import { useOpenTaskId } from "@/components/shell/right-panel";
@@ -72,7 +72,7 @@ export function BoardView({
   const viewConfig = useViewConfig();
   const config = viewConfig?.current ?? configProp;
   const [, run] = useServerAction();
-  const canEdit = useCan("editor");
+  const canEdit = useProjectPermissions().canEdit;
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   // The column a card was dragged from (grouped by tag, a task sits in several columns).
@@ -319,7 +319,7 @@ export function BoardView({
 
             {group.tasks.length === 0 && !isTarget ? (
               <p className="rounded-lg border border-dashed border-zinc-300 bg-white/60 px-2 py-4 text-center text-xs text-zinc-600">
-                {dragging ? "Drop here" : group.target.kind === "section" ? "No tasks yet. Add one above or drag a card here." : "No tasks"}
+                {dragging ? "Drop here" : group.target.kind === "section" && canEdit ? "No tasks yet. Add one above or drag a card here." : "No tasks"}
               </p>
             ) : null}
 
@@ -405,7 +405,8 @@ function TaskCard({
             size="sm"
             kind={task.kind}
             completed={completed}
-            disabled={!canEdit || (task.kind === "approval" && approvalOpen(task.approvalStatus))}
+            readOnly={!canEdit}
+          disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
             onToggle={onToggle}
             label={kindToggleLabel(task.kind, task.title, completed)}
           />
