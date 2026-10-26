@@ -928,7 +928,8 @@ function TimelineBar({
           }`}
           style={{ left: center + size, maxWidth: 240 }}
         >
-          {displayTaskTitle(task.title, task.requestLabel)}
+          {bareTaskTitle(task.title, task.requestLabel)}
+          <TaskNumberBadge label={task.requestLabel} size="2xs" className="ml-1" />
         </span>
         {drag?.moved ? (
           <span
@@ -995,7 +996,8 @@ function TimelineBar({
           }`}
           style={{ left: left + width, maxWidth: 240 }}
         >
-          {displayTaskTitle(task.title, task.requestLabel)}
+          {bareTaskTitle(task.title, task.requestLabel)}
+          <TaskNumberBadge label={task.requestLabel} size="2xs" className="ml-1" />
         </span>
       ) : null}
       {drag?.moved ? (
