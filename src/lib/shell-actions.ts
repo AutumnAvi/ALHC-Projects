@@ -6,7 +6,7 @@
 // project the person can't open is ever returned, workspace admins included.
 
 import { displayName } from "@/components/avatar";
-import { displayTaskTitle } from "@/lib/request-numbers";
+import { bareTaskTitle } from "@/lib/request-numbers";
 import { getViewer } from "@/lib/auth";
 import {
   getGoalViewer,
@@ -84,7 +84,8 @@ export async function quickSearch(query: string, only: SearchKind | null = null)
   const taskLabels = await visibleRequestLabels(taskRows.map((task) => task.id));
   const tasks: QuickTask[] = taskRows.map((t) => ({
           id: t.id,
-          title: displayTaskTitle(t.title, taskLabels.get(t.id) ?? null),
+          title: bareTaskTitle(t.title, taskLabels.get(t.id) ?? null),
+          label: taskLabels.get(t.id) ?? null,
           completed: Boolean(t.completed_at),
           // search_tasks labels every project task with a project the person can read; null = private.
           isPrivate: !t.home_project_id,
@@ -135,6 +136,7 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
   ]);
   const projectsById = new Map(projects.map((p) => [p.id, p] as const));
   const tasks = taskResult && !taskResult.error ? taskResult.data ?? [] : [];
+  const recentLabels = await visibleRequestLabels(tasks.map((t) => t.id));
 
   // A task read through a project other than its home (multi-homed, or a subtask of such a task) is
   // labelled and opened with one of its own (its root's) memberships that RLS shows the person.
@@ -171,7 +173,8 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
       {
         kind: "task",
         id: task.id,
-        title: task.title,
+        title: bareTaskTitle(task.title, recentLabels.get(task.id) ?? null),
+        label: recentLabels.get(task.id) ?? null,
         completed: Boolean(task.completed_at),
         isPrivate,
         projectId: project?.id ?? null,

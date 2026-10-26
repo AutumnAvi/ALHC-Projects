@@ -3,7 +3,7 @@
 import type { Tag } from "@/lib/tags";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useRef, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
-import { Inbox, Route } from "lucide-react";
+import { Inbox, Route, Spline } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useDependencyShift } from "@/components/task/dependency-shift";
@@ -11,7 +11,10 @@ import { EMPTY_CRITICAL_PATH, slackLabel, type CriticalPath, type TaskSchedule }
 import { dependencyConflict, fromPredecessorStart, toSuccessorFinish } from "@/lib/dependencies";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectDependency, ProjectTask, Section } from "@/lib/data";
-import { displayTaskTitle } from "@/lib/request-numbers";
+import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
+import { TaskNumberBadge } from "@/components/task/task-number";
+import { useNotify, useServerAction } from "@/components/toast";
+import { setTaskDependency } from "@/lib/actions";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { groupOf, isIsoDate, type ViewConfig } from "@/lib/views";
 import { useOpenTaskId } from "@/components/shell/right-panel";
@@ -102,6 +105,26 @@ export function TimelineView({
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const trayDrag = useRef<{ taskId: string; originX: number; originY: number; moved: boolean } | null>(null);
   const suppressTrayClick = useRef(false);
+  // Oct 26 notes (batch 4): Draw dependencies. While it's on, dragging from one task (its bar or its row)
+  // to another makes the second one blocked by the first (finish-to-start); Esc or the button stops it.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [linking, setLinking] = useState(false);
+  const [link, setLink] = useState<{ fromId: string; x1: number; y1: number; x2: number; y2: number; overId: string | null } | null>(null);
+  const [, runLink] = useServerAction();
+  const notify = useNotify();
+
+  useEffect(() => {
+    if (!linking) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setLink(null);
+      setLinking(false);
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [linking]);
 
   const requested = searchParams.get("d");
   const zoomParam = searchParams.get("tl");
@@ -246,6 +269,61 @@ export function TimelineView({
     return index >= 0 && index < days ? index : null;
   }
 
+  // Where the pointer is, in the timeline's content coordinates, and which task row it's over.
+  function linkPoint(clientX: number, clientY: number) {
+    const rect = contentRef.current?.getBoundingClientRect();
+    const row = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-timeline-task]");
+    return {
+      x: rect ? clientX - rect.left : 0,
+      y: rect ? clientY - rect.top : 0,
+      overId: row?.dataset.timelineTask ?? null,
+    };
+  }
+
+  const linkHandlers = linking
+    ? {
+        onPointerDownCapture: (e: PointerEvent<HTMLDivElement>) => {
+          if (e.button !== 0) return;
+          const row = (e.target as HTMLElement).closest<HTMLElement>("[data-timeline-task]");
+          const fromId = row?.dataset.timelineTask;
+          if (!fromId) return;
+          // The line starts here instead of a bar drag or opening the pane.
+          e.preventDefault();
+          e.stopPropagation();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          const point = linkPoint(e.clientX, e.clientY);
+          setLink({ fromId, x1: point.x, y1: rowCenter.get(fromId) ?? point.y, x2: point.x, y2: point.y, overId: null });
+        },
+        onPointerMove: (e: PointerEvent<HTMLDivElement>) => {
+          if (!link) return;
+          const point = linkPoint(e.clientX, e.clientY);
+          setLink({ ...link, x2: point.x, y2: point.y, overId: point.overId && point.overId !== link.fromId ? point.overId : null });
+        },
+        onPointerUp: (e: PointerEvent<HTMLDivElement>) => {
+          if (!link) return;
+          const { overId } = linkPoint(e.clientX, e.clientY);
+          const fromId = link.fromId;
+          setLink(null);
+          if (!overId || overId === fromId) return;
+          const from = tasksById.get(fromId);
+          const to = tasksById.get(overId);
+          runLink(async () => {
+            const result = await setTaskDependency(fromId, overId);
+            if (!result.error && from && to) {
+              notify(`“${bareTaskTitle(to.title, to.requestLabel)}” is now blocked by “${bareTaskTitle(from.title, from.requestLabel)}”`);
+            }
+            return result;
+          });
+        },
+        onPointerCancel: () => setLink(null),
+        // No pane opens and no link is followed while drawing.
+        onClickCapture: (e: MouseEvent<HTMLDivElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+        },
+      }
+    : {};
+
   function trayHandlers(task: ProjectTask) {
     return {
       onPointerDown: (e: PointerEvent<HTMLAnchorElement>) => {
@@ -299,6 +377,21 @@ export function TimelineView({
           onToday={() => navigate({ d: null })}
         >
           <div className="flex items-center gap-2">
+            {canEdit ? (
+              <button
+                type="button"
+                aria-pressed={linking}
+                onClick={() => {
+                  setLink(null);
+                  setLinking(!linking);
+                }}
+                data-tooltip={linking ? "Stop drawing (Esc)" : "Drag from one task to another to make the second wait on the first"}
+                className={`btn-secondary ${linking ? "border-accent-600 bg-accent-600 text-white hover:bg-accent-700" : ""}`}
+              >
+                <Spline className="size-4" aria-hidden />
+                Draw dependencies
+              </button>
+            ) : null}
             <button
               type="button"
               aria-pressed={showCritical}
@@ -312,6 +405,12 @@ export function TimelineView({
             <Segmented label="Timeline scale" options={ZOOMS} value={zoom} onChange={(z) => navigate({ tl: z })} />
           </div>
         </PeriodNav>
+        {linking ? (
+          <p className="mb-2 rounded-md bg-accent-50 px-2.5 py-1.5 text-xs text-accent-900" role="status">
+            Drawing dependencies: drag from a task (its bar or its row) to the task that has to wait for it. The second
+            one becomes blocked by the first. Press Esc or the button again to stop.
+          </p>
+        ) : null}
         {showCritical ? (
           <p className="mb-2 text-xs text-zinc-500" role="status">
             Outlined bars are on the critical path: the chain of dependencies that ends at the project’s last due date
@@ -330,7 +429,12 @@ export function TimelineView({
           ref={scrollRef}
           className="relative min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 bg-white"
         >
-          <div className="relative min-h-full" style={{ width: LABEL_WIDTH + width, minHeight: contentHeight }}>
+          <div
+            ref={contentRef}
+            className={`relative min-h-full ${linking ? "cursor-crosshair select-none [&_*]:cursor-crosshair" : ""}`}
+            style={{ width: LABEL_WIDTH + width, minHeight: contentHeight }}
+            {...linkHandlers}
+          >
             <div
               ref={gridRef}
               aria-hidden
@@ -423,6 +527,8 @@ export function TimelineView({
                   key={slot.key}
                   top={slot.top}
                   task={slot.task}
+                  linkTarget={link !== null && link.overId === slot.task.id}
+                  linkSource={link !== null && link.fromId === slot.task.id}
                   open={openTaskId === slot.task.id}
                   today={today}
                   width={width}
@@ -444,6 +550,20 @@ export function TimelineView({
             {arrows.length > 0 ? (
               <DependencyArrows arrows={arrows} width={width} height={contentHeight} />
             ) : null}
+            {link ? (
+              <svg aria-hidden className="pointer-events-none absolute inset-0 z-30" width={LABEL_WIDTH + width} height={contentHeight}>
+                <line
+                  x1={link.x1}
+                  y1={link.y1}
+                  x2={link.x2}
+                  y2={link.y2}
+                  strokeWidth={2}
+                  strokeDasharray="5 4"
+                  className={link.overId ? "stroke-accent-600" : "stroke-zinc-400"}
+                />
+                <circle cx={link.x1} cy={link.y1} r={4} className="fill-accent-600" />
+              </svg>
+            ) : null}
           </div>
         </div>
         <p className={VIEW_HINT}>
@@ -451,6 +571,7 @@ export function TimelineView({
           it, drag either end of a bar to change its start or due date, or drag an unscheduled task onto a day to
           give it a due date. Arrows link a task to the one waiting on it
           (red when the waiting task starts before the first one is due).
+          {canEdit ? " Draw dependencies lets you drag from one task to another to link them." : ""}
         </p>
       </div>
 
@@ -476,7 +597,8 @@ export function TimelineView({
                   openTaskId === task.id ? "border-accent-500 ring-2 ring-accent-100" : "border-zinc-200"
                 } ${trayDragging?.taskId === task.id ? "opacity-40" : ""}`}
               >
-                <span className="min-w-0 flex-1 truncate text-zinc-800">{displayTaskTitle(task.title, task.requestLabel)}</span>
+                <TaskNumberBadge label={task.requestLabel} />
+                <span className="min-w-0 flex-1 truncate text-zinc-800">{bareTaskTitle(task.title, task.requestLabel)}</span>
                 <Assignee profile={task.assigneeId ? profilesById.get(task.assigneeId) : undefined} />
               </TaskLink>
             </li>
@@ -554,6 +676,8 @@ function DependencyArrows({
 function TimelineRow({
   top,
   task,
+  linkTarget = false,
+  linkSource = false,
   open,
   today,
   width,
@@ -571,6 +695,9 @@ function TimelineRow({
 }: {
   top: number;
   task: ProjectTask;
+  // Draw dependencies: the row the line starts from / is over.
+  linkTarget?: boolean;
+  linkSource?: boolean;
   open: boolean;
   today: string;
   width: number;
@@ -590,13 +717,18 @@ function TimelineRow({
   const overdue = isOverdue(task.dueOn, today, completed);
   const span = spanOf(task)!;
   return (
-    <div className="absolute right-0 left-0 flex h-9 border-b border-zinc-100" style={{ top }}>
+    <div
+      data-timeline-task={task.id}
+      className={`absolute right-0 left-0 flex h-9 border-b border-zinc-100 ${linkTarget ? "bg-accent-50 ring-2 ring-inset ring-accent-400" : linkSource ? "bg-accent-50/60" : ""}`}
+      style={{ top }}
+    >
       <div
         className={`sticky left-0 z-10 flex items-center gap-2 border-r border-zinc-200 px-3 ${
-          open ? "bg-accent-50" : "bg-white"
+          open || linkTarget || linkSource ? "bg-accent-50" : "bg-white"
         }`}
         style={labelCell}
       >
+        <TaskNumberBadge label={task.requestLabel} />
         <TaskLink
           taskId={task.id}
           seed={seed}
@@ -605,7 +737,7 @@ function TimelineRow({
             completed ? "text-zinc-400 line-through" : "text-zinc-900"
           }`}
         >
-          {displayTaskTitle(task.title, task.requestLabel)}
+          {bareTaskTitle(task.title, task.requestLabel)}
           <span className="sr-only">
             {task.kind === "milestone" ? ", milestone" : ""}, {spanLabel(span)}
             {overdue ? ", overdue" : ""}
@@ -843,7 +975,10 @@ function TimelineBar({
         style={{ left, width }}
       >
         {labelInside ? (
-          <span className={`min-w-0 flex-1 truncate px-2 ${completed ? "line-through" : ""}`}>{displayTaskTitle(task.title, task.requestLabel)}</span>
+          <span className={`flex min-w-0 flex-1 items-baseline gap-1 px-2 ${completed ? "line-through" : ""}`}>
+            <span className="min-w-0 truncate">{bareTaskTitle(task.title, task.requestLabel)}</span>
+            <TaskNumberBadge label={task.requestLabel} size="2xs" tone="inherit" />
+          </span>
         ) : null}
         {canResize && !clippedStart ? (
           <span data-edge="start" className="absolute inset-y-0 left-0 w-2 cursor-ew-resize rounded-l-md group-hover:bg-black/10" />

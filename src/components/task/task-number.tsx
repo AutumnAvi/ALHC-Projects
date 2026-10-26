@@ -8,6 +8,7 @@ export function TaskNumberBadge({
   label,
   projectName = null,
   size = "xs",
+  tone = "muted",
   className = "",
 }: {
   label: RequestLabel | null | undefined;
@@ -15,13 +16,17 @@ export function TaskNumberBadge({
   projectName?: string | null;
   // "2xs" = calendar bars: tiny, so the task's name keeps the room.
   size?: "xs" | "2xs";
+  // "inherit" = the surrounding text color, a little lighter (inside a colored bar).
+  tone?: "muted" | "inherit";
   className?: string;
 }) {
   const text = formatRequestLabel(label);
   if (!text && !projectName) return null;
   return (
     <span
-      className={`inline-flex min-w-0 shrink-0 items-center gap-1 whitespace-nowrap font-normal tabular-nums text-zinc-400 ${
+      className={`inline-flex min-w-0 shrink-0 items-center gap-1 whitespace-nowrap font-normal tabular-nums ${
+        tone === "muted" ? "text-zinc-400" : "opacity-75"
+      } ${
         size === "2xs" ? "text-[10px] leading-none" : "text-2xs"
       } ${className}`}
     >

@@ -56,7 +56,8 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
               tags={tags}
               results={results.map((r) => ({
                 id: r.id,
-                title: r.title,
+                title: r.bareTitle,
+                label: r.requestLabel,
                 notes: r.notes,
                 completed: Boolean(r.completed_at),
                 dueOn: r.due_on,

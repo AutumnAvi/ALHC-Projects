@@ -8,10 +8,14 @@ import { formatDueDate } from "@/lib/dates";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
 import { seedFromTitle } from "@/lib/task-seed";
+import { displayTaskTitle, type RequestLabel } from "@/lib/request-numbers";
+import { TaskNumberBadge } from "@/components/task/task-number";
 
 export type SearchResult = {
   id: string;
+  // The name without its number; the number is the badge in front (Oct 26 notes, batch 4).
   title: string;
+  label?: RequestLabel | null;
   notes: string | null;
   completed: boolean;
   dueOn: string | null;
@@ -55,7 +59,7 @@ export function SearchResults({
                 <TaskLink
                   taskId={result.id}
                   seed={() =>
-                    seedFromTitle(result.id, result.title, {
+                    seedFromTitle(result.id, displayTaskTitle(result.title, result.label), {
                       completed: result.completed,
                       dueOn: result.dueOn,
                       projectName: result.projectName ?? "Private",
@@ -69,12 +73,15 @@ export function SearchResults({
                     aria-label={result.completed ? "Completed" : "Open"}
                   />
                   <span className="min-w-0 flex-1">
-                    <span
-                      className={`block truncate text-sm ${
-                        result.completed ? "text-zinc-400 line-through" : "text-zinc-900"
-                      }`}
-                    >
-                      {result.title}
+                    <span className="flex min-w-0 items-baseline gap-1.5">
+                      <TaskNumberBadge label={result.label} />
+                      <span
+                        className={`min-w-0 truncate text-sm ${
+                          result.completed ? "text-zinc-400 line-through" : "text-zinc-900"
+                        }`}
+                      >
+                        {result.title}
+                      </span>
                     </span>
                     {result.notes ? (
                       <span className="mt-0.5 line-clamp-1 block text-xs text-zinc-500">

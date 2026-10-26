@@ -1,3 +1,4 @@
+import type { RequestLabel } from "@/lib/request-numbers";
 // The app shell's shared vocabulary (Asana parity, batch 1): search palette results, recents, the
 // Settings modal's tabs and links, and the Create menu's dialogs. Browser + server.
 
@@ -12,7 +13,9 @@ export const isSearchKind = (value: unknown): value is SearchKind =>
 
 export type QuickTask = {
   id: string;
+  // The name without its number; `label` is the number (shown as a badge; Oct 26 notes, batch 4).
   title: string;
+  label?: RequestLabel | null;
   completed: boolean;
   // A private task (no project): only its creator and assignee can read it.
   isPrivate: boolean;

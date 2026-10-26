@@ -33,6 +33,7 @@ import {
 import { DEFAULT_WORK_WEEK, normalizeWorkWeek } from "@/lib/workdays";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import {
+  bareTaskTitle,
   displayTaskTitle,
   requestLabelFrom,
   templateFromPrefix,
@@ -301,7 +302,15 @@ export type TaskDependency = {
   isSubtask: boolean;
 };
 
-export type DependencyCandidateGroup = { key: string; label: string; tasks: { id: string; title: string }[] };
+// Each task carries its number (when its project numbers tasks) and, for a project other than the open
+// task's own, the project's name, so the picker can show "Task #12 · Website" (Oct 26 notes, batch 4).
+export type DependencyCandidate = {
+  id: string;
+  title: string;
+  label?: RequestLabel | null;
+  projectName?: string | null;
+};
+export type DependencyCandidateGroup = { key: string; label: string; tasks: DependencyCandidate[] };
 
 // The pane's on-demand part (Oct 19 notes): the tasks the Dependencies picker and Convert offer, and the
 // slack in each project. On a big project these two reads take seconds (row-by-row RLS over every task),
@@ -1846,9 +1855,16 @@ async function listDependencyCandidates(
       )
     : [];
   const groups: DependencyCandidateGroup[] = [];
-  if (tree.length) groups.push({ key: "tree", label: "This task’s tree", tasks: tree.slice(0, MAX_DEPENDENCY_CANDIDATES) });
+  const treeGroup: DependencyCandidateGroup = {
+    key: "tree",
+    label: "This task’s tree",
+    tasks: tree.slice(0, MAX_DEPENDENCY_CANDIDATES),
+  };
+  // Oct 26 notes (batch 4): the task's own projects come first (its home project first), then its tree,
+  // then the other projects the viewer edits.
   for (const p of all) {
     const limit = own.includes(p) ? MAX_DEPENDENCY_CANDIDATES : MAX_OTHER_PROJECT_CANDIDATES;
+    if (p === others[0] && treeGroup.tasks.length) groups.push(treeGroup);
     groups.push({
       key: p.id,
       label: own.includes(p) ? p.name : `${p.name} (another project)`,
@@ -1856,10 +1872,14 @@ async function listDependencyCandidates(
         .filter((m) => m.project_id === p.id)
         .sort((a, b) => Number(Boolean(a.task.completed_at)) - Number(Boolean(b.task.completed_at)))
         .slice(0, limit)
-        .map((m) => ({ id: m.task.id, title: m.task.title })),
+        .map((m) => ({ id: m.task.id, title: m.task.title, projectName: own.includes(p) ? null : p.name })),
     });
   }
-  return groups.filter((g) => g.tasks.length > 0);
+  if (others.length === 0 && treeGroup.tasks.length) groups.push(treeGroup);
+  const shown = groups.filter((g) => g.tasks.length > 0);
+  // Numbers for every task offered (labels the viewer may see), so the picker shows and searches them.
+  const labels = await visibleRequestLabels(shown.flatMap((g) => g.tasks.map((t) => t.id)));
+  return shown.map((g) => ({ ...g, tasks: g.tasks.map((t) => ({ ...t, label: labels.get(t.id) ?? null })) }));
 }
 
 // Dependency stories only store the other task's title when every reader of this task can read it
@@ -3057,6 +3077,9 @@ export const searchTasks = cache(async (query: string) => {
   return found.map((task) => ({
     ...task,
     title: displayTaskTitle(task.title, labels.get(task.id) ?? null),
+    // The name and the number apart, for screens that draw the number as a badge (Oct 26 notes, batch 4).
+    bareTitle: bareTaskTitle(task.title, labels.get(task.id) ?? null),
+    requestLabel: labels.get(task.id) ?? null,
   }));
 });
 
