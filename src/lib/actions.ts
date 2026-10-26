@@ -1520,6 +1520,23 @@ export async function saveListColumnWidths(projectId: string, widths: ColumnWidt
   }
 }
 
+// Oct 26 notes (batch 4): the List groups the person collapsed in a project, saved quietly (no refresh) so
+// they stay collapsed across visits and reloads.
+export async function saveListCollapsedGroups(projectId: string, keys: string[]): Promise<ActionResult> {
+  try {
+    const cleaned = [...new Set(keys.filter((k) => typeof k === "string" && k.length > 0 && k.length <= 120))].slice(0, 500);
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_list_collapsed_groups", { target_project: id(projectId), keys: cleaned });
+    // A database without this release: collapsing still works for the visit.
+    if (result.error?.code === "PGRST202") return {};
+    check(result);
+    return {};
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+}
+
 // Duplicate a task (duplicate_task): the copy lands where the caller is an Editor (see the migration).
 export async function duplicateTask(
   taskId: string,

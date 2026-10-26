@@ -25,6 +25,7 @@ import {
   listSubtaskTrees,
   listVisibleTags,
   tagsEnabled,
+  getListCollapsedGroups,
   getListColumnWidths,
 } from "@/lib/data";
 import { todayIn } from "@/lib/workload";
@@ -92,6 +93,8 @@ export async function ProjectViewPage({
   // Calendar and Timeline load the visible date window instead of every card.
   const scheduling = layout === "calendar" || layout === "timeline";
 
+  // The List groups this person collapsed here (Oct 26 notes, batch 4), read alongside the rest.
+  const collapsedGroupsLoad = layout === "list" ? getListCollapsedGroups(projectId) : Promise.resolve([]);
   const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, tagsOn, columnWidths, sectionCounts, project] =
     await Promise.all([
     listSections(projectId),
@@ -110,6 +113,7 @@ export async function ProjectViewPage({
     getProject(projectId),
   ]);
 
+  const collapsedGroups = await collapsedGroupsLoad;
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
     fields,
@@ -207,6 +211,7 @@ export async function ProjectViewPage({
               bulk={bulk}
               subtasks={showSubtasks ? subtasks : null}
               columnWidths={columnWidths}
+              collapsedGroups={collapsedGroups}
               sectionTaskCounts={sectionTaskCounts}
             />
           </div>

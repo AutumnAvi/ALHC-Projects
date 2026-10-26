@@ -5367,6 +5367,20 @@ export const getListColumnWidths = cache(async (projectId: string): Promise<Colu
   return parseColumnWidths(data?.widths);
 });
 
+// Oct 26 notes (batch 4): the List groups (sections, assignees, …) the viewer collapsed in a project, kept
+// per person (list_collapsed_groups, own rows). Empty on a database without this release.
+export const getListCollapsedGroups = cache(async (projectId: string): Promise<string[]> => {
+  if (!isUuid(projectId)) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("list_collapsed_groups")
+    .select("group_keys")
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (error) return [];
+  return (data?.group_keys ?? []).filter((key): key is string => typeof key === "string");
+});
+
 // Files tab: every active attachment on the project's active tasks and their subtasks (read through
 // RLS, so only tasks the viewer can read), newest first.
 export type ProjectFile = {
