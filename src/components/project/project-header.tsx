@@ -58,7 +58,6 @@ import {
   duplicateView,
   moveView,
   setDefaultView,
-  setProjectArchived,
   setProjectStarred,
   setProjectTabHidden,
   updateProject,
@@ -403,6 +402,8 @@ function AddTabMenu({
 // The chevron next to the name: what used to be the "…" project options.
 function ProjectMenu({ project, canArchive }: { project: Project; canArchive: boolean }) {
   const router = useRouter();
+  // Archived state flips at once (Oct 26 notes, batch 4): an archived project offers Unarchive, never Archive.
+  const { archived, archivePending, setArchived } = useProjectPage();
   const notify = useNotify();
   const [pending, run] = useServerAction();
   const confirm = useConfirm();
@@ -496,11 +497,11 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
             ) : null}
             {canArchive ? (
               <MenuItem
-                disabled={pending}
+                disabled={archivePending}
                 onClick={async () => {
                   close();
-                  if (project.archived_at) {
-                    run(() => setProjectArchived(project.id, false));
+                  if (archived) {
+                    setArchived(false);
                   } else if (
                     await confirm({
                       title: `Archive “${project.name}”?`,
@@ -509,11 +510,11 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
                       confirmLabel: "Archive",
                     })
                   ) {
-                    run(() => setProjectArchived(project.id, true));
+                    setArchived(true);
                   }
                 }}
               >
-                {project.archived_at ? (
+                {archived ? (
                   <>
                     <ArchiveRestore className="size-4 text-zinc-500" /> Unarchive project
                   </>

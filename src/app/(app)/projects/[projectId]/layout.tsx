@@ -110,7 +110,12 @@ export default async function ProjectLayout({
   return (
     <ProjectAccessProvider role={role}>
       <TaskTemplatesProvider templates={taskTemplates.map(({ id, name, title }) => ({ id, name, title }))}>
-        <ProjectPageProvider project={{ id: project.id, name: project.name }} batch4={batch4} statusTemplates={statusTemplates}>
+        <ProjectPageProvider
+          project={{ id: project.id, name: project.name }}
+          batch4={batch4}
+          archived={project.archived_at !== null}
+          statusTemplates={statusTemplates}
+        >
           <div className="flex min-h-0 flex-1 flex-col">
             <RecordRecent kind="project" id={project.id} />
             <ProjectHeader
@@ -124,7 +129,7 @@ export default async function ProjectLayout({
               defaultViewId={viewSettings.defaultViewId}
               personalViews={batch4Schema}
             />
-            {project.archived_at ? <ArchivedProjectBanner projectId={project.id} canUnarchive={canArchive} /> : null}
+            <ArchivedProjectBanner canUnarchive={canArchive} />
             {children}
           </div>
         </ProjectPageProvider>

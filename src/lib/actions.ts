@@ -1,6 +1,6 @@
 "use server";
 
-import { refresh } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import {
@@ -765,6 +765,9 @@ export async function setProjectArchived(projectId: string, archived: boolean): 
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.rpc("set_project_archived", { target_project: id(projectId), archive: archived === true }));
+    // Oct 26 notes (batch 4): every page that lists projects (sidebar, Home, Browse, pickers) changes, so
+    // drop the browser's cached copies too, not just this page's.
+    revalidatePath("/", "layout");
   });
 }
 
