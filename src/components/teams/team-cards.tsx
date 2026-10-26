@@ -49,7 +49,7 @@ export function TeamMembersCard({
       </div>
       {members.length === 0 ? (
         <EmptyState icon={Users} title="No one in this team yet" size="inline">
-          {canManage ? "Add people by email on the Members tab." : "Team leads and workspace admins add people."}
+          {canManage ? "Add people from the workspace on the Members tab." : "Team leads and workspace admins add people."}
         </EmptyState>
       ) : (
         <ul className="grid grid-cols-1 gap-1 p-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">

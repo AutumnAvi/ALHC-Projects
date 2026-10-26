@@ -44,6 +44,8 @@ const keyOf = (t: InviteTarget) =>
   t.kind === "person" ? `person:${t.person.id}` : t.kind === "team" ? `team:${t.team.id}` : `email:${t.email}`;
 const labelOf = (t: InviteTarget) => (t.kind === "person" ? t.person.name : t.kind === "team" ? t.team.name : t.email);
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
+// A team's line: its size only when the viewer can see inside it (its members, workspace admins).
+const teamLine = (team: ShareTeam) => (team.memberCount === null ? "Team" : `Team · ${people(team.memberCount)}`);
 
 // Asana's Share dialog: invite people, emails, or whole teams with one role; who can find the project
 // (private, or public to its team); and who has access, with a role per person and per team. Everything
@@ -388,7 +390,7 @@ function InviteForm({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-zinc-900">{option.team.name}</span>
-                        <span className="block truncate text-xs text-zinc-500">Team · {people(option.team.memberCount)}</span>
+                        <span className="block truncate text-xs text-zinc-500">{teamLine(option.team)}</span>
                       </span>
                     </>
                   ) : (
@@ -554,7 +556,9 @@ function WhoHasAccess({
             <TeamGlyph />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm text-zinc-900">Members of {data.team.name}</p>
-              <p className="truncate text-xs text-zinc-500">{people(data.team.memberCount)} · can find it and join</p>
+              <p className="truncate text-xs text-zinc-500">
+                {data.team.memberCount === null ? "Can find it and join" : `${people(data.team.memberCount)} · can find it and join`}
+              </p>
             </div>
             <span className="shrink-0 text-xs text-zinc-600">Can join as Editor</span>
             <span aria-hidden className="w-12 shrink-0" />
@@ -565,9 +569,10 @@ function WhoHasAccess({
             <TeamGlyph />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm text-zinc-900">{team.name}</p>
-              <p className="truncate text-xs text-zinc-500">Team · {people(team.memberCount)}</p>
+              <p className="truncate text-xs text-zinc-500">{teamLine(team)}</p>
             </div>
-            {canManage && isTeamProjectRole(team.role) ? (
+            {/* Re-running the group invite needs a team the viewer can see inside (add_team_to_project). */}
+            {canManage && isTeamProjectRole(team.role) && team.memberCount !== null ? (
               <>
                 <TeamRolePicker
                   key={`${team.role}-${team.usesDefaultRoles}`}

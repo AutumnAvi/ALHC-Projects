@@ -1,19 +1,26 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Plus, Users } from "lucide-react";
+import { Lock, Plus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { getWorkspace, listTeams, type Team } from "@/lib/data";
+import { getWorkspace, listTeams, listViewableTeamIds, type Team } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Teams" };
 
-// The workspace's team directory. Everyone allowlisted sees every team and its members; anyone can create
-// one (Create team, the shell's New team dialog) and becomes its lead. Every project belongs to a team;
+// The workspace's team directory. Everyone allowlisted sees every team's name and description; who is in a
+// team only shows to its members and workspace admins (Oct 26 notes, batch 4), so other teams' cards say
+// "Not a member" and open "You're not part of this team" (Join / Request to join). Anyone can create a
+// team (Create team, the shell's New team dialog) and becomes its lead. Every project belongs to a team;
 // team members can find and join the team's public projects (Browse projects).
 export default async function TeamsPage() {
-  const [member, teams, workspace] = await Promise.all([requireMember(), listTeams(), getWorkspace()]);
+  const [member, teams, workspace, viewable] = await Promise.all([
+    requireMember(),
+    listTeams(),
+    getWorkspace(),
+    listViewableTeamIds(),
+  ]);
   const mine = teams.filter((t) => t.members.some((m) => m.profileId === member.id));
   const others = teams.filter((t) => !mine.includes(t));
   const create = (
@@ -35,7 +42,7 @@ export default async function TeamsPage() {
         <div className="px-gutter py-6">
           {teams.length === 0 ? (
             <EmptyState icon={Users} title="No teams yet" action={create}>
-              Create the first team, then add people by email. Teams can own goals and be added to projects together.
+              Create the first team, then add people to it. Teams can own goals and be added to projects together.
             </EmptyState>
           ) : (
             <div className="flex flex-col gap-8">
@@ -51,7 +58,12 @@ export default async function TeamsPage() {
                     <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       {list.map((team) => (
                         <li key={team.id}>
-                          <TeamCard team={team} viewerId={member.id} isDefault={team.id === workspace?.defaultTeamId} />
+                          <TeamCard
+                            team={team}
+                            viewerId={member.id}
+                            isDefault={team.id === workspace?.defaultTeamId}
+                            canView={viewable.has(team.id)}
+                          />
                         </li>
                       ))}
                     </ul>
@@ -61,7 +73,8 @@ export default async function TeamsPage() {
             </div>
           )}
           <p className="mt-8 max-w-2xl text-xs text-zinc-500">
-            Anyone can create a team and becomes its lead. Leads and workspace admins manage a team. Team members can
+            Anyone can create a team and becomes its lead. Leads and workspace admins manage a team. Only a team’s
+            members see who is in it and its work; to join another team, open it and ask its leads. Team members can
             find and join the team’s public projects; private projects still need an invite.
           </p>
         </div>
@@ -70,7 +83,18 @@ export default async function TeamsPage() {
   );
 }
 
-function TeamCard({ team, viewerId, isDefault }: { team: Team; viewerId: string; isDefault: boolean }) {
+function TeamCard({
+  team,
+  viewerId,
+  isDefault,
+  canView,
+}: {
+  team: Team;
+  viewerId: string;
+  isDefault: boolean;
+  // A member or a workspace admin: they see who is in it. Everyone else sees the name and description.
+  canView: boolean;
+}) {
   const mine = team.members.find((m) => m.profileId === viewerId);
   const leads = team.members.filter((m) => m.role === "lead").map((m) => m.name);
   const shown = team.members.slice(0, 4);
@@ -92,21 +116,28 @@ function TeamCard({ team, viewerId, isDefault }: { team: Team; viewerId: string;
       <span className={`line-clamp-2 text-xs ${team.description ? "text-zinc-600" : "text-zinc-400"}`}>
         {team.description || "No description"}
       </span>
-      <span className="mt-auto flex min-w-0 items-center gap-2 pt-1">
-        {shown.length ? (
-          <span className="flex shrink-0 -space-x-1">
-            {shown.map((m) => (
-              <span key={m.profileId} className="rounded-full ring-2 ring-white">
-                <Avatar name={m.name} profileId={m.profileId} size="sm" />
-              </span>
-            ))}
+      {canView ? (
+        <span className="mt-auto flex min-w-0 items-center gap-2 pt-1">
+          {shown.length ? (
+            <span className="flex shrink-0 -space-x-1">
+              {shown.map((m) => (
+                <span key={m.profileId} className="rounded-full ring-2 ring-white">
+                  <Avatar name={m.name} profileId={m.profileId} size="sm" />
+                </span>
+              ))}
+            </span>
+          ) : null}
+          <span className="min-w-0 truncate text-xs text-zinc-500">
+            {team.members.length} {team.members.length === 1 ? "person" : "people"}
+            {leads.length ? ` · Led by ${leads.join(", ")}` : ""}
           </span>
-        ) : null}
-        <span className="min-w-0 truncate text-xs text-zinc-500">
-          {team.members.length} {team.members.length === 1 ? "person" : "people"}
-          {leads.length ? ` · Led by ${leads.join(", ")}` : ""}
         </span>
-      </span>
+      ) : (
+        <span className="mt-auto flex min-w-0 items-center gap-1.5 pt-1 text-xs text-zinc-500">
+          <Lock className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+          <span className="truncate">Not a member · {isDefault ? "Anyone can join" : "Ask to join"}</span>
+        </span>
+      )}
     </Link>
   );
 }

@@ -3345,6 +3345,45 @@ export async function removeTeamMember(teamId: string, profileId: string): Promi
   });
 }
 
+// Oct 26 notes (batch 4): "You're not part of this team" → Join team (the workspace's default team:
+// joined at once, status "member") or Request to join (every other team: "requested"). The database
+// decides; its rate limits come back as the message.
+export async function requestTeamJoin(teamId: string): Promise<ActionResult & { status?: string }> {
+  let status: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("request_team_join", { target_team: id(teamId, "team") });
+    if (error?.code === "PGRST202") throw new InputError("Joining a team needs this release’s database update");
+    if (error?.code === "P0002") throw new InputError("This team doesn’t exist any more");
+    check({ error });
+    status = typeof data === "string" ? data : undefined;
+  });
+  return { ...result, status };
+}
+
+// A team's leads and workspace admins add someone who asked (as a member or a lead) or decline.
+export async function decideTeamJoinRequest(
+  requestId: string,
+  decision: "approve" | "decline",
+  memberRole: string = "member",
+): Promise<ActionResult & { status?: string }> {
+  let status: string | undefined;
+  const result = await run(async () => {
+    if (decision !== "approve" && decision !== "decline") throw new InputError("Add or decline the request");
+    const role = teamRole(memberRole);
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("decide_team_join_request", {
+      target_request: id(requestId, "request"),
+      decision,
+      member_role: role,
+    });
+    if (error?.code === "P0002") throw new InputError("This request isn’t there any more, or you can’t decide it");
+    check({ error }, TEAM_NOT_ALLOWED);
+    status = typeof data === "string" ? data : undefined;
+  });
+  return { ...result, status };
+}
+
 // Group invite: every team member who isn't in the project yet joins it with one role, as ordinary
 // project members. People already in the project keep their role; anyone who can't be added is
 // skipped with a reason.

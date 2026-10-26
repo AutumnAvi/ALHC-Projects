@@ -82,11 +82,14 @@ import {
 import {
   TEAM_CALENDAR_LIMIT,
   isTeamRole,
+  parseTeamAccessStatus,
   type CuratedWorkItem,
+  type TeamAccessStatus,
   type TeamCalendarTask,
+  type TeamJoinRequest,
   type TeamRole,
 } from "@/lib/teams";
-import { INBOX_LIMIT, type InboxTab } from "@/lib/inbox";
+import { INBOX_LIMIT, withoutTeamMessages, type InboxTab } from "@/lib/inbox";
 import { toMyTaskRule, type MyTaskRule } from "@/lib/my-task-rules";
 import { toPortfolioRuleDef, type PortfolioRuleDef, type PortfolioRuleRun } from "@/lib/portfolio-rules";
 import { resolveNotificationSettings, type NotificationSettings } from "@/lib/notifications";
@@ -2520,15 +2523,16 @@ function objectOrNull(value: Json | undefined): Record<string, Json | undefined>
 }
 
 // One Inbox tab, newest first, INBOX_LIMIT items. inbox_page does the four reads in one call.
-// A database without that function uses the row queries.
+// A database without that function uses the row queries. Team message items are left out: teams have
+// no Messages tab since Oct 26 notes (batch 4), so they'd link nowhere (the threads are kept).
 export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<InboxItem[]> => {
   const supabase = await createClient();
   const page = await supabase.rpc("inbox_page", { inbox_tab: tab });
   if (page.error) {
     if (!rpcMissing(page.error)) throw new Error(`Failed to load inbox: ${page.error.message}`);
-    return labelInbox(await listInboxFromRows(tab));
+    return labelInbox(withoutTeamMessages(await listInboxFromRows(tab)));
   }
-  return labelInbox(inboxItemsFromPage(page.data));
+  return labelInbox(withoutTeamMessages(inboxItemsFromPage(page.data)));
 });
 
 async function labelInbox(items: InboxItem[]): Promise<InboxItem[]> {
@@ -4830,9 +4834,10 @@ export async function listNumberFields(projectIds: string[]): Promise<FieldDef[]
 }
 
 // ---------------------------------------------------------------------------------------------
-// Teams directory (see 20261006050000_goals_teams.sql). Teams are workspace-level: everyone
-// allowlisted reads them. A team never grants project access; team_projects rows are only visible to
-// people who can already read the project.
+// Teams directory (see 20261006050000_goals_teams.sql). Team names and descriptions are workspace-level:
+// everyone allowlisted reads them. Since Oct 26 notes (batch 4) who is in a team is visible only inside
+// it (its members and workspace admins), so other teams come back with no members. A team never grants
+// project access; team_projects rows are only visible to people who can already read the project.
 // ---------------------------------------------------------------------------------------------
 
 export type TeamPerson = { profileId: string; role: TeamRole; name: string; email: string; addedAt: string };
@@ -4898,6 +4903,55 @@ export const getTeam = cache(async (teamId: string): Promise<Team | null> => {
 export const canManageTeam = cache(async (teamId: string): Promise<boolean> => {
   const supabase = await createClient();
   return maybe(await supabase.rpc("can_manage_team", { target_team: teamId }), "team role") === true;
+});
+
+// Oct 26 notes (batch 4): what the viewer sees on a team link. "member" = they can see inside (a member
+// or a workspace admin); anything unknown, an error, or a database without this release's update is
+// "missing": the plain Not found.
+export const getTeamAccessStatus = cache(async (teamId: string): Promise<TeamAccessStatus> => {
+  if (!isUuid(teamId)) return "missing";
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("team_access_status", { target_team: teamId });
+  // A database without this release has no team_access_status: teams were open to everyone there, so a
+  // team that exists opens as before (a preview deployed ahead of the migration keeps working).
+  if (error?.code === "PGRST202") return (await getTeam(teamId)) ? "member" : "missing";
+  return error ? "missing" : parseTeamAccessStatus(data);
+});
+
+// Teams the viewer can see inside (RLS hides everyone else's memberships): every team for a workspace
+// admin, else the teams they're on. Share and Add a team offer only these.
+export const listViewableTeamIds = cache(async (): Promise<Set<string>> => {
+  const [admin, teams, mine] = await Promise.all([isWorkspaceAdmin(), listTeams(), listMyTeamIds()]);
+  return admin ? new Set(teams.map((t) => t.id)) : mine;
+});
+
+// Open requests to join a team (RLS: the team's leads and workspace admins, and each requester). Empty
+// without this release's database.
+export const listTeamJoinRequests = cache(async (teamId: string): Promise<TeamJoinRequest[]> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("team_join_requests")
+    .select("id, requester_id, created_at")
+    .eq("team_id", teamId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error || !data?.length) return [];
+  const people = await supabase
+    .from("profiles")
+    .select("id, full_name, email")
+    .in("id", [...new Set(data.map((r) => r.requester_id))]);
+  const byId = new Map((people.data ?? []).map((p) => [p.id, p] as const));
+  return data.map((r) => {
+    const person = byId.get(r.requester_id);
+    return {
+      id: r.id,
+      profileId: r.requester_id,
+      name: person?.full_name?.trim() || person?.email || "Someone",
+      email: person?.email ?? "",
+      requestedAt: r.created_at,
+    };
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -22,6 +22,7 @@ import {
   listProjectMembers,
   listProjectTeamAccess,
   listTeams,
+  listViewableTeamIds,
   commenterRoleAllowed,
 } from "@/lib/data";
 import { isEmailConfigured } from "@/lib/email";
@@ -34,13 +35,14 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
   if (!isUuid(projectId)) return null;
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
-  const [project, role, members, invites, teamAccess, teams, people, resendable, allowCommenter, defaultRoles, accessRequests] = await Promise.all([
+  const [project, role, members, invites, teamAccess, teams, viewable, people, resendable, allowCommenter, defaultRoles, accessRequests] = await Promise.all([
     getProject(projectId),
     getProjectRole(projectId),
     listProjectMembers(projectId),
     listPendingInvites("project", projectId),
     listProjectTeamAccess(projectId),
     listTeams(),
+    listViewableTeamIds(),
     listActivePeople(),
     hasReal1Schema(),
     commenterRoleAllowed(),
@@ -48,7 +50,11 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     listProjectAccessRequests(projectId),
   ]);
   if (!project || !role) return null;
-  const teamsById = new Map(teams.map((t) => [t.id, { id: t.id, name: t.name, memberCount: t.members.length }] as const));
+  // Oct 26 notes (batch 4): who is in a team shows only to its members and workspace admins, so other
+  // teams have no member count, can't be invited (add_team_to_project refuses them), and keep their role.
+  const teamsById = new Map(
+    teams.map((t) => [t.id, { id: t.id, name: t.name, memberCount: viewable.has(t.id) ? t.members.length : null }] as const),
+  );
   return {
     viewerId: user.id,
     viewerRole: role,
@@ -60,12 +66,12 @@ export async function loadProjectShare(projectId: string): Promise<ShareData | n
     addedTeams: teamAccess.map((t) => ({
       id: t.teamId,
       name: t.name,
-      memberCount: teamsById.get(t.teamId)?.memberCount ?? 0,
+      memberCount: teamsById.get(t.teamId)?.memberCount ?? null,
       role: t.role,
       usesDefaultRoles: t.usesDefaultRoles,
     })),
     people,
-    teams: [...teamsById.values()],
+    teams: [...teamsById.values()].filter((t) => t.memberCount !== null),
     allowCommenter,
     defaultRoles,
     accessRequests: hasRole(role, "admin") ? accessRequests : [],

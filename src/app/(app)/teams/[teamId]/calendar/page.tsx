@@ -5,11 +5,11 @@ import { TaskPaneSlot } from "@/components/task/task-pane";
 import { TeamCalendar } from "@/components/teams/team-calendar";
 import { EmptyState } from "@/components/ui";
 import { canPostTeamMessage, getTeam, listCalendarEvents, listTeamCalendarTasks } from "@/lib/data";
-import { isUuid } from "@/lib/ids";
 import { teamCalendarDays, teamTabHref } from "@/lib/teams";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { isIsoDate } from "@/lib/views";
 import { todayIn } from "@/lib/workload";
+import { requireTeamView } from "../require-team";
 import { teamTitle } from "../team-title";
 
 export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/calendar">) {
@@ -24,7 +24,7 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/ca
 // opens the task pane here.
 export default async function TeamCalendarPage({ params, searchParams }: PageProps<"/teams/[teamId]/calendar">) {
   const [{ teamId }, query] = await Promise.all([params, searchParams]);
-  if (!isUuid(teamId)) notFound();
+  await requireTeamView(teamId);
   const anchor = typeof query.d === "string" && isIsoDate(query.d) ? query.d : null;
   const openTaskId = typeof query.task === "string" ? query.task : null;
   const today = todayIn(await getViewerTimeZone());

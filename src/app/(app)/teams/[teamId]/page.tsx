@@ -13,8 +13,8 @@ import {
   listReadableProjects,
   listTeamCuratedWork,
 } from "@/lib/data";
-import { isUuid } from "@/lib/ids";
 import { teamTabHref, type CuratedWorkItem } from "@/lib/teams";
+import { requireTeamView } from "./require-team";
 import { teamTitle } from "./team-title";
 
 export async function generateMetadata({ params }: PageProps<"/teams/[teamId]">) {
@@ -27,7 +27,7 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]">)
 // can see different lists; nothing here grants access to a project.
 export default async function TeamOverviewPage({ params }: PageProps<"/teams/[teamId]">) {
   const { teamId } = await params;
-  if (!isUuid(teamId)) notFound();
+  await requireTeamView(teamId);
   const [member, team, canManage, workspace, curated, readable, portfolios, teamProjects, goals, progress] =
     await Promise.all([
       requireMember(),

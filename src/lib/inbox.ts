@@ -23,6 +23,12 @@ export const inboxTabHref = (tab: InboxTab) => (tab === "activity" ? "/inbox" : 
 // The newest this many items per tab (task items and message items each), newest first.
 export const INBOX_LIMIT = 100;
 
+// Oct 26 notes (batch 4): teams have no Messages tab any more, so the Inbox leaves out items about a team
+// message (they'd link nowhere; the threads stay in the database). Project messages stay.
+export function withoutTeamMessages<T extends { teamMessage: unknown }>(items: T[]): T[] {
+  return items.filter((item) => item.teamMessage === null || item.teamMessage === undefined);
+}
+
 export const INBOX_KINDS = [
   "assigned",
   "comment",

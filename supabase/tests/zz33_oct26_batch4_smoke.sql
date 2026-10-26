@@ -46,6 +46,8 @@ begin
     and not has_function_privilege('anon', 'public.set_list_collapsed_groups(uuid, text[])', 'execute')
     and not has_function_privilege('anon', 'public.set_open_personal_view(boolean)', 'execute'), 'nothing for anon';
   assert not has_function_privilege('authenticated', 'public.on_team_member_close_join_request()', 'execute'), 'trigger revoked';
+  assert position('team_messages' in pg_get_functiondef('public.inbox_unread_count()'::regprocedure)) = 0,
+    'the unread badge no longer counts team-message items (their tab is gone)';
 end $$;
 
 -- ---------------------------------------------------------------------------------------------

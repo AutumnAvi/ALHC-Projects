@@ -2,6 +2,8 @@
 // grants project access; the group invite adds ordinary project members.
 import type { RequestLabel } from "@/lib/request-numbers";
 
+import { hasRole, type ProjectRole } from "@/lib/roles";
+
 export const TEAM_ROLES = ["lead", "member"] as const;
 export type TeamRole = (typeof TEAM_ROLES)[number];
 
@@ -63,14 +65,14 @@ export function describeTeamInvite(teamName: string, result: TeamInviteResult): 
 }
 
 // ---------------------------------------------------------------------------------------------
-// The team page (Asana parity, batch 5): Overview, Members, All work, Messages, Calendar.
+// The team page (Asana parity, batch 5): Overview, Members, All work, Calendar. Oct 26 notes (batch 4)
+// took Messages out (its threads stay in the database; old links go to the Overview).
 // ---------------------------------------------------------------------------------------------
 
 export const TEAM_TABS = [
   { key: "overview", label: "Overview", segment: "" },
   { key: "members", label: "Members", segment: "members" },
   { key: "work", label: "All work", segment: "work" },
-  { key: "messages", label: "Messages", segment: "messages" },
   { key: "calendar", label: "Calendar", segment: "calendar" },
 ] as const;
 export type TeamTab = (typeof TEAM_TABS)[number]["key"];
@@ -147,4 +149,56 @@ export function teamCalendarDays(month: string): string[] {
   const days: string[] = [];
   for (let time = start; time <= end; time += 86_400_000) days.push(new Date(time).toISOString().slice(0, 10));
   return days;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Oct 26 notes (batch 4): teams are for their members. Mirrors 20261026020000_oct26_batch4_a.sql:
+// team_access_status() says what someone outside a team sees on its link, request_team_join() asks (or
+// joins the workspace's default team at once), and the team's leads and workspace admins decide on its
+// Members tab (decide_team_join_request()).
+// ---------------------------------------------------------------------------------------------
+
+// "member" = can see inside (a member, or a workspace admin); "missing" = deleted or never existed (a
+// real Not found). Everything else is the not-part-of-this-team page.
+export const TEAM_ACCESS_STATUSES = ["member", "can_join", "can_request", "requested", "missing"] as const;
+export type TeamAccessStatus = (typeof TEAM_ACCESS_STATUSES)[number];
+
+export function parseTeamAccessStatus(value: unknown): TeamAccessStatus {
+  return typeof value === "string" && (TEAM_ACCESS_STATUSES as readonly string[]).includes(value)
+    ? (value as TeamAccessStatus)
+    : "missing";
+}
+
+// An open request to join a team, as its Members tab lists it for the leads and workspace admins.
+export type TeamJoinRequest = {
+  id: string;
+  profileId: string;
+  name: string;
+  email: string;
+  requestedAt: string;
+};
+
+export type TeamJoinDecision = "approve" | "decline";
+
+// The Members tab's add-member picker (the header's and Overview's "Add members" move focus there).
+export const ADD_TEAM_MEMBER_ID = "team-member-person";
+
+// Who the Members tab offers to add: people in the workspace who have signed in and aren't on the team
+// yet, by name.
+export function teamMemberCandidates<P extends { id: string; name: string }>(
+  people: readonly P[],
+  memberIds: Iterable<string>,
+): P[] {
+  const taken = new Set(memberIds);
+  return people.filter((p) => !taken.has(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Projects someone can move into a team from its All work tab: live ones they run (Admin+ by their own
+// role; an archived project is read-only for everyone) that sit in another team.
+export function projectsToAddToTeam<P extends { id: string; archived_at: string | null; team_id: string }>(
+  projects: readonly P[],
+  ownRoles: ReadonlyMap<string, ProjectRole>,
+  teamId: string,
+): P[] {
+  return projects.filter((p) => p.archived_at === null && p.team_id !== teamId && hasRole(ownRoles.get(p.id), "admin"));
 }

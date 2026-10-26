@@ -218,7 +218,7 @@ export function NotificationMatrix({
         An email isn’t sent when you’ve already read the notification in your Inbox, and turning an email off also
         stops ones already queued. Emails from rules and forms, such as due date reminders or updates to a request
         you submitted, are set up by each project’s admins and aren’t affected by these switches. To stop hearing
-        about one task, leave it (Leave task, at the bottom of its pane); for a team thread, Unfollow it.{" "}
+        about one task, leave it (Leave task, at the bottom of its pane).{" "}
         <Link href="/inbox" className="text-accent-700 hover:underline">
           Open Inbox
         </Link>

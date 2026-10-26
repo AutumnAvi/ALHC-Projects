@@ -11,6 +11,8 @@
 --        team_members_select_reader). team_curated_work and team pending invites are altered the same way.
 --      * add_team_to_project (asserted patch): only a team the caller can view can be added to a project
 --        (adding it would show who is in it), "Team not found" otherwise.
+--      * inbox_unread_count (asserted patch): the badge stops counting team-message items (the team
+--        Messages tab is gone and the Inbox no longer lists them; the data is kept).
 --      * team_join_requests (the requester and the team's managers read; written only by the definer
 --        functions below), team_access_status(team) (invoker): member | can_join | can_request | requested |
 --        missing; request_team_join(team) (definer: joins the default team at once, else one open request,
@@ -142,6 +144,22 @@ select public.alhc_patch_function('public.add_team_to_project(uuid, uuid, text)'
   'if not exists (select 1 from public.teams t where t.id = target_team and t.deleted_at is null) then',
   'if not exists (select 1 from public.teams t where t.id = target_team and t.deleted_at is null)
      or not public.can_view_team(target_team) then'
+);
+
+-- The Inbox no longer lists team messages (their tab is gone; Oct 26 notes, batch 4), so the unread
+-- badge stops counting them too (it counted them for anyone, members or not).
+select public.alhc_patch_function('public.inbox_unread_count()'::regprocedure,
+  '      or (
+        i.task_id is null
+        and exists (
+          select 1
+          from public.team_messages m
+          join public.teams tm on tm.id = m.team_id and tm.deleted_at is null
+          where m.id = i.team_message_id
+        )
+      )
+',
+  ''
 );
 
 create table if not exists public.team_join_requests (
