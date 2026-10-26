@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Archive, Check, Lock } from "lucide-react";
 import { useNotify, useServerAction } from "@/components/toast";
 import { requestProjectAccess } from "@/lib/actions";
 import type { ProjectAccessStatus } from "@/lib/access-requests";
 
-// Oct 26 notes (batch 3): a project link someone isn't part of. Instead of "Not found" they can ask
-// the project's owners to add them; the owners get an Inbox item (and see it in Share). A deleted or
-// unknown project still gets the real Not found page (the layout decides).
+// Oct 26 notes (batch 3): a project link someone isn't part of (/project-access/<id>, where the project
+// layout sends them). Instead of "Not found" they can ask the project's owners to add them; the owners
+// get an Inbox item (and see it in Share). A deleted or unknown project still gets the real Not found.
 export function NoProjectAccess({
   projectId,
   status,
@@ -19,6 +20,7 @@ export function NoProjectAccess({
 }) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
+  const router = useRouter();
   const [requested, setRequested] = useState(status === "requested");
   const archived = status === "archived";
 
@@ -28,7 +30,7 @@ export function NoProjectAccess({
       if (!result.error) {
         setRequested(true);
         // Already added meanwhile: the project opens.
-        if (result.status === "member") window.location.reload();
+        if (result.status === "member") router.push(`/projects/${projectId}`);
         else notify("Request sent to the project’s owners");
       }
       return result;

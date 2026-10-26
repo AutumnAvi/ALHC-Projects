@@ -1,7 +1,6 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArchivedProjectBanner } from "@/components/project/archived-banner";
 import { ProjectAccessProvider } from "@/components/project/project-access";
-import { NoProjectAccess } from "@/components/project/no-project-access";
 import { ProjectHeader } from "@/components/project/project-header";
 import { ProjectPageProvider } from "@/components/project/project-page-context";
 import { RecordRecent } from "@/components/shell/shell-context";
@@ -71,9 +70,10 @@ export default async function ProjectLayout({
       getRequestSequence(projectId),
     ]);
   if (!project || !role) {
+    // A layout doesn't stop its pages from rendering, so the request page is a route of its own.
     const access = await getProjectAccessStatus(projectId);
     if (access === "missing" || access === "member") notFound();
-    return <NoProjectAccess projectId={projectId} status={access} />;
+    redirect(`/project-access/${projectId}`);
   }
   // An archived project caps every role at Viewer (role); archiving is decided by the member's own role.
   const canArchive = hasRole(ownRoles.get(projectId), "admin");
