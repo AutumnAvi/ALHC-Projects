@@ -9,7 +9,7 @@ import {
   listInboundEndpoints,
   listProjectMembers,
   listSections,
-  listTags,
+  listVisibleTags,
 } from "@/lib/data";
 import { requestOrigin } from "@/lib/origin";
 import { hasRole } from "@/lib/roles";
@@ -42,7 +42,7 @@ export default async function ProjectInboundPage({ params }: PageProps<"/project
     listInboundCalls(projectId),
     listSections(projectId),
     listProjectMembers(projectId),
-    listTags(),
+    listVisibleTags(),
     requestOrigin(),
   ]);
   if (!endpoints || !calls) notFound();

@@ -176,9 +176,9 @@ export function RuleIcon({ value, className = "size-4" }: { value: string; class
 // A vocabulary list (TRIGGERS, CONDITIONS, ACTIONS, …) as picker options with icons.
 export function vocabOptions(
   list: readonly { value: string; label: string; group?: string; description?: string; keywords?: readonly string[] }[],
-  opts: { icons?: boolean; disabled?: (value: string) => string | null } = {},
+  opts: { icons?: boolean; disabled?: (value: string) => string | null; hidden?: (value: string) => boolean } = {},
 ): SmartOption[] {
-  return list.map((item) => {
+  return list.filter((item) => !opts.hidden?.(item.value)).map((item) => {
     const Icon = ruleIcon(item.value);
     const reason = opts.disabled?.(item.value) ?? null;
     return {

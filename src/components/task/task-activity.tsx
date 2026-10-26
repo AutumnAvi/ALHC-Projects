@@ -1,5 +1,6 @@
 "use client";
 
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
 import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
@@ -139,6 +140,7 @@ export function TaskActivity({
   ]);
 
   const tab = useActivityTab();
+  const tagsOn = useTagsEnabled();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const canComment = taskPermissions(task).canComment;
   const candidates = mentionCandidates(task, profiles, memberId);
@@ -180,12 +182,15 @@ export function TaskActivity({
         key: merged.keys.get(comment.id) ?? comment.id,
         pending: false as const,
       })),
-      ...task.stories.map((story) => ({ type: "story" as const, at: story.createdAt, story })),
+      // Oct 26 notes (batch 3): tag lines are hidden while the workspace's tags are switched off.
+      ...task.stories
+        .filter((story) => tagsOn || (story.kind !== "tag_added" && story.kind !== "tag_removed"))
+        .map((story) => ({ type: "story" as const, at: story.createdAt, story })),
     ].sort((a, b) => a.at.localeCompare(b.at));
     // arrivedKey changes when a pending comment becomes a server row (its React key moves with it).
     // Pending-only updates leave it alone, so the feed isn't re-sorted on send.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- merged.keys is current whenever arrivedKey changes
-  }, [commentsOnTask, task.stories, arrivedKey]);
+  }, [commentsOnTask, task.stories, arrivedKey, tagsOn]);
   const entries: Entry[] = [
     ...history,
     ...merged.waiting.map((p) => ({

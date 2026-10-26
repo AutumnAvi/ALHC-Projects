@@ -25,10 +25,11 @@ import {
   hasReal3Schema,
   listActivePeople,
   reportCompletedSeries,
+  tagsEnabled,
   workspaceReport,
 } from "@/lib/data";
 import { EMPTY_COUNTS, RECENT_DAYS } from "@/lib/portfolios";
-import { describeReportFilters, filtersFromParams, filtersToParams, isSeriesInterval } from "@/lib/reports";
+import { describeReportFilters, filtersFromParams, filtersToParams, isSeriesInterval, withoutReportTags } from "@/lib/reports";
 import { getViewerTimeZone } from "@/lib/timezone";
 
 export const metadata: Metadata = { title: "Reports" };
@@ -40,7 +41,8 @@ const OVERDUE_SHOWN = 25;
 // a count.
 export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
   const params = await searchParams;
-  const filters = filtersFromParams(params);
+  // Oct 26 notes (batch 3): no tag filter while the workspace's tags are switched off.
+  const filters = withoutReportTags(filtersFromParams(params), await tagsEnabled());
   const interval = isSeriesInterval(params.int) ? params.int : "week";
   const timeZone = await getViewerTimeZone();
 

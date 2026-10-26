@@ -4223,6 +4223,7 @@ export type Database = {
           logo_path: string | null;
           email_sender_name: string | null;
           allow_commenter_role: boolean;
+          tags_enabled: boolean;
           work_week: number[];
         };
         Insert: {
@@ -4235,6 +4236,7 @@ export type Database = {
           logo_path?: string | null;
           email_sender_name?: string | null;
           allow_commenter_role?: boolean;
+          tags_enabled?: boolean;
           work_week?: number[];
         };
         Update: {
@@ -4247,6 +4249,7 @@ export type Database = {
           logo_path?: string | null;
           email_sender_name?: string | null;
           allow_commenter_role?: boolean;
+          tags_enabled?: boolean;
           work_week?: number[];
         };
         Relationships: [

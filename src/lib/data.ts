@@ -123,6 +123,7 @@ import {
   isSeriesInterval,
   parseReportFilters,
   reportFiltersJson,
+  withoutReportTags,
   type PersonalDashboard,
   type PersonalWidget,
   type ReportFilters,
@@ -1076,6 +1077,24 @@ export const listTags = cache(async (): Promise<Tag[]> => {
   return rows(result, "tags").map(toTag);
 });
 
+// Oct 26 notes (batch 3): the workspace's Tags switch (Admin console → Tags; off by default). Off hides
+// tags everywhere in the app; the data stays. Without this release's database tags stay on as before.
+export const tagsEnabled = cache(async (): Promise<boolean> => {
+  const workspace = await getWorkspace();
+  if (!workspace) return false;
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("workspaces").select("tags_enabled").eq("id", workspace.id).maybeSingle();
+  if (error) {
+    if (isMissingColumn(error)) return true;
+    throw new Error(`Failed to load the Tags setting: ${error.message}`);
+  }
+  return data?.tags_enabled ?? false;
+});
+
+// The tags the app shows: every tag while tags are on, none while they're off (so chips, pickers, and
+// filters built from this list have nothing to show). Admin console → Tags reads listTags() itself.
+export const listVisibleTags = cache(async (): Promise<Tag[]> => ((await tagsEnabled()) ? listTags() : []));
+
 // Active tag ids per task, for the tasks the viewer can read (RLS).
 export async function listTaskTagIds(taskIds: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
@@ -1722,7 +1741,7 @@ export type TaskPanePayload = { task: TaskDetail | null; context: TaskPaneContex
 export async function loadTaskPaneContext(): Promise<TaskPaneContext | null> {
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
-  const [projects, profiles, roles, tags] = await Promise.all([listProjects(), listProfiles(), listMyProjectRoles(), listTags()]);
+  const [projects, profiles, roles, tags] = await Promise.all([listProjects(), listProfiles(), listMyProjectRoles(), listVisibleTags()]);
   return {
     memberId: user.id,
     projects: projects.map(({ id, name }) => ({ id, name, canAdd: hasRole(roles.get(id), "editor") })),
@@ -5097,7 +5116,7 @@ export async function workspaceReport(
 ): Promise<ReportRow[]> {
   const supabase = await createClient();
   const result = await supabase.rpc("workspace_report", {
-    filters: reportFiltersJson(filters),
+    filters: reportFiltersJson(withoutReportTags(filters, await tagsEnabled())),
     group_by: groupBy,
     tz: timeZone,
   });
@@ -5126,7 +5145,7 @@ export async function reportCompletedSeries(
 ): Promise<SeriesPoint[]> {
   const supabase = await createClient();
   const result = await supabase.rpc("report_completed_series", {
-    filters: reportFiltersJson(filters),
+    filters: reportFiltersJson(withoutReportTags(filters, await tagsEnabled())),
     bucket_interval: interval,
     tz: timeZone,
   });
@@ -5146,7 +5165,7 @@ export type OverdueTask = {
 export async function reportOverdueTasks(filters: ReportFilters, timeZone: string, max = 200): Promise<OverdueTask[]> {
   const supabase = await createClient();
   const result = await supabase.rpc("report_overdue_tasks", {
-    filters: reportFiltersJson(filters),
+    filters: reportFiltersJson(withoutReportTags(filters, await tagsEnabled())),
     tz: timeZone,
     max_results: max,
   });

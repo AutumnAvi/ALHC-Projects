@@ -1,7 +1,7 @@
 import "server-only";
 import { displayName } from "@/components/avatar";
 import { requireMember } from "@/lib/auth";
-import { listMyProjectRoles, listProfiles, listProjectMembers, listProjects, listTags } from "@/lib/data";
+import { listMyProjectRoles, listProfiles, listProjectMembers, listProjects, listVisibleTags } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 import type { BulkContext } from "./bulk-bar";
 
@@ -15,7 +15,7 @@ export async function listBulkContext(projectId: string | null): Promise<Omit<Bu
     listProfiles(),
     listProjects(),
     listMyProjectRoles(),
-    listTags(),
+    listVisibleTags(),
   ]);
   const people = profiles.map((p) => ({ id: p.id, name: displayName(p) }));
   return {

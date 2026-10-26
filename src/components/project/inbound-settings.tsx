@@ -1,5 +1,6 @@
 "use client";
 
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import Link from "next/link";
 import { useState } from "react";
 import { CheckCircle2, Copy, Inbox, KeyRound, RotateCcw, ShieldCheck, Trash2, XCircle } from "lucide-react";
@@ -209,6 +210,8 @@ function EndpointFields({
   onChange: (next: { name: string; sectionId: string | null; assigneeId: string | null; tagIds: string[] }) => void;
 }) {
   const shownTags = tags.filter((t) => !t.archived || value.tagIds.includes(t.id));
+  // Oct 26 notes (batch 3): no Default tags while the workspace's tags are switched off.
+  const tagsOn = useTagsEnabled();
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600" htmlFor={`${idPrefix}-name`}>
@@ -250,38 +253,40 @@ function EndpointFields({
           ]}
         />
       </label>
-      <fieldset className="flex flex-col gap-1">
-        <legend className="text-xs font-medium text-zinc-600">Default tags</legend>
-        {shownTags.length === 0 ? (
-          <p className="text-xs text-zinc-500">
-            No tags yet — create them in{" "}
-            <Link href="/settings/workspace/tags" className="text-accent-700 hover:underline">
-              Settings → Workspace → Tags
-            </Link>
-            .
-          </p>
-        ) : (
-          <div className="flex max-h-28 flex-wrap gap-x-3 gap-y-1 overflow-y-auto">
-            {shownTags.map((t) => (
-              <label key={t.id} className="inline-flex items-center gap-1.5 text-sm text-zinc-700">
-                <input
-                  type="checkbox"
-                  checked={value.tagIds.includes(t.id)}
-                  disabled={t.archived && !value.tagIds.includes(t.id)}
-                  onChange={(e) =>
-                    onChange({
-                      ...value,
-                      tagIds: e.currentTarget.checked ? [...value.tagIds, t.id] : value.tagIds.filter((x) => x !== t.id),
-                    })
-                  }
-                />
-                {t.name}
-                {t.archived ? <span className="text-xs text-zinc-500">(archived)</span> : null}
-              </label>
-            ))}
-          </div>
-        )}
-      </fieldset>
+      {tagsOn ? (
+        <fieldset className="flex flex-col gap-1">
+          <legend className="text-xs font-medium text-zinc-600">Default tags</legend>
+          {shownTags.length === 0 ? (
+            <p className="text-xs text-zinc-500">
+              No tags yet — create them in{" "}
+              <Link href="/settings/workspace/tags" className="text-accent-700 hover:underline">
+                Settings → Workspace → Tags
+              </Link>
+              .
+            </p>
+          ) : (
+            <div className="flex max-h-28 flex-wrap gap-x-3 gap-y-1 overflow-y-auto">
+              {shownTags.map((t) => (
+                <label key={t.id} className="inline-flex items-center gap-1.5 text-sm text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={value.tagIds.includes(t.id)}
+                    disabled={t.archived && !value.tagIds.includes(t.id)}
+                    onChange={(e) =>
+                      onChange({
+                        ...value,
+                        tagIds: e.currentTarget.checked ? [...value.tagIds, t.id] : value.tagIds.filter((x) => x !== t.id),
+                      })
+                    }
+                  />
+                  {t.name}
+                  {t.archived ? <span className="text-xs text-zinc-500">(archived)</span> : null}
+                </label>
+              ))}
+            </div>
+          )}
+        </fieldset>
+      ) : null}
     </div>
   );
 }

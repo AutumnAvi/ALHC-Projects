@@ -164,4 +164,68 @@ begin
 end $$;
 reset role;
 
+-- ---------------------------------------------------------------------------------------------
+-- 4. The workspace's Tags switch
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  assert (select column_default from information_schema.columns
+    where table_schema = 'public' and table_name = 'workspaces' and column_name = 'tags_enabled') = 'false',
+    'tags are off by default';
+  assert has_column_privilege('authenticated', 'public.workspaces', 'tags_enabled', 'UPDATE'), 'grantable to admins (RLS decides)';
+  assert not has_column_privilege('anon', 'public.workspaces', 'tags_enabled', 'UPDATE'), 'not anon';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  p uuid := (select id from b3_ids where name = 'p');
+  t uuid;
+  g uuid;
+begin
+  t := public.create_task(p, null, 'Spring flyer');
+  insert into b3_ids values ('tagged_task', t);
+  insert into public.tags (workspace_id, name, color) values ('00000000-0000-4000-8000-000000000001', 'Zebracorn', 'red')
+    returning id into g;
+  insert into public.task_tags (task_id, tag_id) values (t, g);
+  assert exists (select 1 from public.search_tasks('zebracorn', 10) where id = t), 'found by tag name while tags are on';
+  -- A member who isn't a workspace admin can't flip it.
+  update public.workspaces set tags_enabled = false;
+  assert (select tags_enabled from public.workspaces where id = '00000000-0000-4000-8000-000000000001'),
+    'members can''t turn tags off';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000004', false) is not null as ok \gset
+do $$
+declare
+  n integer;
+begin
+  update public.workspaces set tags_enabled = false where id = '00000000-0000-4000-8000-000000000001';
+  get diagnostics n = row_count;
+  assert n = 1, 'a workspace admin turns tags off';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b3_ids where name = 'tagged_task');
+begin
+  assert not exists (select 1 from public.search_tasks('zebracorn', 10) where id = t), 'no tag-name matches while off';
+  assert exists (select 1 from public.search_tasks('spring flyer', 10) where id = t), 'title search still works';
+  assert exists (select 1 from public.task_tags where task_id = t and deleted_at is null), 'the tag link is kept';
+  assert exists (select 1 from public.tags where name = 'Zebracorn' and deleted_at is null), 'and the tag';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000004', false) is not null as ok \gset
+update public.workspaces set tags_enabled = true where id = '00000000-0000-4000-8000-000000000001';
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  assert exists (select 1 from public.search_tasks('zebracorn', 10) where id = (select id from b3_ids where name = 'tagged_task')),
+    'back on: found by tag name again';
+end $$;
+reset role;
+
 do $$ begin raise notice 'oct 26 batch 3 smoke: all assertions passed'; end $$;

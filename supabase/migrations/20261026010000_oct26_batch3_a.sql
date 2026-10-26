@@ -13,6 +13,11 @@
 --        through add_project_member (its own checks), and tells the requester.
 --      * Joining by any other way closes the open request (trigger on project_members).
 --
+-- 4. Tags can be switched off for the whole workspace (workspaces.tags_enabled, off by default; workspace
+--    admins turn it on in Admin console → Tags). Off hides tags in the app; nothing is removed: tags,
+--    task links, rules, and views keep their data and come back when it's turned on. Search stops
+--    matching tag names while it's off (search_tasks, asserted patch).
+--
 -- Additive: no tail.
 
 create or replace function public.alhc_patch_function(target regprocedure, variadic edits text[])
@@ -344,3 +349,23 @@ revoke all on function public.on_project_member_close_access_request() from publ
 create trigger project_members_after_insert_close_access_request
   after insert on public.project_members
   for each row execute function public.on_project_member_close_access_request();
+
+-- ---------------------------------------------------------------------------
+-- 4. The workspace's Tags switch
+-- ---------------------------------------------------------------------------
+
+alter table public.workspaces add column if not exists tags_enabled boolean not null default false;
+-- workspaces_update_admin (workspace admins only) decides who; this column is theirs to change too.
+grant update (tags_enabled) on public.workspaces to authenticated;
+
+comment on column public.workspaces.tags_enabled is
+  'Oct 26 notes (batch 3): whether the app shows tags (off by default). Off hides them everywhere; the '
+  'tags, their task links, and rules / views that use them are kept.';
+
+-- Search matches a tag's name only while the tag's workspace uses tags.
+select public.alhc_patch_function('public.search_tasks(text, integer)'::regprocedure,
+$p$        join public.tags g on g.id = tt.tag_id and g.deleted_at is null
+        where tt.task_id = t.id$p$,
+$p$        join public.tags g on g.id = tt.tag_id and g.deleted_at is null
+        join public.workspaces tw on tw.id = g.workspace_id and tw.tags_enabled
+        where tt.task_id = t.id$p$);

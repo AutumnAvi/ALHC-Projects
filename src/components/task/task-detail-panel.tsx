@@ -1,5 +1,6 @@
 "use client";
 
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useOptimistic, useState } from "react";
 import { Check, ChevronRight, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, UserRound, X } from "lucide-react";
 import { TaskLike } from "./task-like";
@@ -45,6 +46,8 @@ export function TaskDetailPanel({
   tags: Tag[];
 }) {
   const { close } = useClosePane();
+  // Oct 26 notes (batch 3): no Tags row while the workspace's tags are switched off.
+  const tagsOn = useTagsEnabled();
   const expanded = usePaneExpanded();
   const wide = usePaneWide();
   const [, run] = useServerAction();
@@ -337,7 +340,7 @@ export function TaskDetailPanel({
               </>
             ) : null}
 
-            {canEdit || task.tagIds.length ? (
+            {tagsOn && (canEdit || task.tagIds.length) ? (
               <>
                 <dt className={`${PANE_LABEL} self-start`}>Tags</dt>
                 <dd className="min-w-0">

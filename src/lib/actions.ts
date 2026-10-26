@@ -3012,6 +3012,25 @@ export async function setDefaultProjectRole(email: string, newRole: string | nul
   });
 }
 
+// Oct 26 notes (batch 3): the workspace's Tags switch (Admin console → Tags; workspace admins, RLS and the
+// column grant decide). Off only hides tags; nothing is removed.
+export async function setTagsEnabled(enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    const result = await supabase
+      .from("workspaces")
+      .update({ tags_enabled: enabled === true })
+      .eq("id", workspace.id)
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
+      throw new InputError("This setting needs this release’s database update");
+    }
+    checkUpdated(result, WORKSPACE_ADMINS_ONLY);
+  });
+}
+
 // The Commenter project role (Admin console → Security; workspace admins, RLS and the column grant
 // decide). Turning it off never changes anyone's role.
 export async function setCommenterRoleAllowed(allowed: boolean): Promise<ActionResult> {

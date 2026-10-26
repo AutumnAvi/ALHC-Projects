@@ -1,5 +1,6 @@
 "use client";
 
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useState, useTransition } from "react";
 import { Dialog } from "@/components/dialog";
 import { useOpenTask } from "@/components/task/task-link";
@@ -22,6 +23,8 @@ export function DuplicateTaskDialog({
   onClose: () => void;
 }) {
   const openTask = useOpenTask();
+  // Oct 26 notes (batch 3): the Tags choice is hidden while tags are switched off (tags still copy).
+  const tagsOn = useTagsEnabled();
   const notify = useNotify();
   const [pending, start] = useTransition();
   const [name, setName] = useState(`Copy of ${title}`);
@@ -70,7 +73,7 @@ export function DuplicateTaskDialog({
         <fieldset className="mt-3">
           <legend className="text-xs font-medium text-zinc-700">Include</legend>
           <div className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
-            {DUPLICATE_TASK_OPTIONS.map((option) => (
+            {DUPLICATE_TASK_OPTIONS.filter((option) => tagsOn || option.key !== "tags").map((option) => (
               <label key={option.key} className="flex items-center gap-2 text-sm text-zinc-700">
                 <input
                   type="checkbox"
