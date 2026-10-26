@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
 import { parseAccessStatus, type ProjectAccessRequest, type ProjectAccessStatus } from "@/lib/access-requests";
 import type { SidebarFolderState } from "@/lib/sidebar-folders";
+import { SKIP_REASONS, type SkipReason } from "@/lib/reply-attachments";
 import type { MentionTeam } from "@/lib/mentions";
 import {
   DESIGN_COLUMNS,
@@ -352,7 +353,7 @@ export type TaskComment = {
   email: CommentEmail | null;
   // A received reply's attachments (saved to the task) and the ones that weren't saved, with why.
   emailFiles?: { id: string; name: string; sizeBytes: number; contentType: string | null }[];
-  emailSkipped?: { name: string; reason: "too_large" | "too_many" | "failed" }[];
+  emailSkipped?: { name: string; reason: SkipReason }[];
 };
 
 export type TaskStory = {
@@ -1050,8 +1051,8 @@ async function withReplyFiles(supabase: Supabase, page: CommentPage): Promise<Co
       c.email_skipped_files.flatMap((item) => {
         const o = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, Json | undefined>) : null;
         const reason = o?.reason;
-        return o && typeof o.name === "string" && (reason === "too_large" || reason === "too_many" || reason === "failed")
-          ? [{ name: o.name, reason }]
+        return o && typeof o.name === "string" && typeof reason === "string" && (SKIP_REASONS as readonly string[]).includes(reason)
+          ? [{ name: o.name, reason: reason as SkipReason }]
           : [];
       }),
     );

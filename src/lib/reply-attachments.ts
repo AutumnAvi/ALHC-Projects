@@ -24,13 +24,56 @@ export type ReceivedFile = {
   size: number | null;
 };
 
-// Mirrors note_reply_skipped_files' reasons.
-export type SkippedFile = { name: string; reason: "too_large" | "too_many" | "failed" };
+// Mirrors note_reply_skipped_files' reasons ("blocked_type" since Oct 26 notes, batch 3).
+export type SkipReason = "too_large" | "too_many" | "failed" | "blocked_type";
+export type SkippedFile = { name: string; reason: SkipReason };
+export const SKIP_REASONS: readonly SkipReason[] = ["too_large", "too_many", "failed", "blocked_type"];
+
+// Oct 26 notes (batch 3): files that could run code or a page when opened are never saved from an
+// email (programs, scripts, installers, shortcuts, web pages, SVG). Everything else is kept (documents,
+// images, video, archives, …); the attachments route still serves only safe types inline.
+const BLOCKED_EXTENSIONS = new Set([
+  "exe", "msi", "msp", "dll", "com", "scr", "pif", "cpl", "bat", "cmd", "vb", "vbs", "vbe", "js", "jse", "mjs",
+  "wsf", "wsh", "hta", "ps1", "psm1", "psd1", "sh", "bash", "zsh", "csh", "ksh", "command", "jar", "apk", "app",
+  "dmg", "pkg", "deb", "rpm", "iso", "img", "vhd", "lnk", "url", "reg", "inf", "scf", "msc", "gadget", "html",
+  "htm", "xhtml", "shtml", "mht", "mhtml", "svg", "svgz", "php", "py", "pl", "rb", "appx",
+  "msix", "xll", "chm",
+]);
+const BLOCKED_TYPES = /^(application\/(x-msdownload|x-msdos-program|x-dosexec|x-executable|x-sh|x-shellscript|javascript|x-javascript|ecmascript|hta|x-ms-shortcut|xhtml\+xml|x-apple-diskimage|java-archive|vnd\.microsoft\.portable-executable)|text\/(html|javascript|x-sh|x-shellscript)|image\/svg\+xml)$/;
+
+export function unsafeReceivedFile(file: Pick<ReceivedFile, "filename" | "contentType">): boolean {
+  const ext = file.filename.match(/\.([A-Za-z0-9]{1,10})$/)?.[1]?.toLowerCase();
+  if (ext && BLOCKED_EXTENSIONS.has(ext)) return true;
+  return file.contentType !== null && BLOCKED_TYPES.test(file.contentType);
+}
 
 export type ReceivedFilePlan = { copy: ReceivedFile[]; skipped: SkippedFile[]; ignored: ReceivedFile[] };
 
 // Resend's attachment objects (the received email's `attachments`, or the attachments list) → files.
 // Entries without an id are dropped.
+// Oct 26 notes (batch 3): the attachments list (GET /emails/receiving/{id}/attachments) is the source of
+// truth — the retrieved email doesn't always carry its attachments (that's how a reply's pasted image
+// went missing and its "[AL_ICON MARK.jpg]" placeholder stayed). Anything the list leaves out about a
+// file (its content id, whether it's inline) is filled in from the email's own attachment entries.
+export function mergeReceivedFiles(listed: unknown, embedded: unknown): ReceivedFile[] {
+  const fromList = normalizeReceivedFiles(listed);
+  const fromEmail = normalizeReceivedFiles(embedded);
+  if (!fromList.length) return fromEmail;
+  const byId = new Map(fromEmail.map((f) => [f.id, f] as const));
+  return fromList.map((file) => {
+    const other = byId.get(file.id);
+    if (!other) return file;
+    return {
+      ...file,
+      filename: file.filename === "attachment" ? other.filename : file.filename,
+      contentType: file.contentType ?? other.contentType,
+      inline: file.inline || other.inline,
+      contentId: file.contentId ?? other.contentId,
+      size: file.size ?? other.size,
+    };
+  });
+}
+
 export function normalizeReceivedFiles(raw: unknown): ReceivedFile[] {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((item) => {
@@ -94,7 +137,8 @@ export function planReceivedFiles(
         continue;
       }
     }
-    if (file.size !== null && file.size > limits.maxBytes) plan.skipped.push({ name: file.filename, reason: "too_large" });
+    if (unsafeReceivedFile(file)) plan.skipped.push({ name: file.filename, reason: "blocked_type" });
+    else if (file.size !== null && file.size > limits.maxBytes) plan.skipped.push({ name: file.filename, reason: "too_large" });
     else if (plan.copy.length >= limits.maxFiles) plan.skipped.push({ name: file.filename, reason: "too_many" });
     else plan.copy.push(file);
   }
@@ -102,10 +146,18 @@ export function planReceivedFiles(
 }
 
 // The text without the placeholders of these files (only their exact names and content ids, so
-// "[other.jpg]" stays), with the spaces and blank lines they leave behind tidied.
-export function stripAttachmentPlaceholders(body: string, files: Pick<ReceivedFile, "filename" | "contentId">[]): string {
-  if (!files.length) return body;
-  const pattern = new RegExp(`[ \\t]*(?:${files.flatMap(placeholders).join("|")})`, "gi");
+// "[other.jpg]" stays), with the spaces and blank lines they leave behind tidied. Since Oct 26 notes
+// (batch 3), when an email had inline images, Gmail's "[image: …]" and Outlook's "[cid:…]" forms come out
+// whatever name they carry (mail apps don't always use the attachment's own file name there).
+export function stripAttachmentPlaceholders(
+  body: string,
+  files: Pick<ReceivedFile, "filename" | "contentId">[],
+  options: { inlineImages?: boolean } = {},
+): string {
+  if (!files.length && !options.inlineImages) return body;
+  const forms = files.flatMap(placeholders);
+  if (options.inlineImages) forms.push("\\[image:[^\\]\\n]{0,255}\\]", "\\[cid:[^\\]\\s]{1,255}\\]");
+  const pattern = new RegExp(`[ \\t]*(?:${forms.join("|")})`, "gi");
   return body
     .replace(pattern, "")
     .split("\n")
@@ -124,4 +176,10 @@ export function attachmentsOnlyBody(count: number): string {
 export function plannedFiles(files: ReceivedFile[], plan: ReceivedFilePlan): ReceivedFile[] {
   const ignored = new Set(plan.ignored.map((f) => f.id));
   return files.filter((f) => !ignored.has(f.id));
+}
+
+// Whether a plan saves (or notes) an inline image: then generic image placeholders come out too.
+export function plansInlineImage(files: ReceivedFile[], plan: ReceivedFilePlan): boolean {
+  const ignored = new Set(plan.ignored.map((f) => f.id));
+  return files.some((f) => !ignored.has(f.id) && f.contentType?.startsWith("image/") === true);
 }

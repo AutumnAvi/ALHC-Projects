@@ -11,7 +11,10 @@ import { copyReceivedAttachments, copyReplyAttachments, resendFileSource, type R
 import { htmlToText, keptHtml, stripQuotedReply } from "@/lib/email-reply";
 import {
   attachmentsOnlyBody,
+  mergeReceivedFiles,
   normalizeReceivedFiles,
+  plansInlineImage,
+  unsafeReceivedFile,
   planReceivedFiles,
   plannedFiles,
   stripAttachmentPlaceholders,
@@ -201,7 +204,7 @@ test("the Resend source: the key goes to the API, never to a download link", asy
   }
 });
 
-test("the reply card: images as thumbnails, PDFs in the viewer, other files as downloads, and what wasn't saved", () => {
+test("the reply card: images inline, PDFs in the viewer, other files as downloads, and what wasn't saved", () => {
   const html = renderToStaticMarkup(
     <EmailFiles
       files={[
@@ -212,8 +215,97 @@ test("the reply card: images as thumbnails, PDFs in the viewer, other files as d
       skipped={[{ name: "walkthrough.mov", reason: "too_large" }]}
     />,
   );
-  assert.ok(html.includes('aria-label="View AL_ICON MARK.jpg"') && html.includes('src="/attachments/a1?preview=1"'), "image thumbnail");
+  assert.ok(html.includes('aria-label="View AL_ICON MARK.jpg full size"') && html.includes('src="/attachments/a1?preview=1"'), "inline image");
+  assert.match(html, /alt="AL_ICON MARK.jpg"[^>]*class="[^"]*max-h-80/, "shown at a readable size, not a tiny thumbnail");
   assert.ok(html.includes('href="/attachments/a2?preview=1"') && html.includes('target="_blank"'), "PDF opens in the viewer");
   assert.ok(html.includes('href="/attachments/a3"'), "other files download");
   assert.ok(html.includes("Not saved: walkthrough.mov (over 25 MB)"));
+});
+
+// Oct 26 notes (batch 3): the reply still lost its image when the retrieved email carried no attachment
+// list. The route now reads Resend's attachments API and merges what the email says about each file.
+test("no attachments on the retrieved email: the attachments API's list is used, the image saved, the placeholder gone", () => {
+  const retrieved = { ...sample.retrieved, attachments: undefined };
+  const files = mergeReceivedFiles(sample.attachmentsList.data, retrieved.attachments);
+  assert.deepEqual(files.map((f) => f.filename), ["AL_ICON MARK.jpg", "brief.pdf", "walkthrough.mov", "image001.png"]);
+  const keptText = stripQuotedReply(retrieved.text);
+  const result = planReceivedFiles(files, { rawText: retrieved.text, keptText, html: retrieved.html, keptHtml: keptHtml(retrieved.html) });
+  assert.deepEqual(result.copy.map((f) => f.filename), ["AL_ICON MARK.jpg", "brief.pdf"]);
+  const body = stripAttachmentPlaceholders(keptText, plannedFiles(files, result), { inlineImages: plansInlineImage(files, result) });
+  assert.equal(body, "Here is the logo.\n\nThanks,\nTerry");
+});
+
+test("merging: the list wins, the email fills in a content id or inline flag the list left out", () => {
+  const merged = mergeReceivedFiles(
+    [{ id: "a1", filename: "logo.png", content_type: "image/png", size: 5000 }],
+    [{ id: "a1", filename: "logo.png", content_type: "image/png", content_disposition: "inline", content_id: "<logo@x>" }],
+  );
+  assert.deepEqual(merged, [{ id: "a1", filename: "logo.png", contentType: "image/png", inline: true, contentId: "logo@x", size: 5000 }]);
+  assert.deepEqual(mergeReceivedFiles(null, [{ id: "b", filename: "x.pdf" }]).map((f) => f.id), ["b"], "falls back to the email's list");
+});
+
+test("unsafe files are noted, never saved", () => {
+  const files = normalizeReceivedFiles([
+    { id: "1", filename: "setup.exe", content_type: "application/octet-stream" },
+    { id: "2", filename: "invoice.html", content_type: "text/html" },
+    { id: "3", filename: "logo.svg", content_type: "image/svg+xml" },
+    { id: "4", filename: "run", content_type: "application/x-sh" },
+    { id: "5", filename: "photo.jpg", content_type: "image/jpeg" },
+    { id: "6", filename: "contract.docx", content_type: null },
+  ]);
+  for (const f of files.slice(0, 4)) assert.ok(unsafeReceivedFile(f), f.filename);
+  const result = planReceivedFiles(files, { rawText: "", keptText: "" });
+  assert.deepEqual(result.copy.map((f) => f.filename), ["photo.jpg", "contract.docx"]);
+  assert.deepEqual(
+    result.skipped.map((f) => [f.name, f.reason]),
+    [
+      ["setup.exe", "blocked_type"],
+      ["invoice.html", "blocked_type"],
+      ["logo.svg", "blocked_type"],
+      ["run", "blocked_type"],
+    ],
+  );
+  const html = renderToStaticMarkup(<EmailFiles files={[]} skipped={[{ name: "setup.exe", reason: "blocked_type" }]} />);
+  assert.match(html, /setup.exe \(this kind of file isn’t saved from email\)/);
+});
+
+test("with inline images saved, Gmail's and Outlook's placeholders come out whatever name they carry", () => {
+  const text = "See below\n[image: Screenshot 2026-10-26 at 9.41.png]\n[cid:ii_m1x2y3]\nThanks [draft.jpg]";
+  assert.equal(stripAttachmentPlaceholders(text, [], { inlineImages: true }), "See below\n\nThanks [draft.jpg]");
+  assert.equal(stripAttachmentPlaceholders(text, []), text, "nothing removed without inline images");
+});
+
+test("copying reuses the list the route already read", async () => {
+  let lists = 0;
+  const stored: string[] = [];
+  const admin = {
+    storage: {
+      from: () => ({
+        upload: async (path: string) => {
+          stored.push(path);
+          return { error: null };
+        },
+        remove: async () => ({ error: null }),
+      }),
+    },
+  };
+  const source: ReceivedFileSource = {
+    list: async () => {
+      lists += 1;
+      return [];
+    },
+    refresh: async () => null,
+    download: async () => ({ ok: true, bytes: new Uint8Array([1, 2, 3]), contentType: "image/jpeg" }),
+  };
+  const files = normalizeReceivedFiles(sample.attachmentsList.data).slice(0, 1);
+  const result = await copyReceivedAttachments(admin as never, source, {
+    emailId: "e1",
+    taskId: TASK,
+    plan: { copy: files, skipped: [], ignored: [] },
+    record: async () => true,
+    listed: sample.attachmentsList.data,
+  });
+  assert.equal(result.added, 1);
+  assert.equal(lists, 0, "no second list call");
+  assert.equal(stored.length, 1);
 });

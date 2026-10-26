@@ -324,4 +324,16 @@ begin
     where profile_id = 'b3b30026-0000-4000-8000-000000000002') is not null, 'and so is their placement';
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- 6. Reply attachments: a blocked type is a reason the card can show
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  assert pg_get_functiondef('public.note_reply_skipped_files(uuid, jsonb)'::regprocedure) like '%''blocked_type''%',
+    'blocked_type is kept as a reason';
+  assert not has_function_privilege('authenticated', 'public.note_reply_skipped_files(uuid, jsonb)', 'execute'),
+    'still service role only';
+end $$;
+
 do $$ begin raise notice 'oct 26 batch 3 smoke: all assertions passed'; end $$;

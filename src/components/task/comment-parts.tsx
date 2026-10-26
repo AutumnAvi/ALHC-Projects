@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { FileText, Mail, Paperclip, UsersRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { Timestamp } from "@/components/timestamp";
-import { ImageLightbox, Thumbnail } from "./task-attachments";
+import { ImageLightbox } from "./task-attachments";
 import { previewKind } from "@/lib/attachment-preview";
 import { COMMENT_EMAIL_STATUS_LABELS, type CommentEmail } from "@/lib/comment-email";
 import { mentionSegments, type MentionPerson, type MentionTeam } from "@/lib/mentions";
@@ -297,10 +297,28 @@ export function EmailCommentHeader({
   );
 }
 
+// A reply's image at its own shape, at most 20rem tall (a failed load falls back to a file chip).
+function InlineImage({ src, alt, onBroken }: { src: string; alt: string; onBroken: () => void }) {
+  const ref = useRef<HTMLImageElement>(null);
+  const brokenRef = useRef(onBroken);
+  useEffect(() => {
+    brokenRef.current = onBroken;
+  }, [onBroken]);
+  useEffect(() => {
+    const img = ref.current;
+    if (img && img.complete && img.naturalWidth === 0) brokenRef.current();
+  }, []);
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- auth-gated redirect to a short-lived signed URL; next/image can't optimise it
+    <img ref={ref} src={src} alt={alt} loading="lazy" decoding="async" onError={onBroken} className="mx-auto max-h-80 w-auto max-w-full object-contain" />
+  );
+}
+
 const SKIP_REASONS = {
   too_large: "over 25 MB",
   too_many: "more than 10 files",
   failed: "couldn’t be saved",
+  blocked_type: "this kind of file isn’t saved from email",
 } as const;
 
 function fileSize(bytes: number) {
@@ -310,7 +328,7 @@ function fileSize(bytes: number) {
 }
 
 // The files that came with a submitter's emailed reply (saved to the task) and the ones that weren't,
-// with why. Shown inside the reply's email card: images as thumbnails that open in the lightbox, PDFs
+// with why. Shown inside the reply's email card: images inline that open in the lightbox, PDFs
 // in the browser's viewer, the rest as downloads (the same rule as the pane's Attachments, previewKind).
 export function EmailFiles({
   files,
@@ -329,18 +347,21 @@ export function EmailFiles({
   return (
     <div className="border-t border-zinc-100 px-3.5 py-2" data-email-files>
       {images.length ? (
-        <ul className="mb-1.5 flex flex-wrap gap-1.5" aria-label="Images">
+        // Oct 26 notes (batch 3): the reply's images show inline at a readable size (like in the email);
+        // a click opens them full size in the lightbox.
+        <ul className={`mb-1.5 grid gap-1.5 ${images.length > 1 ? "grid-cols-2" : "grid-cols-1"}`} aria-label="Images">
           {images.map((file, i) => (
             <li key={file.id}>
               <button
                 type="button"
                 onClick={() => setOpen(i)}
-                aria-label={`View ${file.name}`}
+                aria-label={`View ${file.name} full size`}
                 data-tooltip={file.name}
-                className="block size-24 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 hover:border-zinc-300 focus-visible:outline-2 focus-visible:outline-accent-500"
+                className="block w-full overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 hover:border-zinc-300 focus-visible:outline-2 focus-visible:outline-accent-500"
               >
-                <Thumbnail
+                <InlineImage
                   src={`/attachments/${file.id}?preview=1`}
+                  alt={file.name}
                   onBroken={() => setBroken((current) => new Set(current).add(file.id))}
                 />
               </button>

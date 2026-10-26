@@ -23,6 +23,10 @@
 --    else, workspace admins included, sees or changes them. Putting a project in a folder needs Viewer+
 --    (like starring). Removing a folder puts its projects back under Projects.
 --
+-- 6. Images in emailed replies: the inbound route now reads Resend's attachments list (app code); the
+--    database learns one more reason a reply's file wasn't saved, "blocked_type" (programs, scripts, web
+--    pages, SVG are never saved from an email): note_reply_skipped_files, asserted patch.
+--
 -- Additive: no tail.
 
 create or replace function public.alhc_patch_function(target regprocedure, variadic edits text[])
@@ -549,3 +553,11 @@ grant execute on function public.guard_sidebar_folder_project() to authenticated
 create trigger sidebar_folder_projects_05_guard
   before insert or update on public.sidebar_folder_projects
   for each row execute function public.guard_sidebar_folder_project();
+
+-- ---------------------------------------------------------------------------
+-- 6. Reply attachments: files of a blocked type are noted, not saved
+-- ---------------------------------------------------------------------------
+
+select public.alhc_patch_function('public.note_reply_skipped_files(uuid, jsonb)'::regprocedure,
+$p$when f ->> 'reason' in ('too_large', 'too_many', 'failed') then$p$,
+$p$when f ->> 'reason' in ('too_large', 'too_many', 'failed', 'blocked_type') then$p$);
