@@ -4,7 +4,7 @@ import { ExportLink } from "@/components/reports/report-chrome";
 import { SearchResults } from "@/components/search/search-results";
 import { TaskPaneSlot } from "@/components/task/task-pane";
 import { EmptyState, PageHeader } from "@/components/ui";
-import { listTags, listTaskTagIds, searchTasks } from "@/lib/data";
+import { listVisibleTags, listTaskTagIds, searchTasks } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Search" };
 
@@ -14,7 +14,7 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
   const openTaskId = typeof task === "string" ? task : null;
   const results = query ? await searchTasks(query) : [];
   const [tags, tagIds] = results.length
-    ? await Promise.all([listTags(), listTaskTagIds(results.map((r) => r.id))])
+    ? await Promise.all([listVisibleTags(), listTaskTagIds(results.map((r) => r.id))])
     : [[], new Map<string, string[]>()];
 
   return (

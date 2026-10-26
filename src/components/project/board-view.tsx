@@ -1,5 +1,6 @@
 "use client";
 
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useState, type DragEvent } from "react";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
@@ -64,6 +65,7 @@ export function BoardView({
   sectionTaskCounts = {},
 }: Props) {
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
+  const tagsOn = useTagsEnabled();
   const openTaskId = useOpenTaskId();
   const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
@@ -98,12 +100,12 @@ export function BoardView({
         );
   const visibleTasks = (group: TaskGroup) =>
     group.total != null ? group.tasks : group.tasks.slice(0, pages.limit(group.key));
-  const tagsById = new Map(tags.map((t) => [t.id, t] as const));
+  const tagsById = new Map((tagsOn ? tags : []).map((t) => [t.id, t] as const));
   const groupBy = groupOf(config);
   const bySection = groupBy === "section";
   // Precise positions only make sense when cards are shown in manual (sort_order) order.
   const manualOrder = bySection && sortOf(config)[0]?.key === "manual";
-  const columns = columnsOf(config, fields);
+  const columns = columnsOf(config, fields, tagsOn);
   // The column already shows the grouping value, so a field chip for it would only repeat it.
   const cardFields = columns
     .map((c) => fieldsById.get(refFieldId(c) ?? ""))

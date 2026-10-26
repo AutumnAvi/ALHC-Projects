@@ -18,9 +18,10 @@ import {
 import { isResendDeliveryEvent, RESEND_DELIVERY_EVENTS } from "@/lib/email-schedules";
 import {
   attachmentsOnlyBody,
-  normalizeReceivedFiles,
+  mergeReceivedFiles,
   planReceivedFiles,
   plannedFiles,
+  plansInlineImage,
   stripAttachmentPlaceholders,
 } from "@/lib/reply-attachments";
 import { drainIntegrationOutbox } from "@/lib/integrations";
@@ -151,13 +152,34 @@ export async function POST(request: Request) {
     return json({ ok: false, error: "Couldn’t fetch the email" }, 502);
   }
 
+  // Oct 26 notes (batch 3): the email's files come from Resend's attachments API (the retrieved email
+  // doesn't always list them; then a pasted image was neither saved nor its placeholder removed). A
+  // failure there falls back to the email's own list.
+  const source = resendFileSource(apiKey);
+  const listAttachments = async (): Promise<unknown[] | null> => {
+    try {
+      return await source.list(emailId);
+    } catch {
+      console.error("Inbound email: couldn’t list the attachments; using the email’s own list");
+      return null;
+    }
+  };
+
   const sender = bareAddress(message.from);
   if (forwardToken) {
     if (!sender) {
       console.info("Forwarded email: rejected (no sender address)");
       return json({ ok: true, status: "rejected" }, 200);
     }
-    return forwardedEmail(admin, apiKey, { forwardToken, sender, verified: forwardSenderVerified(message.authentication), emailId, message });
+    const listed = await listAttachments();
+    return forwardedEmail(admin, apiKey, {
+      forwardToken,
+      sender,
+      verified: forwardSenderVerified(message.authentication),
+      emailId,
+      message,
+      listed,
+    });
   }
   // Fails closed: no authentication result from Resend counts as unverified, and an unverified reply is
   // never posted under the submitter's address.
@@ -166,13 +188,14 @@ export async function POST(request: Request) {
     return json({ ok: true, status: "rejected" }, 200);
   }
   if (!token) return json({ ok: true, ignored: true }, 200);
+  const listed = await listAttachments();
   const html = typeof message.html === "string" ? message.html : null;
   const hasText = typeof message.text === "string" && message.text.trim();
   const keptText = stripQuotedReply(hasText ? (message.text as string) : html ? htmlToText(html) : "");
   // Which files to save (pasted and Apple Mail images included; quoted and signature images and
   // tracking pixels left out), and the text without their "[image.jpg]" placeholders. A reply that was
   // only files still says so.
-  const files = normalizeReceivedFiles(message.attachments);
+  const files = mergeReceivedFiles(listed, message.attachments);
   const plan = planReceivedFiles(files, {
     rawText: hasText ? (message.text as string) : html ? htmlToText(html, { keepQuoted: true }) : "",
     keptText,
@@ -180,7 +203,9 @@ export async function POST(request: Request) {
     keptHtml: html ? keptHtml(html) : null,
   });
   const saving = plan.copy.length + plan.skipped.length;
-  const body = stripAttachmentPlaceholders(keptText, plannedFiles(files, plan)) || (saving ? attachmentsOnlyBody(saving) : "");
+  const body =
+    stripAttachmentPlaceholders(keptText, plannedFiles(files, plan), { inlineImages: plansInlineImage(files, plan) }) ||
+    (saving ? attachmentsOnlyBody(saving) : "");
 
   const { data, error } = await admin.rpc("post_submitter_reply", {
     reply_token: token,
@@ -206,7 +231,7 @@ export async function POST(request: Request) {
   after(async () => {
     if (saving && commentId && replyTaskId) {
       try {
-        const copied = await copyReplyAttachments(admin, resendFileSource(apiKey), { emailId, commentId, taskId: replyTaskId, plan });
+        const copied = await copyReplyAttachments(admin, source, { emailId, commentId, taskId: replyTaskId, plan, listed });
         console.info(`Reply by email: ${copied.added} attachment(s) added, ${copied.skipped} skipped, ${plan.ignored.length} left out`);
       } catch (e) {
         console.error("Reply by email: attachments failed", e instanceof Error ? e.name : "error");
@@ -231,7 +256,7 @@ export async function POST(request: Request) {
 async function forwardedEmail(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
   apiKey: string,
-  input: { forwardToken: string; sender: string; verified: boolean; emailId: string; message: Received },
+  input: { forwardToken: string; sender: string; verified: boolean; emailId: string; message: Received; listed: unknown[] | null },
 ) {
   const { data, error } = await admin.rpc("post_email_forward", {
     forward_token: input.forwardToken,
@@ -259,11 +284,22 @@ async function forwardedEmail(
       : html
         ? htmlToText(html, { keepQuoted: true })
         : "";
-  const plan = planReceivedFiles(normalizeReceivedFiles(input.message.attachments), { rawText: text, keptText: text, html, keptHtml: html });
+  const plan = planReceivedFiles(mergeReceivedFiles(input.listed, input.message.attachments), {
+    rawText: text,
+    keptText: text,
+    html,
+    keptHtml: html,
+  });
   after(async () => {
     if (plan.copy.length || plan.skipped.length) {
       try {
-        const copied = await copyForwardedAttachments(admin, resendFileSource(apiKey), { emailId: input.emailId, forwardId, taskId, plan });
+        const copied = await copyForwardedAttachments(admin, resendFileSource(apiKey), {
+          emailId: input.emailId,
+          forwardId,
+          taskId,
+          plan,
+          listed: input.listed,
+        });
         console.info(`Forwarded email: ${copied.added} attachment(s) added, ${copied.skipped} skipped, ${plan.ignored.length} left out`);
       } catch (e) {
         console.error("Forwarded email: attachments failed", e instanceof Error ? e.name : "error");

@@ -63,7 +63,7 @@ import {
   defaultsFor,
 } from "./rule-editor";
 import { vocabOptions } from "./rule-icons";
-import { branchLabel, needsUpdate, ruleSentence, type RuleContext } from "./rule-shared";
+import { branchLabel, needsUpdate, ruleSentence, tagsHidden, type RuleContext } from "./rule-shared";
 import { RuleTestPanel, type RuleTestDraft, type RuleTestTask } from "./rule-test-panel";
 import { RunSteps } from "./run-steps";
 
@@ -531,7 +531,7 @@ export function RuleCanvas({
                       id="rule-trigger"
                       label="Trigger"
                       value={triggerType}
-                      options={vocabOptions(TRIGGERS, { disabled: needsUpdate(ctx) })}
+                      options={vocabOptions(TRIGGERS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, [triggerType]) })}
                       onChange={(v) => {
                         setTriggerType(v as TriggerType);
                         setTriggerConfig({});
@@ -754,10 +754,13 @@ function BranchRows({
 
   // OR groups: AND within a group, OR between groups (one group stores no group keys).
   const groups = splitGroups(branch.conditions);
-  const conditionOptions = vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx) });
+  const conditionOptions = vocabOptions(CONDITIONS, {
+    disabled: needsUpdate(ctx),
+    hidden: tagsHidden(ctx, branch.conditions.map((c) => c.type)),
+  });
   const conditionScope: StepScope = { system: "project", kind: "condition", v3: ctx.v3 };
   const actionScope: StepScope = { system: "project", kind: "action", v3: ctx.v3 };
-  const actionOptions = vocabOptions(ACTIONS, { disabled: needsUpdate(ctx) });
+  const actionOptions = vocabOptions(ACTIONS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, branch.actions.map((a) => a.type)) });
 
   function setGroups(next: RuleCondition[][]) {
     onChange({ ...branch, conditions: joinGroups(next) });

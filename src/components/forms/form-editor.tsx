@@ -34,7 +34,8 @@ import { FieldTypeIcon } from "@/components/project/field-editor";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { deleteForm, updateForm } from "@/lib/actions";
+import { FormLiveSwitch, FormStatusBadge } from "@/components/forms/form-status";
+import { deleteForm, setFormLive, updateForm } from "@/lib/actions";
 import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
 import type { FieldDef } from "@/lib/fields";
 import {
@@ -326,6 +327,19 @@ export function FormEditor({
     });
   }
 
+  // The header's Live / Off switch (and the Settings tab's) saves at once, apart from the editor's Save.
+  const [livePending, runLive] = useServerAction();
+  function changeLive(next: boolean) {
+    const previous = accepting;
+    setAccepting(next);
+    runLive(async () => {
+      const result = await setFormLive(form.id, next);
+      if (result.error) setAccepting(previous);
+      else notify(next ? "Form is live: it takes responses" : "Form is off: it no longer takes responses");
+      return result;
+    });
+  }
+
   async function copy(text: string, what: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -350,24 +364,20 @@ export function FormEditor({
             <FileInput className="size-4" />
           </span>
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="truncate text-base font-semibold text-zinc-900">
-              {title.trim() || "Untitled form"}
+            <h2 id={titleId} className="flex min-w-0 items-center gap-2 text-base font-semibold text-zinc-900">
+              <span className="truncate">{title.trim() || "Untitled form"}</span>
+              <FormStatusBadge live={accepting} />
             </h2>
             <p className="flex flex-wrap items-center gap-x-2 text-xs text-zinc-500">
               <span className="inline-flex items-center gap-1" data-tooltip="No sign-in needed. Signed-in people see their email filled in.">
                 <Globe className="size-3.5" aria-hidden />
                 Who can submit: Anyone with the link
               </span>
-              <button
-                type="button"
-                onClick={() => setTab("settings")}
-                className={`rounded-full px-1.5 py-px text-2xs font-medium ${accepting ? "bg-green-50 text-green-800" : "bg-zinc-100 text-zinc-600"}`}
-              >
-                {accepting ? "Accepting responses" : "Not accepting responses"}
-              </button>
+              <span>{accepting ? "Taking responses" : "Not taking responses: visitors see a closed notice"}</span>
               {dirty ? <span className="text-amber-700">Unsaved changes</span> : null}
             </p>
           </div>
+          {canEdit ? <FormLiveSwitch live={accepting} disabled={livePending} onChange={changeLive} /> : null}
           <a href={publicUrl} target="_blank" rel="noreferrer" className="btn-ghost h-8">
             <ExternalLink className="size-4" aria-hidden />
             View form
@@ -394,7 +404,7 @@ export function FormEditor({
                 <CopyRow label="Embed code" value={embedSnippet} multiline onCopy={() => copy(embedSnippet, "Embed code")} />
                 {!accepting ? (
                   <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
-                    The form is closed: turn on “Accepting responses” in Settings before sharing it.
+                    The form is off: turn it on with the Live switch at the top before sharing it.
                   </p>
                 ) : null}
               </div>
@@ -546,7 +556,8 @@ export function FormEditor({
                   destination={destination}
                   setDestination={touch(setDestination)}
                   accepting={accepting}
-                  setAccepting={touch(setAccepting)}
+                  setAccepting={changeLive}
+                  livePending={livePending}
                   sendConfirmation={sendConfirmation}
                   setSendConfirmation={touch(setSendConfirmation)}
                   confirmationMessage={confirmationMessage}
@@ -1327,6 +1338,7 @@ function SettingsTab({
   setDestination,
   accepting,
   setAccepting,
+  livePending,
   sendConfirmation,
   setSendConfirmation,
   confirmationMessage,
@@ -1347,6 +1359,7 @@ function SettingsTab({
   setDestination: (v: string) => void;
   accepting: boolean;
   setAccepting: (v: boolean) => void;
+  livePending: boolean;
   sendConfirmation: boolean;
   setSendConfirmation: (v: boolean) => void;
   confirmationMessage: string;
@@ -1396,9 +1409,11 @@ function SettingsTab({
       <Setting
         id="form-accepting"
         checked={accepting}
-        onChange={setAccepting}
-        label="Accepting responses"
-        hint="Closed forms show a notice instead of the questions. New forms start closed."
+        onChange={(v) => {
+          if (!livePending) setAccepting(v);
+        }}
+        label="Live (taking responses)"
+        hint="Saves at once, like the switch at the top. A form that's off shows a notice instead of the questions. New forms start off."
       />
       <Setting
         id="form-confirmation-toggle"

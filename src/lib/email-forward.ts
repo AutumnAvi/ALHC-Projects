@@ -87,12 +87,14 @@ export async function copyReceivedAttachments(
     taskId: string;
     plan: ReceivedFilePlan;
     record: (file: { path: string; name: string; type: string | null; size: number }) => Promise<boolean>;
+    // The attachments list the route already read (Oct 26 notes, batch 3), so it isn't asked for twice.
+    listed?: unknown[] | null;
   },
 ): Promise<{ added: number; skipped: SkippedFile[] }> {
   const failed: SkippedFile[] = [];
   let added = 0;
   if (!options.plan.copy.length) return { added, skipped: [...options.plan.skipped] };
-  const urls = downloadUrls(await source.list(options.emailId));
+  const urls = downloadUrls(options.listed?.length ? options.listed : await source.list(options.emailId));
 
   async function copyOne(file: ReceivedFile): Promise<SkippedFile["reason"] | null> {
     let url = urls.get(file.id) ?? (await source.refresh(options.emailId, file.id));
@@ -135,12 +137,13 @@ export async function copyReceivedAttachments(
 export async function copyForwardedAttachments(
   admin: Admin,
   source: ReceivedFileSource,
-  options: { emailId: string; forwardId: string; taskId: string; plan: ReceivedFilePlan },
+  options: { emailId: string; forwardId: string; taskId: string; plan: ReceivedFilePlan; listed?: unknown[] | null },
 ): Promise<{ added: number; skipped: number }> {
   const result = await copyReceivedAttachments(admin, source, {
     emailId: options.emailId,
     taskId: options.taskId,
     plan: options.plan,
+    listed: options.listed,
     record: async (file) => {
       const { error } = await admin.rpc("attach_forwarded_file", {
         target_forward: options.forwardId,
@@ -162,7 +165,7 @@ export async function copyForwardedAttachments(
 export async function copyReplyAttachments(
   admin: Admin,
   source: ReceivedFileSource,
-  options: { emailId: string; commentId: string; taskId: string; plan: ReceivedFilePlan },
+  options: { emailId: string; commentId: string; taskId: string; plan: ReceivedFilePlan; listed?: unknown[] | null },
 ): Promise<{ added: number; skipped: number }> {
   const note = async (files: SkippedFile[]) => {
     const { error } = await admin.rpc("note_reply_skipped_files", { target_comment: options.commentId, files });
@@ -173,6 +176,7 @@ export async function copyReplyAttachments(
     emailId: options.emailId,
     taskId: options.taskId,
     plan: options.plan,
+    listed: options.listed,
     record: async (file) => {
       const { error } = await admin.rpc("attach_reply_file", {
         target_comment: options.commentId,

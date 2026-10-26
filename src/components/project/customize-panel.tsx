@@ -1,5 +1,6 @@
 "use client";
 
+import { FormStatusBadge } from "@/components/forms/form-status";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useOptimistic, useRef, useState, type ReactNode } from "react";
@@ -226,7 +227,7 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         icon={FileInput}
         label="Forms"
         count={summary.forms.length}
-        meta={summary.forms.length ? `${openForms} accepting responses` : "Turn requests into tasks"}
+        meta={summary.forms.length ? `${openForms} live` : "Turn requests into tasks"}
         onClick={() => onOpen("forms")}
       />
       <CardRow
@@ -464,13 +465,7 @@ function FormsView({ projectId, base, forms }: { projectId: string; base: string
               <Link href={`${base}/forms/${form.id}`} className="flex items-center gap-2.5 px-3 py-2 hover:bg-zinc-50">
                 <FileInput className="size-4 shrink-0 text-zinc-500" aria-hidden />
                 <span className="min-w-0 flex-1 truncate text-sm text-zinc-900">{form.title}</span>
-                <span
-                  className={`shrink-0 rounded-full px-2 py-px text-2xs font-medium ${
-                    form.open ? "bg-green-50 text-green-800" : "bg-zinc-100 text-zinc-600"
-                  }`}
-                >
-                  {form.open ? "Accepting" : "Closed"}
-                </span>
+                <FormStatusBadge live={form.open} />
               </Link>
             </li>
           ))}

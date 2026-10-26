@@ -207,6 +207,7 @@ export type Database = {
           deleted_at: string | null;
           edited_at: string | null;
           rule_id: string | null;
+          review_check_id: string | null;
           email_direction: string | null;
           email_address: string | null;
           email_subject: string | null;
@@ -222,6 +223,7 @@ export type Database = {
           deleted_at?: string | null;
           edited_at?: string | null;
           rule_id?: string | null;
+          review_check_id?: string | null;
           email_direction?: string | null;
           email_address?: string | null;
           email_subject?: string | null;
@@ -237,6 +239,7 @@ export type Database = {
           deleted_at?: string | null;
           edited_at?: string | null;
           rule_id?: string | null;
+          review_check_id?: string | null;
           email_direction?: string | null;
           email_address?: string | null;
           email_subject?: string | null;
@@ -2736,6 +2739,179 @@ export type Database = {
           },
         ];
       };
+      project_access_requests: {
+        Row: {
+          id: string;
+          project_id: string;
+          requester_id: string;
+          status: string;
+          granted_role: string | null;
+          decided_by: string | null;
+          decided_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          requester_id: string;
+          status?: string;
+          granted_role?: string | null;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          requester_id?: string;
+          status?: string;
+          granted_role?: string | null;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      sidebar_folders: {
+        Row: {
+          id: string;
+          profile_id: string;
+          name: string;
+          sort_order: number;
+          collapsed: boolean;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          name: string;
+          sort_order?: number;
+          collapsed?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          name?: string;
+          sort_order?: number;
+          collapsed?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      sidebar_folder_projects: {
+        Row: {
+          id: string;
+          profile_id: string;
+          folder_id: string | null;
+          project_id: string;
+          sort_order: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          profile_id?: string;
+          folder_id?: string | null;
+          project_id: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          folder_id?: string | null;
+          project_id?: string;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      review_checks: {
+        Row: {
+          id: string;
+          task_id: string;
+          round: number;
+          recipient_email: string;
+          recipient_name: string | null;
+          message: string | null;
+          token_hash: string;
+          token_hint: string;
+          expires_at: string;
+          status: string;
+          decided_at: string | null;
+          decision_note: string | null;
+          comment_id: string | null;
+          hits: number;
+          hits_window_started_at: string | null;
+          last_viewed_at: string | null;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      review_check_assets: {
+        Row: {
+          id: string;
+          review_id: string;
+          task_id: string;
+          attachment_id: string;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      review_check_pins: {
+        Row: {
+          id: string;
+          review_id: string;
+          task_id: string;
+          asset_id: string;
+          number: number;
+          page: number | null;
+          x: number | null;
+          y: number | null;
+          time_seconds: number | null;
+          body: string;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      review_check_files: {
+        Row: {
+          id: string;
+          review_id: string;
+          task_id: string;
+          storage_path: string;
+          file_name: string;
+          content_type: string | null;
+          size_bytes: number | null;
+          status: string;
+          created_at: string;
+          ready_at: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       project_stars: {
         Row: {
           id: string;
@@ -4187,6 +4363,7 @@ export type Database = {
           logo_path: string | null;
           email_sender_name: string | null;
           allow_commenter_role: boolean;
+          tags_enabled: boolean;
           work_week: number[];
         };
         Insert: {
@@ -4199,6 +4376,7 @@ export type Database = {
           logo_path?: string | null;
           email_sender_name?: string | null;
           allow_commenter_role?: boolean;
+          tags_enabled?: boolean;
           work_week?: number[];
         };
         Update: {
@@ -4211,6 +4389,7 @@ export type Database = {
           logo_path?: string | null;
           email_sender_name?: string | null;
           allow_commenter_role?: boolean;
+          tags_enabled?: boolean;
           work_week?: number[];
         };
         Relationships: [
@@ -5774,6 +5953,56 @@ export type Database = {
       set_project_starred: {
         Args: { target_project: string; starred: boolean };
         Returns: boolean;
+      };
+      project_access_status: {
+        Args: { target_project: string };
+        Returns: string;
+      };
+      request_project_access: {
+        Args: { target_project: string };
+        Returns: string;
+      };
+      decide_project_access_request: {
+        Args: { target_request: string; decision: string; member_role?: string };
+        Returns: string;
+      };
+      create_review_check: {
+        Args: {
+          target_task: string;
+          attachment_ids: string[];
+          recipient: string;
+          recipient_display?: string | null;
+          review_message?: string | null;
+        };
+        Returns: Json;
+      };
+      rotate_review_check_token: {
+        Args: { target_review: string };
+        Returns: Json;
+      };
+      cancel_review_check: {
+        Args: { target_review: string };
+        Returns: string;
+      };
+      review_check_view: {
+        Args: { review_token: string };
+        Returns: Json;
+      };
+      review_check_file: {
+        Args: { review_token: string; target_file: string };
+        Returns: Json;
+      };
+      review_check_upload_start: {
+        Args: { review_token: string; file_name: string; file_type: string; file_size: number };
+        Returns: Json;
+      };
+      review_check_upload_finish: {
+        Args: { review_token: string; target_file: string };
+        Returns: Json;
+      };
+      review_check_decide: {
+        Args: { review_token: string; decision: string; note?: string | null; pins?: Json };
+        Returns: Json;
       };
       set_default_project_role: {
         Args: { member_email: string; new_role: string | null };

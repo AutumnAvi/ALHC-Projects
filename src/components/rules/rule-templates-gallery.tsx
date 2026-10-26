@@ -8,7 +8,7 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { createRule } from "@/lib/actions";
 import { RULE_TEMPLATES, TEMPLATE_CATEGORIES, type RuleTemplate, type TemplateCategory } from "@/lib/rule-templates";
 import { RuleIcon } from "./rule-icons";
-import type { RuleContext } from "./rule-shared";
+import { TAG_VOCABULARY, type RuleContext } from "./rule-shared";
 
 // The Templates gallery (Automations V2, batch 3): ready-made marketing and creative rules. A card's
 // "Add" installs it right away (off, so it can be checked first) when the project already has what it
@@ -32,10 +32,18 @@ export function RuleTemplatesGallery({ projectId, ctx, canEdit }: { projectId: s
     [ctx],
   );
   const q = query.trim().toLowerCase();
+  // Oct 26 notes (batch 3): while the workspace's tags are off, recipes that tag tasks aren't offered.
+  const usesTags = (t: (typeof RULE_TEMPLATES)[number]) => {
+    const built = t.build(templateCtx);
+    return [built.triggerType, ...built.conditions.map((c) => c.type), ...built.actions.map((a) => a.type)].some((v) =>
+      TAG_VOCABULARY.has(v),
+    );
+  };
   const shown = RULE_TEMPLATES.filter(
     (t) =>
       (category === "all" || t.category === category) &&
-      (!q || t.name.toLowerCase().includes(q) || t.sentence.toLowerCase().includes(q)),
+      (!q || t.name.toLowerCase().includes(q) || t.sentence.toLowerCase().includes(q)) &&
+      (ctx.tagsEnabled !== false || !usesTags(t)),
   );
 
   return (

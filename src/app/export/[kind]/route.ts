@@ -10,7 +10,8 @@ import {
   type ExportResult,
 } from "@/lib/exports";
 import { isUuid } from "@/lib/ids";
-import { filtersFromParams } from "@/lib/reports";
+import { filtersFromParams, withoutReportTags } from "@/lib/reports";
+import { tagsEnabled } from "@/lib/data";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@/lib/workload";
 
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/export/[kind
       if (isUuid(projectId)) result = await exportProjectDashboard(projectId, timeZone);
       break;
     case "report":
-      result = await exportWorkspaceReport(params.get("table") ?? "breakdown", filtersFromParams(params), params.get("int") ?? "week", timeZone);
+      result = await exportWorkspaceReport(params.get("table") ?? "breakdown", withoutReportTags(filtersFromParams(params), await tagsEnabled()), params.get("int") ?? "week", timeZone);
       break;
     case "portfolio": {
       const portfolioId = params.get("portfolio");

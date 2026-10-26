@@ -65,6 +65,15 @@ export function parseReportFilters(value: unknown): ReportFilters {
   return out;
 }
 
+// Oct 26 notes (batch 3): while the workspace's tags are switched off a report ignores its tag filter
+// (a saved schedule or dashboard keeps it for when tags come back).
+export function withoutReportTags(filters: ReportFilters, tagsOn: boolean): ReportFilters {
+  if (tagsOn || !filters.tags) return filters;
+  const out = { ...filters };
+  delete out.tags;
+  return out;
+}
+
 export function reportFiltersJson(filters: ReportFilters): Json {
   return JSON.parse(JSON.stringify(parseReportFilters(filters))) as Json;
 }

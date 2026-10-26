@@ -89,7 +89,8 @@ export function ProjectHeader({
   views: ProjectView[];
   // Admin+ by the viewer's own role (an archived project is read-only for everyone).
   canArchive: boolean;
-  customize: CustomizeSummary;
+  // Null below Editor: Customize is hidden entirely (Oct 26 notes, batch 3).
+  customize: CustomizeSummary | null;
   // In the viewer's sidebar Starred section.
   starred: boolean;
   members: HeaderMember[];
@@ -163,7 +164,7 @@ export function ProjectHeader({
             )}
             Share
           </button>
-          <CustomizePanel projectId={project.id} summary={customize} />
+          {customize && canEditViews ? <CustomizePanel projectId={project.id} summary={customize} /> : null}
         </div>
       </div>
 

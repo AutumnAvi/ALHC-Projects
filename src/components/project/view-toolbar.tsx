@@ -1,5 +1,6 @@
 "use client";
 
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
@@ -71,6 +72,7 @@ export function ViewToolbar({
   const [pending, run] = useServerAction();
   // Below Editor, filters still work as an unsaved ?f= draft; only saving is hidden.
   const canSave = useProjectPermissions().canEdit;
+  const tagsOn = useTagsEnabled();
   if (!viewConfig) return null;
   const { current, base, isDraft, apply, urlFor } = viewConfig;
   const filters = current.filters ?? {};
@@ -89,7 +91,7 @@ export function ViewToolbar({
   const sorts = sortOf(current);
   const sorted = sorts[0]?.key !== "manual";
   const sortChoices = sortOptions(context.fields);
-  const groupChoices = groupOptions(context.fields);
+  const groupChoices = groupOptions(context.fields, tagsOn);
   const grouping = groupOf(current);
 
   return (
@@ -318,18 +320,19 @@ function OptionsMenu({
   const viewConfig = useViewConfig();
   const [, run] = useServerAction();
   const [page, setPage] = useState<"main" | "columns" | "save">("main");
+  const tagsOn = useTagsEnabled();
   if (!viewConfig) return null;
   const { current, apply } = viewConfig;
   const filters = current.filters ?? {};
   const completion = completionOf(filters);
-  const columns = columnsOf(current, context.fields);
+  const columns = columnsOf(current, context.fields, tagsOn);
   const columnChoices: { value: ColumnKey; label: string }[] = [
     { value: "assignee", label: "Assignee" },
     { value: "due", label: "Due date" },
     { value: "start", label: "Start date" },
     { value: "section", label: "Section" },
     ...context.fields.map((f) => ({ value: fieldRef(f.id), label: f.name })),
-    { value: "tags", label: "Tags" },
+    ...(tagsOn ? [{ value: "tags" as const, label: "Tags" }] : []),
   ];
   const columnsLabel = layout === "board" ? "Card fields" : "Columns";
 

@@ -60,6 +60,7 @@ import {
   inputClass,
   labelClass,
   needsUpdate,
+  tagsHidden,
   optionDot,
   personCompareVerb,
   ordinal,
@@ -775,7 +776,7 @@ export function ConditionFields({
       <SmartPicker
         label="Condition"
         value={condition.type}
-        options={vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx) })}
+        options={vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, [condition.type]) })}
         onChange={(v) => onChange(conditionDefaultsFor(v as ConditionType))}
         variant="chip"
         searchable

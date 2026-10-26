@@ -118,11 +118,11 @@ export function sortOptions(fields: FieldDef[]) {
   ];
 }
 
-export function groupOptions(fields: FieldDef[]): { value: GroupBy; label: string }[] {
+export function groupOptions(fields: FieldDef[], tags = true): { value: GroupBy; label: string }[] {
   return [
     { value: "section", label: "Section" },
     { value: "assignee", label: "Assignee" },
-    { value: "tag", label: "Tag" },
+    ...(tags ? [{ value: "tag" as const, label: "Tag" }] : []),
     ...fields
       .filter((f) => f.fieldType === "single_select" && !f.boundToSections)
       .map((f) => ({ value: fieldRef(f.id), label: f.name })),
@@ -383,9 +383,24 @@ export const groupOf = (config: ViewConfig): GroupBy => config.group_by ?? "sect
 export const sortOf = (config: ViewConfig): ViewSort[] => config.sort ?? [{ key: "manual", dir: "asc" }];
 export const showsSubtasks = (config: ViewConfig): boolean => config.show_subtasks === true;
 
-export function columnsOf(config: ViewConfig, fields: FieldDef[]): ColumnKey[] {
+export function columnsOf(config: ViewConfig, fields: FieldDef[], tags = true): ColumnKey[] {
   // Asana's default List columns: Assignee, Due date, the fields shown in views (e.g. Priority), Tags.
-  return config.columns ?? ["assignee", "due", ...fields.filter((f) => f.showInViews).map((f) => fieldRef(f.id)), "tags"];
+  const columns = config.columns ?? ["assignee", "due", ...fields.filter((f) => f.showInViews).map((f) => fieldRef(f.id)), "tags"];
+  // Oct 26 notes (batch 3): no Tags column while the workspace's tags are switched off.
+  return tags ? columns : columns.filter((c) => c !== "tags");
+}
+
+// Oct 26 notes (batch 3): a view while the workspace's tags are switched off — no tag filter and no
+// grouping by tag (it groups by section instead). The saved view keeps them until someone saves it.
+export function withoutTags(config: ViewConfig): ViewConfig {
+  const out: ViewConfig = { ...config };
+  if (config.filters?.tags) {
+    const filters = { ...config.filters };
+    delete filters.tags;
+    out.filters = filters;
+  }
+  if (config.group_by === "tag") out.group_by = "section";
+  return out;
 }
 
 export function hasActiveFilters(filters: ViewFilters | undefined) {

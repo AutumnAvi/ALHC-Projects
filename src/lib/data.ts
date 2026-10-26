@@ -5,6 +5,9 @@ import { displayName } from "@/components/avatar";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";
+import { parseAccessStatus, type ProjectAccessRequest, type ProjectAccessStatus } from "@/lib/access-requests";
+import type { SidebarFolderState } from "@/lib/sidebar-folders";
+import { SKIP_REASONS, type SkipReason } from "@/lib/reply-attachments";
 import type { MentionTeam } from "@/lib/mentions";
 import {
   DESIGN_COLUMNS,
@@ -122,6 +125,7 @@ import {
   isSeriesInterval,
   parseReportFilters,
   reportFiltersJson,
+  withoutReportTags,
   type PersonalDashboard,
   type PersonalWidget,
   type ReportFilters,
@@ -349,7 +353,9 @@ export type TaskComment = {
   email: CommentEmail | null;
   // A received reply's attachments (saved to the task) and the ones that weren't saved, with why.
   emailFiles?: { id: string; name: string; sizeBytes: number; contentType: string | null }[];
-  emailSkipped?: { name: string; reason: "too_large" | "too_many" | "failed" }[];
+  emailSkipped?: { name: string; reason: SkipReason }[];
+  // Oct 26 notes (batch 3): the review check whose outcome this comment reports.
+  reviewCheckId?: string | null;
 };
 
 export type TaskStory = {
@@ -436,6 +442,25 @@ export const listStarredProjectIds = cache(async (): Promise<string[]> => {
     return [];
   }
   return (result.data ?? []).map((row) => row.project_id);
+});
+
+// Oct 26 notes (batch 3): the viewer's own sidebar folders and where their projects sit (RLS: own rows
+// only). A missing table (a preview before this release's database update) reads as no folders.
+export const listSidebarFolders = cache(async (): Promise<SidebarFolderState> => {
+  const supabase = await createClient();
+  const [folders, placements] = await Promise.all([
+    supabase.from("sidebar_folders").select("id, name, collapsed, sort_order").is("deleted_at", null).order("sort_order"),
+    supabase.from("sidebar_folder_projects").select("project_id, folder_id, sort_order").not("folder_id", "is", null),
+  ]);
+  if (folders.error || placements.error) {
+    const error = folders.error ?? placements.error;
+    if (error?.code !== "PGRST205" && error?.code !== "42P01") console.error(`[sidebar] couldn't load folders: ${error?.message}`);
+    return { folders: [], placements: [] };
+  }
+  return {
+    folders: (folders.data ?? []).map((f) => ({ id: f.id, name: f.name, collapsed: f.collapsed, sortOrder: f.sort_order })),
+    placements: (placements.data ?? []).map((p) => ({ projectId: p.project_id, folderId: p.folder_id, sortOrder: p.sort_order })),
+  };
 });
 
 export const listArchivedProjects = cache(async (): Promise<Project[]> =>
@@ -994,7 +1019,18 @@ export async function loadTaskCommentPage(
       },
     ]),
   );
-  return withReplyFiles(supabase, parseCommentPage(result.data, outbox));
+  return withReviewChecks(supabase, await withReplyFiles(supabase, parseCommentPage(result.data, outbox)));
+}
+
+// Oct 26 notes (batch 3): which comments report a review check's outcome. A database without this
+// release's update has no such column: none do.
+async function withReviewChecks(supabase: Supabase, page: CommentPage): Promise<CommentPage> {
+  const ids = page.comments.map((c) => c.id);
+  if (!ids.length) return page;
+  const { data, error } = await supabase.from("comments").select("id, review_check_id").in("id", ids).not("review_check_id", "is", null);
+  if (error || !data?.length) return page;
+  const byId = new Map(data.map((c) => [c.id, c.review_check_id] as const));
+  return { ...page, comments: page.comments.map((c) => (byId.has(c.id) ? { ...c, reviewCheckId: byId.get(c.id) ?? null } : c)) };
 }
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -1028,8 +1064,8 @@ async function withReplyFiles(supabase: Supabase, page: CommentPage): Promise<Co
       c.email_skipped_files.flatMap((item) => {
         const o = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, Json | undefined>) : null;
         const reason = o?.reason;
-        return o && typeof o.name === "string" && (reason === "too_large" || reason === "too_many" || reason === "failed")
-          ? [{ name: o.name, reason }]
+        return o && typeof o.name === "string" && typeof reason === "string" && (SKIP_REASONS as readonly string[]).includes(reason)
+          ? [{ name: o.name, reason: reason as SkipReason }]
           : [];
       }),
     );
@@ -1074,6 +1110,24 @@ export const listTags = cache(async (): Promise<Tag[]> => {
     .order("name");
   return rows(result, "tags").map(toTag);
 });
+
+// Oct 26 notes (batch 3): the workspace's Tags switch (Admin console → Tags; off by default). Off hides
+// tags everywhere in the app; the data stays. Without this release's database tags stay on as before.
+export const tagsEnabled = cache(async (): Promise<boolean> => {
+  const workspace = await getWorkspace();
+  if (!workspace) return false;
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("workspaces").select("tags_enabled").eq("id", workspace.id).maybeSingle();
+  if (error) {
+    if (isMissingColumn(error)) return true;
+    throw new Error(`Failed to load the Tags setting: ${error.message}`);
+  }
+  return data?.tags_enabled ?? false;
+});
+
+// The tags the app shows: every tag while tags are on, none while they're off (so chips, pickers, and
+// filters built from this list have nothing to show). Admin console → Tags reads listTags() itself.
+export const listVisibleTags = cache(async (): Promise<Tag[]> => ((await tagsEnabled()) ? listTags() : []));
 
 // Active tag ids per task, for the tasks the viewer can read (RLS).
 export async function listTaskTagIds(taskIds: string[]): Promise<Map<string, string[]>> {
@@ -1467,7 +1521,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     loadReplyThread(supabase, taskId),
     withDependencyTitles(storyList),
     storyEmailStatuses(storyList),
-    comments.error ? Promise.resolve(null) : withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus)),
+    comments.error ? Promise.resolve(null) : withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus)).then((page) => withReviewChecks(supabase, page)),
     approvalRuleIds.length
       ? supabase.from("rules").select("id, name").in("id", approvalRuleIds)
       : Promise.resolve({ data: [], error: null }),
@@ -1721,7 +1775,7 @@ export type TaskPanePayload = { task: TaskDetail | null; context: TaskPaneContex
 export async function loadTaskPaneContext(): Promise<TaskPaneContext | null> {
   const { user, allowlisted } = await getViewer();
   if (!user || !allowlisted) return null;
-  const [projects, profiles, roles, tags] = await Promise.all([listProjects(), listProfiles(), listMyProjectRoles(), listTags()]);
+  const [projects, profiles, roles, tags] = await Promise.all([listProjects(), listProfiles(), listMyProjectRoles(), listVisibleTags()]);
   return {
     memberId: user.id,
     projects: projects.map(({ id, name }) => ({ id, name, canAdd: hasRole(roles.get(id), "editor") })),
@@ -4326,6 +4380,44 @@ export const listProjectTeamAccess = cache(async (projectId: string): Promise<Pr
   );
 });
 
+// Oct 26 notes (batch 3): what someone who isn't a member sees on a project link. Without this
+// release's database (or on any error) it's "missing": the old plain Not found.
+export const getProjectAccessStatus = cache(async (projectId: string): Promise<ProjectAccessStatus> => {
+  if (!isUuid(projectId)) return "missing";
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("project_access_status", { target_project: projectId });
+  return error ? "missing" : parseAccessStatus(data);
+});
+
+// Open requests to join a project (RLS: the project's admins+ and each requester; Share shows them to
+// the people who can decide). Empty without this release's database.
+export const listProjectAccessRequests = cache(async (projectId: string): Promise<ProjectAccessRequest[]> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("project_access_requests")
+    .select("id, requester_id, created_at")
+    .eq("project_id", projectId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error || !data?.length) return [];
+  const people = await supabase
+    .from("profiles")
+    .select("id, full_name, email")
+    .in("id", [...new Set(data.map((r) => r.requester_id))]);
+  const byId = new Map((people.data ?? []).map((p) => [p.id, p] as const));
+  return data.map((r) => {
+    const person = byId.get(r.requester_id);
+    return {
+      id: r.id,
+      profileId: r.requester_id,
+      name: person?.full_name?.trim() || person?.email || "Someone",
+      email: person?.email ?? "",
+      requestedAt: r.created_at,
+    };
+  });
+});
+
 // The Oct 25 notes' database update (default project roles) is applied: allowed_emails.default_project_role
 // is readable.
 export const hasOct25Schema = cache(async (): Promise<boolean> => {
@@ -5058,7 +5150,7 @@ export async function workspaceReport(
 ): Promise<ReportRow[]> {
   const supabase = await createClient();
   const result = await supabase.rpc("workspace_report", {
-    filters: reportFiltersJson(filters),
+    filters: reportFiltersJson(withoutReportTags(filters, await tagsEnabled())),
     group_by: groupBy,
     tz: timeZone,
   });
@@ -5087,7 +5179,7 @@ export async function reportCompletedSeries(
 ): Promise<SeriesPoint[]> {
   const supabase = await createClient();
   const result = await supabase.rpc("report_completed_series", {
-    filters: reportFiltersJson(filters),
+    filters: reportFiltersJson(withoutReportTags(filters, await tagsEnabled())),
     bucket_interval: interval,
     tz: timeZone,
   });
@@ -5107,7 +5199,7 @@ export type OverdueTask = {
 export async function reportOverdueTasks(filters: ReportFilters, timeZone: string, max = 200): Promise<OverdueTask[]> {
   const supabase = await createClient();
   const result = await supabase.rpc("report_overdue_tasks", {
-    filters: reportFiltersJson(filters),
+    filters: reportFiltersJson(withoutReportTags(filters, await tagsEnabled())),
     tz: timeZone,
     max_results: max,
   });

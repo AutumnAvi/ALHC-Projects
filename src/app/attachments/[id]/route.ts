@@ -1,14 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { previewKind } from "@/lib/attachment-preview";
+import { reviewMediaKind } from "@/lib/review-checks";
 import { getViewer } from "@/lib/auth";
 import { ATTACHMENTS_BUCKET } from "@/lib/attachments";
 import { createClient } from "@/lib/supabase/server";
 
 const SIGNED_URL_TTL_SECONDS = 60;
+const MEDIA_URL_TTL_SECONDS = 3600;
 
 // GET /attachments/<id>            inline for previewable files (PNG, JPEG, GIF, WebP, PDF), else a download
 // GET /attachments/<id>?preview=1  same rule; what thumbnails, the lightbox, and the PDF "Open" link use
 // GET /attachments/<id>?download   always a download
+// GET /attachments/<id>?media=1    the same, plus videos (MP4, WebM, MOV) in the browser's player, with an
+//                                  hour-long link so a video keeps playing (Oct 26 notes, batch 3: Reviews)
 // The metadata row is read with the viewer's client (RLS: Viewer+ on the task), then the browser is
 // redirected to a 60-second signed URL of the private bucket. The redirect itself is never cached, so
 // every <img> load gets a fresh URL.
@@ -29,11 +33,12 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/attachments/
 
   const bucket = supabase.storage.from(ATTACHMENTS_BUCKET);
   const wantsDownload = request.nextUrl.searchParams.has("download");
-  const inline = !wantsDownload && (await servableInline(attachment, bucket));
+  const media = request.nextUrl.searchParams.get("media") === "1";
+  const inline = !wantsDownload && (await servableInline(attachment, bucket, media));
 
   const { data: signed, error: signError } = await bucket.createSignedUrl(
     attachment.storage_path,
-    SIGNED_URL_TTL_SECONDS,
+    media ? MEDIA_URL_TTL_SECONDS : SIGNED_URL_TTL_SECONDS,
     { download: inline ? undefined : attachment.file_name },
   );
   if (signError || !signed) return noStore(new NextResponse("Attachment unavailable", { status: 502 }));
@@ -47,13 +52,15 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/attachments/
 async function servableInline(
   attachment: { storage_path: string; file_name: string; content_type: string | null },
   bucket: ReturnType<Awaited<ReturnType<typeof createClient>>["storage"]["from"]>,
+  media = false,
 ): Promise<boolean> {
-  const kind = previewKind(attachment.file_name, attachment.content_type);
-  if (!kind || previewKind(attachment.storage_path, attachment.content_type) !== kind) return false;
+  const kindOf = media ? reviewMediaKind : previewKind;
+  const kind = kindOf(attachment.file_name, attachment.content_type);
+  if (!kind || kindOf(attachment.storage_path, attachment.content_type) !== kind) return false;
   const { data: info, error } = await bucket.info(attachment.storage_path);
   const storedType = info?.contentType;
   if (error || !storedType) return false;
-  return previewKind(attachment.storage_path, storedType) === kind;
+  return kindOf(attachment.storage_path, storedType) === kind;
 }
 
 function noStore(response: NextResponse) {

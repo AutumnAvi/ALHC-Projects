@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { Lock } from "lucide-react";
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { HEADER_TAB } from "@/components/ui";
 import { ONLY_ADMINS_NOTE } from "@/lib/workspace";
 
@@ -20,9 +21,11 @@ const TABS = [
 
 export function WorkspaceSettingsTabs() {
   const pathname = usePathname();
+  // Oct 26 notes (batch 3): no Tags tab while the workspace's tags are switched off.
+  const tagsOn = useTagsEnabled();
   return (
     <nav aria-label="Workspace settings" className="tab-strip shrink-0 gap-1 px-gutter print:hidden">
-      {TABS.map((tab) => (
+      {TABS.filter((tab) => tagsOn || tab.href !== "/settings/workspace/tags").map((tab) => (
         <Link key={tab.href} href={tab.href} aria-current={pathname === tab.href ? "page" : undefined} className={HEADER_TAB}>
           {tab.label}
         </Link>

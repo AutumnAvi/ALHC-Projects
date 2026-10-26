@@ -7,7 +7,7 @@ import {
   listProfiles,
   listProjectFields,
   listSections,
-  listTags,
+  listVisibleTags,
   projectMetrics,
 } from "@/lib/data";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -31,7 +31,7 @@ export default async function ProjectDashboardPage({ params }: PageProps<"/proje
     listProfiles(),
     listProjectFields(projectId),
     getViewerTimeZone(),
-    listTags(),
+    listVisibleTags(),
   ]);
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),

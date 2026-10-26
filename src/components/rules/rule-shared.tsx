@@ -76,7 +76,17 @@ export type RuleContext = {
   // Batch E (Convert to a project): the workspace's project templates and portfolios the viewer edits.
   projectTemplates?: { id: string; name: string }[];
   portfolios?: { id: string; name: string }[];
+  // Oct 26 notes (batch 3): the workspace's Tags switch (missing = on).
+  tagsEnabled?: boolean;
 };
+
+// The tag vocabulary, hidden from the pickers while tags are switched off (Admin console → Tags). A
+// step a rule already uses stays listed (`keep`), so existing rules still read and save.
+export const TAG_VOCABULARY: ReadonlySet<string> = new Set(["tag_added", "has_tag", "lacks_tag", "add_tag", "remove_tag"]);
+export function tagsHidden(ctx: RuleContext, keep: Iterable<string> = []) {
+  const kept = new Set(keep);
+  return (value: string) => ctx.tagsEnabled === false && TAG_VOCABULARY.has(value) && !kept.has(value);
+}
 
 export const NEEDS_UPDATE = "Needs this release’s database update";
 

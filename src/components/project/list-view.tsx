@@ -1,5 +1,6 @@
 "use client";
 
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useOptimistic, useRef, useState, useTransition, type DragEvent, type ReactNode } from "react";
 import {
   ArrowDownNarrowWide,
@@ -143,6 +144,7 @@ export function ListView({
   const viewConfig = useViewConfig();
   // The page's (optimistic) config: column menus apply instantly as an unsaved draft.
   const config = viewConfig?.current ?? configProp;
+  const tagsOn = useTagsEnabled();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
   const [optimisticSections, moveSectionLocally] = useOptimistic(sections, sortSections);
   const [, run] = useServerAction();
@@ -342,7 +344,7 @@ export function ListView({
     if (sectionId && target) moveSection(sectionId, target.beforeId);
   }
 
-  const columns = columnsOf(config, fields).filter(
+  const columns = columnsOf(config, fields, tagsOn).filter(
     (c) => !c.startsWith("field:") || fieldsById.has(refFieldId(c) ?? ""),
   );
   // Column menus write an explicit column list into the (draft) view config.
@@ -358,7 +360,7 @@ export function ListView({
       "minmax(2.5rem,1fr)",
     ].join(" "),
   };
-  const tagsInline = !columns.includes("tags");
+  const tagsInline = tagsOn && !columns.includes("tags");
   const fieldContext: FieldContext = {
     profilesById,
     sectionNames: new Map(optimisticSections.map((s) => [s.id, s.name])),

@@ -14,7 +14,8 @@ import {
   listProjectFields,
   listReadableProjects,
   listSections,
-  listTags,
+  listVisibleTags,
+  tagsEnabled,
   portfolioReport,
   projectMetrics,
   reportCompletedSeries,
@@ -30,7 +31,19 @@ import { isSeriesInterval, reportFiltersJson, seriesLabel, type ReportFilters } 
 import type { Json } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import { parseTaskKind } from "@/lib/task-kinds";
-import { columnsOf, decodeConfig, groupOf, pruneConfig, pruneFilters, refFieldId, sortOf, toJson, type ViewFilters } from "@/lib/views";
+import {
+  columnsOf,
+  decodeConfig,
+  groupOf,
+  pruneConfig,
+  pruneFilters,
+  refFieldId,
+  sortOf,
+  toJson,
+  withoutTags,
+  type ViewConfig,
+  type ViewFilters,
+} from "@/lib/views";
 import { tagsFor } from "@/lib/tags";
 
 // CSV builders for the export route (src/app/export/[kind]/route.ts). Each one reads through the same
@@ -214,11 +227,12 @@ export async function exportList(projectId: string, viewId: string | null, draft
   const view = viewId ? await getProjectView(viewId) : null;
   if (viewId && (!view || view.projectId !== projectId)) return null;
 
-  const [sections, profiles, fields, tags] = await Promise.all([
+  const [sections, profiles, fields, tags, tagsOn] = await Promise.all([
     listSections(projectId),
     listProfiles(),
     listProjectFields(projectId),
-    listTags(),
+    listVisibleTags(),
+    tagsEnabled(),
   ]);
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
@@ -227,13 +241,15 @@ export async function exportList(projectId: string, viewId: string | null, draft
     tagIds: new Set(tags.map((t) => t.id)),
   };
   const tagsById = new Map(tags.map((t) => [t.id, t] as const));
-  const base = pruneConfig(view?.config ?? {}, context);
-  const config = pruneConfig(decodeConfig(draft ?? undefined) ?? base, context);
+  // Oct 26 notes (batch 3): with the workspace's tags off, no tag filter, grouping, or column.
+  const tagless = (c: ViewConfig) => (tagsOn ? c : withoutTags(c));
+  const base = tagless(pruneConfig(view?.config ?? {}, context));
+  const config = tagless(pruneConfig(decodeConfig(draft ?? undefined) ?? base, context));
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const sectionNames = new Map(sections.map((s) => [s.id, s.name]));
   const person = people(profiles);
   const personName = (profileId: string) => person(profileId) || null;
-  const columns = columnsOf(config, fields).filter((c) => c !== "section");
+  const columns = columnsOf(config, fields, tagsOn).filter((c) => c !== "section");
 
   const header = ["Task", "Section"];
   const cells: ((task: ProjectTask) => CsvCell)[] = [

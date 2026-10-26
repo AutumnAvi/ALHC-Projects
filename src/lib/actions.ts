@@ -58,6 +58,8 @@ import { branchProblem, isTriggerType, runReason, splitBranches, type RuleAction
 import { parseRuleTestResult, type RuleTestResult } from "@/lib/rule-steps";
 import { isPortfolioTrigger } from "@/lib/portfolio-rules";
 import { isUuid } from "@/lib/ids";
+import { isAccessGrantRole, type AccessGrantRole } from "@/lib/access-requests";
+import { FOLDER_STEP, folderNameProblem } from "@/lib/sidebar-folders";
 import { normalizeWorkWeek } from "@/lib/workdays";
 import { isReactionKey } from "@/lib/reactions";
 import {
@@ -1403,6 +1405,97 @@ export async function setProjectStarred(projectId: string, starred: boolean): Pr
   return run(async () => {
     const supabase = await createClient();
     check(await supabase.rpc("set_project_starred", { target_project: id(projectId, "project"), starred: starred === true }));
+  });
+}
+
+// Oct 26 notes (batch 3): personal sidebar folders (own rows only; RLS and the guard triggers decide).
+const FOLDER_UNAVAILABLE = "Sidebar folders need this release’s database update";
+
+function folderError(result: DbResult) {
+  if (result.error?.code === "PGRST205" || result.error?.code === "42P01") throw new InputError(FOLDER_UNAVAILABLE);
+  check(result, "That folder isn’t yours");
+}
+
+export async function createSidebarFolder(
+  name: string,
+  sortOrder: number,
+  projectId?: string,
+): Promise<ActionResult & { folderId?: string }> {
+  let folderId: string | undefined;
+  const result = await run(async () => {
+    const problem = folderNameProblem(typeof name === "string" ? name : "");
+    if (problem) throw new InputError(problem);
+    if (!Number.isFinite(sortOrder)) throw new InputError("Invalid position");
+    const supabase = await createClient();
+    const inserted = await supabase.from("sidebar_folders").insert({ name: name.trim(), sort_order: sortOrder }).select("id").single();
+    folderError(inserted);
+    folderId = inserted.data!.id;
+    if (projectId) await placeProject(supabase, id(projectId, "project"), folderId, FOLDER_STEP);
+  });
+  return { ...result, folderId };
+}
+
+export async function updateSidebarFolder(
+  folderId: string,
+  patch: { name?: string; collapsed?: boolean; sortOrder?: number },
+): Promise<ActionResult> {
+  return run(async () => {
+    const update: { name?: string; collapsed?: boolean; sort_order?: number } = {};
+    if (patch.name !== undefined) {
+      const problem = folderNameProblem(patch.name);
+      if (problem) throw new InputError(problem);
+      update.name = patch.name.trim();
+    }
+    if (patch.collapsed !== undefined) update.collapsed = patch.collapsed === true;
+    if (patch.sortOrder !== undefined) {
+      if (!Number.isFinite(patch.sortOrder)) throw new InputError("Invalid position");
+      update.sort_order = patch.sortOrder;
+    }
+    const supabase = await createClient();
+    const result = await supabase.from("sidebar_folders").update(update).eq("id", id(folderId, "folder")).is("deleted_at", null).select("id");
+    folderError(result);
+    if (!result.data?.length) throw new InputError("That folder isn’t there any more");
+  });
+}
+
+// Removing a folder puts its projects back under Projects (the database does it).
+export async function deleteSidebarFolder(folderId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("sidebar_folders")
+      .update({ deleted_at: now() })
+      .eq("id", id(folderId, "folder"))
+      .is("deleted_at", null)
+      .select("id");
+    folderError(result);
+  });
+}
+
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+async function placeProject(supabase: Supabase, projectId: string, folderId: string | null, sortOrder: number) {
+  const existing = await supabase.from("sidebar_folder_projects").select("id").eq("project_id", projectId).maybeSingle();
+  folderError(existing);
+  if (existing.data) {
+    folderError(
+      await supabase.from("sidebar_folder_projects").update({ folder_id: folderId, sort_order: sortOrder }).eq("id", existing.data.id),
+    );
+  } else if (folderId) {
+    const inserted = await supabase
+      .from("sidebar_folder_projects")
+      .insert({ project_id: projectId, folder_id: folderId, sort_order: sortOrder });
+    if (inserted.error?.code === "42501") throw new InputError("You can only file projects you can open");
+    folderError(inserted);
+  }
+}
+
+// Moves a project into one of the person's folders (at sortOrder), or back under Projects (null).
+export async function fileSidebarProject(projectId: string, folderId: string | null, sortOrder = FOLDER_STEP): Promise<ActionResult> {
+  return run(async () => {
+    if (!Number.isFinite(sortOrder)) throw new InputError("Invalid position");
+    const supabase = await createClient();
+    await placeProject(supabase, id(projectId, "project"), folderId ? id(folderId, "folder") : null, sortOrder);
   });
 }
 
@@ -3011,6 +3104,25 @@ export async function setDefaultProjectRole(email: string, newRole: string | nul
   });
 }
 
+// Oct 26 notes (batch 3): the workspace's Tags switch (Admin console → Tags; workspace admins, RLS and the
+// column grant decide). Off only hides tags; nothing is removed.
+export async function setTagsEnabled(enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    const result = await supabase
+      .from("workspaces")
+      .update({ tags_enabled: enabled === true })
+      .eq("id", workspace.id)
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
+      throw new InputError("This setting needs this release’s database update");
+    }
+    checkUpdated(result, WORKSPACE_ADMINS_ONLY);
+  });
+}
+
 // The Commenter project role (Admin console → Security; workspace admins, RLS and the column grant
 // decide). Turning it off never changes anyone's role.
 export async function setCommenterRoleAllowed(allowed: boolean): Promise<ActionResult> {
@@ -4247,6 +4359,54 @@ export async function updateForm(
     const supabase = await createClient();
     check(await supabase.from("forms").update(update).eq("id", id(formId)));
   });
+}
+
+// Oct 26 notes (batch 3): the form editor's Live / Off switch saves at once (Admin+ by forms RLS; a
+// refused update reads as "Your role … doesn't allow that" instead of silently doing nothing).
+export async function setFormLive(formId: string, live: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("forms").update({ accepting_responses: Boolean(live) }).eq("id", id(formId)).select("id"),
+    );
+  });
+}
+
+// Oct 26 notes (batch 3): the not-a-member page's "Request to be added to this project" and the owners'
+// Approve / Decline (Inbox, Share). The database decides who may do either.
+export async function requestProjectAccess(projectId: string): Promise<ActionResult & { status?: string }> {
+  let status: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("request_project_access", { target_project: id(projectId, "project") });
+    if (error?.code === "PGRST202") throw new InputError("Asking for access needs this release’s database update");
+    if (error?.code === "P0002") throw new InputError("This project doesn’t exist any more");
+    check({ error });
+    status = typeof data === "string" ? data : undefined;
+  });
+  return { ...result, status };
+}
+
+export async function decideAccessRequest(
+  requestId: string,
+  decision: "approve" | "decline",
+  role: AccessGrantRole = "default",
+): Promise<ActionResult & { status?: string }> {
+  let status: string | undefined;
+  const result = await run(async () => {
+    if (decision !== "approve" && decision !== "decline") throw new InputError("Approve or decline the request");
+    if (!isAccessGrantRole(role)) throw new InputError("Choose a role");
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("decide_project_access_request", {
+      target_request: id(requestId, "request"),
+      decision,
+      member_role: role,
+    });
+    if (error?.code === "P0002") throw new InputError("This request isn’t there any more, or you can’t decide it");
+    check({ error });
+    status = typeof data === "string" ? data : undefined;
+  });
+  return { ...result, status };
 }
 
 export async function deleteForm(formId: string, projectId: string): Promise<ActionResult> {

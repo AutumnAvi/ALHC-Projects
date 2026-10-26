@@ -32,7 +32,9 @@ begin
   -- Real features 3 added email_unsubscribe(text,text): the one-click "Turn off" links in digest and
   -- report emails (a token in, one switch off, nothing returned about anyone). Real features 4 added
   -- calendar_feed(text): the iCal subscribe links (a hashed token in, that feed's events out).
-  assert exposed = 'calendar_feed(text), email_unsubscribe(text,text), get_public_form(uuid), receive_inbound_webhook(text,text,text,text,text), submit_form(uuid,text,jsonb)',
+  -- review_check_*: the public review page (Oct 26 notes, batch 3: a hashed, expiring token in; that round's
+  -- files, pins, uploads, and decision only).
+  assert exposed = 'calendar_feed(text), email_unsubscribe(text,text), get_public_form(uuid), receive_inbound_webhook(text,text,text,text,text), review_check_decide(text,text,text,jsonb), review_check_file(text,uuid), review_check_upload_finish(text,uuid), review_check_upload_start(text,text,text,bigint), review_check_view(text), submit_form(uuid,text,jsonb)',
     format('anon may execute exactly the five public entry points, got: %s', exposed);
 
   -- Trigger functions that anon reached through PUBLIC keep their authenticated / service_role grants.

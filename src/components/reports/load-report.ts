@@ -2,7 +2,7 @@ import "server-only";
 import { displayName } from "@/components/avatar";
 import type { BarDatum } from "@/components/dashboard/bar-chart";
 import type { OverdueRow } from "@/components/reports/report-blocks";
-import { allProjectsReport, listProfiles, listSectionLabels, listTags, reportOverdueTasks, type ReportRow } from "@/lib/data";
+import { allProjectsReport, listProfiles, listSectionLabels, listVisibleTags, reportOverdueTasks, type ReportRow } from "@/lib/data";
 import type { ReportFilters } from "@/lib/reports";
 
 // Labels for report buckets. Project names only ever come from all_projects_report (readable projects),
@@ -17,7 +17,7 @@ export type ReportContext = {
 };
 
 export async function loadReportContext(timeZone: string): Promise<ReportContext> {
-  const [projects, profiles, tags] = await Promise.all([allProjectsReport(timeZone), listProfiles(), listTags()]);
+  const [projects, profiles, tags] = await Promise.all([allProjectsReport(timeZone), listProfiles(), listVisibleTags()]);
   const projectNames = new Map(projects.map((p) => [p.id, p.name]));
   const people = profiles.map((p) => ({ id: p.id, name: displayName(p) }));
   const personNames = new Map(people.map((p) => [p.id, p.name]));

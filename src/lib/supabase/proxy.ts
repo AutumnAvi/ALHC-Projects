@@ -18,6 +18,9 @@ const PUBLIC_PATHS = [
   "/api/email/unsubscribe",
   // Calendar subscribe links (Real features 4): a token in the URL, no sign-in.
   "/api/calendar",
+  // Review checks (Oct 26 notes, batch 3): the reviewer's page and its files; a token in the URL, no
+  // sign-in (/review-files, the task's own view of uploads, is not public).
+  "/review",
 ];
 
 function isPublicPath(pathname: string) {

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ExternalLink, FileInput, Plus } from "lucide-react";
+import { FormStatusBadge } from "@/components/forms/form-status";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
@@ -10,7 +11,7 @@ import type { FormSummary } from "@/lib/data";
 import { EmptyState } from "@/components/ui";
 
 // The project's forms. A row opens the form editor (a large modal over this list); Add form creates one
-// and opens it. New forms start closed, so they can be built and previewed before the link is shared.
+// and opens it. New forms start off, so they can be built and previewed before the link is shared.
 export function FormsList({
   projectId,
   forms,
@@ -53,7 +54,7 @@ export function FormsList({
               ) : undefined
             }
           >
-            A form turns each submission into a task in this project. New forms start closed, so you can build and
+            A form turns each submission into a task in this project. New forms start off, so you can build and
             preview before sharing the link.
           </EmptyState>
         </div>
@@ -77,13 +78,7 @@ export function FormsList({
                   ) : null}
                 </p>
               </div>
-              <span
-                className={`rounded-full px-2 py-0.5 text-2xs font-medium ${
-                  form.acceptingResponses ? "bg-green-50 text-green-800" : "bg-zinc-100 text-zinc-600"
-                }`}
-              >
-                {form.acceptingResponses ? "Accepting responses" : "Closed"}
-              </span>
+              <FormStatusBadge live={form.acceptingResponses} />
               <a
                 href={`${origin}/forms/${form.id}`}
                 target="_blank"

@@ -23,7 +23,8 @@ import {
   listSectionTaskCounts,
   listSections,
   listSubtaskTrees,
-  listTags,
+  listVisibleTags,
+  tagsEnabled,
   getListColumnWidths,
 } from "@/lib/data";
 import { todayIn } from "@/lib/workload";
@@ -38,7 +39,9 @@ import {
   ROW_PAGE,
   showsSubtasks,
   sortOf,
+  withoutTags,
   type ProjectView,
+  type ViewConfig,
   type ViewLayout,
 } from "@/lib/views";
 
@@ -87,7 +90,7 @@ export async function ProjectViewPage({
   // Calendar and Timeline load the visible date window instead of every card.
   const scheduling = layout === "calendar" || layout === "timeline";
 
-  const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, columnWidths, sectionCounts, project] =
+  const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, tagsOn, columnWidths, sectionCounts, project] =
     await Promise.all([
     listSections(projectId),
     paging || scheduling ? Promise.resolve(null) : listProjectTasks(projectId),
@@ -97,7 +100,8 @@ export async function ProjectViewPage({
     layout === "timeline" ? listProjectDependencies(projectId) : Promise.resolve([]),
     layout === "timeline" ? projectCriticalPath(projectId) : Promise.resolve(EMPTY_CRITICAL_PATH),
     layout === "list" ? listBulkContext(projectId) : Promise.resolve(undefined),
-    listTags(),
+    listVisibleTags(),
+    tagsEnabled(),
     layout === "list" ? getListColumnWidths(projectId) : Promise.resolve({}),
     listSectionTaskCounts(projectId),
     // Already read by the project layout (React-cached): the name the task pane's preview shows.
@@ -110,8 +114,10 @@ export async function ProjectViewPage({
     profileIds: new Set(profiles.map((p) => p.id)),
     tagIds: new Set(tags.map((t) => t.id)),
   };
-  const baseConfig = pruneConfig(view?.config ?? {}, context);
-  let config = pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context);
+  // Oct 26 notes (batch 3): with the workspace's tags off, no tag filter or tag grouping applies.
+  const tagless = (c: ViewConfig) => (tagsOn ? c : withoutTags(c));
+  const baseConfig = tagless(pruneConfig(view?.config ?? {}, context));
+  let config = tagless(pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context));
   // Older links carry ?sub=1: show it as an unsaved draft of the view's Show subtasks setting.
   if (layout === "list" && searchParams.sub === "1" && !showsSubtasks(config)) config = { ...config, show_subtasks: true };
   const limits = parsePageLimits(typeof searchParams.n === "string" ? searchParams.n : undefined);
