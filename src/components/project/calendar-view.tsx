@@ -3,19 +3,22 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, type DragEvent } from "react";
 import { Inbox } from "lucide-react";
+import { AddEventButton, useCalendarEvents } from "@/components/calendar/calendar-events";
 import { CALENDAR_DRAG_TYPE, CalendarGrid, type CalendarDrag, type CalendarItem } from "@/components/calendar/calendar-grid";
 import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink } from "@/components/task/task-link";
+import { TaskNumberBadge } from "@/components/task/task-number";
+import { defaultEventDay, type CalendarEvent } from "@/lib/calendar-events";
 import { calendarVisibleDays, type CalendarMode } from "@/lib/date-input";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
 import type { Tag } from "@/lib/tags";
 import type { TaskSeed } from "@/lib/task-seed";
-import { displayTaskTitle } from "@/lib/request-numbers";
+import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
 import { isIsoDate } from "@/lib/views";
 import { Assignee } from "./task-meta";
 import { useProjectTaskSeeds } from "./task-seeds";
@@ -62,6 +65,7 @@ export function CalendarView({
   anchor: anchorFromServer = null,
   mode: modeFromServer = "month",
   days: daysFromServer = null,
+  events = null,
 }: {
   projectId: string;
   tasks: ProjectTask[];
@@ -78,6 +82,9 @@ export function CalendarView({
   anchor?: string | null;
   mode?: CalendarMode;
   days?: string[] | null;
+  // Oct 26 notes (batch 4): the project's calendar events (not tasks) in the loaded window; null on a
+  // database without them (nothing drawn, no Add event).
+  events?: CalendarEvent[] | null;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -131,6 +138,17 @@ export function CalendarView({
     });
   }
 
+  const days = windowed ? daysFromServer : anchor ? calendarVisibleDays(anchor, mode) : null;
+  // Events (not tasks): Editors+ add and change them, everyone here sees them (RLS decides).
+  const calendarEvents = useCalendarEvents({
+    scope: { projectId },
+    events,
+    canEdit,
+    defaultDay: days?.length
+      ? defaultEventDay(days, today, mode === "month" && anchor ? anchor.slice(0, 7) : null)
+      : (today ?? ""),
+  });
+
   const items: CalendarItem[] = optimisticTasks.flatMap((task) => {
     if (!task.dueOn) return [];
     const completed = Boolean(task.completedAt);
@@ -139,7 +157,9 @@ export function CalendarView({
     return [
       {
         id: task.id,
-        title: displayTaskTitle(task.title, task.requestLabel),
+        // The bare name: the number is drawn tiny after it (Oct 26 notes, batch 4).
+        title: bareTaskTitle(task.title, task.requestLabel),
+        label: task.requestLabel ?? null,
         startOn: task.startOn && task.startOn < task.dueOn && !milestone ? task.startOn : null,
         dueOn: task.dueOn,
         completed,
@@ -155,8 +175,6 @@ export function CalendarView({
   });
   const tray = optimisticTasks.filter((t) => !t.dueOn && !t.completedAt);
 
-  const days = windowed ? daysFromServer : anchor ? calendarVisibleDays(anchor, mode) : null;
-
   if (!anchor || !days || days.length === 0) {
     return <ViewLoading label="Loading calendar…" />;
   }
@@ -167,6 +185,7 @@ export function CalendarView({
   return (
     <div className={VIEW_BODY} aria-busy={navigating}>
       {shift.dialog}
+      {calendarEvents.dialog}
       <div className={`flex min-w-0 flex-1 flex-col ${navigating ? "opacity-60 transition-opacity" : ""}`}>
         <PeriodNav
           label={periodLabel(anchor, mode)}
@@ -177,6 +196,7 @@ export function CalendarView({
           onToday={() => navigate({ d: null })}
         >
           <div className="flex items-center gap-1">
+            {calendarEvents.canAdd ? <AddEventButton onClick={() => calendarEvents.add()} /> : null}
             <SyncCalendarButton scope="project" targetId={projectId} />
             <Segmented
               label="Calendar range"
@@ -193,6 +213,9 @@ export function CalendarView({
           month={mode === "month" ? anchor.slice(0, 7) : null}
           today={today}
           items={items}
+          events={calendarEvents.events}
+          onOpenEvent={calendarEvents.open}
+          onAddEvent={calendarEvents.canAdd ? calendarEvents.add : undefined}
           drag={drag}
           onDragChange={setDrag}
           onChange={(item, dates) => changeDates(item.id, dates)}
@@ -200,13 +223,18 @@ export function CalendarView({
             const task = optimisticTasks.find((t) => t.id === taskId);
             if (task) changeDates(taskId, { startOn: task.startOn && task.startOn <= day ? task.startOn : null, dueOn: day });
           }}
-          label={`Tasks, ${periodLabel(anchor, mode)}`}
+          label={`Tasks and events, ${periodLabel(anchor, mode)}`}
           tall={mode === "week"}
         />
         <p className={VIEW_HINT}>
           {canEdit
             ? "Drag a task to another day to move it (its start date moves too), drag its left or right end to change its start or due date, or use its calendar button. Drop it on “No due date” to clear it."
             : "Tasks run from their start date to their due date. Your role in this project lets you view them, not move them."}
+          {calendarEvents.canAdd
+            ? " Events (in violet) aren’t tasks: click one to change it, or use Add event."
+            : events?.length
+              ? " Events (in violet) aren’t tasks: click one for its details."
+              : ""}
         </p>
       </div>
 
@@ -298,8 +326,16 @@ function CalendarChip({
         aria-hidden
         className={`size-2 shrink-0 ${task.kind === "milestone" ? "rotate-45 rounded-[1px] bg-accent-600" : "rounded-full bg-zinc-300"}`}
       />
+      {/* The name first, then its number, tiny: a narrow chip cuts the number, never the name's start. */}
       <span className="min-w-0 flex-1 truncate text-zinc-800">
-        {displayTaskTitle(task.title, task.requestLabel)}
+        <span aria-hidden={task.requestLabel ? true : undefined}>{bareTaskTitle(task.title, task.requestLabel)}</span>
+        {task.requestLabel ? (
+          <span aria-hidden>
+            {" "}
+            <TaskNumberBadge label={task.requestLabel} size="2xs" className="align-middle" />
+          </span>
+        ) : null}
+        {task.requestLabel ? <span className="sr-only">{displayTaskTitle(task.title, task.requestLabel)}</span> : null}
         {task.kind === "milestone" ? <span className="sr-only"> (milestone)</span> : null}
       </span>
       <Assignee profile={assignee} />

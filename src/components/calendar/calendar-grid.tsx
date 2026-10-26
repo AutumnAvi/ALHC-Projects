@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, type DragEvent } from "react";
-import { CalendarDays } from "lucide-react";
+import { CalendarClock, CalendarDays } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { DateRangePicker } from "@/components/task/date-picker";
 import { TaskLink } from "@/components/task/task-link";
+import { TaskNumberBadge, taskNumberText } from "@/components/task/task-number";
+import { compareEvents, eventAriaLabel, eventBarTime, eventShortWhen, moreLabel, type CalendarEvent } from "@/lib/calendar-events";
+import { displayTaskTitle, type RequestLabel } from "@/lib/request-numbers";
 import type { TaskSeed } from "@/lib/task-seed";
 import { addDays } from "@/lib/dates";
 import { longDate } from "@/lib/date-input";
@@ -16,6 +19,11 @@ import { longDate } from "@/lib/date-input";
 // bar (keyboard: Tab to it, Enter) for the date picker. Others see the same bars without any of that.
 // The parent saves through the task pane's path (useDependencyShift → updateTask / the shift RPCs) and
 // shows the move optimistically; a refused change rolls back with the error toast.
+// Since Oct 26 notes (batch 4) the grid also draws calendar events (not tasks) in the same lanes: a violet
+// bar with a calendar icon instead of the task dot and the start time in front when it has one, never
+// struck through and never dragged (an event changes in its dialog). A click (or Enter) on one calls
+// onOpenEvent; a double-click on an empty part of a day calls onAddEvent with that day. A task's number
+// is drawn tiny after its name, so the start of the name always shows.
 
 export const CALENDAR_DRAG_TYPE = "application/x-alhc-task";
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -24,7 +32,12 @@ const MONTH_LANES = 3;
 
 export type CalendarItem = {
   id: string;
+  // The bare name: the number isn't in front of it (see label).
   title: string;
+  // The task's number when its project numbers tasks (drawn tiny after the name), and the project's name
+  // when the task comes from another project than the one on screen (the team Calendar: always).
+  label?: RequestLabel | null;
+  projectName?: string | null;
   // On or before dueOn; null for a one-day task.
   startOn: string | null;
   dueOn: string;
@@ -56,6 +69,11 @@ const dayIndex = (day: string) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86
 const between = (from: string, to: string) => dayIndex(to) - dayIndex(from);
 const spanStart = (item: Pick<CalendarItem, "startOn" | "dueOn">) => item.startOn ?? item.dueOn;
 
+// "[Task #3] Logo" (or "Task #3 Logo"): the name with its number, for tooltips and screen readers.
+export function fullTaskTitle(item: Pick<CalendarItem, "title" | "label">) {
+  return displayTaskTitle(item.title, item.label ?? null);
+}
+
 // The dates a drop on `day` gives. Ends never cross; a start that lands on the due date is dropped (a
 // one-day task). Milestones only move.
 export function droppedDates(item: CalendarItem, drag: CalendarDrag, day: string): CalendarDates | null {
@@ -85,8 +103,14 @@ export function droppedDates(item: CalendarItem, drag: CalendarDrag, day: string
   return { startOn, dueOn };
 }
 
+// One bar's worth of whatever the grid draws: a task (its start, else due, date through its due date)
+// or an event (its first through last day).
+type Entry =
+  | { kind: "task"; id: string; first: string; last: string; item: CalendarItem }
+  | { kind: "event"; id: string; first: string; last: string; event: CalendarEvent };
+
 type Segment = {
-  item: CalendarItem;
+  entry: Entry;
   col: number;
   span: number;
   lane: number;
@@ -98,36 +122,45 @@ type Segment = {
   primary: boolean;
 };
 
-function layoutWeek(week: string[], items: CalendarItem[], primaryWeek: Map<string, string>): Segment[] {
+const entryTitle = (entry: Entry) => (entry.kind === "task" ? entry.item.title : entry.event.title);
+
+function byOrder(a: { entry: Entry; col: number; span: number }, b: { entry: Entry; col: number; span: number }) {
+  if (a.col !== b.col) return a.col - b.col;
+  if (a.span !== b.span) return b.span - a.span;
+  // On the same first day: events before tasks (all-day before timed), open tasks before completed ones.
+  if (a.entry.kind !== b.entry.kind) return a.entry.kind === "event" ? -1 : 1;
+  if (a.entry.kind === "event" && b.entry.kind === "event") return compareEvents(a.entry.event, b.entry.event);
+  if (a.entry.kind === "task" && b.entry.kind === "task" && a.entry.item.completed !== b.entry.item.completed) {
+    return a.entry.item.completed ? 1 : -1;
+  }
+  return entryTitle(a.entry).localeCompare(entryTitle(b.entry));
+}
+
+// Tasks and events share the week's lanes.
+function layoutWeek(week: string[], entries: Entry[], primaryWeek: Map<string, string>): Segment[] {
   const weekStart = week[0];
   const weekEnd = week[6];
-  const inWeek = items
-    .filter((item) => spanStart(item) <= weekEnd && item.dueOn >= weekStart)
-    .map((item) => {
-      const from = spanStart(item) < weekStart ? weekStart : spanStart(item);
-      const to = item.dueOn > weekEnd ? weekEnd : item.dueOn;
-      return { item, col: between(weekStart, from), span: between(from, to) + 1 };
+  const inWeek = entries
+    .filter((entry) => entry.first <= weekEnd && entry.last >= weekStart)
+    .map((entry) => {
+      const from = entry.first < weekStart ? weekStart : entry.first;
+      const to = entry.last > weekEnd ? weekEnd : entry.last;
+      return { entry, col: between(weekStart, from), span: between(from, to) + 1 };
     })
-    .sort(
-      (a, b) =>
-        a.col - b.col ||
-        b.span - a.span ||
-        Number(a.item.completed) - Number(b.item.completed) ||
-        a.item.title.localeCompare(b.item.title),
-    );
+    .sort(byOrder);
   const laneEnds: number[] = [];
-  return inWeek.map(({ item, col, span }) => {
+  return inWeek.map(({ entry, col, span }) => {
     let lane = laneEnds.findIndex((end) => end < col);
     if (lane === -1) lane = laneEnds.length;
     laneEnds[lane] = col + span - 1;
     return {
-      item,
+      entry,
       col,
       span,
       lane,
-      startsHere: spanStart(item) >= weekStart,
-      endsHere: item.dueOn <= weekEnd,
-      primary: primaryWeek.get(item.id) === weekStart,
+      startsHere: entry.first >= weekStart,
+      endsHere: entry.last <= weekEnd,
+      primary: entry.kind === "task" && primaryWeek.get(entry.id) === weekStart,
     };
   });
 }
@@ -141,10 +174,13 @@ export function CalendarGrid({
   month,
   today,
   items,
+  events = [],
   drag,
   onDragChange,
   onChange,
   onDropExternal,
+  onOpenEvent,
+  onAddEvent,
   label,
   tall = false,
 }: {
@@ -154,11 +190,17 @@ export function CalendarGrid({
   month: string | null;
   today: string | null;
   items: CalendarItem[];
+  // Calendar events (not tasks) to draw next to the tasks.
+  events?: CalendarEvent[];
   drag: CalendarDrag | null;
   onDragChange: (drag: CalendarDrag | null) => void;
   onChange: (item: CalendarItem, dates: CalendarDates) => void;
   // A task dragged in from outside the grid dropped on a day.
   onDropExternal?: (taskId: string, day: string) => void;
+  // An event bar was clicked: open its dialog.
+  onOpenEvent?: (event: CalendarEvent) => void;
+  // A double-click on an empty part of a day (people who can add events only).
+  onAddEvent?: (day: string) => void;
   label: string;
   // Week view: one tall week, every bar shown.
   tall?: boolean;
@@ -168,6 +210,11 @@ export function CalendarGrid({
   const weeks: string[][] = [];
   for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
   const byId = new Map(items.map((item) => [item.id, item] as const));
+  const year = today ? Number(today.slice(0, 4)) : undefined;
+  const entries: Entry[] = [
+    ...items.map((item): Entry => ({ kind: "task", id: item.id, first: spanStart(item), last: item.dueOn, item })),
+    ...events.map((event): Entry => ({ kind: "event", id: event.id, first: event.startOn, last: event.endOn, event })),
+  ];
 
   // Where each task's date button goes: the week of its due date, else the last visible week it reaches.
   const primaryWeek = new Map<string, string>();
@@ -233,13 +280,14 @@ export function CalendarGrid({
       </div>
       <div className="flex min-h-0 flex-1 flex-col border-l border-zinc-200">
         {weeks.map((week) => {
-          const segments = layoutWeek(week, items, primaryWeek);
+          const segments = layoutWeek(week, entries, primaryWeek);
           const open = tall || expanded.has(week[0]);
           const lanes = Math.max(0, ...segments.map((s) => s.lane + 1));
           const visibleLanes = open ? lanes : Math.min(lanes, MONTH_LANES);
-          const hidden = week.map((_, col) =>
-            segments.filter((s) => s.lane >= visibleLanes && s.col <= col && col < s.col + s.span).length,
-          );
+          const hidden = week.map((_, col) => {
+            const over = segments.filter((s) => s.lane >= visibleLanes && s.col <= col && col < s.col + s.span);
+            return { tasks: over.filter((s) => s.entry.kind === "task").length, events: over.filter((s) => s.entry.kind === "event").length };
+          });
           return (
             <div
               key={week[0]}
@@ -247,6 +295,15 @@ export function CalendarGrid({
               role="group"
               aria-label={`Week of ${longDate(week[0])}`}
               className={`relative flex-1 ${tall ? "min-h-[16rem]" : "min-h-[7rem]"}`}
+              onDoubleClick={
+                onAddEvent
+                  ? (e) => {
+                      // Only an empty part of the day: bars and buttons keep their own clicks.
+                      if ((e.target as Element).closest("a, button, [draggable='true']")) return;
+                      onAddEvent(dayAt(e.clientX, e.currentTarget, week));
+                    }
+                  : undefined
+              }
               onDragOver={(e) => {
                 if (!drag) return;
                 e.preventDefault();
@@ -293,35 +350,47 @@ export function CalendarGrid({
               <div className="relative grid grid-cols-7 gap-y-0.5 pt-9 pb-1.5" style={{ gridAutoRows: "1.5rem" }}>
                 {segments
                   .filter((s) => s.lane < visibleLanes)
-                  .map((s) => (
-                    <Bar
-                      key={s.item.id}
-                      segment={s}
-                      dragging={drag?.id === s.item.id}
-                      onDragStart={(e, mode) => {
-                        if (mode === "move") {
-                          const day = dayAt(e.clientX, e.currentTarget.closest("[data-week]"), week);
-                          startDrag(e, { id: s.item.id, mode, offset: between(spanStart(s.item), day) });
-                        } else {
-                          startDrag(e, { id: s.item.id, mode });
-                        }
-                      }}
-                      onDragEnd={endDrag}
-                      onChange={onChange}
-                    />
-                  ))}
+                  .map((s) =>
+                    s.entry.kind === "event" ? (
+                      <EventBar
+                        key={`event-${s.entry.id}`}
+                        segment={s}
+                        event={s.entry.event}
+                        year={year}
+                        onOpen={onOpenEvent}
+                      />
+                    ) : (
+                      <Bar
+                        key={s.entry.id}
+                        segment={s}
+                        item={s.entry.item}
+                        dragging={drag?.id === s.entry.id}
+                        onDragStart={(e, mode) => {
+                          const item = (s.entry as Extract<Entry, { kind: "task" }>).item;
+                          if (mode === "move") {
+                            const day = dayAt(e.clientX, e.currentTarget.closest("[data-week]"), week);
+                            startDrag(e, { id: item.id, mode, offset: between(spanStart(item), day) });
+                          } else {
+                            startDrag(e, { id: item.id, mode });
+                          }
+                        }}
+                        onDragEnd={endDrag}
+                        onChange={onChange}
+                      />
+                    ),
+                  )}
                 {!open
                   ? hidden.map((count, col) =>
-                      count > 0 ? (
+                      count.tasks + count.events > 0 ? (
                         <button
                           key={week[col]}
                           type="button"
                           onClick={() => setExpanded((current) => new Set(current).add(week[0]))}
-                          aria-label={`Show ${count} more ${count === 1 ? "task" : "tasks"} the week of ${longDate(week[0])}`}
+                          aria-label={`Show ${moreLabel(count.tasks, count.events)} the week of ${longDate(week[0])}`}
                           className="mx-1 self-start justify-self-start rounded px-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
                           style={{ gridColumn: `${col + 1} / span 1`, gridRow: visibleLanes + 1 }}
                         >
-                          +{count} more
+                          +{count.tasks + count.events} more
                         </button>
                       ) : null,
                     )
@@ -353,20 +422,23 @@ export function CalendarGrid({
 
 function Bar({
   segment,
+  item,
   dragging,
   onDragStart,
   onDragEnd,
   onChange,
 }: {
   segment: Segment;
+  item: CalendarItem;
   dragging: boolean;
   onDragStart: (e: DragEvent<HTMLElement>, mode: "move" | "start" | "end") => void;
   onDragEnd: () => void;
   onChange: (item: CalendarItem, dates: CalendarDates) => void;
 }) {
-  const { item, col, span, lane, startsHere, endsHere, primary } = segment;
+  const { col, span, lane, startsHere, endsHere, primary } = segment;
   const resizable = item.canEdit && !item.milestone;
   const shape = `${startsHere ? "rounded-l-md" : "rounded-l-none border-l-0"} ${endsHere ? "rounded-r-md" : "rounded-r-none border-r-0"}`;
+  const numbered = Boolean(item.label?.text.trim()) || Boolean(item.projectName);
   return (
     <div
       className={`group/bar relative min-w-0 ${startsHere ? "pl-1" : ""} ${endsHere ? "pr-1" : ""}`}
@@ -378,7 +450,8 @@ function Bar({
         draggable={item.canEdit}
         onDragStart={item.canEdit ? (e) => onDragStart(e, "move") : undefined}
         onDragEnd={item.canEdit ? onDragEnd : undefined}
-        data-tooltip={item.tooltip}
+        data-tooltip={item.tooltip ?? fullTaskTitle(item)}
+        data-calendar-task=""
         aria-current={item.open ? "true" : undefined}
         className={`flex h-6 min-w-0 items-center gap-1.5 border bg-white px-1.5 text-xs shadow-xs hover:border-zinc-300 ${shape} ${
           item.open ? "border-accent-500 ring-2 ring-accent-100" : item.overdue ? "border-red-200" : "border-zinc-200"
@@ -387,13 +460,23 @@ function Bar({
         }`}
       >
         <span aria-hidden className={`size-2 shrink-0 ${item.milestone ? "rotate-45 rounded-[1px]" : "rounded-full"} ${item.dotClass}`} />
-        <span
-          className={`min-w-0 flex-1 truncate ${
-            item.completed ? "text-zinc-400 line-through" : item.overdue ? "text-red-700" : "text-zinc-800"
-          }`}
-        >
-          {item.title}
+        <span className="min-w-0 flex-1 truncate">
+          {/* The name first, then its number, tiny: a narrow bar cuts the number, never the name's start. */}
+          <span
+            aria-hidden={numbered ? true : undefined}
+            className={item.completed ? "text-zinc-400 line-through" : item.overdue ? "text-red-700" : "text-zinc-800"}
+          >
+            {item.title}
+          </span>
+          {numbered ? (
+            <span aria-hidden>
+              {" "}
+              <TaskNumberBadge label={item.label} projectName={item.projectName ?? null} size="2xs" className="align-middle" />
+            </span>
+          ) : null}
           <span className="sr-only">
+            {numbered ? fullTaskTitle(item) : ""}
+            {numbered && item.projectName && !item.srDetail ? `, ${taskNumberText(null, item.projectName)}` : ""}
             {`, ${spanText(item)}`}
             {item.srDetail ?? ""}
             {item.milestone ? " (milestone)" : ""}
@@ -427,6 +510,47 @@ function Bar({
   );
 }
 
+// A calendar event: violet, a calendar icon instead of the dot, the start time in front on the day it
+// starts. A button (Enter / click opens its dialog); never draggable, never struck through.
+function EventBar({
+  segment,
+  event,
+  year,
+  onOpen,
+}: {
+  segment: Segment;
+  event: CalendarEvent;
+  year: number | undefined;
+  onOpen?: (event: CalendarEvent) => void;
+}) {
+  const { col, span, lane, startsHere, endsHere } = segment;
+  const shape = `${startsHere ? "rounded-l-md" : "rounded-l-none border-l-0"} ${endsHere ? "rounded-r-md" : "rounded-r-none border-r-0"}`;
+  const time = startsHere ? eventBarTime(event) : null;
+  const Icon = event.startAt ? CalendarClock : CalendarDays;
+  return (
+    <div
+      className={`relative min-w-0 ${startsHere ? "pl-1" : ""} ${endsHere ? "pr-1" : ""}`}
+      style={{ gridColumn: `${col + 1} / span ${span}`, gridRow: lane + 1 }}
+    >
+      <button
+        type="button"
+        data-calendar-event={event.id}
+        draggable={false}
+        onClick={() => onOpen?.(event)}
+        aria-label={eventAriaLabel(event, year)}
+        data-tooltip={`${event.title} · ${eventShortWhen(event, year)}`}
+        className={`flex h-6 w-full min-w-0 items-center gap-1 border border-violet-200 bg-violet-50 px-1.5 text-left text-xs text-violet-900 hover:border-violet-300 hover:bg-violet-100 ${shape}`}
+      >
+        <Icon aria-hidden className="size-3 shrink-0 text-violet-500" />
+        <span className="min-w-0 flex-1 truncate">
+          {time ? <span className="mr-1 font-medium tabular-nums">{time}</span> : null}
+          {event.title}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 // The keyboard path (and the touch-screen one): the task's start and due dates in the date picker.
 function DatesButton({
   item,
@@ -442,7 +566,7 @@ function DatesButton({
       className={`absolute top-0.5 ${inset ? "right-2.5" : "right-1"} opacity-0 group-hover/bar:opacity-100 has-focus-visible:opacity-100 has-[[aria-expanded=true]]:opacity-100 [@media(hover:none)]:opacity-100`}
     >
       <Popover
-        label={`Change the dates of ${item.title} (${spanText(item)})`}
+        label={`Change the dates of ${fullTaskTitle(item)} (${spanText(item)})`}
         tooltip="Change dates"
         panelClassName="w-[19rem] p-0"
         buttonClassName="flex size-5 items-center justify-center rounded bg-white/90 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"

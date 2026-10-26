@@ -115,6 +115,12 @@ import {
 import { isTeamProjectRole, isTeamRole, parseTeamInviteResult, type TeamInviteResult } from "@/lib/teams";
 import { MAX_PORTFOLIO_FIELD_TEXT, isPortfolioFieldType, isProjectStatus } from "@/lib/portfolios";
 import { CALENDAR_FEED_TOKEN, calendarFeedUrls, isCalendarFeedScope } from "@/lib/calendar-feeds";
+import {
+  eventRowFrom,
+  type CalendarEventInput,
+  type CalendarEventRow,
+  type CalendarEventScope,
+} from "@/lib/calendar-events";
 import { requestOrigin } from "@/lib/origin";
 import { statusTemplateProblem, type StatusTemplateSection } from "@/lib/status-templates";
 import { STATUS_TITLE_MAX } from "@/lib/project-page";
@@ -5762,6 +5768,104 @@ export async function revokeCalendarFeed(feedId: string): Promise<ActionResult> 
       .select("id");
     if (missingReal4(result.error?.code)) throw new DbError(REAL4_SCHEMA_MISSING);
     checkUpdated(result, "This calendar link was already turned off");
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Oct 26 notes (batch 4): calendar events (not tasks) on a project or team Calendar. Project events:
+// Editors+ add, change, and remove them; team events: the team's members, leads, and workspace admins.
+// RLS decides (calendar_events_insert_editor / _update_editor); the guard trigger keeps an event on its
+// calendar, trims it, and sets its days from its times in its own time zone.
+// ---------------------------------------------------------------------------------------------
+
+const EVENTS_SCHEMA_MISSING = "Calendar events need this release’s database update, which isn’t applied yet";
+const TEAM_EVENTS_NOT_ALLOWED = "Your role in this team doesn’t allow that (only its members add or change its events)";
+
+export type CalendarEventResult = ActionResult & { eventId?: string };
+
+function eventScope(scope: unknown): CalendarEventScope {
+  const value = (scope && typeof scope === "object" ? scope : {}) as { projectId?: unknown; teamId?: unknown };
+  if (value.projectId !== undefined && value.teamId === undefined) return { projectId: id(value.projectId, "project") };
+  if (value.teamId !== undefined && value.projectId === undefined) return { teamId: id(value.teamId, "team") };
+  throw new InputError("Choose a project or team calendar");
+}
+
+function eventRow(input: CalendarEventInput): CalendarEventRow {
+  if (!input || typeof input !== "object") throw new InputError("Invalid event");
+  const made = eventRowFrom({
+    title: input.title,
+    notes: input.notes ?? null,
+    startOn: input.startOn,
+    endOn: input.endOn ?? null,
+    startTime: input.startTime ?? null,
+    endTime: input.endTime ?? null,
+    timeZone: input.timeZone,
+  });
+  if ("error" in made) throw new InputError(made.error);
+  return made.row;
+}
+
+// A missing table, a CHECK the input check missed, or RLS: each in plain words.
+function checkEventWrite(result: DbResult, scope: CalendarEventScope) {
+  const code = result.error?.code;
+  if (code === "PGRST205" || code === "42P01" || code === "PGRST204") throw new DbError(EVENTS_SCHEMA_MISSING);
+  const message = result.error?.message ?? "";
+  if (message.includes("calendar_events_title_check")) throw new InputError("Give the event a name.");
+  if (message.includes("calendar_events_dates_check")) throw new InputError("The event can’t end before it starts, or last more than a year.");
+  if (message.includes("calendar_events_times_check")) throw new InputError("The event can’t end before it starts.");
+  check(result, "projectId" in scope ? NOT_ALLOWED : TEAM_EVENTS_NOT_ALLOWED);
+}
+
+export async function createCalendarEvent(
+  scope: CalendarEventScope,
+  input: CalendarEventInput,
+): Promise<CalendarEventResult> {
+  let eventId: string | undefined;
+  const result = await run(async () => {
+    const target = eventScope(scope);
+    const row = eventRow(input);
+    const supabase = await createClient();
+    const inserted = await supabase
+      .from("calendar_events")
+      .insert({
+        ...row,
+        ...("projectId" in target ? { project_id: target.projectId } : { team_id: target.teamId }),
+      })
+      .select("id")
+      .single();
+    checkEventWrite(inserted, target);
+    eventId = inserted.data?.id;
+  });
+  return { ...result, eventId };
+}
+
+export async function updateCalendarEvent(
+  scope: CalendarEventScope,
+  eventId: string,
+  input: CalendarEventInput,
+): Promise<ActionResult> {
+  return run(async () => {
+    const target = eventScope(scope);
+    const row = eventRow(input);
+    const supabase = await createClient();
+    const query = supabase.from("calendar_events").update(row).eq("id", id(eventId, "event"));
+    const scoped = "projectId" in target ? query.eq("project_id", target.projectId) : query.eq("team_id", target.teamId);
+    const updated = await scoped.select("id");
+    checkEventWrite(updated, target);
+    checkUpdated(updated, "projectId" in target ? NOT_ALLOWED : TEAM_EVENTS_NOT_ALLOWED);
+  });
+}
+
+// Removing is final (the row stays, with deleted_at; the database stamps the time).
+export async function deleteCalendarEvent(scope: CalendarEventScope, eventId: string): Promise<ActionResult> {
+  return run(async () => {
+    const target = eventScope(scope);
+    const supabase = await createClient();
+    const query = supabase.from("calendar_events").update({ deleted_at: now() }).eq("id", id(eventId, "event"));
+    const scoped = "projectId" in target ? query.eq("project_id", target.projectId) : query.eq("team_id", target.teamId);
+    const removed = await scoped.select("id");
+    checkEventWrite(removed, target);
+    checkUpdated(removed, "projectId" in target ? NOT_ALLOWED : TEAM_EVENTS_NOT_ALLOWED);
   });
 }
 

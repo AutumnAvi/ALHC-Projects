@@ -11,6 +11,7 @@ import { calendarVisibleDays, timelineWindow, type TimelineZoom } from "@/lib/da
 import {
   filterProjectTaskIds,
   getProject,
+  listCalendarEvents,
   listProfiles,
   listProjectDependencies,
   listProjectFields,
@@ -140,7 +141,7 @@ export async function ProjectViewPage({
       : null;
   // List and Board paint one page per group. Calendar and Timeline load the visible dates (and the
   // undated tray). A missing function falls back to the full card list.
-  const [taskPageResult, scheduleTasks] = await Promise.all([
+  const [taskPageResult, scheduleTasks, calendarEvents] = await Promise.all([
     paging
       ? listProjectTaskPage(
           projectId,
@@ -161,7 +162,14 @@ export async function ProjectViewPage({
           layout === "calendar" ? "calendar" : "timeline",
         )
       : Promise.resolve(null),
+    // Oct 26 notes (batch 4): the Calendar's events (not tasks) for the same visible days.
+    calendarDays
+      ? listCalendarEvents({ projectId }, calendarDays[0], calendarDays[calendarDays.length - 1])
+      : Promise.resolve(null),
   ]);
+  // Events are loaded for the server's window only, so a calendar that pages in the browser (a database
+  // without project_schedule_cards, which has no calendar_events either) shows none.
+  const windowedEvents = scheduleTasks !== null ? calendarEvents : null;
   let taskPage = taskPageResult;
   let everyTask = fullTasks;
   let visible: ProjectTask[];
@@ -238,6 +246,7 @@ export async function ProjectViewPage({
             anchor={requestedDay}
             mode={calendarMode}
             days={calendarDays}
+            events={windowedEvents}
           />
         ) : null}
         {layout === "timeline" ? (
