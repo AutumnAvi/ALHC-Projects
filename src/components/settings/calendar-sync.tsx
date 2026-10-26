@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { CalendarSync } from "lucide-react";
 import { SyncCalendarDialog } from "@/components/calendar/sync-calendar-dialog";
+import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify } from "@/components/toast";
 import { revokeCalendarFeed } from "@/lib/actions";
@@ -19,6 +20,7 @@ export function CalendarSyncSettings() {
   const [feeds, setFeeds] = useState<CalendarFeed[] | null | "loading">("loading");
   const [dialog, setDialog] = useState<{ scope: CalendarFeedScope; targetId: string | null } | null>(null);
   const [pending, start] = useTransition();
+  const confirm = useConfirm();
 
   function reload() {
     loadCalendarFeeds().then(setFeeds, () => setFeeds(null));
@@ -102,8 +104,14 @@ export function CalendarSyncSettings() {
                 <button
                   type="button"
                   disabled={pending}
-                  onClick={() => {
-                    if (!window.confirm(`Turn off the calendar link for ${calendarFeedLabel(feed)}? Calendars subscribed to it will show no tasks from then on.`)) return;
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: `Turn off the calendar link for ${calendarFeedLabel(feed)}?`,
+                      message: "Calendars subscribed to it will show no tasks from then on.",
+                      confirmLabel: "Turn off",
+                      tone: "danger",
+                    });
+                    if (!ok) return;
                     start(async () => {
                       const result = await revokeCalendarFeed(feed.id);
                       notify(result.error ?? "Calendar link turned off");

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { Crown, LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { personHref } from "@/lib/people";
 import { PendingInvites } from "@/components/people/pending-invites";
 import { MemberRolePicker, RolePicker, projectRoleOptions } from "@/components/role-picker";
@@ -65,6 +66,7 @@ export function MembersManager({
   defaultRoles?: boolean;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const notify = useNotify();
   const { isWorkspaceAdmin } = useShell();
   const [teamId, setTeamId] = useState("");
@@ -290,11 +292,14 @@ export function MembersManager({
                     <button
                       type="button"
                       disabled={pending}
-                      onClick={() => {
+                      onClick={async () => {
                         if (
-                          window.confirm(
-                            `Make ${name} the owner? You'll become an Admin and can no longer delete the project.`,
-                          )
+                          await confirm({
+                            title: `Make ${name} the owner?`,
+                            message: "You'll become an Admin and can no longer delete the project.",
+                            confirmLabel: "Make owner",
+                            tone: "danger",
+                          })
                         ) {
                           run(() => transferProjectOwnership(projectId, member.profileId));
                         }
@@ -311,8 +316,15 @@ export function MembersManager({
                       type="button"
                       disabled={pending || lastOwner}
                       title={lastOwner ? "Make someone else an owner before leaving" : "Leave project"}
-                      onClick={() => {
-                        if (window.confirm("Leave this project? You'll lose access until someone invites you again.")) {
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: "Leave this project?",
+                            message: "You'll lose access until someone invites you again.",
+                            confirmLabel: "Leave",
+                            tone: "danger",
+                          })
+                        ) {
                           run(() => leaveProject(projectId, member.profileId));
                         }
                       }}
@@ -325,8 +337,8 @@ export function MembersManager({
                     <button
                       type="button"
                       disabled={pending || lastOwner}
-                      onClick={() => {
-                        if (window.confirm(`Remove ${name} from this project?`)) {
+                      onClick={async () => {
+                        if (await confirm({ title: `Remove ${name} from this project?`, confirmLabel: "Remove", tone: "danger" })) {
                           run(() => removeProjectMember(projectId, member.profileId));
                         }
                       }}

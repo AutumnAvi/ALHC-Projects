@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { CheckCircle2, Copy, Inbox, KeyRound, RotateCcw, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
@@ -370,6 +371,7 @@ function EndpointRow({
   onReveal: (revealed: RevealedInboundCredentials) => void;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState({ name: e.name, sectionId: e.sectionId, assigneeId: e.assigneeId, tagIds: e.tagIds });
   const section = sections.find((s) => s.id === e.sectionId)?.name ?? "No section";
@@ -454,8 +456,14 @@ function EndpointRow({
           type="button"
           disabled={pending}
           aria-label={`Rotate the token of ${e.name}`}
-          onClick={() => {
-            if (!window.confirm(`Rotate the token of “${e.name}”? The current URL stops working right away.`)) return;
+          onClick={async () => {
+            const ok = await confirm({
+              title: `Rotate the token of “${e.name}”?`,
+              message: "The current URL stops working right away.",
+              confirmLabel: "Rotate token",
+              tone: "danger",
+            });
+            if (!ok) return;
             run(async () => {
               const result = await rotateInboundToken(e.id);
               if (!result.error && result.token) onReveal({ endpointId: e.id, token: result.token });
@@ -471,8 +479,18 @@ function EndpointRow({
           type="button"
           disabled={pending}
           aria-label={`${e.signed ? "Replace" : "Add"} the signing secret of ${e.name}`}
-          onClick={() => {
-            if (e.signed && !window.confirm(`Replace the signing secret of “${e.name}”? The old one stops working right away.`)) return;
+          onClick={async () => {
+            if (
+              e.signed &&
+              !(await confirm({
+                title: `Replace the signing secret of “${e.name}”?`,
+                message: "The old one stops working right away.",
+                confirmLabel: "Replace secret",
+                tone: "danger",
+              }))
+            ) {
+              return;
+            }
             run(async () => {
               const result = await setInboundSigningSecret(e.id, true);
               if (!result.error && result.signingSecret) onReveal({ endpointId: e.id, signingSecret: result.signingSecret });
@@ -488,8 +506,13 @@ function EndpointRow({
           <button
             type="button"
             disabled={pending}
-            onClick={() => {
-              if (!window.confirm(`Stop requiring signatures for “${e.name}”? The token alone will be enough.`)) return;
+            onClick={async () => {
+              const ok = await confirm({
+                title: `Stop requiring signatures for “${e.name}”?`,
+                message: "The token alone will be enough.",
+                confirmLabel: "Stop requiring",
+              });
+              if (!ok) return;
               run(() => setInboundSigningSecret(e.id, false));
             }}
             className={buttonClass}
@@ -501,8 +524,14 @@ function EndpointRow({
           type="button"
           disabled={pending}
           aria-label={`Delete ${e.name}`}
-          onClick={() => {
-            if (!window.confirm(`Delete “${e.name}”? Its URL stops working; tasks it created stay.`)) return;
+          onClick={async () => {
+            const ok = await confirm({
+              title: `Delete “${e.name}”?`,
+              message: "Its URL stops working; tasks it created stay.",
+              confirmLabel: "Delete",
+              tone: "danger",
+            });
+            if (!ok) return;
             run(() => deleteInboundEndpoint(e.id));
           }}
           className={`${buttonClass} hover:border-red-500 hover:text-red-700`}

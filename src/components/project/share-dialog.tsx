@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useState, useTransition } from "react";
 import { Clock, Globe, Link2, Lock, Mail, UserMinus, Users, X } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { ResendInviteButton } from "@/components/people/pending-invites";
 import { MemberRolePicker, RolePicker, TeamRolePicker, projectRoleOptions } from "@/components/role-picker";
@@ -731,6 +732,7 @@ function MemberRow({
   projectId: string;
   change: Change;
 }) {
+  const confirm = useConfirm();
   return (
     <li className="flex items-center gap-2.5 py-1.5">
       <Avatar name={member.name} profileId={member.profileId} size="md" />
@@ -764,8 +766,15 @@ function MemberRow({
           type="button"
           disabled={pending || lastOwner}
           title={lastOwner ? "Make someone else an owner before leaving" : "Leave project"}
-          onClick={() => {
-            if (window.confirm("Leave this project? You’ll lose access until someone invites you again.")) {
+          onClick={async () => {
+            if (
+              await confirm({
+                title: "Leave this project?",
+                message: "You’ll lose access until someone invites you again.",
+                confirmLabel: "Leave",
+                tone: "danger",
+              })
+            ) {
               change(() => leaveProject(projectId, member.profileId));
             }
           }}
@@ -777,8 +786,8 @@ function MemberRow({
         <button
           type="button"
           disabled={pending || lastOwner}
-          onClick={() => {
-            if (window.confirm(`Remove ${member.name} from this project?`)) {
+          onClick={async () => {
+            if (await confirm({ title: `Remove ${member.name} from this project?`, confirmLabel: "Remove", tone: "danger" })) {
               change(() => removeProjectMember(projectId, member.profileId));
             }
           }}

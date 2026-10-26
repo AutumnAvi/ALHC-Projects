@@ -20,6 +20,7 @@ import {
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
+import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { Segmented } from "@/components/project/view-chrome";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
@@ -634,6 +635,7 @@ function SectionControls({
   onDown?: () => void;
 }) {
   const [, run] = useServerAction();
+  const confirm = useConfirm();
   const [renaming, setRenaming] = useState(false);
   const reveal = "opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100 [@media(hover:none)]:opacity-100";
   const iconButton = `rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 ${reveal}`;
@@ -703,9 +705,16 @@ function SectionControls({
               </MenuItem>
               <MenuItem
                 danger
-                onClick={() => {
+                onClick={async () => {
                   close();
-                  if (window.confirm(`Delete “${section.name}”? Its tasks move to Recently assigned.`)) {
+                  if (
+                    await confirm({
+                      title: `Delete “${section.name}”?`,
+                      message: "Its tasks move to Recently assigned.",
+                      confirmLabel: "Delete",
+                      tone: "danger",
+                    })
+                  ) {
                     run(() => deleteMyTaskSection(section.id));
                   }
                 }}

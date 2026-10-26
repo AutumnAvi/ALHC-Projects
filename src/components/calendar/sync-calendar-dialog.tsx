@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { CalendarSync, Check, Copy, ExternalLink, TriangleAlert } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify } from "@/components/toast";
@@ -41,6 +42,7 @@ export function SyncCalendarDialog({
   const [loaded, setLoaded] = useState<Loaded | null | "loading">("loading");
   const [urls, setUrls] = useState<Urls | null>(null);
   const [pending, start] = useTransition();
+  const confirm = useConfirm();
 
   useEffect(() => {
     let live = true;
@@ -68,8 +70,14 @@ export function SyncCalendarDialog({
     });
   }
 
-  function turnOff(feedId: string) {
-    if (!window.confirm("Turn off this calendar link? Calendars subscribed to it will show no tasks from then on.")) return;
+  async function turnOff(feedId: string) {
+    const ok = await confirm({
+      title: "Turn off this calendar link?",
+      message: "Calendars subscribed to it will show no tasks from then on.",
+      confirmLabel: "Turn off",
+      tone: "danger",
+    });
+    if (!ok) return;
     start(async () => {
       const result = await revokeCalendarFeed(feedId);
       if (result.error) {

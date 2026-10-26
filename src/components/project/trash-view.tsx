@@ -3,6 +3,7 @@
 import { useOptimistic } from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { displayName } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { useServerAction } from "@/components/toast";
@@ -21,6 +22,7 @@ export function TrashView({
   profiles: Profile[];
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [visible, removeRow] = useOptimistic(tasks, (current, taskId: string) =>
     current.filter((t) => t.id !== taskId),
   );
@@ -67,8 +69,8 @@ export function TrashView({
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => {
-                      if (window.confirm(`Restore “${task.title}”?`)) {
+                    onClick={async () => {
+                      if (await confirm({ title: `Restore “${task.title}”?`, confirmLabel: "Restore" })) {
                         run(
                           () => restoreTask(task.id),
                           () => removeRow(task.id),

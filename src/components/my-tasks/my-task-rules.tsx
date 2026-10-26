@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { FolderClosed, Pencil, Plus, Trash2, X, Zap } from "lucide-react";
 import { Dialog } from "@/components/dialog";
+import { useConfirm } from "@/components/confirm";
 import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { MISSING_INPUT } from "@/components/rules/rule-shared";
@@ -93,6 +94,7 @@ export function MyTaskRulesButton({ rules, ctx }: { rules: MyTaskRule[] | null; 
 
 export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[] | null; ctx: MyTaskRuleContext; onClose: () => void }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState<MyTaskRule | "new" | null>(null);
 
   return (
@@ -141,8 +143,8 @@ export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[]
                     aria-label={`Delete ${rule.name}`}
                     data-tooltip="Delete rule"
                     disabled={pending}
-                    onClick={() => {
-                      if (window.confirm(`Delete the rule “${rule.name}”?`)) run(() => deleteMyTaskRule(rule.id));
+                    onClick={async () => {
+                      if (await confirm({ title: `Delete the rule “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) run(() => deleteMyTaskRule(rule.id));
                     }}
                     className="btn-icon hover:bg-red-50 hover:text-red-700"
                   >

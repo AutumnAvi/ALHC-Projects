@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { RoleChangePicker, RolePicker, teamRoleOptions } from "@/components/role-picker";
 import { PendingInvites } from "@/components/people/pending-invites";
 import { useShell } from "@/components/shell/shell-context";
@@ -42,6 +43,7 @@ export function TeamMembers({
   resendable: boolean;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const notify = useNotify();
   const { isWorkspaceAdmin } = useShell();
   const emailRef = useRef<HTMLInputElement>(null);
@@ -163,8 +165,15 @@ export function TeamMembers({
                       type="button"
                       disabled={pending || lastLead}
                       title={lastLead ? "Make someone else a lead before leaving" : "Leave team"}
-                      onClick={() => {
-                        if (window.confirm(`Leave ${teamName}? Your project memberships stay as they are.`)) {
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: `Leave ${teamName}?`,
+                            message: "Your project memberships stay as they are.",
+                            confirmLabel: "Leave",
+                            tone: "danger",
+                          })
+                        ) {
                           run(() => removeTeamMember(teamId, m.profileId));
                         }
                       }}
@@ -177,8 +186,15 @@ export function TeamMembers({
                     <button
                       type="button"
                       disabled={pending || lastLead}
-                      onClick={() => {
-                        if (window.confirm(`Remove ${m.name} from ${teamName}? Their project memberships stay as they are.`)) {
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: `Remove ${m.name} from ${teamName}?`,
+                            message: "Their project memberships stay as they are.",
+                            confirmLabel: "Remove",
+                            tone: "danger",
+                          })
+                        ) {
                           run(() => removeTeamMember(teamId, m.profileId));
                         }
                       }}

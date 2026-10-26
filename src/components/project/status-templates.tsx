@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { ArrowDown, ArrowUp, FileText, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
@@ -38,6 +39,7 @@ export function StatusTemplatesView({
 }) {
   const canEdit = useProjectPermissions().canEdit;
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState<StatusTemplate | "new" | null>(null);
 
   if (!available) {
@@ -105,8 +107,15 @@ export function StatusTemplatesView({
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => {
-                      if (window.confirm(`Remove the status template “${t.name}”? Updates already posted with it stay as they are.`)) {
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: `Remove the status template “${t.name}”?`,
+                          message: "Updates already posted with it stay as they are.",
+                          confirmLabel: "Remove",
+                          tone: "danger",
+                        })
+                      ) {
                         run(() => deleteStatusTemplate(t.id));
                       }
                     }}

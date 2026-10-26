@@ -10,6 +10,7 @@ import { useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronRight, CirclePause, Copy, Play, Plus, Trash2, UserRound, X, Zap } from "lucide-react";
 import { RulePauseControls } from "@/components/rules/rule-pause";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
@@ -114,6 +115,7 @@ export function PortfolioRulesView({
   canRun: boolean;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const notify = useNotify();
   const names = new Map((rules ?? []).map((r) => [r.id, r.name]));
 
@@ -249,8 +251,10 @@ export function PortfolioRulesView({
                     aria-label={`Delete ${rule.name}`}
                     data-tooltip="Delete rule"
                     disabled={pending}
-                    onClick={() => {
-                      if (window.confirm(`Delete the rule “${rule.name}”?`)) run(() => deletePortfolioRule(rule.id));
+                    onClick={async () => {
+                      if (await confirm({ title: `Delete the rule “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) {
+                        run(() => deletePortfolioRule(rule.id));
+                      }
                     }}
                     className="btn-icon size-7"
                   >

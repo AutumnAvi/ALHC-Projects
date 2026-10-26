@@ -2,6 +2,7 @@
 
 import { useOptimistic } from "react";
 import Link from "next/link";
+import { useConfirm } from "@/components/confirm";
 import { useServerAction } from "@/components/toast";
 import { convertCommenterMember, setCommenterRoleAllowed } from "@/lib/actions";
 import type { CommenterMember } from "@/lib/data";
@@ -12,6 +13,7 @@ import { personHref } from "@/lib/people";
 // Viewer or Editor here, one person at a time. Nothing changes on its own.
 export function CommenterRoleSettings({ allowed, commenters }: { allowed: boolean; commenters: CommenterMember[] }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const [on, setOn] = useOptimistic(allowed);
   const [list, removeFromList] = useOptimistic(commenters, (current, profileId: string) =>
     current.filter((c) => c.profileId !== profileId),
@@ -68,9 +70,13 @@ export function CommenterRoleSettings({ allowed, commenters }: { allowed: boolea
                       type="button"
                       className="btn-secondary"
                       disabled={pending}
-                      onClick={() => {
+                      onClick={async () => {
                         const where = c.projectCount === 1 ? "their project" : `all ${c.projectCount} projects`;
-                        if (!window.confirm(`Make ${c.name} ${role === "viewer" ? "a Viewer" : "an Editor"} in ${where}?`)) return;
+                        const ok = await confirm({
+                          title: `Make ${c.name} ${role === "viewer" ? "a Viewer" : "an Editor"} in ${where}?`,
+                          confirmLabel: role === "viewer" ? "Make Viewer" : "Make Editor",
+                        });
+                        if (!ok) return;
                         run(() => convertCommenterMember(c.profileId, role), () => removeFromList(c.profileId));
                       }}
                     >

@@ -37,6 +37,7 @@ import {
   Users,
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { PROJECT_STATUS_CLASS, PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
@@ -235,6 +236,7 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
   const router = useRouter();
   const notify = useNotify();
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const { canEdit: canEditViews, canManage: canEditProject, isOwner: canDeleteProject } = useProjectPermissions();
   const [duplicating, setDuplicating] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -326,14 +328,17 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
             {canArchive ? (
               <MenuItem
                 disabled={pending}
-                onClick={() => {
+                onClick={async () => {
                   close();
                   if (project.archived_at) {
                     run(() => setProjectArchived(project.id, false));
                   } else if (
-                    window.confirm(
-                      `Archive “${project.name}”? It becomes read-only and leaves the sidebar, Home, and project pickers. Members can still open it from Archived projects, and admins can unarchive it.`,
-                    )
+                    await confirm({
+                      title: `Archive “${project.name}”?`,
+                      message:
+                        "It becomes read-only and leaves the sidebar, Home, and project pickers. Members can still open it from Archived projects, and admins can unarchive it.",
+                      confirmLabel: "Archive",
+                    })
                   ) {
                     run(() => setProjectArchived(project.id, true));
                   }
@@ -354,9 +359,16 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
               <MenuItem
                 danger
                 disabled={pending}
-                onClick={() => {
+                onClick={async () => {
                   close();
-                  if (window.confirm(`Delete “${project.name}”? Its tasks stay recoverable in the database.`)) {
+                  if (
+                    await confirm({
+                      title: `Delete “${project.name}”?`,
+                      message: "Its tasks stay recoverable in the database.",
+                      confirmLabel: "Delete",
+                      tone: "danger",
+                    })
+                  ) {
                     run(() => deleteProject(project.id));
                   }
                 }}
@@ -488,6 +500,7 @@ function ViewTab({
   canEdit: boolean;
 }) {
   const [, run] = useServerAction();
+  const confirm = useConfirm();
   const [renaming, setRenaming] = useState(false);
   const Icon = LAYOUT_ICONS[view.layout];
 
@@ -574,9 +587,16 @@ function ViewTab({
               <MenuItem
                 danger
                 disabled={!canDelete}
-                onClick={() => {
+                onClick={async () => {
                   close();
-                  if (window.confirm(`Delete the view “${view.name}”? Tasks are not affected.`)) {
+                  if (
+                    await confirm({
+                      title: `Delete the view “${view.name}”?`,
+                      message: "Tasks are not affected.",
+                      confirmLabel: "Delete",
+                      tone: "danger",
+                    })
+                  ) {
                     run(() => deleteView(view.id));
                   }
                 }}

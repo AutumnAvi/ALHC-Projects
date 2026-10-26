@@ -23,6 +23,7 @@ import {
   Workflow,
   type LucideIcon,
 } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteTask, setReplyThreadClosed, setTaskKind } from "@/lib/actions";
@@ -76,13 +77,25 @@ export function TaskMoreMenu({
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
+  const confirm = useConfirm();
   const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | "rule" | "review" | null>(null);
   const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
   const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
 
-  function changeKind(kind: TaskKind) {
+  async function changeKind(kind: TaskKind) {
     if (kind === task.kind) return;
-    if (kind === "milestone" && task.startOn && !window.confirm("A milestone has only a due date. Clear the start date?")) return;
+    if (
+      kind === "milestone" &&
+      task.startOn &&
+      !(await confirm({
+        title: "Clear the start date?",
+        message: "A milestone has only a due date.",
+        confirmLabel: "Clear start date",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
     run(() => setTaskKind(task.id, kind));
   }
 
@@ -102,11 +115,16 @@ export function TaskMoreMenu({
     });
   }
 
-  function remove() {
-    const message = task.isSubtask
-      ? `Delete subtask “${task.title}”? It moves to the Trash with its own subtasks, where Editors can restore it.`
-      : `Delete “${task.title}”? It moves to the Trash of each of its projects (with its subtasks), where Editors can restore it.`;
-    if (!window.confirm(message)) return;
+  async function remove() {
+    const ok = await confirm({
+      title: task.isSubtask ? `Delete subtask “${task.title}”?` : `Delete “${task.title}”?`,
+      message: task.isSubtask
+        ? "It moves to the Trash with its own subtasks, where Editors can restore it."
+        : "It moves to the Trash of each of its projects (with its subtasks), where Editors can restore it.",
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!ok) return;
     run(async () => {
       const result = await deleteTask(task.id);
       if (!result.error) onDeleted();

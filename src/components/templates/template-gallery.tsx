@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { FolderClosed, LayoutTemplate, ListPlus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { Dialog, DIALOG_LABEL } from "@/components/dialog";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
@@ -22,6 +23,7 @@ export function TemplateGallery({
   const [using, setUsing] = useState<ProjectTemplate | null>(null);
   const [renaming, setRenaming] = useState<ProjectTemplate | null>(null);
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
 
   const byProject = new Map<string, { name: string; items: TaskTemplate[] }>();
   for (const t of taskTemplates) {
@@ -92,9 +94,16 @@ export function TemplateGallery({
                           <MenuItem
                             danger
                             disabled={pending}
-                            onClick={() => {
+                            onClick={async () => {
                               close();
-                              if (window.confirm(`Delete the template “${template.name}”? Projects made from it are not affected.`)) {
+                              if (
+                                await confirm({
+                                  title: `Delete the template “${template.name}”?`,
+                                  message: "Projects made from it are not affected.",
+                                  confirmLabel: "Delete",
+                                  tone: "danger",
+                                })
+                              ) {
                                 run(() => deleteProjectTemplate(template.id));
                               }
                             }}

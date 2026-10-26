@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { Crown, LogOut, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { RoleChangePicker, RolePicker, portfolioRoleOptions } from "@/components/role-picker";
 import { personHref } from "@/lib/people";
 import { PendingInvites } from "@/components/people/pending-invites";
@@ -54,6 +55,7 @@ export function PortfolioMembersManager({
   resendable: boolean;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const notify = useNotify();
   const { isWorkspaceAdmin } = useShell();
   const emailRef = useRef<HTMLInputElement>(null);
@@ -195,11 +197,14 @@ export function PortfolioMembersManager({
                     <button
                       type="button"
                       disabled={pending}
-                      onClick={() => {
+                      onClick={async () => {
                         if (
-                          window.confirm(
-                            `Make ${name} the owner? You'll become an Admin and can no longer delete the portfolio.`,
-                          )
+                          await confirm({
+                            title: `Make ${name} the owner?`,
+                            message: "You'll become an Admin and can no longer delete the portfolio.",
+                            confirmLabel: "Make owner",
+                            tone: "danger",
+                          })
                         ) {
                           run(() => transferPortfolioOwnership(portfolioId, member.profileId));
                         }
@@ -216,8 +221,15 @@ export function PortfolioMembersManager({
                       type="button"
                       disabled={pending || lastOwner}
                       title={lastOwner ? "Make someone else an owner before leaving" : "Leave portfolio"}
-                      onClick={() => {
-                        if (window.confirm("Leave this portfolio? You'll lose access until someone invites you again.")) {
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: "Leave this portfolio?",
+                            message: "You'll lose access until someone invites you again.",
+                            confirmLabel: "Leave",
+                            tone: "danger",
+                          })
+                        ) {
                           run(() => leavePortfolio(portfolioId, member.profileId));
                         }
                       }}
@@ -230,8 +242,8 @@ export function PortfolioMembersManager({
                     <button
                       type="button"
                       disabled={pending || lastOwner}
-                      onClick={() => {
-                        if (window.confirm(`Remove ${name} from this portfolio?`)) {
+                      onClick={async () => {
+                        if (await confirm({ title: `Remove ${name} from this portfolio?`, confirmLabel: "Remove", tone: "danger" })) {
                           run(() => removePortfolioMember(portfolioId, member.profileId));
                         }
                       }}
@@ -285,8 +297,15 @@ export function PortfolioMembersManager({
           <button
             type="button"
             disabled={pending}
-            onClick={() => {
-              if (window.confirm(`Delete the portfolio “${portfolio.name}”? Its projects are not affected.`)) {
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: `Delete the portfolio “${portfolio.name}”?`,
+                  message: "Its projects are not affected.",
+                  confirmLabel: "Delete",
+                  tone: "danger",
+                })
+              ) {
                 run(() => deletePortfolio(portfolioId));
               }
             }}

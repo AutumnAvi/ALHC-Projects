@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -30,6 +31,7 @@ export function StatusUpdatePanel({
 }) {
   const titleId = useId();
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   const notify = useNotify();
   const [title, setTitle] = useState(() => defaultStatusTitle());
   const [status, setStatus] = useState<ProjectStatus>(initialStatus);
@@ -60,10 +62,16 @@ export function StatusUpdatePanel({
     };
   }, []);
 
-  function applyTemplate(id: string) {
+  async function applyTemplate(id: string) {
     const template = templates.find((t) => t.id === id);
     const next = template ? renderStatusTemplate(template.sections) : "";
-    if (summary.trim() && summary !== prefilled && !window.confirm("Replace the summary you wrote with this template?")) return;
+    if (
+      summary.trim() &&
+      summary !== prefilled &&
+      !(await confirm({ title: "Replace the summary you wrote with this template?", confirmLabel: "Replace summary" }))
+    ) {
+      return;
+    }
     setTemplateId(id);
     setSummary(next);
     setPrefilled(next);

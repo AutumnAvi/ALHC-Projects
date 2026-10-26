@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
@@ -189,6 +190,7 @@ function TeamMenu({
 }) {
   const notify = useNotify();
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
 
   async function copyLink() {
     try {
@@ -223,12 +225,16 @@ function TeamMenu({
               <MenuItem
                 danger
                 disabled={pending || isDefault}
-                onClick={() => {
+                onClick={async () => {
                   close();
                   if (
-                    window.confirm(
-                      `Delete ${name}? Its projects move to the default team and become private, project memberships stay as they are, and its goals keep working without a team.`,
-                    )
+                    await confirm({
+                      title: `Delete ${name}?`,
+                      message:
+                        "Its projects move to the default team and become private, project memberships stay as they are, and its goals keep working without a team.",
+                      confirmLabel: "Delete team",
+                      tone: "danger",
+                    })
                   ) {
                     run(() => deleteTeam(teamId));
                   }

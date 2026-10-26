@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { ConfirmProvider } from "@/components/confirm";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,7 +21,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
-      <body className="h-full font-sans">{children}</body>
+      <body className="h-full font-sans">
+        {/* The in-app confirm / alert modal (useConfirm, useAlert): browser dialogs are lint-blocked. */}
+        <ConfirmProvider>{children}</ConfirmProvider>
+      </body>
     </html>
   );
 }

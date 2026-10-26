@@ -7,6 +7,7 @@ import { Ellipsis, RotateCcw, Search, Send, UserMinus, UserPlus, Users } from "l
 import { AdminPage } from "@/components/admin/admin-chrome";
 import { InviteUsersDialog } from "@/components/admin/invite-users-dialog";
 import { Avatar } from "@/components/avatar";
+import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { RolePicker } from "@/components/role-picker";
 import { SmartPicker } from "@/components/smart-picker";
@@ -102,6 +103,7 @@ export function UsersAdmin({
   const router = useRouter();
   const notify = useNotify();
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   // The tab lives in the address (?tab=, shareable, survives a reload). Reading it from the address —
   // which history.replaceState updates too — keeps it right when a link opens this page again with
   // another tab (Next keeps this component mounted across ?tab= changes).
@@ -162,12 +164,21 @@ export function UsersAdmin({
     });
   }
 
-  function remove(m: WorkspaceMember) {
+  async function remove(m: WorkspaceMember) {
     const question =
       m.status === "invited"
-        ? `Cancel the invite for ${m.email}? Their pending project and team invites are cancelled too.`
-        : `Remove ${m.name} from the workspace? They can’t sign in anymore. Their tasks, comments, and memberships stay, and you can add them back later.`;
-    if (!window.confirm(question)) return;
+        ? {
+            title: `Cancel the invite for ${m.email}?`,
+            message: "Their pending project and team invites are cancelled too.",
+            confirmLabel: "Cancel invite",
+            cancelLabel: "Keep it",
+          }
+        : {
+            title: `Remove ${m.name} from the workspace?`,
+            message: "They can’t sign in anymore. Their tasks, comments, and memberships stay, and you can add them back later.",
+            confirmLabel: "Remove",
+          };
+    if (!(await confirm({ ...question, tone: "danger" }))) return;
     run(async () => {
       const result = await removeWorkspaceMember(m.email);
       if (!result.error) notify(m.status === "invited" ? `Invite for ${m.email} cancelled` : `${m.name} was removed from the workspace`);
@@ -488,6 +499,7 @@ function RoleCell({
   pending: boolean;
   onRole: (role: WorkspaceRole, revert: () => void) => void;
 }) {
+  const confirm = useConfirm();
   const chipClass = `chip ${m.role === "admin" ? "bg-accent-50 text-accent-700" : ""}`;
   if (m.status !== "active" || m.profileId === null) return <span className={chipClass}>{WORKSPACE_ROLE_LABELS[m.role]}</span>;
   if (lastAdmin) {
@@ -511,13 +523,18 @@ function RoleCell({
         { value: "admin", label: WORKSPACE_ROLE_LABELS.admin, description: "Runs the workspace: people, teams, settings" },
         { value: "member", label: WORKSPACE_ROLE_LABELS.member, description: "Uses the workspace; project roles decide the rest" },
       ]}
-      onChange={(value) => {
+      onChange={async (value) => {
         const next = value as WorkspaceRole;
         if (next === m.role) return;
         if (
           next === "member" &&
           self &&
-          !window.confirm("Stop being a workspace admin? You’ll leave the Admin console, and another admin will have to make you one again.")
+          !(await confirm({
+            title: "Stop being a workspace admin?",
+            message: "You’ll leave the Admin console, and another admin will have to make you one again.",
+            confirmLabel: "Stop being an admin",
+            tone: "danger",
+          }))
         ) {
           return;
         }
