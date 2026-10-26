@@ -354,6 +354,8 @@ export type TaskComment = {
   // A received reply's attachments (saved to the task) and the ones that weren't saved, with why.
   emailFiles?: { id: string; name: string; sizeBytes: number; contentType: string | null }[];
   emailSkipped?: { name: string; reason: SkipReason }[];
+  // Oct 26 notes (batch 3): the review check whose outcome this comment reports.
+  reviewCheckId?: string | null;
 };
 
 export type TaskStory = {
@@ -1017,7 +1019,18 @@ export async function loadTaskCommentPage(
       },
     ]),
   );
-  return withReplyFiles(supabase, parseCommentPage(result.data, outbox));
+  return withReviewChecks(supabase, await withReplyFiles(supabase, parseCommentPage(result.data, outbox)));
+}
+
+// Oct 26 notes (batch 3): which comments report a review check's outcome. A database without this
+// release's update has no such column: none do.
+async function withReviewChecks(supabase: Supabase, page: CommentPage): Promise<CommentPage> {
+  const ids = page.comments.map((c) => c.id);
+  if (!ids.length) return page;
+  const { data, error } = await supabase.from("comments").select("id, review_check_id").in("id", ids).not("review_check_id", "is", null);
+  if (error || !data?.length) return page;
+  const byId = new Map(data.map((c) => [c.id, c.review_check_id] as const));
+  return { ...page, comments: page.comments.map((c) => (byId.has(c.id) ? { ...c, reviewCheckId: byId.get(c.id) ?? null } : c)) };
 }
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -1508,7 +1521,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     loadReplyThread(supabase, taskId),
     withDependencyTitles(storyList),
     storyEmailStatuses(storyList),
-    comments.error ? Promise.resolve(null) : withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus)),
+    comments.error ? Promise.resolve(null) : withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus)).then((page) => withReviewChecks(supabase, page)),
     approvalRuleIds.length
       ? supabase.from("rules").select("id, name").in("id", approvalRuleIds)
       : Promise.resolve({ data: [], error: null }),

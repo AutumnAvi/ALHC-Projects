@@ -648,19 +648,35 @@ export function renderDesignSample(
 // "Send me a test": one email straight to the signed-in person (never another address). Mocked without
 // an email provider, like the drain.
 export async function sendTestEmail(to: string, email: Rendered): Promise<"sent" | "mocked"> {
+  return sendEmailNow(to, { ...email, subject: `[Test] ${email.subject}` }, "design test");
+}
+
+// One email sent right away (not through the outbox): "Send me a test", and a review check's email (Oct 26
+// notes, batch 3), whose link carries a token the database keeps only as a hash, so it can't wait in the
+// outbox. Mocked without an email provider. Logs only `what`, never an address or a link.
+export async function sendEmailNow(
+  to: string,
+  email: Rendered,
+  what: string,
+  idempotencyKey?: string,
+): Promise<"sent" | "mocked"> {
   if (!isEmailConfigured()) {
-    console.info("[email:mocked] design test");
+    console.info(`[email:mocked] ${what}`);
     return "mocked";
   }
   const admin = createAdminClient();
   const senderName = admin ? await workspaceSenderName(admin) : null;
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+    },
     body: JSON.stringify({
       from: fromHeader(process.env.EMAIL_FROM!, senderName),
       to: [to],
-      subject: `[Test] ${email.subject}`.slice(0, 300),
+      subject: email.subject.slice(0, 300),
       text: email.text,
       html: email.html,
     }),

@@ -207,6 +207,7 @@ export type Database = {
           deleted_at: string | null;
           edited_at: string | null;
           rule_id: string | null;
+          review_check_id: string | null;
           email_direction: string | null;
           email_address: string | null;
           email_subject: string | null;
@@ -222,6 +223,7 @@ export type Database = {
           deleted_at?: string | null;
           edited_at?: string | null;
           rule_id?: string | null;
+          review_check_id?: string | null;
           email_direction?: string | null;
           email_address?: string | null;
           email_subject?: string | null;
@@ -237,6 +239,7 @@ export type Database = {
           deleted_at?: string | null;
           edited_at?: string | null;
           rule_id?: string | null;
+          review_check_id?: string | null;
           email_direction?: string | null;
           email_address?: string | null;
           email_subject?: string | null;
@@ -2833,6 +2836,80 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
+        Relationships: [];
+      };
+      review_checks: {
+        Row: {
+          id: string;
+          task_id: string;
+          round: number;
+          recipient_email: string;
+          recipient_name: string | null;
+          message: string | null;
+          token_hash: string;
+          token_hint: string;
+          expires_at: string;
+          status: string;
+          decided_at: string | null;
+          decision_note: string | null;
+          comment_id: string | null;
+          hits: number;
+          hits_window_started_at: string | null;
+          last_viewed_at: string | null;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      review_check_assets: {
+        Row: {
+          id: string;
+          review_id: string;
+          task_id: string;
+          attachment_id: string;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      review_check_pins: {
+        Row: {
+          id: string;
+          review_id: string;
+          task_id: string;
+          asset_id: string;
+          number: number;
+          page: number | null;
+          x: number | null;
+          y: number | null;
+          time_seconds: number | null;
+          body: string;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      review_check_files: {
+        Row: {
+          id: string;
+          review_id: string;
+          task_id: string;
+          storage_path: string;
+          file_name: string;
+          content_type: string | null;
+          size_bytes: number | null;
+          status: string;
+          created_at: string;
+          ready_at: string | null;
+        };
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       project_stars: {
@@ -5888,6 +5965,44 @@ export type Database = {
       decide_project_access_request: {
         Args: { target_request: string; decision: string; member_role?: string };
         Returns: string;
+      };
+      create_review_check: {
+        Args: {
+          target_task: string;
+          attachment_ids: string[];
+          recipient: string;
+          recipient_display?: string | null;
+          review_message?: string | null;
+        };
+        Returns: Json;
+      };
+      rotate_review_check_token: {
+        Args: { target_review: string };
+        Returns: Json;
+      };
+      cancel_review_check: {
+        Args: { target_review: string };
+        Returns: string;
+      };
+      review_check_view: {
+        Args: { review_token: string };
+        Returns: Json;
+      };
+      review_check_file: {
+        Args: { review_token: string; target_file: string };
+        Returns: Json;
+      };
+      review_check_upload_start: {
+        Args: { review_token: string; file_name: string; file_type: string; file_size: number };
+        Returns: Json;
+      };
+      review_check_upload_finish: {
+        Args: { review_token: string; target_file: string };
+        Returns: Json;
+      };
+      review_check_decide: {
+        Args: { review_token: string; decision: string; note?: string | null; pins?: Json };
+        Returns: Json;
       };
       set_default_project_role: {
         Args: { member_email: string; new_role: string | null };

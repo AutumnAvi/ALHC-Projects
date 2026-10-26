@@ -16,6 +16,7 @@ import {
   Paperclip,
   Printer,
   Repeat,
+  Send,
   ShieldCheck,
   ThumbsUp,
   Trash2,
@@ -29,6 +30,7 @@ import type { TaskDetail } from "@/lib/data";
 import { describeRecurrence } from "@/lib/recurrence";
 import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/task-kinds";
 import { DuplicateTaskDialog } from "./duplicate-task-dialog";
+import { SendReviewDialog } from "./send-review-dialog";
 import { RunRuleDialog } from "./run-rule-dialog";
 import { SaveTaskTemplateDialog } from "./save-task-template";
 import { ConvertTaskDialog, canConvert } from "./task-convert";
@@ -74,7 +76,7 @@ export function TaskMoreMenu({
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
-  const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | "rule" | null>(null);
+  const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | "rule" | "review" | null>(null);
   const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
   const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
 
@@ -144,6 +146,8 @@ export function TaskMoreMenu({
                   close,
                 )}
                 {item(ShieldCheck, "Request approval…", onRequestApproval, close)}
+                {/* Oct 26 notes (batch 3): files out for review by a client (or anyone) by email. */}
+                {item(Send, "Send review check…", () => setDialog("review"), close)}
                 {canAddSubtask ? item(ListPlus, "Add subtask", onAddSubtask, close) : null}
                 {item(Paperclip, "Attach files…", onAttach, close)}
                 <div role="separator" className="my-1 border-t border-zinc-100" />
@@ -205,6 +209,7 @@ export function TaskMoreMenu({
       ) : null}
       {dialog === "convert" ? <ConvertTaskDialog task={task} onClose={() => setDialog(null)} /> : null}
       {dialog === "rule" ? <RunRuleDialog taskId={task.id} onClose={() => setDialog(null)} /> : null}
+      {dialog === "review" ? <SendReviewDialog task={task} onClose={() => setDialog(null)} /> : null}
       {dialog === "template" && home ? (
         <SaveTaskTemplateDialog
           taskId={task.id}

@@ -187,7 +187,9 @@ export function InboxCard({
   }`;
   const { ruleName, verb, detail } = describe(item);
   // A form submitter's emailed reply has no actor: name the address it came from.
-  const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? "Someone");
+  // Oct 26 notes (batch 3): a review check's outcome names the reviewer's address.
+  const reviewer = dataText(item.data, "reviewer_email");
+  const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? reviewer ?? "Someone");
   const ruleHref = pausedRuleHref(item);
   const accessRequest = accessRequestOf(item.data);
   const Icon = ruleHref ? CirclePause : accessRequest || isAccessGranted(item.data) ? UserPlus : KIND[item.kind].icon;

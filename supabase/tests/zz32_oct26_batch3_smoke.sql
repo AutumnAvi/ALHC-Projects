@@ -336,4 +336,279 @@ begin
     'still service role only';
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- 7. Review checks: hashed, expiring links; only the round's own files; one decision
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  assert not has_column_privilege('authenticated', 'public.review_checks', 'token_hash', 'SELECT'), 'nobody reads the hash';
+  assert has_column_privilege('authenticated', 'public.review_checks', 'status', 'SELECT'), 'the round is readable';
+  assert not has_table_privilege('authenticated', 'public.review_checks', 'INSERT'), 'no client inserts';
+  assert not has_table_privilege('authenticated', 'public.review_checks', 'UPDATE'), 'no client updates';
+  assert not has_table_privilege('authenticated', 'public.review_check_pins', 'INSERT'), 'pins come from the decision';
+  assert not has_table_privilege('anon', 'public.review_checks', 'SELECT'), 'anon reads no table';
+  assert not has_table_privilege('anon', 'public.review_check_files', 'SELECT'), 'anon reads no table';
+  assert has_function_privilege('anon', 'public.review_check_view(text)', 'execute'), 'the page runs as anon';
+  assert not has_function_privilege('authenticated', 'public.review_check_view(text)', 'execute'), 'only through the page';
+  assert not has_function_privilege('anon', 'public.create_review_check(uuid, uuid[], text, text, text)', 'execute'), 'anon sends nothing';
+  assert not has_function_privilege('anon', 'public.review_check_by_token(text)', 'execute'), 'internal';
+  assert not has_function_privilege('authenticated', 'public.review_check_hit(uuid)', 'execute'), 'internal';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  p uuid := (select id from b3_ids where name = 'p');
+  t uuid;
+  other_task uuid;
+  a1 uuid;
+  a2 uuid;
+  stranger uuid;
+  result jsonb;
+begin
+  t := public.create_task(p, null, 'Poster design');
+  insert into b3_ids values ('rt', t);
+  update public.tasks set assignee_id = 'b3b30026-0000-4000-8000-000000000003' where id = t;
+  insert into public.task_attachments (task_id, storage_path, file_name, content_type, size_bytes)
+    values (t, t::text || '/a1-poster.png', 'poster.png', 'image/png', 1000) returning id into a1;
+  insert into public.task_attachments (task_id, storage_path, file_name, content_type, size_bytes)
+    values (t, t::text || '/a2-proof.pdf', 'proof.pdf', 'application/pdf', 2000) returning id into a2;
+  other_task := public.create_task(p, null, 'Another task');
+  insert into public.task_attachments (task_id, storage_path, file_name, content_type, size_bytes)
+    values (other_task, other_task::text || '/x-other.png', 'other.png', 'image/png', 10) returning id into stranger;
+  insert into b3_ids values ('a1', a1), ('a2', a2);
+
+  begin
+    perform public.create_review_check(t, array[stranger], 'client@example.org');
+    raise exception 'files of another task can''t be sent';
+  exception when check_violation then null;
+  end;
+  begin
+    perform public.create_review_check(t, array[a1], 'not an email');
+    raise exception 'a bad address is refused';
+  exception when check_violation then null;
+  end;
+
+  result := public.create_review_check(t, array[a1, a2], ' Client@Example.org ', 'Cara Client', 'Please check the poster');
+  assert (result ->> 'round')::int = 1, 'v1';
+  assert result ->> 'token' ~ '^alhc_rev_[0-9a-f]{64}$', 'a long random token, once';
+  insert into b3_ids values ('rc1', (result ->> 'id')::uuid);
+  create temporary table if not exists b3_tokens (name text primary key, token text);
+  insert into b3_tokens values ('v1', result ->> 'token');
+  assert (select recipient_email from public.review_checks where id = (result ->> 'id')::uuid) = 'client@example.org', 'lowercased';
+  assert (select count(*) from public.review_check_assets where review_id = (result ->> 'id')::uuid) = 2, 'two files';
+end $$;
+reset role;
+grant all on b3_tokens to anon, authenticated;
+do $$
+begin
+  assert (select token_hash from public.review_checks where id = (select id from b3_ids where name = 'rc1'))
+    = encode(sha256(convert_to((select token from b3_tokens where name = 'v1'), 'UTF8')), 'hex'), 'only the hash is stored';
+  assert not exists (select 1 from public.review_checks where token_hash like 'alhc_rev_%'), 'never the token';
+end $$;
+
+-- A Viewer of the project reads the round but can't send one; a workspace admin outside it sees nothing.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  assert exists (select 1 from public.review_checks where id = (select id from b3_ids where name = 'rc1')), 'Viewers read it';
+  begin
+    perform public.create_review_check((select id from b3_ids where name = 'rt'), array[(select id from b3_ids where name = 'a1')], 'x@example.org');
+    raise exception 'Viewers can''t send';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000004', false) is not null as ok \gset
+do $$
+begin
+  assert not exists (select 1 from public.review_checks), 'outside the project: nothing';
+  assert not exists (select 1 from public.review_check_assets), 'nothing';
+  begin
+    perform public.create_review_check((select id from b3_ids where name = 'rt'), array[(select id from b3_ids where name = 'a1')], 'x@example.org');
+    raise exception 'outsiders can''t send';
+  exception when no_data_found then null;
+  end;
+end $$;
+
+-- The public page, as anon with only the token.
+reset role;
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+do $$
+declare
+  token text := (select token from b3_tokens where name = 'v1');
+  view jsonb;
+  asset uuid;
+  started jsonb;
+begin
+  assert public.review_check_view('nope') ->> 'status' = 'unknown', 'malformed';
+  assert public.review_check_view('alhc_rev_' || repeat('0', 64)) ->> 'status' = 'unknown', 'well-formed but unknown';
+  assert public.review_check_view(upper(token)) ->> 'status' = 'unknown', 'exact token only';
+  view := public.review_check_view(token);
+  assert view ->> 'status' = 'ok', 'the link works';
+  assert jsonb_array_length(view -> 'assets') = 2, 'its two files';
+  assert view -> 'review' ->> 'task_title' = 'Poster design';
+  assert not (view -> 'review' ? 'token_hash') and not (view::text like '%' || token || '%'), 'nothing secret comes back';
+  asset := (view -> 'assets' -> 0 ->> 'id')::uuid;
+  insert into b3_ids values ('asset1', asset);
+  assert public.review_check_file(token, asset) ->> 'status' = 'ok', 'a file of the round';
+  assert public.review_check_file(token, (select id from b3_ids where name = 'a1')) ->> 'status' = 'unknown',
+    'by asset id only, never a raw attachment id';
+  assert public.review_check_file(token, gen_random_uuid()) ->> 'status' = 'unknown', 'nothing else';
+
+  assert public.review_check_upload_start(token, 'setup.exe', 'application/octet-stream', 100) ->> 'status' = 'blocked_type', 'no programs';
+  assert public.review_check_upload_start(token, 'page.html', 'text/html', 100) ->> 'status' = 'blocked_type', 'no web pages';
+  assert public.review_check_upload_start(token, 'huge.mov', 'video/quicktime', 26214401) ->> 'status' = 'too_large', '25 MB';
+  started := public.review_check_upload_start(token, 'Final poster.png', 'image/png', 5000);
+  assert started ->> 'status' = 'ok', 'a file back';
+  assert started ->> 'path' like (select id from b3_ids where name = 'rt')::text || '/%-review-Final_poster.png', 'in the task''s folder';
+  insert into b3_ids values ('upload', (started ->> 'file_id')::uuid);
+  insert into b3_tokens values ('upload_path', started ->> 'path');
+  assert public.review_check_upload_finish(token, (started ->> 'file_id')::uuid) ->> 'status' = 'missing', 'not there yet';
+
+  assert public.review_check_decide(token, 'changes_requested') ->> 'status' = 'empty', 'feedback needs words';
+  assert public.review_check_decide(token, 'changes_requested', null,
+    jsonb_build_array(jsonb_build_object('asset_id', gen_random_uuid(), 'x', 0.5, 'y', 0.5, 'body', 'x'))) ->> 'status' = 'invalid',
+    'a pin on someone else''s file is refused';
+  assert public.review_check_decide(token, 'changes_requested', null,
+    jsonb_build_array(jsonb_build_object('asset_id', asset, 'x', 1.5, 'y', 0.5, 'body', 'x'))) ->> 'status' = 'invalid',
+    'a pin outside the file is refused';
+  assert public.review_check_decide(token, 'maybe') ->> 'status' = 'invalid', 'two answers only';
+  begin
+    perform 1 from public.review_checks;
+    raise exception 'anon reads no table';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+
+-- The upload lands in Storage (the app's signed upload link); finishing makes it part of the round.
+reset role;
+insert into storage.objects (bucket_id, name, metadata)
+values ('task-attachments', (select token from b3_tokens where name = 'upload_path'), '{"size": 4321, "mimetype": "image/png"}');
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+do $$
+declare
+  token text := (select token from b3_tokens where name = 'v1');
+  asset uuid := (select id from b3_ids where name = 'asset1');
+  result jsonb;
+begin
+  result := public.review_check_upload_finish(token, (select id from b3_ids where name = 'upload'));
+  assert result ->> 'status' = 'ok', 'finished';
+  assert (result -> 'file' ->> 'size')::int = 4321, 'the size Storage saw';
+  assert jsonb_array_length(public.review_check_view(token) -> 'files') = 1, 'listed on the page';
+  assert public.review_check_file(token, (select id from b3_ids where name = 'upload')) ->> 'status' = 'ok', 'and openable';
+
+  result := public.review_check_decide(token, 'changes_requested', 'Bigger logo please', jsonb_build_array(
+    jsonb_build_object('asset_id', asset, 'x', 0.25, 'y', 0.75, 'body', 'Make this bigger'),
+    jsonb_build_object('asset_id', asset, 'page', 2, 'x', 0.5, 'y', 0.5, 'body', 'Typo here'),
+    jsonb_build_object('asset_id', asset, 'time', 12.4, 'body', 'Cut here')
+  ));
+  assert result ->> 'status' = 'ok' and result ->> 'review_status' = 'changes_requested', 'feedback sent';
+  assert public.review_check_decide(token, 'approved') ->> 'status' = 'closed', 'one decision per round';
+  assert public.review_check_upload_start(token, 'late.png', 'image/png', 10) ->> 'status' = 'closed', 'no uploads after it';
+  assert public.review_check_view(token) ->> 'status' = 'ok', 'still viewable until it expires';
+end $$;
+reset role;
+do $$
+declare
+  rc uuid := (select id from b3_ids where name = 'rc1');
+  c public.comments;
+begin
+  select * into c from public.comments where review_check_id = rc;
+  assert c.id is not null, 'the outcome is a comment on the task';
+  assert c.author_id is null and c.email_direction = 'received' and c.email_address = 'client@example.org', 'from the reviewer';
+  assert c.body like 'Requested changes (review v1)%' and c.body like '%1. poster.png: Make this bigger%'
+    and c.body like '%2. poster.png, page 2: Typo here%' and c.body like '%3. poster.png at 0:12: Cut here%'
+    and c.body like '%Files sent back: Final poster.png%', format('pins summarized: %s', c.body);
+  assert (select count(*) from public.review_check_pins where review_id = rc) = 3, 'three pins';
+  assert (select comment_id from public.review_checks where id = rc) = c.id, 'linked';
+  assert exists (
+    select 1 from public.inbox_items i
+    where i.recipient_id = 'b3b30026-0000-4000-8000-000000000003' and i.kind = 'approval_decided'
+      and i.data ->> 'review_check_id' = rc::text and i.data ->> 'status' = 'changes_requested'
+  ), 'the assignee is told';
+end $$;
+
+-- Round 2 supersedes an open round 1; a new link replaces the old one; links expire; too many requests stop.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  result jsonb;
+  rotated jsonb;
+begin
+  result := public.create_review_check((select id from b3_ids where name = 'rt'), array[(select id from b3_ids where name = 'a1')], 'client@example.org');
+  assert (result ->> 'round')::int = 2, 'v2';
+  insert into b3_tokens values ('v2', result ->> 'token');
+  insert into b3_ids values ('rc2', (result ->> 'id')::uuid);
+  result := public.create_review_check((select id from b3_ids where name = 'rt'), array[(select id from b3_ids where name = 'a2')], 'client@example.org');
+  assert (result ->> 'round')::int = 3, 'v3';
+  insert into b3_tokens values ('v3', result ->> 'token');
+  insert into b3_ids values ('rc3', (result ->> 'id')::uuid);
+  assert (select status from public.review_checks where id = (select id from b3_ids where name = 'rc2')) = 'superseded', 'v2 superseded by v3';
+  rotated := public.rotate_review_check_token((result ->> 'id')::uuid);
+  insert into b3_tokens values ('v3b', rotated ->> 'token');
+  assert public.cancel_review_check((select id from b3_ids where name = 'rc1')) = 'changes_requested', 'a decided round stays decided';
+  begin
+    insert into public.comments (task_id, body, review_check_id)
+    values ((select id from b3_ids where name = 'rt'), 'Approved (review v3)', (select id from b3_ids where name = 'rc3'));
+    raise exception 'clients can''t pass a comment off as a review''s outcome';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+reset role;
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+do $$
+begin
+  assert public.review_check_decide((select token from b3_tokens where name = 'v2'), 'approved') ->> 'status' = 'closed',
+    'a superseded round can''t be answered';
+  assert public.review_check_view((select token from b3_tokens where name = 'v3')) ->> 'status' = 'unknown', 'the replaced link is dead';
+  assert public.review_check_view((select token from b3_tokens where name = 'v3b')) ->> 'status' = 'ok', 'the new one works';
+end $$;
+reset role;
+update public.review_checks set hits = 600, hits_window_started_at = now() where id = (select id from b3_ids where name = 'rc3');
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+select public.review_check_view((select token from b3_tokens where name = 'v3b')) ->> 'status' = 'rate_limited' as ok \gset
+\if :ok
+\else
+  \echo 'expected rate_limited'
+  select 1/0;
+\endif
+reset role;
+update public.review_checks set expires_at = now() - interval '1 minute', hits = 0 where id = (select id from b3_ids where name = 'rc3');
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+do $$
+begin
+  assert public.review_check_view((select token from b3_tokens where name = 'v3b')) ->> 'status' = 'expired', 'expired links say so, nothing more';
+  assert public.review_check_decide((select token from b3_tokens where name = 'v3b'), 'approved') ->> 'status' = 'expired', 'and take nothing';
+end $$;
+reset role;
+
+-- An approval: approved status, a comment, rules fire like an approval decision.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b3b30026-0000-4000-8000-000000000001', false) is not null as ok \gset
+select public.create_review_check((select id from b3_ids where name = 'rt'), array[(select id from b3_ids where name = 'a2')], 'client@example.org') ->> 'token' as approve_token \gset
+reset role;
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+select public.review_check_decide(:'approve_token', 'approved', 'Looks great') ->> 'review_status' = 'approved' as ok \gset
+\if :ok
+\else
+  \echo 'expected approved'
+  select 1/0;
+\endif
+reset role;
+do $$
+begin
+  assert exists (select 1 from public.comments c join public.review_checks r on r.comment_id = c.id
+    where r.status = 'approved' and c.body like 'Approved (review v4)%Looks great%'), 'the approval is on the task';
+end $$;
+
 do $$ begin raise notice 'oct 26 batch 3 smoke: all assertions passed'; end $$;

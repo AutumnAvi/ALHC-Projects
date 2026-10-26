@@ -53,10 +53,15 @@ export function setPaneWide(wide: boolean) {
   write(PANE_WIDE_KEY, wide ? "1" : "0");
 }
 
-export type ActivityTab = "comments" | "all";
+// "reviews" since Oct 26 notes (batch 3): the task's review checks.
+export type ActivityTab = "comments" | "all" | "reviews";
+
+function activityTabOf(value: string | null): ActivityTab {
+  return value === "all" || value === "reviews" ? value : "comments";
+}
 
 export function useActivityTab(): ActivityTab {
-  return useSyncExternalStore(subscribePaneSize, () => (read(ACTIVITY_TAB_KEY) === "all" ? "all" : "comments"), () => "comments");
+  return useSyncExternalStore(subscribePaneSize, () => activityTabOf(read(ACTIVITY_TAB_KEY)), () => "comments");
 }
 
 export function setActivityTab(tab: ActivityTab) {

@@ -1,5 +1,6 @@
 "use client";
 
+import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
 import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
@@ -416,6 +417,8 @@ export function TaskActivity({
           [
             { key: "comments", label: "Comments", count: commentCount },
             { key: "all", label: "All activity", count: 0 },
+            // Oct 26 notes (batch 3): each review check sent for this task, with its pins and files.
+            { key: "reviews", label: "Reviews", count: 0 },
           ] as const
         ).map((t) => (
           <button
@@ -433,66 +436,74 @@ export function TaskActivity({
           </button>
         ))}
       </div>
-      {shown.length === 0 ? (
-        <p id="activity-panel" role="tabpanel" aria-labelledby={`activity-tab-${tab}`} className="py-4 text-sm text-zinc-500">
-          {canComment ? "No comments yet. Ask a question or share an update below." : "No comments yet."}
-        </p>
-      ) : null}
-      {olderCursor ? (
-        <button
-          type="button"
-          className="btn-ghost mt-3 text-zinc-500"
-          disabled={loadingEarlier}
-          onClick={() => {
-            const cursor = olderCursor;
-            setLoadingEarlier(true);
-            void loadOlderComments(task.id, cursor.beforeAt, cursor.beforeId).then((result) => {
-              setLoadingEarlier(false);
-              if (result.error || !result.comments) {
-                notify(result.error ?? "Couldn’t load earlier comments");
-                return;
-              }
-              setEarlier((current) => [...result.comments!, ...current]);
-              setOlderCursor(result.older ?? null);
-            });
-          }}
-        >
-          {loadingEarlier ? "Loading…" : "Show earlier comments"}
-        </button>
-      ) : null}
-      <ol
-        id={shown.length ? "activity-panel" : undefined}
-        role={shown.length ? "tabpanel" : undefined}
-        aria-labelledby={shown.length ? `activity-tab-${tab}` : undefined}
-        className={`flex flex-col gap-3 ${shown.length ? "mt-3" : ""}`}
-      >
-        {shown.map((entry) =>
-          entry.type === "story" ? (
-            <li key={entry.story.id} className="flex items-baseline gap-2 pl-1 text-xs text-zinc-500">
-              <span aria-hidden className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-zinc-300" />
-              <p className="min-w-0">
-                <span className="font-medium text-zinc-700">{storyActor(entry.story)}</span>{" "}
-                {storyText(entry.story)} · <Timestamp iso={entry.story.createdAt} />
-              </p>
-            </li>
-          ) : (
-            <CommentItem
-              key={entry.key}
-              comment={entry.comment}
-              pending={entry.pending}
-              authorName={entry.comment.ruleName ? `Rule “${entry.comment.ruleName}”` : nameOf(entry.comment.authorId)}
-              mine={entry.comment.authorId !== null && entry.comment.authorId === memberId}
-              canComment={canComment}
-              memberId={memberId}
-              nameOf={nameOf}
-              candidates={candidates}
-              mentioned={entry.comment.mentionIds.flatMap((mentionId) => profileById(mentionId) ?? [])}
-              describe={describe}
-              teams={task.mentionTeams}
-            />
-          ),
-        )}
-      </ol>
+      {tab === "reviews" ? (
+        <div id="activity-panel" role="tabpanel" aria-labelledby="activity-tab-reviews" className="pt-3">
+          <TaskReviews task={task} profiles={profiles} />
+        </div>
+      ) : (
+        <>
+          {shown.length === 0 ? (
+            <p id="activity-panel" role="tabpanel" aria-labelledby={`activity-tab-${tab}`} className="py-4 text-sm text-zinc-500">
+              {canComment ? "No comments yet. Ask a question or share an update below." : "No comments yet."}
+            </p>
+          ) : null}
+          {olderCursor ? (
+            <button
+              type="button"
+              className="btn-ghost mt-3 text-zinc-500"
+              disabled={loadingEarlier}
+              onClick={() => {
+                const cursor = olderCursor;
+                setLoadingEarlier(true);
+                void loadOlderComments(task.id, cursor.beforeAt, cursor.beforeId).then((result) => {
+                  setLoadingEarlier(false);
+                  if (result.error || !result.comments) {
+                    notify(result.error ?? "Couldn’t load earlier comments");
+                    return;
+                  }
+                  setEarlier((current) => [...result.comments!, ...current]);
+                  setOlderCursor(result.older ?? null);
+                });
+              }}
+            >
+              {loadingEarlier ? "Loading…" : "Show earlier comments"}
+            </button>
+          ) : null}
+          <ol
+            id={shown.length ? "activity-panel" : undefined}
+            role={shown.length ? "tabpanel" : undefined}
+            aria-labelledby={shown.length ? `activity-tab-${tab}` : undefined}
+            className={`flex flex-col gap-3 ${shown.length ? "mt-3" : ""}`}
+          >
+            {shown.map((entry) =>
+              entry.type === "story" ? (
+                <li key={entry.story.id} className="flex items-baseline gap-2 pl-1 text-xs text-zinc-500">
+                  <span aria-hidden className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-zinc-300" />
+                  <p className="min-w-0">
+                    <span className="font-medium text-zinc-700">{storyActor(entry.story)}</span>{" "}
+                    {storyText(entry.story)} · <Timestamp iso={entry.story.createdAt} />
+                  </p>
+                </li>
+              ) : (
+                <CommentItem
+                  key={entry.key}
+                  comment={entry.comment}
+                  pending={entry.pending}
+                  authorName={entry.comment.ruleName ? `Rule “${entry.comment.ruleName}”` : nameOf(entry.comment.authorId)}
+                  mine={entry.comment.authorId !== null && entry.comment.authorId === memberId}
+                  canComment={canComment}
+                  memberId={memberId}
+                  nameOf={nameOf}
+                  candidates={candidates}
+                  mentioned={entry.comment.mentionIds.flatMap((mentionId) => profileById(mentionId) ?? [])}
+                  describe={describe}
+                  teams={task.mentionTeams}
+                />
+              ),
+            )}
+          </ol>
+        </>
+      )}
     </section>
   );
 }
@@ -623,6 +634,7 @@ function CommentItem({
           >
             {received ? comment.body : <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} />}
           </EmailCard>
+          {comment.reviewCheckId ? <ReviewLink /> : null}
           {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
         </div>
       </li>
@@ -679,9 +691,19 @@ function CommentItem({
             <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} />
           </p>
         )}
+        {comment.reviewCheckId ? <ReviewLink /> : null}
         {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
       </div>
     </li>
+  );
+}
+
+// Oct 26 notes (batch 3): a review's outcome comment links to the Reviews tab (its pins on the files).
+function ReviewLink() {
+  return (
+    <button type="button" onClick={() => setActivityTab("reviews")} className="mt-1 text-xs font-medium text-accent-700 hover:underline">
+      See the pins and files in Reviews
+    </button>
   );
 }
 
