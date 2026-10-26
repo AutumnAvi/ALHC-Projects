@@ -342,7 +342,7 @@ function TabEmptyState({ tab, bookmarks }: { tab: InboxTab; bookmarks: boolean }
     case "mentioned":
       return (
         <EmptyState icon={AtSign} title="No @mentions yet">
-          When someone @mentions you in a task comment, a project message, or a team message, it shows up here,
+          When someone @mentions you in a task comment or a project message, it shows up here,
           archived or not.
         </EmptyState>
       );

@@ -12,6 +12,7 @@ import {
   listPendingInvites,
   listProjectMembers,
   listTeams,
+  listViewableTeamIds,
 } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 
@@ -38,8 +39,13 @@ export default async function ProjectMembersPage({
     hasOct25Schema(),
   ]);
   if (!project || !role) notFound();
-  // Group invite (Admin+): the team directory is workspace-wide, so any team can be added.
-  const teams = hasRole(role, "admin") ? await listTeams() : [];
+  // Group invite (Admin+): only teams the viewer can see inside (their own; every team for a workspace
+  // admin) — add_team_to_project refuses the rest since Oct 26 notes (batch 4).
+  const admin = hasRole(role, "admin");
+  const [teams, viewable] = await Promise.all([
+    admin ? listTeams() : Promise.resolve([]),
+    admin ? listViewableTeamIds() : Promise.resolve(new Set<string>()),
+  ]);
 
   return (
     <MembersManager
@@ -47,7 +53,9 @@ export default async function ProjectMembersPage({
       members={members}
       viewerId={viewer.id}
       viewerRole={role}
-      teams={teams.map((t) => ({ id: t.id, name: t.name, memberCount: t.members.length }))}
+      teams={teams
+        .filter((t) => viewable.has(t.id))
+        .map((t) => ({ id: t.id, name: t.name, memberCount: t.members.length }))}
       invites={invites}
       resendable={resendable && isEmailConfigured()}
       allowCommenter={allowCommenter}

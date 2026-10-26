@@ -6,7 +6,7 @@ import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState } from "@/components/ui";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { ADMIN_PATH_FOR_SETTINGS } from "@/lib/admin";
-import { getWorkspace, isWorkspaceAdmin, listTeams } from "@/lib/data";
+import { getWorkspace, isWorkspaceAdmin, listMyTeamIds, listTeams } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Teams · Workspace settings" };
 
@@ -14,7 +14,8 @@ export const metadata: Metadata = { title: "Teams · Workspace settings" };
 // (anyone). Workspace admins see this in Admin console → Teams.
 export default async function WorkspaceTeamsPage() {
   if (await isWorkspaceAdmin()) redirect(ADMIN_PATH_FOR_SETTINGS["/settings/workspace/teams"]);
-  const [workspace, teams] = await Promise.all([getWorkspace(), listTeams()]);
+  // Who is in a team shows only to its members (Oct 26 notes, batch 4); admins never get here.
+  const [workspace, teams, mine] = await Promise.all([getWorkspace(), listTeams(), listMyTeamIds()]);
   return (
     <>
       <SettingsCard
@@ -55,8 +56,9 @@ export default async function WorkspaceTeamsPage() {
                       {team.name}
                     </Link>
                     <p className="truncate text-xs text-zinc-500">
-                      {team.members.length} {team.members.length === 1 ? "person" : "people"}
-                      {leads.length ? ` · Led by ${leads.join(", ")}` : ""}
+                      {mine.has(team.id)
+                        ? `${team.members.length} ${team.members.length === 1 ? "person" : "people"}${leads.length ? ` · Led by ${leads.join(", ")}` : ""}`
+                        : "Not a member"}
                     </p>
                   </div>
                   {team.id === workspace?.defaultTeamId ? <span className="chip bg-accent-50 text-accent-700">Default team</span> : null}

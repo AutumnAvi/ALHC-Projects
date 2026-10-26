@@ -70,7 +70,7 @@ export function TeamOverviewSkeleton() {
   );
 }
 
-// Members, All work, and Messages: a heading and a few rows.
+// Members and All work: a heading and a few rows.
 export function TeamListSkeleton({ label }: { label: string }) {
   return (
     <LoadingRegion label={label}>

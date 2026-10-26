@@ -7,7 +7,6 @@ import {
   ClipboardList,
   FolderKanban,
   Link2,
-  MessagesSquare,
   MoreHorizontal,
   Trash2,
   UserPlus,
@@ -20,13 +19,12 @@ import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
 import { deleteTeam, updateTeam } from "@/lib/actions";
-import { TEAM_TABS, teamTabHref, type TeamTab } from "@/lib/teams";
+import { ADD_TEAM_MEMBER_ID, TEAM_TABS, teamTabHref, type TeamTab } from "@/lib/teams";
 
 const TAB_ICONS: Record<TeamTab, LucideIcon> = {
   overview: ClipboardList,
   members: Users,
   work: FolderKanban,
-  messages: MessagesSquare,
   calendar: CalendarDays,
 };
 
@@ -34,13 +32,14 @@ type HeaderMember = { profileId: string; name: string };
 
 // Asana's team header: "Teams /", the team's icon and name (editable by leads and workspace admins),
 // a "…" menu, and on the right up to three member avatars; then the tabs Overview, Members, All work,
-// Messages, and Calendar.
+// and Calendar. Only the team's members and workspace admins get here (the layout checks first).
 export function TeamHeader({
   teamId,
   name,
   members,
   canManage,
   isDefault,
+  requestCount = 0,
 }: {
   teamId: string;
   name: string;
@@ -49,6 +48,8 @@ export function TeamHeader({
   canManage: boolean;
   // The workspace's default team: new members join it automatically; it can't be deleted.
   isDefault: boolean;
+  // Oct 26 notes (batch 4): open requests to join, for the people who decide (0 for everyone else).
+  requestCount?: number;
 }) {
   const pathname = usePathname();
   const [, run] = useServerAction();
@@ -119,11 +120,11 @@ export function TeamHeader({
             <Link
               href={`${membersHref}#add-member`}
               onClick={(e) => {
-                // Already on Members: just move into the email box.
-                const input = document.getElementById("team-member-email");
-                if (pathname === membersHref && input) {
+                // Already on Members: just move to the person picker.
+                const picker = document.getElementById(ADD_TEAM_MEMBER_ID);
+                if (pathname === membersHref && picker) {
                   e.preventDefault();
-                  input.focus();
+                  picker.focus();
                 }
               }}
               className="btn-primary h-7 px-3"
@@ -140,10 +141,20 @@ export function TeamHeader({
           const href = teamTabHref(teamId, key);
           const Icon = TAB_ICONS[key];
           const active = key === "overview" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+          const requests = key === "members" ? requestCount : 0;
           return (
             <Link key={key} href={href} aria-current={active ? "page" : undefined} className={HEADER_TAB}>
               <Icon className="size-3.5" aria-hidden />
               {label}
+              {requests > 0 ? (
+                <span
+                  className="ml-0.5 rounded-full bg-amber-100 px-1.5 text-2xs font-semibold tabular-nums text-amber-800"
+                  data-tooltip={requests === 1 ? "1 person asked to join" : `${requests} people asked to join`}
+                >
+                  {requests}
+                  <span className="sr-only">{requests === 1 ? " person asked to join" : " people asked to join"}</span>
+                </span>
+              ) : null}
             </Link>
           );
         })}
