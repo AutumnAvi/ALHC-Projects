@@ -1,6 +1,37 @@
 -- ALHC Projects — Oct 27 notes, batch 6.
 --
--- @@HEADER@@
+-- 40. Adding a subtask failed with 'column reference "number" is ambiguous' when the project reuses
+--     freed numbers (assign_request_number_on_insert; asserted patch). Regression test in suite zz35.
+--
+-- 39. Each project numbers the tasks it holds: task_project_numbers (one row per task and project; read
+--     with the task and the project; written only by numbering triggers; never removed). A task added to
+--     a numbering project gets that project's next number (its template, scope, period, counter field);
+--     re-adding keeps it. The home project's number stays on tasks.req_* (shown outside projects: My
+--     tasks, search, the Inbox, emails, rules) and "Make home" moves the new home's number there.
+--     task_request_labels_in (invoker) = the labels inside one project; task_numbers = a task's numbers;
+--     search_tasks and a view's search find any of them. Existing multi-homed tasks get their other
+--     projects' numbers once (backfill); nothing already issued changes. Converting a subtask to a task
+--     numbers it like a new task (its subtasks' paths follow); a task made a subtask keeps its number.
+--
+-- 41. List / My tasks rows remember which ones a person expanded: profile_preferences.expanded_task_ids
+--     (own row; set_task_row_expanded, invoker).
+--
+-- 42. subtask_parent_candidates (invoker): the "Make a subtask of…" picker.
+--
+-- 43. Blocked = any link that holds up completion: project_task_cards / project_schedule_cards count
+--     every such kind (asserted patches); task_open_blockers / open_blocker_counts (invoker) list them.
+--
+-- 44. projects.dependency_shift = auto | ask (default) | off, Admin+ like the project's other settings;
+--     dependency_shift_mode(tasks) picks the mode for a change.
+--
+-- 45 / 45b. Approval tasks: approvers separate from the assignee (task_approvers), Any one / Everyone
+--     and an approval due date (task_approval_settings), rounds sent with "Ready for approval"
+--     (approval_rounds; approval_requests.round_id), Request changes needs a note, Withdraw, Feedback /
+--     Rejection received, Hand off, Owners / Admins reassign, More steps after approval (move to a
+--     section or just notify), reminders the day before and once overdue (from workflow_tick), the
+--     view filter `approval` incl. waiting_on_me. Only Approve without More steps completes the task.
+--     Five new client SECURITY DEFINER functions (pinned in suite 60): set_task_approvers,
+--     send_for_approval, withdraw_approval, acknowledge_approval, hand_off_approval. Nothing new for anon.
 --
 -- No row-removal or object-removal keywords anywhere in this file (the hosted connector refuses them).
 -- Additive: no tail.
