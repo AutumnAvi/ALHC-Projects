@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Layers, ListChecks, Lock, MessageSquare, Paperclip, Repeat, UserRound } from "lucide-react";
+import { CalendarDays, Layers, ListChecks, MessageSquare, Paperclip, Repeat, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
@@ -146,16 +146,7 @@ export function TaskBadges({ task }: { task: ProjectTask }) {
           <span className="sr-only">Repeats</span>
         </span>
       ) : null}
-      {task.blockedBy > 0 && !task.completedAt ? (
-        <span
-          className="inline-flex items-center gap-1 text-xs tabular-nums text-amber-700"
-          title={`Blocked by ${task.blockedBy} incomplete task${task.blockedBy === 1 ? "" : "s"}`}
-        >
-          <Lock className="size-3.5" aria-hidden />
-          <span className="sr-only">Blocked by</span>
-          {task.blockedBy}
-        </span>
-      ) : null}
+      {/* Blocked tasks wear the lock on their completion control (BlockedToggle; Oct 27 notes, batch 6). */}
       {task.subtaskCount > 0 ? (
         <span
           className="inline-flex items-center gap-1 text-xs tabular-nums text-zinc-500"

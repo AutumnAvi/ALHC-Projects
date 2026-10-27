@@ -9,6 +9,7 @@ import { useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useViewConfig } from "@/components/project/view-config";
 import { useOpenTaskId } from "@/components/shell/right-panel";
+import { BlockedToggle } from "@/components/task/blockers-popover";
 import { TaskLink } from "@/components/task/task-link";
 import { useServerAction } from "@/components/toast";
 import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
@@ -20,6 +21,7 @@ import { displayTaskTitle } from "@/lib/request-numbers";
 import type { FieldDef } from "@/lib/fields";
 import { columnsOf, groupOf, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
+import { blockedCount } from "./inline-cells";
 import { GroupTitle } from "./list-view";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, addTaskKindOf } from "./shared";
 import { Assignee, CommentCount, DueDate, StartDate, TaskBadges } from "./task-meta";
@@ -173,6 +175,8 @@ export function BoardView({
 
   function toggle(task: ProjectTask) {
     const completed = !task.completedAt;
+    // A blocked card has a lock instead of a checkbox (Oct 27 notes, batch 6): never try and undo.
+    if (completed && blockedCount(task) > 0) return;
     run(
       () => setTaskCompleted(task.id, completed),
       () => applyChange({ type: "complete", taskId: task.id, completed }),
@@ -387,6 +391,7 @@ function TaskCard({
   onDragEnd: () => void;
 }) {
   const completed = Boolean(task.completedAt);
+  const blocked = blockedCount(task);
   const due = showDue && task.dueOn;
   const start = showStart && task.startOn;
   const hasCounts =
@@ -403,15 +408,20 @@ function TaskCard({
     >
       <div className="flex items-start gap-2">
         <span className="pt-0.5">
-          <CompleteToggle
-            size="sm"
-            kind={task.kind}
-            completed={completed}
-            readOnly={!canEdit}
-          disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
-            onToggle={onToggle}
-            label={kindToggleLabel(task.kind, task.title, completed)}
-          />
+          {blocked > 0 ? (
+            // Blocked: the completion control is locked; hovering or tapping it lists what it waits on.
+            <BlockedToggle taskId={task.id} title={task.title} count={blocked} size="sm" />
+          ) : (
+            <CompleteToggle
+              size="sm"
+              kind={task.kind}
+              completed={completed}
+              readOnly={!canEdit}
+              disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
+              onToggle={onToggle}
+              label={kindToggleLabel(task.kind, task.title, completed)}
+            />
+          )}
         </span>
         <TaskLink
           taskId={task.id}

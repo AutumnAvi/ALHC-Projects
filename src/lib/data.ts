@@ -1266,6 +1266,8 @@ export type SubtaskItem = {
   subtaskDoneCount: number;
   // The request number with its project's bracket setting (task numbering on), else null.
   requestLabel?: RequestLabel | null;
+  // Open blockers (the completion check's count; Oct 27 notes, batch 6). Missing = not loaded.
+  blockedBy?: number;
 };
 
 const SUBTASK_COLUMNS = "id, parent_task_id, title, completed_at, assignee_id, start_on, due_on, kind, subtask_order";
@@ -1320,7 +1322,9 @@ export const listSubtaskTrees = cache(async (rootIds: string[], projectId?: stri
     await supabase.from("tasks").select(SUBTASK_COLUMNS).in("root_task_id", rootIds).is("deleted_at", null),
     "subtasks",
   );
-  return withRequestLabels(toSubtaskItems(list, list), projectId);
+  const blocked = await openBlockerCounts(supabase, list.filter((t) => !t.completed_at).map((t) => t.id));
+  const items = toSubtaskItems(list, list).map((item) => ({ ...item, blockedBy: blocked.get(item.id) ?? 0 }));
+  return withRequestLabels(items, projectId);
 });
 
 // Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).
@@ -2130,6 +2134,8 @@ export type MyTask = {
   subtaskDoneCount?: number;
   approvalStatus?: ApprovalTaskStatus | null;
   approvalPaused?: boolean;
+  // A subtask's top-level task (its expanded tree loads by that); null for a top-level task.
+  rootTaskId?: string | null;
 };
 
 function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
@@ -6656,19 +6662,18 @@ async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask
   if (ids.length === 0) return extras;
   const supabase = await createClient();
   const approvalIds = tasks.filter((t) => t.kind === "approval").map((t) => t.id);
-  const [blockers, children, states] = await Promise.all([
-    supabase.rpc("open_blocker_counts", { task_ids: ids }),
+  const [blocked, children, states, roots] = await Promise.all([
+    openBlockerCounts(supabase, ids),
     supabase.from("tasks").select("parent_task_id, completed_at").in("parent_task_id", ids).is("deleted_at", null),
     Promise.all(
       approvalIds.slice(0, 200).map((taskId) =>
         supabase.rpc("task_approval_state", { target_task: taskId }).then((r) => [taskId, r.data] as const),
       ),
     ),
+    supabase.from("tasks").select("id, root_task_id").in("id", ids).not("root_task_id", "is", null),
   ]);
-  const blocked = blockers.data && typeof blockers.data === "object" && !Array.isArray(blockers.data) ? blockers.data : {};
-  for (const [taskId, count] of Object.entries(blocked)) {
-    if (typeof count === "number") extras.set(taskId, { ...extras.get(taskId), blockedBy: count });
-  }
+  for (const [taskId, count] of blocked) extras.set(taskId, { ...extras.get(taskId), blockedBy: count });
+  for (const r of roots.data ?? []) extras.set(r.id, { ...extras.get(r.id), rootTaskId: r.root_task_id });
   for (const c of children.data ?? []) {
     if (!c.parent_task_id) continue;
     const prev = extras.get(c.parent_task_id) ?? {};
@@ -6772,3 +6777,17 @@ export const listAwaitingMyApproval = cache(async (): Promise<AwaitingApproval[]
   }
   return out;
 });
+
+// Open-blocker counts (open_blocker_counts: the completion check's count, hidden blockers included as a
+// number). Empty on a database without the function.
+async function openBlockerCounts(supabase: ServerClient, ids: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (let i = 0; i < ids.length; i += 2000) {
+    const result = await supabase.rpc("open_blocker_counts", { task_ids: ids.slice(i, i + 2000) });
+    if (result.error || !result.data || typeof result.data !== "object" || Array.isArray(result.data)) return counts;
+    for (const [taskId, count] of Object.entries(result.data)) {
+      if (typeof count === "number" && count > 0) counts.set(taskId, count);
+    }
+  }
+  return counts;
+}

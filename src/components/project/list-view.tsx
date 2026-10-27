@@ -27,10 +27,23 @@ import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dial
 import { useViewConfig } from "@/components/project/view-config";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { useOpenTaskId } from "@/components/shell/right-panel";
+import { BlockedToggle } from "@/components/task/blockers-popover";
+import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { placeSection, placeTask, saveListCollapsedGroups, saveListColumnWidths, setTaskCompleted, updateTask } from "@/lib/actions";
+import {
+  moveTask,
+  placeSection,
+  placeTask,
+  saveListCollapsedGroups,
+  saveListColumnWidths,
+  setFieldValue,
+  setTaskCompleted,
+  updateSubtask,
+  updateTask,
+  type ActionResult,
+} from "@/lib/actions";
 import {
   MAX_COLUMN_WIDTH,
   clampColumnWidth,
@@ -39,9 +52,9 @@ import {
   type ColumnWidths,
 } from "@/lib/column-widths";
 import type { Profile, ProjectTask, ProjectTaskGroupPage, Section, SubtaskItem } from "@/lib/data";
-import { displayTaskTitle } from "@/lib/request-numbers";
-import { subtasksByParent } from "@/lib/subtasks";
+import { displayTaskTitle, type RequestLabel } from "@/lib/request-numbers";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
+import type { Json } from "@/lib/supabase/database.types";
 import {
   columnsOf,
   fieldRef,
@@ -49,14 +62,32 @@ import {
   hasActiveFilters,
   refFieldId,
   sameConfig,
+  showsSubtasks,
   sortOf,
   type ColumnKey,
   type SortKey,
   type ViewConfig,
 } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
+import {
+  ExpandToggle,
+  InlineAssigneeCell,
+  InlineChoiceCell,
+  InlineDateCell,
+  InlineFieldCell,
+  blockedCount,
+  blockedSkipMessage,
+  flattenSubtaskRows,
+  mergeDateEdit,
+  splitBlocked,
+  useSubtaskTrees,
+  type DateEdit,
+  type FlatSubtaskRow,
+  type RowPatch,
+  type SubtaskTrees,
+} from "./inline-cells";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf } from "./shared";
-import { AttachmentCount, Assignee, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
+import { AttachmentCount, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
 import { useProjectTaskSeeds } from "./task-seeds";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
@@ -78,8 +109,11 @@ type Props = {
   // Server page of cards. Null means every matching task is already in `tasks`.
   taskPage?: ProjectTaskGroupPage[] | null;
   bulk?: Omit<BulkContext, "project">;
-  // “Show subtasks” on: every listed task's subtask tree (null = off).
+  // The subtask trees the server loaded: every listed task's with “Show subtasks” on (the view's
+  // show_subtasks), else the rows this person opened (Oct 27 notes, batch 6). Others load on opening.
   subtasks?: SubtaskItem[] | null;
+  // Rows this person opened (getExpandedTaskIds(); kept per person, newest first).
+  expandedTaskIds?: string[];
   tags: Tag[];
   // The viewer's own saved column widths for this project (list_column_widths).
   columnWidths?: ColumnWidths;
@@ -104,11 +138,14 @@ const HEADER = "sticky top-0 z-20 border-b border-zinc-200 bg-white text-xs font
 const CELL = "flex min-w-0 items-center px-2";
 const STICKY_CELL = "sticky left-0 z-[1] border-r border-zinc-100";
 // The Name cell's leading controls, so the header, rows, subtasks, and the "Add task…" row line up:
-// Editors: drag handle (1rem) · checkbox (0.875rem) · completion (1.125rem), 0.5rem apart, after 0.375rem.
+// Editors: drag handle (1rem) · checkbox (0.875rem) · expand arrow (1rem) · completion (1.125rem), 0.5rem
+// apart, after 0.375rem. Viewers: expand arrow · completion, after 0.75rem.
 const ROW_LEFT = { editor: "pl-1.5", viewer: "pl-3" } as const;
 const NAME_HEADER_INDENT = { editor: "pl-[3.25rem]", viewer: "pl-3" } as const;
-const TITLE_INDENT = { editor: "pl-[4.875rem]", viewer: "pl-[2.375rem]" } as const;
+const TITLE_INDENT = { editor: "pl-[6.375rem]", viewer: "pl-[3.875rem]" } as const;
+// A subtask row's expand arrow sits under its parent's completion control: 1.5rem further in per level.
 const SUBTASK_BASE_REM = { editor: 3.25, viewer: 0.75 } as const;
+const SUBTASK_STEP_REM = 1.5;
 
 function sortSections(list: Section[], change: { id: string; sortOrder: number }) {
   return list
@@ -135,6 +172,7 @@ export function ListView({
   taskPage = null,
   bulk,
   subtasks = null,
+  expandedTaskIds,
   tags,
   columnWidths = {},
   collapsedGroups = [],
@@ -262,6 +300,8 @@ export function ListView({
 
   const toggle = (task: ProjectTask) => {
     const completed = !task.completedAt;
+    // A blocked task has a lock instead of a checkbox; never try (and undo) completing it.
+    if (completed && blockedCount(task) > 0) return;
     run(
       () => setTaskCompleted(task.id, completed),
       () => applyChange({ type: "complete", taskId: task.id, completed }),
@@ -273,6 +313,98 @@ export function ListView({
       () => updateTask(task.id, { title }),
       () => applyChange({ type: "title", taskId: task.id, title }),
     );
+
+  // Oct 27 notes (batch 6): every visible cell edits in place (item 46), and rows open their subtasks
+  // (item 41). Dates go through the dependency shift (dependents may move too), never a plain update.
+  const shift = useDependencyShift();
+  const showAll = showsSubtasks(config);
+  const treeRows: { id: string; rootId: string }[] = [];
+  const treeRowIds = new Set<string>();
+  for (const group of groups) {
+    if (collapsed.has(group.key)) continue;
+    for (const task of visibleTasks(group)) {
+      if (task.subtaskCount <= 0 || treeRowIds.has(task.id)) continue;
+      treeRowIds.add(task.id);
+      treeRows.push({ id: task.id, rootId: task.id });
+    }
+  }
+  const trees = useSubtaskTrees({ initialExpanded: expandedTaskIds, serverSubtasks: subtasks, projectId, rows: treeRows, showAll });
+  // Only the project's members can be assigned (others couldn't read the task); the database decides.
+  const memberIds = bulk?.memberIds ? new Set(bulk.memberIds) : null;
+  const assignable = memberIds ? profiles.filter((p) => memberIds.has(p.id)) : profiles;
+
+  const assign = (task: ProjectTask, assigneeId: string | null) => {
+    if (assigneeId === task.assigneeId) return;
+    run(
+      () => updateTask(task.id, { assigneeId }),
+      () => applyChange({ type: "assign", taskId: task.id, assigneeId }),
+    );
+  };
+  const setField = (task: ProjectTask, field: FieldDef, value: Json) =>
+    run(
+      () => setFieldValue(task.id, field.id, value),
+      () => applyChange({ type: "field", taskId: task.id, fieldId: field.id, value }),
+    );
+  const moveToSection = (task: ProjectTask, sectionId: string | null) => {
+    if (sectionId === task.sectionId) return;
+    const last = optimisticTasks.filter((t) => t.sectionId === sectionId && t.id !== task.id).at(-1)?.sortOrder ?? 0;
+    run(
+      () => moveTask(task.id, projectId, sectionId),
+      () => applyChange({ type: "move", taskId: task.id, sectionId, sortOrder: last + 1024 }),
+    );
+  };
+  // A row's new dates (a task or a subtask). The rows that move (it, and dependents the person lets
+  // move) are drawn in their new place at once.
+  const changeRowDates = (
+    task: { id: string; title: string; startOn: string | null; dueOn: string | null; kind: TaskKind },
+    edit: DateEdit,
+    close: () => void,
+  ) => {
+    const dates = mergeDateEdit(task, edit, task.kind === "milestone");
+    if (!dates) return;
+    const before = new Map<string, RowPatch | undefined>();
+    shift.changeDates(task, dates, {
+      projectId,
+      onPrompt: close,
+      onOptimistic: (moves) => {
+        for (const move of moves) {
+          if (tasksById.has(move.taskId)) {
+            applyChange({ type: "dates", taskId: move.taskId, startOn: move.startOn, dueOn: move.dueOn });
+          } else {
+            const patch = { startOn: move.startOn, dueOn: move.dueOn };
+            if (!before.has(move.taskId)) before.set(move.taskId, trees.keptPatch(move.taskId));
+            trees.show(move.taskId, patch);
+            trees.keep(move.taskId, patch);
+          }
+        }
+      },
+      onRevert: () => before.forEach((previous, id) => trees.restore(id, previous)),
+    });
+  };
+  // Subtask edits show at once and are kept until fresh data arrives (a tree loaded in the browser isn't
+  // part of the page's refresh).
+  const editSubtask = (subtask: SubtaskItem, patch: RowPatch, action: () => Promise<ActionResult>) =>
+    run(
+      async () => {
+        const result = await action();
+        if (!result.error) trees.keep(subtask.id, patch);
+        return result;
+      },
+      () => trees.show(subtask.id, patch),
+    );
+  const subtaskHandlers: SubtaskHandlers = {
+    toggle(subtask) {
+      const completed = !subtask.completedAt;
+      if (completed && blockedCount(subtask) > 0) return;
+      editSubtask(subtask, { completedAt: completed ? new Date().toISOString() : null }, () => setTaskCompleted(subtask.id, completed));
+    },
+    rename: (subtask, title) => editSubtask(subtask, { title }, () => updateSubtask(subtask.id, { title })),
+    assign(subtask, assigneeId) {
+      if (assigneeId !== subtask.assigneeId) editSubtask(subtask, { assigneeId }, () => updateTask(subtask.id, { assigneeId }));
+    },
+    dates: changeRowDates,
+    expand: (id) => trees.toggle(id),
+  };
 
   // Shortcuts act on the selection, else the task open in the pane, else the keyboard cursor.
   const targets = () => {
@@ -305,9 +437,19 @@ export function ListView({
       return true;
     },
     complete() {
-      const ids = targets();
+      let ids = targets();
       if (ids.length === 0) return;
       const completed = !ids.every((id) => tasksById.get(id)?.completedAt);
+      if (completed) {
+        // Blocked tasks can't be completed: say so and leave them out (item 43).
+        const listed = ids.flatMap((id) => tasksById.get(id) ?? []);
+        const { blocked } = splitBlocked(listed);
+        const message = blockedSkipMessage(blocked);
+        if (message) notify(message);
+        const skip = new Set(blocked.map((t) => t.id));
+        ids = ids.filter((id) => !skip.has(id));
+        if (ids.length === 0) return;
+      }
       bulkEdit.apply(ids, { action: completed ? "complete" : "reopen" }, () => {
         if (canEdit) for (const taskId of ids) applyChange({ type: "complete", taskId, completed });
       });
@@ -400,6 +542,7 @@ export function ListView({
     profilesById,
     sectionNames: new Map(optimisticSections.map((s) => [s.id, s.name])),
   };
+  const sectionOptions = optimisticSections.map((s) => ({ id: s.id, name: s.name }));
   const rowProps = {
     profilesById,
     tagsById,
@@ -415,11 +558,29 @@ export function ListView({
     selection,
     selecting: selection.selected.length > 0,
     tagsInline,
+    edit: {
+      people: assignable,
+      everyone: profiles,
+      sections: sectionOptions,
+      assign,
+      setField,
+      moveToSection,
+      dates: changeRowDates,
+    },
+  };
+  const subtaskProps = {
+    trees,
+    profilesById,
+    people: assignable,
+    seeds,
+    openTaskId,
+    canEdit,
+    columns,
+    gridStyle,
+    handlers: subtaskHandlers,
   };
   const sectionGroups = groups.filter((g) => g.section);
   const firstSectionGroup = groups.find((g) => g.target.kind === "section");
-  const childrenOf = subtasks ? subtasksByParent(subtasks) : null;
-  const toggleSubtask = (subtask: SubtaskItem) => run(() => setTaskCompleted(subtask.id, !subtask.completedAt));
   const editingField = editingFieldId ? fieldsById.get(editingFieldId) : undefined;
 
   const columnMenu = (column: ColumnKey | "task", index: number) => {
@@ -628,6 +789,8 @@ export function ListView({
                 <TaskRow
                   task={task}
                   {...rowProps}
+                  expanded={task.subtaskCount > 0 && trees.isExpanded(task.id)}
+                  onToggleExpanded={() => trees.toggle(task.id)}
                   draggable={canDragTasks}
                   dragging={draggingTask === task.id}
                   onDragStart={(e) => {
@@ -640,20 +803,8 @@ export function ListView({
                     setTaskDrop(null);
                   }}
                 />
-                {childrenOf ? (
-                  <SubtaskRows
-                    parentId={task.id}
-                    parentTitle={task.title}
-                    depth={1}
-                    childrenOf={childrenOf}
-                    profilesById={profilesById}
-                    seeds={seeds}
-                    openTaskId={openTaskId}
-                    canEdit={canEdit}
-                    columns={columns}
-                    gridStyle={gridStyle}
-                    onToggle={toggleSubtask}
-                  />
+                {task.subtaskCount > 0 && trees.isExpanded(task.id) ? (
+                  <SubtaskRows root={task} {...subtaskProps} />
                 ) : null}
               </div>
             ))}
@@ -743,6 +894,8 @@ export function ListView({
           onClose={() => setEditingFieldId(null)}
         />
       ) : null}
+      {/* "Move dependent tasks too?" after a date change in a row (outside the rows: they contain paint). */}
+      {shift.dialog}
     </div>
   );
 }
@@ -974,7 +1127,7 @@ function HeaderCell({
 
 // The task name. Editors click it to rename in place (Enter saves, Esc cancels); the ">" at the end of
 // the cell, a click elsewhere on the row, or Enter on the selected row opens the task. Below Editor the
-// name is a link to the task.
+// name is a link to the task. Subtask rows use it too (a lighter name, "Subtask:" for screen readers).
 function TaskTitle({
   task,
   seed,
@@ -983,17 +1136,20 @@ function TaskTitle({
   editing,
   setEditing,
   onRename,
+  subtask = false,
 }: {
-  task: ProjectTask;
+  task: { id: string; title: string; completedAt: string | null; requestLabel?: RequestLabel | null };
   seed: () => TaskSeed;
   canEdit: boolean;
   open: boolean;
   editing: boolean;
   setEditing: (editing: boolean) => void;
   onRename: (title: string) => void;
+  subtask?: boolean;
 }) {
   const completed = Boolean(task.completedAt);
-  const tone = completed ? "text-zinc-400 line-through" : "text-zinc-900";
+  const tone = completed ? "text-zinc-400 line-through" : subtask ? "text-zinc-700" : "text-zinc-900";
+  const prefix = subtask ? <span className="sr-only">Subtask: </span> : null;
   if (!canEdit) {
     return (
       <TaskLink
@@ -1003,6 +1159,7 @@ function TaskTitle({
         aria-current={open ? "true" : undefined}
         className={`min-w-0 truncate text-sm hover:underline ${tone}`}
       >
+        {prefix}
         {displayTaskTitle(task.title, task.requestLabel)}
       </TaskLink>
     );
@@ -1013,7 +1170,7 @@ function TaskTitle({
         autoFocus
         defaultValue={task.title}
         maxLength={500}
-        aria-label="Task name"
+        aria-label={subtask ? "Subtask name" : "Task name"}
         onFocus={(e) => e.currentTarget.select()}
         onBlur={(e) => {
           const title = e.currentTarget.value.trim();
@@ -1041,10 +1198,47 @@ function TaskTitle({
       aria-label={`Rename “${task.title}”`}
       className={`-mx-1 min-w-0 truncate rounded px-1 text-left text-sm ring-zinc-200 group-hover:ring-1 hover:ring-zinc-300 ${tone}`}
     >
+      {prefix}
       {displayTaskTitle(task.title, task.requestLabel)}
     </button>
   );
 }
+
+// The ">" at the end of a Name cell: opens the task (shown on hover; always on touch screens).
+function OpenTaskLink({ taskId, title, seed, open }: { taskId: string; title: string; seed: () => TaskSeed; open: boolean }) {
+  return (
+    <TaskLink
+      taskId={taskId}
+      seed={seed}
+      draggable={false}
+      aria-label={`Open “${title}”`}
+      aria-current={open ? "true" : undefined}
+      title="Details"
+      className="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 opacity-0 hover:bg-zinc-200/70 hover:text-zinc-700 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+    >
+      <ChevronRight className="size-4" />
+    </TaskLink>
+  );
+}
+
+// A click on the row itself (not on a control) opens the task. Clicks inside a cell's picker (drawn on
+// <body>, but still the row's child in React) aren't the row's.
+function rowClickOpens(e: React.MouseEvent<HTMLElement>) {
+  const target = e.target as HTMLElement;
+  if (!e.currentTarget.contains(target)) return "outside" as const;
+  return target.closest("a, button, input, select, textarea, label") ? ("control" as const) : ("row" as const);
+}
+
+type RowEdit = {
+  // People who can be assigned (the project's members) and everyone (people fields).
+  people: Profile[];
+  everyone: Profile[];
+  sections: { id: string; name: string }[];
+  assign: (task: ProjectTask, assigneeId: string | null) => void;
+  setField: (task: ProjectTask, field: FieldDef, value: Json) => void;
+  moveToSection: (task: ProjectTask, sectionId: string | null) => void;
+  dates: (task: ProjectTask, edit: DateEdit, close: () => void) => void;
+};
 
 function TaskRow({
   task,
@@ -1062,6 +1256,9 @@ function TaskRow({
   selection,
   selecting,
   tagsInline,
+  edit,
+  expanded,
+  onToggleExpanded,
   draggable,
   dragging,
   onDragStart,
@@ -1082,6 +1279,9 @@ function TaskRow({
   selection: TaskSelection;
   selecting: boolean;
   tagsInline: boolean;
+  edit: RowEdit;
+  expanded: boolean;
+  onToggleExpanded: () => void;
   draggable: boolean;
   dragging: boolean;
   onDragStart: (e: DragEvent) => void;
@@ -1091,9 +1291,11 @@ function TaskRow({
   const seed = () => seeds.task(task);
   // Hovering the row fetches the pane's data, so a click usually finds it ready.
   const prefetch = useTaskPrefetch(task.id, seed);
-  // Renaming in place: the row stops being draggable so the mouse can select text in the name.
+  // Renaming in place (or typing in a cell): the row stops being draggable so the mouse can select text.
   const [editing, setEditing] = useState(false);
+  const [editingCell, setEditingCell] = useState(false);
   const completed = Boolean(task.completedAt);
+  const blocked = blockedCount(task);
   const assignee = task.assigneeId ? profilesById.get(task.assigneeId) : undefined;
   const open = openTaskId === task.id;
   const selected = selection.isSelected(task.id);
@@ -1105,17 +1307,17 @@ function TaskRow({
   return (
     <div
       data-task-row={task.id}
-      draggable={draggable && !editing}
+      draggable={draggable && !editing && !editingCell}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onPointerEnter={prefetch.onPointerEnter}
       onPointerLeave={prefetch.onPointerLeave}
       onClick={(e) => {
-        const target = e.target as HTMLElement;
-        const control = target.closest("a, button, input, select, textarea, label");
-        if (control) {
+        const where = rowClickOpens(e);
+        if (where === "outside") return;
+        if (where === "control") {
           // The ">" (and a viewer's name link) opens the task (⌘/Ctrl-click: a new tab).
-          if (control.tagName === "A") selection.setActive(task.id);
+          if ((e.target as HTMLElement).closest("a")) selection.setActive(task.id);
           return;
         }
         // Clicking a row opens the task; only the checkbox on the left selects (and brings up the bulk bar).
@@ -1159,14 +1361,19 @@ function TaskRow({
             }`}
           />
         ) : null}
-        <CompleteToggle
-          kind={task.kind}
-          completed={completed}
-          readOnly={!canEdit}
-          disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
-          onToggle={() => onToggle(task)}
-          label={kindToggleLabel(task.kind, task.title, completed)}
-        />
+        <ExpandToggle expandable={task.subtaskCount > 0} expanded={expanded} title={task.title} onToggle={onToggleExpanded} />
+        {blocked > 0 ? (
+          <BlockedToggle taskId={task.id} title={task.title} count={blocked} />
+        ) : (
+          <CompleteToggle
+            kind={task.kind}
+            completed={completed}
+            readOnly={!canEdit}
+            disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
+            onToggle={() => onToggle(task)}
+            label={kindToggleLabel(task.kind, task.title, completed)}
+          />
+        )}
         <TaskTitle
           task={task}
           seed={seed}
@@ -1182,44 +1389,72 @@ function TaskRow({
           <CommentCount count={task.commentCount} />
         </span>
         {tagsInline ? <TagChips ids={task.tagIds} byId={tagsById} /> : null}
-        <TaskLink
-          taskId={task.id}
-          seed={seed}
-          draggable={false}
-          aria-label={`Open “${task.title}”`}
-          aria-current={open ? "true" : undefined}
-          title="Details"
-          className="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 opacity-0 hover:bg-zinc-200/70 hover:text-zinc-700 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-        >
-          <ChevronRight className="size-4" />
-        </TaskLink>
+        <OpenTaskLink taskId={task.id} title={task.title} seed={seed} open={open} />
       </div>
       {columns.map((column) => {
         if (column === "assignee") {
           return (
             <div key={column} className={CELL}>
-              {assignee ? <Assignee profile={assignee} showName /> : <EmptyCellHint kind="person" hidden={!canEdit} />}
+              <InlineAssigneeCell
+                taskTitle={task.title}
+                assignee={assignee}
+                people={edit.people}
+                canEdit={canEdit}
+                approver={task.kind === "approval"}
+                onChange={(assigneeId) => edit.assign(task, assigneeId)}
+              />
             </div>
           );
         }
         if (column === "due") {
           return (
             <div key={column} className={CELL}>
-              {task.dueOn ? <DueDate task={task} /> : <EmptyCellHint kind="date" hidden={!canEdit} />}
+              <InlineDateCell
+                taskTitle={task.title}
+                column="due"
+                startOn={task.startOn}
+                dueOn={task.dueOn}
+                milestone={task.kind === "milestone"}
+                canEdit={canEdit}
+                display={task.dueOn ? <DueDate task={task} /> : <EmptyCellHint kind="date" hidden={!canEdit} />}
+                onChange={(change, close) => edit.dates(task, change, close)}
+              />
             </div>
           );
         }
         if (column === "start") {
           return (
             <div key={column} className={CELL}>
-              {task.startOn ? <StartDate task={task} /> : <EmptyCellHint kind="date" hidden={!canEdit} />}
+              <InlineDateCell
+                taskTitle={task.title}
+                column="start"
+                startOn={task.startOn}
+                dueOn={task.dueOn}
+                milestone={task.kind === "milestone"}
+                canEdit={canEdit}
+                display={task.startOn ? <StartDate task={task} /> : <EmptyCellHint kind="date" hidden={!canEdit || task.kind === "milestone"} />}
+                onChange={(change, close) => edit.dates(task, change, close)}
+              />
             </div>
           );
         }
         if (column === "section") {
+          const name = task.sectionId ? fieldContext.sectionNames.get(task.sectionId) : "";
+          const shown = <span className="truncate text-xs text-zinc-600">{name}</span>;
           return (
-            <div key={column} className={`${CELL} text-xs text-zinc-600`}>
-              <span className="truncate">{task.sectionId ? fieldContext.sectionNames.get(task.sectionId) : ""}</span>
+            <div key={column} className={CELL}>
+              {canEdit ? (
+                <InlineChoiceCell
+                  label={`Section of “${task.title}”: ${name || "No section"}. Change`}
+                  value={task.sectionId}
+                  options={edit.sections.map((s) => ({ id: s.id, name: s.name, color: "zinc" as const }))}
+                  clearLabel="No section"
+                  display={shown}
+                  onChange={(sectionId) => edit.moveToSection(task, sectionId)}
+                />
+              ) : (
+                shown
+              )}
             </div>
           );
         }
@@ -1233,7 +1468,21 @@ function TaskRow({
         const field = fieldsById.get(refFieldId(column) ?? "");
         return (
           <div key={column} className={CELL}>
-            {field ? <FieldValueChips field={field} task={task} context={fieldContext} showName /> : null}
+            {field ? (
+              <InlineFieldCell
+                field={field}
+                value={task.fieldValues[field.id]}
+                sectionId={task.sectionId}
+                sections={edit.sections}
+                people={edit.everyone}
+                taskTitle={task.title}
+                canEdit={canEdit}
+                display={<FieldValueChips field={field} task={task} context={fieldContext} showName />}
+                onChange={(value) => edit.setField(task, field, value)}
+                onSectionChange={(sectionId) => edit.moveToSection(task, sectionId)}
+                onEditingChange={setEditingCell}
+              />
+            ) : null}
           </div>
         );
       })}
@@ -1242,118 +1491,169 @@ function TaskRow({
   );
 }
 
-// “Show subtasks”: a task's subtasks (all levels) under its row, indented, read-only apart from
-// completing them; open one to edit it in the pane. Subtasks aren't selected, dragged, or filtered —
-// they follow their task.
-function SubtaskRows({
-  parentId,
-  parentTitle,
-  depth,
-  childrenOf,
-  profilesById,
-  seeds,
-  openTaskId,
-  canEdit,
-  columns,
-  gridStyle,
-  onToggle,
-}: {
-  parentId: string;
-  parentTitle: string;
-  depth: number;
-  childrenOf: Map<string, SubtaskItem[]>;
+type SubtaskHandlers = {
+  toggle: (subtask: SubtaskItem) => void;
+  rename: (subtask: SubtaskItem, title: string) => void;
+  assign: (subtask: SubtaskItem, assigneeId: string | null) => void;
+  dates: (subtask: SubtaskItem, edit: DateEdit, close: () => void) => void;
+  expand: (id: string) => void;
+};
+
+type SubtaskRowsProps = {
+  trees: SubtaskTrees;
   profilesById: Map<string, Profile>;
+  people: Profile[];
   seeds: Seeds;
   openTaskId: string | null;
   canEdit: boolean;
   columns: ColumnKey[];
   gridStyle: React.CSSProperties;
-  onToggle: (subtask: SubtaskItem) => void;
-}) {
-  const openTask = useOpenTask();
-  const children = childrenOf.get(parentId) ?? [];
-  if (children.length === 0) return null;
+  handlers: SubtaskHandlers;
+};
+
+// An open row's subtasks (Oct 27 notes, batch 6; also every row's with “Show subtasks”): every level,
+// indented, each one expandable when it has subtasks of its own, edited in place like a task row
+// (complete, rename, assignee, dates) for Editors. Subtasks aren't selected, dragged, or filtered — they
+// follow their task — and open in the pane with a click.
+function SubtaskRows({ root, trees, canEdit, ...rest }: { root: ProjectTask } & SubtaskRowsProps) {
+  const base = SUBTASK_BASE_REM[canEdit ? "editor" : "viewer"];
+  if (trees.isLoading(root.id)) {
+    return (
+      <p
+        role="status"
+        className="sticky left-0 flex min-h-row w-[min(100%,48rem)] items-center border-b border-zinc-100 text-xs text-zinc-400"
+        style={{ paddingLeft: `${base + SUBTASK_STEP_REM}rem` }}
+      >
+        Loading subtasks…
+      </p>
+    );
+  }
+  const rows = flattenSubtaskRows(root.id, root.title, trees.childrenOf, trees.isExpanded);
+  if (rows.length === 0) return null;
   return (
-    <ul aria-label="Subtasks">
-      {children.map((subtask) => {
-        const completed = Boolean(subtask.completedAt);
-        const open = openTaskId === subtask.id;
-        return (
-          <li key={subtask.id}>
-            <div
-              data-subtask-row={subtask.id}
-              onClick={(e) => {
-                if ((e.target as HTMLElement).closest("a, button, input, select, textarea, label")) return;
-                if (!open) openTask(subtask.id, seeds.subtask(subtask, parentTitle));
-              }}
-              className={`cv-row group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
-              style={gridStyle}
-            >
-              <div
-                className={`${CELL} ${STICKY_CELL} gap-2 py-1 ${open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50"}`}
-                style={{ paddingLeft: `${SUBTASK_BASE_REM[canEdit ? "editor" : "viewer"] + depth * 1.25}rem` }}
-              >
-                <CompleteToggle
-                  size="sm"
-                  kind={subtask.kind}
-                  completed={completed}
-                  readOnly={!canEdit}
-                  disabled={subtask.kind === "approval"}
-                  onToggle={() => onToggle(subtask)}
-                  label={kindToggleLabel(subtask.kind, subtask.title, completed)}
-                />
-                <TaskLink
-                  taskId={subtask.id}
-                  seed={() => seeds.subtask(subtask, parentTitle)}
-                  aria-current={open ? "true" : undefined}
-                  className={`min-w-0 truncate text-sm hover:underline ${completed ? "text-zinc-400 line-through" : "text-zinc-700"}`}
-                >
-                  <span className="sr-only">Subtask: </span>
-                  {displayTaskTitle(subtask.title, subtask.requestLabel)}
-                </TaskLink>
-                {subtask.subtaskCount > 0 ? (
-                  <span
-                    className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500"
-                    title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
-                  >
-                    {subtask.subtaskDoneCount}/{subtask.subtaskCount}
-                  </span>
-                ) : null}
-              </div>
-              {columns.map((column) => (
-                <div key={column} className={CELL}>
-                  {column === "assignee" ? (
-                    subtask.assigneeId && profilesById.get(subtask.assigneeId) ? (
-                      <Assignee profile={profilesById.get(subtask.assigneeId)} showName />
-                    ) : (
-                      <EmptyCellHint kind="person" hidden={!canEdit} />
-                    )
-                  ) : column === "due" ? (
-                    subtask.dueOn ? <DueDate task={subtask} /> : <EmptyCellHint kind="date" hidden={!canEdit} />
-                  ) : column === "start" ? (
-                    subtask.startOn ? <StartDate task={subtask} /> : <EmptyCellHint kind="date" hidden={!canEdit} />
-                  ) : null}
-                </div>
-              ))}
-              <span aria-hidden />
-            </div>
-            <SubtaskRows
-              parentId={subtask.id}
-              parentTitle={subtask.title}
-              depth={depth + 1}
-              childrenOf={childrenOf}
-              profilesById={profilesById}
-              seeds={seeds}
-              openTaskId={openTaskId}
-              canEdit={canEdit}
-              columns={columns}
-              gridStyle={gridStyle}
-              onToggle={onToggle}
-            />
-          </li>
-        );
-      })}
+    <ul aria-label={`Subtasks of “${root.title}”`}>
+      {rows.map((row) => (
+        <li key={row.item.id}>
+          <SubtaskRow row={row} indentRem={base + row.depth * SUBTASK_STEP_REM} canEdit={canEdit} trees={trees} {...rest} />
+        </li>
+      ))}
     </ul>
+  );
+}
+
+function SubtaskRow({
+  row,
+  indentRem,
+  profilesById,
+  people,
+  seeds,
+  openTaskId,
+  canEdit,
+  columns,
+  gridStyle,
+  handlers,
+}: { row: FlatSubtaskRow; indentRem: number } & SubtaskRowsProps) {
+  const { item: subtask, parentTitle } = row;
+  const openTask = useOpenTask();
+  const [editing, setEditing] = useState(false);
+  const completed = Boolean(subtask.completedAt);
+  const blocked = blockedCount(subtask);
+  const open = openTaskId === subtask.id;
+  const seed = () => seeds.subtask(subtask, parentTitle);
+  const assignee = subtask.assigneeId ? profilesById.get(subtask.assigneeId) : undefined;
+  return (
+    <div
+      data-subtask-row={subtask.id}
+      onClick={(e) => {
+        if (rowClickOpens(e) !== "row") return;
+        if (!open) openTask(subtask.id, seed());
+      }}
+      className={`cv-row group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
+      style={gridStyle}
+    >
+      <div
+        className={`${CELL} ${STICKY_CELL} gap-2 py-1 ${open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50"}`}
+        style={{ paddingLeft: `${indentRem}rem` }}
+      >
+        <ExpandToggle
+          expandable={row.hasChildren}
+          expanded={row.expanded}
+          title={subtask.title}
+          onToggle={() => handlers.expand(subtask.id)}
+        />
+        {blocked > 0 ? (
+          <BlockedToggle taskId={subtask.id} title={subtask.title} count={blocked} size="sm" />
+        ) : (
+          <CompleteToggle
+            size="sm"
+            kind={subtask.kind}
+            completed={completed}
+            readOnly={!canEdit}
+            disabled={subtask.kind === "approval"}
+            onToggle={() => handlers.toggle(subtask)}
+            label={kindToggleLabel(subtask.kind, subtask.title, completed)}
+          />
+        )}
+        <TaskTitle
+          task={subtask}
+          seed={seed}
+          canEdit={canEdit}
+          open={open}
+          editing={editing}
+          setEditing={setEditing}
+          onRename={(title) => handlers.rename(subtask, title)}
+          subtask
+        />
+        {subtask.subtaskCount > 0 ? (
+          <span
+            className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500"
+            title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
+          >
+            {subtask.subtaskDoneCount}/{subtask.subtaskCount}
+          </span>
+        ) : null}
+        <OpenTaskLink taskId={subtask.id} title={subtask.title} seed={seed} open={open} />
+      </div>
+      {columns.map((column) => (
+        <div key={column} className={CELL}>
+          {column === "assignee" ? (
+            <InlineAssigneeCell
+              taskTitle={subtask.title}
+              assignee={assignee}
+              people={people}
+              canEdit={canEdit}
+              approver={subtask.kind === "approval"}
+              onChange={(assigneeId) => handlers.assign(subtask, assigneeId)}
+            />
+          ) : column === "due" ? (
+            <InlineDateCell
+              taskTitle={subtask.title}
+              column="due"
+              startOn={subtask.startOn}
+              dueOn={subtask.dueOn}
+              milestone={subtask.kind === "milestone"}
+              canEdit={canEdit}
+              display={subtask.dueOn ? <DueDate task={subtask} /> : <EmptyCellHint kind="date" hidden={!canEdit} />}
+              onChange={(change, close) => handlers.dates(subtask, change, close)}
+            />
+          ) : column === "start" ? (
+            <InlineDateCell
+              taskTitle={subtask.title}
+              column="start"
+              startOn={subtask.startOn}
+              dueOn={subtask.dueOn}
+              milestone={subtask.kind === "milestone"}
+              canEdit={canEdit}
+              display={
+                subtask.startOn ? <StartDate task={subtask} /> : <EmptyCellHint kind="date" hidden={!canEdit || subtask.kind === "milestone"} />
+              }
+              onChange={(change, close) => handlers.dates(subtask, change, close)}
+            />
+          ) : null}
+        </div>
+      ))}
+      <span aria-hidden />
+    </div>
   );
 }
 
