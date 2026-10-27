@@ -8,7 +8,7 @@ export type Permissions = {
   role: ProjectRole | null;
   // Read the project / task (every member).
   canView: boolean;
-  // Comment, react, like, follow, decide approvals they're named on (Commenter+).
+  // Comment, react, follow, decide approvals they're named on (Commenter+).
   canComment: boolean;
   // Create, edit, complete, move, select, drag, add tasks and sections (Editor+).
   canEdit: boolean;

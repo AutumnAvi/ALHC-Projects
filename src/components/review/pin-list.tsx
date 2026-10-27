@@ -3,7 +3,8 @@
 import { Trash2 } from "lucide-react";
 import { MAX_PIN_TEXT, pinPlace, type ReviewFile } from "@/lib/review-checks";
 
-// The numbered comments, in order: pick one to show it on its file (and jump a video to it).
+// The numbered comments, in order: pick one to show it on its file (and jump a video to it). Each item has
+// an id (pin-item-<key>) so picking a pin on the file can scroll its comment into view.
 export function PinList({
   pins,
   assets,
@@ -30,6 +31,7 @@ export function PinList({
       {pins.map((p) => (
         <li
           key={p.key}
+          id={`pin-item-${p.key}`}
           className={`rounded-md border px-2.5 py-2 ${activePin === p.key ? "border-amber-300 bg-amber-50" : "border-zinc-200"}`}
         >
           <div className="flex items-center gap-2">
@@ -37,7 +39,9 @@ export function PinList({
               type="button"
               onClick={() => onChoose(p.key, p.assetId)}
               aria-label={`Show comment ${p.number} on ${nameOf(p.assetId)}`}
-              className="flex size-5 shrink-0 items-center justify-center rounded-full bg-accent-600 text-2xs font-semibold text-white"
+              className={`flex size-6 shrink-0 items-center justify-center rounded-full text-2xs font-semibold text-white ${
+                activePin === p.key ? "bg-amber-500" : "bg-accent-600"
+              }`}
             >
               {p.number}
             </button>

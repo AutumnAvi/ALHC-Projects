@@ -22,7 +22,7 @@ import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
 import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
-import { useProjectPermissions } from "@/components/project/project-access";
+import { useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
 import { useViewConfig } from "@/components/project/view-config";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
@@ -56,7 +56,7 @@ import {
 } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf } from "./shared";
-import { Assignee, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
+import { AttachmentCount, Assignee, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
 import { useProjectTaskSeeds } from "./task-seeds";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
@@ -247,7 +247,9 @@ export function ListView({
   // Precise drop positions only make sense in manual (sort_order) order, like Board.
   const manualOrder = bySection && sortOf(config)[0]?.key === "manual";
   const canDragTasks = canEdit && manualOrder;
-  const canDragSections = canEdit && bySection && !config.filters?.sections;
+  // Oct 27 notes (batch 5): while the owner has locked the sections, only owners reorder them.
+  const { canEditSections } = useSectionPermissions();
+  const canDragSections = canEditSections && bySection && !config.filters?.sections;
   const filtered = hasActiveFilters(config.filters);
 
   const visibleTasks = (group: TaskGroup) =>
@@ -1176,6 +1178,7 @@ function TaskRow({
         />
         <span className="flex shrink-0 items-center gap-2">
           <TaskBadges task={task} />
+          <AttachmentCount count={task.attachmentCount} />
           <CommentCount count={task.commentCount} />
         </span>
         {tagsInline ? <TagChips ids={task.tagIds} byId={tagsById} /> : null}

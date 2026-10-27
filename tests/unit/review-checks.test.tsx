@@ -125,18 +125,29 @@ const review: PublicReview = {
   previous: null,
 };
 
-test("the review page: open rounds offer Approve and Send feedback, files, and uploads", () => {
+test("the review page: open rounds offer the answer (Approve / Request changes), files, and uploads", () => {
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={review} logoUrl={null} initialAction={null} />);
   assert.match(html, /Spring poster/);
+  assert.match(html, /role="radiogroup"/);
   assert.match(html, />Approve</);
-  assert.match(html, /Send feedback/);
+  assert.match(html, /Request changes/);
+  assert.match(html, /Submit review/, "no answer picked yet");
   assert.match(html, /Upload files/);
   assert.match(html, /Click the file to pin a comment/);
+  assert.match(html, /Round 1/);
+  assert.doesNotMatch(html, /[Vv]ersion/, "plain words: rounds, not versions");
   assert.ok(html.includes(`src="/review/${TOKEN}/file/a1"`), "the file in full quality, through the token route");
   assert.match(html, /cursor-crosshair/, "clicking pins");
 });
 
-test("the review page after a decision: read-only, with the pins sent", () => {
+test("the email's Approve button picks Approve (it doesn't send anything by itself)", () => {
+  const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={review} logoUrl={null} initialAction="approve" />);
+  assert.match(html, /role="radio" aria-checked="true"[^>]*>(?:(?!<\/button>)[\s\S])*Approve/);
+  assert.match(html, /Send approval/);
+  assert.doesNotMatch(html, /Yes, send it/, "no confirmation until they ask to send");
+});
+
+test("the review page after a decision: the confirmation, with what was sent", () => {
   const decided: PublicReview = {
     ...review,
     status: "changes_requested",
@@ -144,12 +155,14 @@ test("the review page after a decision: read-only, with the pins sent", () => {
     pins: [{ number: 1, assetId: "a1", page: null, x: 0.5, y: 0.5, time: null, body: "Here" }],
   };
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={decided} logoUrl={null} initialAction="approve" />);
-  assert.match(html, /your feedback was sent/);
+  assert.match(html, /your feedback was sent \(1 comment\)/);
   assert.doesNotMatch(html, />Approve</);
   assert.doesNotMatch(html, /Upload files/);
   assert.doesNotMatch(html, /cursor-crosshair/);
   assert.match(html, /Bigger logo/);
-  assert.match(html, /aria-label="Comment 1: Here"/);
+  assert.match(html, /poster\.png · 1 comment/);
+  assert.match(html, /Here/);
+  assert.match(html, /Look at the files again/);
 });
 
 test("a dead link says so and nothing else", () => {

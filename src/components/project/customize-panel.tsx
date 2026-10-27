@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   Blocks,
   ChevronRight,
+  Crown,
   Diamond,
   FileInput,
   FileText,
@@ -15,6 +16,7 @@ import {
   Hash,
   LayoutTemplate,
   ListChecks,
+  Lock,
   Mail,
   Plus,
   SlidersHorizontal,
@@ -30,7 +32,7 @@ import { useProjectPermissions } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useRightPanel } from "@/components/shell/right-panel";
 import { useServerAction } from "@/components/toast";
-import { createForm, setRuleEnabled } from "@/lib/actions";
+import { createForm, setRuleEnabled, setSectionsLocked } from "@/lib/actions";
 import type { FieldDef } from "@/lib/fields";
 import type { CustomizeDetails } from "@/lib/project-page";
 import type { StatusTemplate } from "@/lib/status-templates";
@@ -58,9 +60,11 @@ export type CustomizeSummary = {
   statusTemplatesAvailable: boolean;
   numbering: TaskNumbering | null;
   sections: { id: string; name: string }[];
+  // Oct 27 notes (batch 5): Owner settings, sent only to the project's Owners (null for everyone else).
+  owner?: { sectionsLocked: boolean } | null;
 };
 
-type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types" | "status" | "numbers";
+type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types" | "status" | "numbers" | "owner";
 
 const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   rules: "Automations",
@@ -71,6 +75,7 @@ const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   types: "Task types and templates",
   status: "Status templates",
   numbers: "Task numbering",
+  owner: "Owner settings",
 };
 
 // Asana's Customize panel (Asana parity, batch 4): a ~320px panel on the right with a card row per
@@ -185,6 +190,8 @@ export function CustomizePanel({ projectId, summary }: { projectId: string; summ
                 sections={summary.sections}
                 fields={summary.fields}
               />
+            ) : view === "owner" && summary.owner ? (
+              <OwnerSettingsView projectId={projectId} settings={summary.owner} />
             ) : view === "status" ? (
               <StatusTemplatesView
                 projectId={projectId}
@@ -268,7 +275,61 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         }
         onClick={() => onOpen("status")}
       />
+      {summary.owner ? (
+        <CardRow
+          icon={Crown}
+          label="Owner settings"
+          meta={summary.owner.sectionsLocked ? "Section order is locked" : "Only owners see this · lock section order"}
+          onClick={() => onOpen("owner")}
+        />
+      ) : null}
     </ul>
+  );
+}
+
+// Oct 27 notes (batch 5): settings only the project's Owners change (the database checks their own role).
+function OwnerSettingsView({ projectId, settings }: { projectId: string; settings: { sectionsLocked: boolean } }) {
+  const [pending, run] = useServerAction();
+  const [locked, setLocked] = useOptimistic(settings.sectionsLocked);
+  return (
+    <div>
+      <Intro>Only the project’s owners see these settings and can change them.</Intro>
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5">
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-zinc-900">
+            <Lock className="size-3.5 text-zinc-500" aria-hidden />
+            Lock section order
+          </span>
+          <span className="mt-0.5 block text-xs text-zinc-500">
+            When on, only owners can add, rename, reorder, or delete sections. Everyone who can edit still moves
+            tasks between them.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={locked}
+          disabled={pending}
+          data-panel-focus
+          onChange={(e) => {
+            const next = e.currentTarget.checked;
+            run(
+              () => setSectionsLocked(projectId, next),
+              () => setLocked(next),
+            );
+          }}
+          className="peer sr-only"
+          aria-describedby="sections-lock-state"
+        />
+        <span
+          aria-hidden
+          className="relative mt-0.5 h-4 w-7 shrink-0 rounded-full bg-zinc-300 transition-colors peer-checked:bg-accent-500 peer-focus-visible:shadow-[0_0_0_3px_var(--focus-ring)] after:absolute after:top-0.5 after:left-0.5 after:size-3 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-3"
+        />
+      </label>
+      <p id="sections-lock-state" className="mt-2 text-xs text-zinc-500">
+        {locked ? "Locked: sections show a lock for everyone else." : "Unlocked: Editors can change sections."}
+      </p>
+    </div>
   );
 }
 
@@ -507,7 +568,7 @@ function EmailsView({
   const confirming = summary.forms.filter((f) => f.sendsConfirmation);
   return (
     <div>
-      <Intro>Everything this project emails: rule emails, form confirmations, and comment emails to collaborators.</Intro>
+      <Intro>Everything this project emails: rule emails, form confirmations, and comment emails to followers.</Intro>
       <SubHeading>Design</SubHeading>
       <p className="text-xs text-zinc-500">
         The logo, colors, header, and sign-off of this project’s emails (and of each form’s emails to requesters).
@@ -546,7 +607,7 @@ function EmailsView({
       )}
       <SubHeading>Comment emails</SubHeading>
       <p className="text-xs text-zinc-500">
-        Collaborators get an email for each new comment unless they turned it off in Settings → Notifications. These
+        Followers get an email for each new comment unless they turned it off in Settings → Notifications. These
         emails are no-reply; only a form’s submitter can answer a response by email.
       </p>
       <SubHeading>Deliveries</SubHeading>

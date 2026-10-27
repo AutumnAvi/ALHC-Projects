@@ -43,7 +43,7 @@ export const NOTIFICATION_KINDS = [
   {
     key: "field_change",
     label: "Field changes",
-    description: "A field set to “Notify collaborators when changed” changes on a task you follow.",
+    description: "A field set to “Notify followers when changed” changes on a task you follow.",
   },
   {
     key: "rule",

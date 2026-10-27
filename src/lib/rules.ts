@@ -26,7 +26,7 @@ export const TRIGGERS = [
   { value: "scheduled", label: "On a schedule", group: "Flow", description: "Runs every day, workday, week, or month for the open tasks that match.", keywords: ["cron", "daily", "weekly", "every", "recurring", "time"] },
   { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks it from a task's … menu (Run a rule).", keywords: ["button", "on demand", "by hand", "click"] },
   // Automations V3 (20261021010000_automations_v3_a.sql).
-  { value: "follower_added", label: "A collaborator is added", group: "People", description: "Fires when someone starts following a task (anyone, or people you pick).", keywords: ["follower", "collaborator", "watch", "follow"] },
+  { value: "follower_added", label: "A follower is added", group: "People", description: "Fires when someone starts following a task (anyone, or people you pick).", keywords: ["follower", "collaborator", "watch", "follow"] },
   // Batch B: start dates.
   { value: "start_date_changed", label: "Start date changes", group: "Dates", description: "Fires when a task's start date is set, moved, or cleared.", keywords: ["begin", "kickoff", "reschedule"] },
   { value: "start_approaching", label: "Start date is approaching", group: "Dates", description: "Fires once per open task some hours, days, or weeks before it starts.", keywords: ["begin", "kickoff", "soon", "reminder"] },
@@ -67,7 +67,7 @@ export const CONDITIONS = [
   { value: "title_contains", label: "Name contains", group: "Task", description: "The task's name includes some text (any case).", keywords: ["title", "text", "keyword"] },
   { value: "form_answer_contains", label: "Form answer contains", group: "Approvals and forms", description: "An answer on the task's form submission includes some text.", keywords: ["form", "request", "submission", "answer", "intake"] },
   // Automations V3.
-  { value: "person_compare", label: "Compare people", group: "People", description: "The assignee, creator, collaborators, or a People field is (or isn't) someone — e.g. the assignee is the creator.", keywords: ["dynamic", "same", "creator", "assignee", "people field", "collaborator", "follower", "equals"] },
+  { value: "person_compare", label: "Compare people", group: "People", description: "The assignee, creator, followers, or a People field is (or isn't) someone — e.g. the assignee is the creator.", keywords: ["dynamic", "same", "creator", "assignee", "people field", "collaborator", "follower", "equals"] },
   // Batch B: dates.
   { value: "date_compare", label: "Date is", group: "Dates", description: "The due or start date is before, after, on, or between dates you pick.", keywords: ["due", "start", "before", "after", "between", "range", "on"] },
   { value: "has_start_date", label: "Has a start date", group: "Dates", description: "A start date is set.", keywords: ["begin", "kickoff"] },
@@ -93,7 +93,7 @@ export const ACTIONS = [
   { value: "move_section", label: "Move to section", group: "Task", description: "Moves the task to a section of this project.", keywords: ["column", "stage", "status"] },
   { value: "set_field", label: "Set field", group: "Fields", description: "Writes a value into a custom field (Status moves the section).", keywords: ["custom field", "priority", "value"] },
   { value: "set_assignee", label: "Set assignee", group: "People", description: "Assigns a person, the creator, or nobody.", keywords: ["assign", "owner", "unassign", "remove assignee"] },
-  { value: "add_followers", label: "Add followers", group: "People", description: "Adds collaborators who'll hear about updates.", keywords: ["collaborator", "follow", "watch"] },
+  { value: "add_followers", label: "Add followers", group: "People", description: "Adds followers who'll hear about updates.", keywords: ["collaborator", "follow", "watch"] },
   { value: "add_comment", label: "Add comment", group: "Communication", description: "Posts a comment on the task as this rule.", keywords: ["message", "note", "mention"] },
   { value: "notify", label: "Send inbox notification", group: "Communication", description: "Puts a message in people's Inbox.", keywords: ["alert", "inbox", "ping", "tell"] },
   { value: "send_email", label: "Send email", group: "Communication", description: "Emails the submitter, the assignee, an address in a field, or a fixed address.", keywords: ["mail", "requester", "submitter"] },
@@ -234,7 +234,7 @@ export type AssignMode = (typeof ASSIGN_MODES)[number]["value"];
 export const PERSON_SIDES = [
   { value: "assignee", label: "Assignee" },
   { value: "creator", label: "Creator" },
-  { value: "followers", label: "Collaborators" },
+  { value: "followers", label: "Followers" },
 ] as const;
 
 // "On a schedule" (mirrors rule_schedule_next_at): when, at a time of the rule's time zone. Automations

@@ -28,6 +28,7 @@ import {
   tagsEnabled,
   getListCollapsedGroups,
   getListColumnWidths,
+  getProjectShowCompleted,
 } from "@/lib/data";
 import { todayIn } from "@/lib/workload";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
@@ -41,6 +42,7 @@ import {
   ROW_PAGE,
   showsSubtasks,
   sortOf,
+  withShowCompleted,
   withoutTags,
   type ProjectView,
   type ViewConfig,
@@ -96,6 +98,8 @@ export async function ProjectViewPage({
 
   // The List groups this person collapsed here (Oct 26 notes, batch 4), read alongside the rest.
   const collapsedGroupsLoad = layout === "list" ? getListCollapsedGroups(projectId) : Promise.resolve([]);
+  // Oct 27 notes (batch 5): the viewer's own Show / Hide completed for this project's List and Board.
+  const showCompletedLoad = paging ? getProjectShowCompleted(projectId) : Promise.resolve(null);
   const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, tagsOn, columnWidths, sectionCounts, project] =
     await Promise.all([
     listSections(projectId),
@@ -114,7 +118,7 @@ export async function ProjectViewPage({
     getProject(projectId),
   ]);
 
-  const collapsedGroups = await collapsedGroupsLoad;
+  const [collapsedGroups, showCompleted] = await Promise.all([collapsedGroupsLoad, showCompletedLoad]);
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
     fields,
@@ -123,7 +127,10 @@ export async function ProjectViewPage({
   };
   // Oct 26 notes (batch 3): with the workspace's tags off, no tag filter or tag grouping applies.
   const tagless = (c: ViewConfig) => (tagsOn ? c : withoutTags(c));
-  const baseConfig = tagless(pruneConfig(view?.config ?? {}, context));
+  // The person's Show / Hide completed applies to the saved view (an unsaved ?f= draft carries its own, set
+  // by the same toggle), so turning it on or off never shows as an unsaved change.
+  const personal = (c: ViewConfig) => (showCompleted === null ? c : withShowCompleted(c, showCompleted));
+  const baseConfig = personal(tagless(pruneConfig(view?.config ?? {}, context)));
   let config = tagless(pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context));
   // Older links carry ?sub=1: show it as an unsaved draft of the view's Show subtasks setting.
   if (layout === "list" && searchParams.sub === "1" && !showsSubtasks(config)) config = { ...config, show_subtasks: true };
@@ -208,7 +215,13 @@ export async function ProjectViewPage({
   return (
     <main className="flex min-h-0 flex-1 flex-col">
       <ViewConfigProvider key={`config-${view?.id ?? layout}`} baseConfig={baseConfig} config={config}>
-        <ViewToolbar projectId={projectId} view={view} layout={layout} context={{ sections, profiles, fields, tags }} />
+        <ViewToolbar
+          projectId={projectId}
+          view={view}
+          layout={layout}
+          context={{ sections, profiles, fields, tags }}
+          showCompleted={showCompleted}
+        />
         {layout === "list" ? (
           // The toolbar stays put; the list scrolls under it with a sticky column header.
           <div className="min-h-0 flex-1 overflow-auto">

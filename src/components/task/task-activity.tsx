@@ -3,7 +3,7 @@
 import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
-import { Bell, BellOff, Pencil, Plus, SmilePlus, Trash2 } from "lucide-react";
+import { Bell, BellOff, Pencil, SmilePlus, Trash2, UserPlus, X } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
@@ -136,7 +136,6 @@ export function TaskActivity({
   useRealtimeRefresh(`task-${task.id}`, [
     { table: "comments", filter: `task_id=eq.${task.id}` },
     { table: "comment_reactions", filter: `task_id=eq.${task.id}` },
-    { table: "task_likes", filter: `task_id=eq.${task.id}` },
     { table: "task_stories", filter: `task_id=eq.${task.id}` },
     { table: "email_outbox", filter: `task_id=eq.${task.id}` },
   ]);
@@ -814,7 +813,7 @@ export function ReactionBar({
   );
 }
 
-// People who can read the task: who can be added as a collaborator (followers must be able to read it).
+// People who can read the task: who can be added as a follower (followers must be able to read it).
 function readers(task: TaskDetail, profiles: Profile[]) {
   return task.isPrivate
     ? profiles.filter((p) => task.privateReaderIds.includes(p.id))
@@ -822,7 +821,9 @@ function readers(task: TaskDetail, profiles: Profile[]) {
 }
 
 // The pane's footer (Asana parity, batch 3): a one-line "Add a comment" box that grows while you write,
-// and one row of collaborators (followers) with "+" and Leave / Join task. Commenters and above.
+// and one row of followers (Oct 27 notes, batch 5: "Followers", not "Collaborators") with Add follower, a
+// remove × on each, and Follow task / Unfollow. Followers hear about comments, completion, and changes.
+// Commenters and above.
 export function TaskPaneFooter({
   task,
   profiles,
@@ -962,33 +963,62 @@ export function TaskPaneFooter({
           </div>
         </div>
       ) : (
-        <p className="text-sm text-zinc-600">You can view this task. Commenters and above can comment and collaborate.</p>
+        <p className="text-sm text-zinc-600">You can view this task. Commenters and above can comment and follow it.</p>
       )}
-      <div className="mt-1.5 flex min-h-7 items-center gap-2 text-xs text-zinc-500">
-        <span className="shrink-0">Collaborators</span>
-        <span className="flex -space-x-1" aria-label={`Collaborators: ${followers.map(displayName).join(", ") || "none"}`}>
-          {followers.slice(0, 8).map((p) => (
-            <span key={p.id} className="rounded-full ring-2 ring-white" data-tooltip={displayName(p)}>
-              <Avatar name={displayName(p)} src={p.avatar_url} profileId={p.id} />
-            </span>
-          ))}
+      <div className="mt-1.5 flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">
+        <span
+          className="shrink-0 font-medium text-zinc-600"
+          data-tooltip="Followers are notified about new comments, completion, and changes to this task"
+        >
+          Followers
         </span>
+        <ul className="flex flex-wrap items-center gap-1" aria-label={`Followers: ${followers.map(displayName).join(", ") || "none"}`}>
+          {followers.slice(0, 8).map((p) => (
+            <li key={p.id} className="group/follower relative">
+              <span className="block rounded-full ring-2 ring-white" data-tooltip={displayName(p)}>
+                <Avatar name={displayName(p)} src={p.avatar_url} profileId={p.id} />
+              </span>
+              {canComment ? (
+                <button
+                  type="button"
+                  onClick={() => follow(p.id, false)}
+                  aria-label={p.id === memberId ? "Stop following this task" : `Remove ${displayName(p)} as a follower`}
+                  data-tooltip={p.id === memberId ? "Unfollow" : `Remove ${displayName(p)}`}
+                  className="absolute -right-1 -top-1 hidden size-3.5 items-center justify-center rounded-full bg-zinc-700 text-white ring-1 ring-white hover:bg-red-600 focus-visible:flex group-hover/follower:flex [@media(hover:none)]:flex"
+                >
+                  <X className="size-2.5" aria-hidden />
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
         {followers.length > 8 ? <span className="tabular-nums">+{followers.length - 8}</span> : null}
+        {followers.length === 0 ? <span className="text-zinc-400">No followers yet</span> : null}
         {canComment ? (
           <Popover
-            label="Add or remove collaborators"
-            tooltip="Add collaborators"
+            label="Add or remove followers"
+            tooltip="Followers are notified about comments, completion, and changes"
             side="top"
             panelClassName="w-72 p-0"
-            buttonClassName="inline-flex size-6 items-center justify-center rounded-full border border-dashed border-zinc-300 text-zinc-500 hover:border-zinc-400 hover:text-zinc-800 aria-expanded:border-zinc-400"
-            button={<Plus className="size-3.5" aria-hidden />}
+            buttonClassName="inline-flex h-6 items-center gap-1 rounded-full border border-dashed border-zinc-300 px-2 text-zinc-600 hover:border-zinc-400 hover:text-zinc-900 aria-expanded:border-zinc-400"
+            button={
+              <>
+                <UserPlus className="size-3.5" aria-hidden />
+                Add follower
+              </>
+            }
           >
             {() => (
               <PeopleList
-                label="Collaborators"
+                label="Followers"
                 people={readers(task, profiles)}
                 selected={followerIds}
-                emptyNote="Only people who can open this task can collaborate."
+                emptyNote="Only people who can open this task can follow it."
+                footer={
+                  <p className="px-2.5 py-1.5 text-2xs text-zinc-500">
+                    Ticked people follow this task. Pick someone again to remove them.
+                  </p>
+                }
                 onPick={(profileId) => follow(profileId, !followerIds.includes(profileId))}
               />
             )}
@@ -998,10 +1028,15 @@ export function TaskPaneFooter({
           <button
             type="button"
             onClick={() => follow(memberId, !following)}
-            className="ml-auto inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+            aria-pressed={following}
+            className={`ml-auto inline-flex h-7 items-center gap-1 rounded-md border px-2 font-medium ${
+              following
+                ? "border-zinc-200 text-zinc-700 hover:bg-zinc-100"
+                : "border-accent-200 bg-accent-50 text-accent-800 hover:bg-accent-100"
+            }`}
           >
             {following ? <BellOff className="size-3.5" aria-hidden /> : <Bell className="size-3.5" aria-hidden />}
-            {following ? "Leave task" : "Join task"}
+            {following ? "Unfollow" : "Follow task"}
           </button>
         ) : null}
       </div>

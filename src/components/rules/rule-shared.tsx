@@ -393,7 +393,7 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
       return "Someone runs it from a task";
     case "follower_added": {
       const names = peopleNames(ctx, cfg.people);
-      return names.length ? `${joinWords(names, "or")} starts following a task` : "A collaborator is added";
+      return names.length ? `${joinWords(names, "or")} starts following a task` : "A follower is added";
     }
     default:
       return labelOf(TRIGGERS, t);
@@ -716,14 +716,14 @@ export function personOptions(ctx: RuleContext, opts: { none?: string; many?: bo
   ];
 }
 
-// "is" / "isn't" for one person, "includes" for a People field, "include" for the collaborators.
+// "is" / "isn't" for one person, "includes" for a People field, "include" for the followers.
 export function personCompareVerb(side: Json | undefined, negated: boolean) {
   if (side === "followers") return negated ? "don’t include" : "include";
   if (fieldOfSlot(side) !== null) return negated ? "doesn’t include" : "includes";
   return negated ? "isn’t" : "is";
 }
 
-// A "Compare people" side: the assignee, the creator, the collaborators, or a People field.
+// A "Compare people" side: the assignee, the creator, the followers, or a People field.
 export function sideOptions(ctx: RuleContext): SmartOption[] {
   return [
     ...PERSON_SIDES.map((side) => ({ value: side.value as string, label: side.label, group: "On the task", icon: <User className="size-4" /> })),

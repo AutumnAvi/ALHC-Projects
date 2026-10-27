@@ -1,7 +1,7 @@
 "use client";
 
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, GripVertical, ListChecks, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GripVertical, ListChecks, ListFilter, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
@@ -19,6 +19,8 @@ import { useDateText } from "./task-dates";
 import { PANE_HEADING } from "./pane-styles";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromSubtask } from "@/lib/task-seed";
+import { useSubtaskPrefs } from "./subtask-prefs";
+import { SUBTASK_SORTS, SUBTASK_SORT_LABELS, isOrganized, organizeSummary, organizeSubtasks, type SubtaskPrefs } from "@/lib/subtask-view";
 
 type Change =
   | { type: "toggle"; id: string; completed: boolean }
@@ -55,11 +57,14 @@ export function TaskSubtasks({
   profiles,
   adding,
   onAddingChange,
+  memberId,
 }: {
   task: TaskDetail;
   profiles: Profile[];
   adding: boolean;
   onAddingChange: (adding: boolean) => void;
+  // The signed-in person (the "Assigned to me" filter).
+  memberId?: string;
 }) {
   const [, run] = useServerAction();
   // What a subtask row knows, drawn at once when it's opened (no navigation; Oct 19 notes).
@@ -73,11 +78,21 @@ export function TaskSubtasks({
     );
   };
   const inputRef = useRef<HTMLInputElement>(null);
-  const [subtasks, change] = useOptimistic(task.subtasks, applyChange);
+  const [allSubtasks, change] = useOptimistic(task.subtasks, applyChange);
+  // Oct 27 notes (batch 5): Filter (Hide completed, Assigned to me) and Sort, remembered per person.
+  const { prefs, setPrefs } = useSubtaskPrefs();
+  const me = memberId ?? null;
+  const nameOf = (profileId: string) => {
+    const person = profiles.find((p) => p.id === profileId);
+    return person ? displayName(person) : "";
+  };
+  const subtasks = organizeSubtasks(allSubtasks, prefs, me, nameOf);
+  // Reordering by hand only makes sense in the manual order.
+  const manualOrder = prefs.sort === "manual";
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropBefore, setDropBefore] = useState<string | null | undefined>(undefined);
   const canEdit = taskPermissions(task).canEdit;
-  const done = subtasks.filter((s) => s.completedAt).length;
+  const done = allSubtasks.filter((s) => s.completedAt).length;
   const approvalBySubtask = new Map(task.approvals.filter((a) => a.subtaskId).map((a) => [a.subtaskId!, a] as const));
   // This task's own depth is its number of ancestors (0 = an ordinary task); subtasks sit one below.
   const atDepthLimit = task.ancestors.length >= MAX_SUBTASK_DEPTH;
@@ -88,11 +103,11 @@ export function TaskSubtasks({
         (s.kind === "approval" ? hasRole(task.memberRoles[p.id], "commenter") : p.id in task.memberRoles),
     );
 
-  if (subtasks.length === 0 && !(canEdit && !atDepthLimit)) return null;
+  if (allSubtasks.length === 0 && !(canEdit && !atDepthLimit)) return null;
 
   function move(subtask: SubtaskItem, beforeId: string | null) {
     if (beforeId === subtask.id) return;
-    const sortOrder = subtaskOrderBefore(subtasks, beforeId, subtask.id);
+    const sortOrder = subtaskOrderBefore(allSubtasks, beforeId, subtask.id);
     run(
       () => placeSubtask(subtask.id, beforeId),
       () => change({ type: "move", id: subtask.id, sortOrder }),
@@ -126,18 +141,31 @@ export function TaskSubtasks({
 
   return (
     <section id="task-subtasks" className="mt-6" aria-labelledby={subtasks.length ? "subtasks-heading" : undefined}>
-      {subtasks.length > 0 ? (
-        <div className="flex items-baseline justify-between">
+      {allSubtasks.length > 0 ? (
+        <div className="flex items-center gap-2">
           <h3 id="subtasks-heading" className={PANE_HEADING}>
             Subtasks
           </h3>
-          <span className="text-xs tabular-nums text-zinc-500">
-            {done} of {subtasks.length} done
+          <span className="ml-auto text-xs tabular-nums text-zinc-500">
+            {done} of {allSubtasks.length} done
           </span>
+          <SubtaskOrganizeMenu prefs={prefs} onChange={setPrefs} />
         </div>
       ) : null}
+      {allSubtasks.length > 0 && isOrganized(prefs) ? (
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-2xs text-zinc-500">
+          <span>{organizeSummary(subtasks.length, allSubtasks.length, prefs)}</span>
+          <button
+            type="button"
+            onClick={() => setPrefs({ hideCompleted: false, assignedToMe: false, sort: "manual" })}
+            className="font-medium text-accent-700 hover:underline"
+          >
+            Show all in manual order
+          </button>
+        </p>
+      ) : null}
 
-      {subtasks.length > 0 || adding ? (
+      {allSubtasks.length > 0 || adding ? (
         <ul
           className="mt-1.5 border-t border-zinc-100"
           onDragOver={(e) => {
@@ -166,7 +194,7 @@ export function TaskSubtasks({
                   setDropBefore(after ? (subtasks[index + 1]?.id ?? null) : subtask.id);
                 }}
               >
-                {canEdit ? (
+                {canEdit && manualOrder ? (
                   <span
                     draggable
                     onDragStart={(e) => {
@@ -266,7 +294,7 @@ export function TaskSubtasks({
                     {(close) => (
                       <>
                         <MenuItem
-                          disabled={index === 0}
+                          disabled={index === 0 || !manualOrder}
                           onClick={() => {
                             close();
                             move(subtask, subtasks[index - 1].id);
@@ -275,7 +303,7 @@ export function TaskSubtasks({
                           <ArrowUp className="size-4 text-zinc-500" aria-hidden /> Move up
                         </MenuItem>
                         <MenuItem
-                          disabled={index === subtasks.length - 1}
+                          disabled={index === subtasks.length - 1 || !manualOrder}
                           onClick={() => {
                             close();
                             move(subtask, subtasks[index + 2]?.id ?? null);
@@ -444,6 +472,70 @@ function SubtaskDates({
             if (next.start !== startOn || next.due !== dueOn) onChange({ startOn: next.start, dueOn: next.due });
           }}
         />
+      )}
+    </Popover>
+  );
+}
+
+// The Subtasks organize menu (Oct 27 notes, batch 5): Filter and Sort, saved for this person.
+function SubtaskOrganizeMenu({ prefs, onChange }: { prefs: SubtaskPrefs; onChange: (next: SubtaskPrefs) => void }) {
+  const row = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100";
+  const on = isOrganized(prefs);
+  return (
+    <Popover
+      label="Filter and sort subtasks"
+      tooltip="Filter and sort"
+      align="end"
+      panelClassName="w-60 p-1.5"
+      buttonClassName={`btn-ghost h-6 gap-1 px-1.5 text-xs ${on ? "text-accent-700 hover:text-accent-800" : ""}`}
+      button={
+        <>
+          <ListFilter className="size-3.5" aria-hidden />
+          Organize
+          {on ? <span className="sr-only"> (on)</span> : null}
+        </>
+      }
+    >
+      {() => (
+        <div>
+          <p className="px-2 pb-1 pt-0.5 text-2xs font-medium uppercase tracking-wide text-zinc-400">Filter</p>
+          {(
+            [
+              { key: "hideCompleted", label: "Hide completed" },
+              { key: "assignedToMe", label: "Assigned to me" },
+            ] as const
+          ).map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={prefs[item.key]}
+              onClick={() => onChange({ ...prefs, [item.key]: !prefs[item.key] })}
+              className={row}
+            >
+              <span className="flex-1">{item.label}</span>
+              {prefs[item.key] ? <Check className="size-3.5 text-accent-600" aria-hidden /> : null}
+            </button>
+          ))}
+          <div role="separator" className="my-1 border-t border-zinc-100" />
+          <p className="px-2 pb-1 pt-0.5 text-2xs font-medium uppercase tracking-wide text-zinc-400">Sort</p>
+          <div role="group" aria-label="Sort subtasks">
+            {SUBTASK_SORTS.map((sort) => (
+              <button
+                key={sort}
+                type="button"
+                role="menuitemradio"
+                aria-checked={prefs.sort === sort}
+                onClick={() => onChange({ ...prefs, sort })}
+                className={row}
+              >
+                <span className="flex-1">{SUBTASK_SORT_LABELS[sort]}</span>
+                {prefs.sort === sort ? <Check className="size-3.5 text-accent-600" aria-hidden /> : null}
+              </button>
+            ))}
+          </div>
+          <p className="px-2 pt-1 text-2xs text-zinc-500">Saved for you on every task. Drag to reorder in Manual.</p>
+        </div>
       )}
     </Popover>
   );

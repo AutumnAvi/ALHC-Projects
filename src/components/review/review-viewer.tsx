@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Download, FileQuestion, MessageSquarePlus } from "lucide-react";
 import { reviewMediaKind, timeLabel } from "@/lib/review-checks";
+import { timeScaleTicks } from "@/lib/review-portal";
 
 // Oct 26 notes (batch 3): one file of a review, in full quality, with its pins. Shared by the public review
 // page (where clicking adds a pin) and the task's Reviews tab (read-only).
@@ -92,6 +93,7 @@ function PinMarkers({ pins, activePin, onSelectPin }: Pick<ViewProps, "pins" | "
             }}
             aria-label={`Comment ${p.number}: ${p.body || "(no text yet)"}`}
             data-tooltip={p.body || undefined}
+            data-pin-key={p.key}
             className={pinClass(activePin === p.key)}
             style={{ left: `${(p.x ?? 0) * 100}%`, top: `${(p.y ?? 0) * 100}%` }}
           >
@@ -239,6 +241,7 @@ function VideoView({ file, pins, activePin, onPick, onSelectPin }: ViewProps) {
   const [duration, setDuration] = useState(0);
   const [now, setNow] = useState(0);
   const timed = pins.filter((p) => p.time !== null);
+  const ticks = timeScaleTicks(duration);
   // Picking a pin (here or in the list) jumps the player to it.
   useEffect(() => {
     const pin = timed.find((p) => p.key === activePin);
@@ -264,24 +267,72 @@ function VideoView({ file, pins, activePin, onPick, onSelectPin }: ViewProps) {
         <a href={file.downloadHref}>Download {file.name}</a>
       </video>
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative h-6 min-w-40 flex-1 rounded bg-zinc-100" aria-label="Comments on the timeline">
-          {duration > 0
-            ? timed.map((p) => (
-                <button
-                  key={p.key}
-                  type="button"
-                  onClick={() => onSelectPin?.(p.key)}
-                  aria-label={`Comment ${p.number} at ${timeLabel(p.time ?? 0)}: ${p.body || "(no text yet)"}`}
-                  data-tooltip={`${timeLabel(p.time ?? 0)} · ${p.body}`}
-                  className={`${pinClass(activePin === p.key)} top-1/2 size-5 text-2xs`}
-                  style={{ left: `${Math.min(100, ((p.time ?? 0) / duration) * 100)}%` }}
-                >
-                  {p.number}
-                </button>
-              ))
-            : null}
+        {/* Oct 27 notes (batch 5): a timeline under the player — light time-scale ticks, a tick and a
+            numbered marker per comment at its moment (click to jump there), and the playhead. Clicking the
+            track itself seeks too. */}
+        <div className="min-w-40 flex-1">
+          <div
+            className="relative h-8 cursor-pointer rounded bg-zinc-100"
+            role="group"
+            aria-label={`Comments on the timeline${duration > 0 ? ` (${timed.length})` : ""}`}
+            onClick={(e) => {
+              const video = videoRef.current;
+              if (!video || duration <= 0) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              video.currentTime = Math.min(duration, Math.max(0, ((e.clientX - rect.left) / rect.width) * duration));
+            }}
+          >
+            {duration > 0
+              ? ticks.map((t) => (
+                  <span
+                    key={`tick-${t}`}
+                    aria-hidden
+                    className="absolute bottom-0 h-1.5 w-px bg-zinc-300"
+                    style={{ left: `${(t / duration) * 100}%` }}
+                  />
+                ))
+              : null}
+            {duration > 0
+              ? timed.map((p) => (
+                  <span
+                    key={`line-${p.key}`}
+                    aria-hidden
+                    className={`absolute top-0 h-full w-0.5 -translate-x-1/2 ${activePin === p.key ? "bg-amber-400" : "bg-accent-300"}`}
+                    style={{ left: `${Math.min(100, ((p.time ?? 0) / duration) * 100)}%` }}
+                  />
+                ))
+              : null}
+            {duration > 0
+              ? timed.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectPin?.(p.key);
+                    }}
+                    aria-label={`Comment ${p.number} at ${timeLabel(p.time ?? 0)}: ${p.body || "(no text yet)"}`}
+                    data-tooltip={`${timeLabel(p.time ?? 0)} · ${p.body}`}
+                    className={`${pinClass(activePin === p.key)} top-1/2 size-5 text-2xs`}
+                    style={{ left: `${Math.min(100, ((p.time ?? 0) / duration) * 100)}%` }}
+                  >
+                    {p.number}
+                  </button>
+                ))
+              : null}
+            {duration > 0 ? (
+              <span aria-hidden className="absolute top-0 h-full w-px bg-zinc-500" style={{ left: `${Math.min(100, (now / duration) * 100)}%` }} />
+            ) : null}
+          </div>
           {duration > 0 ? (
-            <span aria-hidden className="absolute top-0 h-full w-px bg-zinc-400" style={{ left: `${Math.min(100, (now / duration) * 100)}%` }} />
+            <div aria-hidden className="relative mt-0.5 h-4 text-2xs tabular-nums text-zinc-400">
+              <span className="absolute left-0">0:00</span>
+              {ticks.map((t) => (
+                <span key={`label-${t}`} className="absolute -translate-x-1/2" style={{ left: `${(t / duration) * 100}%` }}>
+                  {timeLabel(t)}
+                </span>
+              ))}
+            </div>
           ) : null}
         </div>
         {onPick ? (

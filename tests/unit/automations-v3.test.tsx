@@ -53,21 +53,21 @@ test("Set assignee reads round robin, least busy, and People fields", () => {
   assert.equal(describeAction(action({ type: "remove_followers", people: ["p-dana", "p-sam"] }), ctx), "remove followers Dana and Sam");
 });
 
-test("Compare people, a picked form, and the collaborator trigger", () => {
+test("Compare people, a picked form, and the follower trigger", () => {
   assert.equal(describeCondition(condition({ type: "person_compare", left: "assignee", op: "is", people: ["creator"] }), ctx), "the assignee is the task creator");
   assert.equal(describeCondition(condition({ type: "person_compare", left: "assignee", op: "is_not", people: ["creator"] }), ctx), "the assignee isn’t the task creator");
   assert.equal(
     describeCondition(condition({ type: "person_compare", left: "field:f-designer", op: "is", people: ["p-sam"] }), ctx),
     "the “Designer” field includes Sam",
   );
-  assert.equal(describeCondition(condition({ type: "person_compare", left: "followers", op: "is_not", people: ["p-dana"] }), ctx), "the collaborators don’t include Dana");
+  assert.equal(describeCondition(condition({ type: "person_compare", left: "followers", op: "is_not", people: ["p-dana"] }), ctx), "the followers don’t include Dana");
   assert.equal(describeCondition(condition({ type: "source_is", source: "form", form_id: "form-brief" }), ctx), "task came from “Brief”");
   assert.equal(describeCondition(condition({ type: "source_is", source: "form" }), ctx), "task came from a form");
-  assert.equal(describeTrigger({ triggerType: "follower_added", triggerConfig: {} }, ctx), "A collaborator is added");
+  assert.equal(describeTrigger({ triggerType: "follower_added", triggerConfig: {} }, ctx), "A follower is added");
   assert.equal(describeTrigger({ triggerType: "follower_added", triggerConfig: { people: ["p-dana"] } }, ctx), "Dana starts following a task");
   assert.equal(
     ruleSentence({ triggerType: "follower_added", triggerConfig: {}, conditions: [], actions: [action({ type: "remove_followers", people: ["p-sam"] })] }, ctx),
-    "When a collaborator is added, remove follower Sam.",
+    "When a follower is added, remove follower Sam.",
   );
 });
 

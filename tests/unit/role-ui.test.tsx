@@ -259,7 +259,6 @@ const paneTask = (viewerRole: ProjectRole): TaskDetail => ({
   viewerRole,
   memberRoles: { me: viewerRole },
   tagIds: [],
-  likeProfileIds: [],
   isPrivate: false,
   privateReaderIds: [],
 });

@@ -7,10 +7,34 @@ import { ROLE_LABELS, hasRole, type ProjectRole } from "@/lib/roles";
 
 // The viewer's role in the current project. Only hides controls; RLS enforces the real rules.
 const ProjectRoleContext = createContext<ProjectRole | null>(null);
+// Oct 27 notes (batch 5): the project's Owners locked its sections (Owner settings → Lock section order).
+const SectionsLockedContext = createContext(false);
 
-export function ProjectAccessProvider({ role, children }: { role: ProjectRole | null; children: ReactNode }) {
-  return <ProjectRoleContext.Provider value={role}>{children}</ProjectRoleContext.Provider>;
+export function ProjectAccessProvider({
+  role,
+  sectionsLocked = false,
+  children,
+}: {
+  role: ProjectRole | null;
+  sectionsLocked?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <ProjectRoleContext.Provider value={role}>
+      <SectionsLockedContext.Provider value={sectionsLocked}>{children}</SectionsLockedContext.Provider>
+    </ProjectRoleContext.Provider>
+  );
 }
+
+// Whether the viewer may add, rename, reorder, or delete sections: Editors+, and only Owners while the
+// sections are locked (the database refuses the rest anyway).
+export function useSectionPermissions(): { canEditSections: boolean; locked: boolean } {
+  const permissions = permissionsFor(useContext(ProjectRoleContext));
+  const locked = useContext(SectionsLockedContext);
+  return { canEditSections: permissions.canEdit && (!locked || permissions.isOwner), locked };
+}
+
+export const SECTIONS_LOCKED_NOTE = "The project’s owner locked the sections. Only owners can add, rename, reorder, or delete them.";
 
 export function useProjectRole() {
   return useContext(ProjectRoleContext);

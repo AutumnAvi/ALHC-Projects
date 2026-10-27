@@ -5,6 +5,7 @@ import { AvatarDirectoryProvider } from "@/components/avatar-face";
 import { AppShell } from "@/components/shell/app-shell";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { TagsEnabledProvider } from "@/components/tags/tags-enabled";
+import { SubtaskPrefsProvider } from "@/components/task/subtask-prefs";
 import { KeyboardShortcuts } from "@/components/shortcuts/keyboard-shortcuts";
 import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { SetupRequired } from "@/components/setup-required";
@@ -12,6 +13,7 @@ import { ToastProvider } from "@/components/toast";
 import { requireMember } from "@/lib/auth";
 import {
   countUnreadInbox,
+  getSubtaskPreferences,
   getWorkspace,
   isWorkspaceAdmin,
   listProfileAvatars,
@@ -28,7 +30,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!isSupabaseConfigured()) return <SetupRequired />;
 
   const member = await requireMember();
-  const [workspace, projects, starredIds, unreadCount, admin, cookieStore, avatars, tagsOn, folders] = await Promise.all([
+  const [workspace, projects, starredIds, unreadCount, admin, cookieStore, avatars, tagsOn, folders, subtaskPrefs] = await Promise.all([
     getWorkspace(),
     listProjects(),
     listStarredProjectIds(),
@@ -38,6 +40,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     listProfileAvatars(),
     tagsEnabled(),
     listSidebarFolders(),
+    getSubtaskPreferences(),
   ]);
 
   return (
@@ -50,16 +53,18 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
         >
           <TagsEnabledProvider enabled={tagsOn}>
-            <TimeZoneCookie />
-            <KeyboardShortcuts />
-            <AppShell
-              projects={projects.map(({ id, name }) => ({ id, name }))}
-              starredIds={starredIds}
-              folders={folders}
-              unreadCount={unreadCount}
-            >
-              {children}
-            </AppShell>
+            <SubtaskPrefsProvider initial={subtaskPrefs}>
+              <TimeZoneCookie />
+              <KeyboardShortcuts />
+              <AppShell
+                projects={projects.map(({ id, name }) => ({ id, name }))}
+                starredIds={starredIds}
+                folders={folders}
+                unreadCount={unreadCount}
+              >
+                {children}
+              </AppShell>
+            </SubtaskPrefsProvider>
           </TagsEnabledProvider>
         </ShellProvider>
       </AvatarDirectoryProvider>

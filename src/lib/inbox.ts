@@ -44,7 +44,7 @@ export const INBOX_KINDS = [
 export type InboxKind = (typeof INBOX_KINDS)[number];
 
 // The Filter menu's categories: the notification kinds of Settings → Notifications
-// (src/lib/notifications.ts). A field set to "Notify collaborators when changed" (Asana parity,
+// (src/lib/notifications.ts). A field set to "Notify followers when changed" (Asana parity,
 // batch 4) sends kind "rule" items with data.field_change, so field changes and rule notifications are
 // told apart by that flag.
 export const INBOX_CATEGORIES = [

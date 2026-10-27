@@ -87,7 +87,7 @@ const INBOX_KINDS = [
   "Comments on tasks you follow, and when they’re completed",
   "Approval requests for you, and decisions on approvals of tasks you follow",
   "Replies in message threads you started or replied to",
-  "Rules that notify you, and changes to fields set to “Notify collaborators when changed” on tasks you follow",
+  "Rules that notify you, and changes to fields set to “Notify followers when changed” on tasks you follow",
 ];
 
 export function InboxNotifications() {

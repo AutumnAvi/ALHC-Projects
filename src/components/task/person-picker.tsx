@@ -8,7 +8,7 @@ import type { Profile } from "@/lib/data";
 
 // Asana's people picker (Asana parity, batch 3): a search box over a list of people, the current one
 // ticked, and a way to clear. Used for the task's assignee (field row and header avatar) and for adding
-// collaborators. Who appears is decided by the caller (people who can read the task).
+// followers. Who appears is decided by the caller (people who can read the task).
 export function PersonPicker({
   label,
   people,
