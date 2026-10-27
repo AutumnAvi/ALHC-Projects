@@ -6537,16 +6537,24 @@ export const listMyTaskRules = cache(async (): Promise<MyTaskRule[] | null> => {
 // it numbers tasks (its numbers for other projects' tasks too, and for their subtasks), else each task's
 // home-project label as before. A database without the function falls back to the home labels.
 export async function visibleRequestLabelsIn(projectId: string, ids: string[]): Promise<Map<string, RequestLabel>> {
+  return requestLabelsInWith(await createClient(), projectId, ids);
+}
+
+// Same, with a client made earlier (the List CSV export reads inside a stream).
+export async function requestLabelsInWith(
+  supabase: ServerClient,
+  projectId: string,
+  ids: string[],
+): Promise<Map<string, RequestLabel>> {
   const unique = [...new Set(ids.filter(Boolean))];
   const labels = new Map<string, RequestLabel>();
   if (unique.length === 0) return labels;
-  const supabase = await createClient();
   for (let i = 0; i < unique.length; i += 5000) {
     const result = await supabase.rpc("task_request_labels_in", {
       target_project: projectId,
       task_ids: unique.slice(i, i + 5000),
     });
-    if (rpcMissing(result.error)) return visibleRequestLabels(unique);
+    if (rpcMissing(result.error)) return requestLabelsWith(supabase, unique);
     if (result.error) return new Map();
     const map = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {};
     for (const [taskId, value] of Object.entries(map)) {
