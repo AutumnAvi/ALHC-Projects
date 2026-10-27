@@ -4,7 +4,7 @@ import { CalendarDays, Layers, ListChecks, Lock, MessageSquare, Paperclip, Repea
 import { Avatar, displayName } from "@/components/avatar";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
-import { APPROVAL_STATUS_LABELS, type ApprovalTaskStatus } from "@/lib/task-kinds";
+import { APPROVAL_STATUS_LABELS, approvalStatusText, type ApprovalTaskStatus } from "@/lib/task-kinds";
 
 // Asana's due dates: overdue in red, today and tomorrow in green (spelled out), the rest as dates.
 // Completed tasks stay neutral.
@@ -113,19 +113,23 @@ export function Assignee({
 }
 
 const APPROVAL_STATUS_CLASSES: Record<ApprovalTaskStatus, string> = {
+  not_sent: "bg-zinc-50 text-zinc-600 ring-zinc-200",
   pending: "bg-amber-50 text-amber-800 ring-amber-200",
   changes_requested: "bg-orange-50 text-orange-800 ring-orange-200",
   approved: "bg-green-50 text-green-800 ring-green-200",
   rejected: "bg-red-50 text-red-700 ring-red-200",
 };
 
-// Status of an approval task's request (List rows, Board cards, the pane).
-export function ApprovalStatusBadge({ status }: { status: ApprovalTaskStatus }) {
+// Status of an approval task (List rows, Board cards, My tasks, the pane). Paused = Changes requested /
+// Rejected and the assignee hasn't marked the feedback received yet (Oct 27 notes, batch 6).
+export function ApprovalStatusBadge({ status, paused = false }: { status: ApprovalTaskStatus; paused?: boolean }) {
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded px-1.5 py-px text-2xs font-medium whitespace-nowrap ring-1 ring-inset ${APPROVAL_STATUS_CLASSES[status]}`}
+      className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-px text-2xs font-medium whitespace-nowrap ring-1 ring-inset ${APPROVAL_STATUS_CLASSES[status]}`}
+      title={approvalStatusText(status, paused)}
     >
       {APPROVAL_STATUS_LABELS[status]}
+      {paused ? <span className="rounded bg-white/70 px-1 text-[10px] uppercase tracking-wide">Paused</span> : null}
     </span>
   );
 }
@@ -133,7 +137,9 @@ export function ApprovalStatusBadge({ status }: { status: ApprovalTaskStatus }) 
 export function TaskBadges({ task }: { task: ProjectTask }) {
   return (
     <>
-      {task.kind === "approval" && task.approvalStatus ? <ApprovalStatusBadge status={task.approvalStatus} /> : null}
+      {task.kind === "approval" && task.approvalStatus ? (
+        <ApprovalStatusBadge status={task.approvalStatus} paused={task.approvalPaused} />
+      ) : null}
       {task.recurring ? (
         <span className="inline-flex items-center text-zinc-400" title="Repeats">
           <Repeat className="size-3.5" aria-hidden />

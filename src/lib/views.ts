@@ -1,6 +1,7 @@
 import { isUuid } from "@/lib/ids";
 import type { FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
+import { isApprovalFilterKey, type ApprovalFilterKey } from "@/lib/task-kinds";
 
 // Shared view config schema for List, Board, Calendar, Timeline, and dashboard widgets. The
 // database validates the same shape (validate_view_config) and evaluates filters in
@@ -45,6 +46,9 @@ export type ViewFilters = {
   text?: string;
   // Tags (any-of; null = tasks with no tags). Since Tags and collaboration extras.
   tags?: (string | null)[];
+  // Approval status (any-of; Oct 27 notes, batch 6): approval tasks by their round's status, paused
+  // ones, and "waiting_on_me" (any task with an approval request waiting on the viewer).
+  approval?: ApprovalFilterKey[];
 };
 
 export type FieldRef = `field:${string}`;
@@ -243,6 +247,10 @@ export function parseFilters(value: unknown): ViewFilters {
   if (assignees) out.assignees = assignees;
   const tags = idList(value.tags);
   if (tags) out.tags = tags;
+  if (Array.isArray(value.approval)) {
+    const approval = [...new Set(value.approval.filter(isApprovalFilterKey))];
+    if (approval.length) out.approval = approval;
+  }
   const due = value.due;
   if (isObj(due) && DUE_KINDS.some((k) => k.value === due.kind)) {
     const kind = due.kind as DueKind;

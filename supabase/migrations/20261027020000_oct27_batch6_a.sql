@@ -812,6 +812,16 @@ select public.alhc_patch_function(
       and not public.dependency_satisfied(d.kind, pred)$new$
 );
 
+select public.alhc_patch_function(
+  'public.project_schedule_cards(uuid,jsonb,text,date,date,text)'::regprocedure,
+  $old$      and d.kind = 'finish_to_start'
+      and pred.deleted_at is null
+      and pred.completed_at is null$old$,
+  $new$      and d.kind <> 'start_to_start'
+      and pred.deleted_at is null
+      and not public.dependency_satisfied(d.kind, pred)$new$
+);
+
 create or replace function public.task_open_blockers(target_task uuid)
 returns jsonb
 language sql

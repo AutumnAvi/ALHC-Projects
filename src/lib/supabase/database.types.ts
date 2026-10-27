@@ -73,6 +73,10 @@ export type Database = {
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          round_id: string | null;
+          cancel_reason: string | null;
+          handoff_to: string | null;
+          handoff_note: string | null;
         };
         Insert: {
           id?: string;
@@ -89,6 +93,10 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          round_id?: string | null;
+          cancel_reason?: string | null;
+          handoff_to?: string | null;
+          handoff_note?: string | null;
         };
         Update: {
           id?: string;
@@ -105,6 +113,10 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          round_id?: string | null;
+          cancel_reason?: string | null;
+          handoff_to?: string | null;
+          handoff_note?: string | null;
         };
         Relationships: [];
       };
@@ -1888,6 +1900,7 @@ export type Database = {
           visibility: string;
           due_on: string | null;
           sections_locked: boolean;
+          dependency_shift: string;
         };
         Insert: {
           id?: string;
@@ -1910,6 +1923,7 @@ export type Database = {
           visibility?: string;
           due_on?: string | null;
           sections_locked?: boolean;
+          dependency_shift?: string;
         };
         Update: {
           id?: string;
@@ -1932,6 +1946,7 @@ export type Database = {
           visibility?: string;
           due_on?: string | null;
           sections_locked?: boolean;
+          dependency_shift?: string;
         };
         Relationships: [
           {
@@ -2926,6 +2941,7 @@ export type Database = {
           subtask_hide_completed: boolean;
           subtask_assigned_to_me: boolean;
           subtask_sort: string;
+          expanded_task_ids: string[];
           created_at: string;
           updated_at: string;
         };
@@ -2935,6 +2951,7 @@ export type Database = {
           subtask_hide_completed?: boolean;
           subtask_assigned_to_me?: boolean;
           subtask_sort?: string;
+          expanded_task_ids?: string[];
           created_at?: string;
           updated_at?: string;
         };
@@ -2944,6 +2961,7 @@ export type Database = {
           subtask_hide_completed?: boolean;
           subtask_assigned_to_me?: boolean;
           subtask_sort?: string;
+          expanded_task_ids?: string[];
           created_at?: string;
           updated_at?: string;
         };
@@ -5117,11 +5135,247 @@ export type Database = {
         };
         Relationships: [];
       };
+      task_project_numbers: {
+        Row: {
+          id: string;
+          task_id: string;
+          project_id: string;
+          req_number: number;
+          req_period: string;
+          req_counter_key: string;
+          req_label: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          project_id: string;
+          req_number: number;
+          req_period?: string;
+          req_counter_key?: string;
+          req_label?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          project_id?: string;
+          req_number?: number;
+          req_period?: string;
+          req_counter_key?: string;
+          req_label?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      task_approvers: {
+        Row: {
+          id: string;
+          task_id: string;
+          profile_id: string;
+          added_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          profile_id: string;
+          added_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          profile_id?: string;
+          added_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      task_approval_settings: {
+        Row: {
+          task_id: string;
+          mode: string;
+          due_on: string | null;
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          task_id: string;
+          mode?: string;
+          due_on?: string | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          task_id?: string;
+          mode?: string;
+          due_on?: string | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      approval_rounds: {
+        Row: {
+          id: string;
+          task_id: string;
+          round_number: number;
+          status: string;
+          mode: string;
+          final_text: string | null;
+          attachment_ids: string[];
+          more_steps: boolean;
+          after_approval: string;
+          move_section_id: string | null;
+          due_on: string | null;
+          sent_by: string | null;
+          sent_at: string;
+          decided_by: string | null;
+          decided_at: string | null;
+          acknowledged_by: string | null;
+          acknowledged_at: string | null;
+          withdrawn_by: string | null;
+          withdrawn_at: string | null;
+          reminded_soon_at: string | null;
+          reminded_overdue_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          round_number: number;
+          status?: string;
+          mode?: string;
+          final_text?: string | null;
+          attachment_ids?: string[];
+          more_steps?: boolean;
+          after_approval?: string;
+          move_section_id?: string | null;
+          due_on?: string | null;
+          sent_by?: string | null;
+          sent_at?: string;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          acknowledged_by?: string | null;
+          acknowledged_at?: string | null;
+          withdrawn_by?: string | null;
+          withdrawn_at?: string | null;
+          reminded_soon_at?: string | null;
+          reminded_overdue_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          round_number?: number;
+          status?: string;
+          mode?: string;
+          final_text?: string | null;
+          attachment_ids?: string[];
+          more_steps?: boolean;
+          after_approval?: string;
+          move_section_id?: string | null;
+          due_on?: string | null;
+          sent_by?: string | null;
+          sent_at?: string;
+          decided_by?: string | null;
+          decided_at?: string | null;
+          acknowledged_by?: string | null;
+          acknowledged_at?: string | null;
+          withdrawn_by?: string | null;
+          withdrawn_at?: string | null;
+          reminded_soon_at?: string | null;
+          reminded_overdue_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      task_request_labels_in: {
+        Args: { target_project: string; task_ids: string[] };
+        Returns: Json;
+      };
+      task_numbers: {
+        Args: { target_task: string };
+        Returns: Json;
+      };
+      set_task_row_expanded: {
+        Args: { target_task: string; expanded: boolean };
+        Returns: string[];
+      };
+      subtask_parent_candidates: {
+        Args: { target_task: string; query: string; max_results?: number };
+        Returns: {
+          id: string;
+          title: string;
+          parent_task_id: string | null;
+          home_project_id: string | null;
+          completed_at: string | null;
+        }[];
+      };
+      task_open_blockers: {
+        Args: { target_task: string };
+        Returns: Json;
+      };
+      open_blocker_counts: {
+        Args: { task_ids: string[] };
+        Returns: Json;
+      };
+      dependency_shift_mode: {
+        Args: { task_ids: string[] };
+        Returns: string;
+      };
+      task_approval_state: {
+        Args: { target_task: string };
+        Returns: Json;
+      };
+      set_task_approvers: {
+        Args: { target_task: string; approvers: string[]; approval_mode?: string; approval_due?: string | null };
+        Returns: Json;
+      };
+      send_for_approval: {
+        Args: {
+          target_task: string;
+          final_text: string | null;
+          attachment_ids: string[];
+          more_steps?: boolean;
+          after_approval?: string;
+          move_section?: string | null;
+        };
+        Returns: string;
+      };
+      withdraw_approval: {
+        Args: { target_task: string };
+        Returns: undefined;
+      };
+      acknowledge_approval: {
+        Args: { target_task: string };
+        Returns: undefined;
+      };
+      hand_off_approval: {
+        Args: { target_task: string; new_approver: string; handoff_note?: string | null };
+        Returns: undefined;
+      };
       create_calendar_feed: {
         Args: { feed_scope: string; target?: string | null };
         Returns: Json;

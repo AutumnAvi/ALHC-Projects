@@ -12,10 +12,15 @@ import {
   listMyProjectRoles,
   listMyTeamIds,
   listProjectTemplates,
+  listSubtaskTrees,
   listTeams,
   loadTaskCommentPage,
+  visibleRequestLabels,
+  visibleRequestLabelsIn,
+  type SubtaskItem,
   type TaskComment,
 } from "@/lib/data";
+import type { RequestLabel } from "@/lib/request-numbers";
 import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/attachments";
 import { safeDownload } from "@/lib/safe-fetch";
 import { drainOutbox, isEmailConfigured } from "@/lib/email";
@@ -68,9 +73,11 @@ import {
   MAX_SHIFT_MOVES,
   isDependencyKind,
   isLagDays,
+  parseDependencyShiftMode,
   parseShiftResult,
   parseUndoResult,
   type DependencyKind,
+  type DependencyShiftMode,
   type ShiftChange,
   type ShiftMove,
   type ShiftPlanRow,
@@ -6301,5 +6308,246 @@ export async function deleteMyTaskRule(ruleId: string): Promise<ActionResult> {
     const updated = await supabase.from("my_task_rules").update({ deleted_at: now(), enabled: false }).eq("id", id(ruleId, "rule")).select("id");
     myTaskRuleError(updated);
     checkUpdated(updated, "That isn’t one of your rules");
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Oct 27 notes (batch 6)
+// ---------------------------------------------------------------------------------------------
+
+// 44. Every date change goes through here, in one call. The tasks' project decides (dependency_shift_mode):
+//   off   only the given tasks move;
+//   auto  the given tasks and every dependent move, later or earlier (keeping the gap) — Undo in the toast;
+//   ask   when nothing else would move, the tasks move; otherwise nothing changes yet and both plans come
+//         back for the prompt (applyDependencyShifts then does what the person chose).
+export type DateChangeOutcome =
+  | { kind: "done"; mode: DependencyShiftMode; changes: ShiftChange[]; skipped: ShiftResult["skipped"] }
+  | { kind: "ask"; push: ShiftPlanRow[]; pull: ShiftPlanRow[] };
+
+export async function changeTaskDates(moves: ShiftMove[]): Promise<ActionResult & { outcome?: DateChangeOutcome }> {
+  let outcome: DateChangeOutcome | undefined;
+  const result = await run(async () => {
+    const input = shiftMovesInput(moves);
+    const ids = moves.map((m) => id(m.taskId, "task"));
+    const supabase = await createClient();
+    const [modeResult, push, pull] = await Promise.all([
+      supabase.rpc("dependency_shift_mode", { task_ids: ids }),
+      supabase.rpc("preview_dependency_shifts", { moves: input, pull_earlier: false }),
+      supabase.rpc("preview_dependency_shifts", { moves: input, pull_earlier: true }),
+    ]);
+    const mode: DependencyShiftMode = modeResult.error ? "ask" : parseDependencyShiftMode(modeResult.data);
+    check(push);
+    check(pull);
+    const pushPlan = toPlanRows(push.data ?? []);
+    const pullPlan = toPlanRows(pull.data ?? []);
+    const pushes = pushPlan.filter((r) => r.status === "move");
+    const pulls = pullPlan.filter((r) => r.status === "move" && r.shiftDays < 0);
+    if (mode === "ask" && (pushes.length > 0 || pulls.length > 0)) {
+      outcome = { kind: "ask", push: pushPlan, pull: pulls.length > 0 ? pullPlan : [] };
+      return;
+    }
+    const confirmed = mode === "auto" ? pullPlan.filter((r) => r.status === "move").map((r) => r.taskId) : [];
+    const applied = await supabase.rpc("apply_dependency_shifts", {
+      moves: input,
+      confirmed_tasks: [...new Set(confirmed)],
+      pull_earlier: mode === "auto",
+    });
+    if (/tasks_start_(on_before_due_on|at_before_due_at)/.test(applied.error?.message ?? "")) {
+      throw new InputError(START_AFTER_DUE);
+    }
+    check(applied);
+    const parsed = parseShiftResult(applied.data);
+    // A task the person moved and couldn't: say why (the others still moved).
+    const given = new Set(ids);
+    const refused = parsed.skipped.find((skip) => given.has(skip.taskId));
+    if (refused && moves.length === 1) throw new InputError(refused.reason || NOT_ALLOWED);
+    outcome = { kind: "done", mode, changes: parsed.changes, skipped: parsed.skipped };
+  });
+  return result.error ? result : { outcome };
+}
+
+export async function setDependencyShiftMode(projectId: string, mode: DependencyShiftMode): Promise<ActionResult> {
+  return run(async () => {
+    if (!["auto", "ask", "off"].includes(mode)) throw new InputError("Choose Auto-shift, Ask me, or Off");
+    const supabase = await createClient();
+    const result = await supabase.from("projects").update({ dependency_shift: mode }).eq("id", id(projectId, "project")).select("id");
+    if (result.error && /dependency_shift/.test(result.error.message)) {
+      throw new InputError("This setting needs this release's database update");
+    }
+    checkUpdated(result);
+  });
+}
+
+// 41. Remembers which List / My tasks rows a person opened (no page refresh).
+export async function setTaskRowExpanded(taskId: string, expanded: boolean): Promise<ActionResult> {
+  try {
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_task_row_expanded", { target_task: id(taskId, "task"), expanded: expanded === true });
+    // A database without this release: the row stays open for the visit only.
+    if (result.error?.code === "PGRST202") return {};
+    check(result);
+    return {};
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+}
+
+// The subtask tree under some rows (expanding a row), numbered as projectId numbers them.
+export async function loadSubtaskRows(rootIds: string[], projectId?: string | null): Promise<{ error?: string; data?: SubtaskItem[] }> {
+  return read(async () => {
+    if (!Array.isArray(rootIds) || rootIds.length > 500) throw new InputError("Too many tasks");
+    return listSubtaskTrees(
+      rootIds.map((rootId) => id(rootId, "task")),
+      projectId ? id(projectId, "project") : undefined,
+    );
+  });
+}
+
+// 43. The open blockers of a task (the locked checkbox's hover card): the ones the viewer can read with
+// their numbers and project names, plus how many more they can't open.
+export type TaskBlocker = { id: string; title: string; label: RequestLabel | null; projectName: string | null; isSubtask: boolean };
+
+export async function loadTaskBlockers(taskId: string): Promise<{ error?: string; data?: { total: number; blockers: TaskBlocker[] } }> {
+  return read(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("task_open_blockers", { target_task: id(taskId, "task") });
+    check(result);
+    const value = (result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {}) as Record<string, Json>;
+    const list = Array.isArray(value.blockers) ? value.blockers : [];
+    const rowsOf = list.filter((b): b is Record<string, Json> => Boolean(b) && typeof b === "object" && !Array.isArray(b));
+    const projectIds = [...new Set(rowsOf.map((b) => (typeof b.home_project_id === "string" ? b.home_project_id : "")).filter(Boolean))];
+    const [labels, projects] = await Promise.all([
+      visibleRequestLabels(rowsOf.map((b) => String(b.id))),
+      projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    ]);
+    const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+    const blockers = rowsOf.map((b) => ({
+      id: String(b.id),
+      title: typeof b.title === "string" ? b.title : "",
+      label: labels.get(String(b.id)) ?? null,
+      projectName: typeof b.home_project_id === "string" ? (names.get(b.home_project_id) ?? null) : null,
+      isSubtask: typeof b.parent_task_id === "string",
+    }));
+    return { total: typeof value.total === "number" ? value.total : blockers.length, blockers };
+  });
+}
+
+// 42. "Make a subtask of…": tasks the viewer edits that this task can go under (searchable).
+export type ParentCandidate = { id: string; title: string; label: RequestLabel | null; projectName: string | null; isSubtask: boolean; completed: boolean };
+
+export async function searchSubtaskParents(taskId: string, query: string): Promise<{ error?: string; data?: ParentCandidate[] }> {
+  return read(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("subtask_parent_candidates", {
+      target_task: id(taskId, "task"),
+      query: typeof query === "string" ? query.slice(0, 200) : "",
+      max_results: 30,
+    });
+    check(result);
+    const found = result.data ?? [];
+    const projectIds = [...new Set(found.map((c) => c.home_project_id).filter((p): p is string => Boolean(p)))];
+    const [labels, projects] = await Promise.all([
+      visibleRequestLabels(found.map((c) => c.id)),
+      projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    ]);
+    const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+    return found.map((c) => ({
+      id: c.id,
+      title: c.title,
+      label: labels.get(c.id) ?? null,
+      projectName: c.home_project_id ? (names.get(c.home_project_id) ?? null) : null,
+      isSubtask: c.parent_task_id !== null,
+      completed: c.completed_at !== null,
+    }));
+  });
+}
+
+// Labels of tasks as one project shows them (rows added on the client, e.g. expanded subtasks).
+export async function loadProjectLabels(projectId: string, taskIds: string[]): Promise<{ error?: string; data?: Record<string, RequestLabel> }> {
+  return read(async () => {
+    const labels = await visibleRequestLabelsIn(id(projectId, "project"), (taskIds ?? []).slice(0, 2000).map((t) => id(t, "task")));
+    return Object.fromEntries(labels);
+  });
+}
+
+// 45 / 45b. Approval tasks.
+export async function setTaskApprovers(
+  taskId: string,
+  input: { approverIds: string[]; mode: "any" | "all"; dueOn: string | null },
+): Promise<ActionResult> {
+  return run(async () => {
+    if (!Array.isArray(input?.approverIds) || input.approverIds.length > 10) throw new InputError("A task can have up to 10 approvers");
+    if (input.mode !== "any" && input.mode !== "all") throw new InputError("Choose how approvers decide");
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("set_task_approvers", {
+        target_task: id(taskId, "task"),
+        approvers: [...new Set(input.approverIds.map((p) => id(p, "approver")))],
+        approval_mode: input.mode,
+        approval_due: optionalDate(input.dueOn, "approval due date"),
+      }),
+    );
+  });
+}
+
+export async function sendForApproval(
+  taskId: string,
+  input: {
+    finalText: string;
+    attachmentIds: string[];
+    moreSteps: boolean;
+    afterApproval: "complete" | "move_section" | "notify";
+    moveSectionId: string | null;
+  },
+): Promise<ActionResult & { roundId?: string }> {
+  let roundId: string | undefined;
+  const result = await run(async () => {
+    const finalText = typeof input?.finalText === "string" ? input.finalText.trim() : "";
+    if (finalText.length > 10000) throw new InputError("The final text is limited to 10,000 characters");
+    const files = Array.isArray(input?.attachmentIds) ? [...new Set(input.attachmentIds.map((a) => id(a, "file")))] : [];
+    if (!finalText && files.length === 0) throw new InputError("Add the final text or at least one file before sending for approval");
+    const moreSteps = input?.moreSteps === true;
+    const after = moreSteps ? (input.afterApproval === "move_section" ? "move_section" : "notify") : "complete";
+    if (after === "move_section" && !input.moveSectionId) throw new InputError("Choose the section to move it to");
+    const supabase = await createClient();
+    const response = await supabase.rpc("send_for_approval", {
+      target_task: id(taskId, "task"),
+      final_text: finalText || null,
+      attachment_ids: files,
+      more_steps: moreSteps,
+      after_approval: after,
+      move_section: after === "move_section" ? id(input.moveSectionId!, "section") : null,
+    });
+    check(response);
+    roundId = typeof response.data === "string" ? response.data : undefined;
+  });
+  return result.error ? result : { roundId };
+}
+
+export async function withdrawApproval(taskId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("withdraw_approval", { target_task: id(taskId, "task") }));
+  });
+}
+
+export async function acknowledgeApproval(taskId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(await supabase.rpc("acknowledge_approval", { target_task: id(taskId, "task") }));
+  });
+}
+
+export async function handOffApproval(taskId: string, newApproverId: string, note: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("hand_off_approval", {
+        target_task: id(taskId, "task"),
+        new_approver: id(newApproverId, "approver"),
+        handoff_note: optionalText(note, 2000),
+      }),
+    );
   });
 }

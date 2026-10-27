@@ -61,7 +61,12 @@ import {
 import { bestRole, permissionsFor } from "@/lib/permissions";
 import { EMPTY_COUNTS, isPortfolioFieldType, type PortfolioCounts, type PortfolioFieldType } from "@/lib/portfolios";
 import type { CriticalPath, TaskSchedule } from "@/lib/critical-path";
-import { parseDependencyKind, type DependencyKind } from "@/lib/dependencies";
+import {
+  parseDependencyKind,
+  parseDependencyShiftMode,
+  type DependencyKind,
+  type DependencyShiftMode,
+} from "@/lib/dependencies";
 import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
 import {
   MY_TASKS_LAYOUT_COOKIE,
@@ -126,9 +131,9 @@ import { toStatusTemplate, type StatusTemplate } from "@/lib/status-templates";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import { isInboundCallStatus, type InboundCall, type InboundEndpoint } from "@/lib/inbound-shared";
 import {
-  approvalTaskRequest,
   parseApprovalTaskStatus,
   parseTaskKind,
+  type AfterApproval,
   type ApprovalTaskStatus,
   type TaskKind,
 } from "@/lib/task-kinds";
@@ -199,11 +204,16 @@ export type ProjectTask = {
   projectCount: number;
   fieldValues: Record<string, Json>;
   recurring: boolean;
-  // Incomplete finish-to-start predecessors the task is waiting on (that the viewer can read).
+  // Links that hold up completing the task (open predecessors the viewer can read; since Oct 27 notes,
+  // batch 6, every kind the completion check counts, not only finish-to-start).
   blockedBy: number;
   kind: TaskKind;
-  // Approval tasks: the status of the assignee's request (null: none yet, or not an approval task).
+  // Approval tasks: the latest round's status (Not sent before the first); null for other kinds.
   approvalStatus: ApprovalTaskStatus | null;
+  // Changes requested / rejected and not marked received yet (Oct 27 notes, batch 6).
+  approvalPaused?: boolean;
+  // A pending round waits on the viewer's decision.
+  approvalWaitingOnMe?: boolean;
   // Active tag links (ids; look names and colors up in listTags()).
   tagIds: string[];
   // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
@@ -268,6 +278,10 @@ export type TaskDetail = {
     subject: string | null;
   } | null;
   approvals: TaskApproval[];
+  // Approval tasks: approvers, status, rounds (null for other kinds, or before Oct 27 notes, batch 6).
+  approval: TaskApprovalInfo | null;
+  // The task's number in each of its projects the viewer can read (projectId → label; Oct 27 notes, batch 6).
+  projectNumbers: Record<string, RequestLabel>;
   // Direct subtasks, in order.
   subtasks: SubtaskItem[];
   // Set for a subtask: its parent, and the way up from the top-level task (root first) for the breadcrumb.
@@ -359,6 +373,45 @@ export type TaskApproval = {
   decidedAt: string | null;
   decisionNote: string | null;
   createdAt: string;
+  // Approval tasks (Oct 27 notes, batch 6): the round it belongs to, and why it was cancelled.
+  roundId?: string | null;
+  cancelReason?: string | null;
+  handoffTo?: string | null;
+  handoffNote?: string | null;
+};
+
+// An approval task's approval (Oct 27 notes, batch 6): who approves, how, by when, and every round.
+export type ApprovalRound = {
+  id: string;
+  number: number;
+  status: "pending" | "approved" | "changes_requested" | "rejected" | "withdrawn";
+  mode: "any" | "all";
+  finalText: string | null;
+  attachmentIds: string[];
+  moreSteps: boolean;
+  afterApproval: AfterApproval;
+  moveSectionId: string | null;
+  moveSectionName: string | null;
+  dueOn: string | null;
+  sentBy: string | null;
+  sentAt: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  acknowledgedAt: string | null;
+  withdrawnAt: string | null;
+  // This round's requests (one per approver), oldest first.
+  requests: TaskApproval[];
+};
+
+export type TaskApprovalInfo = {
+  approverIds: string[];
+  mode: "any" | "all";
+  dueOn: string | null;
+  status: ApprovalTaskStatus;
+  paused: boolean;
+  waitingOnMe: boolean;
+  // Newest first.
+  rounds: ApprovalRound[];
 };
 
 export type TaskComment = {
@@ -672,7 +725,9 @@ function projectTasksFromCards(data: Json): ProjectTask[] {
       recurring: card.recurring === true,
       blockedBy: typeof card.blocked_by === "number" ? card.blocked_by : 0,
       kind: parseTaskKind(card.kind),
-      approvalStatus: parseApprovalTaskStatus(card.approval_status),
+      approvalStatus: parseTaskKind(card.kind) === "approval" ? (parseApprovalTaskStatus(card.approval_status) ?? "not_sent") : null,
+      approvalPaused: card.approval_paused === true,
+      approvalWaitingOnMe: card.approval_waiting_on_me === true,
       tagIds: Array.isArray(card.tag_ids) ? card.tag_ids.filter((tagId): tagId is string => typeof tagId === "string") : [],
       commentCount: typeof card.comment_count === "number" ? card.comment_count : 0,
       attachmentCount: typeof card.attachment_count === "number" ? card.attachment_count : 0,
@@ -702,7 +757,7 @@ export const listProjectSchedule = cache(
     });
     if (rpcMissing(result.error)) return null;
     if (result.error) throw new Error(`Failed to load tasks: ${result.error.message}`);
-    return withRequestLabels(projectTasksFromCards(result.data));
+    return withRequestLabels(projectTasksFromCards(result.data), projectId);
   },
 );
 
@@ -711,7 +766,7 @@ export const listProjectSchedule = cache(
 export const listProjectTasks = cache(async (projectId: string): Promise<ProjectTask[]> => {
   const supabase = await createClient();
   const cards = await supabase.rpc("project_task_cards", { target_project: projectId });
-  if (!cards.error) return withRequestLabels(projectTasksFromCards(cards.data));
+  if (!cards.error) return withRequestLabels(projectTasksFromCards(cards.data), projectId);
   if (rpcMissing(cards.error)) return listProjectTasksFromRows(projectId);
   throw new Error(`Failed to load tasks: ${cards.error.message}`);
 });
@@ -764,7 +819,7 @@ export const listProjectTaskPage = cache(
         tasks: projectTasksFromCards(group.cards ?? []),
       });
     }
-    const labels = await visibleRequestLabels(pages.flatMap((page) => page.tasks.map((task) => task.id)));
+    const labels = await visibleRequestLabelsIn(projectId, pages.flatMap((page) => page.tasks.map((task) => task.id)));
     return pages.map((page) => ({
       ...page,
       tasks: page.tasks.map((task) => ({ ...task, requestLabel: labels.get(task.id) ?? null })),
@@ -899,9 +954,12 @@ async function listProjectTasksFromRows(projectId: string): Promise<ProjectTask[
     recurring: m.task.recurrence !== null,
     blockedBy: blockedBy.get(m.task.id) ?? 0,
     kind: parseTaskKind(m.task.kind),
-    approvalStatus: parseApprovalTaskStatus(
-      approvalTaskRequest(parseTaskKind(m.task.kind), m.task.assignee_id, approvalsByTask.get(m.task.id) ?? [])?.status,
-    ),
+    approvalStatus:
+      parseTaskKind(m.task.kind) === "approval"
+        ? (parseApprovalTaskStatus(
+            [...(approvalsByTask.get(m.task.id) ?? [])].sort((x, y) => y.createdAt.localeCompare(x.createdAt))[0]?.status,
+          ) ?? "not_sent")
+        : null,
     tagIds: tagIds.get(m.task.id) ?? [],
     commentCount: commentCounts.get(m.task.id) ?? 0,
   })));
@@ -917,8 +975,13 @@ function legacyPaneLabel(
   return text ? { text, wrap: sequence?.wrap_brackets !== false } : null;
 }
 
-async function withRequestLabels<T extends { id: string }>(tasks: T[]): Promise<Array<T & { requestLabel: RequestLabel | null }>> {
-  const labels = await visibleRequestLabels(tasks.map((task) => task.id));
+// projectId: the labels shown inside that project (its own numbers; Oct 27 notes, batch 6).
+async function withRequestLabels<T extends { id: string }>(
+  tasks: T[],
+  projectId?: string,
+): Promise<Array<T & { requestLabel: RequestLabel | null }>> {
+  const ids = tasks.map((task) => task.id);
+  const labels = projectId ? await visibleRequestLabelsIn(projectId, ids) : await visibleRequestLabels(ids);
   return tasks.map((task) => ({ ...task, requestLabel: labels.get(task.id) ?? null }));
 }
 
@@ -1248,15 +1311,16 @@ function toSubtaskItems(list: SubtaskRow[], children: { parent_task_id: string |
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
-// Every active subtask (all levels) under the given top-level tasks, for List's “Show subtasks”.
-export const listSubtaskTrees = cache(async (rootIds: string[]): Promise<SubtaskItem[]> => {
+// Every active subtask (all levels) under the given top-level tasks, for List's “Show subtasks” and
+// expanded rows. projectId: numbered as that project numbers them (Oct 27 notes, batch 6).
+export const listSubtaskTrees = cache(async (rootIds: string[], projectId?: string): Promise<SubtaskItem[]> => {
   if (rootIds.length === 0) return [];
   const supabase = await createClient();
   const list = rows(
     await supabase.from("tasks").select(SUBTASK_COLUMNS).in("root_task_id", rootIds).is("deleted_at", null),
     "subtasks",
   );
-  return withRequestLabels(toSubtaskItems(list, list));
+  return withRequestLabels(toSubtaskItems(list, list), projectId);
 });
 
 // Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).
@@ -1326,6 +1390,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       : Promise.resolve(null),
     listTeams(),
     visibleRequestLabels([taskId]),
+    loadTaskNumbers(supabase, taskId),
+    task.kind === "approval" ? loadApprovalInfo(supabase, taskId) : Promise.resolve(null),
   ]);
   // Marked handled now; awaiting it below still throws its error.
   early.catch(() => {});
@@ -1427,7 +1493,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .order("created_at"),
     supabase
       .from("approval_requests")
-      .select("id, subtask_id, approver_id, requested_by, rule_id, note, status, decided_at, decision_note, created_at")
+      .select("*")
       .eq("task_id", taskId)
       .is("deleted_at", null)
       .order("created_at"),
@@ -1546,7 +1612,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     pagedComments,
     approvalRuleNames,
     formTitle,
-    [myRoles, tagIds, blockerCount, privateRoot, teams, taskLabels],
+    [myRoles, tagIds, blockerCount, privateRoot, teams, taskLabels, projectNumbers, approvalInfo],
     subtaskItems,
   ] = await Promise.all([
     loadReplyThread(supabase, taskId),
@@ -1709,7 +1775,13 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       decidedAt: a.decided_at,
       decisionNote: a.decision_note,
       createdAt: a.created_at,
+      roundId: a.round_id ?? null,
+      cancelReason: a.cancel_reason ?? null,
+      handoffTo: a.handoff_to ?? null,
+      handoffNote: a.handoff_note ?? null,
     })),
+    approval: approvalInfo,
+    projectNumbers,
     viewerRole: viewerProjectRole,
     memberRoles,
     tagIds: tagIds.get(taskId) ?? [],
@@ -2051,6 +2123,13 @@ export type MyTask = {
   // The viewer may edit it (task_role() ≥ Editor; editableTaskIds()). Being assigned only needs read
   // access, so a Viewer or Commenter sees the task without a checkbox or a clickable complete control.
   canEdit: boolean;
+  // Oct 27 notes (batch 6): open blockers (the completion check's count), direct subtasks (the row's
+  // expand arrow), and an approval task's status.
+  blockedBy?: number;
+  subtaskCount?: number;
+  subtaskDoneCount?: number;
+  approvalStatus?: ApprovalTaskStatus | null;
+  approvalPaused?: boolean;
 };
 
 function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
@@ -2083,10 +2162,16 @@ function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
 
 async function labelMyTasks(page: { open: MyTask[]; completed: MyTask[] }) {
   const ids = [...page.open, ...page.completed].map((task) => task.id);
-  const [labels, editable] = await Promise.all([visibleRequestLabels(ids), editableTaskIds(ids)]);
+  const [labels, editable, extras] = await Promise.all([visibleRequestLabels(ids), editableTaskIds(ids), myTaskExtras(page.open)]);
   const apply = (task: MyTask): MyTask => {
     const label = labels.get(task.id) ?? null;
-    return { ...task, requestLabel: label, title: displayTaskTitle(task.title, label), canEdit: editable.has(task.id) };
+    return {
+      ...task,
+      ...extras.get(task.id),
+      requestLabel: label,
+      title: displayTaskTitle(task.title, label),
+      canEdit: editable.has(task.id),
+    };
   };
   return { open: page.open.map(apply), completed: page.completed.map(apply) };
 }
@@ -6442,4 +6527,240 @@ export const listMyTaskRules = cache(async (): Promise<MyTaskRule[] | null> => {
     .order("created_at");
   if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
   return rows(result, "My Tasks rules").map(toMyTaskRule);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Oct 27 notes (batch 6)
+// ---------------------------------------------------------------------------------------------
+
+// The labels shown inside one project (task_request_labels_in, invoker): that project's own numbers while
+// it numbers tasks (its numbers for other projects' tasks too, and for their subtasks), else each task's
+// home-project label as before. A database without the function falls back to the home labels.
+export async function visibleRequestLabelsIn(projectId: string, ids: string[]): Promise<Map<string, RequestLabel>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const labels = new Map<string, RequestLabel>();
+  if (unique.length === 0) return labels;
+  const supabase = await createClient();
+  for (let i = 0; i < unique.length; i += 5000) {
+    const result = await supabase.rpc("task_request_labels_in", {
+      target_project: projectId,
+      task_ids: unique.slice(i, i + 5000),
+    });
+    if (rpcMissing(result.error)) return visibleRequestLabels(unique);
+    if (result.error) return new Map();
+    const map = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {};
+    for (const [taskId, value] of Object.entries(map)) {
+      const label = requestLabelFrom(value);
+      if (label) labels.set(taskId, label);
+    }
+  }
+  return labels;
+}
+
+// Every number a task has in the projects the viewer reads (the pane's Projects row).
+async function loadTaskNumbers(supabase: ServerClient, taskId: string): Promise<Record<string, RequestLabel>> {
+  const result = await supabase.rpc("task_numbers", { target_task: taskId });
+  const numbers: Record<string, RequestLabel> = {};
+  if (result.error || !result.data || typeof result.data !== "object" || Array.isArray(result.data)) return numbers;
+  for (const [projectId, value] of Object.entries(result.data)) {
+    const label = requestLabelFrom(value);
+    if (label) numbers[projectId] = label;
+  }
+  return numbers;
+}
+
+const ROUND_STATUSES = new Set(["pending", "approved", "changes_requested", "rejected", "withdrawn"]);
+
+// An approval task's approvers, settings, state, and rounds (each with its requests). Null on a database
+// without approval rounds.
+async function loadApprovalInfo(supabase: ServerClient, taskId: string): Promise<TaskApprovalInfo | null> {
+  const [approvers, settings, rounds, requests, state] = await Promise.all([
+    supabase.from("task_approvers").select("profile_id, created_at").eq("task_id", taskId).is("deleted_at", null).order("created_at"),
+    supabase.from("task_approval_settings").select("mode, due_on").eq("task_id", taskId).maybeSingle(),
+    supabase.from("approval_rounds").select("*").eq("task_id", taskId).order("round_number", { ascending: false }),
+    supabase.from("approval_requests").select("*").eq("task_id", taskId).not("round_id", "is", null).is("deleted_at", null).order("created_at"),
+    supabase.rpc("task_approval_state", { target_task: taskId }),
+  ]);
+  if (approvers.error || rounds.error || state.error) return null;
+  const roundRows = rounds.data ?? [];
+  const sectionIds = [...new Set(roundRows.map((r) => r.move_section_id).filter((id): id is string => Boolean(id)))];
+  const sections = sectionIds.length
+    ? ((await supabase.from("sections").select("id, name").in("id", sectionIds)).data ?? [])
+    : [];
+  const sectionName = new Map(sections.map((sec) => [sec.id, sec.name] as const));
+  const byRound = new Map<string, TaskApproval[]>();
+  for (const a of requests.data ?? []) {
+    if (!a.round_id) continue;
+    const list = byRound.get(a.round_id) ?? [];
+    list.push({
+      id: a.id,
+      subtaskId: a.subtask_id,
+      approverId: a.approver_id,
+      requestedBy: a.requested_by,
+      ruleName: null,
+      note: a.note,
+      status: a.status as TaskApproval["status"],
+      decidedAt: a.decided_at,
+      decisionNote: a.decision_note,
+      createdAt: a.created_at,
+      roundId: a.round_id,
+      cancelReason: a.cancel_reason,
+      handoffTo: a.handoff_to,
+      handoffNote: a.handoff_note,
+    });
+    byRound.set(a.round_id, list);
+  }
+  const value = state.data && typeof state.data === "object" && !Array.isArray(state.data) ? (state.data as Record<string, Json>) : {};
+  return {
+    approverIds: (approvers.data ?? []).map((a) => a.profile_id),
+    mode: settings.data?.mode === "all" ? "all" : "any",
+    dueOn: settings.data?.due_on ?? null,
+    status: parseApprovalTaskStatus(value.status) ?? "not_sent",
+    paused: value.paused === true,
+    waitingOnMe: value.waiting_on_me === true,
+    rounds: roundRows.map((r) => ({
+      id: r.id,
+      number: r.round_number,
+      status: (ROUND_STATUSES.has(r.status) ? r.status : "pending") as ApprovalRound["status"],
+      mode: r.mode === "all" ? "all" : "any",
+      finalText: r.final_text,
+      attachmentIds: r.attachment_ids ?? [],
+      moreSteps: r.more_steps,
+      afterApproval: (r.after_approval === "move_section" || r.after_approval === "notify" ? r.after_approval : "complete") as AfterApproval,
+      moveSectionId: r.move_section_id,
+      moveSectionName: r.move_section_id ? (sectionName.get(r.move_section_id) ?? null) : null,
+      dueOn: r.due_on,
+      sentBy: r.sent_by,
+      sentAt: r.sent_at,
+      decidedBy: r.decided_by,
+      decidedAt: r.decided_at,
+      acknowledgedAt: r.acknowledged_at,
+      withdrawnAt: r.withdrawn_at,
+      requests: byRound.get(r.id) ?? [],
+    })),
+  };
+}
+
+// My tasks rows: open blockers, direct subtask counts, approval status (one read each).
+async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask>>> {
+  const extras = new Map<string, Partial<MyTask>>();
+  const ids = tasks.map((t) => t.id);
+  if (ids.length === 0) return extras;
+  const supabase = await createClient();
+  const approvalIds = tasks.filter((t) => t.kind === "approval").map((t) => t.id);
+  const [blockers, children, states] = await Promise.all([
+    supabase.rpc("open_blocker_counts", { task_ids: ids }),
+    supabase.from("tasks").select("parent_task_id, completed_at").in("parent_task_id", ids).is("deleted_at", null),
+    Promise.all(
+      approvalIds.slice(0, 200).map((taskId) =>
+        supabase.rpc("task_approval_state", { target_task: taskId }).then((r) => [taskId, r.data] as const),
+      ),
+    ),
+  ]);
+  const blocked = blockers.data && typeof blockers.data === "object" && !Array.isArray(blockers.data) ? blockers.data : {};
+  for (const [taskId, count] of Object.entries(blocked)) {
+    if (typeof count === "number") extras.set(taskId, { ...extras.get(taskId), blockedBy: count });
+  }
+  for (const c of children.data ?? []) {
+    if (!c.parent_task_id) continue;
+    const prev = extras.get(c.parent_task_id) ?? {};
+    extras.set(c.parent_task_id, {
+      ...prev,
+      subtaskCount: (prev.subtaskCount ?? 0) + 1,
+      subtaskDoneCount: (prev.subtaskDoneCount ?? 0) + (c.completed_at ? 1 : 0),
+    });
+  }
+  for (const [taskId, state] of states) {
+    const value = state && typeof state === "object" && !Array.isArray(state) ? (state as Record<string, Json>) : {};
+    extras.set(taskId, {
+      ...extras.get(taskId),
+      approvalStatus: parseApprovalTaskStatus(value.status) ?? "not_sent",
+      approvalPaused: value.paused === true,
+    });
+  }
+  return extras;
+}
+
+// List / My tasks rows the viewer expanded (profile_preferences.expanded_task_ids; newest first). Empty on
+// a database without the column.
+export const getExpandedTaskIds = cache(async (): Promise<string[]> => {
+  const supabase = await createClient();
+  const result = await supabase.from("profile_preferences").select("expanded_task_ids").maybeSingle();
+  if (result.error || !result.data) return [];
+  return Array.isArray(result.data.expanded_task_ids) ? result.data.expanded_task_ids : [];
+});
+
+// A project's dependency-shift mode (Auto-shift / Ask me / Off). Ask me on a database without it.
+export const getDependencyShiftMode = cache(async (projectId: string): Promise<DependencyShiftMode> => {
+  const supabase = await createClient();
+  const result = await supabase.from("projects").select("dependency_shift").eq("id", projectId).maybeSingle();
+  if (result.error || !result.data) return "ask";
+  return parseDependencyShiftMode(result.data.dependency_shift);
+});
+
+// Tasks waiting on the viewer's approval (pending requests where they are the approver; round requests
+// only while their round is pending). My tasks shows them in "Waiting on me to approve".
+export type AwaitingApproval = {
+  requestId: string;
+  taskId: string;
+  title: string;
+  requestLabel: RequestLabel | null;
+  projectId: string | null;
+  projectName: string | null;
+  // The approval due date (approval tasks), else the task's due date.
+  dueOn: string | null;
+  sentAt: string;
+  roundNumber: number | null;
+  isApprovalTask: boolean;
+};
+
+export const listAwaitingMyApproval = cache(async (): Promise<AwaitingApproval[]> => {
+  const { user } = await getViewer();
+  if (!user) return [];
+  const supabase = await createClient();
+  const requests = await supabase
+    .from("approval_requests")
+    .select("id, task_id, round_id, created_at")
+    .eq("approver_id", user.id)
+    .eq("status", "pending")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (requests.error || !requests.data?.length) return [];
+  const taskIds = [...new Set(requests.data.map((r) => r.task_id))];
+  const roundIds = [...new Set(requests.data.map((r) => r.round_id).filter((r): r is string => Boolean(r)))];
+  const [tasks, rounds, labels] = await Promise.all([
+    supabase.from("tasks").select("id, title, kind, due_on, home_project_id, completed_at").in("id", taskIds).is("deleted_at", null),
+    roundIds.length
+      ? supabase.from("approval_rounds").select("id, status, due_on, round_number").in("id", roundIds)
+      : Promise.resolve({ data: [] as { id: string; status: string; due_on: string | null; round_number: number }[], error: null }),
+    visibleRequestLabels(taskIds),
+  ]);
+  const taskById = new Map((tasks.data ?? []).map((t) => [t.id, t] as const));
+  const roundById = new Map((rounds.data ?? []).map((r) => [r.id, r] as const));
+  const projectIds = [...new Set((tasks.data ?? []).map((t) => t.home_project_id).filter((p): p is string => Boolean(p)))];
+  const projects = projectIds.length ? ((await supabase.from("projects").select("id, name").in("id", projectIds)).data ?? []) : [];
+  const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
+  const seen = new Set<string>();
+  const out: AwaitingApproval[] = [];
+  for (const r of requests.data) {
+    const task = taskById.get(r.task_id);
+    if (!task || seen.has(task.id)) continue;
+    const round = r.round_id ? roundById.get(r.round_id) : null;
+    if (r.round_id && round?.status !== "pending") continue;
+    seen.add(task.id);
+    out.push({
+      requestId: r.id,
+      taskId: task.id,
+      title: task.title,
+      requestLabel: labels.get(task.id) ?? null,
+      projectId: task.home_project_id,
+      projectName: task.home_project_id ? (projectName.get(task.home_project_id) ?? null) : null,
+      dueOn: round?.due_on ?? task.due_on,
+      sentAt: r.created_at,
+      roundNumber: round?.round_number ?? null,
+      isApprovalTask: task.kind === "approval",
+    });
+  }
+  return out;
 });
