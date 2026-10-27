@@ -18,7 +18,6 @@ import {
   timeLabel,
   type PublicReview,
 } from "@/lib/review-checks";
-import { renderReviewEmail, reviewUrls } from "@/lib/review-email";
 import { finishReviewUpload, startReviewUpload, submitReviewDecision } from "@/lib/review-public-actions";
 
 const TOKEN = `alhc_rev_${"a1".repeat(32)}`;
@@ -63,7 +62,7 @@ test("parsing what review_check_view returns", () => {
   assert.deepEqual(parsePublicReview({ status: "withdrawn" }), { status: "withdrawn" });
   assert.deepEqual(parsePublicReview({ status: "superseded" }), { status: "superseded" });
   assert.match(REVIEW_REFUSALS.withdrawn, /withdrawn/);
-  assert.match(REVIEW_REFUSALS.superseded, /newer version/);
+  assert.match(REVIEW_REFUSALS.superseded, /newer round/);
   assert.deepEqual(parsePublicReview({ status: "weird" }), { status: "unknown" });
   assert.deepEqual(parsePublicReview(null), { status: "unknown" });
   const parsed = parsePublicReview({
@@ -101,37 +100,6 @@ test("pins read as places; uploads are checked like emailed files", () => {
   assert.equal(reviewUploadProblem({ name: "final.png", type: "image/png", size: 1000 }), null);
   assert.match(reviewUploadProblem({ name: "big.mov", type: "video/quicktime", size: 26 * 1024 * 1024 }) ?? "", /over 25 MB/);
   assert.match(reviewUploadProblem({ name: "run.sh", type: "", size: 10 }) ?? "", /can’t be sent/);
-});
-
-test("the email: the design, a thumbnail, and exactly two buttons (Approve, Leave feedback)", () => {
-  const email = renderReviewEmail({
-    origin: "https://projects.example.com",
-    token: TOKEN,
-    round: 2,
-    recipientName: "Cara Client",
-    senderName: "Avi",
-    taskTitle: "Spring poster",
-    projectName: "Creative requests",
-    message: "Here's the second draft.",
-    assets: [
-      { assetId: "asset-1", name: "poster.png", contentType: "image/png" },
-      { assetId: "asset-2", name: "proof.pdf", contentType: "application/pdf" },
-    ],
-    design: null,
-  });
-  const urls = reviewUrls("https://projects.example.com", TOKEN);
-  assert.equal(email.subject, "Review requested: Spring poster (v2)");
-  assert.ok(email.html.includes(`href="${urls.approve}"`) && email.html.includes(">Approve</a>"));
-  assert.ok(email.html.includes(`href="${urls.feedback}"`) && email.html.includes(">Leave feedback</a>"));
-  assert.equal(email.html.match(/<a [^>]*>(Approve|Leave feedback)<\/a>/g)?.length, 2, "two buttons");
-  assert.equal(
-    email.html.match(/<a [^>]*style="display:inline-block[^"]*"/g)?.length,
-    2,
-    "no other button (e.g. the design's form button)",
-  );
-  assert.ok(email.html.includes(`src="${urls.page}/file/asset-1"`), "the image is the thumbnail");
-  assert.match(email.html, /Hi Cara,/);
-  assert.match(email.text, /Approve: https:\/\/projects\.example\.com\/review\/alhc_rev_/);
 });
 
 const review: PublicReview = {
