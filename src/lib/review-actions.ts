@@ -198,7 +198,7 @@ export async function loadTaskReviews(taskId: string): Promise<TaskReviewRound[]
   if (rounds.error) return rounds.error.code === "PGRST205" || rounds.error.code === "42P01" ? null : [];
   const ids = (rounds.data ?? []).map((r) => r.id);
   if (!ids.length) return [];
-  const [assets, pins, files] = await Promise.all([
+  const [assets, pins, files, saved] = await Promise.all([
     supabase.from("review_check_assets").select("id, review_id, attachment_id, sort_order").in("review_id", ids).order("sort_order"),
     supabase
       .from("review_check_pins")
@@ -210,7 +210,10 @@ export async function loadTaskReviews(taskId: string): Promise<TaskReviewRound[]
       .select("id, review_id, file_name, content_type, size_bytes")
       .in("review_id", ids)
       .order("created_at"),
+    // Oct 27 notes (batch 5): when the reviewer last saved progress (a database without the column: none).
+    supabase.from("review_checks").select("id, draft_saved_at").in("id", ids),
   ]);
+  const savedAt = new Map((saved.error ? [] : (saved.data ?? [])).map((r) => [r.id, r.draft_saved_at] as const));
   const attachmentIds = [...new Set((assets.data ?? []).map((a) => a.attachment_id))];
   const attachments = attachmentIds.length
     ? await supabase.from("task_attachments").select("id, file_name, content_type, size_bytes").in("id", attachmentIds)
@@ -229,6 +232,7 @@ export async function loadTaskReviews(taskId: string): Promise<TaskReviewRound[]
     decidedAt: r.decided_at,
     decisionNote: r.decision_note,
     lastViewedAt: r.last_viewed_at,
+    draftSavedAt: savedAt.get(r.id) ?? null,
     assets: (assets.data ?? [])
       .filter((a) => a.review_id === r.id)
       .flatMap((a) => {

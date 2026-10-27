@@ -20,6 +20,7 @@ import {
   isReviewToken,
   parseReviewFiles,
   reviewUploadProblem,
+  type ReviewDecision,
   type ReviewFile,
   type ReviewStatus,
 } from "@/lib/review-checks";
@@ -29,7 +30,10 @@ type Answer = { status?: string; review_status?: string; file_id?: string; path?
 const NOT_SET_UP = "Reviews aren’t set up on this site yet.";
 const refusal = (status: string | undefined) => REVIEW_REFUSALS[status ?? ""] ?? "Something went wrong. Try again.";
 
-async function call(name: "review_check_decide" | "review_check_upload_start" | "review_check_upload_finish", args: Record<string, unknown>) {
+async function call(
+  name: "review_check_decide" | "review_check_upload_start" | "review_check_upload_finish" | "review_check_save",
+  args: Record<string, unknown>,
+) {
   const supabase = createAnonServerClient();
   if (!supabase) return { error: NOT_SET_UP };
   const { data, error } = await supabase.rpc(name, args as never);
@@ -109,4 +113,50 @@ export async function finishReviewUpload(token: string, fileId: string): Promise
   }
   const [file] = parseReviewFiles([answer.file]);
   return file ? { file } : { error: refusal("missing") };
+}
+
+// Oct 27 notes (batch 5): the reviewer's progress, saved as they go (pins, the note, the answer they picked,
+// the file they're on), so leaving the page loses nothing; and / or "they closed the walkthrough". Only the
+// token decides (review_check_save: open rounds only, pins on this round's files only, its own rate limit).
+export type ReviewProgress = {
+  pins: DraftPin[];
+  note: string;
+  decision: ReviewDecision | null;
+  activeAsset: string | null;
+};
+
+export async function saveReviewProgress(
+  token: string,
+  progress: ReviewProgress | null,
+  walkthroughSeen = false,
+): Promise<{ error?: string; status?: string; savedAt?: string }> {
+  if (!isReviewToken(token)) return { error: refusal("unknown"), status: "unknown" };
+  let clean: Record<string, unknown> | null = null;
+  if (progress) {
+    if (!Array.isArray(progress.pins) || progress.pins.length > MAX_REVIEW_PINS) return { error: refusal("invalid"), status: "invalid" };
+    clean = {
+      pins: progress.pins.flatMap((p) =>
+        isUuid(p?.assetId)
+          ? [
+              {
+                asset_id: p.assetId,
+                page: typeof p.page === "number" ? Math.round(p.page) : null,
+                x: typeof p.x === "number" ? p.x : null,
+                y: typeof p.y === "number" ? p.y : null,
+                time: typeof p.time === "number" ? p.time : null,
+                body: typeof p.body === "string" ? p.body.slice(0, MAX_PIN_TEXT) : "",
+              },
+            ]
+          : [],
+      ),
+      note: typeof progress.note === "string" ? progress.note.slice(0, MAX_REVIEW_NOTE) : "",
+      decision: progress.decision === "approved" || progress.decision === "changes_requested" ? progress.decision : null,
+      active_asset: isUuid(progress.activeAsset) ? progress.activeAsset : null,
+    };
+  }
+  const result = await call("review_check_save", { review_token: token, progress: clean, walkthrough_seen: walkthroughSeen });
+  if (result.error) return { error: result.error };
+  const answer = result.answer as Answer & { saved_at?: string };
+  if (answer.status !== "ok") return { error: refusal(answer.status), status: answer.status };
+  return { status: "ok", savedAt: typeof answer.saved_at === "string" ? answer.saved_at : undefined };
 }

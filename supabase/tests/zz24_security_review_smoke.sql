@@ -329,7 +329,7 @@ begin
   where n.nspname = 'public' and p.prosecdef
     and has_function_privilege('anon', p.oid, 'execute');
   -- Oct 26 notes (batch 3) added the public review page's five token-checked functions (review_check_*).
-  assert anon_defs = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,review_check_decide,review_check_file,review_check_upload_finish,review_check_upload_start,review_check_view,submit_form',
+  assert anon_defs = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,review_check_decide,review_check_file,review_check_save,review_check_upload_finish,review_check_upload_start,review_check_view,submit_form',
     'anon executes only the intended definer functions';
   assert not exists (
     select 1

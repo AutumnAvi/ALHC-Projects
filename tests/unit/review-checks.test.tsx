@@ -152,6 +152,9 @@ const review: PublicReview = {
   assets: [{ id: "a1", name: "poster.png", contentType: "image/png", size: 2048 }],
   pins: [],
   files: [],
+  draft: null,
+  walkthroughSeen: false,
+  previous: null,
 };
 
 test("the review page: open rounds offer Approve and Send feedback, files, and uploads", () => {

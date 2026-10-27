@@ -747,7 +747,7 @@ begin
   where n.nspname = 'public' and p.prosecdef and has_function_privilege('anon', p.oid, 'execute');
   -- Real features 3 added email_unsubscribe (the one-click "Turn off" links in digest and report emails).
   -- Real features 4 added calendar_feed (the iCal subscribe links).
-  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,review_check_decide,review_check_file,review_check_upload_finish,review_check_upload_start,review_check_view,submit_form', format('anon SECURITY DEFINER surface: %s', exposed);
+  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,review_check_decide,review_check_file,review_check_save,review_check_upload_finish,review_check_upload_start,review_check_view,submit_form', format('anon SECURITY DEFINER surface: %s', exposed);
 
   assert not has_function_privilege('anon', 'public.create_inbound_endpoint(uuid, text, uuid, uuid, uuid[], boolean)', 'execute')
     and not has_function_privilege('anon', 'public.rotate_inbound_token(uuid)', 'execute')

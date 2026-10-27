@@ -2920,8 +2920,10 @@ export async function registerAttachment(input: {
   fileName: string;
   contentType: string | null;
   sizeBytes: number;
-}): Promise<ActionResult> {
-  return run(async () => {
+}): Promise<ActionResult & { attachmentId?: string }> {
+  // The new attachment's id (Oct 27 notes, batch 5: the Send review check dialog picks what it uploads).
+  let attachmentId: string | undefined;
+  const result = await run(async () => {
     const taskId = id(input.taskId);
     if (!input.storagePath.startsWith(`${taskId}/`) || input.storagePath.includes("..")) {
       throw new InputError("Invalid attachment path");
@@ -2931,16 +2933,21 @@ export async function registerAttachment(input: {
     }
     if (input.sizeBytes > MAX_ATTACHMENT_BYTES) throw new InputError("Files are limited to 25 MB");
     const supabase = await createClient();
-    check(
-      await supabase.from("task_attachments").insert({
+    const inserted = await supabase
+      .from("task_attachments")
+      .insert({
         task_id: taskId,
         storage_path: input.storagePath,
         file_name: text(input.fileName, "File name", { max: 255 }),
         content_type: input.contentType?.slice(0, 255) || null,
         size_bytes: input.sizeBytes,
-      }),
-    );
+      })
+      .select("id")
+      .single();
+    check(inserted);
+    attachmentId = inserted.data?.id;
   });
+  return result.error ? result : { ...result, attachmentId };
 }
 
 export async function deleteAttachment(attachmentId: string): Promise<ActionResult> {
