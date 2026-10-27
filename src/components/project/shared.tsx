@@ -8,6 +8,7 @@ import {
   ArrowRight,
   ArrowUp,
   ListPlus,
+  Lock,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
-import { useProjectPermissions } from "@/components/project/project-access";
+import { SECTIONS_LOCKED_NOTE, useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { useTaskTemplates } from "@/components/project/task-templates-context";
 import { useServerAction } from "@/components/toast";
 import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
@@ -44,13 +45,20 @@ export function SectionTitle({
   count: number;
 }) {
   const [, run] = useServerAction();
-  const canEdit = useProjectPermissions().canEdit;
+  // Oct 27 notes (batch 5): while the owner has locked the sections, only owners rename them.
+  const { canEditSections, locked } = useSectionPermissions();
+  const lock = locked ? (
+    <span className="inline-flex shrink-0 text-zinc-400" data-tooltip={SECTIONS_LOCKED_NOTE}>
+      <Lock className="size-3" aria-label="Sections are locked" />
+    </span>
+  ) : null;
 
-  if (!canEdit) {
+  if (!canEditSections) {
     return (
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <h3 className="min-w-0 truncate px-1 py-0.5 text-sm font-semibold text-zinc-900">{section.name}</h3>
         <span className="text-xs tabular-nums text-zinc-400">{count}</span>
+        {lock}
       </div>
     );
   }
@@ -80,6 +88,7 @@ export function SectionTitle({
         className="field-sizing-content min-w-12 max-w-full truncate rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
       />
       <span className="text-xs tabular-nums text-zinc-400">{count}</span>
+      {lock}
     </div>
   );
 }
@@ -169,6 +178,16 @@ function SectionMenu({
   // Adding a section asks for its name in the same panel; before = the section it goes in front of.
   const [adding, setAdding] = useState<{ before: string | null; label: string } | null>(null);
   const vertical = orientation === "vertical";
+  const { canEditSections } = useSectionPermissions();
+
+  if (!canEditSections) {
+    return (
+      <p className="flex items-start gap-2 px-2 py-1.5 text-xs text-zinc-600">
+        <Lock className="mt-0.5 size-3.5 shrink-0 text-zinc-400" aria-hidden />
+        {SECTIONS_LOCKED_NOTE}
+      </p>
+    );
+  }
 
   if (adding) {
     return (
@@ -437,9 +456,10 @@ export function AddSection({ projectId, variant }: { projectId: string; variant:
   const [pending, run] = useServerAction();
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const canEdit = useProjectPermissions().canEdit;
+  // Editors+, and only owners while the sections are locked (Oct 27 notes, batch 5).
+  const { canEditSections } = useSectionPermissions();
 
-  if (!canEdit) return null;
+  if (!canEditSections) return null;
   if (!open) {
     return (
       <button

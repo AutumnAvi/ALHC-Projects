@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Layers, ListChecks, Lock, MessageSquare, Repeat, UserRound } from "lucide-react";
+import { CalendarDays, Layers, ListChecks, Lock, MessageSquare, Paperclip, Repeat, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
 import type { Profile, ProjectTask } from "@/lib/data";
@@ -47,6 +47,21 @@ export function CommentCount({ count }: { count: number }) {
       {count}
       <MessageSquare className="size-3.5" aria-hidden />
       <span className="sr-only"> comment{count === 1 ? "" : "s"}</span>
+    </span>
+  );
+}
+
+// Asana's paperclip on a List row (Oct 27 notes, batch 5): how many files are attached.
+export function AttachmentCount({ count }: { count: number | undefined }) {
+  if (!count || count <= 0) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums text-zinc-500"
+      title={`${count} attachment${count === 1 ? "" : "s"}`}
+    >
+      {count}
+      <Paperclip className="size-3.5" aria-hidden />
+      <span className="sr-only"> attachment{count === 1 ? "" : "s"}</span>
     </span>
   );
 }

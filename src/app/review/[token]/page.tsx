@@ -3,12 +3,14 @@ import { cache } from "react";
 import { connection } from "next/server";
 import { ReviewClosedNotice, ReviewPortal } from "@/components/review/review-portal";
 import { emailLogoUrl } from "@/lib/email";
+import { isUuid } from "@/lib/ids";
 import { REVIEW_REFUSALS, isReviewToken, parsePublicReview, type PublicReviewResult } from "@/lib/review-checks";
 import { createAnonServerClient } from "@/lib/supabase/anon-server";
 
 // Oct 26 notes (batch 3): the public review page. No sign-in: the token in the link is the only key, checked
 // by review_check_view (anon; the token's hash, its expiry, 600 requests an hour) with a cookie-less anon
-// client. Never indexed, never sends a referrer (the URL is the key).
+// client. Never indexed, never sends a referrer (the URL is the key). Oct 27 notes (batch 5): ?file=<file id>
+// opens that file first (the email's thumbnails link to their file).
 export const dynamic = "force-dynamic";
 
 const loadReview = cache(async (token: string): Promise<PublicReviewResult> => {
@@ -39,6 +41,7 @@ export default async function ReviewPage({ params, searchParams }: PageProps<"/r
   const result = await loadReview(token);
   if (result.status !== "ok") return <ReviewClosedNotice message={REVIEW_REFUSALS[result.status]} />;
   const action = query.action === "approve" || query.action === "feedback" ? query.action : null;
+  const file = typeof query.file === "string" && isUuid(query.file) ? query.file : null;
   const logoUrl = result.review.workspaceLogoPath ? emailLogoUrl(result.review.workspaceLogoPath) : null;
-  return <ReviewPortal token={token} review={result.review} logoUrl={logoUrl} initialAction={action} />;
+  return <ReviewPortal token={token} review={result.review} logoUrl={logoUrl} initialAction={action} initialFile={file} />;
 }

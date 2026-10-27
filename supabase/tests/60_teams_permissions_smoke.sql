@@ -505,7 +505,7 @@ begin
   -- a token in, one switch off, nothing returned about anyone; anon only).
   -- Real features 4 added calendar_feed (the iCal subscribe links: a hashed token in, that feed's events
   -- out, built with the token owner's own access at every fetch; anon only).
-  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,review_check_decide,review_check_file,review_check_upload_finish,review_check_upload_start,review_check_view,submit_form', format('anon SECURITY DEFINER surface changed: %s', exposed);
+  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,review_check_decide,review_check_file,review_check_save,review_check_upload_finish,review_check_upload_start,review_check_view,submit_form', format('anon SECURITY DEFINER surface changed: %s', exposed);
 
   select string_agg(p.proname, ',' order by p.proname) into exposed
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace

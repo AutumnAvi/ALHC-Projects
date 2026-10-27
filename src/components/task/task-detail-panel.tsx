@@ -3,7 +3,6 @@
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useOptimistic, useState } from "react";
 import { Check, ChevronRight, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, UserRound, X } from "lucide-react";
-import { TaskLike } from "./task-like";
 import { usePaneExpanded, usePaneWide } from "./pane-size";
 import { CloseButton, ExpandButton, PANE_HEADER, PaneShell, useClosePane, WideViewToggle } from "./task-pane-frame";
 import { RecordRecent } from "@/components/shell/shell-context";
@@ -171,13 +170,6 @@ export function TaskDetailPanel({
           </span>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          <TaskLike
-            taskId={task.id}
-            likeProfileIds={task.likeProfileIds}
-            profiles={profiles}
-            memberId={memberId}
-            canLike={permissions.canComment}
-          />
           {canEdit ? (
             <PersonPicker
               label={`${assigneeLabel}: ${assigneeName ?? "nobody"}. Change`}
@@ -377,7 +369,7 @@ export function TaskDetailPanel({
             )}
           </section>
 
-          <TaskSubtasks task={task} profiles={profiles} adding={addingSubtask} onAddingChange={setAddingSubtask} />
+          <TaskSubtasks task={task} profiles={profiles} adding={addingSubtask} onAddingChange={setAddingSubtask} memberId={memberId} />
 
           <TaskApprovals
             task={task}

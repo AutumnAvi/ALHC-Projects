@@ -87,7 +87,7 @@ function describe(item: InboxItem) {
   if ((item.message || item.teamMessage) && item.kind === "mention") verb = "mentioned you in";
   // A new team thread (Real features 2) tells every team member: "posted".
   if (item.teamMessage && item.kind === "message" && isNewThread(item)) verb = "posted";
-  // A field set to "Notify collaborators when changed" (Asana parity, batch 4): kind rule with
+  // A field set to "Notify followers when changed" (Asana parity, batch 4): kind rule with
   // data.field_change, so the release before it still shows it as a notification.
   const fieldName = isFieldChange(item) ? dataText(item.data, "field_name") : null;
   if (fieldName) {

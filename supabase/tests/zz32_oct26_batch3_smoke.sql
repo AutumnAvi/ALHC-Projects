@@ -528,7 +528,7 @@ begin
   select * into c from public.comments where review_check_id = rc;
   assert c.id is not null, 'the outcome is a comment on the task';
   assert c.author_id is null and c.email_direction = 'received' and c.email_address = 'client@example.org', 'from the reviewer';
-  assert c.body like 'Requested changes (review v1)%' and c.body like '%1. poster.png: Make this bigger%'
+  assert c.body like 'Requested changes (round 1)%' and c.body like '%1. poster.png: Make this bigger%'
     and c.body like '%2. poster.png, page 2: Typo here%' and c.body like '%3. poster.png at 0:12: Cut here%'
     and c.body like '%Files sent back: Final poster.png%', format('pins summarized: %s', c.body);
   assert (select count(*) from public.review_check_pins where review_id = rc) = 3,
@@ -644,7 +644,7 @@ reset role;
 do $$
 begin
   assert exists (select 1 from public.comments c join public.review_checks r on r.comment_id = c.id
-    where r.status = 'approved' and c.body like 'Approved (review v5)%Looks great%'), 'the approval is on the task';
+    where r.status = 'approved' and c.body like 'Approved (round 5)%Looks great%'), 'the approval is on the task';
 end $$;
 
 do $$ begin raise notice 'oct 26 batch 3 smoke: all assertions passed'; end $$;

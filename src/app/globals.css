@@ -152,6 +152,24 @@
   }
 }
 
+/* The bulk action bar (Oct 27 notes, batch 5) sits above the task pane. With the side pane open on a wide
+   screen it centers on the part of the page left of the pane (and never runs under it); on narrower
+   screens, where the pane covers the page, it rises above the pane's comment box. */
+@media (min-width: 64rem) {
+  .app-shell:has([data-task-pane="side"]) [data-bulk-bar] {
+    --bulk-pane-w: min(max(calc((100vw - var(--sidebar-w, 0px)) * 0.45), 26rem), 56rem);
+    left: calc(var(--sidebar-w, 0px) + (100vw - var(--sidebar-w, 0px) - var(--bulk-pane-w)) / 2);
+    margin-left: 0;
+    max-width: calc(100vw - var(--sidebar-w, 0px) - var(--bulk-pane-w) - 2rem);
+  }
+}
+
+@media (max-width: 63.999rem) {
+  .app-shell:has([data-task-pane="side"]) [data-bulk-bar] {
+    bottom: 6.5rem;
+  }
+}
+
 /* The Customize panel (Asana parity, batch 4) sits on the right like the task pane: on wide screens the
    page narrows by its width (20rem), so the header's Share and Customize stay in view. */
 @media (min-width: 64rem) {

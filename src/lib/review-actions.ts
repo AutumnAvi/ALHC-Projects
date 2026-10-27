@@ -7,12 +7,13 @@
 
 import { refresh } from "next/cache";
 import { getViewer } from "@/lib/auth";
-import { sendEmailNow } from "@/lib/email";
+import { isEmailConfigured, sendEmailNow } from "@/lib/email";
 import { isUuid } from "@/lib/ids";
 import { requestOrigin } from "@/lib/origin";
 import {
   MAX_REVIEW_ASSETS,
   MAX_REVIEW_MESSAGE,
+  REVIEW_LINK_DAYS,
   isReviewStatus,
   isReviewToken,
   parseReviewFiles,
@@ -20,6 +21,7 @@ import {
   type TaskReviewRound,
 } from "@/lib/review-checks";
 import { reviewUrls, renderReviewEmail } from "@/lib/review-email";
+import { reviewThumbnails } from "@/lib/review-thumbnails";
 import { createClient } from "@/lib/supabase/server";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -43,10 +45,23 @@ function dbError(error: { code?: string; message: string; hint?: string | null }
   return error.hint ? `${error.message}. ${error.hint}` : error.message;
 }
 
+// The link's expiry as the database returned it (30 days from now otherwise).
+function expiryOf(value: unknown): Date {
+  const parsed = typeof value === "string" ? new Date(value) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date(Date.now() + REVIEW_LINK_DAYS * 86_400_000);
+}
+
 async function emailRound(
   supabase: Supabase,
   taskId: string,
-  review: { round: number; token: string; recipientEmail: string; recipientName: string | null; message: string | null },
+  review: {
+    round: number;
+    token: string;
+    recipientEmail: string;
+    recipientName: string | null;
+    message: string | null;
+    expiresAt: Date;
+  },
   assetIds: { assetId: string; attachmentId: string }[],
 ): Promise<{ emailed: boolean; link?: string }> {
   const origin = await requestOrigin();
@@ -56,7 +71,10 @@ async function emailRound(
     const [task, sender, attachments] = await Promise.all([
       supabase.from("tasks").select("title, home_project_id, root_task_id").eq("id", taskId).maybeSingle(),
       supabase.from("profiles").select("full_name, email").eq("id", user?.id ?? "").maybeSingle(),
-      supabase.from("task_attachments").select("id, file_name, content_type").in("id", assetIds.map((a) => a.attachmentId)),
+      supabase
+        .from("task_attachments")
+        .select("id, file_name, content_type, storage_path, size_bytes")
+        .in("id", assetIds.map((a) => a.attachmentId)),
     ]);
     const rootId = task.data?.root_task_id ?? taskId;
     const root = rootId === taskId ? task.data : (await supabase.from("tasks").select("home_project_id").eq("id", rootId).maybeSingle()).data;
@@ -73,6 +91,22 @@ async function emailRound(
         })
       : { data: null };
     const byId = new Map((attachments.data ?? []).map((a) => [a.id, a] as const));
+    // Oct 27 notes (batch 5): thumbnails of the images and PDFs (first page), drawn on the server and
+    // stored with the Editor's own client, signed until the link expires. Only when an email can go out;
+    // any file that can't be drawn gets a file tile instead.
+    const thumbnails = isEmailConfigured()
+      ? await reviewThumbnails(
+          supabase,
+          taskId,
+          assetIds.flatMap(({ assetId, attachmentId }) => {
+            const a = byId.get(attachmentId);
+            return a
+              ? [{ assetId, attachmentId, name: a.file_name, contentType: a.content_type, storagePath: a.storage_path, size: a.size_bytes }]
+              : [];
+          }),
+          review.expiresAt,
+        ).catch(() => new Map<string, string>())
+      : new Map<string, string>();
     const email = renderReviewEmail({
       origin,
       token: review.token,
@@ -84,7 +118,7 @@ async function emailRound(
       message: review.message,
       assets: assetIds.flatMap(({ assetId, attachmentId }) => {
         const a = byId.get(attachmentId);
-        return a ? [{ assetId, name: a.file_name, contentType: a.content_type }] : [];
+        return a ? [{ assetId, name: a.file_name, contentType: a.content_type, thumbnailUrl: thumbnails.get(assetId) ?? null }] : [];
       }),
       design: design.data ?? null,
     });
@@ -129,7 +163,7 @@ export async function sendReviewCheck(input: {
     review_message: message,
   });
   if (error) return { error: dbError(error) };
-  const created = data as { id?: string; round?: number; token?: string; suppressed?: boolean } | null;
+  const created = data as { id?: string; round?: number; token?: string; suppressed?: boolean; expires_at?: string } | null;
   if (!created?.id || !isReviewToken(created.token)) return { error: "Couldn’t create the review check" };
   if (created.suppressed) {
     refresh();
@@ -138,7 +172,14 @@ export async function sendReviewCheck(input: {
   const sent = await emailRound(
     supabase,
     input.taskId,
-    { round: created.round ?? 1, token: created.token, recipientEmail: email, recipientName: input.recipientName?.trim() || null, message },
+    {
+      round: created.round ?? 1,
+      token: created.token,
+      recipientEmail: email,
+      recipientName: input.recipientName?.trim() || null,
+      message,
+      expiresAt: expiryOf(created.expires_at),
+    },
     await roundAssets(supabase, created.id),
   );
   refresh();
@@ -157,7 +198,7 @@ export async function resendReviewCheck(reviewId: string): Promise<SendReviewRes
   if (!review) return { error: "Review check not found" };
   const { data, error } = await supabase.rpc("rotate_review_check_token", { target_review: reviewId });
   if (error) return { error: dbError(error) };
-  const rotated = data as { token?: string; suppressed?: boolean } | null;
+  const rotated = data as { token?: string; suppressed?: boolean; expires_at?: string } | null;
   const token = rotated?.token;
   if (!isReviewToken(token)) return { error: "Couldn’t make a new link" };
   if (rotated?.suppressed) {
@@ -167,7 +208,14 @@ export async function resendReviewCheck(reviewId: string): Promise<SendReviewRes
   const sent = await emailRound(
     supabase,
     review.task_id,
-    { round: review.round, token, recipientEmail: review.recipient_email, recipientName: review.recipient_name, message: review.message },
+    {
+      round: review.round,
+      token,
+      recipientEmail: review.recipient_email,
+      recipientName: review.recipient_name,
+      message: review.message,
+      expiresAt: expiryOf(rotated?.expires_at),
+    },
     await roundAssets(supabase, reviewId),
   );
   refresh();
@@ -198,7 +246,7 @@ export async function loadTaskReviews(taskId: string): Promise<TaskReviewRound[]
   if (rounds.error) return rounds.error.code === "PGRST205" || rounds.error.code === "42P01" ? null : [];
   const ids = (rounds.data ?? []).map((r) => r.id);
   if (!ids.length) return [];
-  const [assets, pins, files] = await Promise.all([
+  const [assets, pins, files, saved] = await Promise.all([
     supabase.from("review_check_assets").select("id, review_id, attachment_id, sort_order").in("review_id", ids).order("sort_order"),
     supabase
       .from("review_check_pins")
@@ -210,7 +258,10 @@ export async function loadTaskReviews(taskId: string): Promise<TaskReviewRound[]
       .select("id, review_id, file_name, content_type, size_bytes")
       .in("review_id", ids)
       .order("created_at"),
+    // Oct 27 notes (batch 5): when the reviewer last saved progress (a database without the column: none).
+    supabase.from("review_checks").select("id, draft_saved_at").in("id", ids),
   ]);
+  const savedAt = new Map((saved.error ? [] : (saved.data ?? [])).map((r) => [r.id, r.draft_saved_at] as const));
   const attachmentIds = [...new Set((assets.data ?? []).map((a) => a.attachment_id))];
   const attachments = attachmentIds.length
     ? await supabase.from("task_attachments").select("id, file_name, content_type, size_bytes").in("id", attachmentIds)
@@ -229,6 +280,7 @@ export async function loadTaskReviews(taskId: string): Promise<TaskReviewRound[]
     decidedAt: r.decided_at,
     decisionNote: r.decision_note,
     lastViewedAt: r.last_viewed_at,
+    draftSavedAt: savedAt.get(r.id) ?? null,
     assets: (assets.data ?? [])
       .filter((a) => a.review_id === r.id)
       .flatMap((a) => {

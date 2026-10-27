@@ -2,6 +2,7 @@
 
 import { refresh, revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { parseSubtaskPrefs, type SubtaskPrefs } from "@/lib/subtask-view";
 import { after } from "next/server";
 import {
   getProjectRole,
@@ -1137,6 +1138,23 @@ export async function setPortfolioFieldValue(
   });
 }
 
+// Oct 27 notes (batch 5): Owner settings → Lock section order. Only the project's Owners change it (the
+// database checks their own role); while it's on, only Owners add, rename, reorder, or delete sections.
+export async function setSectionsLocked(projectId: string, locked: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase
+      .from("projects")
+      .update({ sections_locked: Boolean(locked) })
+      .eq("id", id(projectId))
+      .select("id");
+    if (result.error?.code === "PGRST204" || result.error?.code === "42703") {
+      throw new InputError("Locking sections needs this release’s database update");
+    }
+    checkUpdated(result, "Only the project’s owners can lock or unlock its sections");
+  });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sections
 // ---------------------------------------------------------------------------------------------
@@ -1546,6 +1564,47 @@ export async function saveListCollapsedGroups(projectId: string, keys: string[])
   }
 }
 
+// Oct 27 notes (batch 5): the viewer's Show / Hide completed for a project's List and Board, remembered per
+// person per project (set_project_show_completed, invoker, own row). The page refreshes with it applied.
+export async function setProjectShowCompleted(
+  projectId: string,
+  show: boolean,
+): Promise<ActionResult & { remembered?: boolean }> {
+  let remembered = true;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const saved = await supabase.rpc("set_project_show_completed", { target_project: id(projectId), show: Boolean(show) });
+    // A database without this release: the toolbar applies it to this visit only.
+    if (saved.error?.code === "PGRST202") {
+      remembered = false;
+      return;
+    }
+    check(saved);
+  });
+  return result.error ? result : { remembered };
+}
+
+// Oct 27 notes (batch 5): the task pane's Subtasks filter and sort, remembered per person
+// (set_subtask_preferences, invoker, own row). No refresh: the pane already shows the change.
+export async function saveSubtaskPreferences(prefs: SubtaskPrefs): Promise<ActionResult> {
+  try {
+    const clean = parseSubtaskPrefs({ hide_completed: prefs?.hideCompleted, assigned_to_me: prefs?.assignedToMe, sort: prefs?.sort });
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_subtask_preferences", {
+      hide_completed: clean.hideCompleted,
+      assigned_to_me: clean.assignedToMe,
+      sort_key: clean.sort,
+    });
+    // A database without this release: the choice lasts for the visit.
+    if (result.error?.code === "PGRST202") return {};
+    check(result);
+    return {};
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+}
+
 // Duplicate a task (duplicate_task): the copy lands where the caller is an Editor (see the migration).
 export async function duplicateTask(
   taskId: string,
@@ -1571,32 +1630,6 @@ export async function duplicateTask(
     if (!result) throw new DbError("The task couldn’t be duplicated");
   });
   return outcome.error ? outcome : { result };
-}
-
-// Like / unlike a task (Commenter+, own like only; the database checks both).
-export async function setTaskLiked(taskId: string, liked: boolean): Promise<ActionResult> {
-  return run(async () => {
-    const supabase = await createClient();
-    const task = id(taskId, "task");
-    if (liked) {
-      const result = await supabase.from("task_likes").insert({ task_id: task });
-      if (result.error?.code === "23505") return; // already liked
-      check(result);
-    } else {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new InputError("Sign in again to unlike");
-      check(
-        await supabase
-          .from("task_likes")
-          .update({ deleted_at: now() })
-          .eq("task_id", task)
-          .eq("profile_id", user.id)
-          .is("deleted_at", null),
-      );
-    }
-  });
 }
 
 function taskKindInput(value: unknown): TaskKind {
@@ -2920,8 +2953,10 @@ export async function registerAttachment(input: {
   fileName: string;
   contentType: string | null;
   sizeBytes: number;
-}): Promise<ActionResult> {
-  return run(async () => {
+}): Promise<ActionResult & { attachmentId?: string }> {
+  // The new attachment's id (Oct 27 notes, batch 5: the Send review check dialog picks what it uploads).
+  let attachmentId: string | undefined;
+  const result = await run(async () => {
     const taskId = id(input.taskId);
     if (!input.storagePath.startsWith(`${taskId}/`) || input.storagePath.includes("..")) {
       throw new InputError("Invalid attachment path");
@@ -2931,16 +2966,21 @@ export async function registerAttachment(input: {
     }
     if (input.sizeBytes > MAX_ATTACHMENT_BYTES) throw new InputError("Files are limited to 25 MB");
     const supabase = await createClient();
-    check(
-      await supabase.from("task_attachments").insert({
+    const inserted = await supabase
+      .from("task_attachments")
+      .insert({
         task_id: taskId,
         storage_path: input.storagePath,
         file_name: text(input.fileName, "File name", { max: 255 }),
         content_type: input.contentType?.slice(0, 255) || null,
         size_bytes: input.sizeBytes,
-      }),
-    );
+      })
+      .select("id")
+      .single();
+    check(inserted);
+    attachmentId = inserted.data?.id;
   });
+  return result.error ? result : { ...result, attachmentId };
 }
 
 export async function deleteAttachment(attachmentId: string): Promise<ActionResult> {

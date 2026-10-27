@@ -8,6 +8,7 @@ import { TaskTemplatesProvider } from "@/components/project/task-templates-conte
 import {
   getProject,
   getProjectAccessStatus,
+  getProjectSectionsLocked,
   getProjectRole,
   hasBatch4Schema,
   hasReal4Schema,
@@ -56,6 +57,7 @@ export default async function ProjectLayout({
     numbering,
     viewSettings,
     batch4Schema,
+    sectionsLocked,
   ] = await Promise.all([
       getProject(projectId),
       listProjectViews(projectId),
@@ -74,6 +76,7 @@ export default async function ProjectLayout({
       getRequestSequence(projectId),
       getProjectViewSettings(projectId),
       hasOct26Batch4Schema(),
+      getProjectSectionsLocked(projectId),
     ]);
   if (!project || !role) {
     // A layout doesn't stop its pages from rendering, so the request page is a route of its own.
@@ -103,12 +106,14 @@ export default async function ProjectLayout({
     statusTemplatesAvailable: real4,
     numbering,
     sections: sections.map((section) => ({ id: section.id, name: section.name })),
+    // Oct 27 notes (batch 5): Owner settings (Owners only).
+    owner: permissionsFor(role).isOwner ? { sectionsLocked } : null,
   };
   // The header's avatars (owners first, then by role and name); Share lists everyone.
   const headerMembers = members.map(({ profileId, name, role }) => ({ profileId, name, role })).sort(compareMembers);
 
   return (
-    <ProjectAccessProvider role={role}>
+    <ProjectAccessProvider role={role} sectionsLocked={sectionsLocked}>
       <TaskTemplatesProvider templates={taskTemplates.map(({ id, name, title }) => ({ id, name, title }))}>
         <ProjectPageProvider
           project={{ id: project.id, name: project.name }}

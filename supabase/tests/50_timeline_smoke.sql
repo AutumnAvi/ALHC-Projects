@@ -214,7 +214,7 @@ begin
   -- Inbound integrations added receive_inbound_webhook (the inbound webhook receiver, like submit_form).
   -- Real features 3 added email_unsubscribe (the one-click "Turn off" links in digest and report emails).
   -- Real features 4 added calendar_feed (the iCal subscribe links: a token in, that feed's events out).
-  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,review_check_decide,review_check_file,review_check_upload_finish,review_check_upload_start,review_check_view,submit_form',
+  assert exposed = 'calendar_feed,email_unsubscribe,get_public_form,receive_inbound_webhook,review_check_decide,review_check_file,review_check_save,review_check_upload_finish,review_check_upload_start,review_check_view,submit_form',
     format('anon may only execute the public form RPCs and the inbound receiver among SECURITY DEFINER functions, got %s', exposed);
 
   assert not exists (

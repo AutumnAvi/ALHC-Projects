@@ -1887,6 +1887,7 @@ export type Database = {
           team_id: string;
           visibility: string;
           due_on: string | null;
+          sections_locked: boolean;
         };
         Insert: {
           id?: string;
@@ -1908,6 +1909,7 @@ export type Database = {
           team_id?: string | null;
           visibility?: string;
           due_on?: string | null;
+          sections_locked?: boolean;
         };
         Update: {
           id?: string;
@@ -1929,6 +1931,7 @@ export type Database = {
           team_id?: string;
           visibility?: string;
           due_on?: string | null;
+          sections_locked?: boolean;
         };
         Relationships: [
           {
@@ -2920,18 +2923,51 @@ export type Database = {
         Row: {
           profile_id: string;
           open_personal_view: boolean;
+          subtask_hide_completed: boolean;
+          subtask_assigned_to_me: boolean;
+          subtask_sort: string;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           profile_id?: string;
           open_personal_view?: boolean;
+          subtask_hide_completed?: boolean;
+          subtask_assigned_to_me?: boolean;
+          subtask_sort?: string;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
           profile_id?: string;
           open_personal_view?: boolean;
+          subtask_hide_completed?: boolean;
+          subtask_assigned_to_me?: boolean;
+          subtask_sort?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      project_person_settings: {
+        Row: {
+          profile_id: string;
+          project_id: string;
+          show_completed: boolean | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          profile_id?: string;
+          project_id: string;
+          show_completed?: boolean | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          profile_id?: string;
+          project_id?: string;
+          show_completed?: boolean | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -3018,6 +3054,11 @@ export type Database = {
           hits: number;
           hits_window_started_at: string | null;
           last_viewed_at: string | null;
+          draft: Json | null;
+          draft_saved_at: string | null;
+          draft_saves: number;
+          draft_window_started_at: string | null;
+          walkthrough_seen_at: string | null;
           created_by: string;
           created_at: string;
           updated_at: string;
@@ -6143,6 +6184,18 @@ export type Database = {
       set_open_personal_view: {
         Args: { enabled: boolean };
         Returns: boolean;
+      };
+      set_project_show_completed: {
+        Args: { target_project: string; show: boolean | null };
+        Returns: boolean | null;
+      };
+      set_subtask_preferences: {
+        Args: { hide_completed: boolean; assigned_to_me: boolean; sort_key: string };
+        Returns: Json;
+      };
+      review_check_save: {
+        Args: { review_token: string; progress?: Json | null; walkthrough_seen?: boolean };
+        Returns: Json;
       };
       request_project_access: {
         Args: { target_project: string };

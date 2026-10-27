@@ -178,7 +178,10 @@ export function BulkBar({
         <div
           role="toolbar"
           aria-label={`Bulk actions for ${taskCount(count)}`}
-          className="fixed bottom-4 left-1/2 z-20 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-wrap items-center gap-0.5 rounded-xl bg-zinc-900 px-2 py-1.5 text-sm text-white shadow-xl md:ml-30"
+          // Above the task pane (z-30), and on wide screens centered on the part of the page the pane
+          // leaves visible (globals.css: [data-bulk-bar]), so it never hides under it (Oct 27 notes, batch 5).
+          data-bulk-bar=""
+          className="fixed bottom-4 left-1/2 z-40 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-wrap items-center gap-0.5 rounded-xl bg-zinc-900 px-2 py-1.5 text-sm text-white shadow-xl md:ml-30"
           aria-busy={bulk.pending}
         >
           <span className="px-2 font-medium tabular-nums" aria-live="polite">
@@ -751,6 +754,7 @@ function BulkSummary({ summary, onClose }: { summary: Summary; onClose: () => vo
       role="alertdialog"
       aria-labelledby="bulk-summary-title"
       aria-describedby="bulk-summary-body"
+      data-bulk-bar=""
       className="fixed bottom-20 left-1/2 z-40 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-4 text-sm shadow-xl md:ml-30"
     >
       <div className="flex items-start gap-3">

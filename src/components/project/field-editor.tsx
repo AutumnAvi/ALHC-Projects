@@ -114,7 +114,7 @@ export function FieldList({
                     <Library className="size-3.5 shrink-0 text-zinc-400" aria-label="In the field library" />
                   ) : null}
                   {field.notifyOnChange ? (
-                    <Bell className="size-3.5 shrink-0 text-zinc-400" aria-label="Notifies collaborators when changed" />
+                    <Bell className="size-3.5 shrink-0 text-zinc-400" aria-label="Notifies followers when changed" />
                   ) : null}
                 </span>
                 {hasOptions(field) || field.boundToSections ? (
@@ -185,7 +185,7 @@ function draftOf(field: FieldDef | null): Draft {
 }
 
 // Asana's Add field / Edit field modal: title, type, description, options with color dots, "Add to
-// field library", and "Notify collaborators when changed". Adding also offers the workspace field
+// field library", and "Notify followers when changed". Adding also offers the workspace field
 // library (a copy of a library field's definition). Description, library, and notify need this
 // release's database update (batch4); without it they stay hidden.
 export function FieldEditorDialog({
@@ -544,8 +544,8 @@ function FieldForm({
               id={`${prefix}-notify`}
               checked={draft.notifyOnChange}
               onChange={(v) => set("notifyOnChange", v)}
-              label="Notify collaborators when changed"
-              hint="When a task’s value changes, its collaborators get an Inbox notification."
+              label="Notify followers when changed"
+              hint="When a task’s value changes, its followers get an Inbox notification."
             />
           </>
         ) : null}

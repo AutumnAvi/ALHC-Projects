@@ -1560,7 +1560,7 @@ export function ActionFields({
                 value={str(action.members) || "none"}
                 options={[
                   { value: "none", label: "invite nobody else", description: "Only the rule’s owner (who owns the project)" },
-                  { value: "task_people", label: "invite the task’s people", description: "Its assignee and collaborators, as Editors" },
+                  { value: "task_people", label: "invite the task’s people", description: "Its assignee and followers, as Editors" },
                 ]}
                 onChange={(v) => onChange(v === "none" ? omit(action, "members") : { ...action, members: v })}
                 variant="chip"

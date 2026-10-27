@@ -9,6 +9,7 @@ import { parseAccessStatus, type ProjectAccessRequest, type ProjectAccessStatus 
 import type { SidebarFolderState } from "@/lib/sidebar-folders";
 import { SKIP_REASONS, type SkipReason } from "@/lib/reply-attachments";
 import type { MentionTeam } from "@/lib/mentions";
+import { DEFAULT_SUBTASK_PREFS, parseSubtaskPrefs, type SubtaskPrefs } from "@/lib/subtask-view";
 import {
   DESIGN_COLUMNS,
   DESIGN_FIELDS,
@@ -207,6 +208,9 @@ export type ProjectTask = {
   tagIds: string[];
   // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
   commentCount: number;
+  // Files and attachment links on the task (not removed), for the paperclip on List rows (Oct 27 notes,
+  // batch 5; project_task_cards). Missing = not known (an older database, or a card built elsewhere).
+  attachmentCount?: number;
   // Shown in front of the name while numbering is on, with its project's bracket setting. The stored
   // title stays bare.
   requestLabel?: RequestLabel | null;
@@ -291,8 +295,6 @@ export type TaskDetail = {
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
   memberRoles: Record<string, ProjectRole>;
   tagIds: string[];
-  // People who liked the task, oldest first.
-  likeProfileIds: string[];
   // A private task (no project; for a subtask: its top-level task is private). Only its top-level task's
   // creator and assignee (privateReaderIds) can read it, so only they can be assigned or follow.
   isPrivate: boolean;
@@ -673,6 +675,7 @@ function projectTasksFromCards(data: Json): ProjectTask[] {
       approvalStatus: parseApprovalTaskStatus(card.approval_status),
       tagIds: Array.isArray(card.tag_ids) ? card.tag_ids.filter((tagId): tagId is string => typeof tagId === "string") : [],
       commentCount: typeof card.comment_count === "number" ? card.comment_count : 0,
+      attachmentCount: typeof card.attachment_count === "number" ? card.attachment_count : 0,
     });
   }
   return tasks;
@@ -1313,13 +1316,6 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     listMyProjectRoles(),
     listTaskTagIds([taskId]),
     supabase.rpc("open_blocker_count", { target_task: taskId }),
-    supabase
-      .from("task_likes")
-      .select("profile_id")
-      .eq("task_id", taskId)
-      .is("deleted_at", null)
-      .order("created_at")
-      .then((r) => rows(r, "likes")),
     isPrivate
       ? supabase
           .from("tasks")
@@ -1550,7 +1546,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     pagedComments,
     approvalRuleNames,
     formTitle,
-    [myRoles, tagIds, blockerCount, likes, privateRoot, teams, taskLabels],
+    [myRoles, tagIds, blockerCount, privateRoot, teams, taskLabels],
     subtaskItems,
   ] = await Promise.all([
     loadReplyThread(supabase, taskId),
@@ -1717,7 +1713,6 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     viewerRole: viewerProjectRole,
     memberRoles,
     tagIds: tagIds.get(taskId) ?? [],
-    likeProfileIds: likes.map((l) => l.profile_id),
     isPrivate,
     privateReaderIds: [
       ...new Set([privateRoot?.created_by, privateRoot?.assignee_id].filter((p): p is string => Boolean(p))),
@@ -3951,6 +3946,21 @@ export const getProfilePreferences = cache(async (): Promise<{ openPersonalView:
   return { openPersonalView: row?.open_personal_view ?? false, available: true };
 });
 
+// Oct 27 notes (batch 5): the person's Subtasks filter and sort (the defaults without a row, or on a
+// database without this release).
+export const getSubtaskPreferences = cache(async (): Promise<SubtaskPrefs> => {
+  const { user } = await getViewer();
+  if (!user) return DEFAULT_SUBTASK_PREFS;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("profile_preferences")
+    .select("subtask_hide_completed, subtask_assigned_to_me, subtask_sort")
+    .eq("profile_id", user.id)
+    .maybeSingle();
+  if (error || !data) return DEFAULT_SUBTASK_PREFS;
+  return parseSubtaskPrefs(data);
+});
+
 // Ids of the project's tasks that match a view filter, evaluated by filter_project_tasks() under RLS.
 export async function filterProjectTaskIds(
   projectId: string,
@@ -5476,6 +5486,33 @@ export const getListCollapsedGroups = cache(async (projectId: string): Promise<s
     .maybeSingle();
   if (error) return [];
   return (data?.group_keys ?? []).filter((key): key is string => typeof key === "string");
+});
+
+// Oct 27 notes (batch 5): whether the project's Owners locked its sections (false on a database without
+// this release).
+export const getProjectSectionsLocked = cache(async (projectId: string): Promise<boolean> => {
+  if (!isUuid(projectId)) return false;
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("projects").select("sections_locked").eq("id", projectId).maybeSingle();
+  if (error) return false;
+  return data?.sections_locked === true;
+});
+
+// Oct 27 notes (batch 5): the viewer's own Show / Hide completed for a project's List and Board (null = what
+// the view says; also null on a database without this release).
+export const getProjectShowCompleted = cache(async (projectId: string): Promise<boolean | null> => {
+  if (!isUuid(projectId)) return null;
+  const supabase = await createClient();
+  const { user } = await getViewer();
+  if (!user) return null;
+  const { data, error } = await supabase
+    .from("project_person_settings")
+    .select("show_completed")
+    .eq("project_id", projectId)
+    .eq("profile_id", user.id)
+    .maybeSingle();
+  if (error) return null;
+  return data?.show_completed ?? null;
 });
 
 // Files tab: every active attachment on the project's active tasks and their subtasks (read through

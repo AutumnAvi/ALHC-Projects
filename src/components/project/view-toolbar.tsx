@@ -6,6 +6,9 @@ import { useState } from "react";
 import {
   ArrowDownUp,
   Check,
+  CheckCircle2,
+  Eye,
+  EyeOff,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -22,13 +25,14 @@ import {
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { useProjectPermissions } from "@/components/project/project-access";
+import { useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { useViewConfig } from "@/components/project/view-config";
-import { createSection, createTask, createView, saveViewChanges } from "@/lib/actions";
+import { createSection, createTask, createView, saveViewChanges, setProjectShowCompleted } from "@/lib/actions";
 import { requestAddTask } from "./shared";
 import {
   columnsOf,
   completionOf,
+  completionStateLabel,
   encodeConfig,
   fieldRef,
   groupOf,
@@ -36,7 +40,9 @@ import {
   showsSubtasks,
   sortOf,
   sortOptions,
+  withCompletionOf,
   withFilters,
+  withShowCompleted,
   type ColumnKey,
   type GroupBy,
   type ProjectView,
@@ -61,11 +67,14 @@ export function ViewToolbar({
   view,
   layout,
   context,
+  showCompleted = null,
 }: {
   projectId: string;
   view: ProjectView | null;
   layout: ViewLayout;
   context: FilterContext;
+  // The viewer's own Show / Hide completed for this project (null = what the view says).
+  showCompleted?: boolean | null;
 }) {
   const router = useRouter();
   const viewConfig = useViewConfig();
@@ -85,8 +94,12 @@ export function ViewToolbar({
 
   function save() {
     if (!view) return;
+    // The person's own Show / Hide completed isn't part of the view: keep the view's own completion unless
+    // it was changed some other way (the Filter's completion choice).
+    const personal = showCompleted !== null && completionOf(current.filters) === (showCompleted ? "all" : "incomplete");
+    const toSave = personal ? withCompletionOf(current, view.config) : current;
     run(async () => {
-      const result = await saveViewChanges(view.id, current);
+      const result = await saveViewChanges(view.id, toSave);
       if (!result.error && !result.copied) router.replace(urlFor(null), { scroll: false });
       if (!result.error && result.copied && result.viewId) {
         notify("Saved as your own view. The shared view stays as it was.");
@@ -134,6 +147,15 @@ export function ViewToolbar({
               ) : null}
               <span aria-hidden className="mx-1 h-4 w-px bg-zinc-200" />
             </>
+          ) : null}
+
+          {layout === "list" || layout === "board" ? (
+            <CompletedToggle
+              completion={completionOf(filters)}
+              onChange={(show) =>
+                viewConfig.applyPersonal(withShowCompleted(current, show), () => setProjectShowCompleted(projectId, show))
+              }
+            />
           ) : null}
 
           <Popover
@@ -308,6 +330,35 @@ export function ViewToolbar({
   );
 }
 
+// Oct 27 notes (batch 5): an obvious Show / Hide completed in the List and Board toolbar, with what's
+// shown spelled out next to it. Remembered per person per project (setProjectShowCompleted).
+function CompletedToggle({ completion, onChange }: { completion: ReturnType<typeof completionOf>; onChange: (show: boolean) => void }) {
+  const showing = completion !== "incomplete";
+  return (
+    <span role="group" aria-label="Completed tasks" className="mr-1 inline-flex items-center gap-1">
+      <span
+        className={`inline-flex h-6 items-center gap-1 rounded-full px-2 text-xs font-medium ${
+          showing ? "bg-green-50 text-green-800" : "bg-zinc-100 text-zinc-600"
+        }`}
+        aria-live="polite"
+      >
+        <CheckCircle2 className="size-3.5" aria-hidden />
+        {completionStateLabel(completion)}
+      </span>
+      <button
+        type="button"
+        aria-pressed={showing}
+        onClick={() => onChange(!showing)}
+        data-tooltip={showing ? "Hide completed tasks (remembered for you in this project)" : "Show completed tasks too (remembered for you in this project)"}
+        className={`${toolButton} ${showing ? activeTool : ""}`}
+      >
+        {showing ? <EyeOff className="size-3.5" aria-hidden /> : <Eye className="size-3.5" aria-hidden />}
+        {showing ? "Hide completed" : "Show completed"}
+      </button>
+    </span>
+  );
+}
+
 function withoutText(filters: ViewFilters): ViewFilters {
   const next = { ...filters };
   delete next.text;
@@ -441,6 +492,7 @@ function OptionsMenu({
 
   return (
     <div>
+      {layout === "list" || layout === "board" ? null : (
       <Toggle
         label="Show completed tasks"
         checked={completion !== "incomplete"}
@@ -452,6 +504,7 @@ function OptionsMenu({
           apply(withFilters(current, next));
         }}
       />
+      )}
       {layout === "list" ? (
         <Toggle
           label="Show subtasks"
@@ -638,6 +691,8 @@ function AddMenu({
   close: () => void;
 }) {
   const [page, setPage] = useState<"menu" | "section" | "milestone">("menu");
+  // Oct 27 notes (batch 5): no Add section while the owner has locked the sections.
+  const { canEditSections } = useSectionPermissions();
   if (page === "section") {
     return (
       <div className="p-1.5">
@@ -670,9 +725,11 @@ function AddMenu({
   }
   return (
     <>
-      <MenuItem onClick={() => setPage("section")}>
-        <Rows3 className="size-4 text-zinc-500" /> Add section
-      </MenuItem>
+      {canEditSections ? (
+        <MenuItem onClick={() => setPage("section")}>
+          <Rows3 className="size-4 text-zinc-500" /> Add section
+        </MenuItem>
+      ) : null}
       <MenuItem
         onClick={() => {
           if (inline) {

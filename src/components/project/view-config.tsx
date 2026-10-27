@@ -13,6 +13,10 @@ type ViewConfigState = {
   base: ViewConfig;
   isDraft: boolean;
   apply: (next: ViewConfig) => void;
+  // A person's own choice that the server applies to the saved view (Oct 27 notes, batch 5: Show / Hide
+  // completed): shown at once, saved by `save` (a Server Action whose refresh brings the page back with it
+  // applied). An unsaved draft gets it too; if it couldn't be remembered, it becomes part of the draft.
+  applyPersonal: (next: ViewConfig, save: () => Promise<{ error?: string; remembered?: boolean }>) => void;
   // The page URL for a config (null = the saved view, ?f= dropped).
   urlFor: (next: ViewConfig | null) => string;
 };
@@ -55,6 +59,14 @@ export function ViewConfigProvider({
         startTransition(() => {
           setCurrent(next);
           router.replace(urlFor(next), { scroll: false });
+        }),
+      applyPersonal: (next, save) =>
+        startTransition(async () => {
+          setCurrent(next);
+          const drafting = searchParams.has("f");
+          const result = await save();
+          if (result.error) return;
+          if (drafting || result.remembered === false) router.replace(urlFor(next), { scroll: false });
         }),
     };
   }, [current, baseConfig, searchParams, pathname, router, setCurrent]);

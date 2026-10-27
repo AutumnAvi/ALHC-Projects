@@ -456,3 +456,30 @@ export function withFilters(config: ViewConfig, filters: ViewFilters): ViewConfi
   if (!Object.keys(filters).length) delete next.filters;
   return next;
 }
+
+// Oct 27 notes (batch 5): Show / Hide completed in the List and Board toolbar, remembered per person per
+// project (project_person_settings.show_completed). It sets the config's completion filter: shown = all
+// tasks, hidden = incomplete (the default), and drops "completed in the last N days".
+export function withShowCompleted(config: ViewConfig, show: boolean): ViewConfig {
+  const filters: ViewFilters = { ...(config.filters ?? {}) };
+  delete filters.completed_within_days;
+  if (show) filters.completion = "all";
+  else delete filters.completion;
+  return withFilters(config, filters);
+}
+
+// The completion part of `source` on top of `config` (Save view keeps the view's own completion when the
+// person's Show / Hide completed choice is what changed it).
+export function withCompletionOf(config: ViewConfig, source: ViewConfig): ViewConfig {
+  const filters: ViewFilters = { ...(config.filters ?? {}) };
+  delete filters.completion;
+  delete filters.completed_within_days;
+  if (source.filters?.completion) filters.completion = source.filters.completion;
+  if (source.filters?.completed_within_days !== undefined) filters.completed_within_days = source.filters.completed_within_days;
+  return withFilters(config, filters);
+}
+
+// What the toolbar says about completed tasks.
+export function completionStateLabel(completion: Completion): string {
+  return completion === "all" ? "All tasks" : completion === "completed" ? "Completed tasks" : "Incomplete tasks";
+}

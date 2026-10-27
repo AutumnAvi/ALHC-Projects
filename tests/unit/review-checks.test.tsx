@@ -18,7 +18,6 @@ import {
   timeLabel,
   type PublicReview,
 } from "@/lib/review-checks";
-import { renderReviewEmail, reviewUrls } from "@/lib/review-email";
 import { finishReviewUpload, startReviewUpload, submitReviewDecision } from "@/lib/review-public-actions";
 
 const TOKEN = `alhc_rev_${"a1".repeat(32)}`;
@@ -63,7 +62,7 @@ test("parsing what review_check_view returns", () => {
   assert.deepEqual(parsePublicReview({ status: "withdrawn" }), { status: "withdrawn" });
   assert.deepEqual(parsePublicReview({ status: "superseded" }), { status: "superseded" });
   assert.match(REVIEW_REFUSALS.withdrawn, /withdrawn/);
-  assert.match(REVIEW_REFUSALS.superseded, /newer version/);
+  assert.match(REVIEW_REFUSALS.superseded, /newer round/);
   assert.deepEqual(parsePublicReview({ status: "weird" }), { status: "unknown" });
   assert.deepEqual(parsePublicReview(null), { status: "unknown" });
   const parsed = parsePublicReview({
@@ -103,37 +102,6 @@ test("pins read as places; uploads are checked like emailed files", () => {
   assert.match(reviewUploadProblem({ name: "run.sh", type: "", size: 10 }) ?? "", /can’t be sent/);
 });
 
-test("the email: the design, a thumbnail, and exactly two buttons (Approve, Leave feedback)", () => {
-  const email = renderReviewEmail({
-    origin: "https://projects.example.com",
-    token: TOKEN,
-    round: 2,
-    recipientName: "Cara Client",
-    senderName: "Avi",
-    taskTitle: "Spring poster",
-    projectName: "Creative requests",
-    message: "Here's the second draft.",
-    assets: [
-      { assetId: "asset-1", name: "poster.png", contentType: "image/png" },
-      { assetId: "asset-2", name: "proof.pdf", contentType: "application/pdf" },
-    ],
-    design: null,
-  });
-  const urls = reviewUrls("https://projects.example.com", TOKEN);
-  assert.equal(email.subject, "Review requested: Spring poster (v2)");
-  assert.ok(email.html.includes(`href="${urls.approve}"`) && email.html.includes(">Approve</a>"));
-  assert.ok(email.html.includes(`href="${urls.feedback}"`) && email.html.includes(">Leave feedback</a>"));
-  assert.equal(email.html.match(/<a [^>]*>(Approve|Leave feedback)<\/a>/g)?.length, 2, "two buttons");
-  assert.equal(
-    email.html.match(/<a [^>]*style="display:inline-block[^"]*"/g)?.length,
-    2,
-    "no other button (e.g. the design's form button)",
-  );
-  assert.ok(email.html.includes(`src="${urls.page}/file/asset-1"`), "the image is the thumbnail");
-  assert.match(email.html, /Hi Cara,/);
-  assert.match(email.text, /Approve: https:\/\/projects\.example\.com\/review\/alhc_rev_/);
-});
-
 const review: PublicReview = {
   id: "r1",
   round: 1,
@@ -152,20 +120,34 @@ const review: PublicReview = {
   assets: [{ id: "a1", name: "poster.png", contentType: "image/png", size: 2048 }],
   pins: [],
   files: [],
+  draft: null,
+  walkthroughSeen: false,
+  previous: null,
 };
 
-test("the review page: open rounds offer Approve and Send feedback, files, and uploads", () => {
+test("the review page: open rounds offer the answer (Approve / Request changes), files, and uploads", () => {
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={review} logoUrl={null} initialAction={null} />);
   assert.match(html, /Spring poster/);
+  assert.match(html, /role="radiogroup"/);
   assert.match(html, />Approve</);
-  assert.match(html, /Send feedback/);
+  assert.match(html, /Request changes/);
+  assert.match(html, /Submit review/, "no answer picked yet");
   assert.match(html, /Upload files/);
   assert.match(html, /Click the file to pin a comment/);
+  assert.match(html, /Round 1/);
+  assert.doesNotMatch(html, /[Vv]ersion/, "plain words: rounds, not versions");
   assert.ok(html.includes(`src="/review/${TOKEN}/file/a1"`), "the file in full quality, through the token route");
   assert.match(html, /cursor-crosshair/, "clicking pins");
 });
 
-test("the review page after a decision: read-only, with the pins sent", () => {
+test("the email's Approve button picks Approve (it doesn't send anything by itself)", () => {
+  const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={review} logoUrl={null} initialAction="approve" />);
+  assert.match(html, /role="radio" aria-checked="true"[^>]*>(?:(?!<\/button>)[\s\S])*Approve/);
+  assert.match(html, /Send approval/);
+  assert.doesNotMatch(html, /Yes, send it/, "no confirmation until they ask to send");
+});
+
+test("the review page after a decision: the confirmation, with what was sent", () => {
   const decided: PublicReview = {
     ...review,
     status: "changes_requested",
@@ -173,12 +155,14 @@ test("the review page after a decision: read-only, with the pins sent", () => {
     pins: [{ number: 1, assetId: "a1", page: null, x: 0.5, y: 0.5, time: null, body: "Here" }],
   };
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={decided} logoUrl={null} initialAction="approve" />);
-  assert.match(html, /your feedback was sent/);
+  assert.match(html, /your feedback was sent \(1 comment\)/);
   assert.doesNotMatch(html, />Approve</);
   assert.doesNotMatch(html, /Upload files/);
   assert.doesNotMatch(html, /cursor-crosshair/);
   assert.match(html, /Bigger logo/);
-  assert.match(html, /aria-label="Comment 1: Here"/);
+  assert.match(html, /poster\.png · 1 comment/);
+  assert.match(html, /Here/);
+  assert.match(html, /Look at the files again/);
 });
 
 test("a dead link says so and nothing else", () => {
