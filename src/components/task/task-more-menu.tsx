@@ -34,7 +34,7 @@ import { DuplicateTaskDialog } from "./duplicate-task-dialog";
 import { SendReviewDialog } from "./send-review-dialog";
 import { RunRuleDialog } from "./run-rule-dialog";
 import { SaveTaskTemplateDialog } from "./save-task-template";
-import { ConvertTaskDialog, canConvert } from "./task-convert";
+import { ConvertTaskDialog, convertMenuItem } from "./task-convert";
 import { OPEN_REPEATS_EVENT } from "./task-dates";
 import { displayTaskTitle } from "@/lib/request-numbers";
 
@@ -81,6 +81,8 @@ export function TaskMoreMenu({
   const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | "rule" | "review" | null>(null);
   const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
   const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
+  // Oct 27 notes (batch 6): a task → "Make a subtask of…", a subtask → "Convert to main task…".
+  const convert = convertMenuItem(task);
 
   async function changeKind(kind: TaskKind) {
     if (kind === task.kind) return;
@@ -170,7 +172,8 @@ export function TaskMoreMenu({
                   () => window.dispatchEvent(new Event(OPEN_REPEATS_EVENT)),
                   close,
                 )}
-                {item(ShieldCheck, "Request approval…", onRequestApproval, close)}
+                {/* Approval tasks are sent with Ready for approval (Oct 27 notes, batch 6), not a one-off request. */}
+                {task.kind !== "approval" ? item(ShieldCheck, "Request approval…", onRequestApproval, close) : null}
                 {/* Oct 26 notes (batch 3): files out for review by a client (or anyone) by email. */}
                 {item(Send, "Send review check…", () => setDialog("review"), close)}
                 {canAddSubtask ? item(ListPlus, "Add subtask", onAddSubtask, close) : null}
@@ -198,7 +201,7 @@ export function TaskMoreMenu({
                   })}
                 </div>
                 <div role="separator" className="my-1 border-t border-zinc-100" />
-                {canConvert(task) ? item(GitBranch, task.isSubtask ? "Convert to a task…" : "Convert to a subtask…", () => setDialog("convert"), close) : null}
+                {convert ? item(GitBranch, convert.label, () => setDialog("convert"), close) : null}
                 {home && editableProjects.length ? item(LayoutTemplate, "Save as task template…", () => setDialog("template"), close) : null}
                 {item(Copy, task.isSubtask ? "Duplicate subtask…" : "Duplicate task…", () => setDialog("duplicate"), close)}
                 {/* "Run manually" rules (Automations V2) run on top-level tasks of their project only. */}

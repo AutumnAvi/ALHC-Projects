@@ -9,6 +9,7 @@ import type { Profile, Section } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
 import { TagChip } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
+import { APPROVAL_FILTER_KEYS, APPROVAL_FILTER_LABELS, type ApprovalFilterKey } from "@/lib/task-kinds";
 import {
   DUE_KINDS,
   completionOf,
@@ -29,6 +30,18 @@ export type FilterContext = {
 };
 
 const inputClass = "control h-8 w-full";
+
+// The Approval filter's choices (Oct 27 notes, batch 6): "Waiting on me to approve" first, then the
+// statuses in order, then "Paused".
+export const APPROVAL_FILTER_ORDER: readonly ApprovalFilterKey[] = [
+  "waiting_on_me",
+  ...APPROVAL_FILTER_KEYS.filter((key) => key !== "waiting_on_me"),
+];
+
+export function approvalFilterLabel(keys: readonly ApprovalFilterKey[]): string {
+  const ordered = APPROVAL_FILTER_ORDER.filter((key) => keys.includes(key));
+  return `Approval: ${ordered.map((key) => APPROVAL_FILTER_LABELS[key]).join(", ")}`;
+}
 const pickerClass = "h-8 w-full";
 
 // ---------------------------------------------------------------------------------------------
@@ -113,6 +126,9 @@ export function filterChips(filters: ViewFilters, context: FilterContext): Chip[
     );
     chips.push({ key: "tags", label: `Tag: ${names.join(", ")}`, remove: () => without(filters, "tags") });
   }
+  if (filters.approval?.length) {
+    chips.push({ key: "approval", label: approvalFilterLabel(filters.approval), remove: () => without(filters, "approval") });
+  }
   filters.fields?.forEach((filter, index) => {
     const field = context.fields.find((f) => f.id === filter.field_id);
     if (!field) return;
@@ -175,6 +191,14 @@ function toggleIn<T>(list: T[] | undefined, value: T): T[] {
 
 function setList<K extends "sections" | "assignees" | "tags">(filters: ViewFilters, key: K, list: (string | null)[]): ViewFilters {
   return list.length ? { ...filters, [key]: list } : without(filters, key);
+}
+
+// Ticks or unticks one Approval choice (kept in APPROVAL_FILTER_ORDER).
+export function toggleApprovalFilter(filters: ViewFilters, key: ApprovalFilterKey): ViewFilters {
+  const current = filters.approval ?? [];
+  const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+  const ordered = APPROVAL_FILTER_ORDER.filter((k) => next.includes(k));
+  return ordered.length ? { ...filters, approval: ordered } : without(filters, "approval");
 }
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
@@ -417,6 +441,18 @@ export function FilterEditor({
           </div>
         </Group>
       ) : null}
+
+      <Group title="Approval">
+        {APPROVAL_FILTER_ORDER.map((key) => (
+          <Check
+            key={key}
+            checked={filters.approval?.includes(key) ?? false}
+            onChange={() => onChange(toggleApprovalFilter(filters, key))}
+          >
+            {APPROVAL_FILTER_LABELS[key]}
+          </Check>
+        ))}
+      </Group>
 
       {context.fields.length > 0 ? (
         <Group title="Fields">

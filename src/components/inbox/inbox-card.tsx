@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  AlarmClock,
   Archive,
   ArchiveRestore,
   AtSign,
@@ -19,6 +20,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
+import { ApprovalDecisionForm, type Decision } from "@/components/task/task-approval-banner";
 import { TaskLink } from "@/components/task/task-link";
 import { Timestamp } from "@/components/timestamp";
 import type { InboxItem, Profile } from "@/lib/data";
@@ -27,6 +29,7 @@ import { accessRequestOf, isAccessGranted } from "@/lib/access-requests";
 import { AccessRequestDecision } from "@/components/inbox/access-request-decision";
 import { isFieldChange, type InboxDensity } from "@/lib/inbox";
 import { seedFromTitle } from "@/lib/task-seed";
+import { formatDueDate } from "@/lib/dates";
 
 // One notification card in the Inbox (Asana parity, batch 5): unread dot, actor, "Actor verb Task",
 // where it happened, the comment or message (Detailed density), an approver's decision buttons, the
@@ -66,7 +69,19 @@ const DECISION_VERB: Record<string, string> = {
   rejected: "rejected",
 };
 
-export type Decision = "approved" | "changes_requested" | "rejected";
+export type { Decision };
+
+// An approval reminder (Oct 27 notes, batch 6): approval_reminders_tick nudges each approver still
+// deciding the day before the approval due date (due_soon) and once it's overdue.
+export function approvalReminderOf(item: Pick<InboxItem, "kind" | "data">): "due_soon" | "overdue" | null {
+  if (item.kind !== "approval_requested") return null;
+  const reminder = dataText(item.data, "reminder");
+  return reminder === "due_soon" || reminder === "overdue" ? reminder : null;
+}
+
+export function approvalReminderText(reminder: "due_soon" | "overdue"): string {
+  return reminder === "overdue" ? "Reminder: approval overdue" : "Reminder: approval due tomorrow";
+}
 
 // The card's read / archived / bookmarked state, with the page's optimistic changes applied.
 export type CardState = { read: boolean; archived: boolean; bookmarked: boolean };
@@ -79,6 +94,11 @@ function dataText(data: InboxItem["data"], key: string): string | null {
 
 function describe(item: InboxItem) {
   const ruleName = dataText(item.data, "rule_name");
+  const reminder = approvalReminderOf(item);
+  if (reminder) {
+    const dueOn = dataText(item.data, "due_on");
+    return { ruleName: null, verb: approvalReminderText(reminder), detail: dueOn && /^\d{4}-\d{2}-\d{2}$/.test(dueOn) ? `Approval due ${formatDueDate(dueOn)}` : null };
+  }
   let verb: string = KIND[item.kind].verb;
   if (item.kind === "approval_decided") verb = DECISION_VERB[dataText(item.data, "status") ?? ""] ?? verb;
   if (item.kind === "approval_requested" && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.resubmitted) {
@@ -176,7 +196,7 @@ export function InboxCard({
   onRead: (read: boolean) => void;
   onArchive: (archived: boolean) => void;
   onBookmark: (bookmarked: boolean) => void;
-  onDecide: (decision: Decision) => void;
+  onDecide: (decision: Decision, note: string) => void;
 }) {
   const { read, archived, bookmarked } = state;
   const compact = density === "compact";
@@ -186,15 +206,30 @@ export function InboxCard({
     compact ? "truncate" : ""
   }`;
   const { ruleName, verb, detail } = describe(item);
+  const reminder = approvalReminderOf(item);
   // A form submitter's emailed reply has no actor: name the address it came from.
   // Oct 26 notes (batch 3): a review check's outcome names the reviewer's address.
   const reviewer = dataText(item.data, "reviewer_email");
   const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? reviewer ?? "Someone");
   const ruleHref = pausedRuleHref(item);
   const accessRequest = accessRequestOf(item.data);
-  const Icon = ruleHref ? CirclePause : accessRequest || isAccessGranted(item.data) ? UserPlus : KIND[item.kind].icon;
+  const Icon = reminder
+    ? AlarmClock
+    : ruleHref
+      ? CirclePause
+      : accessRequest || isAccessGranted(item.data)
+        ? UserPlus
+        : KIND[item.kind].icon;
   const strong = read ? "font-medium text-zinc-800" : "font-semibold text-zinc-900";
-  const linkText = (
+  const linkText = reminder ? (
+    <>
+      <span className={reminder === "overdue" ? `${strong} text-red-700` : strong}>{verb}</span> ·{" "}
+      <span className={strong}>{item.taskTitle}</span>
+      {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
+      {read ? null : <span className="sr-only"> (unread)</span>}
+      {bookmarked ? <span className="sr-only"> (bookmarked)</span> : null}
+    </>
+  ) : (
     <>
       <span className={strong}>{actorName}</span> {verb} <span className={strong}>{item.taskTitle}</span>
       {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
@@ -245,7 +280,16 @@ export function InboxCard({
           aria-hidden
           className={`size-2 shrink-0 rounded-full ${read ? "" : "bg-accent-500"} ${compact ? "" : "mt-2.5"}`}
         />
-        {actor || !ruleName ? (
+        {reminder ? (
+          <span
+            aria-hidden
+            className={`inline-flex shrink-0 items-center justify-center rounded-full ${
+              reminder === "overdue" ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-700"
+            } ${compact ? "size-5" : "size-7"}`}
+          >
+            <AlarmClock className={compact ? "size-3" : "size-3.5"} />
+          </span>
+        ) : actor || !ruleName ? (
           <Avatar name={actorName} src={actor?.avatar_url} profileId={actor?.id} size={compact ? "sm" : "md"} />
         ) : (
           <span
@@ -265,20 +309,9 @@ export function InboxCard({
           {openRule ? <p className="mt-1">{openRule}</p> : null}
           {accessRequest ? <AccessRequestDecision request={accessRequest} compact={compact} /> : null}
           {decides && item.approval?.status === "pending" ? (
-            <div className="relative z-10 mt-2 flex flex-wrap gap-1.5" role="group" aria-label={`Decide on “${item.taskTitle}”`}>
-              <button type="button" onClick={() => onDecide("approved")} className="btn-primary h-6 px-2 text-xs">
-                Approve
-              </button>
-              <button type="button" onClick={() => onDecide("changes_requested")} className="btn-secondary h-6 px-2 text-xs">
-                Request changes
-              </button>
-              <button
-                type="button"
-                onClick={() => onDecide("rejected")}
-                className="btn-secondary h-6 px-2 text-xs hover:border-red-300 hover:text-red-700"
-              >
-                Reject
-              </button>
+            // Request changes needs a note (the form won't send without one); Approve and Reject ask for one.
+            <div className="relative z-10 mt-2" role="group" aria-label={`Decide on “${item.taskTitle}”`}>
+              <ApprovalDecisionForm idPrefix={`inbox-${item.id}`} pending={false} compact onDecide={onDecide} />
             </div>
           ) : decides && item.kind === "approval_requested" && !compact && item.approval ? (
             <p className="mt-1 text-xs text-zinc-500">{APPROVAL_STATE[item.approval.status]}</p>

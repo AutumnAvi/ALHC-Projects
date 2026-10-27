@@ -368,12 +368,21 @@ begin
   end;
   perform public.send_for_approval(t, 'Banner', '{}', true, 'move_section', done_section);
 
-  -- An Editor who isn't an Owner / Admin can't swap approvers while it's pending.
+  -- An Editor who isn't an Owner / Admin can't swap approvers or change how they decide while it's
+  -- pending; the approval due date is still theirs to change.
   begin
     perform public.set_task_approvers(t, array['b6b60027-0000-4000-8000-000000000005'::uuid], 'any', null);
     raise exception 'reassigning needs an Owner or Admin';
   exception when insufficient_privilege then null;
   end;
+  begin
+    perform public.set_task_approvers(t, array['b6b60027-0000-4000-8000-000000000004'::uuid], 'all', null);
+    raise exception 'changing the mode mid-round needs an Owner or Admin';
+  exception when insufficient_privilege then null;
+  end;
+  perform public.set_task_approvers(t, array['b6b60027-0000-4000-8000-000000000004'::uuid], 'any', current_date + 3);
+  assert (select due_on from public.approval_rounds where task_id = t and status = 'pending') = current_date + 3,
+    'the due date follows to the pending round';
 
   -- Withdraw, then send again.
   perform public.withdraw_approval(t);

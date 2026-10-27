@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useOptimistic, useState } from "react";
 import { Archive, AtSign, Bookmark, Inbox, ListFilter } from "lucide-react";
-import { useConfirm, usePrompt } from "@/components/confirm";
+import { useConfirm } from "@/components/confirm";
 import { InboxCard, inboxItemHref, type CardState, type Decision } from "@/components/inbox/inbox-card";
 import { useInboxDensity } from "@/components/inbox/inbox-density";
 import { InboxToolbar } from "@/components/inbox/inbox-toolbar";
@@ -73,7 +73,6 @@ export function InboxView({
   const density = useInboxDensity();
   const [, run] = useServerAction();
   const confirm = useConfirm();
-  const prompt = usePrompt();
   const [filter, setFilter] = useState<InboxFilter>(NO_INBOX_FILTER);
   const [sort, setSort] = useState<InboxSort>("newest");
   const [clickedId, setClickedId] = useState<string | null>(null);
@@ -148,24 +147,13 @@ export function InboxView({
   const setRead = (item: InboxItem, read: boolean) =>
     change([item.id], { read }, () => (read ? markInboxRead([item.id]) : markInboxUnread(item.id)));
 
-  // The approver decides a pending request right here (decide_approval: approver only, Commenter+).
-  async function decide(item: InboxItem, decision: Decision) {
+  // The approver decides a pending request right here (decide_approval: approver only, Commenter+). The
+  // card's form asks for the note first: required for Request changes, recommended for the others.
+  function decide(item: InboxItem, decision: Decision, note: string) {
     if (!item.approval) return;
-    let note: string | undefined;
-    if (decision !== "approved") {
-      const rejecting = decision === "rejected";
-      const answer = await prompt({
-        title: rejecting ? "Reject this request?" : "Request changes?",
-        label: "Note for the requester (optional)",
-        placeholder: rejecting ? undefined : "What should change?",
-        confirmLabel: rejecting ? "Reject" : "Request changes",
-        tone: rejecting ? "danger" : "default",
-      });
-      if (answer === null) return;
-      note = answer.trim() || undefined;
-    }
+    if (decision === "changes_requested" && !note.trim()) return;
     const approvalId = item.approval.id;
-    change([item.id], { read: true }, () => decideApproval(approvalId, decision, note));
+    change([item.id], { read: true }, () => decideApproval(approvalId, decision, note.trim() || undefined));
   }
 
   // "Mark all as read" on Activity covers every unread notification, older ones past the newest
@@ -288,7 +276,7 @@ export function InboxView({
                               onBookmark={(bookmarked) =>
                                 change([item.id], { bookmarked }, () => setInboxBookmark(item.id, bookmarked))
                               }
-                              onDecide={(decision) => decide(item, decision)}
+                              onDecide={(decision, note) => decide(item, decision, note)}
                             />
                           ))}
                           {group.items.length > pages.limit(pageKey) ? (

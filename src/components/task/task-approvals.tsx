@@ -20,12 +20,18 @@ export const APPROVAL_STATUS: Record<TaskApproval["status"], { label: string; cl
   cancelled: { label: "Cancelled", className: "bg-zinc-100 text-zinc-600" },
 };
 
+// Requests that belong to an approval task's rounds are the approval panel's, not this list's.
+export function legacyApprovals(approvals: TaskApproval[], excludeId: string | null = null): TaskApproval[] {
+  return approvals.filter((a) => !a.roundId && a.id !== excludeId);
+}
+
 const inputClass =
   "field h-auto w-full py-1.5";
 
-// The pane's Approvals block: approval requests on this task (an approval task's own request is in the
-// banner at the top instead). Since Asana parity, batch 3 it shows only when there are requests, or
-// while an Editor writes one ("…" → Request approval opens the form: requesting / onRequestingChange).
+// The pane's Approvals block: approval requests on this task. An approval task's own requests (one per
+// approver in each round — roundId set; Oct 27 notes, batch 6) are in the approval panel at the top
+// instead, so this lists only the other ("…" → Request approval) ones. Since Asana parity, batch 3 it
+// shows only when there are requests, or while an Editor writes one (requesting / onRequestingChange).
 export function TaskApprovals({
   task,
   profiles,
@@ -37,7 +43,7 @@ export function TaskApprovals({
   task: TaskDetail;
   profiles: Profile[];
   memberId: string;
-  // An approval task's own request, shown in the banner at the top of the pane instead.
+  // A request shown elsewhere (round requests are always left out).
   excludeId?: string | null;
   requesting: boolean;
   onRequestingChange: (requesting: boolean) => void;
@@ -47,7 +53,7 @@ export function TaskApprovals({
   const [note, setNote] = useState("");
   const [asSubtask, setAsSubtask] = useState(true);
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
-  const approvals = task.approvals.filter((a) => a.id !== excludeId);
+  const approvals = legacyApprovals(task.approvals, excludeId);
   // Requesting/cancelling needs Editor; an approver needs at least Commenter to be able to decide.
   const canEdit = taskPermissions(task).canEdit;
   // The approver picker takes focus when the form opens (the old select's autoFocus).
@@ -154,7 +160,7 @@ export function TaskApprovals({
 
       {approvals.length === 0 && !open ? (
         <p className="mt-2 text-xs text-zinc-500">
-          {excludeId ? "No other approvals requested." : "No approvals requested."}
+          {task.kind === "approval" || excludeId ? "No other approvals requested." : "No approvals requested."}
         </p>
       ) : (
         <ul className="mt-2 space-y-2" aria-label="Approval requests">

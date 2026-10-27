@@ -76,7 +76,8 @@ export function WorkloadView({
   const [shown, applyChange] = useOptimistic(tasks, (current, change: Pick<Change, "id"> & Partial<Change>) =>
     current.map((t) => (t.id === change.id ? { ...t, ...change } : t)),
   );
-  // Moving a task's dates can push (or, if asked, pull) its dependents: ask first, with Undo.
+  // Moving a task's dates moves its dependents (later or earlier) as its project's Settings →
+  // Dependencies says: Auto-shift (with Undo), Ask me, or Off.
   const shift = useDependencyShift();
 
   const byField = measure !== "";
@@ -144,6 +145,7 @@ export function WorkloadView({
             moves.forEach((m) => {
               if (m.dueOn) applyChange({ id: m.taskId, startOn: m.startOn, dueOn: m.dueOn });
             }),
+          projectId: task.projectId,
         },
       );
     }

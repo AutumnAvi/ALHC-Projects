@@ -3,14 +3,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { History } from "lucide-react";
 import { RoleGate } from "@/components/project/project-access";
-import { ProjectSettings } from "@/components/project/project-settings";
+import { DependencyShiftSettings, ProjectSettings } from "@/components/project/project-settings";
 import { TaskNumberingForm } from "@/components/project/task-numbering";
 import { ProjectStatusForm } from "@/components/project/project-status-form";
 import { ProjectStatusHistory } from "@/components/project/project-status-history";
 import { ProjectTeamSettings } from "@/components/project/project-team-settings";
 import {
+  getDependencyShiftMode,
   getProject,
   getProjectOrigin,
+  getProjectRole,
   getRequestSequence,
   listProjectFields,
   listSections,
@@ -20,6 +22,7 @@ import {
   listTeams,
   type ProjectOrigin,
 } from "@/lib/data";
+import { hasRole } from "@/lib/roles";
 import { isProjectVisibility } from "@/lib/workspace";
 import { getViewerTimeZone } from "@/lib/timezone";
 
@@ -35,7 +38,7 @@ export default async function ProjectSettingsPage({
   params,
 }: PageProps<"/projects/[projectId]/settings">) {
   const { projectId } = await params;
-  const [project, sequence, sections, fields, origin, timeZone, statusUpdates, workspace, teams, myTeams] = await Promise.all([
+  const [project, sequence, sections, fields, origin, timeZone, statusUpdates, workspace, teams, myTeams, shiftMode, role] = await Promise.all([
     getProject(projectId),
     getRequestSequence(projectId),
     listSections(projectId),
@@ -46,6 +49,8 @@ export default async function ProjectSettingsPage({
     getWorkspace(),
     listTeams(),
     listMyTeamIds(),
+    getDependencyShiftMode(projectId),
+    getProjectRole(projectId),
   ]);
   if (!project) notFound();
   // The project's own team, the default team, and teams the viewer is on.
@@ -66,6 +71,10 @@ export default async function ProjectSettingsPage({
           sections={sections.map((section) => ({ id: section.id, name: section.name }))}
           fields={fields}
         />
+      </div>
+      {/* Oct 27 notes (batch 6): Admin+ by their own role (archived projects cap everyone at Viewer). */}
+      <div className="mx-auto max-w-3xl px-gutter pt-5">
+        <DependencyShiftSettings projectId={project.id} mode={shiftMode} canEdit={hasRole(role, "admin")} />
       </div>
       <RoleGate need="admin" what="project settings">
         <ProjectTeamSettings

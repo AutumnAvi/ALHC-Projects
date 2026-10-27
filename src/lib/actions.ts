@@ -6326,7 +6326,23 @@ export type DateChangeOutcome =
 
 export async function changeTaskDates(moves: ShiftMove[]): Promise<ActionResult & { outcome?: DateChangeOutcome }> {
   let outcome: DateChangeOutcome | undefined;
-  const result = await run(async () => {
+  // Not run(): an "ask" outcome changed nothing, so it mustn't refresh the page under the prompt.
+  const result = await (async (): Promise<ActionResult> => {
+    try {
+      await applyDateChange();
+    } catch (error) {
+      if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+      throw error;
+    }
+    if (outcome?.kind === "done") {
+      deliverQueuedEmail();
+      refresh();
+    }
+    return {};
+  })();
+  return result.error ? result : { outcome };
+
+  async function applyDateChange() {
     const input = shiftMovesInput(moves);
     const ids = moves.map((m) => id(m.taskId, "task"));
     const supabase = await createClient();
@@ -6362,8 +6378,7 @@ export async function changeTaskDates(moves: ShiftMove[]): Promise<ActionResult 
     const refused = parsed.skipped.find((skip) => given.has(skip.taskId));
     if (refused && moves.length === 1) throw new InputError(refused.reason || NOT_ALLOWED);
     outcome = { kind: "done", mode, changes: parsed.changes, skipped: parsed.skipped };
-  });
-  return result.error ? result : { outcome };
+  }
 }
 
 export async function setDependencyShiftMode(projectId: string, mode: DependencyShiftMode): Promise<ActionResult> {

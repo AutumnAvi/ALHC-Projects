@@ -263,7 +263,7 @@ export function TaskActivity({
         );
       }
       case "approval_requested":
-        return <>requested approval from {nameOf(str(d, "approver_id"))}</>;
+        return <>asked {nameOf(str(d, "approver_id"))} to approve this</>;
       case "approval_decided": {
         const note = str(d, "note");
         const verb =
@@ -274,9 +274,36 @@ export function TaskActivity({
               : "requested changes";
         return note ? <>{verb}: “{note}”</> : verb;
       }
-      case "approval_cancelled":
-        return <>cancelled the approval request for {nameOf(str(d, "approver_id"))}</>;
+      case "approval_cancelled": {
+        // Oct 27 notes (batch 6): why an approval request ended (data.reason).
+        const approver = nameOf(str(d, "approver_id"));
+        switch (str(d, "reason")) {
+          case "withdrawn":
+            return <>withdrew the approval request to {approver}</>;
+          case "handed_off": {
+            const note = str(d, "note");
+            const to = nameOf(str(d, "handoff_to"));
+            return note ? (
+              <>
+                handed off the approval to {to}: “{note}”
+              </>
+            ) : (
+              <>handed off the approval to {to}</>
+            );
+          }
+          case "reassigned":
+            return <>removed {approver} as an approver</>;
+          case "kind_changed":
+            return <>cancelled the approval request to {approver} (it’s no longer an approval task)</>;
+          default:
+            return <>cancelled the approval request for {approver}</>;
+        }
+      }
       case "approval_resubmitted":
+        // "Feedback received" / "Rejection received" (Oct 27 notes, batch 6) reuse this kind.
+        if (str(d, "event") === "acknowledged") {
+          return str(d, "status") === "rejected" ? "marked the rejection received" : "marked the feedback received";
+        }
         return <>resubmitted this to {nameOf(str(d, "approver_id"))} for approval</>;
       case "form_submitted":
         return <>submitted the form “{str(d, "form_title")}”</>;

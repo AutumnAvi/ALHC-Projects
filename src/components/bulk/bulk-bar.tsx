@@ -93,7 +93,12 @@ export function useBulkEdit() {
     });
   }
 
-  return { pending, apply, summary, closeSummary: () => setSummary(null) };
+  // A change made elsewhere (a bulk due date through useDependencyShift) that skipped some tasks.
+  function showSummary(total: number, operation: BulkOperation, result: BulkResult) {
+    if (result.skipped.length > 0) setSummary({ operation, total, result });
+  }
+
+  return { pending, apply, showSummary, summary, closeSummary: () => setSummary(null) };
 }
 
 export type BulkEdit = ReturnType<typeof useBulkEdit>;
@@ -115,7 +120,8 @@ export function BulkBar({
 }) {
   const count = selected.length;
   const run = (operation: BulkOperation) => bulk.apply(selected, operation);
-  // A new due date can push (or, if asked, pull) the selected tasks' dependents: ask first, with Undo.
+  // A new due date moves the selected tasks' dependents (later or earlier) as their project's Settings →
+  // Dependencies says: Auto-shift (with Undo), Ask me, or Off — one call, the same as the pane.
   const shift = useDependencyShift();
   const project = context.project;
   const fields = project?.fields.filter((f) => !f.boundToSections) ?? [];
@@ -242,12 +248,17 @@ export function BulkBar({
                 onPick={(dueOn) => {
                   close();
                   const ids = [...selected];
+                  // Clearing the due date moves nothing else: the bulk path (with its summary).
                   if (dueOn === null || ids.length > MAX_BULK_TASKS) {
                     run({ action: "set_due", due_on: dueOn });
                   } else {
-                    shift.changeMany(ids.map((taskId) => ({ taskId, dueOn })), taskCount(ids.length), () =>
-                      bulk.apply(ids, { action: "set_due", due_on: dueOn }),
-                    );
+                    const operation: BulkOperation = { action: "set_due", due_on: dueOn };
+                    shift.changeMany(ids.map((taskId) => ({ taskId, dueOn })), taskCount(ids.length), null, {
+                      projectId: project?.id ?? null,
+                      // Tasks that couldn't take the date (read-only, start after it, …): the usual summary.
+                      onResult: ({ moved, skipped }) =>
+                        bulk.showSummary(ids.length, operation, { updated: moved, unchanged: [], skipped }),
+                    });
                   }
                 }}
               />

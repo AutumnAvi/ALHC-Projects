@@ -7,15 +7,19 @@ import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { addTaskToProject, moveTask, removeTaskFromProject, setHomeProject } from "@/lib/actions";
 import type { TaskDetail, TaskMembership } from "@/lib/data";
+import type { RequestLabel } from "@/lib/request-numbers";
 import { projectColorClass } from "@/lib/project-colors";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
+import { TaskNumberBadge, taskNumberText } from "./task-number";
 
 // canAdd: the viewer is an Editor there, so the task can be added to that project.
 export type ProjectOption = { id: string; name: string; canAdd: boolean };
 
 // The pane's Projects row (Asana parity, batch 3): each project as a colored chip with its section in a
-// dropdown, "Add to projects" below. Home project and removal sit in a small menu per project.
+// dropdown, "Add to projects" below. Home project and removal sit in a small menu per project. Since Oct 27
+// notes (batch 6) each project numbers the tasks it holds, so each chip shows the task's number there
+// ("Website · Task #12").
 export function TaskProjects({
   task,
   addableProjects,
@@ -57,13 +61,7 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
 
   return (
     <li className="group/membership flex min-w-0 flex-wrap items-center gap-1">
-      <Link
-        href={`/projects/${membership.projectId}?task=${task.id}`}
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 text-sm font-medium text-zinc-800 hover:bg-zinc-100"
-      >
-        <span aria-hidden className={`size-3 shrink-0 rounded-[3px] ${projectColorClass(membership.projectId)}`} />
-        <span className="truncate">{membership.projectName}</span>
-      </Link>
+      <ProjectChip taskId={task.id} membership={membership} number={task.projectNumbers?.[membership.projectId] ?? null} />
       {membership.isHome && task.memberships.length > 1 ? (
         <span data-tooltip="Home project: the task's main project" className="inline-flex text-zinc-400">
           <Home className="size-3.5" aria-label="Home project" />
@@ -212,6 +210,38 @@ function AddToProjects({ task, projects }: { task: TaskDetail; projects: Project
   );
 }
 
+// A project chip: color, name, and the task's number in that project (small, muted), linking to the
+// task in that project.
+export function ProjectChip({
+  taskId,
+  membership,
+  number,
+}: {
+  taskId: string;
+  membership: Pick<TaskMembership, "projectId" | "projectName">;
+  number: RequestLabel | null;
+}) {
+  const numberText = taskNumberText(number);
+  return (
+    <Link
+      href={`/projects/${membership.projectId}?task=${taskId}`}
+      aria-label={numberText ? `${membership.projectName}, ${numberText}` : undefined}
+      className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 text-sm font-medium text-zinc-800 hover:bg-zinc-100"
+    >
+      <span aria-hidden className={`size-3 shrink-0 rounded-[3px] ${projectColorClass(membership.projectId)}`} />
+      <span className="truncate">{membership.projectName}</span>
+      {numberText ? (
+        <>
+          <span aria-hidden className="text-zinc-300">
+            ·
+          </span>
+          <TaskNumberBadge label={number} />
+        </>
+      ) : null}
+    </Link>
+  );
+}
+
 // A subtask's projects are its top-level task's (read-only here; change them on that task).
 function InheritedProjects({ task }: { task: TaskDetail }) {
   const root = task.ancestors[0];
@@ -221,13 +251,7 @@ function InheritedProjects({ task }: { task: TaskDetail }) {
         <ul className="flex flex-wrap gap-1">
           {task.memberships.map((m) => (
             <li key={m.projectId}>
-              <Link
-                href={`/projects/${m.projectId}?task=${task.id}`}
-                className="inline-flex h-7 items-center gap-1.5 rounded-md px-1 font-medium text-zinc-800 hover:bg-zinc-100"
-              >
-                <span aria-hidden className={`size-3 shrink-0 rounded-[3px] ${projectColorClass(m.projectId)}`} />
-                {m.projectName}
-              </Link>
+              <ProjectChip taskId={task.id} membership={m} number={task.projectNumbers?.[m.projectId] ?? null} />
             </li>
           ))}
         </ul>

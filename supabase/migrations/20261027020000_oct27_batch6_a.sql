@@ -1342,7 +1342,8 @@ end;
 $$;
 
 -- Approvers, how they decide, and the approval due date. Editors+ set them; while a round is pending only
--- project Owners / Admins change who approves (an approver hands off instead).
+-- project Owners / Admins change who approves or how they decide (an approver hands off instead); the
+-- approval due date stays the Editors'.
 create or replace function public.set_task_approvers(
   target_task uuid,
   approvers uuid[],
@@ -1389,9 +1390,10 @@ begin
   pending := found and r.status = 'pending';
   select coalesce(array_agg(a.profile_id), '{}') into current_ids
   from public.task_approvers a where a.task_id = target_task and a.deleted_at is null;
-  if pending and not (wanted @> current_ids and current_ids @> wanted) then
+  -- Changing who approves, or how they decide, mid-round can settle it: Owners / Admins only.
+  if pending and (not (wanted @> current_ids and current_ids @> wanted) or coalesce(approval_mode, 'any') <> r.mode) then
     if not public.has_task_role(target_task, 'admin') then
-      raise exception 'While approval is pending, only a project Owner or Admin can change approvers (an approver can hand off)'
+      raise exception 'While approval is pending, only a project Owner or Admin can change approvers or how they decide (an approver can hand off)'
         using errcode = 'insufficient_privilege';
     end if;
     if cardinality(wanted) = 0 then
