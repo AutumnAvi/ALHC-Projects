@@ -1,34 +1,50 @@
 "use client";
 
-import { startTransition, useCallback, useState, useTransition, type ReactNode } from "react";
-import { ArrowRight } from "lucide-react";
+import Link from "next/link";
+import { startTransition, useCallback, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { ArrowRight, Settings2 } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
-import { applyDependencyShifts, previewDependencyShifts, undoDependencyShift, updateTask } from "@/lib/actions";
+import { applyDependencyShifts, changeTaskDates, undoDependencyShift } from "@/lib/actions";
 import { currentMutationToken, dropTokenTasks, holdTaskChanges } from "@/lib/optimistic-session";
-import { shiftLabel, type ShiftChange, type ShiftMove, type ShiftPlanRow } from "@/lib/dependencies";
+import {
+  shiftLabel,
+  type ShiftChange,
+  type ShiftMove,
+  type ShiftPlanRow,
+  type ShiftResult,
+  type ShiftSkip,
+} from "@/lib/dependencies";
+import { invalidateTaskPanes } from "./task-pane-store";
 
 export type DateChange = { startOn: string | null; dueOn: string | null };
 export type MovedTask = { taskId: string } & DateChange;
 
 type Options = {
-  // Called inside the transition with the tasks about to move (the task itself first), for optimistic UI.
+  // Called with the tasks that move, for optimistic UI: first the changed task(s) at once (before the
+  // server answers), later the dependents that moved with them.
   onOptimistic?: (moves: MovedTask[]) => void;
   // Called when the change didn't happen (cancelled or refused), e.g. to reset an input.
   onRevert?: () => void;
   // Called just before the confirm dialog opens (e.g. to close the date picker it would sit under).
   onPrompt?: () => void;
+  // The project whose Settings → Dependencies decides how its dependents move (the prompt links there).
+  projectId?: string | null;
+  // Several tasks at once: which of the given tasks moved and which couldn't (a bulk change's summary).
+  onResult?: (result: { moved: string[]; skipped: ShiftSkip[] }) => void;
 };
 
-type Choice = { confirmed: string[]; pull: boolean } | "only" | "cancel";
+export type ShiftChoice = { confirmed: string[]; pull: boolean } | "only" | "cancel";
 
-type Prompt = {
+// What the prompt shows (exported for tests).
+export type ShiftPrompt = {
   // “Spring flyer”, or “8 tasks” for a bulk change.
   subject: string;
   many: boolean;
   push: ShiftPlanRow[];
   pull: ShiftPlanRow[];
-  resolve: (choice: Choice) => void;
+  projectId: string | null;
+  resolve: (choice: ShiftChoice) => void;
 };
 
 function shortDate(iso: string | null) {
@@ -42,31 +58,149 @@ function span(start: string | null, due: string | null) {
 }
 
 const movesOf = (plan: ShiftPlanRow[]) => plan.filter((r) => r.status === "move");
-// The pull-earlier plan only matters when it pulls something earlier.
-const pullAdds = (pull: ShiftPlanRow[]) => movesOf(pull).some((r) => r.shiftDays < 0);
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-// Date changes that respect dependencies. When moving tasks later would break the start of tasks that
-// depend on them (by kind and lag, transitively), the person sees which ones would move — and which are
-// skipped (completed, or they can't edit them) — and confirms before anything shifts. When a task moves
-// earlier, the same prompt offers to pull its dependents earlier too (keeping the gap); nothing is pulled
-// unless they tick it. The result toast offers Undo, which puts every moved date back. Without such
-// dependents it is a plain date change.
+// ---------------------------------------------------------------------------------------------
+// Pure rules (unit-tested)
+// ---------------------------------------------------------------------------------------------
+
+export type ShiftDirection = "later" | "earlier" | "both";
+
+// Which way the dependents of a change would go: pushed later, pulled earlier (keeping the gap), or both
+// (e.g. a start moved earlier and a due date moved later). Null when nothing would move.
+export function shiftDirection(push: ShiftPlanRow[], pull: ShiftPlanRow[]): ShiftDirection | null {
+  const later = movesOf(push).length > 0 || movesOf(pull).some((r) => r.shiftDays > 0);
+  const earlier = movesOf(pull).some((r) => r.shiftDays < 0);
+  if (later && earlier) return "both";
+  if (later) return "later";
+  if (earlier) return "earlier";
+  return null;
+}
+
+// The plan the prompt shows. The pull plan already holds the pushes too, so whenever something would move
+// earlier it is the one to show (moving a task earlier: pulling is the choice, not a hidden extra); else
+// the push plan.
+export function primaryShiftPlan(push: ShiftPlanRow[], pull: ShiftPlanRow[]): { plan: ShiftPlanRow[]; pull: boolean } {
+  return movesOf(pull).some((r) => r.shiftDays < 0) ? { plan: pull, pull: true } : { plan: push, pull: false };
+}
+
+// What the prompt asks, in plain words.
+export function shiftPromptText(
+  direction: ShiftDirection,
+  subject: string,
+  counts: { later: number; earlier: number },
+  many = false,
+): { title: string; description: string } {
+  const it = many ? "them" : "it";
+  const depends = (n: number) => (n === 1 ? `a task that depends on ${it}` : `${n} tasks that depend on ${it}`);
+  if (direction === "earlier") {
+    return {
+      title: "Pull dependent tasks earlier too?",
+      description: `Moving ${subject} earlier leaves a gap before ${depends(counts.earlier)}. Pull ${plural(counts.earlier, "it", "them")} earlier by the same amount to keep the gap, or leave ${plural(counts.earlier, "it", "them")} where ${plural(counts.earlier, "it is", "they are")}.`,
+    };
+  }
+  if (direction === "both") {
+    return {
+      title: "Move dependent tasks too?",
+      description: `Changing the dates of ${subject} would start ${depends(counts.later)} too early, and leaves a gap before ${depends(counts.earlier)}. Choose which ones move with ${it}.`,
+    };
+  }
+  return {
+    title: "Move dependent tasks later too?",
+    description: `Moving ${subject} later would start ${depends(counts.later)} too early. Nothing else moves until you choose.`,
+  };
+}
+
+// The primary button of the prompt.
+export function shiftConfirmLabel(direction: ShiftDirection, count: number) {
+  const n = plural(count, "1 dependent", `${count} dependents`);
+  return direction === "earlier" ? `Pull ${n} earlier` : `Move ${n} too`;
+}
+
+// Later (+1), earlier (−1), or the same day (0) for one moved task.
+function changeSign(c: ShiftChange) {
+  const before = c.old_due_on ?? c.old_start_on;
+  const after = c.new_due_on ?? c.new_start_on;
+  if (before && after && before !== after) return after > before ? 1 : -1;
+  const s0 = c.old_start_on;
+  const s1 = c.new_start_on;
+  if (s0 && s1 && s0 !== s1) return s1 > s0 ? 1 : -1;
+  return 0;
+}
+
+// The toast after a change: “Moved “Spring flyer” and 2 dependent tasks later”, plus the dependents
+// left alone (completed, or you can't edit them). Null when a single task moved alone (nothing to say).
+// Several tasks (a bulk change) always get a line.
+export function shiftToastText({
+  subject,
+  given,
+  changes,
+  skipped,
+}: {
+  subject: string;
+  given: string[];
+  changes: ShiftChange[];
+  skipped: ShiftSkip[];
+}): string | null {
+  const givenSet = new Set(given);
+  const many = given.length > 1;
+  const dependents = changes.filter((c) => !givenSet.has(c.task_id));
+  const leftAlone = skipped.filter((s) => !givenSet.has(s.taskId));
+  const movedGiven = changes.filter((c) => givenSet.has(c.task_id)).length;
+  const later = dependents.filter((c) => changeSign(c) > 0).length;
+  const earlier = dependents.filter((c) => changeSign(c) < 0).length;
+  const way = later && !earlier ? " later" : earlier && !later ? " earlier" : "";
+  const lead = many
+    ? `Updated the dates of ${movedGiven === given.length ? subject : `${movedGiven} of ${given.length} tasks`}`
+    : `Moved ${subject}`;
+  const kept = leftAlone.length
+    ? `${leftAlone.length} dependent ${plural(leftAlone.length, "task", "tasks")} ${plural(leftAlone.length, "was", "were")} left as ${plural(leftAlone.length, "it was", "they were")}${leftAlone.length === 1 && leftAlone[0].reason ? ` (${leftAlone[0].reason})` : ""}`
+    : "";
+  // Nothing else moved (Off, “Only move this task”, or no dependents): no news for one task.
+  if (dependents.length === 0) return many ? lead : null;
+  const deps = plural(dependents.length, "1 dependent task", `${dependents.length} dependent tasks`);
+  const text = many ? `${lead} and moved ${deps}${way}` : `${lead} and ${deps}${way}`;
+  return kept ? `${text}; ${kept}` : text;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The hook
+// ---------------------------------------------------------------------------------------------
+
+// Date changes that respect dependencies, both ways, the same everywhere (pane, subtasks, Calendar,
+// Timeline, Workload, bulk due dates). The changed task moves on screen at once; then one server call
+// (changeTaskDates) does what the project's Settings → Dependencies says:
+//   Auto-shift  the task and every dependent move right away — later when it moves later, earlier
+//               (keeping the gap) when it moves earlier — and the toast offers Undo;
+//   Ask me      when dependents would move, nothing else changes until the person picks which ones in the
+//               prompt (later and earlier the same way); otherwise the task just moves;
+//   Off         only the task moves.
+// Dependents that can't move (completed, or the person can't edit them) are listed and left alone.
 export function useDependencyShift(): {
   changeDates: (task: { id: string; title: string }, dates: DateChange, options?: Options) => void;
-  // Several tasks at once (a bulk due date). plain runs the change without shifting anything (no
-  // dependents to move, or the person chose “Only move these tasks”).
-  changeMany: (moves: ShiftMove[], subject: string, plain: () => void, options?: Options) => void;
+  // Several tasks at once (a bulk due date). `plain` is kept for older callers and no longer run:
+  // changeTaskDates applies the change itself.
+  changeMany: (moves: ShiftMove[], subject: string, plain: (() => void) | null, options?: Options) => void;
   pending: boolean;
   dialog: ReactNode;
 } {
   const notify = useNotify();
   const [pending, startShift] = useTransition();
-  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const [prompt, setPrompt] = useState<ShiftPrompt | null>(null);
+  // An open prompt whose screen goes away counts as Cancel (so its held changes are let go).
+  const openPrompt = useRef<ShiftPrompt | null>(null);
+  useEffect(
+    () => () => {
+      openPrompt.current?.resolve("cancel");
+    },
+    [],
+  );
 
   const undo = useCallback(
     (changes: ShiftChange[]) => {
       startTransition(async () => {
         const result = await undoDependencyShift(changes);
+        invalidateTaskPanes();
         if (result.error) return notify(result.error);
         const restored = result.result?.restored.length ?? 0;
         const kept = result.result?.skipped ?? [];
@@ -80,113 +214,124 @@ export function useDependencyShift(): {
     [notify],
   );
 
-  // Preview (push, and pull earlier), ask when something would move, then apply or fall back to plain.
+  // What a finished change says: dependents shown in their new place, Undo when they moved, tasks that
+  // couldn't move dropped from the optimistic overlay.
+  const report = useCallback(
+    (moves: ShiftMove[], subject: string, result: ShiftResult, options: Options) => {
+      const given = moves.map((m) => m.taskId);
+      const givenSet = new Set(given);
+      const { changes, skipped } = result;
+      const dependents = changes.filter((c) => !givenSet.has(c.task_id));
+      if (dependents.length) {
+        startTransition(() =>
+          options.onOptimistic?.(dependents.map((c) => ({ taskId: c.task_id, startOn: c.new_start_on, dueOn: c.new_due_on }))),
+        );
+      }
+      if (skipped.length) dropTokenTasks(currentMutationToken(), skipped.map((s) => s.taskId));
+      options.onResult?.({
+        moved: changes.filter((c) => givenSet.has(c.task_id)).map((c) => c.task_id),
+        skipped: skipped.filter((s) => givenSet.has(s.taskId)),
+      });
+      const text = shiftToastText({ subject, given, changes, skipped });
+      if (text) notify(text, dependents.length ? { label: "Undo", onClick: () => undo(changes) } : undefined);
+      invalidateTaskPanes();
+    },
+    [notify, undo],
+  );
+
   const shift = useCallback(
-    async (
-      moves: ShiftMove[],
-      subject: string,
-      plain: () => Promise<boolean>,
-      options: Options,
-    ) => {
-      const [push, pull] = await Promise.all([previewDependencyShifts(moves, false), previewDependencyShifts(moves, true)]);
-      if (push.error) {
-        notify(push.error);
+    async (moves: ShiftMove[], subject: string, options: Options): Promise<boolean> => {
+      const answer = await changeTaskDates(moves);
+      if (answer.error || !answer.outcome) {
+        notify(answer.error ?? "Couldn’t change the dates");
         options.onRevert?.();
         return false;
       }
-      const pushPlan = push.data ?? [];
-      const pullPlan = pull.data ?? [];
-      if (movesOf(pushPlan).length === 0 && !pullAdds(pullPlan)) {
-        const ok = await plain();
-        if (!ok) options.onRevert?.();
-        return ok;
+      const outcome = answer.outcome;
+      if (outcome.kind === "done") {
+        report(moves, subject, outcome, options);
+        return true;
       }
 
-      // Keep the transition (and the optimistic position) while the person decides.
+      // Ask me: keep the transition (and the optimistic position) while the person decides.
       options.onPrompt?.();
-      const choice = await new Promise<Choice>((resolve) =>
-        setPrompt({
+      const choice = await new Promise<ShiftChoice>((resolve) => {
+        const next: ShiftPrompt = {
           subject,
           many: moves.length > 1,
-          push: pushPlan,
-          pull: pullAdds(pullPlan) ? pullPlan : [],
-          resolve,
-        }),
-      );
+          push: outcome.push,
+          pull: outcome.pull,
+          projectId: options.projectId ?? null,
+          resolve: (value) => {
+            openPrompt.current = null;
+            resolve(value);
+          },
+        };
+        openPrompt.current = next;
+        setPrompt(next);
+      });
       setPrompt(null);
       if (choice === "cancel") {
         options.onRevert?.();
         return false;
       }
-      if (choice === "only" || choice.confirmed.length === 0) {
-        const ok = await plain();
-        if (!ok) options.onRevert?.();
-        return ok;
+      const confirmed = choice === "only" ? [] : choice.confirmed;
+      const pull = choice !== "only" && choice.pull;
+      if (confirmed.length) {
+        const chosen = new Set(confirmed);
+        const plan = movesOf(pull ? outcome.pull : outcome.push).filter((m) => chosen.has(m.taskId));
+        startTransition(() => options.onOptimistic?.(plan.map((m) => ({ taskId: m.taskId, startOn: m.newStart, dueOn: m.newDue }))));
       }
-      const confirmed = new Set(choice.confirmed);
-      const planned = movesOf(choice.pull ? pullPlan : pushPlan);
-      startTransition(() =>
-        options.onOptimistic?.(
-          planned
-            .filter((m) => confirmed.has(m.taskId))
-            .map((m) => ({ taskId: m.taskId, startOn: m.newStart, dueOn: m.newDue })),
-        ),
-      );
-      const result = await applyDependencyShifts(moves, choice.confirmed, choice.pull);
-      if (result.error) {
-        notify(result.error);
+      const applied = await applyDependencyShifts(moves, confirmed, pull);
+      if (applied.error || !applied.result) {
+        notify(applied.error ?? "Couldn’t change the dates");
         options.onRevert?.();
         return false;
       }
-      const changes = result.result?.changes ?? [];
-      const given = new Set(moves.map((m) => m.taskId));
-      const skipped = result.result?.skipped ?? [];
-      if (skipped.length > 0) dropTokenTasks(currentMutationToken(), skipped.map((skip) => skip.taskId));
-      const moved = changes.filter((c) => !given.has(c.task_id)).length;
-      notify(
-        `Moved ${subject} and ${moved === 1 ? "1 dependent task" : `${moved} dependent tasks`}${
-          skipped.length ? ` (${skipped.length} left as ${skipped.length === 1 ? "it was" : "they were"})` : ""
-        }`,
-        changes.length ? { label: "Undo", onClick: () => undo(changes) } : undefined,
-      );
+      // One task that couldn't move: say why and put it back.
+      const refused = moves.length === 1 ? applied.result.skipped.find((s) => s.taskId === moves[0].taskId) : undefined;
+      if (refused) {
+        notify(refused.reason || "Your role doesn’t allow changing this task’s dates");
+        options.onRevert?.();
+        return false;
+      }
+      report(moves, subject, applied.result, options);
       return true;
     },
-    [notify, undo],
+    [notify, report],
   );
 
   const changeDates = useCallback(
     (task: { id: string; title: string }, dates: DateChange, options: Options = {}) => {
       startShift(async () => {
-        // The confirm dialog outlives one transition. Hold the optimistic dates until the
-        // save lands, and drop them if the person cancels or the database refuses.
+        // The prompt outlives one transition. Hold the optimistic dates until the save lands, and drop
+        // them if the person cancels or the database refuses.
         const held = holdTaskChanges();
         let ok = false;
         try {
+          // Instant: the task moves on screen before the server answers.
           options.onOptimistic?.([{ taskId: task.id, ...dates }]);
-          ok = await shift([{ taskId: task.id, ...dates }], `“${task.title}”`, async () => {
-            const result = await updateTask(task.id, dates);
-            if (result.error) notify(result.error);
-            return !result.error;
-          }, options);
+          ok = await shift([{ taskId: task.id, ...dates }], `“${task.title}”`, options);
         } finally {
           if (ok) held.ok();
           else held.cancel();
         }
       });
     },
-    [notify, shift],
+    [shift],
   );
 
   const changeMany = useCallback(
-    (moves: ShiftMove[], subject: string, plain: () => void, options: Options = {}) => {
+    // `plain` is accepted for compatibility only (see the type above).
+    (moves: ShiftMove[], subject: string, _plain: (() => void) | null, options: Options = {}) => {
       startShift(async () => {
         const held = holdTaskChanges();
         let ok = false;
         try {
-          ok = await shift(moves, subject, async () => {
-            plain();
-            return true;
-          }, options);
+          // Moves that give both dates can be drawn at once.
+          const full = moves.filter((m): m is MovedTask => m.startOn !== undefined && m.dueOn !== undefined);
+          if (full.length) options.onOptimistic?.(full.map((m) => ({ taskId: m.taskId, startOn: m.startOn, dueOn: m.dueOn })));
+          ok = await shift(moves, subject, options);
         } finally {
           if (ok) held.ok();
           else held.cancel();
@@ -200,54 +345,31 @@ export function useDependencyShift(): {
   return { changeDates, changeMany, pending, dialog };
 }
 
-function ShiftDialog({ prompt }: { prompt: Prompt }) {
-  const canPull = prompt.pull.length > 0;
-  const pushMoves = movesOf(prompt.push);
-  const [pull, setPull] = useState(false);
-  const plan = pull ? prompt.pull : prompt.push;
+// The Ask me prompt: later and earlier the same way — one list of what would move, each with a
+// checkbox (all ticked), what won't, and a link to the project's setting.
+export function ShiftDialog({ prompt }: { prompt: ShiftPrompt }) {
+  const direction = shiftDirection(prompt.push, prompt.pull) ?? "later";
+  const { plan } = primaryShiftPlan(prompt.push, prompt.pull);
   const moves = movesOf(plan);
   const skipped = plan.filter((r) => r.status === "skipped");
-  const [checked, setChecked] = useState(() => new Set(pushMoves.map((m) => m.taskId)));
-  const count = moves.filter((m) => checked.has(m.taskId)).length;
+  const [checked, setChecked] = useState(() => new Set(moves.map((m) => m.taskId)));
+  const chosen = moves.filter((m) => checked.has(m.taskId));
   const these = prompt.many ? "these tasks" : "this task";
-
-  function togglePull(next: boolean) {
-    setPull(next);
-    setChecked(new Set(movesOf(next ? prompt.pull : prompt.push).map((m) => m.taskId)));
-  }
+  const { title, description } = shiftPromptText(
+    direction,
+    prompt.subject,
+    { later: moves.filter((m) => m.shiftDays > 0).length, earlier: moves.filter((m) => m.shiftDays < 0).length },
+    prompt.many,
+  );
+  const legend = direction === "later" ? "Will move later" : direction === "earlier" ? "Will move earlier" : "Will move";
 
   return (
-    <Dialog
-      title={pushMoves.length ? "Move dependent tasks too?" : "Pull dependent tasks earlier?"}
-      description={
-        pushMoves.length
-          ? `Moving ${prompt.subject} later would start ${
-              pushMoves.length === 1 ? "a task that depends on it" : `${pushMoves.length} tasks that depend on it`
-            } too early. Nothing moves until you choose.`
-          : `Moving ${prompt.subject} earlier leaves a gap before the tasks that depend on it. They stay put unless you pull them earlier too.`
-      }
-      onClose={() => prompt.resolve("cancel")}
-      width="max-w-lg"
-    >
-      {canPull ? (
-        <label className="mb-3 flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
-          <input
-            type="checkbox"
-            className="mt-0.5 size-3.5 accent-zinc-900"
-            checked={pull}
-            onChange={(e) => togglePull(e.currentTarget.checked)}
-          />
-          <span>
-            Also pull dependents earlier (keep the gap)
-            <span className="block text-xs text-zinc-500">
-              Each moves earlier by as much as the task it waits on, never before its other links allow.
-            </span>
-          </span>
-        </label>
-      ) : null}
+    <Dialog title={title} description={description} onClose={() => prompt.resolve("cancel")} width="max-w-lg">
       {moves.length ? (
         <fieldset>
-          <legend className="text-xs font-medium text-zinc-700">Will move ({moves.length})</legend>
+          <legend className="text-xs font-medium text-zinc-700">
+            {legend} ({moves.length})
+          </legend>
           <ul className="mt-1.5 max-h-60 divide-y divide-zinc-100 overflow-y-auto rounded-md border border-zinc-200">
             {moves.map((m) => (
               <li key={m.taskId}>
@@ -268,16 +390,17 @@ function ShiftDialog({ prompt }: { prompt: Prompt }) {
                     {span(m.startOn, m.dueOn)}
                     <ArrowRight className="size-3" aria-label="to" />
                     <span className="text-zinc-900">{span(m.newStart, m.newDue)}</span>
-                    <span className="chip ml-1">{shiftLabel(m.shiftDays)}</span>
+                    <span className={`chip ml-1 ${m.shiftDays < 0 ? "text-accent-700" : ""}`}>
+                      {shiftLabel(m.shiftDays)}
+                      <span className="sr-only">{m.shiftDays < 0 ? " earlier" : " later"}</span>
+                    </span>
                   </span>
                 </label>
               </li>
             ))}
           </ul>
         </fieldset>
-      ) : (
-        <p className="text-sm text-zinc-500">Tick the option above to see which tasks would be pulled earlier.</p>
-      )}
+      ) : null}
       {skipped.length ? (
         <div className="mt-3">
           <h3 className="text-xs font-medium text-zinc-700">Won’t move ({skipped.length})</h3>
@@ -291,30 +414,43 @@ function ShiftDialog({ prompt }: { prompt: Prompt }) {
           </ul>
         </div>
       ) : null}
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500">
+        <Settings2 className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+        {prompt.projectId ? (
+          <span>
+            Change how this project handles this:{" "}
+            <Link
+              href={`/projects/${prompt.projectId}/settings#dependencies`}
+              onClick={() => prompt.resolve("cancel")}
+              className="font-medium text-accent-700 hover:underline"
+            >
+              Project settings → Dependencies
+            </Link>
+          </span>
+        ) : (
+          <span>Change how a project handles this in its Project settings → Dependencies.</span>
+        )}
+      </p>
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
         <button type="button" className="btn-ghost" onClick={() => prompt.resolve("cancel")}>
           Cancel
         </button>
+        <button type="button" className="btn-secondary" onClick={() => prompt.resolve("only")}>
+          Only move {these}
+        </button>
         {moves.length ? (
-          <>
-            <button type="button" className="btn-secondary" onClick={() => prompt.resolve("only")}>
-              Only move {these}
-            </button>
-            <button
-              type="button"
-              className="btn-primary"
-              data-autofocus
-              disabled={count === 0}
-              onClick={() => prompt.resolve({ confirmed: moves.filter((m) => checked.has(m.taskId)).map((m) => m.taskId), pull })}
-            >
-              {pull ? "Pull" : "Move"} {count === 1 ? "1 dependent" : `${count} dependents`} too
-            </button>
-          </>
-        ) : (
-          <button type="button" className="btn-primary" data-autofocus onClick={() => prompt.resolve("only")}>
-            Move {these}
+          <button
+            type="button"
+            className="btn-primary"
+            data-autofocus
+            disabled={chosen.length === 0}
+            onClick={() =>
+              prompt.resolve({ confirmed: chosen.map((m) => m.taskId), pull: chosen.some((m) => m.shiftDays < 0) })
+            }
+          >
+            {shiftConfirmLabel(direction, chosen.length)}
           </button>
-        )}
+        ) : null}
       </div>
     </Dialog>
   );

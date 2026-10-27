@@ -19,7 +19,7 @@ import {
   portfolioReport,
   projectMetrics,
   reportCompletedSeries,
-  requestLabelsWith,
+  requestLabelsInWith,
   searchTasks,
   type OverdueTask,
   type Profile,
@@ -123,9 +123,10 @@ async function taskKeys(supabase: Supabase, projectId: string): Promise<ProjectT
     const { data, error } = await query;
     if (error) throw new Error(`Failed to export tasks: ${error.message}`);
     const list = data ?? [];
-    // The request number with its project's bracket setting (and only while numbering is on). The
-    // title stays bare so sorting by name matches the List.
-    const labels = await requestLabelsWith(supabase, list.map((m) => m.task.id));
+    // The number this project gives each task (Oct 27 notes, batch 6: each project numbers the tasks it
+    // holds, other projects' tasks included), with its bracket setting and only while numbering is on.
+    // The title stays bare so sorting by name matches the List.
+    const labels = await requestLabelsInWith(supabase, projectId, list.map((m) => m.task.id));
     for (const m of list) {
       out.push({
         id: m.task.id,

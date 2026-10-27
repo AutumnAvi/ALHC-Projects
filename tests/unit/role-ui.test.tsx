@@ -229,6 +229,8 @@ const paneTask = (viewerRole: ProjectRole): TaskDetail => ({
   submitterResponses: false,
   replyThread: null,
   approvals: [],
+  approval: null,
+  projectNumbers: {},
   subtasks: [
     {
       id: "st1",

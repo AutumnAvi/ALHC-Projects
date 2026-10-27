@@ -1,7 +1,7 @@
 "use client";
 
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
-import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GripVertical, ListChecks, ListFilter, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
@@ -14,6 +14,8 @@ import { taskPermissions } from "@/lib/permissions";
 import { hasRole } from "@/lib/roles";
 import { MAX_SUBTASK_DEPTH, subtaskOrderBefore } from "@/lib/subtasks";
 import { DateRangePicker } from "./date-picker";
+import { useDependencyShift } from "./dependency-shift";
+import { ConvertToMainTaskDialog, canConvertSubtaskRow } from "./task-convert";
 import { PersonPicker } from "./person-picker";
 import { useDateText } from "./task-dates";
 import { PANE_HEADING } from "./pane-styles";
@@ -91,6 +93,11 @@ export function TaskSubtasks({
   const manualOrder = prefs.sort === "manual";
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropBefore, setDropBefore] = useState<string | null | undefined>(undefined);
+  // Dates go through the same path as the task's own (Oct 27 notes, batch 6): dependents move as the
+  // project's Settings → Dependencies says.
+  const shift = useDependencyShift();
+  // "Convert to main task…" from a row's "…" menu.
+  const [converting, setConverting] = useState<SubtaskItem | null>(null);
   const canEdit = taskPermissions(task).canEdit;
   const done = allSubtasks.filter((s) => s.completedAt).length;
   const approvalBySubtask = new Map(task.approvals.filter((a) => a.subtaskId).map((a) => [a.subtaskId!, a] as const));
@@ -114,11 +121,23 @@ export function TaskSubtasks({
     );
   }
 
-  function patch(subtask: SubtaskItem, value: Partial<Pick<SubtaskItem, "assigneeId" | "startOn" | "dueOn">>) {
+  function patch(subtask: SubtaskItem, value: Partial<Pick<SubtaskItem, "assigneeId">>) {
     run(
       () => updateTask(subtask.id, value),
       () => change({ type: "patch", id: subtask.id, patch: value }),
     );
+  }
+
+  // A subtask's dates: shown at once; tasks that depend on it move (later or earlier) like anywhere else.
+  function changeDates(subtask: SubtaskItem, dates: { startOn: string | null; dueOn: string | null }) {
+    const shown = new Set(allSubtasks.map((s) => s.id));
+    shift.changeDates(subtask, dates, {
+      onOptimistic: (moves) =>
+        moves
+          .filter((m) => shown.has(m.taskId))
+          .forEach((m) => change({ type: "patch", id: m.taskId, patch: { startOn: m.startOn, dueOn: m.dueOn } })),
+      projectId: task.homeProjectId,
+    });
   }
 
   function drop(e: DragEvent) {
@@ -141,6 +160,16 @@ export function TaskSubtasks({
 
   return (
     <section id="task-subtasks" className="mt-6" aria-labelledby={subtasks.length ? "subtasks-heading" : undefined}>
+      {shift.dialog}
+      {converting ? (
+        <ConvertToMainTaskDialog
+          taskId={converting.id}
+          title={converting.title}
+          memberships={task.memberships}
+          editableProjectIds={task.editableProjectIds}
+          onClose={() => setConverting(null)}
+        />
+      ) : null}
       {allSubtasks.length > 0 ? (
         <div className="flex items-center gap-2">
           <h3 id="subtasks-heading" className={PANE_HEADING}>
@@ -281,7 +310,7 @@ export function TaskSubtasks({
                   </span>
                 ) : null}
                 <SubtaskAssignee subtask={subtask} people={assignableFor(subtask)} canEdit={canEdit} onChange={(assigneeId) => patch(subtask, { assigneeId })} />
-                <SubtaskDates subtask={subtask} canEdit={canEdit} onChange={(dates) => patch(subtask, dates)} />
+                <SubtaskDates subtask={subtask} canEdit={canEdit} onChange={(dates) => changeDates(subtask, dates)} />
                 {canEdit ? (
                   <Popover
                     label={`More for subtask ${subtask.title}`}
@@ -311,6 +340,16 @@ export function TaskSubtasks({
                         >
                           <ArrowDown className="size-4 text-zinc-500" aria-hidden /> Move down
                         </MenuItem>
+                        {canConvertSubtaskRow(task, Boolean(approval)) ? (
+                          <MenuItem
+                            onClick={() => {
+                              close();
+                              setConverting(subtask);
+                            }}
+                          >
+                            <GitBranch className="size-4 text-zinc-500" aria-hidden /> Convert to main task…
+                          </MenuItem>
+                        ) : null}
                         <MenuItem
                           danger
                           onClick={() => {

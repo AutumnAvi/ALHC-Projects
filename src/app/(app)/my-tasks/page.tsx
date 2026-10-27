@@ -8,7 +8,17 @@ import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
 import { MyTaskRulesButton } from "@/components/my-tasks/my-task-rules";
-import { listMyTaskLayout, listMyTaskRules, listMyTasks, listProjects } from "@/lib/data";
+import {
+  getExpandedTaskIds,
+  listAwaitingMyApproval,
+  listMyTaskLayout,
+  listMyTaskRules,
+  listMyTasks,
+  listProfiles,
+  listProjects,
+  listSubtaskTrees,
+  type MyTask,
+} from "@/lib/data";
 import { MY_TASKS_LAYOUT_COOKIE, isMyTasksLayout } from "@/lib/my-tasks";
 
 export const metadata: Metadata = { title: "My tasks" };
@@ -21,12 +31,27 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
   // The layout call seeds the viewer's sections and places newly assigned tasks first, so it runs
   // before the task lists are read.
   const { sections, placements } = await listMyTaskLayout();
-  const [{ open, completed }, bulk, rules, projects] = await Promise.all([
+  const [{ open, completed }, bulk, rules, projects, expandedTaskIds, awaiting, profiles] = await Promise.all([
     listMyTasks(member.id),
     listBulkContext(null),
     listMyTaskRules(),
     listProjects(),
+    // Oct 27 notes (batch 6): rows this person opened, and approvals waiting on them.
+    getExpandedTaskIds(),
+    listAwaitingMyApproval(),
+    listProfiles(),
   ]);
+  // The subtask trees of the open rows (trees load by their top-level task: a row that is itself a
+  // subtask needs its root, when the data says which).
+  const opened = new Set(expandedTaskIds);
+  const rootOf = (task: MyTask) =>
+    (task as MyTask & { rootTaskId?: string | null }).rootTaskId ?? (task.parentTitle ? null : task.id);
+  const roots = [
+    ...new Set(
+      open.filter((task) => opened.has(task.id) && (task.subtaskCount ?? 0) > 0).flatMap((task) => rootOf(task) ?? []),
+    ),
+  ];
+  const subtasks = roots.length ? await listSubtaskTrees(roots) : [];
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
@@ -53,6 +78,10 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
             layout={isMyTasksLayout(saved) ? saved : "sections"}
             sections={sections}
             placements={placements}
+            expandedTaskIds={expandedTaskIds}
+            subtasks={subtasks}
+            awaiting={awaiting}
+            profiles={profiles}
           />
         </div>
       </div>

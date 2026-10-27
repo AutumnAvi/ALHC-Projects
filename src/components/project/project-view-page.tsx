@@ -26,9 +26,11 @@ import {
   listSubtaskTrees,
   listVisibleTags,
   tagsEnabled,
+  getExpandedTaskIds,
   getListCollapsedGroups,
   getListColumnWidths,
   getProjectShowCompleted,
+  type SubtaskItem,
 } from "@/lib/data";
 import { todayIn } from "@/lib/workload";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
@@ -100,6 +102,8 @@ export async function ProjectViewPage({
   const collapsedGroupsLoad = layout === "list" ? getListCollapsedGroups(projectId) : Promise.resolve([]);
   // Oct 27 notes (batch 5): the viewer's own Show / Hide completed for this project's List and Board.
   const showCompletedLoad = paging ? getProjectShowCompleted(projectId) : Promise.resolve(null);
+  // Oct 27 notes (batch 6): the List rows this person opened to show their subtasks.
+  const expandedLoad = layout === "list" ? getExpandedTaskIds() : Promise.resolve([] as string[]);
   const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, tagsOn, columnWidths, sectionCounts, project] =
     await Promise.all([
     listSections(projectId),
@@ -118,7 +122,11 @@ export async function ProjectViewPage({
     getProject(projectId),
   ]);
 
-  const [collapsedGroups, showCompleted] = await Promise.all([collapsedGroupsLoad, showCompletedLoad]);
+  const [collapsedGroups, showCompleted, expandedTaskIds] = await Promise.all([
+    collapsedGroupsLoad,
+    showCompletedLoad,
+    expandedLoad,
+  ]);
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
     fields,
@@ -201,9 +209,15 @@ export async function ProjectViewPage({
   // The open task (?task=) is read on the client (useOpenTaskId): opening one never renders this page.
   const props = { projectId, projectName: project?.name ?? null, sections, tasks: visible, profiles, fields, config, tags };
   // List's “Show subtasks” (the view's show_subtasks setting, off by default): each task's subtask tree
-  // under its row.
+  // under its row. Otherwise the trees of the rows this person opened (others load when opened).
   const showSubtasks = layout === "list" && showsSubtasks(config);
-  const subtasks = showSubtasks ? await listSubtaskTrees(visible.map((t) => t.id)) : [];
+  let subtasks: SubtaskItem[] = [];
+  if (layout === "list") {
+    const opened = new Set(expandedTaskIds);
+    const roots = visible.filter((t) => t.subtaskCount > 0 && (showSubtasks || opened.has(t.id))).map((t) => t.id);
+    // Numbered as this project numbers them.
+    if (roots.length) subtasks = await listSubtaskTrees(roots, projectId);
+  }
   // Every task per section, whatever the view shows: a section can be deleted only when it's empty.
   const sectionTaskCounts: Record<string, number> = sectionCounts ?? {};
   if (!sectionCounts) {
@@ -230,7 +244,8 @@ export async function ProjectViewPage({
               {...props}
               taskPage={taskPage}
               bulk={bulk}
-              subtasks={showSubtasks ? subtasks : null}
+              subtasks={subtasks}
+              expandedTaskIds={expandedTaskIds}
               columnWidths={columnWidths}
               collapsedGroups={collapsedGroups}
               sectionTaskCounts={sectionTaskCounts}

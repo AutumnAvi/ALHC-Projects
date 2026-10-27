@@ -52,8 +52,8 @@ export function useDateText() {
 }
 
 // The pane's Due date row (Asana parity, batch 3): one field for the start date, due date, times, and
-// Repeats, edited in the date picker. A later date can push tasks that depend on this one;
-// useDependencyShift asks first (with Undo), so saving keeps the same rules as before.
+// Repeats, edited in the date picker. Dates go through useDependencyShift, so tasks that depend on this
+// one move (later or earlier) as the project's Settings → Dependencies says: Auto-shift, Ask me, or Off.
 export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: boolean }) {
   const [, run] = useServerAction();
   const shift = useDependencyShift();
@@ -93,6 +93,7 @@ export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: bool
           if (self) setDates({ start: self.startOn, due: self.dueOn });
         },
         onPrompt: close,
+        projectId: task.homeProjectId,
       },
     );
   }

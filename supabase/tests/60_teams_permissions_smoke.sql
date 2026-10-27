@@ -583,15 +583,24 @@ begin
   -- Oct 26 notes (batch 4): can_view_team (team_members' read policy uses it: an active member or a
   -- workspace admin), request_team_join (joins the default team, else one request per person and team),
   -- and decide_team_join_request (the team's leads and workspace admins).
-  assert exposed = 'add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,'
-    'apply_task_numbering,assign_request_number,browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,convert_commenter_members,create_project_from_template,create_review_check,custom_field_has_role,'
-    'decide_approval,decide_project_access_request,decide_team_join_request,delete_project_template,duplicate_project,finish_import_run,'
-    'get_project_integrations,get_public_form,goal_hidden_project_count,has_portfolio_role,has_project_role,has_task_role,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,move_portfolio_project,'
-    'my_task_cards,my_tasks_layout,open_blocker_count,portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_access_status,project_role,project_schedule_cards,project_section_task_counts,project_task_card_page,project_task_cards,'
-    'receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,remove_workspace_admin,remove_workspace_member,'
-    'request_approval,request_project_access,request_team_join,resend_workspace_invite,restore_task,resubmit_approval,retry_email_delivery,retry_integration_delivery,rotate_review_check_token,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,set_default_project_role,set_project_archived,set_project_integration,set_project_status,set_submitter_thread_closed,set_task_dependency,start_import_run,submit_form,submitter_thread_status,'
-    'sync_my_task_placements,task_comment_page,task_role,test_rule,transfer_portfolio_ownership,transfer_project_ownership,'
-    'update_portfolio_member_role,update_project_member_role,update_project_template,workspace_email_summary,workspace_hidden_project_count',
+  -- Oct 27 notes (batch 6) added acknowledge_approval, hand_off_approval, send_for_approval, set_task_approvers,
+  -- withdraw_approval (approval tasks: approvers, Ready for approval, Withdraw, Feedback received, Hand off).
+  assert exposed =
+    'acknowledge_approval,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
+    'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
+    'convert_commenter_members,create_project_from_template,create_review_check,custom_field_has_role,decide_approval,decide_project_access_request,decide_team_join_request,'
+    'delete_project_template,duplicate_project,finish_import_run,get_project_integrations,get_public_form,goal_hidden_project_count,hand_off_approval,has_portfolio_role,'
+    'has_project_role,has_task_role,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,'
+    'is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,'
+    'list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,move_portfolio_project,my_task_cards,my_tasks_layout,open_blocker_count,'
+    'portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_access_status,project_role,project_schedule_cards,project_section_task_counts,'
+    'project_task_card_page,project_task_cards,receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,'
+    'remove_workspace_admin,remove_workspace_member,request_approval,request_project_access,request_team_join,resend_workspace_invite,restore_task,resubmit_approval,'
+    'retry_email_delivery,retry_integration_delivery,rotate_review_check_token,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,send_for_approval,'
+    'set_default_project_role,set_project_archived,set_project_integration,set_project_status,set_submitter_thread_closed,set_task_approvers,set_task_dependency,'
+    'start_import_run,submit_form,submitter_thread_status,sync_my_task_placements,task_comment_page,task_role,test_rule,transfer_portfolio_ownership,'
+    'transfer_project_ownership,update_portfolio_member_role,update_project_member_role,update_project_template,withdraw_approval,workspace_email_summary,'
+    'workspace_hidden_project_count',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);
 
   assert not has_function_privilege('authenticated', 'public.workflow_tick()', 'execute'), 'tick is service-role only';

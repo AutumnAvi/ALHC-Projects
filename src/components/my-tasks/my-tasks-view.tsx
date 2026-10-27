@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useOptimistic, useState, type DragEvent, type ReactNode } from "react";
+import { Fragment, useOptimistic, useState, type DragEvent, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -15,8 +15,10 @@ import {
   Lock,
   Pencil,
   Plus,
+  ThumbsUp,
   Trash2,
 } from "lucide-react";
+import { displayName } from "@/components/avatar";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
@@ -27,8 +29,10 @@ import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard"
 import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
+import { BlockedToggle } from "@/components/task/blockers-popover";
+import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
-import { useServerAction } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import {
   createMyTaskSection,
@@ -38,11 +42,31 @@ import {
   placeMyTaskSection,
   renameMyTaskSection,
   setTaskCompleted,
+  updateSubtask,
+  updateTask,
+  type ActionResult,
 } from "@/lib/actions";
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
-import { EmptyCellHint } from "@/components/project/task-meta";
-import type { MyTask } from "@/lib/data";
-import { seedFromMyTask, type TaskSeed } from "@/lib/task-seed";
+import { dayLabel } from "@/lib/date-input";
+import {
+  ExpandToggle,
+  InlineAssigneeCell,
+  InlineDateCell,
+  blockedCount,
+  blockedSkipMessage,
+  flattenSubtaskRows,
+  mergeDateEdit,
+  splitBlocked,
+  useSubtaskTrees,
+  type DateEdit,
+  type FlatSubtaskRow,
+  type RowPatch,
+  type SubtaskTrees,
+} from "@/components/project/inline-cells";
+import { ApprovalStatusBadge, DueDate, EmptyCellHint } from "@/components/project/task-meta";
+import type { AwaitingApproval, MyTask, Profile, SubtaskItem } from "@/lib/data";
+import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
+import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@/lib/task-seed";
 import {
   MY_TASKS_LAYOUT_COOKIE,
   type MyTaskPlacement,
@@ -112,6 +136,19 @@ function sortOrderFor(tasks: MyTask[], placements: Record<string, MyTaskPlacemen
   return (prev + next) / 2;
 }
 
+// The top-level task a My tasks row's subtask tree is loaded by (subtask trees load per top-level task):
+// the row itself, or its root when the row is a subtask and the data says which (rootTaskId).
+export function myTaskRootId(task: MyTask): string {
+  return (task as MyTask & { rootTaskId?: string | null }).rootTaskId ?? task.id;
+}
+
+// Rows whose subtasks can be opened under them: open tasks with subtasks.
+export function expandableMyTasks(tasks: MyTask[]): { id: string; rootId: string }[] {
+  return tasks.filter((task) => !task.completedAt && (task.subtaskCount ?? 0) > 0).map((task) => ({ id: task.id, rootId: myTaskRootId(task) }));
+}
+
+const NO_AWAITING: AwaitingApproval[] = [];
+
 export function MyTasksView({
   open,
   completed,
@@ -119,6 +156,10 @@ export function MyTasksView({
   layout: initialLayout,
   sections,
   placements: savedPlacements,
+  expandedTaskIds,
+  subtasks = null,
+  awaiting = NO_AWAITING,
+  profiles = [],
 }: {
   open: MyTask[];
   completed: MyTask[];
@@ -126,6 +167,12 @@ export function MyTasksView({
   layout: MyTasksLayout;
   sections: MyTaskSection[];
   placements: Record<string, MyTaskPlacement>;
+  // Oct 27 notes (batch 6): rows this person opened, the subtask trees the server loaded for them, the
+  // approvals waiting on them, and the people a subtask can be assigned to.
+  expandedTaskIds?: string[];
+  subtasks?: SubtaskItem[] | null;
+  awaiting?: AwaitingApproval[];
+  profiles?: Profile[];
 }) {
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
@@ -134,6 +181,7 @@ export function MyTasksView({
   const seed = (task: MyTask): TaskSeed => seedFromMyTask(task, { id: member.id, name: member.name });
   const today = useToday();
   const [, run] = useServerAction();
+  const notify = useNotify();
   const bulkEdit = useBulkEdit();
   const [layout, setLayout] = useState<MyTasksLayout>(initialLayout);
   const pages = useGroupPages();
@@ -161,14 +209,107 @@ export function MyTasksView({
       .sort((a, b) => a.sortOrder - b.sortOrder),
   );
 
+  // Row edits (Oct 27 notes, batch 6): a rename shows at once; a new due date too, until the page's
+  // fresh data (or a cancelled prompt) replaces it.
+  const [titles, setTitle] = useOptimistic(
+    new Map<string, string>(),
+    (current, change: { id: string; title: string }) => new Map(current).set(change.id, change.title),
+  );
+  const [dueEdits, setDueEdits] = useState<Record<string, string | null>>({});
+  const [seenOpen, setSeenOpen] = useState(open);
+  if (seenOpen !== open) {
+    setSeenOpen(open);
+    setDueEdits({});
+  }
+  const edited = (task: MyTask): MyTask => {
+    const title = titles.get(task.id);
+    const due = task.id in dueEdits ? dueEdits[task.id] : undefined;
+    if (title === undefined && due === undefined) return task;
+    return {
+      ...task,
+      ...(title !== undefined ? { title: displayTaskTitle(title, task.requestLabel) } : {}),
+      ...(due !== undefined ? { dueOn: due } : {}),
+    };
+  };
+  const openTasks = open.map(edited);
+  const shift = useDependencyShift();
+  const trees = useSubtaskTrees({ initialExpanded: expandedTaskIds, serverSubtasks: subtasks, rows: expandableMyTasks(open) });
+
   const bySections = layout === "sections" && orderedSections.length > 0;
   const isDone = (task: MyTask) => toggled.get(task.id) ?? Boolean(task.completedAt);
   const toggle = (task: MyTask) => {
     const next = !isDone(task);
+    // A blocked task has a lock instead of a checkbox; never try (and undo) completing it.
+    if (next && blockedCount(task) > 0) return;
     run(
       () => setTaskCompleted(task.id, next),
       () => setToggled({ id: task.id, completed: next }),
     );
+  };
+  const rename = (task: MyTask, title: string) =>
+    run(
+      () => updateTask(task.id, { title }),
+      () => setTitle({ id: task.id, title }),
+    );
+  // Subtasks shown under rows: edits show at once and are kept until fresh data arrives.
+  const showMoves = (moves: { taskId: string; startOn: string | null; dueOn: string | null }[], before: Map<string, RowPatch | undefined>) => {
+    for (const move of moves) {
+      if (tasksById.has(move.taskId)) continue; // a row of My tasks: the page's refresh brings it
+      const patch = { startOn: move.startOn, dueOn: move.dueOn };
+      if (!before.has(move.taskId)) before.set(move.taskId, trees.keptPatch(move.taskId));
+      trees.show(move.taskId, patch);
+      trees.keep(move.taskId, patch);
+    }
+  };
+  // My tasks rows know the due date only: the start date is left as it is.
+  const changeDue = (task: MyTask, edit: DateEdit, close: () => void) => {
+    if (edit.dueOn === undefined || edit.dueOn === task.dueOn) return;
+    const dueOn = edit.dueOn;
+    const before = new Map<string, RowPatch | undefined>();
+    setDueEdits((current) => ({ ...current, [task.id]: dueOn }));
+    shift.changeMany([{ taskId: task.id, dueOn }], `“${task.title}”`, null, {
+      onPrompt: close,
+      onOptimistic: (moves) => showMoves(moves, before),
+      onRevert: () => {
+        setDueEdits((current) => {
+          const next = { ...current };
+          delete next[task.id];
+          return next;
+        });
+        before.forEach((previous, id) => trees.restore(id, previous));
+      },
+    });
+  };
+  const editSubtask = (subtask: SubtaskItem, patch: RowPatch, action: () => Promise<ActionResult>) =>
+    run(
+      async () => {
+        const result = await action();
+        if (!result.error) trees.keep(subtask.id, patch);
+        return result;
+      },
+      () => trees.show(subtask.id, patch),
+    );
+  const subtaskHandlers: MySubtaskHandlers = {
+    toggle(subtask) {
+      const done = !subtask.completedAt;
+      if (done && blockedCount(subtask) > 0) return;
+      editSubtask(subtask, { completedAt: done ? new Date().toISOString() : null }, () => setTaskCompleted(subtask.id, done));
+    },
+    rename: (subtask, title) => editSubtask(subtask, { title }, () => updateSubtask(subtask.id, { title })),
+    assign(subtask, assigneeId) {
+      if (assigneeId !== subtask.assigneeId) editSubtask(subtask, { assigneeId }, () => updateTask(subtask.id, { assigneeId }));
+    },
+    dates(subtask, edit, close) {
+      const dates = mergeDateEdit(subtask, edit, subtask.kind === "milestone");
+      if (!dates) return;
+      const before = new Map<string, RowPatch | undefined>();
+      shift.changeDates(subtask, dates, {
+        onPrompt: close,
+        onOptimistic: (moves) => showMoves(moves, before),
+        onRevert: () => before.forEach((previous, id) => trees.restore(id, previous)),
+      });
+    },
+    expand: (id) => trees.toggle(id),
   };
 
   function chooseLayout(next: MyTasksLayout) {
@@ -177,15 +318,15 @@ export function MyTasksView({
   }
 
   const openGroups: Group[] = bySections
-    ? groupBySection(open, orderedSections, placements)
+    ? groupBySection(openTasks, orderedSections, placements)
     : today === null
       ? []
-      : groupByDue(open, today);
+      : groupByDue(openTasks, today);
   const groups: Group[] = [
     ...openGroups,
     ...(completed.length > 0 ? [{ key: "completed", title: "Recently completed", tasks: completed }] : []),
   ];
-  const tasksById = new Map([...open, ...completed].map((t) => [t.id, t]));
+  const tasksById = new Map([...openTasks, ...completed].map((t) => [t.id, t]));
   const shownIds = (key: string, list: { id: string }[]) => list.slice(0, pages.limit(key)).map((task) => task.id);
   const selection = useTaskSelection(
     groups.flatMap((g) => shownIds(g.key, g.tasks)),
@@ -216,12 +357,25 @@ export function MyTasksView({
       return true;
     },
     complete() {
-      const ids = targets();
+      let ids = targets();
       if (ids.length === 0) return;
       const next = !ids.every((id) => {
         const task = tasksById.get(id);
         return task ? isDone(task) : true;
       });
+      if (next) {
+        // Blocked tasks can't be completed: say so and leave them out (Oct 27 notes, batch 6).
+        const listed = ids.flatMap((id) => {
+          const task = tasksById.get(id);
+          return task ? [{ ...task, completedAt: isDone(task) ? (task.completedAt ?? "done") : null }] : [];
+        });
+        const { blocked } = splitBlocked(listed);
+        const message = blockedSkipMessage(blocked);
+        if (message) notify(message);
+        const skip = new Set(blocked.map((task) => task.id));
+        ids = ids.filter((id) => !skip.has(id));
+        if (ids.length === 0) return;
+      }
       bulkEdit.apply(ids, { action: next ? "complete" : "reopen" }, () => {
         for (const id of ids) setToggled({ id, completed: next });
       });
@@ -269,7 +423,31 @@ export function MyTasksView({
     if (sectionId && target) moveSection(sectionId, target.beforeId);
   }
 
-  const rowProps = { openTaskId, seed, today, isDone, onToggle: toggle, selection, selecting: selection.selected.length > 0 };
+  const rowProps = {
+    openTaskId,
+    seed,
+    today,
+    isDone,
+    onToggle: toggle,
+    onRename: rename,
+    onDueChange: changeDue,
+    selection,
+    selecting: selection.selected.length > 0,
+  };
+  const subtaskProps = { trees, profiles, openTaskId, handlers: subtaskHandlers, today, viewer: { id: member.id, name: member.name } };
+  // A row, then (when it's open) its subtasks under it.
+  const expandable = (task: MyTask) => !isDone(task) && (task.subtaskCount ?? 0) > 0;
+  const rowWithSubtasks = (task: MyTask, row: ReactNode) => (
+    <Fragment key={task.id}>
+      {row}
+      {expandable(task) && trees.isExpanded(task.id) ? <MySubtaskRows task={task} {...subtaskProps} /> : null}
+    </Fragment>
+  );
+  const expandProps = (task: MyTask) => ({
+    expandable: expandable(task),
+    expanded: expandable(task) && trees.isExpanded(task.id),
+    onToggleExpanded: () => trees.toggle(task.id),
+  });
   const collapseProps = (key: string) => ({
     collapsed: collapsed.has(key),
     onToggleCollapsed: () =>
@@ -304,11 +482,23 @@ export function MyTasksView({
       </ul>
     ) : null;
 
+  // Oct 27 notes (batch 6): approvals waiting on the viewer, above everything else (not selectable or
+  // draggable; a row opens the task).
+  const awaitingGroup =
+    awaiting.length > 0 ? (
+      <TaskGroup id="awaiting" title="Waiting on me to approve" count={awaiting.length} {...collapseProps("awaiting")}>
+        {awaiting.map((item) => (
+          <AwaitingRow key={item.requestId} item={item} openTaskId={openTaskId} />
+        ))}
+      </TaskGroup>
+    ) : null;
+
   // With sections, an empty My Tasks still shows them (with their "Add task…" rows), like Asana.
   if (open.length === 0 && completed.length === 0 && !bySections) {
     return (
       <>
         {toolbar}
+        {awaitingGroup}
         <div className="mt-6">
           <EmptyState icon={CircleCheck} title="Nothing assigned to you">
             Tasks you’re assigned to in any project show up here: new ones in Recently assigned, ready to sort into
@@ -323,6 +513,7 @@ export function MyTasksView({
   return (
     <div className="pb-20">
       {toolbar}
+      {awaitingGroup}
       {topAddRow}
       {!bySections && today === null ? (
         <div role="status" className="mt-4">
@@ -389,11 +580,13 @@ export function MyTasksView({
                     onClose={() => setTopAdd(null)}
                   />
                 ) : null}
-                {group.tasks.slice(0, pages.limit(section.id)).map((task, i) => (
+                {group.tasks.slice(0, pages.limit(section.id)).map((task, i) =>
+                  rowWithSubtasks(
+                    task,
                   <MyTaskRow
-                    key={task.id}
                     task={task}
                     {...rowProps}
+                    {...expandProps(task)}
                     dropBefore={isTarget && taskDrop?.beforeId === task.id}
                     dragging={draggingTask === task.id}
                     onDragStart={(e) => {
@@ -412,8 +605,9 @@ export function MyTasksView({
                       const after = e.clientY > box.top + box.height / 2;
                       setTaskDrop({ sectionId: section.id, beforeId: after ? (group.tasks[i + 1]?.id ?? null) : task.id });
                     }}
-                  />
-                ))}
+                  />,
+                  ),
+                )}
                 {group.tasks.length > pages.limit(section.id) ? (
                   <li>
                     <ShowMoreRows
@@ -450,9 +644,9 @@ export function MyTasksView({
       ) : (
         openGroups.map((group) => (
           <TaskGroup key={group.key} id={group.key} title={group.title} count={group.tasks.length} {...collapseProps(group.key)}>
-            {group.tasks.slice(0, pages.limit(group.key)).map((task) => (
-              <MyTaskRow key={task.id} task={task} {...rowProps} />
-            ))}
+            {group.tasks.slice(0, pages.limit(group.key)).map((task) =>
+              rowWithSubtasks(task, <MyTaskRow task={task} {...rowProps} {...expandProps(task)} />),
+            )}
             {group.tasks.length > pages.limit(group.key) ? (
               <ShowMoreRows hidden={group.tasks.length - pages.limit(group.key)} onClick={() => pages.showMore(group.key)} />
             ) : null}
@@ -484,6 +678,8 @@ export function MyTasksView({
         bulk={bulkEdit}
         onClear={selection.clear}
       />
+      {/* "Move dependent tasks too?" after a date change in a row. */}
+      {shift.dialog}
     </div>
   );
 }
@@ -788,6 +984,131 @@ function TaskGroup({
   );
 }
 
+// A row's name: Editors click it to rename in place (Enter saves, Escape cancels) and open the task with
+// the ">" after it or a click elsewhere on the row; below Editor it is a link to the task. The stored name
+// has no number in front (the label is drawn from the task's project).
+function RowTitle({
+  taskId,
+  title,
+  bareTitle,
+  done,
+  canEdit,
+  open,
+  seed,
+  subtask = false,
+  onRename,
+  onEditingChange,
+}: {
+  taskId: string;
+  // As shown (with the number in front).
+  title: string;
+  // As stored (what the rename box starts from).
+  bareTitle: string;
+  done: boolean;
+  canEdit: boolean;
+  open: boolean;
+  seed: () => TaskSeed;
+  subtask?: boolean;
+  onRename: (title: string) => void;
+  // Renaming: a draggable row stops being draggable so the mouse can select text.
+  onEditingChange?: (editing: boolean) => void;
+}) {
+  const [editing, setEditingState] = useState(false);
+  const setEditing = (next: boolean) => {
+    setEditingState(next);
+    onEditingChange?.(next);
+  };
+  const tone = done ? "text-zinc-400 line-through" : subtask ? "text-zinc-700" : "text-zinc-900";
+  const prefix = subtask ? <span className="sr-only">Subtask: </span> : null;
+  if (!canEdit) {
+    return (
+      <TaskLink
+        taskId={taskId}
+        seed={seed}
+        draggable={false}
+        data-task-link=""
+        aria-current={open ? "true" : undefined}
+        className={`min-w-0 flex-1 truncate text-sm hover:underline ${tone}`}
+      >
+        {prefix}
+        {title}
+      </TaskLink>
+    );
+  }
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1">
+      {editing ? (
+        <input
+          autoFocus
+          defaultValue={bareTitle}
+          maxLength={500}
+          aria-label={subtask ? "Subtask name" : "Task name"}
+          draggable={false}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={(e) => {
+            const next = e.currentTarget.value.trim();
+            setEditing(false);
+            if (next && next !== bareTitle) onRename(next);
+          }}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") {
+              e.currentTarget.value = bareTitle;
+              e.currentTarget.blur();
+            }
+          }}
+          className="h-6 min-w-0 flex-1 rounded border border-accent-500/60 bg-white px-1 text-sm text-zinc-900 shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
+        />
+      ) : (
+        <button
+          type="button"
+          draggable={false}
+          onClick={() => setEditing(true)}
+          title="Rename"
+          aria-label={`Rename “${title}”`}
+          className={`-mx-1 min-w-0 truncate rounded px-1 text-left text-sm ring-zinc-200 group-hover:ring-1 hover:ring-zinc-300 ${tone}`}
+        >
+          {prefix}
+          {title}
+        </button>
+      )}
+      <TaskLink
+        taskId={taskId}
+        seed={seed}
+        draggable={false}
+        data-task-link=""
+        aria-label={`Open “${title}”`}
+        aria-current={open ? "true" : undefined}
+        title="Details"
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 opacity-0 hover:bg-zinc-200/70 hover:text-zinc-700 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+      >
+        <ChevronRight className="size-4" />
+      </TaskLink>
+    </span>
+  );
+}
+
+// A click on the row itself (not a control) opens the task. Clicks inside a cell's picker (drawn on
+// <body>, but the row's child in React) aren't the row's.
+function rowClickOpens(e: React.MouseEvent<HTMLElement>) {
+  const target = e.target as HTMLElement;
+  if (!e.currentTarget.contains(target)) return "outside" as const;
+  return target.closest("a, button, input, select, textarea, label") ? ("control" as const) : ("row" as const);
+}
+
+// The due date as My tasks shows it: red when overdue.
+function MyDueDate({ dueOn, done, today }: { dueOn: string | null; done: boolean; today: string | null }) {
+  if (!dueOn) return null;
+  const overdue = Boolean(today && !done && dueOn < today);
+  return (
+    <span className={`ml-auto text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
+      {formatDueDate(dueOn, today ? Number(today.slice(0, 4)) : undefined)}
+      {overdue ? <span className="sr-only"> (overdue)</span> : null}
+    </span>
+  );
+}
+
 function MyTaskRow({
   task,
   openTaskId,
@@ -795,8 +1116,13 @@ function MyTaskRow({
   today,
   isDone,
   onToggle,
+  onRename,
+  onDueChange,
   selection,
   selecting,
+  expandable = false,
+  expanded = false,
+  onToggleExpanded,
   dragging = false,
   dropBefore = false,
   onDragStart,
@@ -809,8 +1135,13 @@ function MyTaskRow({
   today: string | null;
   isDone: (task: MyTask) => boolean;
   onToggle: (task: MyTask) => void;
+  onRename: (task: MyTask, title: string) => void;
+  onDueChange: (task: MyTask, edit: DateEdit, close: () => void) => void;
   selection: TaskSelection;
   selecting: boolean;
+  expandable?: boolean;
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
   dragging?: boolean;
   dropBefore?: boolean;
   onDragStart?: (e: DragEvent) => void;
@@ -823,27 +1154,28 @@ function MyTaskRow({
   const prefetch = useTaskPrefetch(task.id, seedThis);
   const done = isDone(task);
   const open = openTaskId === task.id;
-  const overdue = Boolean(task.dueOn && today && !done && task.dueOn < today);
   const selected = selection.isSelected(task.id);
+  const blocked = done ? 0 : blockedCount(task);
+  const [renaming, setRenaming] = useState(false);
 
   return (
     <li
       data-task-row={task.id}
-      draggable={Boolean(onDragStart)}
+      draggable={Boolean(onDragStart) && !renaming}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onPointerEnter={prefetch.onPointerEnter}
       onPointerLeave={prefetch.onPointerLeave}
       onClick={(e) => {
-        const control = (e.target as HTMLElement).closest("a, button, input, select, textarea, label");
-        if (control) {
+        const where = rowClickOpens(e);
+        if (where === "outside") return;
+        if (where === "control") {
           // The title link opens the task too (⌘/Ctrl-click: a new tab, the browser's own behaviour).
-          if (control.tagName === "A") selection.setActive(task.id);
+          if ((e.target as HTMLElement).closest("a")) selection.setActive(task.id);
           return;
         }
         // Clicking a row opens the task; only the checkbox on the left selects (and brings up the bulk bar).
-
         selection.setActive(task.id);
         if (!open) openTask(task.id, seedThis());
       }}
@@ -873,23 +1205,47 @@ function MyTaskRow({
         // A task the viewer can only read (Viewer / Commenter in its projects): nothing to select or tick.
         <span aria-hidden className="-mr-1 size-3.5 shrink-0" />
       )}
-      <CompleteToggle
-        kind={task.kind}
-        completed={done}
-        readOnly={!task.canEdit}
-        onToggle={() => onToggle(task)}
-        label={kindToggleLabel(task.kind, task.title, done)}
+      <ExpandToggle
+        expandable={expandable}
+        expanded={expanded}
+        title={task.title}
+        onToggle={() => onToggleExpanded?.()}
+        className="-mr-1"
       />
-      <TaskLink
+      {blocked > 0 ? (
+        <BlockedToggle taskId={task.id} title={task.title} count={blocked} />
+      ) : (
+        <CompleteToggle
+          kind={task.kind}
+          completed={done}
+          readOnly={!task.canEdit}
+          onToggle={() => onToggle(task)}
+          label={kindToggleLabel(task.kind, task.title, done)}
+        />
+      )}
+      <RowTitle
         taskId={task.id}
+        title={task.title}
+        bareTitle={bareTaskTitle(task.title, task.requestLabel)}
+        done={done}
+        canEdit={task.canEdit}
+        open={open}
         seed={seedThis}
-        draggable={false}
-        data-task-link=""
-        aria-current={open ? "true" : undefined}
-        className={`min-w-0 flex-1 truncate text-sm hover:underline ${done ? "text-zinc-400 line-through" : "text-zinc-900"}`}
-      >
-        {task.title}
-      </TaskLink>
+        onRename={(title) => onRename(task, title)}
+        onEditingChange={setRenaming}
+      />
+      {task.kind === "approval" && task.approvalStatus ? (
+        <ApprovalStatusBadge status={task.approvalStatus} paused={task.approvalPaused} />
+      ) : null}
+      {(task.subtaskCount ?? 0) > 0 ? (
+        <span
+          className="hidden shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500 sm:inline-flex"
+          title={`${task.subtaskDoneCount ?? 0} of ${task.subtaskCount} subtasks done`}
+        >
+          {task.subtaskDoneCount ?? 0}/{task.subtaskCount}
+          <span className="sr-only"> subtasks done</span>
+        </span>
+      ) : null}
       {task.parentTitle ? (
         <span className="hidden max-w-40 shrink-0 truncate text-xs text-zinc-500 md:inline" title={`Subtask of ${task.parentTitle}`}>
           <span className="sr-only">Subtask of </span>
@@ -915,8 +1271,223 @@ function MyTaskRow({
           Private
         </span>
       )}
-      <span className={`flex w-16 shrink-0 justify-end text-xs tabular-nums ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}>
-        {task.dueOn ? formatDueDate(task.dueOn, today ? Number(today.slice(0, 4)) : undefined) : <EmptyCellHint kind="date" hidden={!task.canEdit} />}
+      <span className="flex w-20 shrink-0 justify-end">
+        <InlineDateCell
+          taskTitle={task.title}
+          column="due-only"
+          dueOn={task.dueOn}
+          canEdit={task.canEdit}
+          display={task.dueOn ? <MyDueDate dueOn={task.dueOn} done={done} today={today} /> : <EmptyCellHint kind="date" hidden={!task.canEdit} />}
+          onChange={(edit, close) => onDueChange(task, edit, close)}
+        />
+      </span>
+    </li>
+  );
+}
+
+type MySubtaskHandlers = {
+  toggle: (subtask: SubtaskItem) => void;
+  rename: (subtask: SubtaskItem, title: string) => void;
+  assign: (subtask: SubtaskItem, assigneeId: string | null) => void;
+  dates: (subtask: SubtaskItem, edit: DateEdit, close: () => void) => void;
+  expand: (id: string) => void;
+};
+
+type MySubtaskProps = {
+  trees: SubtaskTrees;
+  profiles: Profile[];
+  openTaskId: string | null;
+  handlers: MySubtaskHandlers;
+  today: string | null;
+  viewer: { id: string; name: string };
+};
+
+// A subtask row sits under its parent's completion control, 1.5rem further in per level.
+const MY_SUBTASK_BASE_REM = 2.125;
+
+// An open row's subtasks (Oct 27 notes, batch 6): every level, indented, each expandable when it has
+// subtasks of its own, edited in place (complete, rename, assignee, dates) when the viewer can edit the
+// task they belong to. They aren't selected or dragged.
+function MySubtaskRows({ task, trees, ...rest }: { task: MyTask } & MySubtaskProps) {
+  const rootId = myTaskRootId(task);
+  const bare = bareTaskTitle(task.title, task.requestLabel);
+  if (trees.isLoading(rootId)) {
+    return (
+      <li role="status" className="flex min-h-row items-center border-b border-zinc-100 text-xs text-zinc-400" style={{ paddingLeft: `${MY_SUBTASK_BASE_REM + 1.5}rem` }}>
+        Loading subtasks…
+      </li>
+    );
+  }
+  const rows = flattenSubtaskRows(task.id, bare, trees.childrenOf, trees.isExpanded);
+  if (rows.length === 0) {
+    // A subtask whose own subtasks this page can't load (it only loads trees by their top-level task).
+    return (
+      <li className="flex min-h-row items-center border-b border-zinc-100 text-xs text-zinc-500" style={{ paddingLeft: `${MY_SUBTASK_BASE_REM + 1.5}rem` }}>
+        <TaskLink taskId={task.id} seedData={seedFromTitle(task.id, task.title)} className="hover:underline">
+          Open the task to see its subtasks
+        </TaskLink>
+      </li>
+    );
+  }
+  return (
+    <>
+      {rows.map((row) => (
+        <MySubtaskRow key={row.item.id} row={row} parent={task} trees={trees} {...rest} />
+      ))}
+    </>
+  );
+}
+
+function MySubtaskRow({
+  row,
+  parent,
+  profiles,
+  openTaskId,
+  handlers,
+  today,
+}: { row: FlatSubtaskRow; parent: MyTask } & MySubtaskProps) {
+  const { item: subtask, depth, parentTitle } = row;
+  const openTask = useOpenTask();
+  // A subtask's access is its top-level task's: the row's own permission decides.
+  const canEdit = parent.canEdit;
+  const done = Boolean(subtask.completedAt);
+  const blocked = blockedCount(subtask);
+  const open = openTaskId === subtask.id;
+  const assignee = subtask.assigneeId ? profiles.find((p) => p.id === subtask.assigneeId) : undefined;
+  const seed = () =>
+    seedFromSubtask(subtask, { title: parentTitle, projectName: parent.projectName }, {
+      canEdit,
+      personName: (id) => {
+        const person = profiles.find((p) => p.id === id);
+        return person ? displayName(person) : null;
+      },
+    });
+  return (
+    <li
+      data-subtask-row={subtask.id}
+      onClick={(e) => {
+        if (rowClickOpens(e) !== "row") return;
+        if (!open) openTask(subtask.id, seed());
+      }}
+      className={`cv-row group flex min-h-row cursor-pointer items-center gap-2 border-b border-zinc-100 py-1 pr-3 ${
+        open ? "bg-accent-50/60" : "hover:bg-zinc-50"
+      }`}
+      style={{ paddingLeft: `${MY_SUBTASK_BASE_REM + depth * 1.5}rem` }}
+    >
+      <ExpandToggle expandable={row.hasChildren} expanded={row.expanded} title={subtask.title} onToggle={() => handlers.expand(subtask.id)} />
+      {blocked > 0 ? (
+        <BlockedToggle taskId={subtask.id} title={subtask.title} count={blocked} size="sm" />
+      ) : (
+        <CompleteToggle
+          size="sm"
+          kind={subtask.kind}
+          completed={done}
+          readOnly={!canEdit}
+          disabled={subtask.kind === "approval"}
+          onToggle={() => handlers.toggle(subtask)}
+          label={kindToggleLabel(subtask.kind, subtask.title, done)}
+        />
+      )}
+      <RowTitle
+        taskId={subtask.id}
+        title={displayTaskTitle(subtask.title, subtask.requestLabel)}
+        bareTitle={subtask.title}
+        done={done}
+        canEdit={canEdit}
+        open={open}
+        seed={seed}
+        subtask
+        onRename={(title) => handlers.rename(subtask, title)}
+      />
+      {subtask.subtaskCount > 0 ? (
+        <span
+          className="inline-flex shrink-0 items-center text-xs tabular-nums text-zinc-500"
+          title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
+        >
+          {subtask.subtaskDoneCount}/{subtask.subtaskCount}
+        </span>
+      ) : null}
+      <span className="flex shrink-0 items-center">
+        <InlineAssigneeCell
+          taskTitle={subtask.title}
+          assignee={assignee}
+          people={profiles}
+          canEdit={canEdit && profiles.length > 0}
+          approver={subtask.kind === "approval"}
+          showName={false}
+          onChange={(assigneeId) => handlers.assign(subtask, assigneeId)}
+        />
+      </span>
+      <span className="flex w-20 shrink-0 justify-end">
+        <InlineDateCell
+          taskTitle={subtask.title}
+          column="due"
+          startOn={subtask.startOn}
+          dueOn={subtask.dueOn}
+          milestone={subtask.kind === "milestone"}
+          canEdit={canEdit}
+          display={subtask.dueOn ? <MyDueDate dueOn={subtask.dueOn} done={done} today={today} /> : <EmptyCellHint kind="date" hidden={!canEdit} />}
+          onChange={(edit, close) => handlers.dates(subtask, edit, close)}
+        />
+      </span>
+    </li>
+  );
+}
+
+// One approval waiting on the viewer (Oct 27 notes, batch 6): opens the task, with its project, due
+// date, and round.
+function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId: string | null }) {
+  const openTask = useOpenTask();
+  const title = displayTaskTitle(item.title, item.requestLabel);
+  const seed = () =>
+    seedFromTitle(item.taskId, bareTaskTitle(item.title, item.requestLabel), {
+      requestLabel: item.requestLabel,
+      dueOn: item.dueOn,
+      projectName: item.projectName ?? (item.projectId ? undefined : "Private"),
+      kind: item.isApprovalTask ? "approval" : undefined,
+    });
+  const prefetch = useTaskPrefetch(item.taskId, seed);
+  const open = openTaskId === item.taskId;
+  return (
+    <li
+      data-awaiting-row={item.taskId}
+      onPointerEnter={prefetch.onPointerEnter}
+      onPointerLeave={prefetch.onPointerLeave}
+      onClick={(e) => {
+        if (rowClickOpens(e) !== "row") return;
+        if (!open) openTask(item.taskId, seed());
+      }}
+      className={`group flex min-h-row cursor-pointer items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
+        open ? "bg-accent-50/60" : "hover:bg-zinc-50"
+      }`}
+    >
+      <span
+        aria-hidden
+        className="ml-[1.375rem] inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-700"
+      >
+        <ThumbsUp className="size-[62%]" strokeWidth={2.5} />
+      </span>
+      <TaskLink
+        taskId={item.taskId}
+        seed={seed}
+        aria-current={open ? "true" : undefined}
+        className="min-w-0 flex-1 truncate text-sm text-zinc-900 hover:underline"
+      >
+        <span className="sr-only">Approve: </span>
+        {title}
+      </TaskLink>
+      {item.roundNumber ? <span className="chip shrink-0">Round {item.roundNumber}</span> : null}
+      {item.projectId ? (
+        <Link
+          href={`/projects/${item.projectId}/list`}
+          className="chip hidden max-w-40 shrink-0 truncate hover:bg-zinc-200 hover:text-zinc-900 sm:inline-flex"
+        >
+          <FolderClosed className="size-3 shrink-0" aria-hidden />
+          <span className="truncate">{item.projectName}</span>
+        </Link>
+      ) : null}
+      <span className="flex w-20 shrink-0 justify-end" title={`Sent ${dayLabel(item.sentAt.slice(0, 10), Number(item.sentAt.slice(0, 4)))}`}>
+        {item.dueOn ? <DueDate task={{ dueOn: item.dueOn, completedAt: null }} /> : null}
       </span>
     </li>
   );

@@ -2,6 +2,7 @@
 
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useOptimistic, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Check, ChevronRight, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, UserRound, X } from "lucide-react";
 import { usePaneExpanded, usePaneWide } from "./pane-size";
 import { CloseButton, ExpandButton, PANE_HEADER, PaneShell, useClosePane, WideViewToggle } from "./task-pane-frame";
@@ -9,12 +10,11 @@ import { RecordRecent } from "@/components/shell/shell-context";
 import { Avatar, displayName } from "@/components/avatar";
 import { useNotify, useServerAction } from "@/components/toast";
 import { assignRequestNumber, setTaskCompleted, updateTask } from "@/lib/actions";
-import { approvalOpen, approvalTaskRequest, parseApprovalTaskStatus } from "@/lib/task-kinds";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { taskPermissions } from "@/lib/permissions";
-import { hasRole } from "@/lib/roles";
 import type { Tag } from "@/lib/tags";
 import { ApprovalTaskBanner } from "./task-approval-banner";
+import { BlockersHover } from "./blockers-popover";
 import { TaskActivity, TaskPaneFooter } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
 import { TaskAttachments, useAttachmentUpload } from "./task-attachments";
@@ -66,9 +66,14 @@ export function TaskDetailPanel({
     ).length +
     task.hiddenBlockers;
   const blocked = !completed && openBlockers > 0;
-  // An approval task is completed by its assignee's decision while the request is open.
-  const approvalRequest = approvalTaskRequest(task.kind, task.assigneeId, task.approvals);
-  const awaitingApproval = !completed && approvalOpen(parseApprovalTaskStatus(approvalRequest?.status));
+  // An approval task can't be ticked complete while its approval is pending (the approvers decide; the
+  // database refuses too). Oct 27 notes, batch 6: the status is the latest round's.
+  const awaitingApproval = !completed && task.kind === "approval" && task.approval?.status === "pending";
+  // Item 39: inside a project the pane shows that project's number for the task (each project numbers
+  // the tasks it holds); elsewhere the home project's.
+  const pathname = usePathname();
+  const pathProjectId = /^\/projects\/([^/?#]+)/.exec(pathname ?? "")?.[1] ?? null;
+  const numberLabel = (pathProjectId ? task.projectNumbers?.[pathProjectId] : undefined) ?? task.requestLabel;
 
   const memberProjectIds = new Set(task.memberships.map((m) => m.projectId));
   const permissions = taskPermissions(task);
@@ -76,21 +81,19 @@ export function TaskDetailPanel({
   // Subtasks live in their root task's projects; they're never added to one themselves.
   const addableProjects = canEdit && !task.isSubtask ? projects.filter((p) => p.canAdd && !memberProjectIds.has(p.id)) : [];
   // Only people with access to one of the task's projects can be assigned (others couldn't see it).
-  // An approval task's assignee approves it, so they need Commenter+ (the database refuses Viewers).
   // A private task is shared by assigning it, so anyone can be its assignee; a private task's subtask
-  // only its top-level task's creator or assignee (nobody else can read it).
+  // only its top-level task's creator or assignee (nobody else can read it). An approval task's
+  // assignee does the work; its approvers are separate (the approval panel), since Oct 27 notes, batch 6.
   const assignable = profiles.filter((p) =>
     p.id === task.assigneeId
       ? true
       : task.isPrivate
         ? !task.isSubtask || task.privateReaderIds.includes(p.id)
-        : task.kind === "approval"
-          ? hasRole(task.memberRoles[p.id], "commenter")
-          : p.id in task.memberRoles,
+        : p.id in task.memberRoles,
   );
   const assignee = profiles.find((p) => p.id === assigneeId);
   const assigneeName = assignee ? displayName(assignee) : null;
-  const assigneeLabel = task.kind === "approval" ? "Approver" : "Assignee";
+  const assigneeLabel = "Assignee";
 
   function assign(profileId: string | null) {
     run(
@@ -125,18 +128,29 @@ export function TaskDetailPanel({
       <RecordRecent kind="task" id={task.id} />
       {upload.input}
       <div className={PANE_HEADER}>
-        {canEdit ? (
+        {canEdit && blocked ? (
+          // Item 43: a blocked task can't be completed. The button stays where it is, looks disabled,
+          // wears a lock, and hovering, focusing, or tapping it lists the tasks it waits on (each opens).
+          <BlockersHover taskId={task.id} count={openBlockers}>
+            <button
+              type="button"
+              aria-disabled="true"
+              data-blocked-complete=""
+              aria-label={`Mark complete: blocked by ${openBlockers} ${openBlockers === 1 ? "task" : "tasks"}. Show ${openBlockers === 1 ? "it" : "them"}`}
+              className="inline-flex h-8 shrink-0 cursor-help items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 text-sm font-medium text-amber-800"
+            >
+              <Lock className="size-4" strokeWidth={2.5} aria-hidden />
+              {task.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
+              <span className="text-xs font-normal tabular-nums text-amber-700 max-sm:hidden">
+                · Blocked by {openBlockers}
+              </span>
+            </button>
+          </BlockersHover>
+        ) : canEdit ? (
           <button
             type="button"
-            disabled={blocked || awaitingApproval}
-            data-tooltip={
-              awaitingApproval
-                ? "The assignee completes this by approving or rejecting it"
-                : blocked
-                  ? "Complete the tasks this one is blocked by first"
-                  : undefined
-            }
-            aria-describedby={blocked ? "task-blocked-note" : undefined}
+            disabled={awaitingApproval}
+            data-tooltip={awaitingApproval ? "Waiting for approval. Withdraw the request first, or wait for the approvers" : undefined}
             aria-pressed={completed}
             onClick={() =>
               run(
@@ -163,23 +177,17 @@ export function TaskDetailPanel({
             <span className="truncate">{permissions.readOnlyNote}</span>
           </span>
         )}
-        {blocked && canEdit ? (
-          <span id="task-blocked-note" className="hidden min-w-0 items-center gap-1 truncate text-xs text-amber-700 sm:inline-flex">
-            <Lock className="size-3.5 shrink-0" aria-hidden />
-            Blocked by {openBlockers} task{openBlockers === 1 ? "" : "s"}
-          </span>
-        ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
           {canEdit ? (
             <PersonPicker
               label={`${assigneeLabel}: ${assigneeName ?? "nobody"}. Change`}
-              tooltip={assigneeName ? `${assigneeLabel}: ${assigneeName}` : `Choose ${task.kind === "approval" ? "an approver" : "an assignee"}`}
+              tooltip={assigneeName ? `${assigneeLabel}: ${assigneeName}` : "Choose an assignee"}
               align="end"
               people={assignable}
               value={assigneeId}
               onPick={assign}
               onClear={() => assign(null)}
-              clearLabel={task.kind === "approval" ? "Remove approver" : "Remove assignee"}
+              clearLabel="Remove assignee"
               buttonClassName="inline-flex size-8 items-center justify-center rounded-full hover:bg-zinc-100 aria-expanded:bg-zinc-100"
               button={face}
             />
@@ -227,9 +235,9 @@ export function TaskDetailPanel({
         <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
           {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
-          {task.requestLabel ? (
-            <p className="mb-1 text-sm font-medium text-zinc-500">
-              {formatRequestLabel(task.requestLabel)}
+          {numberLabel ? (
+            <p className="mb-1 text-sm font-medium text-zinc-500" data-task-number="">
+              {formatRequestLabel(numberLabel)}
             </p>
           ) : null}
           {canEdit ? (
@@ -280,7 +288,7 @@ export function TaskDetailPanel({
                     value={assigneeId}
                     onPick={assign}
                     onClear={() => assign(null)}
-                    clearLabel={task.kind === "approval" ? "Remove approver" : "Remove assignee"}
+                    clearLabel="Remove assignee"
                     buttonClassName="inline-flex h-8 min-w-0 max-w-full items-center gap-2 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
                     button={
                       <>
@@ -297,8 +305,8 @@ export function TaskDetailPanel({
                     <button
                       type="button"
                       onClick={() => assign(null)}
-                      aria-label={task.kind === "approval" ? "Remove the approver" : "Remove the assignee"}
-                      data-tooltip={task.kind === "approval" ? "Remove approver" : "Remove assignee"}
+                      aria-label="Remove the assignee"
+                      data-tooltip="Remove assignee"
                       className="ml-0.5 rounded p-1 text-zinc-400 opacity-0 hover:bg-zinc-100 hover:text-zinc-700 focus-visible:opacity-100 group-hover/assignee:opacity-100 [@media(hover:none)]:opacity-100"
                     >
                       <X className="size-3.5" />
@@ -375,7 +383,6 @@ export function TaskDetailPanel({
             task={task}
             profiles={profiles}
             memberId={memberId}
-            excludeId={approvalRequest?.id ?? null}
             requesting={requestingApproval}
             onRequestingChange={setRequestingApproval}
           />

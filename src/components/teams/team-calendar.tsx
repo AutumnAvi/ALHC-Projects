@@ -178,7 +178,7 @@ export function TeamCalendar({
             shift.changeDates(
               { id: task.id, title: displayTaskTitle(task.title, task.requestLabel) },
               dates,
-              { onOptimistic: (moves) => applyMoves(moves) },
+              { onOptimistic: (moves) => applyMoves(moves), projectId: task.projectId },
             );
           }}
           label={`Tasks and events, ${label}`}

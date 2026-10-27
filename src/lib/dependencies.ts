@@ -165,3 +165,27 @@ export function shiftLabel(days: number) {
 export const MAX_SHIFT_MOVES = 200;
 
 export type ShiftMove = { taskId: string; startOn?: string | null; dueOn?: string | null };
+
+// Oct 27 notes (batch 6): what a date change does to dependent tasks, per project
+// (projects.dependency_shift; dependency_shift_mode() in the database picks it for a change).
+export const DEPENDENCY_SHIFT_MODES = ["auto", "ask", "off"] as const;
+export type DependencyShiftMode = (typeof DEPENDENCY_SHIFT_MODES)[number];
+
+export const DEPENDENCY_SHIFT_OPTIONS: Record<DependencyShiftMode, { label: string; description: string }> = {
+  auto: {
+    label: "Auto-shift",
+    description: "Dependent tasks move with their blockers right away — later or earlier, keeping the gap. Undo stays available.",
+  },
+  ask: {
+    label: "Ask me",
+    description: "Show which dependent tasks would move (later or earlier) and let me choose.",
+  },
+  off: {
+    label: "Off",
+    description: "Only the task you change moves. Dependent tasks keep their dates.",
+  },
+};
+
+export function parseDependencyShiftMode(value: unknown): DependencyShiftMode {
+  return value === "auto" || value === "off" ? value : "ask";
+}

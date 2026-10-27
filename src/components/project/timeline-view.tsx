@@ -72,6 +72,7 @@ const ROW_HEIGHT = 36;
 const labelCell = { width: LABEL_WIDTH, minWidth: LABEL_WIDTH };
 
 export function TimelineView({
+  projectId,
   sections,
   tasks,
   profiles,
@@ -161,12 +162,13 @@ export function TimelineView({
     }
   }
 
-  // Moving a task later can push the tasks that depend on it: useDependencyShift previews that and asks
-  // before anything else moves (with Undo afterwards).
+  // Moving a task (later or earlier) moves the tasks that depend on it as the project's Settings →
+  // Dependencies says (Auto-shift, Ask me, or Off); the bar moves at once (useDependencyShift).
   function reschedule(task: ProjectTask, dates: Dates) {
     if (task.startOn === dates.startOn && task.dueOn === dates.dueOn) return;
     shift.changeDates(task, dates, {
       onOptimistic: (moves) => moves.forEach((m) => applyChange({ type: "dates", ...m })),
+      projectId,
     });
   }
 

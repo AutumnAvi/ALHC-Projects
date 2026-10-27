@@ -127,14 +127,16 @@ export function CalendarView({
     }
   }
 
-  // The task pane's path: a later date can push dependent tasks, so useDependencyShift asks first (and
-  // offers Undo); the move shows at once and rolls back if the database refuses it.
+  // The task pane's path (useDependencyShift): the move shows at once, dependent tasks move later or
+  // earlier as the project's Settings → Dependencies says (Auto-shift, Ask me, or Off), and it rolls back
+  // if the database refuses it.
   function changeDates(taskId: string, dates: { startOn: string | null; dueOn: string | null }) {
     const task = optimisticTasks.find((t) => t.id === taskId);
     if (!task || (task.startOn === dates.startOn && task.dueOn === dates.dueOn)) return;
     shift.changeDates(task, dates, {
       onOptimistic: (moves) =>
         moves.forEach((m) => applyChange({ type: "dates", taskId: m.taskId, startOn: m.startOn, dueOn: m.dueOn })),
+      projectId,
     });
   }
 
