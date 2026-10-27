@@ -1,7 +1,7 @@
 -- Behavioural checks for Phase: Task types and nested rollups: tasks.kind validation and stories,
 -- milestones (date-only, zero length on the critical path, portfolio Timeline diamonds), approval tasks on
--- the existing approvals engine (the assignee is the approver; only they decide; one inbox item per
--- event; reassigning or switching kind cancels the request; deciding completes the task), kinds kept by
+-- the existing approvals engine (since Oct 27 notes, batch 6: approvers separate from the assignee, rounds
+-- sent with Ready for approval, only Approve completes the task), kinds kept by
 -- recurrence / templates / Duplicate project / imports (which open no request and notify nobody), and
 -- workload + goal progress that count nested portfolios' projects only when readable. People from
 -- earlier suites:
@@ -94,7 +94,10 @@ begin
   assert r.slack_days = 2 and not r.critical, 'a free milestone has slack up to the finish';
 end $$;
 
--- Approval tasks -----------------------------------------------------------------------------------
+-- Approval tasks ---------------------------------------------------------------------------------
+-- Since Oct 27 notes (batch 6) the assignee and the approvers are separate people: approvers are set on
+-- the task, a round starts with "Ready for approval", only an approver decides, and only Approve (without
+-- More steps) completes the task (zz35 covers the rest of the flow).
 
 do $$
 declare
@@ -104,16 +107,24 @@ declare
 begin
   t := public.create_task(p, null, 'Approve the flyer');
   insert into tk_ids values ('appr', t);
-  update public.tasks set kind = 'approval', assignee_id = '66666666-6666-4666-8666-666666666666' where id = t;
-
-  assert (select count(*) from public.approval_requests where task_id = t) = 1, 'assigning opens one request';
-  select * into a from public.approval_requests where task_id = t;
-  assert a.status = 'pending' and a.approver_id = '66666666-6666-4666-8666-666666666666'
-    and a.requested_by = '77777777-7777-4777-8777-777777777777' and a.subtask_id is null,
-    'the assignee approves; whoever assigned requested it; no approval subtask';
+  update public.tasks set kind = 'approval', assignee_id = '88888888-8888-4888-8888-888888888888' where id = t;
+  assert not exists (select 1 from public.approval_requests where task_id = t), 'assigning opens no request';
   assert not exists (select 1 from public.tasks where parent_task_id = t), 'no approval subtask is created';
 
-  -- Only the assignee decides, and nobody ticks it complete while it's open.
+  -- A Viewer can't approve.
+  begin
+    perform public.set_task_approvers(t, array['55555555-5555-4555-8555-555555555555'::uuid], 'any', null);
+    raise exception 'viewers can''t be approvers';
+  exception when check_violation then null;
+  end;
+  perform public.set_task_approvers(t, array['66666666-6666-4666-8666-666666666666'::uuid], 'any', null);
+  perform public.send_for_approval(t, 'Flyer, final copy', '{}', false, 'complete', null);
+  select * into a from public.approval_requests where task_id = t;
+  assert a.status = 'pending' and a.approver_id = '66666666-6666-4666-8666-666666666666'
+    and a.requested_by = '77777777-7777-4777-8777-777777777777' and a.subtask_id is null and a.round_id is not null,
+    'the approver decides; whoever sent it requested it; no approval subtask';
+
+  -- Only the approver decides, and nobody ticks it complete while it's pending.
   begin
     perform public.decide_approval(a.id, 'approved');
     raise exception 'only the approver may decide';
@@ -121,78 +132,62 @@ begin
   end;
   begin
     update public.tasks set completed_at = now() where id = t;
-    raise exception 'an open approval task can''t be ticked complete';
+    raise exception 'a pending approval task can''t be ticked complete';
   exception when check_violation then null;
   end;
-
-  -- A Viewer can't approve, so they can't be the assignee of an approval task.
-  begin
-    update public.tasks set assignee_id = '55555555-5555-4555-8555-555555555555' where id = t;
-    raise exception 'viewers can''t be approval assignees';
-  exception when check_violation then null;
-  end;
-  assert (select assignee_id from public.tasks where id = t) = '66666666-6666-4666-8666-666666666666',
-    'the failed reassignment changed nothing';
 end $$;
 
--- The assignee hears about it once (approval_requested, not also "assigned").
+-- The assignee got an ordinary assignment; the approver one approval_requested item.
+select set_config('request.jwt.claim.sub', '88888888-8888-4888-8888-888888888888', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from tk_ids where name = 'appr');
+begin
+  assert (select count(*) from public.inbox_items where task_id = t) = 1
+    and (select kind from public.inbox_items where task_id = t) = 'assigned', 'the assignee is simply assigned';
+end $$;
+
 select set_config('request.jwt.claim.sub', '66666666-6666-4666-8666-666666666666', false) is not null as ok \gset
 do $$
 declare
   t uuid := (select id from tk_ids where name = 'appr');
 begin
-  assert (select count(*) from public.inbox_items where task_id = t) = 1, 'one inbox item for the assignee';
-  assert (select kind from public.inbox_items where task_id = t) = 'approval_requested', 'it is the approval request';
-end $$;
-
--- Reassigning cancels the request and opens a new one for the new assignee.
-select set_config('request.jwt.claim.sub', '77777777-7777-4777-8777-777777777777', false) is not null as ok \gset
-do $$
-declare
-  t uuid := (select id from tk_ids where name = 'appr');
-begin
-  update public.tasks set assignee_id = '88888888-8888-4888-8888-888888888888' where id = t;
-  assert (select status from public.approval_requests
-          where task_id = t and approver_id = '66666666-6666-4666-8666-666666666666') = 'cancelled',
-    'the old assignee''s request is cancelled';
-  assert (select count(*) from public.approval_requests
-          where task_id = t and approver_id = '88888888-8888-4888-8888-888888888888' and status = 'pending') = 1,
-    'the new assignee gets a pending request';
-end $$;
-
-select set_config('request.jwt.claim.sub', '88888888-8888-4888-8888-888888888888', false) is not null as ok \gset
-do $$
-declare
-  t uuid := (select id from tk_ids where name = 'appr');
-  a uuid := (select id from public.approval_requests
-             where task_id = (select id from tk_ids where name = 'appr') and status = 'pending');
-begin
   assert (select count(*) from public.inbox_items where task_id = t) = 1
-    and (select kind from public.inbox_items where task_id = t) = 'approval_requested',
-    'the new assignee gets one approval_requested item';
-  perform public.decide_approval(a, 'changes_requested', 'Bigger logo');
+    and (select kind from public.inbox_items where task_id = t) = 'approval_requested', 'one approval request item';
+  perform public.decide_approval((select id from public.approval_requests where task_id = t and status = 'pending'),
+    'changes_requested', 'Bigger logo');
   assert (select completed_at is null from public.tasks where id = t), 'changes requested keeps the task open';
 end $$;
 
--- The requester gets one approval_decided item per decision; resubmitting goes back to the approver.
+-- The sender and the assignee each get one approval_decided item; the assignee marks the feedback received
+-- and sends it again; approving completes it.
 select set_config('request.jwt.claim.sub', '77777777-7777-4777-8777-777777777777', false) is not null as ok \gset
 do $$
 declare
   t uuid := (select id from tk_ids where name = 'appr');
 begin
-  assert (select count(*) from public.inbox_items where task_id = t) = 1
-    and (select kind from public.inbox_items where task_id = t) = 'approval_decided',
-    'one approval_decided item for the requester';
-  perform public.resubmit_approval((select id from public.approval_requests where task_id = t and status = 'changes_requested'));
+  assert (select count(*) from public.inbox_items where task_id = t and kind = 'approval_decided') = 1,
+    'one approval_decided item for the sender';
 end $$;
 
 select set_config('request.jwt.claim.sub', '88888888-8888-4888-8888-888888888888', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from tk_ids where name = 'appr');
+begin
+  assert (select count(*) from public.inbox_items where task_id = t and kind = 'approval_decided') = 1,
+    'the assignee hears about the decision';
+  perform public.acknowledge_approval(t);
+  perform public.send_for_approval(t, 'Flyer, bigger logo', '{}', false, 'complete', null);
+end $$;
+
+select set_config('request.jwt.claim.sub', '66666666-6666-4666-8666-666666666666', false) is not null as ok \gset
 do $$
 declare
   t uuid := (select id from tk_ids where name = 'appr');
 begin
   assert (select count(*) from public.inbox_items where task_id = t and kind = 'approval_requested') = 2,
-    'resubmitting asks the approver again (one item for that event)';
+    'the second round asks the approver again (one item for that event)';
   perform public.decide_approval((select id from public.approval_requests where task_id = t and status = 'pending'), 'approved');
   assert (select completed_at is not null from public.tasks where id = t), 'approving completes the approval task';
   assert (select count(*) from public.inbox_items where task_id = t and kind = 'approval_decided') = 0,
@@ -206,7 +201,6 @@ declare
   t uuid := (select id from tk_ids where name = 'appr');
   t2 uuid;
   t3 uuid;
-  next_task uuid;
 begin
   assert (select count(*) from public.inbox_items where task_id = t and kind = 'approval_decided') = 2,
     'one approval_decided item per decision';
@@ -215,25 +209,27 @@ begin
   assert exists (select 1 from public.task_stories where task_id = t and kind = 'completed'),
     'the completion is still in the activity';
 
-  -- Switching away from approval cancels the open request; switching back opens a new one.
+  -- Switching to approval opens nothing; switching away withdraws a pending round.
   t2 := public.create_task(p, null, 'Approve the copy');
-  update public.tasks set assignee_id = '66666666-6666-4666-8666-666666666666' where id = t2;
-  assert not exists (select 1 from public.approval_requests where task_id = t2), 'plain tasks open no request';
-  update public.tasks set kind = 'approval' where id = t2;
-  assert (select count(*) from public.approval_requests where task_id = t2 and status = 'pending') = 1,
-    'switching to approval opens a request for the assignee';
+  update public.tasks set assignee_id = '66666666-6666-4666-8666-666666666666', kind = 'approval' where id = t2;
+  assert not exists (select 1 from public.approval_requests where task_id = t2), 'switching to approval opens nothing';
+  perform public.set_task_approvers(t2, array['66666666-6666-4666-8666-666666666666'::uuid], 'any', null);
+  perform public.send_for_approval(t2, 'Copy', '{}', false, 'complete', null);
   update public.tasks set kind = 'task' where id = t2;
-  assert (select status from public.approval_requests where task_id = t2) = 'cancelled',
-    'switching away cancels it';
+  assert (select status from public.approval_requests where task_id = t2) = 'cancelled'
+    and (select cancel_reason from public.approval_requests where task_id = t2) = 'kind_changed', 'switching away withdraws it';
+  assert (select status from public.approval_rounds where task_id = t2) = 'withdrawn', 'the round is withdrawn';
   update public.tasks set assignee_id = null, kind = 'approval' where id = t2;
-  assert (select count(*) from public.approval_requests where task_id = t2) = 1, 'no assignee, no request';
+  assert public.task_approval_state(t2) ->> 'status' = 'not_sent', 'switching back sends nothing by itself';
 
-  -- Recurrence keeps the kind and the next occurrence asks its assignee again.
+  -- Recurrence keeps the kind and the approvers; the next occurrence waits to be sent.
   t3 := public.create_task(p, null, 'Weekly sign-off');
   update public.tasks
-  set kind = 'approval', assignee_id = '66666666-6666-4666-8666-666666666666', due_on = '2026-11-02',
+  set kind = 'approval', assignee_id = '88888888-8888-4888-8888-888888888888', due_on = '2026-11-02',
       recurrence = '{"freq": "weekly", "interval": 1}'
   where id = t3;
+  perform public.set_task_approvers(t3, array['66666666-6666-4666-8666-666666666666'::uuid], 'all', null);
+  perform public.send_for_approval(t3, 'This week''s numbers', '{}', false, 'complete', null);
   insert into tk_ids values ('weekly', t3);
 end $$;
 
@@ -244,12 +240,28 @@ declare
   next_task uuid;
 begin
   perform public.decide_approval((select id from public.approval_requests where task_id = t3 and status = 'pending'), 'rejected');
+  assert (select completed_at is null from public.tasks where id = t3), 'rejecting never completes the task';
+  assert (public.task_approval_state(t3) ->> 'paused')::boolean, 'it goes back to the assignee, paused';
+end $$;
+
+select set_config('request.jwt.claim.sub', '88888888-8888-4888-8888-888888888888', false) is not null as ok \gset
+select public.acknowledge_approval((select id from tk_ids where name = 'weekly'));
+select public.send_for_approval((select id from tk_ids where name = 'weekly'), 'Fixed numbers', '{}', false, 'complete', null);
+select set_config('request.jwt.claim.sub', '66666666-6666-4666-8666-666666666666', false) is not null as ok \gset
+do $$
+declare
+  t3 uuid := (select id from tk_ids where name = 'weekly');
+  next_task uuid;
+begin
+  perform public.decide_approval((select id from public.approval_requests where task_id = t3 and status = 'pending'), 'approved');
   select recurrence_next_id into next_task from public.tasks where id = t3;
-  assert (select completed_at is not null from public.tasks where id = t3), 'rejecting completes the approval task too';
+  assert (select completed_at is not null from public.tasks where id = t3), 'approving completes it';
   assert next_task is not null and (select kind from public.tasks where id = next_task) = 'approval',
     'the next occurrence is an approval task';
-  assert (select count(*) from public.approval_requests where task_id = next_task and status = 'pending'
-          and approver_id = '66666666-6666-4666-8666-666666666666') = 1, 'and has its own pending request';
+  assert exists (select 1 from public.task_approvers where task_id = next_task and deleted_at is null
+                 and profile_id = '66666666-6666-4666-8666-666666666666'), 'with the same approver';
+  assert (select mode from public.task_approval_settings where task_id = next_task) = 'all', 'and the same mode';
+  assert public.task_approval_state(next_task) ->> 'status' = 'not_sent', 'waiting to be sent';
 end $$;
 
 -- Templates and Duplicate project keep kinds (copies open no request) ------------------------------
