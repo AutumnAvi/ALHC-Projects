@@ -99,6 +99,29 @@ export function hasOptions(field: Pick<FieldDef, "fieldType" | "boundToSections"
   return !field.boundToSections && (field.fieldType === "single_select" || field.fieldType === "multi_select");
 }
 
+// Oct 29 notes, item 47: a single- or multi-select field (not the section-bound Status) needs at
+// least one option — the editors, the actions, and the database (`guard_select_field_options`) agree.
+export const SELECT_NEEDS_OPTION = "Add at least one option";
+
+// Why a select field can't be saved as drafted, or null. `optionCount` = the options in the list,
+// `pendingOption` = a name typed in the "Add an option" box but not added yet (it's added on save, so it
+// counts). `previousCount` = how many options the saved field has (null / absent while creating): a
+// field that never had any (older data, the Creative Requests template) can still be renamed — it just
+// can't be emptied, mirroring the database guard. Portfolio fields pass no `boundToSections`.
+export function selectOptionsProblem(input: {
+  fieldType: string;
+  boundToSections?: boolean;
+  optionCount: number;
+  pendingOption?: string;
+  previousCount?: number | null;
+}): string | null {
+  const select = input.fieldType === "single_select" || input.fieldType === "multi_select";
+  if (!select || input.boundToSections) return null;
+  if (input.optionCount > 0 || (input.pendingOption ?? "").trim()) return null;
+  if (input.previousCount === 0) return null;
+  return SELECT_NEEDS_OPTION;
+}
+
 export function isFieldType(value: unknown): value is FieldType {
   return FIELD_TYPES.some((t) => t.value === value);
 }

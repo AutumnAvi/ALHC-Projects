@@ -51,7 +51,15 @@ import {
   toProjectIntegrations,
   type ProjectIntegrations,
 } from "@/lib/integrations-shared";
-import { MAX_FIELD_DESCRIPTION, isFieldType, isOptionColor, type FieldOption, type LibraryField } from "@/lib/fields";
+import {
+  MAX_FIELD_DESCRIPTION,
+  isFieldType,
+  isOptionColor,
+  parseOptions,
+  selectOptionsProblem,
+  type FieldOption,
+  type LibraryField,
+} from "@/lib/fields";
 import {
   isChoice,
   isQuestionType,
@@ -1068,6 +1076,8 @@ export async function createPortfolioField(
   return run(async () => {
     if (!isPortfolioFieldType(input.fieldType)) throw new InputError("Choose a field type");
     const options = input.fieldType === "single_select" ? portfolioFieldOptions(input.options ?? []) : [];
+    const optionsProblem = selectOptionsProblem({ fieldType: input.fieldType, optionCount: options.length });
+    if (optionsProblem) throw new InputError(optionsProblem);
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("portfolio_fields")
@@ -1098,6 +1108,22 @@ export async function updatePortfolioField(
     if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
     if (patch.options !== undefined) update.options = portfolioFieldOptions(patch.options);
     const supabase = await createClient();
+    if (Array.isArray(update.options) && update.options.length === 0) {
+      // A single-select keeps at least one option (item 47); one that never had any stays as it is.
+      const { data: current } = await supabase
+        .from("portfolio_fields")
+        .select("field_type, options")
+        .eq("id", id(fieldId, "field"))
+        .maybeSingle();
+      const problem = current
+        ? selectOptionsProblem({
+            fieldType: current.field_type,
+            optionCount: 0,
+            previousCount: parseOptions(current.options).length,
+          })
+        : null;
+      if (problem) throw new InputError(problem);
+    }
     checkUpdated(
       await supabase.from("portfolio_fields").update(update).eq("id", id(fieldId, "field")).select("id"),
       "Only portfolio editors and above can change fields",
@@ -2857,6 +2883,9 @@ export async function createField(
     }
     const extras = fieldExtras(input, bound);
     const withOptions = (input.fieldType === "single_select" || input.fieldType === "multi_select") && !bound;
+    const options = withOptions ? fieldOptions(input.options ?? []) : [];
+    const optionsProblem = selectOptionsProblem({ fieldType: input.fieldType, boundToSections: bound, optionCount: options.length });
+    if (optionsProblem) throw new InputError(optionsProblem);
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("custom_fields")
@@ -2874,7 +2903,7 @@ export async function createField(
         field_type: input.fieldType,
         bound_to_sections: bound,
         show_in_views: bound || Boolean(input.showInViews),
-        ...(withOptions && input.options?.length ? { options: fieldOptions(input.options) } : {}),
+        ...(withOptions ? { options } : {}),
         ...extras,
         sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
       })
@@ -2909,6 +2938,23 @@ export async function updateField(
     // The database refuses library / notify on the section-bound Status (CHECKs); say so plainly.
     Object.assign(update, fieldExtras(patch, false));
     const supabase = await createClient();
+    if (Array.isArray(update.options) && update.options.length === 0) {
+      // Emptying a select field's options is refused (item 47); one that never had any stays as it is.
+      const { data: current } = await supabase
+        .from("custom_fields")
+        .select("field_type, bound_to_sections, options")
+        .eq("id", id(fieldId))
+        .maybeSingle();
+      const problem = current
+        ? selectOptionsProblem({
+            fieldType: current.field_type,
+            boundToSections: current.bound_to_sections,
+            optionCount: 0,
+            previousCount: parseOptions(current.options).length,
+          })
+        : null;
+      if (problem) throw new InputError(problem);
+    }
     const result = await supabase.from("custom_fields").update(update).eq("id", id(fieldId)).select("id");
     if (result.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
     if (result.error?.code === "23514" && (update.in_library || update.notify_on_change)) {

@@ -32,6 +32,7 @@ import {
   OPTION_COLOR_CLASSES,
   fieldTypeLabel,
   hasOptions,
+  selectOptionsProblem,
   type FieldDef,
   type FieldOption,
   type FieldType,
@@ -289,6 +290,16 @@ function FieldForm({
   const withOptions = hasOptions({ fieldType: draft.fieldType, boundToSections: bound });
   const removed = field ? field.options.filter((o) => !draft.options.some((d) => d.id === o.id)) : [];
   const prefix = field ? `field-${field.id}` : "field-new";
+  // Item 47: a select field needs at least one option (a name typed in "Add an option" counts). An
+  // existing field that never had any can still be renamed; it just can't be emptied.
+  const optionsProblem = selectOptionsProblem({
+    fieldType: draft.fieldType,
+    boundToSections: bound,
+    optionCount: draft.options.length,
+    pendingOption: newOption,
+    previousCount: field ? field.options.length : null,
+  });
+  const stillEmpty = withOptions && !optionsProblem && draft.options.length === 0 && !newOption.trim();
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -312,7 +323,7 @@ function FieldForm({
 
   function save() {
     const name = draft.name.trim();
-    if (!name || pending) return;
+    if (!name || pending || optionsProblem) return;
     // A name typed in the "Add an option" box but not added yet still counts.
     const pendingOption = newOption.trim();
     const options =
@@ -515,6 +526,15 @@ function FieldForm({
               </button>
             </li>
           </ul>
+          {optionsProblem ? (
+            <p id={`${prefix}-options-hint`} className="mt-1.5 text-xs text-amber-700">
+              {optionsProblem} so people can pick a value.
+            </p>
+          ) : stillEmpty ? (
+            <p id={`${prefix}-options-hint`} className="mt-1.5 text-xs text-zinc-500">
+              This field has no options yet. Add at least one so people can pick a value.
+            </p>
+          ) : null}
           {removed.length ? (
             <p className="mt-1.5 text-xs text-amber-700">
               Tasks set to {removed.map((o) => `“${o.name}”`).join(", ")} lose that value when you save.
@@ -585,7 +605,13 @@ function FieldForm({
         <button type="button" onClick={onClose} className="btn-secondary h-8 px-3">
           Cancel
         </button>
-        <button type="button" onClick={save} disabled={pending || !draft.name.trim()} className="btn-primary h-8 px-3">
+        <button
+          type="button"
+          onClick={save}
+          disabled={pending || !draft.name.trim() || Boolean(optionsProblem)}
+          aria-describedby={optionsProblem ? `${prefix}-options-hint` : undefined}
+          className="btn-primary h-8 px-3"
+        >
           {pending ? "Saving…" : creating ? "Create field" : "Save"}
         </button>
       </div>

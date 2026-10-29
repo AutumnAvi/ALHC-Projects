@@ -9,8 +9,11 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { createPortfolioField, deletePortfolioField, updatePortfolioField } from "@/lib/actions";
 import type { PortfolioField } from "@/lib/data";
-import { OPTION_COLORS, OPTION_COLOR_CLASSES, type FieldOption } from "@/lib/fields";
+import { OPTION_COLORS, OPTION_COLOR_CLASSES, selectOptionsProblem, type FieldOption } from "@/lib/fields";
 import { PORTFOLIO_FIELD_TYPES, isPortfolioFieldType, type PortfolioFieldType } from "@/lib/portfolios";
+
+// Why the last option of a single-select can't be removed.
+export const LAST_OPTION_NOTE = "A single-select field needs at least one option. Add another option first.";
 
 const typeLabel = (type: PortfolioFieldType) => PORTFOLIO_FIELD_TYPES.find((t) => t.value === type)?.label ?? type;
 
@@ -28,6 +31,17 @@ export function PortfolioFieldsManager({
   const [pending, run] = useServerAction();
   const [name, setName] = useState("");
   const [fieldType, setFieldType] = useState<PortfolioFieldType>("text");
+  // A new single-select starts with its options (item 47: at least one; a typed one counts).
+  const [newOptions, setNewOptions] = useState<FieldOption[]>([]);
+  const [optionName, setOptionName] = useState("");
+  const optionsProblem = selectOptionsProblem({ fieldType, optionCount: newOptions.length, pendingOption: optionName });
+
+  function addNewOption() {
+    const label = optionName.trim();
+    if (!label) return;
+    setNewOptions((list) => [...list, { id: crypto.randomUUID(), name: label, color: OPTION_COLORS[list.length % OPTION_COLORS.length] }]);
+    setOptionName("");
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-gutter pt-5">
@@ -57,10 +71,21 @@ export function PortfolioFieldsManager({
             className="mt-4 flex flex-wrap items-end gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              if (!name.trim()) return;
+              if (!name.trim() || optionsProblem) return;
+              const typed = optionName.trim();
+              const options =
+                fieldType !== "single_select"
+                  ? []
+                  : typed
+                    ? [...newOptions, { id: crypto.randomUUID(), name: typed, color: OPTION_COLORS[newOptions.length % OPTION_COLORS.length] }]
+                    : newOptions;
               run(async () => {
-                const result = await createPortfolioField(portfolioId, { name, fieldType, options: [] });
-                if (!result.error) setName("");
+                const result = await createPortfolioField(portfolioId, { name, fieldType, options });
+                if (!result.error) {
+                  setName("");
+                  setNewOptions([]);
+                  setOptionName("");
+                }
                 return result;
               });
             }}
@@ -92,10 +117,62 @@ export function PortfolioFieldsManager({
                 options={PORTFOLIO_FIELD_TYPES.map((t) => ({ value: t.value, label: t.label }))}
               />
             </div>
-            <button type="submit" disabled={pending || !name.trim()} className="btn-primary">
+            <button
+              type="submit"
+              disabled={pending || !name.trim() || Boolean(optionsProblem)}
+              aria-describedby={optionsProblem ? "new-portfolio-field-options-hint" : undefined}
+              className="btn-primary"
+            >
               <Plus className="size-4" aria-hidden />
               Add field
             </button>
+            {fieldType === "single_select" ? (
+              <fieldset className="w-full">
+                <legend className="text-xs font-medium text-zinc-600">Options</legend>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {newOptions.map((option) => (
+                    <span
+                      key={option.id}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[option.color]}`}
+                    >
+                      {option.name}
+                      <button
+                        type="button"
+                        onClick={() => setNewOptions((list) => list.filter((o) => o.id !== option.id))}
+                        aria-label={`Remove option ${option.name}`}
+                        data-tooltip="Remove option"
+                        className="rounded hover:bg-black/10"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    aria-label="Add an option"
+                    value={optionName}
+                    maxLength={100}
+                    placeholder="Add an option"
+                    onChange={(e) => setOptionName(e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      // Enter adds the option; the field is created with the Add field button.
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addNewOption();
+                      }
+                    }}
+                    className="control h-7 w-36 text-xs"
+                  />
+                  <button type="button" onClick={addNewOption} disabled={!optionName.trim()} className="btn-ghost h-7 px-1.5 text-xs">
+                    Add
+                  </button>
+                </div>
+                {optionsProblem ? (
+                  <p id="new-portfolio-field-options-hint" className="mt-1 text-xs text-amber-700">
+                    {optionsProblem} so editors can pick a value.
+                  </p>
+                ) : null}
+              </fieldset>
+            ) : null}
           </form>
         ) : null}
       </section>
@@ -177,15 +254,30 @@ function FieldRow({ field, canEdit }: { field: PortfolioField; canEdit: boolean 
                       saveOptions(field.options.map((o) => (o.id === option.id ? { ...o, color } : o)))
                     }
                   />
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => saveOptions(field.options.filter((o) => o.id !== option.id))}
-                    aria-label={`Remove option ${option.name}`}
-                    className="rounded hover:bg-black/10"
-                  >
-                    <X className="size-3" />
-                  </button>
+                  {field.options.length > 1 ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => saveOptions(field.options.filter((o) => o.id !== option.id))}
+                      aria-label={`Remove option ${option.name}`}
+                      data-tooltip="Remove option"
+                      className="rounded hover:bg-black/10"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  ) : (
+                    // The last option stays (item 47); add another first, then remove this one.
+                    <button
+                      type="button"
+                      aria-disabled="true"
+                      aria-label={`Remove option ${option.name}`}
+                      data-tooltip={LAST_OPTION_NOTE}
+                      onClick={(e) => e.preventDefault()}
+                      className="cursor-not-allowed rounded opacity-40"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  )}
                 </>
               ) : null}
             </span>
