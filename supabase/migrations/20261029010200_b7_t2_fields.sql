@@ -9,6 +9,11 @@
 -- 54. More option colors: a 20-color palette (option_colors()) for field options, portfolio field
 --     options, and tags; tags keep the picked color in the new tags.palette_color and the nearest of
 --     the original nine in tags.color (whose CHECK can't be widened additively).
+-- 49. Number field symbol: custom_fields.number_prefix and portfolio_fields.number_prefix (number fields
+--     only; 1–4 characters, trimmed, no control characters or line breaks) shown before the value
+--     everywhere (format_number_value(); task_field_text and rule_field_value_label use it, so Inbox
+--     field changes, notification emails, and rule placeholders / emails / run logs show "$1,250").
+--     The stored value stays a plain number. Templates and Duplicate project keep the symbol.
 --
 -- No row-removal or object-removal keywords anywhere in this file (the hosted connector refuses them).
 -- Additive: no tail.
@@ -231,4 +236,137 @@ select public.alhc_patch_function(
   $old$select * into tag from public.tags t where t.id = new.tag_id;$old$,
   $new$select * into tag from public.tags t where t.id = new.tag_id;
   tag.color := coalesce(tag.palette_color, tag.color);$new$
+);
+
+-- ---------------------------------------------------------------------------------------------------
+-- 49. Number field symbol (a prefix such as $, €, #, ₪ shown before a number field's value).
+--
+--   * custom_fields.number_prefix / portfolio_fields.number_prefix: null = none. CHECK: number fields
+--     only, 1–4 characters (code points), no surrounding spaces, no control characters or line breaks.
+--     The invoker trigger normalize_number_prefix() trims surrounding spaces first and turns an empty
+--     symbol into null (both tables).
+--   * public.format_number_value(value, prefix): the one SQL rendering of a number, mirroring
+--     formatNumberValue() in src/lib/fields.ts — grouped with commas, at most three decimals (rounded
+--     half away from zero), the minus sign before the symbol ("-$1,250.5"), and a space after a symbol
+--     that ends in a letter ("USD 1,250").
+--   * task_field_text() (Inbox field changes, notification emails, rule placeholders {{field.…}},
+--     Send email's "include a field") and rule_field_value_label() (rule run logs, the dry run) render
+--     numbers through it. Numbers there are now grouped like everywhere in the app ("1,250").
+--   * Templates and Duplicate project keep the symbol (project_snapshot carries it,
+--     instantiate_project_snapshot sets it; a symbol that no longer fits is left out, never failing the
+--     copy).
+-- The stored value stays a plain JSON number: sorting, filtering, rules, and exports are unchanged.
+-- Additive: the release still on main never reads or writes the new columns.
+-- ---------------------------------------------------------------------------------------------------
+
+alter table public.custom_fields add column number_prefix text;
+alter table public.portfolio_fields add column number_prefix text;
+
+alter table public.custom_fields add constraint custom_fields_number_prefix_check check (
+  number_prefix is null
+  or (
+    field_type = 'number'
+    and char_length(number_prefix) between 1 and 4
+    and number_prefix = btrim(number_prefix)
+    and number_prefix !~ '[\x01-\x1f\x7f-\x9f\u2028\u2029]'
+  )
+);
+
+alter table public.portfolio_fields add constraint portfolio_fields_number_prefix_check check (
+  number_prefix is null
+  or (
+    field_type = 'number'
+    and char_length(number_prefix) between 1 and 4
+    and number_prefix = btrim(number_prefix)
+    and number_prefix !~ '[\x01-\x1f\x7f-\x9f\u2028\u2029]'
+  )
+);
+
+comment on column public.custom_fields.number_prefix is
+  'Oct 29 notes, item 49: a number field''s symbol (e.g. $, €, #), shown before its values; null = none. The values stay plain numbers.';
+comment on column public.portfolio_fields.number_prefix is
+  'Oct 29 notes, item 49: a number field''s symbol (e.g. $, €, #), shown before its values; null = none. The values stay plain numbers.';
+
+create or replace function public.normalize_number_prefix()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  -- Surrounding spaces (incl. no-break and ideographic ones) go; an empty symbol is no symbol.
+  new.number_prefix := nullif(btrim(new.number_prefix, E' \t\n\r\u00a0\u2007\u202f\u3000'), '');
+  return new;
+end;
+$$;
+
+revoke all on function public.normalize_number_prefix() from public, anon, authenticated;
+
+create trigger custom_fields_08_number_prefix
+  before insert or update on public.custom_fields
+  for each row execute function public.normalize_number_prefix();
+
+create trigger portfolio_fields_08_number_prefix
+  before insert or update on public.portfolio_fields
+  for each row execute function public.normalize_number_prefix();
+
+-- "1,250", "$1,250.5", "-$40", "€0.125", "USD 7"; null for a null value. Mirrors formatNumberValue().
+create or replace function public.format_number_value(value numeric, prefix text default null)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select case when r.n < 0 then '-' else '' end
+    || coalesce(prefix, '')
+    -- A symbol ending in a letter (USD, Rs, CHF) gets a space before the digits.
+    || case when prefix ~ '[A-Za-z]$' then ' ' else '' end
+    || regexp_replace(trunc(abs(r.n))::text, '(\d)(?=(\d{3})+$)', '\1,', 'g')
+    || coalesce('.' || nullif(rtrim(split_part((abs(r.n) - trunc(abs(r.n)))::text, '.', 2), '0'), ''), '')
+  from (select round(value, 3) as n) r
+  where r.n is not null;
+$$;
+
+comment on function public.format_number_value(numeric, text) is
+  'Oct 29 notes, item 49: a number as people read it (commas, up to three decimals, the field''s symbol after the sign). Mirrors formatNumberValue() in src/lib/fields.ts.';
+
+revoke all on function public.format_number_value(numeric, text) from public, anon;
+grant execute on function public.format_number_value(numeric, text) to authenticated, service_role;
+
+-- Inbox field changes, notification emails, rule placeholders, and Send email's field line.
+select public.alhc_patch_function(
+  'public.task_field_text(uuid, uuid)'::regprocedure,
+  $old$    else v.value #>> '{}'$old$,
+  $new$    when 'number' then case when jsonb_typeof(v.value) = 'number'
+      then public.format_number_value((v.value #>> '{}')::numeric, f.number_prefix) end
+    else v.value #>> '{}'$new$
+);
+
+-- Rule run logs and the dry run ("Set Budget to $1,250").
+select public.alhc_patch_function(
+  'public.rule_field_value_label(public.custom_fields, jsonb)'::regprocedure,
+  $old$    else left(value #>> '{}', 200)$old$,
+  $new$    when field.field_type = 'number' and jsonb_typeof(value) = 'number'
+      then public.format_number_value((value #>> '{}')::numeric, field.number_prefix)
+    else left(value #>> '{}', 200)$new$
+);
+
+-- Templates and Duplicate project keep the symbol.
+select public.alhc_patch_function(
+  'public.project_snapshot(uuid, jsonb)'::regprocedure,
+  $old$'field_type', f.field_type, 'options', f.options,$old$,
+  $new$'field_type', f.field_type, 'options', f.options, 'number_prefix', f.number_prefix,$new$
+);
+
+select public.alhc_patch_function(
+  'public.instantiate_project_snapshot(jsonb, text, date, uuid, text, jsonb)'::regprocedure,
+  $old$    n_fields := n_fields + 1;$old$,
+  $new$    if item ->> 'field_type' = 'number' and nullif(btrim(coalesce(item ->> 'number_prefix', '')), '') is not null then
+      begin
+        update public.custom_fields set number_prefix = item ->> 'number_prefix' where id = found_id;
+      exception when check_violation then
+        null; -- a symbol that no longer fits is left out; the copy goes on
+      end;
+    end if;
+    n_fields := n_fields + 1;$new$
 );

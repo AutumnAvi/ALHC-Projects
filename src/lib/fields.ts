@@ -192,6 +192,9 @@ export type FieldDef = {
   notifyOnChange: boolean;
   // Listed in the workspace field library (name, type, description, and options only).
   inLibrary: boolean;
+  // Oct 29 notes, item 49: a number field's symbol ("$", "€", "#"), shown before its values; null /
+  // absent = none (and on a database without 20261029010000_oct29_batch7_a.sql).
+  numberPrefix?: string | null;
 };
 
 // A field from the workspace library (list_field_library): a definition other projects can copy.
@@ -204,6 +207,58 @@ export type LibraryField = {
 };
 
 export const MAX_FIELD_DESCRIPTION = 2000;
+
+// Oct 29 notes, item 49: a number field's symbol (custom_fields.number_prefix, portfolio_fields'
+// too). Mirrors the CHECKs and public.normalize_number_prefix(): number fields only, surrounding spaces
+// trimmed (empty = none), 1–4 characters counted as code points, no control characters or line breaks.
+export const MAX_NUMBER_PREFIX = 4;
+export const NUMBER_PREFIX_EXAMPLES = ["$", "€", "£", "#", "₪"] as const;
+// C0 / DEL / C1 controls and the Unicode line and paragraph separators.
+const PREFIX_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+// The symbol as it will be stored: trimmed, or null when there is none.
+export function normalizeNumberPrefix(raw: string | null | undefined): string | null {
+  const trimmed = (raw ?? "").trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+// Why a typed symbol can't be saved, or null.
+export function numberPrefixProblem(raw: string | null | undefined): string | null {
+  const prefix = normalizeNumberPrefix(raw);
+  if (prefix === null) return null;
+  if (PREFIX_FORBIDDEN.test(prefix)) return "A symbol can’t contain line breaks or control characters";
+  if ([...prefix].length > MAX_NUMBER_PREFIX) return `A symbol is ${MAX_NUMBER_PREFIX} characters at most`;
+  return null;
+}
+
+// "1,250" with its symbol: "$1,250", "-$40" (the sign first), "USD 1,000" (a space after a symbol that
+// ends in a letter). Mirrors public.format_number_value()'s placement of the symbol.
+export function prefixNumberText(text: string, prefix: string | null | undefined): string {
+  const symbol = normalizeNumberPrefix(prefix);
+  if (!symbol) return text;
+  const spaced = /[A-Za-z]$/.test(symbol) ? `${symbol} ` : symbol;
+  return text.startsWith("-") ? `-${spaced}${text.slice(1)}` : `${spaced}${text}`;
+}
+
+// The one way a number value reads in the app: grouped with commas, at most three decimals, and the
+// field's symbol before it ("$1,250.5"). Mirrors public.format_number_value() (task_field_text, rule
+// logs, the Inbox, emails). A value that rounds to zero has no sign.
+export function formatNumberValue(value: number, prefix?: string | null): string {
+  const digits = Math.abs(value).toLocaleString("en-US");
+  return prefixNumberText(value < 0 && /[1-9]/.test(digits) ? `-${digits}` : digits, prefix);
+}
+
+// A field's symbol when it has one (number fields only; the section-bound Status never does).
+export function numberPrefixOf(field: { fieldType: string; boundToSections?: boolean; numberPrefix?: string | null }) {
+  return field.fieldType === "number" && !field.boundToSections ? normalizeNumberPrefix(field.numberPrefix) : null;
+}
+
+// A column / measure name with the symbol: "Budget ($)" (CSV headers keep the numbers raw so
+// spreadsheets can add them up; the workload measure picker).
+export function fieldNameWithSymbol(field: { name: string; fieldType: string; boundToSections?: boolean; numberPrefix?: string | null }) {
+  const symbol = numberPrefixOf(field);
+  return symbol ? `${field.name} (${symbol})` : field.name;
+}
 
 // Field types with options (the section-bound Status's options are the sections, not stored here).
 export function hasOptions(field: Pick<FieldDef, "fieldType" | "boundToSections">) {
@@ -276,7 +331,7 @@ export function fieldChips(
     case "text":
       return typeof value === "string" && value ? [{ label: value, color: "zinc" }] : [];
     case "number":
-      return typeof value === "number" ? [{ label: value.toLocaleString("en-US"), color: "zinc" }] : [];
+      return typeof value === "number" ? [{ label: formatNumberValue(value, field.numberPrefix), color: "zinc" }] : [];
     case "date":
       return typeof value === "string" ? [{ label: value, color: "zinc" }] : [];
     case "boolean":

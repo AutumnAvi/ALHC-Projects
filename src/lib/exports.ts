@@ -25,7 +25,7 @@ import {
   type Profile,
   type ProjectTask,
 } from "@/lib/data";
-import { fieldChips, type FieldDef } from "@/lib/fields";
+import { fieldChips, fieldNameWithSymbol, type FieldDef } from "@/lib/fields";
 import { PROJECT_STATUS_LABELS, isProjectStatus, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
 import { isSeriesInterval, reportFiltersJson, seriesLabel, type ReportFilters } from "@/lib/reports";
 import type { Json } from "@/lib/supabase/database.types";
@@ -271,7 +271,9 @@ export async function exportList(projectId: string, viewId: string | null, draft
     } else {
       const field = fields.find((f) => f.id === refFieldId(column));
       if (!field) continue;
-      header.push(field.name);
+      // A number field's symbol goes in the header ("Budget ($)"); its cells stay raw numbers so
+      // spreadsheets can add them up (item 49).
+      header.push(fieldNameWithSymbol(field));
       if (!field.boundToSections) columnFieldIds.push(field.id);
       cells.push((t) =>
         fieldCell(field, t.fieldValues[field.id], personName, t.sectionId ? (sectionNames.get(t.sectionId) ?? null) : null),

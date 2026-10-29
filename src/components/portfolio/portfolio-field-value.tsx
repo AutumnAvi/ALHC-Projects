@@ -5,7 +5,8 @@ import { SmartPicker } from "@/components/smart-picker";
 import { setPortfolioFieldValue } from "@/lib/actions";
 import { formatDueDate } from "@/lib/dates";
 import type { PortfolioField } from "@/lib/data";
-import { OPTION_COLOR_CLASSES } from "@/lib/fields";
+import { NumberInput } from "@/components/number-input";
+import { OPTION_COLOR_CLASSES, formatNumberValue, numberPrefixOf } from "@/lib/fields";
 import { MAX_PORTFOLIO_FIELD_TEXT } from "@/lib/portfolios";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -27,7 +28,7 @@ export function PortfolioFieldDisplay({ field, value }: { field: PortfolioField;
     return <span className="tabular-nums">{`${formatDueDate(value)}, ${value.slice(0, 4)}`}</span>;
   }
   if (field.fieldType === "number" && typeof value === "number") {
-    return <span className="tabular-nums">{value.toLocaleString("en-US")}</span>;
+    return <span className="tabular-nums">{formatNumberValue(value, numberPrefixOf(field))}</span>;
   }
   return <span className="break-words">{String(value)}</span>;
 }
@@ -79,31 +80,30 @@ export function PortfolioFieldInput({
       />
     );
   }
-  return (
-    <input
-      type={field.fieldType === "number" ? "number" : "text"}
-      aria-label={label}
-      key={current}
-      defaultValue={current}
-      maxLength={field.fieldType === "text" ? MAX_PORTFOLIO_FIELD_TEXT : undefined}
-      step="any"
-      disabled={pending}
-      placeholder="—"
-      onBlur={(e) => {
-        const raw = e.currentTarget.value.trim();
-        if (raw === current.trim()) return;
-        if (field.fieldType === "number") {
-          if (raw === "") return save(null);
-          const n = Number(raw);
-          if (Number.isFinite(n)) save(n);
-          return;
-        }
-        save(raw || null);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-      }}
-      className={CONTROL}
-    />
-  );
+  const box = {
+    "aria-label": label,
+    defaultValue: current,
+    disabled: pending,
+    placeholder: "—",
+    onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+      const raw = e.currentTarget.value.trim();
+      if (raw === current.trim()) return;
+      if (field.fieldType === "number") {
+        if (raw === "") return save(null);
+        const n = Number(raw);
+        if (Number.isFinite(n)) save(n);
+        return;
+      }
+      save(raw || null);
+    },
+    onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") e.currentTarget.blur();
+    },
+    className: CONTROL,
+  };
+  if (field.fieldType === "number") {
+    // The field's symbol (item 49) sits inside the box.
+    return <NumberInput key={current} {...box} symbol={numberPrefixOf(field)} wrapperClassName="w-full" symbolClassName="text-xs" />;
+  }
+  return <input type="text" key={current} {...box} maxLength={MAX_PORTFOLIO_FIELD_TEXT} />;
 }

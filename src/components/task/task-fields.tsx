@@ -8,7 +8,8 @@ import { moveTask, setFieldValue } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { MenuItem, Popover } from "@/components/popover";
 import { PILL, isChoiceField } from "@/components/project/field-chips";
-import { OPTION_COLOR_CLASSES, fieldChips, type FieldDef, type FieldOption } from "@/lib/fields";
+import { NumberInput } from "@/components/number-input";
+import { OPTION_COLOR_CLASSES, fieldChips, numberPrefixOf, type FieldDef, type FieldOption } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { formatDueDate } from "@/lib/dates";
 import { SingleDatePicker } from "./date-picker";
@@ -168,11 +169,12 @@ function FieldRow({
         );
         break;
       case "number":
+        // The field's symbol (item 49) sits inside the box; the value stays a plain number.
         control = (
-          <input
+          <NumberInput
             id={inputId}
-            type="number"
-            step="any"
+            symbol={numberPrefixOf(field)}
+            wrapperClassName="w-full max-w-64"
             key={String(value ?? "")}
             defaultValue={typeof value === "number" ? value : ""}
             onBlur={(e) => {

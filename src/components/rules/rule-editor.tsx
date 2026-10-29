@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useId, useState, useSyncExternalStore } from "react";
 import type { RevealedSigningSecret } from "@/lib/actions";
 import { dayLabel, isoDate, weekdayOf } from "@/lib/date-input";
-import type { FieldDef } from "@/lib/fields";
+import { numberPrefixOf, type FieldDef } from "@/lib/fields";
 import {
   DEFAULT_SECRET_HEADER,
   SIGNATURE_HEADER,
@@ -71,6 +71,8 @@ import {
   tagOptions,
   timeLabel,
   valueOr,
+  WithSymbol,
+  numberValueLabel,
   type RuleContext,
 } from "./rule-shared";
 import { PlaceholderInput } from "./placeholder-input";
@@ -1214,17 +1216,21 @@ function CompareValueInput({
     return <SectionSelect id={id} label={label} value={value} ctx={ctx} onChange={onChange} />;
   }
   switch (field.fieldType) {
-    case "number":
+    case "number": {
+      const symbol = numberPrefixOf(field);
       return (
-        <NumberBox
-          id={id}
-          label={label}
-          value={typeof value === "number" ? value : null}
-          whole={false}
-          className="w-28"
-          onCommit={onChange}
-        />
+        <WithSymbol symbol={symbol}>
+          <NumberBox
+            id={id}
+            label={numberValueLabel(label, symbol)}
+            value={typeof value === "number" ? value : null}
+            whole={false}
+            className="w-28"
+            onCommit={onChange}
+          />
+        </WithSymbol>
       );
+    }
     case "date":
       return <RuleDateInput id={id} label={label} value={value} onChange={onChange} />;
     case "single_select":

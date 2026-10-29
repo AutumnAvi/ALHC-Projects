@@ -400,4 +400,238 @@ begin
   assert exists (select 1 from pg_trigger where tgname = 'tags_06_palette_color' and not tgisinternal), 'tag trigger';
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- 49. Number field symbol: number_prefix on project and portfolio number fields, shown through
+-- format_number_value() (task_field_text, rule_field_value_label); values stay plain numbers.
+-- ---------------------------------------------------------------------------------------------
+
+-- The one SQL rendering (the same vectors as tests/unit/oct29-batch7-number-prefix.test.ts).
+do $$
+begin
+  assert public.format_number_value(1250, null) = '1,250', 'grouped';
+  assert public.format_number_value(1250, '$') = '$1,250', 'the symbol first';
+  assert public.format_number_value(-1250.5, '$') = '-$1,250.5', 'the sign before the symbol';
+  assert public.format_number_value(0.12345, '€') = '€0.123', 'three decimals at most';
+  assert public.format_number_value(1234567.891, null) = '1,234,567.891', 'millions';
+  assert public.format_number_value(42.10, '#') = '#42.1', 'no trailing zeros';
+  assert public.format_number_value(-0.0001, '$') = '$0', 'a value that rounds to zero has no sign';
+  assert public.format_number_value(0, '₪') = '₪0', 'zero';
+  assert public.format_number_value(1000, 'USD') = 'USD 1,000', 'a space after a symbol ending in a letter';
+  assert public.format_number_value(-7, 'Rs') = '-Rs 7', 'and the sign still first';
+  assert public.format_number_value(999, '') = '999', 'an empty symbol is none';
+  assert public.format_number_value(null, '$') is null, 'no value, no text';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+  f uuid;
+  g uuid;
+begin
+  -- An Editor sets a symbol on a number field; surrounding spaces go, an empty one is none.
+  insert into public.custom_fields (project_id, name, field_type, number_prefix, notify_on_change)
+  values (a, 'Cost', 'number', '  $ ', true) returning id into f;
+  assert (select number_prefix from public.custom_fields where id = f) = '$', 'trimmed';
+  insert into b7f_ids values ('cost', f);
+  update public.custom_fields set number_prefix = '' where id = f;
+  assert (select number_prefix is null from public.custom_fields where id = f), 'empty = none';
+  update public.custom_fields set number_prefix = E' € ' where id = f;
+  assert (select number_prefix from public.custom_fields where id = f) = '€', 'no-break spaces trimmed too';
+  update public.custom_fields set number_prefix = '₪₪₪₪' where id = f;
+  assert (select char_length(number_prefix) from public.custom_fields where id = f) = 4, 'four characters (code points)';
+  update public.custom_fields set number_prefix = 'US $' where id = f;
+  update public.custom_fields set number_prefix = '$' where id = f;
+
+  -- Refused: too long, control characters / line breaks, and any field that isn't a number field.
+  begin
+    update public.custom_fields set number_prefix = 'Euros' where id = f;
+    raise exception 'five characters must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    update public.custom_fields set number_prefix = E'$\n€' where id = f;
+    raise exception 'a line break must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    update public.custom_fields set number_prefix = E'$ ' || '€' where id = f;
+    raise exception 'a Unicode line separator must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    update public.custom_fields set number_prefix = E'\u0007#' where id = f;
+    raise exception 'a control character must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.custom_fields (project_id, name, field_type, number_prefix) values (a, 'Label', 'text', '$');
+    raise exception 'a text field has no symbol';
+  exception when check_violation then null;
+  end;
+  insert into public.custom_fields (project_id, name, field_type, number_prefix) values (a, 'Label', 'text', '  ')
+  returning id into g;
+  assert (select number_prefix is null from public.custom_fields where id = g), 'blank on a text field is just none';
+  assert (select number_prefix from public.custom_fields where id = f) = '$', 'still $';
+end $$;
+
+-- A Viewer can't change a symbol (RLS, unchanged).
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  hit integer;
+begin
+  update public.custom_fields set number_prefix = '€' where id = (select id from b7f_ids where name = 'cost');
+  get diagnostics hit = row_count;
+  assert hit = 0, 'viewers change no field';
+end $$;
+
+-- A task with a value, followed by the owner (who hears about field changes).
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid;
+begin
+  t := public.create_task((select id from b7f_ids where name = 'a'), null, 'B7F costed task');
+  insert into b7f_ids values ('t49', t);
+end $$;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+insert into public.task_followers (task_id, profile_id)
+values ((select id from b7f_ids where name = 't49'), 'b7f20029-0000-4000-8000-000000000001');
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7f_ids where name = 't49');
+  f uuid := (select id from b7f_ids where name = 'cost');
+  a uuid := (select id from b7f_ids where name = 'a');
+begin
+  insert into public.task_field_values (task_id, field_id, value) values (t, f, '1250.5');
+  assert (select value from public.task_field_values where task_id = t and field_id = f) = '1250.5'::jsonb,
+    'the stored value is a plain number';
+  -- Filtering still compares numbers.
+  assert t in (select x.task_id from public.filter_project_tasks(a, jsonb_build_object('completion', 'all',
+    'fields', jsonb_build_array(jsonb_build_object('field_id', f, 'op', 'equals', 'value', 1250.5))), 'UTC') x),
+    'a number filter still matches';
+end $$;
+
+-- The owner's Inbox: "Cost changed to $1,250.5".
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7f_ids where name = 't49');
+begin
+  assert (select data ->> 'value_text' from public.inbox_items
+           where recipient_id = 'b7f20029-0000-4000-8000-000000000001' and task_id = t and data ->> 'field_change' = 'true'
+           order by created_at desc limit 1) = '$1,250.5', 'the Inbox shows the symbol';
+  assert (select data ->> 'message' from public.inbox_items
+           where recipient_id = 'b7f20029-0000-4000-8000-000000000001' and task_id = t and data ->> 'field_change' = 'true'
+           order by created_at desc limit 1) = 'Cost changed to $1,250.5', 'in the message too';
+end $$;
+
+-- Rule text (placeholders, Send email's field line) and rule run logs.
+reset role;
+do $$
+declare
+  t uuid := (select id from b7f_ids where name = 't49');
+  f uuid := (select id from b7f_ids where name = 'cost');
+  a uuid := (select id from b7f_ids where name = 'a');
+  task_row public.tasks;
+  field_row public.custom_fields;
+begin
+  select * into task_row from public.tasks where id = t;
+  select * into field_row from public.custom_fields where id = f;
+  assert public.task_field_text(t, f) = '$1,250.5', 'task_field_text';
+  assert public.rule_placeholder_value('field.Cost', task_row, a, '{}'::jsonb, 'text') = '$1,250.5', '{{field.Cost}}';
+  assert public.render_rule_text_as('Budget: {{field.cost}}', t, a, '{}'::jsonb, 'text') = 'Budget: $1,250.5',
+    'rendered in a rule message';
+  assert public.rule_field_value_label(field_row, '-40'::jsonb) = '-$40', 'the run log''s value';
+  assert public.rule_field_value_label(field_row, 'null'::jsonb) = 'empty', 'clearing still reads empty';
+  -- A number field without a symbol is grouped, nothing else.
+  select * into field_row from public.custom_fields where project_id = a and name = 'Budget';
+  assert public.rule_field_value_label(field_row, '1250'::jsonb) = '1,250', 'no symbol';
+end $$;
+
+-- Templates and Duplicate project keep the symbol; a stored symbol that no longer fits is left out.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+  dup jsonb;
+  tmpl uuid;
+  created jsonb;
+begin
+  dup := public.duplicate_project(a, 'B7F A copy', '{}'::jsonb);
+  assert (select number_prefix from public.custom_fields
+           where project_id = (dup ->> 'project_id')::uuid and name = 'Cost' and deleted_at is null) = '$',
+    'Duplicate project keeps the symbol';
+  assert (select number_prefix is null from public.custom_fields
+           where project_id = (dup ->> 'project_id')::uuid and name = 'Budget' and deleted_at is null),
+    'and no symbol stays none';
+  tmpl := public.save_project_as_template(a, 'B7F costs', null, null, null);
+  insert into b7f_ids values ('tmpl49', tmpl);
+  created := public.create_project_from_template(tmpl, 'B7F from costs', current_date);
+  assert (select number_prefix from public.custom_fields
+           where project_id = (created ->> 'project_id')::uuid and name = 'Cost' and deleted_at is null) = '$',
+    'a project template keeps the symbol';
+end $$;
+
+reset role;
+update public.project_templates
+   set content = jsonb_set(content, '{fields}', (
+     select jsonb_agg(case when x ->> 'name' = 'Cost' then x || '{"number_prefix": "Dollars"}' else x end)
+     from jsonb_array_elements(content -> 'fields') x))
+ where id = (select id from b7f_ids where name = 'tmpl49');
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  created jsonb;
+begin
+  created := public.create_project_from_template((select id from b7f_ids where name = 'tmpl49'), 'B7F odd costs', current_date);
+  assert (select number_prefix is null from public.custom_fields
+           where project_id = (created ->> 'project_id')::uuid and name = 'Cost' and deleted_at is null),
+    'a symbol that no longer fits is left out, and the copy goes on';
+end $$;
+
+-- Portfolio number fields take a symbol too.
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  p uuid := (select id from b7f_ids where name = 'p');
+  pf uuid;
+begin
+  insert into public.portfolio_fields (portfolio_id, name, field_type, number_prefix) values (p, 'Spend B7F', 'number', ' € ')
+  returning id into pf;
+  assert (select number_prefix from public.portfolio_fields where id = pf) = '€', 'trimmed';
+  update public.portfolio_fields set number_prefix = '#' where id = pf;
+  update public.portfolio_fields set number_prefix = null where id = pf;
+  begin
+    update public.portfolio_fields set number_prefix = 'Euros' where id = pf;
+    raise exception 'five characters must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.portfolio_fields (portfolio_id, name, field_type, number_prefix) values (p, 'Note B7F', 'text', '$');
+    raise exception 'a portfolio text field has no symbol';
+  exception when check_violation then null;
+  end;
+end $$;
+
+reset role;
+do $$
+begin
+  assert not has_function_privilege('anon', 'public.format_number_value(numeric, text)', 'execute'), 'anon: format_number_value';
+  assert has_function_privilege('authenticated', 'public.format_number_value(numeric, text)', 'execute'),
+    'authenticated: format_number_value';
+  assert not has_function_privilege('anon', 'public.normalize_number_prefix()', 'execute'), 'anon: the trigger';
+  assert not has_function_privilege('authenticated', 'public.normalize_number_prefix()', 'execute'), 'authenticated: the trigger';
+  assert has_column_privilege('authenticated', 'public.custom_fields', 'number_prefix', 'UPDATE'), 'editors set it (RLS decides)';
+  assert has_column_privilege('authenticated', 'public.portfolio_fields', 'number_prefix', 'UPDATE'), 'portfolio editors too';
+  assert not has_column_privilege('anon', 'public.custom_fields', 'number_prefix', 'SELECT'), 'anon reads nothing';
+  assert exists (select 1 from pg_trigger where tgname = 'custom_fields_08_number_prefix' and not tgisinternal), 'project trigger';
+  assert exists (select 1 from pg_trigger where tgname = 'portfolio_fields_08_number_prefix' and not tgisinternal), 'portfolio trigger';
+end $$;
+
 do $$ begin raise notice 'Oct 29 batch 7 fields (T2) smoke: all assertions passed'; end $$;

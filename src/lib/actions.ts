@@ -56,6 +56,8 @@ import {
   isFieldType,
   isBaseOptionColor,
   isOptionColor,
+  normalizeNumberPrefix,
+  numberPrefixProblem,
   parseOptions,
   selectOptionsProblem,
   type FieldOption,
@@ -1072,13 +1074,14 @@ function portfolioFieldOptions(value: unknown): FieldOption[] {
 
 export async function createPortfolioField(
   portfolioId: string,
-  input: { name: string; fieldType: string; options?: FieldOption[] },
+  input: { name: string; fieldType: string; options?: FieldOption[]; numberPrefix?: string | null },
 ): Promise<ActionResult> {
   return run(async () => {
     if (!isPortfolioFieldType(input.fieldType)) throw new InputError("Choose a field type");
     const options = input.fieldType === "single_select" ? portfolioFieldOptions(input.options ?? []) : [];
     const optionsProblem = selectOptionsProblem({ fieldType: input.fieldType, optionCount: options.length });
     if (optionsProblem) throw new InputError(optionsProblem);
+    const numberPrefix = numberPrefixInput(input.numberPrefix, input.fieldType);
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("portfolio_fields")
@@ -1087,26 +1090,27 @@ export async function createPortfolioField(
       .is("deleted_at", null)
       .order("sort_order", { ascending: false })
       .limit(1);
-    check(
-      await supabase.from("portfolio_fields").insert({
-        portfolio_id: portfolioId,
-        name: text(input.name, "Field name", { max: 100 }),
-        field_type: input.fieldType,
-        options,
-        sort_order: (last?.[0]?.sort_order ?? 0) + ORDER_STEP,
-      }),
-      "Only portfolio editors and above can add fields",
-    );
+    const inserted = await supabase.from("portfolio_fields").insert({
+      portfolio_id: portfolioId,
+      name: text(input.name, "Field name", { max: 100 }),
+      field_type: input.fieldType,
+      options,
+      ...(numberPrefix !== null ? { number_prefix: numberPrefix } : {}),
+      sort_order: (last?.[0]?.sort_order ?? 0) + ORDER_STEP,
+    });
+    if (inserted.error?.code === "PGRST204") throw new InputError(NUMBER_PREFIX_MISSING);
+    check(inserted, "Only portfolio editors and above can add fields");
   });
 }
 
 export async function updatePortfolioField(
   fieldId: string,
-  patch: { name?: string; options?: FieldOption[] },
+  patch: { name?: string; options?: FieldOption[]; numberPrefix?: string | null },
 ): Promise<ActionResult> {
   return run(async () => {
     const update: TablesUpdate<"portfolio_fields"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
+    if (patch.numberPrefix !== undefined) update.number_prefix = numberPrefixInput(patch.numberPrefix);
     if (patch.options !== undefined) update.options = portfolioFieldOptions(patch.options);
     const supabase = await createClient();
     if (Array.isArray(update.options) && update.options.length === 0) {
@@ -1125,10 +1129,11 @@ export async function updatePortfolioField(
         : null;
       if (problem) throw new InputError(problem);
     }
-    checkUpdated(
-      await supabase.from("portfolio_fields").update(update).eq("id", id(fieldId, "field")).select("id"),
-      "Only portfolio editors and above can change fields",
-    );
+    const result = await supabase.from("portfolio_fields").update(update).eq("id", id(fieldId, "field")).select("id");
+    if (result.error?.code === "PGRST204") throw new InputError(NUMBER_PREFIX_MISSING);
+    // portfolio_fields_number_prefix_check: a symbol on a field that isn't a number field.
+    if (result.error?.code === "23514" && update.number_prefix) throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
+    checkUpdated(result, "Only portfolio editors and above can change fields");
   });
 }
 
@@ -2857,6 +2862,18 @@ function fieldOptions(value: unknown): FieldOption[] {
 }
 
 const FIELD_EXTRAS_MISSING = "Field descriptions, the field library, and notifications need this release’s database update, which isn’t applied yet";
+const NUMBER_PREFIX_MISSING = "Number symbols need this release’s database update, which isn’t applied yet";
+const NUMBER_PREFIX_NUMBERS_ONLY = "Only number fields have a symbol";
+
+// Item 49: a number field's symbol as it will be stored (trimmed; null = none). Refuses a symbol that
+// is too long or has line breaks / control characters, and one on another type of field (when known).
+function numberPrefixInput(raw: string | null | undefined, fieldType?: string): string | null {
+  const problem = numberPrefixProblem(raw);
+  if (problem) throw new InputError(problem);
+  const prefix = normalizeNumberPrefix(raw);
+  if (prefix !== null && fieldType !== undefined && fieldType !== "number") throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
+  return prefix;
+}
 
 // Description, library, and notify (Asana parity, batch 4): only the keys that were given.
 function fieldExtras(input: { description?: string | null; inLibrary?: boolean; notifyOnChange?: boolean }, bound: boolean) {
@@ -2889,6 +2906,8 @@ export async function createField(
     description?: string | null;
     inLibrary?: boolean;
     notifyOnChange?: boolean;
+    // Item 49: a number field's symbol ("$"); empty / null = none.
+    numberPrefix?: string | null;
   },
 ): Promise<ActionResult & { fieldId?: string }> {
   let fieldId: string | undefined;
@@ -2899,6 +2918,8 @@ export async function createField(
       throw new InputError("Only single-select fields can mirror sections");
     }
     const extras = fieldExtras(input, bound);
+    // Sent only when there is one, so a database without the column still takes every other field.
+    const numberPrefix = numberPrefixInput(input.numberPrefix, input.fieldType);
     const withOptions = (input.fieldType === "single_select" || input.fieldType === "multi_select") && !bound;
     const options = withOptions ? fieldOptions(input.options ?? []) : [];
     const optionsProblem = selectOptionsProblem({ fieldType: input.fieldType, boundToSections: bound, optionCount: options.length });
@@ -2922,6 +2943,7 @@ export async function createField(
         show_in_views: bound || Boolean(input.showInViews),
         ...(withOptions ? { options } : {}),
         ...extras,
+        ...(numberPrefix !== null ? { number_prefix: numberPrefix } : {}),
         sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
       })
       .select("id")
@@ -2929,7 +2951,9 @@ export async function createField(
     if (inserted.error?.code === "23505") {
       throw new InputError("This project already has a section-bound field");
     }
-    if (inserted.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
+    if (inserted.error?.code === "PGRST204") {
+      throw new InputError(numberPrefix !== null ? NUMBER_PREFIX_MISSING : FIELD_EXTRAS_MISSING);
+    }
     check(inserted);
     fieldId = inserted.data?.id;
   });
@@ -2945,11 +2969,14 @@ export async function updateField(
     description?: string | null;
     inLibrary?: boolean;
     notifyOnChange?: boolean;
+    // Item 49: a number field's symbol; null / empty removes it.
+    numberPrefix?: string | null;
   },
 ): Promise<ActionResult> {
   return run(async () => {
     const update: TablesUpdate<"custom_fields"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
+    if (patch.numberPrefix !== undefined) update.number_prefix = numberPrefixInput(patch.numberPrefix);
     if (patch.options !== undefined) update.options = fieldOptions(patch.options);
     if (patch.showInViews !== undefined) update.show_in_views = Boolean(patch.showInViews);
     // The database refuses library / notify on the section-bound Status (CHECKs); say so plainly.
@@ -2973,7 +3000,11 @@ export async function updateField(
       if (problem) throw new InputError(problem);
     }
     const result = await supabase.from("custom_fields").update(update).eq("id", id(fieldId)).select("id");
-    if (result.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
+    if (result.error?.code === "PGRST204") {
+      throw new InputError("number_prefix" in update ? NUMBER_PREFIX_MISSING : FIELD_EXTRAS_MISSING);
+    }
+    // custom_fields_number_prefix_check: a symbol on a field that isn't a number field.
+    if (result.error?.code === "23514" && update.number_prefix) throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
     if (result.error?.code === "23514" && (update.in_library || update.notify_on_change)) {
       throw new InputError("The Status field follows the sections, so it can’t notify or join the field library");
     }

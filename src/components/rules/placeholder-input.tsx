@@ -81,7 +81,7 @@ export function PlaceholderInput({
     () =>
       samplePlaceholderValues({
         projectName: ctx.projectName,
-        fields: ctx.fields.map((f) => ({ name: f.name, fieldType: f.fieldType, options: f.options })),
+        fields: ctx.fields.map((f) => ({ name: f.name, fieldType: f.fieldType, options: f.options, numberPrefix: f.numberPrefix })),
         questions: ctx.forms.flatMap((f) => f.questions ?? []),
       }),
     [ctx],

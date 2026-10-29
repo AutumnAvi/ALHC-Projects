@@ -12,7 +12,8 @@ import { useNotify } from "@/components/toast";
 import { loadSubtaskRows, setTaskRowExpanded } from "@/lib/actions";
 import type { Profile, SubtaskItem } from "@/lib/data";
 import { dayLabel } from "@/lib/date-input";
-import { OPTION_COLOR_CLASSES, type FieldDef, type FieldOption } from "@/lib/fields";
+import { NumberInput } from "@/components/number-input";
+import { OPTION_COLOR_CLASSES, formatNumberValue, numberPrefixOf, type FieldDef, type FieldOption } from "@/lib/fields";
 import { MAX_SUBTASK_DEPTH, subtasksByParent } from "@/lib/subtasks";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -567,6 +568,7 @@ export function InlineFieldCell({
         <InlineTextCell
           label={label}
           numeric={field.fieldType === "number"}
+          symbol={numberPrefixOf(field)}
           value={value ?? null}
           display={display}
           onChange={onChange}
@@ -697,10 +699,11 @@ export function InlineFieldCell({
 }
 
 // Text and number values: the cell turns into a box. Enter or leaving it saves, Escape cancels; Enter and
-// Escape put the focus back on the cell.
+// Escape put the focus back on the cell. A number field's symbol (item 49) sits inside the box.
 function InlineTextCell({
   label,
   numeric,
+  symbol = null,
   value,
   display,
   onChange,
@@ -708,6 +711,7 @@ function InlineTextCell({
 }: {
   label: string;
   numeric: boolean;
+  symbol?: string | null;
   value: Json;
   display: ReactNode;
   onChange: (next: Json) => void;
@@ -740,39 +744,45 @@ function InlineTextCell({
 
   if (editing) {
     const initial = typeof value === "string" || typeof value === "number" ? String(value) : "";
-    return (
-      <input
-        autoFocus
-        type={numeric ? "number" : "text"}
-        step={numeric ? "any" : undefined}
-        defaultValue={initial}
-        maxLength={numeric ? undefined : 2000}
-        aria-label={label}
-        draggable={false}
-        onFocus={(e) => e.currentTarget.select()}
-        onBlur={(e) => commit(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key === "Enter") {
-            refocus.current = true;
-            e.currentTarget.blur();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            refocus.current = true;
-            e.currentTarget.value = initial;
-            e.currentTarget.blur();
-          }
-        }}
-        className="control h-7 min-w-0 flex-1"
-      />
+    const box = {
+      autoFocus: true,
+      defaultValue: initial,
+      "aria-label": label,
+      draggable: false,
+      onFocus: (e: React.FocusEvent<HTMLInputElement>) => e.currentTarget.select(),
+      onBlur: (e: React.FocusEvent<HTMLInputElement>) => commit(e.currentTarget.value),
+      onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+          refocus.current = true;
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          refocus.current = true;
+          e.currentTarget.value = initial;
+          e.currentTarget.blur();
+        }
+      },
+      className: "control h-7 min-w-0 flex-1",
+    };
+    return numeric ? (
+      <NumberInput {...box} symbol={symbol} wrapperClassName="min-w-0 flex-1" />
+    ) : (
+      <input type="text" maxLength={2000} {...box} />
     );
   }
+  const shown =
+    value === null || value === ""
+      ? "empty"
+      : numeric && typeof value === "number"
+        ? formatNumberValue(value, symbol)
+        : String(value);
   return (
     <button
       ref={buttonRef}
       type="button"
       draggable={false}
-      aria-label={`${label}: ${value === null || value === "" ? "empty" : String(value)}. Change`}
+      aria-label={`${label}: ${shown}. Change`}
       onClick={() => {
         setEditing(true);
         onEditingChange?.(true);

@@ -28,6 +28,7 @@ import {
 } from "@/lib/workload";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
+import { formatNumberValue } from "@/lib/fields";
 
 export type WorkloadPerson = { id: string; name: string };
 export type WorkloadScope = { projectId: string } | { portfolioId: string };
@@ -59,7 +60,9 @@ export function WorkloadView({
   tasks: WorkloadTask[];
   capacities: Record<string, number>;
   // value "" = count tasks; otherwise a number field (id in a project, name in a portfolio).
-  measures: { value: string; label: string }[];
+  // label: the measure's name with a number field's symbol ("Budget ($)"); symbol: shown before each
+  // task's value (item 49).
+  measures: { value: string; label: string; symbol?: string | null }[];
   measure: string;
   canEditCapacity: boolean;
   projectNames?: Record<string, string>;
@@ -82,6 +85,7 @@ export function WorkloadView({
 
   const byField = measure !== "";
   const unit = byField ? (measures.find((m) => m.value === measure)?.label ?? "value") : "tasks";
+  const symbol = byField ? (measures.find((m) => m.value === measure)?.symbol ?? null) : null;
   const { start, end, columns } = workloadWindow(anchor, zoom);
   const todayColumn = columns.findIndex((c) => c.start <= today && today <= c.end);
 
@@ -344,8 +348,8 @@ export function WorkloadView({
                       <span className="chip hidden max-w-40 truncate sm:inline-flex">{projectNames[task.projectId]}</span>
                     ) : null}
                     {byField ? (
-                      <span className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-500">
-                        {task.value === null ? "—" : formatLoad(task.value)}
+                      <span className="w-20 shrink-0 truncate text-right text-xs tabular-nums text-zinc-500">
+                        {task.value === null ? "—" : formatNumberValue(task.value, symbol)}
                       </span>
                     ) : null}
                     <span className="w-28 shrink-0 text-right text-xs tabular-nums text-zinc-500">

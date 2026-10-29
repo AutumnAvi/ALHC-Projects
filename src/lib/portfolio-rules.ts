@@ -1,5 +1,6 @@
 import type { Json } from "@/lib/supabase/database.types";
 import { dayLabel } from "@/lib/date-input";
+import { formatNumberValue, numberPrefixOf } from "@/lib/fields";
 
 // Portfolio rules (Automations V3, batch D; mirrors validate_portfolio_rule() and the engine in
 // 20261021010000_automations_v3_a.sql). A portfolio rule acts on the projects directly in the portfolio,
@@ -108,7 +109,8 @@ export type PortfolioRuleRun = {
 // What the builder knows about the portfolio.
 export type PortfolioRuleContext = {
   portfolioName: string;
-  fields: { id: string; name: string; fieldType: string; options: { id: string; name: string; color: string }[] }[];
+  // numberPrefix: a number field's symbol (item 49).
+  fields: { id: string; name: string; fieldType: string; options: { id: string; name: string; color: string }[]; numberPrefix?: string | null }[];
   people: { id: string; name: string }[];
   members: { id: string; name: string }[];
   // Other portfolios the viewer edits (Add to another portfolio).
@@ -209,6 +211,7 @@ export function portfolioFieldValueLabel(ctx: PortfolioRuleContext, fieldId: Jso
   if (field?.fieldType === "single_select") return field.options.find((o) => o.id === value)?.name ?? "a removed option";
   if (field?.fieldType === "date") return day(value);
   if (field?.fieldType === "text") return `“${String(value)}”`;
+  if (field?.fieldType === "number" && typeof value === "number") return formatNumberValue(value, numberPrefixOf(field));
   return String(value);
 }
 
