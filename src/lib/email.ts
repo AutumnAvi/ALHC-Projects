@@ -47,15 +47,53 @@ export function labelPrefix(label: string | null, wrap: boolean): string {
   return wrap ? `[${label}] ` : `${label} · `;
 }
 
+// Oct 29 notes (batch 7, 55b): a task has a number in each project that numbers it, and there's no home
+// project. email_design_context (read at send time) gives the numbers the email may show, in the stable
+// order: the ones its recipient can read, or the request's own number (its form's project) in an email
+// to a form's submitter. The email shows the first and how many more ("[Req #1 +2] Logo"). Null = the
+// database said nothing (an address outside the workspace, or an older database): the label the email
+// was queued with and the issuing project's bracket setting, as before.
+export type EmailNumber = { label: string; wrap: boolean };
+
+export function emailNumbersFrom(value: unknown): EmailNumber[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.flatMap((entry): EmailNumber[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const e = entry as { label?: unknown; wrap?: unknown };
+    return typeof e.label === "string" && e.label.trim() ? [{ label: e.label, wrap: e.wrap !== false }] : [];
+  });
+}
+
+/**
+ * The number an email shows for its task and its bracket setting: `label` for sentences ("We received
+ * your request (Req #1)"), `prefix` in front of the task's name with the count of the others ("Req #1
+ * +2"). Without numbers from the database, the label the email was queued with.
+ */
+export function emailTaskLabel(
+  queued: string | null,
+  wrap: boolean,
+  numbers: EmailNumber[] | null | undefined,
+): { label: string | null; prefix: string | null; wrap: boolean } {
+  if (!numbers) return { label: queued, prefix: queued, wrap };
+  const [first, ...rest] = numbers;
+  if (!first) return { label: null, prefix: null, wrap };
+  return { label: first.label, prefix: rest.length ? `${first.label} +${rest.length}` : first.label, wrap: first.wrap };
+}
+
 // A follower's comment email: task, project, who commented, the comment, and an Open task link. No-reply
 // (Comments and reply by email): workspace people answer in the app; only a form submitter's response
 // email can be answered by email (renderSubmitterResponseEmail).
-function renderCommentEmail(row: OutboxRow, design?: AppliedDesign | null, requestWrap = true): Rendered {
+function renderCommentEmail(
+  row: OutboxRow,
+  design?: AppliedDesign | null,
+  queuedWrap = true,
+  numbers: EmailNumber[] | null = null,
+): Rendered {
   const p = payloadOf(row);
   const taskTitle = str(p.task_title) ?? "a task";
   const author = str(p.author_name) ?? "Someone";
   const project = str(p.project_name);
-  const label = str(p.request_label);
+  const { prefix: label, wrap: requestWrap } = emailTaskLabel(str(p.request_label), queuedWrap, numbers);
   const link = taskLink(row, str(p.project_id));
   const origin = backgroundOrigin();
   // Real features 2: a follower who is @mentioned in the comment (and wants mention emails).
@@ -94,11 +132,12 @@ export function renderSubmitterResponseEmail(
   row: OutboxRow,
   canReply: boolean,
   design?: AppliedDesign | null,
-  requestWrap = true,
+  queuedWrap = true,
+  numbers: EmailNumber[] | null = null,
 ): Rendered {
   const p = payloadOf(row);
   const author = str(p.author_name) ?? "The team";
-  const label = str(p.request_label);
+  const { prefix: label, wrap: requestWrap } = emailTaskLabel(str(p.request_label), queuedWrap, numbers);
   const taskTitle = str(p.task_title);
   return layout(
     RESPONSE_HEADING,
@@ -296,22 +335,24 @@ function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null):
 
 export function renderEmail(
   row: OutboxRow,
-  options: { canReply?: boolean; design?: AppliedDesign | null; requestWrap?: boolean } = {},
+  options: { canReply?: boolean; design?: AppliedDesign | null; requestWrap?: boolean; taskNumbers?: EmailNumber[] | null } = {},
 ): Rendered {
   const design = options.design ?? defaultAppliedDesign(guessDesignKind(row));
-  const wrap = options.requestWrap !== false;
-  if (row.comment_id) return renderCommentEmail(row, design, wrap);
-  if (isSubmitterResponse(row)) return renderSubmitterResponseEmail(row, Boolean(options.canReply), design, wrap);
+  const numbers = options.taskNumbers ?? null;
+  if (row.comment_id) return renderCommentEmail(row, design, options.requestWrap !== false, numbers);
+  if (isSubmitterResponse(row)) {
+    return renderSubmitterResponseEmail(row, Boolean(options.canReply), design, options.requestWrap !== false, numbers);
+  }
   if (isInvite(row)) return renderInviteEmail(row, design);
   if (isNotification(row)) return renderNotificationEmail(row, design);
   const p = payloadOf(row);
-  const label = str(p.request_label);
+  const { label, prefix, wrap } = emailTaskLabel(str(p.request_label), options.requestWrap !== false, numbers);
   const taskTitle = str(p.task_title) ?? "your request";
   // Rule emails: {{task.url}} arrives as an alhc-link: marker (Automations V2).
   const origin = backgroundOrigin();
   const message = str(p.message) === null ? null : resolveTaskLinkMarkers(str(p.message)!, origin);
   row = row.subject ? { ...row, subject: resolveTaskLinkMarkers(row.subject, origin) } : row;
-  const reference = labelPrefix(label, wrap);
+  const reference = labelPrefix(prefix, wrap);
 
   switch (row.template) {
     case "form_confirmation": {
@@ -455,11 +496,14 @@ export function emailLogoUrl(path: string): string | null {
 // The email's design (Email designs): email_design_context (service role) says whether it's an internal
 // or a requester email, which project and form it belongs to, the resolved design (form → project →
 // workspace), and the fill-in values. Without the database update, the built-in look of the guessed kind.
-async function designFor(row: OutboxRow, admin: Admin): Promise<{ design: AppliedDesign; requestWrap: boolean }> {
+async function designFor(
+  row: OutboxRow,
+  admin: Admin,
+): Promise<{ design: AppliedDesign; requestWrap: boolean; taskNumbers: EmailNumber[] | null }> {
   const fallback = guessDesignKind(row);
   const { data, error } = await admin.rpc("email_design_context", { target_email: row.id });
   if (error || !data || typeof data !== "object" || Array.isArray(data)) {
-    return { design: defaultAppliedDesign(fallback), requestWrap: true };
+    return { design: defaultAppliedDesign(fallback), requestWrap: true, taskNumbers: null };
   }
   const ctx = data as Record<string, unknown>;
   const kind = isEmailDesignKind(ctx.kind) ? ctx.kind : fallback;
@@ -492,8 +536,9 @@ async function designFor(row: OutboxRow, admin: Admin): Promise<{ design: Applie
       buttonHref: kind === "requester" && origin && formId ? `${origin}/forms/${formId}` : null,
     },
   );
-  // The issuing project's bracket setting (absent before Oct 19's migration: brackets, as before).
-  return { design, requestWrap: v.request_wrap !== false };
+  // The issuing project's bracket setting (absent before Oct 19's migration: brackets, as before), and the
+  // numbers the email may show (Oct 29 notes, 55b; absent = the label it was queued with).
+  return { design, requestWrap: v.request_wrap !== false, taskNumbers: emailNumbersFrom(v.task_numbers) };
 }
 
 // A sample email of a kind with a design, for the editor's live preview and "Send me a test", rendered
@@ -695,7 +740,7 @@ async function deliver(
   let email: Rendered;
   let headers: Record<string, string> = {};
   let reply: string | null = null;
-  const { design, requestWrap } = await designFor(row, admin);
+  const { design, requestWrap, taskNumbers } = await designFor(row, admin);
   if (scheduled) {
     const rendered = await renderScheduled(row, scheduled, admin, design);
     if ("error" in rendered) return { outcome: "error", error: rendered.error };
@@ -703,7 +748,7 @@ async function deliver(
     headers = rendered.headers;
   } else {
     reply = await replyTo(row, admin);
-    email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap });
+    email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap, taskNumbers });
   }
   if (!isEmailConfigured()) {
     const template =

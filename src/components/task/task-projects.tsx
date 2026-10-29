@@ -2,24 +2,28 @@
 
 import Link from "next/link";
 import { useOptimistic, useState } from "react";
-import { Check, ChevronDown, Home, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
+import { Check, ChevronDown, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
-import { useServerAction } from "@/components/toast";
-import { addTaskToProject, moveTask, removeTaskFromProject, setHomeProject } from "@/lib/actions";
+import { useConfirm } from "@/components/confirm";
+import { useNotify, useServerAction } from "@/components/toast";
+import { addTaskToProject, deleteTask, moveTask, removeTaskFromProject, restoreTask } from "@/lib/actions";
 import type { TaskDetail, TaskMembership } from "@/lib/data";
 import type { RequestLabel } from "@/lib/request-numbers";
 import { projectColorClass } from "@/lib/project-colors";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
+import { LAST_PROJECT_CODE, lastProjectQuestion, removeFromProjectOrDelete } from "@/lib/task-projects";
+import { useClosePane } from "./task-pane-frame";
 import { TaskNumberBadge, taskNumberText } from "./task-number";
 
 // canAdd: the viewer is an Editor there, so the task can be added to that project.
 export type ProjectOption = { id: string; name: string; canAdd: boolean };
 
 // The pane's Projects row (Asana parity, batch 3): each project as a colored chip with its section in a
-// dropdown, "Add to projects" below. Home project and removal sit in a small menu per project. Since Oct 27
-// notes (batch 6) each project numbers the tasks it holds, so each chip shows the task's number there
-// ("Website · Task #12").
+// dropdown, "Add to projects" below. Removal sits in a small menu per project. Since Oct 27 notes (batch 6)
+// each project numbers the tasks it holds, so each chip shows the task's number there ("Website · Task
+// #12"). Since Oct 29 notes (55b) there's no home project: projects are listed in the order the task was
+// added to them, and any of them can be removed; removing the last one asks to delete the task instead.
 export function TaskProjects({
   task,
   addableProjects,
@@ -55,19 +59,47 @@ export function TaskProjects({
 
 function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; membership: TaskMembership; canEdit: boolean }) {
   const [, run] = useServerAction();
+  const notify = useNotify();
+  const confirm = useConfirm();
+  const { close: closePane } = useClosePane();
   const [sectionId, setSectionId] = useOptimistic(membership.sectionId);
   const section = membership.sections.find((s) => s.id === sectionId);
+  // Its section and removal there need Editor in that project (task_projects' RLS), not just on the task:
+  // an Editor of one project may only view another one the task is in.
+  const canEditHere = canEdit && (task.editableProjectIds ?? []).includes(membership.projectId);
   const sectionName = section?.name ?? "No section";
+
+  // One write through run (pending state, the error toast, fresh panes), handing its result back. `quiet`:
+  // a result that isn't shown as an error.
+  function write<T extends { error?: string }>(action: () => Promise<T>, quiet?: (result: T) => boolean): Promise<T> {
+    return new Promise((resolve) =>
+      run(async () => {
+        const result = await action();
+        resolve(result);
+        return quiet?.(result) ? undefined : result;
+      }),
+    );
+  }
+
+  // Removes the task from this project only. On its last project the database refuses, and the person is
+  // asked whether to delete the task instead (to the Trash, with Undo; Oct 29 notes, 55b). The question
+  // waits outside any write.
+  async function removeHere() {
+    const outcome = await removeFromProjectOrDelete({
+      remove: () => write(() => removeTaskFromProject(task.id, membership.projectId), (r) => r.code === LAST_PROJECT_CODE),
+      ask: () => confirm(lastProjectQuestion(task.title, membership.projectName)),
+      deleteTask: () => write(() => deleteTask(task.id)),
+    });
+    if (outcome.kind === "deleted") {
+      closePane();
+      notify("Task moved to the Trash", { label: "Undo", onClick: () => run(() => restoreTask(task.id)) });
+    }
+  }
 
   return (
     <li className="group/membership flex min-w-0 flex-wrap items-center gap-1">
       <ProjectChip taskId={task.id} membership={membership} number={task.projectNumbers?.[membership.projectId] ?? null} />
-      {membership.isHome && task.memberships.length > 1 ? (
-        <span data-tooltip="Home project: the task's main project" className="inline-flex text-zinc-400">
-          <Home className="size-3.5" aria-label="Home project" />
-        </span>
-      ) : null}
-      {canEdit ? (
+      {canEditHere ? (
         <Popover
           label={`Section in ${membership.projectName}: ${sectionName}. Change`}
           panelClassName="w-56 p-1.5"
@@ -104,7 +136,7 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
       ) : (
         <span className="px-1 text-xs text-zinc-500">{sectionName}</span>
       )}
-      {canEdit && !membership.isHome ? (
+      {canEditHere ? (
         <Popover
           label={`More for ${membership.projectName}`}
           tooltip="Project options"
@@ -116,18 +148,10 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
           {(close) => (
             <>
               <MenuItem
-                onClick={() => {
-                  close();
-                  run(() => setHomeProject(task.id, membership.projectId));
-                }}
-              >
-                <Home className="size-4 text-zinc-500" aria-hidden /> Make it the home project
-              </MenuItem>
-              <MenuItem
                 danger
                 onClick={() => {
                   close();
-                  run(() => removeTaskFromProject(task.id, membership.projectId));
+                  void removeHere();
                 }}
               >
                 <X className="size-4" aria-hidden /> Remove from {membership.projectName}

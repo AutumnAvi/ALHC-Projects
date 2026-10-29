@@ -33,6 +33,7 @@ import { RowCompleteControl } from "@/components/task/row-complete-control";
 import { useApprovalAction, useApprovalShortcut } from "@/components/task/approval-action";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
+import { MoreTaskNumbers } from "@/components/task/task-number";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import {
@@ -1001,6 +1002,7 @@ function RowTitle({
   open,
   seed,
   subtask = false,
+  after = null,
   onRename,
   onEditingChange,
 }: {
@@ -1014,6 +1016,8 @@ function RowTitle({
   open: boolean;
   seed: () => TaskSeed;
   subtask?: boolean;
+  // Right after the name: the "+N" of a task numbered in several projects (Oct 29 notes, 55b).
+  after?: ReactNode;
   onRename: (title: string) => void;
   // Renaming: a draggable row stops being draggable so the mouse can select text.
   onEditingChange?: (editing: boolean) => void;
@@ -1026,18 +1030,26 @@ function RowTitle({
   const tone = done ? "text-zinc-400 line-through" : subtask ? "text-zinc-700" : "text-zinc-900";
   const prefix = subtask ? <span className="sr-only">Subtask: </span> : null;
   if (!canEdit) {
-    return (
+    const link = (
       <TaskLink
         taskId={taskId}
         seed={seed}
         draggable={false}
         data-task-link=""
         aria-current={open ? "true" : undefined}
-        className={`min-w-0 flex-1 truncate text-sm hover:underline ${tone}`}
+        className={`min-w-0 truncate text-sm hover:underline ${tone} ${after ? "" : "flex-1"}`}
       >
         {prefix}
         {title}
       </TaskLink>
+    );
+    return after ? (
+      <span className="flex min-w-0 flex-1 items-center gap-1">
+        {link}
+        {after}
+      </span>
+    ) : (
+      link
     );
   }
   return (
@@ -1078,6 +1090,7 @@ function RowTitle({
           {title}
         </button>
       )}
+      {editing ? null : after}
       <TaskLink
         taskId={taskId}
         seed={seed}
@@ -1231,6 +1244,7 @@ function MyTaskRow({
         taskId={task.id}
         title={task.title}
         bareTitle={bareTaskTitle(task.title, task.requestLabel)}
+        after={<MoreTaskNumbers numbers={task.taskNumbers} />}
         done={done}
         canEdit={task.canEdit}
         open={open}
@@ -1478,15 +1492,18 @@ function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId:
           <ThumbsUp className="size-[62%]" strokeWidth={2.5} />
         </span>
       )}
-      <TaskLink
-        taskId={item.taskId}
-        seed={seed}
-        aria-current={open ? "true" : undefined}
-        className="min-w-0 flex-1 truncate text-sm text-zinc-900 hover:underline"
-      >
-        <span className="sr-only">Approve: </span>
-        {title}
-      </TaskLink>
+      <span className="flex min-w-0 flex-1 items-center gap-1">
+        <TaskLink
+          taskId={item.taskId}
+          seed={seed}
+          aria-current={open ? "true" : undefined}
+          className="min-w-0 truncate text-sm text-zinc-900 hover:underline"
+        >
+          <span className="sr-only">Approve: </span>
+          {title}
+        </TaskLink>
+        <MoreTaskNumbers numbers={item.taskNumbers} />
+      </span>
       {item.roundNumber ? <span className="chip shrink-0">Round {item.roundNumber}</span> : null}
       {item.projectId ? (
         <Link

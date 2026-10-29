@@ -58,6 +58,7 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
                 id: r.id,
                 title: r.bareTitle,
                 label: r.requestLabel,
+                numbers: r.taskNumbers,
                 notes: r.notes,
                 completed: Boolean(r.completed_at),
                 dueOn: r.due_on,

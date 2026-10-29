@@ -8,7 +8,7 @@ import { formatDueDate } from "@/lib/dates";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
 import { seedFromTitle } from "@/lib/task-seed";
-import { displayTaskTitle, type RequestLabel } from "@/lib/request-numbers";
+import { displayTaskTitle, type RequestLabel, type TaskNumber } from "@/lib/request-numbers";
 import { TaskNumberBadge } from "@/components/task/task-number";
 
 export type SearchResult = {
@@ -16,6 +16,9 @@ export type SearchResult = {
   // The name without its number; the number is the badge in front (Oct 26 notes, batch 4).
   title: string;
   label?: RequestLabel | null;
+  // Every number the viewer can read, in the stable order (Oct 29 notes, 55b): the badge shows the first
+  // and "+N".
+  numbers?: TaskNumber[];
   notes: string | null;
   completed: boolean;
   dueOn: string | null;
@@ -74,7 +77,7 @@ export function SearchResults({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-baseline gap-1.5">
-                      <TaskNumberBadge label={result.label} />
+                      <TaskNumberBadge label={result.label} numbers={result.numbers} />
                       <span
                         className={`min-w-0 truncate text-sm ${
                           result.completed ? "text-zinc-400 line-through" : "text-zinc-900"

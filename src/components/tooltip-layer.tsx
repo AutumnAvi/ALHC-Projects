@@ -19,6 +19,7 @@ export function isCutOff(el: Pick<HTMLElement, "scrollWidth" | "clientWidth" | "
 // containers and tab rows never clip it. The element keeps its own aria-label for screen readers.
 // Oct 29 notes, batch 7 (item 48): with data-tooltip-truncated the tooltip shows only while the element's
 // text is cut off (a long value on one line or a few), and long tooltips wrap wider, keeping line breaks.
+// A line break in the text starts a new line (a task's numbers, one per project; Oct 29 notes, 55b).
 export function TooltipLayer() {
   const [tip, setTip] = useState<Tip | null>(null);
 

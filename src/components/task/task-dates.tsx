@@ -93,7 +93,7 @@ export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: bool
           if (self) setDates({ start: self.startOn, due: self.dueOn });
         },
         onPrompt: close,
-        projectId: task.homeProjectId,
+        projectId: task.memberships[0]?.projectId ?? null,
       },
     );
   }

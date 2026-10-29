@@ -70,12 +70,13 @@ export function TaskSubtasks({
 }) {
   const [, run] = useServerAction();
   // What a subtask row knows, drawn at once when it's opened (no navigation; Oct 19 notes).
-  const homeProject = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+  // The task's first project the viewer can read (stable order; Oct 29 notes, 55b).
+  const firstProject = task.memberships[0];
   const subtaskSeed = (subtask: SubtaskItem) => {
     const assignee = subtask.assigneeId ? profiles.find((p) => p.id === subtask.assigneeId) : undefined;
     return seedFromSubtask(
       subtask,
-      { title: task.title, projectName: homeProject?.projectName ?? (task.isPrivate ? "Private" : null) },
+      { title: task.title, projectName: firstProject?.projectName ?? (task.isPrivate ? "Private" : null) },
       { personName: () => (assignee ? displayName(assignee) : null), canEdit: taskPermissions(task).canEdit },
     );
   };
@@ -136,7 +137,7 @@ export function TaskSubtasks({
         moves
           .filter((m) => shown.has(m.taskId))
           .forEach((m) => change({ type: "patch", id: m.taskId, patch: { startOn: m.startOn, dueOn: m.dueOn } })),
-      projectId: task.homeProjectId,
+      projectId: task.memberships[0]?.projectId ?? null,
     });
   }
 

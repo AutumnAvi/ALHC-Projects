@@ -7,7 +7,7 @@ import { DateRangePicker } from "@/components/task/date-picker";
 import { TaskLink } from "@/components/task/task-link";
 import { TaskNumberBadge, taskNumberText } from "@/components/task/task-number";
 import { compareEvents, eventAriaLabel, eventBarTime, eventShortWhen, moreLabel, type CalendarEvent } from "@/lib/calendar-events";
-import { displayTaskTitle, type RequestLabel } from "@/lib/request-numbers";
+import { displayTaskTitle, moreTaskNumbers, type RequestLabel, type TaskNumber } from "@/lib/request-numbers";
 import type { TaskSeed } from "@/lib/task-seed";
 import { addDays } from "@/lib/dates";
 import { longDate } from "@/lib/date-input";
@@ -38,6 +38,9 @@ export type CalendarItem = {
   // when the task comes from another project than the one on screen (the team Calendar: always).
   label?: RequestLabel | null;
   projectName?: string | null;
+  // Calendars that mix projects (the team Calendar; Oct 29 notes, 55b): every number the viewer can read,
+  // in the stable order. The bar shows the first and "+N"; its tooltip and screen-reader text list them all.
+  numbers?: TaskNumber[] | null;
   // On or before dueOn; null for a one-day task.
   startOn: string | null;
   dueOn: string;
@@ -439,6 +442,8 @@ function Bar({
   const resizable = item.canEdit && !item.milestone;
   const shape = `${startsHere ? "rounded-l-md" : "rounded-l-none border-l-0"} ${endsHere ? "rounded-r-md" : "rounded-r-none border-r-0"}`;
   const numbered = Boolean(item.label?.text.trim()) || Boolean(item.projectName);
+  const others = moreTaskNumbers(item.numbers);
+  const tooltip = item.tooltip ?? fullTaskTitle(item);
   return (
     <div
       className={`group/bar relative min-w-0 ${startsHere ? "pl-1" : ""} ${endsHere ? "pr-1" : ""}`}
@@ -450,7 +455,7 @@ function Bar({
         draggable={item.canEdit}
         onDragStart={item.canEdit ? (e) => onDragStart(e, "move") : undefined}
         onDragEnd={item.canEdit ? onDragEnd : undefined}
-        data-tooltip={item.tooltip ?? fullTaskTitle(item)}
+        data-tooltip={others ? `${tooltip}\n${others.list}` : tooltip}
         data-calendar-task=""
         aria-current={item.open ? "true" : undefined}
         className={`flex h-6 min-w-0 items-center gap-1.5 border bg-white px-1.5 text-xs shadow-xs hover:border-zinc-300 ${shape} ${
@@ -471,11 +476,19 @@ function Bar({
           {numbered ? (
             <span aria-hidden>
               {" "}
-              <TaskNumberBadge label={item.label} projectName={item.projectName ?? null} size="2xs" className="align-middle" />
+              <TaskNumberBadge
+                label={item.label}
+                numbers={item.numbers}
+                more="inline-quiet"
+                projectName={item.projectName ?? null}
+                size="2xs"
+                className="align-middle"
+              />
             </span>
           ) : null}
           <span className="sr-only">
             {numbered ? fullTaskTitle(item) : ""}
+            {others ? `, also ${others.spoken}` : ""}
             {numbered && item.projectName && !item.srDetail ? `, ${taskNumberText(null, item.projectName)}` : ""}
             {`, ${spanText(item)}`}
             {item.srDetail ?? ""}

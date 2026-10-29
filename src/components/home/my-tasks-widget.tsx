@@ -16,6 +16,7 @@ import { Widget, WidgetTitle } from "@/components/home/widget";
 import { createPrivateTask, setTaskCompleted } from "@/lib/actions";
 import type { MyTask } from "@/lib/data";
 import { seedFromMyTask } from "@/lib/task-seed";
+import { MoreTaskNumbers } from "@/components/task/task-number";
 import { HOME_TASK_TABS, RECENT_COMPLETED_LIMIT, createdFirst, type HomeTaskTab } from "@/lib/home";
 import { projectColorClass } from "@/lib/project-colors";
 
@@ -227,14 +228,18 @@ export function MyTasksWidget({
                     seed={seed}
                     onToggle={() => toggle(task)}
                   />
-                  <TaskLink
-                    taskId={task.id}
-                    seed={seed}
-                    aria-current={open ? "true" : undefined}
-                    className={`min-w-0 flex-1 truncate text-sm hover:underline ${done ? "text-zinc-400 line-through" : "text-zinc-900"}`}
-                  >
-                    {task.title}
-                  </TaskLink>
+                  <span className="flex min-w-0 flex-1 items-center gap-1">
+                    <TaskLink
+                      taskId={task.id}
+                      seed={seed}
+                      aria-current={open ? "true" : undefined}
+                      className={`min-w-0 truncate text-sm hover:underline ${done ? "text-zinc-400 line-through" : "text-zinc-900"}`}
+                    >
+                      {task.title}
+                    </TaskLink>
+                    {/* A task numbered in several projects: its first number is in the name, "+N" lists them all. */}
+                    <MoreTaskNumbers numbers={task.taskNumbers} />
+                  </span>
                   {task.parentTitle ? (
                     <span className="hidden max-w-28 shrink-0 truncate text-xs text-zinc-400 @xl:inline" title={`Subtask of ${task.parentTitle}`}>
                       <span className="sr-only">Subtask of </span>
@@ -341,8 +346,8 @@ function PrivateChip() {
   );
 }
 
-// The task's project (its home project when the viewer can read it), or "Private" for a task that is
-// in no project yet.
+// The task's project (the first one it was added to that the viewer can read; Oct 29 notes, 55b), or
+// "Private" for a task that is in no project yet.
 function ProjectChip({ task }: { task: MyTask }) {
   if (!task.projectId) return <PrivateChip />;
   return (

@@ -101,6 +101,7 @@ export function TeamCalendar({
       title: task.title,
       // The number (when its project numbers tasks) and the project, tiny after the name.
       label: task.requestLabel,
+      numbers: task.taskNumbers,
       projectName: task.projectName,
       startOn: milestone ? null : task.startOn,
       dueOn: task.dueOn,

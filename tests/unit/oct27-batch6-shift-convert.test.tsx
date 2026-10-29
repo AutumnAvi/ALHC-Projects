@@ -223,8 +223,8 @@ const paneTask = (viewerRole: ProjectRole | null, extra: Partial<TaskDetail> = {
     ancestors: [],
     isSubtask: false,
     memberships: [
-      { projectId: "p1", projectName: "Launch", sectionId: "s1", isHome: true, sections: [{ id: "s1", name: "To do" }] },
-      { projectId: "p2", projectName: "Website", sectionId: null, isHome: false, sections: [] },
+      { projectId: "p1", projectName: "Launch", sectionId: "s1", sections: [{ id: "s1", name: "To do" }] },
+      { projectId: "p2", projectName: "Website", sectionId: null, sections: [] },
     ],
     viewerRole,
     memberRoles: {},

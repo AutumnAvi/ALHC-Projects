@@ -5419,6 +5419,12 @@ export type Database = {
         Args: { target_task: string };
         Returns: Json;
       };
+      // Oct 29 notes (batch 7, 55b): every project of each task the caller can read, in the stable order,
+      // with its number there: { "<task id>": [{ project_id, project_name, label, wrap }] }.
+      task_project_labels: {
+        Args: { task_ids: string[] };
+        Returns: Json;
+      };
       set_task_row_expanded: {
         Args: { target_task: string; expanded: boolean };
         Returns: string[];

@@ -29,7 +29,8 @@ import { TaskProjects, type ProjectOption } from "./task-projects";
 import { TaskSubtasks, canAddSubtask } from "./task-subtasks";
 import { TaskTags } from "./task-tags";
 import { PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
-import { formatRequestLabel } from "@/lib/request-numbers";
+import { paneTaskNumbers } from "@/lib/request-numbers";
+import { TaskNumberChips } from "./task-number";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
 
@@ -79,11 +80,11 @@ export function TaskDetailPanel({
     isApprover: Boolean(task.approval?.approverIds.includes(memberId)),
     waitingOnMe: task.approval?.waitingOnMe,
   });
-  // Item 39: inside a project the pane shows that project's number for the task (each project numbers
-  // the tasks it holds); elsewhere the home project's.
+  // The task's numbers (Oct 29 notes, 55b): one chip per project that numbers it and the viewer can read,
+  // in the stable order; inside one of those projects (item 39) its chip is the darker one.
   const pathname = usePathname();
   const pathProjectId = /^\/projects\/([^/?#]+)/.exec(pathname ?? "")?.[1] ?? null;
-  const numberLabel = (pathProjectId ? task.projectNumbers?.[pathProjectId] : undefined) ?? task.requestLabel;
+  const numbers = paneTaskNumbers(task);
 
   const memberProjectIds = new Set(task.memberships.map((m) => m.projectId));
   const permissions = taskPermissions(task);
@@ -113,9 +114,9 @@ export function TaskDetailPanel({
   }
 
   async function copyLink() {
-    // The task in its home project (else another of its projects the viewer can open); a private task in
-    // My tasks. People still need access to open it.
-    const project = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+    // The task in the first project it was added to that the viewer can open (Oct 29 notes, 55b: the
+    // stable rule; memberships come in that order); a private task in My tasks. People still need access.
+    const project = task.memberships[0];
     const path = project ? `/projects/${project.projectId}?task=${task.id}` : `/my-tasks?task=${task.id}`;
     try {
       await navigator.clipboard.writeText(`${window.location.origin}${path}`);
@@ -280,11 +281,7 @@ export function TaskDetailPanel({
         <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
           {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
-          {numberLabel ? (
-            <p className="mb-1 text-sm font-medium text-zinc-500" data-task-number="">
-              {formatRequestLabel(numberLabel)}
-            </p>
-          ) : null}
+          <TaskNumberChips numbers={numbers} currentProjectId={pathProjectId} className="mb-1.5" />
           {canEdit ? (
             <label htmlFor="task-title" className="sr-only">
               Task name

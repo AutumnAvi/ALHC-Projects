@@ -186,3 +186,132 @@ export function requestLabelFrom(value: unknown): RequestLabel | null {
   if (typeof entry.label !== "string" || !entry.label.trim()) return null;
   return { text: entry.label, wrap: entry.wrap !== false };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Oct 29 notes (batch 7, 55b): no home project. A task is in one or more projects; it has a number in
+// each one that numbers it. Lists show them in the stable order — the order the task was added to its
+// projects (task_projects.created_at, then project id) — and only projects the viewer can read
+// (task_project_labels, invoker). Links and defaults use the first one.
+// ---------------------------------------------------------------------------------------------
+
+/** One project of a task the viewer can read, with the number it gives the task (null = none). */
+export type TaskPlace = { projectId: string; projectName: string; label: RequestLabel | null };
+
+/** A task's number in one project (the "Req #1 · Design #14" chips). */
+export type TaskNumber = { projectId: string | null; projectName: string | null; label: RequestLabel };
+
+/** Reads one task's list from task_project_labels(): [{ project_id, project_name, label, wrap }]. */
+export function taskPlacesFrom(value: unknown): TaskPlace[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): TaskPlace[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const e = entry as { project_id?: unknown; project_name?: unknown };
+    if (typeof e.project_id !== "string" || !e.project_id) return [];
+    return [
+      {
+        projectId: e.project_id,
+        projectName: typeof e.project_name === "string" ? e.project_name : "",
+        label: requestLabelFrom(entry),
+      },
+    ];
+  });
+}
+
+/** The numbers in a task's places, in the same (stable) order. */
+export function numbersOf(places: TaskPlace[]): TaskNumber[] {
+  return places.flatMap((p) => (p.label ? [{ projectId: p.projectId, projectName: p.projectName, label: p.label }] : []));
+}
+
+/**
+ * What a tight spot shows (My tasks, Home, search, the Inbox, the team Calendar, emails): the first
+ * number and how many more there are ("Req #1 +2"), plus every number for the hover / focus list
+ * ("Req #1 (Launch)", "Design #14 (Website)").
+ */
+export type TaskNumberSummary = { first: RequestLabel | null; more: number; all: { text: string; projectName: string | null }[] };
+
+export function summarizeTaskNumbers(numbers: TaskNumber[] | null | undefined): TaskNumberSummary {
+  const list = (numbers ?? []).filter((n) => n.label.text.trim());
+  return {
+    first: list[0]?.label ?? null,
+    more: Math.max(0, list.length - 1),
+    all: list.map((n) => ({ text: formatRequestLabel(n.label), projectName: n.projectName })),
+  };
+}
+
+/** "[Req #1] +2" / "Req #1 +2" — the first number and the count of the others; "" without numbers. */
+export function shortTaskNumbers(numbers: TaskNumber[] | null | undefined): string {
+  const { first, more } = summarizeTaskNumbers(numbers);
+  const text = formatRequestLabel(first);
+  return text && more > 0 ? `${text} +${more}` : text;
+}
+
+/** Every number, in order, for a tooltip or a screen reader: "Req #1 (Launch) · Design #14 (Website)". */
+export function taskNumbersText(numbers: TaskNumber[] | null | undefined): string {
+  return summarizeTaskNumbers(numbers)
+    .all.map((n) => (n.projectName ? `${n.text} (${n.projectName})` : n.text))
+    .join(" · ");
+}
+
+/**
+ * The "+N" after a task's first number (the number chips' tight form): its text, the hover / tap list (every
+ * number on its own line with its project, first one included), the others inline ("Design #14 · WEB-3",
+ * shown when the row has keyboard focus), and the others as a screen reader hears them ("Design #14 in
+ * Design, WEB-3 in Website"). Null when the task has one number or none.
+ */
+export type MoreNumbers = { count: number; text: string; list: string; others: string; spoken: string };
+
+export function moreTaskNumbers(numbers: TaskNumber[] | null | undefined): MoreNumbers | null {
+  const list = (numbers ?? []).filter((n) => n.label.text.trim());
+  if (list.length < 2) return null;
+  const rest = list.slice(1);
+  const shown = (n: TaskNumber) => formatRequestLabel(n.label);
+  return {
+    count: rest.length,
+    text: `+${rest.length}`,
+    list: list.map((n) => (n.projectName ? `${shown(n)} · ${n.projectName}` : shown(n))).join("\n"),
+    others: rest.map(shown).join(" · "),
+    spoken: rest.map((n) => (n.projectName ? `${shown(n)} in ${n.projectName}` : shown(n))).join(", "),
+  };
+}
+
+/** One of the pane's number chips: the number, its project, and whether it's the project on screen. */
+export type NumberChip = { key: string; text: string; projectId: string | null; projectName: string | null; current: boolean; spoken: string };
+
+/**
+ * The pane's chips ("Req #1 · Design #14"): every number the viewer can read, in the stable order; the
+ * project on screen (inside a project's own views) is marked current, nothing moves.
+ */
+export function numberChips(numbers: TaskNumber[] | null | undefined, currentProjectId: string | null = null): NumberChip[] {
+  return (numbers ?? [])
+    .filter((n) => n.label.text.trim())
+    .map((n, i) => {
+      const text = formatRequestLabel(n.label);
+      return {
+        key: n.projectId ?? `number-${i}`,
+        text,
+        projectId: n.projectId,
+        projectName: n.projectName,
+        current: Boolean(currentProjectId && n.projectId === currentProjectId),
+        spoken: n.projectName ? `${text} in ${n.projectName}` : text,
+      };
+    });
+}
+
+/**
+ * The pane's numbers: task_project_labels' list when the database has it; else each listed project's own
+ * number (task_request_labels_in, Oct 27 notes), else the one label the task has.
+ */
+export function paneTaskNumbers(task: {
+  taskNumbers?: TaskNumber[] | null;
+  memberships: { projectId: string; projectName: string }[];
+  projectNumbers?: Record<string, RequestLabel> | null;
+  requestLabel: RequestLabel | null;
+}): TaskNumber[] {
+  if (task.taskNumbers?.length) return task.taskNumbers;
+  const own = task.memberships.flatMap((m): TaskNumber[] => {
+    const label = task.projectNumbers?.[m.projectId];
+    return label?.text.trim() ? [{ projectId: m.projectId, projectName: m.projectName, label }] : [];
+  });
+  if (own.length) return own;
+  return task.requestLabel?.text.trim() ? [{ projectId: null, projectName: null, label: task.requestLabel }] : [];
+}

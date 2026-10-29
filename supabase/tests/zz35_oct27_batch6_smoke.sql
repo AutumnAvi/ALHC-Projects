@@ -519,13 +519,21 @@ do $$
 declare
   a uuid := (select id from b6_ids where name = 'a');
   b uuid := (select id from b6_ids where name = 'b');
+  only_b uuid;
 begin
   update public.projects set dependency_shift = 'auto' where id = a;
   assert public.dependency_shift_mode(array[(select id from b6_ids where name = 't40')]) = 'auto', 'auto';
   update public.projects set dependency_shift = 'off' where id = b;
-  assert public.dependency_shift_mode(array[(select id from b6_ids where name = 'shared')]) = 'off', 'off (its home is B)';
-  assert public.dependency_shift_mode(array[(select id from b6_ids where name = 'shared'), (select id from b6_ids where name = 't40')]) = 'auto',
+  -- Oct 29 notes (55b): no home project — a task's first project decides ("shared" was made in A, then
+  -- its home was moved to B).
+  assert public.dependency_shift_mode(array[(select id from b6_ids where name = 'shared')]) = 'auto', 'A decides, not the old home B';
+  update public.projects set dependency_shift = 'off' where id = a;
+  update public.projects set dependency_shift = 'auto' where id = b;
+  assert public.dependency_shift_mode(array[(select id from b6_ids where name = 'shared')]) = 'off', 'off (its first project is A)';
+  only_b := public.create_task(b, (select id from b6_ids where name = 'sb'), 'Only in B');
+  assert public.dependency_shift_mode(array[(select id from b6_ids where name = 'shared'), only_b]) = 'auto',
     'Off only when every task''s project is off';
+  update public.projects set dependency_shift = 'auto' where id = a;
   begin
     update public.projects set dependency_shift = 'sometimes' where id = a;
     raise exception 'unknown modes are refused';
