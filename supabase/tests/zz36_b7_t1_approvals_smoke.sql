@@ -103,6 +103,7 @@ declare
   plain uuid := (select id from b7t1_ids where name = 'plain');
   result jsonb;
   cards jsonb;
+  msg text;
 begin
   perform public.set_task_approvers(t,
     array['b7b70029-0000-4000-8000-000000000003'::uuid, 'b7b70029-0000-4000-8000-000000000004'::uuid], 'any', null);
@@ -111,6 +112,16 @@ begin
     raise exception 'still not an approver';
   exception when check_violation then null;
   end;
+
+  -- Nor by switching it to another type and completing it in the same statement.
+  begin
+    update public.tasks set kind = 'task', completed_at = now() where id = t;
+    raise exception 'switching the type in the same statement doesn''t get around it';
+  exception when check_violation then
+    get stacked diagnostics msg = message_text;
+    assert msg = 'Only its approvers can complete an approval task. Send it with Ready for approval.', 'the reason: ' || msg;
+  end;
+  assert (select kind = 'approval' and completed_at is null from public.tasks where id = t), 'still an open approval task';
 
   -- The rows know who approves.
   assert not (public.task_approval_state(t) ->> 'is_approver')::boolean, 'the Editor isn''t an approver';
@@ -321,6 +332,49 @@ begin
   assert (select completed_at from public.tasks where id = t2) is null, 'the approval task stays open';
   update public.my_task_rules set enabled = false where name = 'Done when assigned';
 end $$;
+
+-- Recurrence: an approver completing a recurring approval task spawns the next one, open, with the same
+-- approver (the spawn isn't a person). Imports bring completed approval tasks in completed.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t1_ids where name = 'a');
+  t3 uuid;
+  run uuid;
+begin
+  t3 := public.create_task(a, (select id from b7t1_ids where name = 'sa'), 'Weekly numbers approval');
+  update public.tasks set kind = 'approval', due_on = '2026-11-02', recurrence = '{"freq": "weekly", "interval": 1}' where id = t3;
+  perform public.set_task_approvers(t3, array['b7b70029-0000-4000-8000-000000000003'::uuid], 'any', null);
+  insert into b7t1_ids values ('t3', t3);
+
+  run := public.start_import_run(a, 'asana', array['b7-approvals.json']);
+  perform public.import_batch(run, jsonb_build_object(
+    'project', jsonb_build_object('gid', 'b7-approvals-proj', 'name', 'B7 Approvals'),
+    'tasks', jsonb_build_array(
+      jsonb_build_object('gid', 'b7-k1', 'title', 'Signed off in Asana', 'kind', 'approval', 'completed_at', '2026-10-01T10:00:00Z')
+    )
+  ));
+  perform public.finish_import_run(run, 'completed');
+  assert (select kind = 'approval' and completed_at is not null from public.tasks
+          where home_project_id = a and title = 'Signed off in Asana' and deleted_at is null),
+    'imports keep a completed approval task completed';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  t3 uuid := (select id from b7t1_ids where name = 't3');
+  next_task uuid;
+begin
+  update public.tasks set completed_at = now() where id = t3;
+  select recurrence_next_id into next_task from public.tasks where id = t3;
+  assert next_task is not null, 'completing it spawned the next occurrence';
+  assert (select kind = 'approval' and completed_at is null from public.tasks where id = next_task), 'open, still an approval task';
+  assert exists (select 1 from public.task_approvers where task_id = next_task and deleted_at is null
+                 and profile_id = 'b7b70029-0000-4000-8000-000000000003'), 'with the same approver';
+end $$;
+reset role;
 
 -- Copies keep a completed approval task completed (the copy engine isn't a person).
 set role authenticated;

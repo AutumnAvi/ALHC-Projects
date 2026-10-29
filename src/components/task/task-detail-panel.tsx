@@ -138,7 +138,8 @@ export function TaskDetailPanel({
       <RecordRecent kind="task" id={task.id} />
       {upload.input}
       <div className={PANE_HEADER}>
-        {completeMode === "approve" ? (
+        {completeMode === "approve" && permissions.canComment ? (
+          // An approver who was later lowered to Viewer can't decide anymore (decide_approval needs Commenter+).
           <button
             type="button"
             data-complete-mode="approve"

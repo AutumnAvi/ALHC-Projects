@@ -294,6 +294,23 @@ test("My tasks and Home: the assignee's approval task is theirs to send, even wi
 
   const home = render(<MyTasksWidget tasks={{ upcoming: [myTask()], overdue: [], completed: [] }} />, null, "/");
   assert.match(home, /aria-label="Ready for approval: “Approve the copy”"/);
+
+  // "Waiting on me to approve": an approval task's round is decided from its row (Approve opens the
+  // decision in the pane); an older request (an approval subtask) keeps the plain mark.
+  const awaiting = render(
+    <MyTasksView
+      {...myProps}
+      open={[]}
+      awaiting={[
+        { requestId: "q1", taskId: "w1", title: "Spring flyer", requestLabel: null, projectId: "p1", projectName: "Launch", dueOn: null, sentAt: "2026-10-20T10:00:00Z", roundNumber: 2, isApprovalTask: true },
+        { requestId: "q2", taskId: "w2", title: "Legal check", requestLabel: null, projectId: "p1", projectName: "Launch", dueOn: null, sentAt: "2026-10-20T10:00:00Z", roundNumber: null, isApprovalTask: false },
+      ]}
+    />,
+    null,
+    "/my-tasks",
+  );
+  assert.match(awaiting, /aria-label="Approve “Spring flyer”"[^>]*data-approval-toggle="approve"/, "Approve on the round's row");
+  assert.ok(!/aria-label="Approve “Legal check”"/.test(awaiting), "an older request keeps the plain mark");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -434,6 +451,12 @@ test("the pane's Mark complete: Ready for approval for non-approvers, Mark compl
   const viewer = pane(approvalTask("viewer", info()));
   assert.ok(!/data-complete-mode=/.test(viewer), "a Viewer gets the read-only note");
 
+  // An approver later lowered to Viewer can't decide anymore (decide_approval needs Commenter+).
+  const demoted = pane(
+    approvalTask("viewer", info({ approverIds: ["me"], status: "pending", waitingOnMe: true, rounds: [round({ requests: [request({ id: "req-me", approverId: "me" })] })] })),
+  );
+  assert.ok(!/data-complete-mode="approve"/.test(demoted), "no Approve for a Viewer");
+
   const plain = pane(approvalTask("editor", info(), { kind: "task", approval: null }));
   assert.match(plain, />Mark complete<\/button>/, "other kinds are unchanged");
 });
@@ -446,6 +469,7 @@ test("the compact approval banner: one row of approvers (locked in), status, and
   assert.match(row, /Lee Second/);
   assert.equal(row.match(/data-approver-lock=""/g)?.length, 2, "each approver locked in");
   assert.match(row, /Not sent/, "the status pill");
+  assert.match(row, /data-approval-headline-sr="">Not sent yet\./, "screen readers get the pill's tooltip while Details is closed");
   assert.match(row, />Ready for approval<\/button>/, "the viewer's primary action");
   assert.match(row, /aria-expanded="false"[^>]*>Details/, "Details is closed by default");
   assert.ok(!/Who decides/.test(row), "how they decide is in Details");

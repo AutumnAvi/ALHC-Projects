@@ -343,6 +343,12 @@ function ApprovalPanel({
         })}
         <span data-tooltip={headline} className="inline-flex">
           <ApprovalStatusBadge status={status} paused={paused} />
+          {/* The tooltip is pointer-only; screen readers get the same words while Details is closed. */}
+          {detailsOpen ? null : (
+            <span className="sr-only" data-approval-headline-sr="">
+              {headline}
+            </span>
+          )}
         </span>
         {latest && status !== "not_sent" ? <span className="text-2xs text-zinc-500">Round {latest.number}</span> : null}
 

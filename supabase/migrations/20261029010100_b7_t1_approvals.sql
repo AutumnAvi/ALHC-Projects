@@ -42,7 +42,8 @@ revoke all on function public.alhc_patch_function(regprocedure, text[]) from pub
 --     completed_at going from null to a value, or a new row inserted complete — only while they are one
 --     of its active approvers (task_approvers). While a round is pending nobody ticks it complete: an
 --     approver whose decision is still open is told to Approve (the decision path), everyone else that
---     it's waiting for approval. With no approvers nobody completes it by hand.
+--     it's waiting for approval. With no approvers nobody completes it by hand. A statement that switches
+--     an approval task to another type and completes it at once is checked the same way.
 --   * Rules never complete approval tasks: the rule engine's "Mark complete" step (and "Convert to a
 --     project … and complete the task", and My Tasks rules' "Mark complete") skip them with a logged
 --     reason instead of failing the run; the guard refuses a completion in rule context as a backstop.
@@ -70,9 +71,10 @@ select public.alhc_patch_function(
       using errcode = 'check_violation';
   end if;$old$,
   $new$  -- Oct 29 notes, batch 7 (item 52): only an approval task's approvers complete it by hand, never
-  -- while a round is pending, and rules never do. Imports, copies, and an approved round (which names
-  -- its task in alhc.approval_finish) aren't checked; other system code isn't a client role.
-  if new.kind = 'approval'
+  -- while a round is pending, and rules never do — also when the same statement switches it to another
+  -- type. Imports, copies, and an approved round (which names its task in alhc.approval_finish) aren't
+  -- checked; other system code isn't a client role.
+  if (new.kind = 'approval' or (tg_op = 'UPDATE' and old.kind = 'approval'))
      and new.completed_at is not null
      and (tg_op = 'INSERT' or old.completed_at is null)
      and public.import_context_id() is null

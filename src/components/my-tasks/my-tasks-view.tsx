@@ -28,8 +28,9 @@ import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard"
 import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
+import { ApprovalToggle } from "@/components/complete-toggle";
 import { RowCompleteControl } from "@/components/task/row-complete-control";
-import { useApprovalShortcut } from "@/components/task/approval-action";
+import { useApprovalAction, useApprovalShortcut } from "@/components/task/approval-action";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -1436,6 +1437,10 @@ function MySubtaskRow({
 // date, and round.
 function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId: string | null }) {
   const openTask = useOpenTask();
+  const approvalAction = useApprovalAction();
+  // An approval task's round waits on the viewer: its control is Approve (opens the decision in the pane,
+  // Oct 29 notes, batch 7). Other requests (approval subtasks) are decided in the pane's Approvals list.
+  const decides = item.isApprovalTask && item.roundNumber !== null;
   const title = displayTaskTitle(item.title, item.requestLabel);
   const seed = () =>
     seedFromTitle(item.taskId, bareTaskTitle(item.title, item.requestLabel), {
@@ -1444,7 +1449,7 @@ function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId:
       projectName: item.projectName ?? (item.projectId ? undefined : "Private"),
       kind: item.isApprovalTask ? "approval" : undefined,
       // Waiting on the viewer's decision: the pane's button is Approve (Oct 29 notes, batch 7).
-      completeMode: item.isApprovalTask ? "approve" : undefined,
+      completeMode: decides ? "approve" : undefined,
     });
   const prefetch = useTaskPrefetch(item.taskId, seed);
   const open = openTaskId === item.taskId;
@@ -1461,12 +1466,18 @@ function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId:
         open ? "bg-accent-50/60" : "hover:bg-zinc-50"
       }`}
     >
-      <span
-        aria-hidden
-        className="ml-[1.375rem] inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-700"
-      >
-        <ThumbsUp className="size-[62%]" strokeWidth={2.5} />
-      </span>
+      {decides ? (
+        <span className="ml-[1.375rem] inline-flex shrink-0">
+          <ApprovalToggle mode="approve" title={title} onAction={() => approvalAction(item.taskId, "decide", seed())} />
+        </span>
+      ) : (
+        <span
+          aria-hidden
+          className="ml-[1.375rem] inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-700"
+        >
+          <ThumbsUp className="size-[62%]" strokeWidth={2.5} />
+        </span>
+      )}
       <TaskLink
         taskId={item.taskId}
         seed={seed}

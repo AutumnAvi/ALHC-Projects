@@ -1583,7 +1583,7 @@ export function ActionFields({
               value={action.complete_task === true ? "yes" : "no"}
               options={[
                 { value: "no", label: "keep the task open" },
-                { value: "yes", label: "complete the task" },
+                { value: "yes", label: "complete the task", description: "Not approval tasks: only their approvers complete them" },
               ]}
               onChange={(v) => onChange(v === "yes" ? { ...action, complete_task: true } : omit(action, "complete_task"))}
               variant="chip"
