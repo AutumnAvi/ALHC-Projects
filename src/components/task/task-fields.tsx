@@ -8,7 +8,7 @@ import { moveTask, setFieldValue } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { MenuItem, Popover } from "@/components/popover";
 import { PILL, isChoiceField } from "@/components/project/field-chips";
-import { OPTION_COLOR_CLASSES, fieldChips, type FieldDef, type FieldOption } from "@/lib/fields";
+import { OPTION_COLOR_CLASSES, fieldChips, repeatedSharedFieldIds, type FieldDef, type FieldOption } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { formatDueDate } from "@/lib/dates";
 import { SingleDatePicker } from "./date-picker";
@@ -26,8 +26,18 @@ const FIELDS_SHOWN = 5;
 export function TaskFields({ task, profiles, canEdit }: { task: TaskDetail; profiles: Profile[]; canEdit: boolean }) {
   const [expanded, setExpanded] = useState(false);
   if (task.fields.length === 0) return null;
-  const byProject = task.memberships
-    .map((m) => ({ membership: m, fields: task.fields.filter((f) => f.projectId === m.projectId) }))
+  const grouped = task.memberships.map((m) => ({
+    membership: m,
+    fields: task.fields.filter((f) => f.projectId === m.projectId),
+  }));
+  // Oct 29 notes (batch 7): a shared library field in several of the task's projects is one field with
+  // one value (the database keeps them in step), so it shows once, in its first project.
+  const repeated = repeatedSharedFieldIds(
+    grouped.flatMap((g) => g.fields),
+    task.fieldValues,
+  );
+  const byProject = grouped
+    .map((group) => ({ ...group, fields: group.fields.filter((f) => !repeated.has(f.id)) }))
     .filter((group) => group.fields.length > 0);
   const showProjectNames = byProject.length > 1;
   const total = byProject.reduce((n, g) => n + g.fields.length, 0);

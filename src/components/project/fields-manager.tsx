@@ -11,7 +11,7 @@ import { createField } from "@/lib/actions";
 import type { FieldDef } from "@/lib/fields";
 
 // The Fields page (Asana parity, batch 4): Asana's fields list — type icon, name, option preview — with
-// Add field (create one or copy one from the workspace field library) and the Edit field modal on a
+// Add field (create one or share one from the workspace field library) and the Edit field modal on a
 // click. Editors and above change fields; everyone else reads.
 export function FieldsManager({
   projectId,
@@ -23,7 +23,7 @@ export function FieldsManager({
   sectionNames: string[];
 }) {
   const [pending, run] = useServerAction();
-  const { batch4 } = useProjectPage();
+  const { batch4, fieldSharing } = useProjectPage();
   const canEdit = useProjectPermissions().canEdit;
   const [adding, setAdding] = useState(false);
   const hasBound = fields.some((f) => f.boundToSections);
@@ -60,7 +60,14 @@ export function FieldsManager({
             Custom fields add structured details to every task here, like a priority, a channel, or a reviewer.
           </EmptyState>
         ) : (
-          <FieldList projectId={projectId} fields={fields} sectionNames={sectionNames} canEdit={canEdit} batch4={batch4} />
+          <FieldList
+            projectId={projectId}
+            fields={fields}
+            sectionNames={sectionNames}
+            canEdit={canEdit}
+            batch4={batch4}
+            sharing={fieldSharing}
+          />
         )}
       </div>
 
@@ -98,7 +105,7 @@ export function FieldsManager({
           field={null}
           sectionNames={sectionNames}
           batch4={batch4}
-          existingFieldIds={fields.map((f) => f.id)}
+          existingFields={fields}
           onClose={() => setAdding(false)}
         />
       ) : null}

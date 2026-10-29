@@ -9,6 +9,7 @@ import { setProjectArchived } from "@/lib/actions";
 
 // Share is a large dialog opened from the header. Leave it out of the project page chunk until then.
 const ShareDialog = dynamic(() => import("@/components/project/share-dialog").then((m) => m.ShareDialog));
+import type { FieldSharing } from "@/lib/fields";
 import type { ProjectStatus } from "@/lib/portfolios";
 import type { StatusTemplate } from "@/lib/status-templates";
 
@@ -27,15 +28,22 @@ type ProjectPage = {
   archived: boolean;
   archivePending: boolean;
   setArchived: (archived: boolean) => void;
+  // Oct 29 notes (batch 7): which of the project's fields are shared through the field library and
+  // whether the viewer may change their definition (project_field_sharing), by field id. Empty on a
+  // database without the update.
+  fieldSharing: Record<string, FieldSharing>;
 };
 
 const ProjectPageContext = createContext<ProjectPage | null>(null);
+
+const NO_SHARING: Record<string, FieldSharing> = {};
 
 export function ProjectPageProvider({
   project,
   batch4,
   archived: savedArchived = false,
   statusTemplates = [],
+  fieldSharing = NO_SHARING,
   children,
 }: {
   project: { id: string; name: string };
@@ -43,6 +51,7 @@ export function ProjectPageProvider({
   archived?: boolean;
   // Real features 4: Customize → Status templates, offered in the status update panel.
   statusTemplates?: StatusTemplate[];
+  fieldSharing?: Record<string, FieldSharing> | null;
   children: ReactNode;
 }) {
   const [sharing, setSharing] = useState(false);
@@ -71,8 +80,9 @@ export function ProjectPageProvider({
       archived,
       archivePending,
       setArchived,
+      fieldSharing: fieldSharing ?? NO_SHARING,
     }),
-    [batch4, setStatusOpen, archived, archivePending, setArchived],
+    [batch4, setStatusOpen, archived, archivePending, setArchived, fieldSharing],
   );
 
   return (

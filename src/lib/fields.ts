@@ -120,6 +120,68 @@ export type FieldSharing = {
 export const SHARED_FIELD_READ_ONLY =
   "Shared from the field library. Only editors of the project that published it can change its name, description, and options.";
 
+export const SHARED_FIELD_EDITABLE =
+  "Shared through the field library. Changes to its name, description, and options apply in every project that uses it.";
+
+// How a field reads in this project's field settings (the Fields list, Customize → Fields, Edit field).
+export type SharedFieldView = {
+  // Linked to other projects: a placement, or a source other projects use (the "Shared" marker).
+  shared: boolean;
+  // This project's placement of another project's library field (never listed in the library itself).
+  placement: boolean;
+  // Name, description, options, and notifications can't be changed from here (SHARED_FIELD_READ_ONLY);
+  // the per-project settings (Show in List and Board) still can.
+  definitionReadOnly: boolean;
+  // Other projects using it; null when unknown (no sharing data yet).
+  otherProjects: number | null;
+};
+
+export function sharedFieldView(
+  field: Pick<FieldDef, "id" | "libraryFieldId">,
+  sharing: FieldSharing | null | undefined,
+): SharedFieldView {
+  const placement = Boolean(field.libraryFieldId ?? sharing?.libraryFieldId);
+  const shared = sharing ? sharing.isShared || placement : placement;
+  return {
+    shared,
+    placement,
+    // Without sharing data the database still decides (its refusal says SHARED_FIELD_READ_ONLY).
+    definitionReadOnly: Boolean(sharing && shared && !sharing.definitionEditable),
+    otherProjects: sharing && shared ? Math.max(sharing.placementCount - 1, 0) : null,
+  };
+}
+
+// The "Shared" marker's tooltip. Counts only — never another project's name.
+export function sharedFieldTooltip(view: SharedFieldView): string | null {
+  if (!view.shared) return null;
+  const n = view.otherProjects;
+  return n ? `Shared through the field library with ${n} other project${n === 1 ? "" : "s"}` : "Shared through the field library";
+}
+
+// The note at the top of Edit field for a shared field.
+export function sharedFieldNote(view: SharedFieldView): string | null {
+  if (!view.shared) return null;
+  return view.definitionReadOnly ? SHARED_FIELD_READ_ONLY : SHARED_FIELD_EDITABLE;
+}
+
+// Edit field → delete. A shared field's other projects keep it, so it only leaves this project.
+export function removeFieldWording(name: string, view: SharedFieldView) {
+  return view.shared
+    ? {
+        button: "Remove from this project",
+        title: `Remove “${name}” from this project?`,
+        message:
+          "This only removes the field from this project. Other projects that use this shared field keep it and their values. Values here are kept in the database.",
+        confirmLabel: "Remove",
+      }
+    : {
+        button: "Delete field",
+        title: `Delete the “${name}” field?`,
+        message: "Existing values are kept in the database.",
+        confirmLabel: "Delete",
+      };
+}
+
 // A field from the workspace library (list_field_library): a definition other projects can copy.
 export type LibraryField = {
   fieldId: string;
@@ -128,6 +190,43 @@ export type LibraryField = {
   description: string | null;
   options: FieldOption[];
 };
+
+// Add field → Choose from library: the library fields this project doesn't use yet (by group, so a
+// field it already has — as the source or a placement — isn't offered again), then a search by name or
+// description.
+export function libraryChoices(
+  library: LibraryField[],
+  projectFields: Pick<FieldDef, "id" | "libraryFieldId">[],
+): LibraryField[] {
+  return library.filter((f) => !projectHasLibraryField(projectFields, f.fieldId));
+}
+
+export function searchLibrary(choices: LibraryField[], query: string): LibraryField[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return choices;
+  return choices.filter(
+    (f) => f.name.toLowerCase().includes(needle) || (f.description ?? "").toLowerCase().includes(needle),
+  );
+}
+
+// The task pane lists each of the task's projects' fields. A shared library field in several of them
+// is one field with one value, so it shows once (in its first project) — unless its values there
+// differ (two copies linked by the batch 7 migration that disagreed: both are kept, so both show).
+export function repeatedSharedFieldIds(
+  fields: Pick<FieldDef, "id" | "libraryFieldId">[],
+  values: Record<string, Json | undefined>,
+): Set<string> {
+  const shown = new Map<string, string[]>();
+  const repeated = new Set<string>();
+  for (const field of fields) {
+    const group = fieldGroupId(field);
+    const value = JSON.stringify(values[field.id] ?? null);
+    const seen = shown.get(group);
+    if (seen?.includes(value)) repeated.add(field.id);
+    else shown.set(group, [...(seen ?? []), value]);
+  }
+  return repeated;
+}
 
 export const MAX_FIELD_DESCRIPTION = 2000;
 

@@ -8,6 +8,7 @@ import {
   Columns3,
   Hash,
   Library,
+  Link2,
   ListChecks,
   Plus,
   Search,
@@ -24,7 +25,7 @@ import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { createField, deleteField, loadFieldLibrary, updateField } from "@/lib/actions";
+import { addLibraryField, createField, deleteField, loadFieldLibrary, updateField } from "@/lib/actions";
 import {
   FIELD_TYPES,
   MAX_FIELD_DESCRIPTION,
@@ -32,8 +33,15 @@ import {
   OPTION_COLOR_CLASSES,
   fieldTypeLabel,
   hasOptions,
+  libraryChoices,
+  removeFieldWording,
+  searchLibrary,
+  sharedFieldNote,
+  sharedFieldTooltip,
+  sharedFieldView,
   type FieldDef,
   type FieldOption,
+  type FieldSharing,
   type FieldType,
   type LibraryField,
 } from "@/lib/fields";
@@ -78,14 +86,32 @@ export function OptionPreview({ options, max = 3 }: { options: FieldOption[]; ma
   );
 }
 
+const NO_SHARING: Record<string, FieldSharing> = {};
+
+// Oct 29 notes (batch 7): a library field shared with other projects (a placement here, or the source
+// other projects use). The tooltip gives a count, never another project's name.
+export function SharedFieldMarker({ tooltip }: { tooltip: string }) {
+  return (
+    <span
+      data-tooltip={tooltip}
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-accent-50 px-1.5 py-px text-2xs font-medium text-accent-700"
+    >
+      <Link2 className="size-3" aria-hidden />
+      Shared
+    </span>
+  );
+}
+
 // Asana's Fields list: type icon, name, option preview. Editors click a row to edit it (the Edit field
-// modal); everyone else reads. Used by the Fields page and Customize → Fields.
+// modal); everyone else reads. Used by the Fields page and Customize → Fields. Shared library fields
+// carry a "Shared" marker (sharing = project_field_sharing by field id, from the project layout).
 export function FieldList({
   projectId,
   fields,
   sectionNames,
   canEdit,
   batch4,
+  sharing = NO_SHARING,
   dense = false,
 }: {
   projectId: string;
@@ -93,6 +119,7 @@ export function FieldList({
   sectionNames: string[];
   canEdit: boolean;
   batch4: boolean;
+  sharing?: Record<string, FieldSharing>;
   dense?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -104,12 +131,14 @@ export function FieldList({
           const options = field.boundToSections
             ? sectionNames.map((name, i) => ({ id: `section-${i}`, name, color: "zinc" as const }))
             : field.options;
+          const sharedTip = sharedFieldTooltip(sharedFieldView(field, sharing[field.id]));
           const body = (
             <>
               <FieldTypeIcon field={field} />
               <span className={`flex min-w-0 flex-1 ${dense ? "flex-col gap-1" : "items-center gap-3"}`}>
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate font-medium text-zinc-900">{field.name}</span>
+                  {sharedTip ? <SharedFieldMarker tooltip={sharedTip} /> : null}
                   {field.inLibrary ? (
                     <Library className="size-3.5 shrink-0 text-zinc-400" aria-label="In the field library" />
                   ) : null}
@@ -137,7 +166,7 @@ export function FieldList({
                 <button
                   type="button"
                   onClick={() => setEditingId(field.id)}
-                  aria-label={`Edit field ${field.name}`}
+                  aria-label={`Edit field ${field.name}${sharedTip ? ` (${sharedTip.toLowerCase()})` : ""}`}
                   className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-zinc-50"
                 >
                   {body}
@@ -155,12 +184,18 @@ export function FieldList({
           field={editing}
           sectionNames={sectionNames}
           batch4={batch4}
+          sharing={sharing[editing.id]}
           onClose={() => setEditingId(null)}
         />
       ) : null}
     </>
   );
 }
+
+const NO_FIELDS: Pick<FieldDef, "id" | "libraryFieldId">[] = [];
+
+// A shared field's definition for people who can't change it: readable and selectable, visibly fixed.
+const READ_ONLY_FIELD = "bg-zinc-50 text-zinc-600";
 
 type Draft = {
   name: string;
@@ -186,14 +221,16 @@ function draftOf(field: FieldDef | null): Draft {
 
 // Asana's Add field / Edit field modal: title, type, description, options with color dots, "Add to
 // field library", and "Notify followers when changed". Adding also offers the workspace field
-// library (a copy of a library field's definition). Description, library, and notify need this
-// release's database update (batch4); without it they stay hidden.
+// library (Oct 29 notes, batch 7: the field is shared with this project — one definition, one value per
+// task). Description, library, and notify need this release's database update (batch4); without it
+// they stay hidden. A shared field's definition is read-only for people who can't change it (sharing).
 export function FieldEditorDialog({
   projectId,
   field,
   sectionNames,
   batch4,
-  existingFieldIds = [],
+  sharing = null,
+  existingFields = NO_FIELDS,
   onCreated,
   onClose,
 }: {
@@ -202,20 +239,25 @@ export function FieldEditorDialog({
   field: FieldDef | null;
   sectionNames: string[];
   batch4: boolean;
-  // This project's fields (library fields that came from this project aren't offered again).
-  existingFieldIds?: string[];
+  // The field's project_field_sharing row (Edit field).
+  sharing?: FieldSharing | null;
+  // This project's fields (library fields it already uses, by group, aren't offered again).
+  existingFields?: Pick<FieldDef, "id" | "libraryFieldId">[];
   onCreated?: (fieldId: string) => void;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<"new" | "library">("new");
   const creating = field === null;
+  const shared = field ? sharedFieldView(field, sharing).shared : false;
   return (
     <Dialog
       title={creating ? "Add field" : "Edit field"}
       description={
         creating
           ? "A field adds the same detail to every task in this project."
-          : "Changes apply to every task in this project."
+          : shared
+            ? "A field shared with other projects through the field library."
+            : "Changes apply to every task in this project."
       }
       onClose={onClose}
       width="max-w-lg"
@@ -245,7 +287,7 @@ export function FieldEditorDialog({
         <LibraryPicker
           projectId={projectId}
           batch4={batch4}
-          existingFieldIds={existingFieldIds}
+          existingFields={existingFields}
           onCreated={(fieldId) => {
             onCreated?.(fieldId);
             onClose();
@@ -257,6 +299,7 @@ export function FieldEditorDialog({
           field={field}
           sectionNames={sectionNames}
           batch4={batch4}
+          sharing={sharing}
           onCreated={onCreated}
           onClose={onClose}
         />
@@ -270,6 +313,7 @@ function FieldForm({
   field,
   sectionNames,
   batch4,
+  sharing,
   onCreated,
   onClose,
 }: {
@@ -277,6 +321,7 @@ function FieldForm({
   field: FieldDef | null;
   sectionNames: string[];
   batch4: boolean;
+  sharing: FieldSharing | null;
   onCreated?: (fieldId: string) => void;
   onClose: () => void;
 }) {
@@ -289,6 +334,13 @@ function FieldForm({
   const withOptions = hasOptions({ fieldType: draft.fieldType, boundToSections: bound });
   const removed = field ? field.options.filter((o) => !draft.options.some((d) => d.id === o.id)) : [];
   const prefix = field ? `field-${field.id}` : "field-new";
+  // Oct 29 notes (batch 7): a shared library field. Its definition (name, description, options,
+  // notifications) is read-only for people who can't change it; Show in List and Board stays theirs.
+  const view = field ? sharedFieldView(field, sharing) : null;
+  const readOnly = view?.definitionReadOnly ?? false;
+  const sharedNote = view ? sharedFieldNote(view) : null;
+  const removal = field && view ? removeFieldWording(field.name, view) : null;
+  const noteId = `${prefix}-shared`;
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -314,16 +366,22 @@ function FieldForm({
     const name = draft.name.trim();
     if (!name || pending) return;
     // A name typed in the "Add an option" box but not added yet still counts.
-    const pendingOption = newOption.trim();
+    const pendingOption = readOnly ? "" : newOption.trim();
     const options =
       withOptions && pendingOption
         ? [...draft.options, { id: crypto.randomUUID(), name: pendingOption, color: OPTION_COLORS[(draft.options.length + 1) % OPTION_COLORS.length] }]
         : draft.options;
-    const extras = batch4 && !bound
-      ? { description: draft.description.trim() || null, inLibrary: draft.inLibrary, notifyOnChange: draft.notifyOnChange }
-      : batch4
-        ? { description: draft.description.trim() || null }
-        : {};
+    // A placement is never listed in the library itself (only its source is), and a read-only shared
+    // definition sends none of its columns.
+    const extras = readOnly
+      ? {}
+      : batch4 && !bound && !view?.placement
+        ? { description: draft.description.trim() || null, inLibrary: draft.inLibrary, notifyOnChange: draft.notifyOnChange }
+        : batch4 && !bound
+          ? { description: draft.description.trim() || null, notifyOnChange: draft.notifyOnChange }
+          : batch4
+            ? { description: draft.description.trim() || null }
+            : {};
     run(async () => {
       if (creating) {
         const result = await createField(projectId, {
@@ -340,8 +398,8 @@ function FieldForm({
         return result;
       }
       const patch: Parameters<typeof updateField>[1] = {};
-      if (name !== field.name) patch.name = name;
-      if (withOptions && JSON.stringify(options) !== JSON.stringify(field.options)) patch.options = options;
+      if (!readOnly && name !== field.name) patch.name = name;
+      if (!readOnly && withOptions && JSON.stringify(options) !== JSON.stringify(field.options)) patch.options = options;
       if (draft.showInViews !== field.showInViews) patch.showInViews = draft.showInViews;
       if ("description" in extras && (extras.description ?? null) !== (field.description ?? null)) {
         patch.description = extras.description;
@@ -361,6 +419,15 @@ function FieldForm({
   return (
     // Not a <form>: Enter in the option box adds an option instead of saving.
     <div className="flex flex-col gap-4">
+      {sharedNote ? (
+        <p
+          id={noteId}
+          className="flex items-start gap-2 rounded-lg border border-accent-100 bg-accent-50 px-3 py-2 text-xs text-accent-900"
+        >
+          <Link2 className="mt-px size-3.5 shrink-0 text-accent-700" aria-hidden />
+          <span>{sharedNote}</span>
+        </p>
+      ) : null}
       <div>
         <label htmlFor={`${prefix}-name`} className={DIALOG_LABEL}>
           Field title
@@ -371,6 +438,8 @@ function FieldForm({
           value={draft.name}
           maxLength={100}
           placeholder="e.g. Priority"
+          readOnly={readOnly}
+          aria-describedby={readOnly ? noteId : undefined}
           onChange={(e) => set("name", e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -378,7 +447,7 @@ function FieldForm({
               save();
             }
           }}
-          className="field mt-1 w-full"
+          className={`field mt-1 w-full ${readOnly ? READ_ONLY_FIELD : ""}`}
         />
       </div>
       <div>
@@ -424,9 +493,11 @@ function FieldForm({
             value={draft.description}
             maxLength={MAX_FIELD_DESCRIPTION}
             rows={2}
-            placeholder="What this field is for and how to fill it in"
+            placeholder={readOnly ? "No description" : "What this field is for and how to fill it in"}
+            readOnly={readOnly}
+            aria-describedby={readOnly ? noteId : undefined}
             onChange={(e) => set("description", e.currentTarget.value)}
-            className="field mt-1 h-auto w-full py-2"
+            className={`field mt-1 h-auto w-full py-2 ${readOnly ? READ_ONLY_FIELD : ""}`}
           />
         </div>
       ) : null}
@@ -438,6 +509,17 @@ function FieldForm({
             The options are this project’s sections, so changing the Status moves the task:{" "}
             {sectionNames.length ? sectionNames.join(", ") : "this project has no sections yet"}.
           </p>
+        </div>
+      ) : withOptions && readOnly ? (
+        <div>
+          <p className={DIALOG_LABEL}>Options</p>
+          <div className="mt-1.5">
+            {draft.options.length ? (
+              <OptionPreview options={draft.options} max={draft.options.length} />
+            ) : (
+              <p className="text-xs text-zinc-500">No options yet.</p>
+            )}
+          </div>
         </div>
       ) : withOptions ? (
         <fieldset>
@@ -533,16 +615,21 @@ function FieldForm({
         />
         {batch4 && !bound ? (
           <>
-            <Toggle
-              id={`${prefix}-library`}
-              checked={draft.inLibrary}
-              onChange={(v) => set("inLibrary", v)}
-              label="Add to field library"
-              hint="Everyone in the workspace can find this field’s title, type, description, and options and add a copy to their projects. Tasks and values stay private."
-            />
+            {/* A placement isn't listed in the library itself: its source is. */}
+            {!view?.placement ? (
+              <Toggle
+                id={`${prefix}-library`}
+                checked={draft.inLibrary}
+                disabled={readOnly}
+                onChange={(v) => set("inLibrary", v)}
+                label="Add to field library"
+                hint={`Everyone in the workspace can find this field’s title, type, description, and options and add it to their projects. Projects that add it share it: one definition, and one value for a task in several of them. Tasks stay private to their projects.${view?.shared ? " Projects that already use it keep it either way." : ""}`}
+              />
+            ) : null}
             <Toggle
               id={`${prefix}-notify`}
               checked={draft.notifyOnChange}
+              disabled={readOnly}
               onChange={(v) => set("notifyOnChange", v)}
               label="Notify followers when changed"
               hint="When a task’s value changes, its followers get an Inbox notification."
@@ -562,10 +649,11 @@ function FieldForm({
             type="button"
             disabled={pending}
             onClick={async () => {
+              if (!removal) return;
               const ok = await confirm({
-                title: `Delete the “${field.name}” field?`,
-                message: "Existing values are kept in the database.",
-                confirmLabel: "Delete",
+                title: removal.title,
+                message: removal.message,
+                confirmLabel: removal.confirmLabel,
                 tone: "danger",
               });
               if (!ok) return;
@@ -578,7 +666,7 @@ function FieldForm({
             className="btn-ghost h-8 text-red-700 hover:bg-red-50 hover:text-red-800"
           >
             <Trash2 className="size-4" aria-hidden />
-            Delete field
+            {removal?.button ?? "Delete field"}
           </button>
         ) : null}
         <span className="flex-1" />
@@ -599,12 +687,14 @@ function Toggle({
   onChange,
   label,
   hint,
+  disabled = false,
 }: {
   id: string;
   checked: boolean;
   onChange: (value: boolean) => void;
   label: string;
   hint: string;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-start gap-2.5">
@@ -613,6 +703,7 @@ function Toggle({
         type="checkbox"
         role="switch"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.currentTarget.checked)}
         aria-describedby={`${id}-hint`}
         className="peer sr-only"
@@ -620,10 +711,10 @@ function Toggle({
       <label
         htmlFor={id}
         aria-hidden
-        className="relative mt-0.5 inline-block h-4 w-7 shrink-0 cursor-pointer rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500 peer-focus-visible:ring-offset-1"
+        className="relative mt-0.5 inline-block h-4 w-7 shrink-0 cursor-pointer rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500 peer-focus-visible:ring-offset-1 peer-disabled:cursor-not-allowed peer-disabled:opacity-50"
       />
       <span className="min-w-0">
-        <label htmlFor={id} className="block cursor-pointer text-sm text-zinc-800">
+        <label htmlFor={id} className={`block text-sm ${disabled ? "cursor-not-allowed text-zinc-500" : "cursor-pointer text-zinc-800"}`}>
           {label}
         </label>
         <span id={`${id}-hint`} className="block text-xs text-zinc-500">
@@ -634,16 +725,18 @@ function Toggle({
   );
 }
 
-// Choose from library: a copy of a library field's definition becomes a new field of this project.
+// Choose from library (Oct 29 notes, batch 7): the library field is shared with this project
+// (add_library_field: this project's placement of it — one definition, and one value per task across
+// every project that uses it). Library fields the project already uses aren't offered.
 function LibraryPicker({
   projectId,
   batch4,
-  existingFieldIds,
+  existingFields,
   onCreated,
 }: {
   projectId: string;
   batch4: boolean;
-  existingFieldIds: string[];
+  existingFields: Pick<FieldDef, "id" | "libraryFieldId">[];
   onCreated: (fieldId: string) => void;
 }) {
   const [pending, run] = useServerAction();
@@ -666,16 +759,8 @@ function LibraryPicker({
     };
   }, [batch4]);
 
-  const needle = query.trim().toLowerCase();
-  const shown = useMemo(
-    () =>
-      (library ?? []).filter(
-        (f) =>
-          !existingFieldIds.includes(f.fieldId) &&
-          (!needle || f.name.toLowerCase().includes(needle) || (f.description ?? "").toLowerCase().includes(needle)),
-      ),
-    [library, existingFieldIds, needle],
-  );
+  const choices = useMemo(() => libraryChoices(library ?? [], existingFields), [library, existingFields]);
+  const shown = useMemo(() => searchLibrary(choices, query), [choices, query]);
 
   if (!batch4 || failed) {
     return (
@@ -696,13 +781,7 @@ function LibraryPicker({
 
   function add(field: LibraryField) {
     run(async () => {
-      const result = await createField(projectId, {
-        name: field.name,
-        fieldType: field.fieldType,
-        description: field.description,
-        options: field.options,
-        showInViews: true,
-      });
+      const result = await addLibraryField(projectId, field.fieldId);
       if (!result.error && result.fieldId) onCreated(result.fieldId);
       return result;
     });
@@ -723,10 +802,22 @@ function LibraryPicker({
         />
       </label>
       {shown.length === 0 ? (
-        <EmptyState icon={Library} title={library.length === 0 ? "The library is empty" : "No fields match"} size="inline">
+        <EmptyState
+          icon={Library}
+          title={
+            library.length === 0
+              ? "The library is empty"
+              : choices.length === 0
+                ? "Every library field is already here"
+                : "No fields match"
+          }
+          size="inline"
+        >
           {library.length === 0
-            ? "Edit a field and turn on “Add to field library” to share its definition with the workspace."
-            : "Try another name."}
+            ? "Edit a field and turn on “Add to field library” to share it with the workspace."
+            : choices.length === 0
+              ? "This project already uses every field in the library. They’re in its Fields list."
+              : "Try another name."}
         </EmptyState>
       ) : (
         <ul className="flex max-h-80 flex-col divide-y divide-zinc-100 overflow-y-auto rounded-lg border border-zinc-200">
@@ -761,7 +852,9 @@ function LibraryPicker({
         </ul>
       )}
       <p className="text-xs text-zinc-500">
-        Adding copies the field into this project; later changes to either copy don’t sync.
+        Adding shares the field with this project: one name, description, and set of options everywhere it’s used,
+        and a task in several of those projects has one value. Only editors of the project that published it change
+        its definition.
       </p>
     </div>
   );
