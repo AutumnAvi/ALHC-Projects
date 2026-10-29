@@ -10,6 +10,7 @@ import {
   hasBatch4Schema,
   listFieldLibrary,
   listMyProjectRoles,
+  listProjectFieldSharing,
   listMyTeamIds,
   listProjectTemplates,
   listSubtaskTrees,
@@ -52,6 +53,7 @@ import {
   type ProjectIntegrations,
 } from "@/lib/integrations-shared";
 import {
+  LOCKED_FIELD_NOTE,
   MAX_FIELD_DESCRIPTION,
   isFieldType,
   isBaseOptionColor,
@@ -61,6 +63,7 @@ import {
   parseOptions,
   selectOptionsProblem,
   type FieldOption,
+  type FieldSharing,
   type LibraryField,
 } from "@/lib/fields";
 import { MAX_TEXT_FIELD_LENGTH, textLength } from "@/lib/long-text";
@@ -499,21 +502,49 @@ export async function saveTaskAsTemplate(
 }
 
 // From quick-add: a normal task creation (stories, notifications, and task_created rules as usual).
+// `lockedLeftOut`: the template's values of locked fields the viewer may not set (Oct 29 notes, batch
+// 7) — the database leaves them out; the caller says so.
 export async function createTaskFromTemplate(
   templateId: string,
   sectionId: string | null,
   title: string | null,
-): Promise<ActionResult> {
-  return run(async () => {
+): Promise<ActionResult & { lockedLeftOut?: number }> {
+  let lockedLeftOut = 0;
+  const result = await run(async () => {
     const supabase = await createClient();
+    const templateKey = id(templateId, "template");
     check(
       await supabase.rpc("create_task_from_template", {
-        target_template: id(templateId, "template"),
+        target_template: templateKey,
         target_section: sectionId ? id(sectionId, "section") : null,
         task_title: optionalText(title, 1000),
       }),
     );
+    lockedLeftOut = await lockedTemplateValues(supabase, templateKey);
   });
+  return result.error ? result : { lockedLeftOut };
+}
+
+// How many of a task template's values are in locked fields the viewer can't set (a template's fields
+// are its project's, so it's that project's Owners and Admins).
+async function lockedTemplateValues(supabase: Awaited<ReturnType<typeof createClient>>, templateId: string): Promise<number> {
+  const { data: template } = await supabase
+    .from("task_templates")
+    .select("project_id, field_values")
+    .eq("id", templateId)
+    .maybeSingle();
+  const values = Array.isArray(template?.field_values) ? template.field_values : [];
+  const fieldIds = values.flatMap((v) =>
+    v && typeof v === "object" && !Array.isArray(v) && typeof v.field_id === "string" && isUuid(v.field_id) && v.value != null
+      ? [v.field_id]
+      : [],
+  );
+  if (!template || fieldIds.length === 0) return 0;
+  const locked = await supabase.from("custom_fields").select("id").in("id", fieldIds).eq("locked", true).is("deleted_at", null);
+  // A database without the field lock (42703) has nothing locked.
+  const lockedIds = locked.error ? [] : (locked.data ?? []);
+  if (lockedIds.length === 0 || hasRole(await getProjectRole(template.project_id), "admin")) return 0;
+  return lockedIds.length;
 }
 
 export async function createTaskTemplate(
@@ -2972,6 +3003,8 @@ export async function updateField(
     notifyOnChange?: boolean;
     // Item 49: a number field's symbol; null / empty removes it.
     numberPrefix?: string | null;
+    // Oct 29 notes, batch 7 (51): Owners / Admins only (custom_fields_06_lock_guard says so otherwise).
+    locked?: boolean;
   },
 ): Promise<ActionResult> {
   return run(async () => {
@@ -2980,6 +3013,7 @@ export async function updateField(
     if (patch.numberPrefix !== undefined) update.number_prefix = numberPrefixInput(patch.numberPrefix);
     if (patch.options !== undefined) update.options = fieldOptions(patch.options);
     if (patch.showInViews !== undefined) update.show_in_views = Boolean(patch.showInViews);
+    if (patch.locked !== undefined) update.locked = Boolean(patch.locked);
     // The database refuses library / notify on the section-bound Status (CHECKs); say so plainly.
     Object.assign(update, fieldExtras(patch, false));
     const supabase = await createClient();
@@ -3001,6 +3035,9 @@ export async function updateField(
       if (problem) throw new InputError(problem);
     }
     const result = await supabase.from("custom_fields").update(update).eq("id", id(fieldId)).select("id");
+    if (result.error?.code === "PGRST204" && update.locked !== undefined && result.error.message.includes("locked")) {
+      throw new InputError("Locking fields needs this release’s database update");
+    }
     if (result.error?.code === "PGRST204") {
       throw new InputError("number_prefix" in update ? NUMBER_PREFIX_MISSING : FIELD_EXTRAS_MISSING);
     }
@@ -3009,15 +3046,55 @@ export async function updateField(
     if (result.error?.code === "23514" && (update.in_library || update.notify_on_change)) {
       throw new InputError("The Status field follows the sections, so it can’t notify or join the field library");
     }
+    if (result.error?.code === "23514" && update.locked) {
+      throw new InputError("The Status field follows the sections, so it can’t be locked");
+    }
     // Editor+ (custom_fields_update_editor): RLS turns anything below into zero rows.
     checkUpdated(result, "Only Editors and above can change fields");
   });
+}
+
+// Lock / unlock a field (the List column menu; Edit field saves it with the rest). Owners and Admins of
+// the project whose Editors change its definition — for a shared library field, the project that
+// published it. Locking a shared field locks it in every project that uses it.
+export async function setFieldLocked(fieldId: string, locked: boolean): Promise<ActionResult> {
+  return updateField(fieldId, { locked });
 }
 
 // The workspace field library for the Add field dialog (name, type, description, options; never the
 // projects they come from). Null on a database without this release's migration.
 export async function loadFieldLibrary(): Promise<LibraryField[] | null> {
   return listFieldLibrary();
+}
+
+// Add field → Choose from library (Oct 29 notes, batch 7): this project's placement of a shared
+// library field — one definition and one value per task across every project that uses it (values
+// the project's tasks already have elsewhere come along). Returns the field's id: the existing one when
+// the project already uses that library field. Editor+ (the database decides).
+export async function addLibraryField(
+  projectId: string,
+  libraryFieldId: string,
+): Promise<ActionResult & { fieldId?: string }> {
+  let fieldId: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("add_library_field", {
+      target_project: id(projectId, "project"),
+      library_field: id(libraryFieldId, "field"),
+    });
+    if (error?.code === "PGRST202") throw new InputError("Shared library fields need this release’s database update");
+    if (error?.code === "P0002") throw new InputError("This field isn’t in the field library any more");
+    if (error?.code === "42501") throw new InputError("Only Editors and above can add fields to this project");
+    check({ error });
+    fieldId = typeof data === "string" ? data : undefined;
+  });
+  return result.error ? result : { fieldId };
+}
+
+// Which of a project's fields are shared through the field library, and whether the viewer may change
+// their definition (for client components that open the field editor). Null without the update.
+export async function loadFieldSharing(projectId: string): Promise<Record<string, FieldSharing> | null> {
+  return listProjectFieldSharing(id(projectId, "project"));
 }
 
 export async function deleteField(fieldId: string): Promise<ActionResult> {
@@ -3040,12 +3117,13 @@ export async function setFieldValue(
       throw new InputError(`Text fields hold up to ${MAX_TEXT_FIELD_LENGTH.toLocaleString("en-US")} characters`);
     }
     const supabase = await createClient();
-    check(
-      await supabase.from("task_field_values").upsert(
-        { task_id: id(taskId), field_id: id(fieldId, "field"), value },
-        { onConflict: "task_id,field_id" },
-      ),
+    const result = await supabase.from("task_field_values").upsert(
+      { task_id: id(taskId), field_id: id(fieldId, "field"), value },
+      { onConflict: "task_id,field_id" },
     );
+    // A locked field (Oct 29 notes, batch 7): only the project's Owners and Admins change its values.
+    if (result.error?.code === "42501" && result.error.message.startsWith("Locked")) throw new InputError(LOCKED_FIELD_NOTE);
+    check(result);
   });
 }
 

@@ -2,15 +2,17 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { Lock, X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
+import { LOCKED_FIELD_NOTE } from "@/lib/fields";
 import { initialDraft, isSaveShortcut, lengthCounter, longTextDraft, textLength, type LongTextDraft } from "@/lib/long-text";
 
 // Oct 29 notes, batch 7, item 48: the pop-out editor for a text custom field, opened from a List cell and
 // from the task pane's field row. A large box that grows with the text (then scrolls), a character count
 // against the 10,000 limit, Save / Cancel. ⌘/Ctrl+Enter saves, a plain Enter is a new line, Escape (or
 // a click outside, or ✕) cancels — and asks first when something was typed. People who can't edit the
-// field get the same window with the whole text to read.
+// field get the same window with the whole text to read (with the lock's note when the field is locked —
+// item 51).
 //
 // It is drawn on <body> (a List row hides off-screen content, and the full-screen pane sits at z-50), and
 // keeps its clicks, keys, and drags from reaching the row or the page it was opened from.
@@ -19,6 +21,7 @@ export function LongTextEditor({
   taskTitle,
   value,
   readOnly = false,
+  locked = false,
   onSave,
   onClose,
 }: {
@@ -27,6 +30,8 @@ export function LongTextEditor({
   // The stored value (a string, or nothing) when the editor opens.
   value: unknown;
   readOnly?: boolean;
+  // The field is locked (item 51): a read-only view says why.
+  locked?: boolean;
   // Only called when Save changes the value: the trimmed text, or null to clear the field.
   onSave: (next: string | null) => void;
   onClose: () => void;
@@ -107,6 +112,7 @@ export function LongTextEditor({
       fieldName={fieldName}
       taskTitle={taskTitle}
       readOnly={readOnly}
+      locked={locked}
       draft={draft}
       state={state}
       textareaRef={textareaRef}
@@ -132,6 +138,7 @@ export function LongTextEditorView({
   fieldName,
   taskTitle,
   readOnly,
+  locked = false,
   draft,
   state,
   textareaRef,
@@ -145,6 +152,7 @@ export function LongTextEditorView({
   fieldName: string;
   taskTitle: string;
   readOnly: boolean;
+  locked?: boolean;
   draft: string;
   state: LongTextDraft;
   textareaRef?: Ref<HTMLTextAreaElement>;
@@ -203,6 +211,12 @@ export function LongTextEditorView({
             <p id={taskId} className="mt-0.5 truncate text-xs text-zinc-500">
               {readOnly ? "View only · " : ""}“{taskTitle}”
             </p>
+            {readOnly && locked ? (
+              <p data-locked-note="" className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
+                <Lock className="size-3 shrink-0 text-zinc-400" aria-hidden />
+                {LOCKED_FIELD_NOTE}.
+              </p>
+            ) : null}
           </div>
           <button
             type="button"

@@ -115,6 +115,8 @@ const LABELS: Record<string, string> = {
   // Automations V3
   no_candidate: "Nobody can take it",
   no_person: "Nobody to assign",
+  // Oct 29 notes, batch 7: Set field on a locked field, the rule's owner not an Owner / Admin.
+  locked: "Field locked",
   error: "Failed",
 };
 

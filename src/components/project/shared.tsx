@@ -19,7 +19,7 @@ import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { SECTIONS_LOCKED_NOTE, useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { useTaskTemplates } from "@/components/project/task-templates-context";
-import { useServerAction } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
 import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
 import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, type TaskKind } from "@/lib/task-kinds";
 import type { Section } from "@/lib/data";
@@ -328,6 +328,7 @@ export function AddTaskInput({
   onClose?: () => void;
 }) {
   const [pending, run] = useServerAction();
+  const notify = useNotify();
   const [open, setOpen] = useState(defaultOpen);
   const [kind, setKind] = useState<TaskKind>(defaultKind);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -434,7 +435,16 @@ export function AddTaskInput({
                     const input = inputRef.current;
                     const title = input?.value.trim() || null;
                     if (input) input.value = "";
-                    run(() => createTaskFromTemplate(template.id, sectionId, title));
+                    run(async () => {
+                      const result = await createTaskFromTemplate(template.id, sectionId, title);
+                      // Locked fields (Oct 29 notes, batch 7): only the project's Owners and Admins set them.
+                      if (!result.error && result.lockedLeftOut) {
+                        notify(
+                          `Task added. ${result.lockedLeftOut} locked field value${result.lockedLeftOut === 1 ? " was" : "s were"} left out: only project Owners and Admins can set ${result.lockedLeftOut === 1 ? "it" : "them"}.`,
+                        );
+                      }
+                      return result;
+                    });
                   }}
                 >
                   <ListPlus className="size-4 shrink-0 text-zinc-500" />

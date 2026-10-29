@@ -12,6 +12,8 @@ import {
   EyeOff,
   GripVertical,
   ListTodo,
+  Lock,
+  LockOpen,
   Pencil,
   Plus,
   SearchX,
@@ -23,6 +25,8 @@ import type { TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
 import { useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
+import { FieldLockIcon, LockedFieldValue } from "@/components/project/field-lock";
+import { useFieldSharing } from "@/components/project/project-page-context";
 import { useViewConfig } from "@/components/project/view-config";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { useOpenTaskId } from "@/components/shell/right-panel";
@@ -38,6 +42,7 @@ import {
   placeTask,
   saveListCollapsedGroups,
   saveListColumnWidths,
+  setFieldLocked,
   setFieldValue,
   setTaskCompleted,
   updateSubtask,
@@ -53,7 +58,7 @@ import {
 } from "@/lib/column-widths";
 import type { Profile, ProjectTask, ProjectTaskGroupPage, Section, SubtaskItem } from "@/lib/data";
 import { displayTaskTitle, type RequestLabel } from "@/lib/request-numbers";
-import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
+import { OPTION_COLOR_CLASSES, fieldLockManageable, fieldLockedFor, type FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import {
   columnsOf,
@@ -191,8 +196,10 @@ export function ListView({
   const notify = useNotify();
   const [, startTransition] = useTransition();
   const bulkEdit = useBulkEdit();
-  const canEdit = useProjectPermissions().canEdit;
+  const { canEdit, canManage } = useProjectPermissions();
   const who = canEdit ? "editor" : "viewer";
+  // Oct 29 notes (batch 7): who may lock a field (a shared one: its publishing project's Owners / Admins).
+  const fieldSharing = useFieldSharing();
   // Every collapse / expand is kept for this person (saved a moment after the last change, and right
   // away when the List goes away; no refresh), so groups stay collapsed across visits and reloads. Keys
   // are kept per grouping ("assignee::assignee-none"), so collapsing "No Priority" in one view doesn't
@@ -575,6 +582,7 @@ export function ListView({
       setField,
       moveToSection,
       dates: changeRowDates,
+      canManage,
     },
   };
   const subtaskProps = {
@@ -611,6 +619,11 @@ export function ListView({
             : () => applyColumns(columns.map((c, i) => (i === index + 1 ? column : i === index ? columns[index + 1] : c)))
         }
         onEditField={field && canEdit ? () => setEditingFieldId(field.id) : undefined}
+        lock={
+          field && fieldLockManageable(field, fieldSharing[field.id], { canManage })
+            ? { locked: Boolean(field.locked), toggle: () => run(() => setFieldLocked(field.id, !field.locked)) }
+            : null
+        }
       />
     );
   };
@@ -632,6 +645,7 @@ export function ListView({
           <HeaderCell
             key={column}
             label={columnLabel(column, fieldsById)}
+            locked={Boolean(fieldsById.get(refFieldId(column) ?? "")?.locked)}
             width={columnWidth(widths, column)}
             onResize={(w) => resizeColumn(column, w)}
             onReset={() => resizeColumn(column, null)}
@@ -888,7 +902,7 @@ export function ListView({
       {addingField ? (
         <NewFieldDialog
           projectId={projectId}
-          existingFieldIds={fields.map((f) => f.id)}
+          existingFields={fields}
           onClose={() => setAddingField(false)}
           onCreated={(fieldId) => {
             // Pinned fields show in views with the default columns; a view with its own columns gets it
@@ -1006,6 +1020,7 @@ function ColumnMenu({
   onMoveLeft,
   onMoveRight,
   onEditField,
+  lock = null,
 }: {
   label: string;
   sort: { current: "asc" | "desc" | null; apply: (dir: "asc" | "desc") => void } | null;
@@ -1013,6 +1028,8 @@ function ColumnMenu({
   onMoveLeft?: () => void;
   onMoveRight?: () => void;
   onEditField?: () => void;
+  // Owners / Admins (of a shared field's publishing project): Lock field / Unlock field.
+  lock?: { locked: boolean; toggle: () => void } | null;
 }) {
   const item = (onClick: () => void, close: () => void) => () => {
     close();
@@ -1041,12 +1058,25 @@ function ColumnMenu({
               </MenuItem>
             </>
           ) : null}
-          {sort && (onHide || onMoveLeft || onMoveRight || onEditField) ? (
+          {sort && (onHide || onMoveLeft || onMoveRight || onEditField || lock) ? (
             <div role="separator" className="my-1 border-t border-zinc-100" />
           ) : null}
           {onEditField ? (
             <MenuItem onClick={item(onEditField, close)}>
               <Pencil className="size-4 text-zinc-500" /> Edit field
+            </MenuItem>
+          ) : null}
+          {lock ? (
+            <MenuItem onClick={item(lock.toggle, close)}>
+              {lock.locked ? (
+                <>
+                  <LockOpen className="size-4 text-zinc-500" /> Unlock field
+                </>
+              ) : (
+                <>
+                  <Lock className="size-4 text-zinc-500" /> Lock field
+                </>
+              )}
             </MenuItem>
           ) : null}
           {onHide ? (
@@ -1096,6 +1126,7 @@ function HeaderCell({
   pinned = false,
   className = "",
   menu,
+  locked = false,
   onResize,
   onReset,
   onCommit,
@@ -1105,6 +1136,8 @@ function HeaderCell({
   pinned?: boolean;
   className?: string;
   menu: ReactNode;
+  // A locked field's column (Oct 29 notes, batch 7): a lock after the name.
+  locked?: boolean;
   onResize: (width: number) => void;
   onReset: () => void;
   onCommit: () => void;
@@ -1112,6 +1145,7 @@ function HeaderCell({
   return (
     <div className={`${listHeaderCellClass(pinned)} ${className}`}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
+      {locked ? <FieldLockIcon /> : null}
       {menu}
       <span
         role="separator"
@@ -1268,6 +1302,8 @@ type RowEdit = {
   setField: (task: ProjectTask, field: FieldDef, value: Json) => void;
   moveToSection: (task: ProjectTask, sectionId: string | null) => void;
   dates: (task: ProjectTask, edit: DateEdit, close: () => void) => void;
+  // Owner / Admin here: may change locked fields' values (Oct 29 notes, batch 7).
+  canManage: boolean;
 };
 
 function TaskRow({
@@ -1497,6 +1533,9 @@ function TaskRow({
           );
         }
         const field = fieldsById.get(refFieldId(column) ?? "");
+        // A locked field (Oct 29 notes, batch 7): read-only with the lock below Owner / Admin.
+        const locked = field ? fieldLockedFor(field, edit) : false;
+        const chips = field ? <FieldValueChips field={field} task={task} context={fieldContext} showName /> : null;
         return (
           <div key={column} className={LIST_CELL}>
             {field ? (
@@ -1507,8 +1546,8 @@ function TaskRow({
                 sections={edit.sections}
                 people={edit.everyone}
                 taskTitle={task.title}
-                canEdit={canEdit}
-                display={<FieldValueChips field={field} task={task} context={fieldContext} showName />}
+                canEdit={canEdit && !locked}
+                display={locked ? <LockedFieldValue>{chips}</LockedFieldValue> : chips}
                 onChange={(value) => edit.setField(task, field, value)}
                 onSectionChange={(sectionId) => edit.moveToSection(task, sectionId)}
                 onEditingChange={setEditingCell}

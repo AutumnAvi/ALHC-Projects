@@ -38,7 +38,8 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { FormLiveSwitch, FormStatusBadge } from "@/components/forms/form-status";
 import { deleteForm, setFormLive, updateForm } from "@/lib/actions";
 import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
-import type { FieldDef } from "@/lib/fields";
+import { FORM_LOCKED_FIELD_NOTE, type FieldDef } from "@/lib/fields";
+import { FieldLockIcon } from "@/components/project/field-lock";
 import {
   BATCH4_QUESTION_TYPES,
   MAX_FILES_PER_QUESTION,
@@ -752,6 +753,7 @@ function NewQuestionMenu({
                   >
                     <FieldTypeIcon field={field} />
                     <span className="min-w-0 flex-1 truncate">{field.name}</span>
+                    {field.locked ? <FieldLockIcon label={FORM_LOCKED_FIELD_NOTE} /> : null}
                     {already ? <span className="text-2xs text-zinc-400">Asked</span> : null}
                   </button>
                 );
@@ -1156,6 +1158,8 @@ function MappingSelect({
 }) {
   const value = question.maps_to?.target === "field" ? `field:${question.maps_to.field_id}` : (question.maps_to?.target ?? "");
   const mappable = fields.filter((f) => fieldAccepts(f, question.type));
+  const mappedLocked =
+    question.maps_to?.target === "field" && Boolean(fields.find((f) => f.id === question.maps_to?.field_id)?.locked);
   return (
     <div>
       <label htmlFor={`${prefix}-map`} className={LABEL}>
@@ -1183,9 +1187,17 @@ function MappingSelect({
           ...mappable.map((f) => ({
             value: `field:${f.id}`,
             label: `Field: ${f.name}${f.boundToSections ? " (moves the section)" : ""}`,
+            // Oct 29 notes (batch 7): a locked field — answers still fill it in.
+            ...(f.locked ? { description: "Locked", icon: <FieldLockIcon label={FORM_LOCKED_FIELD_NOTE} /> } : {}),
           })),
         ]}
       />
+      {mappedLocked ? (
+        <p className="mt-1 flex items-start gap-1.5 text-xs text-zinc-500">
+          <FieldLockIcon label={FORM_LOCKED_FIELD_NOTE} />
+          <span>{FORM_LOCKED_FIELD_NOTE}</span>
+        </p>
+      ) : null}
       {question.maps_to?.target === "section" || (question.maps_to?.target === "field" && isChoice(question.type)) ? (
         <p className="mt-1 text-xs text-zinc-500">Options match by id first, then by name.</p>
       ) : null}

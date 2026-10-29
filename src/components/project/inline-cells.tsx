@@ -560,6 +560,7 @@ export function InlineFieldCell({
         taskTitle={taskTitle}
         value={value ?? null}
         canEdit={canEdit}
+        locked={Boolean(field.locked)}
         display={display}
         onChange={onChange}
         onEditingChange={onEditingChange}
@@ -806,6 +807,7 @@ export function InlineLongTextCell({
   taskTitle,
   value,
   canEdit,
+  locked = false,
   display,
   onChange,
   onEditingChange,
@@ -815,6 +817,8 @@ export function InlineLongTextCell({
   taskTitle: string;
   value: Json;
   canEdit: boolean;
+  // A locked field (item 51): the read-only view says why.
+  locked?: boolean;
   display: ReactNode;
   onChange: (next: Json) => void;
   onEditingChange?: (editing: boolean) => void;
@@ -844,6 +848,7 @@ export function InlineLongTextCell({
           taskTitle={taskTitle}
           value={value}
           readOnly={!canEdit}
+          locked={locked}
           onSave={(next) => onChange(next)}
           onClose={() => {
             setOpen(false);

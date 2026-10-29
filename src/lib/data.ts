@@ -21,7 +21,15 @@ import {
   type EmailDesignSettings,
 } from "@/lib/email-design";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
-import { isFieldType, parseOptions, type FieldDef, type FieldOption, type FieldType, type LibraryField } from "@/lib/fields";
+import {
+  isFieldType,
+  parseOptions,
+  type FieldDef,
+  type FieldOption,
+  type FieldSharing,
+  type FieldType,
+  type LibraryField,
+} from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
 import {
   parsePresetInputs,
@@ -311,6 +319,10 @@ export type TaskDetail = {
   viewerRole: ProjectRole | null;
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
   memberRoles: Record<string, ProjectRole>;
+  // The viewer's own role in each of the task's projects (archived = Viewer): a field's values are
+  // changed through its project, so a locked field only by that project's Owners and Admins (Oct 29
+  // notes, batch 7). Absent = unknown (the task-level role decides).
+  viewerProjectRoles?: Record<string, ProjectRole>;
   tagIds: string[];
   // A private task (no project; for a subtask: its top-level task is private). Only its top-level task's
   // creator and assignee (privateReaderIds) can read it, so only they can be assigned or follow.
@@ -1808,6 +1820,12 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     projectNumbers,
     viewerRole: viewerProjectRole,
     memberRoles,
+    viewerProjectRoles: Object.fromEntries(
+      membershipRows.flatMap((m) => {
+        const projectRole = myRoles.get(m.project_id);
+        return projectRole ? [[m.project_id, projectRole] as const] : [];
+      }),
+    ),
     tagIds: tagIds.get(taskId) ?? [],
     isPrivate,
     privateReaderIds: [
@@ -2081,6 +2099,10 @@ function toFieldDef(row: Tables<"custom_fields">): FieldDef {
     notifyOnChange: row.notify_on_change ?? false,
     inLibrary: row.in_library ?? false,
     numberPrefix: row.number_prefix ?? null,
+    libraryFieldId: row.library_field_id ?? null,
+    locked: row.locked ?? false,
+    lockedBy: row.locked_by ?? null,
+    lockedAt: row.locked_at ?? null,
   };
 }
 
@@ -2106,6 +2128,30 @@ export const listFieldLibrary = cache(async (): Promise<LibraryField[] | null> =
       : [],
   );
 });
+
+// Which of a project's fields are shared through the field library, and whether the viewer may change
+// their definition (project_field_sharing: booleans and counts only). Keyed by field id. Null on a
+// database without the Oct 29 notes (batch 7) update.
+export const listProjectFieldSharing = cache(
+  async (projectId: string): Promise<Record<string, FieldSharing> | null> => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("project_field_sharing", { target_project: projectId });
+    if (result.error?.code === "PGRST202") return null;
+    const sharing: Record<string, FieldSharing> = {};
+    for (const r of rows(result, "field sharing")) {
+      sharing[r.field_id] = {
+        fieldId: r.field_id,
+        libraryFieldId: r.library_field_id,
+        isSource: r.is_source,
+        isShared: r.is_shared,
+        placementCount: r.placement_count,
+        definitionEditable: r.definition_editable,
+        definitionManageable: r.definition_manageable,
+      };
+    }
+    return sharing;
+  },
+);
 
 async function listFieldsForProjects(projectIds: string[]): Promise<FieldDef[]> {
   const supabase = await createClient();
