@@ -9,12 +9,20 @@ import { Assignee, EmptyCellHint } from "@/components/project/task-meta";
 import { DateRangePicker, SingleDatePicker } from "@/components/task/date-picker";
 import { PeopleList, PersonPicker } from "@/components/task/person-picker";
 import { useNotify } from "@/components/toast";
-import { loadSubtaskRows, setTaskRowExpanded } from "@/lib/actions";
+import { loadSubtaskRows, setTaskRowExpanded, type ActionResult } from "@/lib/actions";
 import type { Profile, SubtaskItem } from "@/lib/data";
 import { dayLabel } from "@/lib/date-input";
 import { LongTextEditor } from "@/components/long-text-editor";
 import { NumberInput } from "@/components/number-input";
-import { OPTION_COLOR_CLASSES, formatNumberValue, numberPrefixOf, type FieldDef, type FieldOption } from "@/lib/fields";
+import {
+  OPTION_COLOR_CLASSES,
+  formatNumberValue,
+  notANumberNote,
+  numberPrefixOf,
+  readNumberBox,
+  type FieldDef,
+  type FieldOption,
+} from "@/lib/fields";
 import { textValueLabel } from "@/lib/long-text";
 import { MAX_SUBTASK_DEPTH, subtasksByParent } from "@/lib/subtasks";
 import type { Json } from "@/lib/supabase/database.types";
@@ -544,8 +552,9 @@ export function InlineFieldCell({
   taskTitle: string;
   canEdit: boolean;
   display: ReactNode;
-  // JSON null clears the value.
-  onChange: (next: Json) => void;
+  // JSON null clears the value. The text editor waits for the returned result (useServerAction's run):
+  // a refused save keeps it open with what was typed.
+  onChange: (next: Json) => void | Promise<ActionResult | void>;
   onSectionChange: (sectionId: string | null) => void;
   // A text box is open (the row stops being draggable so text can be selected).
   onEditingChange?: (editing: boolean) => void;
@@ -585,6 +594,7 @@ export function InlineFieldCell({
       return (
         <InlineNumberCell
           label={label}
+          fieldName={field.name}
           symbol={numberPrefixOf(field)}
           value={value ?? null}
           display={display}
@@ -719,6 +729,7 @@ export function InlineFieldCell({
 // put the focus back on the cell. The field's symbol (item 49) sits inside the box.
 function InlineNumberCell({
   label,
+  fieldName,
   symbol = null,
   value,
   display,
@@ -726,12 +737,14 @@ function InlineNumberCell({
   onEditingChange,
 }: {
   label: string;
+  fieldName: string;
   symbol?: string | null;
   value: Json;
   display: ReactNode;
   onChange: (next: Json) => void;
   onEditingChange?: (editing: boolean) => void;
 }) {
+  const notify = useNotify();
   const [editing, setEditing] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const refocus = useRef(false);
@@ -745,10 +758,15 @@ function InlineNumberCell({
     setEditing(false);
     onEditingChange?.(false);
   };
-  const commit = (raw: string) => {
+  const commit = (raw: string, badInput: boolean) => {
     stop();
-    const next = raw.trim() === "" ? null : Number(raw);
-    if (next !== null && !Number.isFinite(next)) return;
+    // Text that isn't a number (the box then reads "") keeps the saved value instead of clearing it.
+    const entry = readNumberBox(raw, badInput);
+    if (entry.kind === "keep") {
+      notify(notANumberNote(fieldName, symbol));
+      return;
+    }
+    const next = entry.kind === "clear" ? null : entry.value;
     if (next !== (typeof value === "number" ? value : null)) onChange(next);
   };
 
@@ -761,7 +779,7 @@ function InlineNumberCell({
         aria-label={label}
         draggable={false}
         onFocus={(e) => e.currentTarget.select()}
-        onBlur={(e) => commit(e.currentTarget.value)}
+        onBlur={(e) => commit(e.currentTarget.value, e.currentTarget.validity.badInput)}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Enter") {
@@ -820,7 +838,7 @@ export function InlineLongTextCell({
   // A locked field (item 51): the read-only view says why.
   locked?: boolean;
   display: ReactNode;
-  onChange: (next: Json) => void;
+  onChange: (next: Json) => void | Promise<ActionResult | void>;
   onEditingChange?: (editing: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);

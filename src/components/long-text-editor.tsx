@@ -5,7 +5,16 @@ import { createPortal } from "react-dom";
 import { Lock, X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { LOCKED_FIELD_NOTE } from "@/lib/fields";
-import { initialDraft, isSaveShortcut, lengthCounter, longTextDraft, textLength, type LongTextDraft } from "@/lib/long-text";
+import { FOCUSABLE_SELECTOR, trappedTabTarget } from "@/lib/focus-trap";
+import {
+  initialDraft,
+  isSaveShortcut,
+  lengthCounter,
+  longTextDraft,
+  saveLongText,
+  textLength,
+  type LongTextDraft,
+} from "@/lib/long-text";
 
 // Oct 29 notes, batch 7, item 48: the pop-out editor for a text custom field, opened from a List cell and
 // from the task pane's field row. A large box that grows with the text (then scrolls), a character count
@@ -15,7 +24,12 @@ import { initialDraft, isSaveShortcut, lengthCounter, longTextDraft, textLength,
 // item 51).
 //
 // It is drawn on <body> (a List row hides off-screen content, and the full-screen pane sits at z-50), and
-// keeps its clicks, keys, and drags from reaching the row or the page it was opened from.
+// keeps its clicks, keys, and drags from reaching the row or the page it was opened from. Tab and
+// Shift+Tab stay inside it (the page behind can't be reached while it's open).
+//
+// Save waits for the server: the window stays open ("Saving…") until the value is stored, and a save
+// that's refused or fails (the field was locked meanwhile, a role change, a dropped connection) keeps
+// everything typed, with the reason above the buttons.
 export function LongTextEditor({
   fieldName,
   taskTitle,
@@ -32,8 +46,9 @@ export function LongTextEditor({
   readOnly?: boolean;
   // The field is locked (item 51): a read-only view says why.
   locked?: boolean;
-  // Only called when Save changes the value: the trimmed text, or null to clear the field.
-  onSave: (next: string | null) => void;
+  // Only called when Save changes the value: the trimmed text, or null to clear the field. Its result
+  // (useServerAction's run) decides whether the window closes: an error keeps it open with the draft.
+  onSave: (next: string | null) => void | Promise<{ error?: string } | void>;
   onClose: () => void;
 }) {
   const confirm = useConfirm();
@@ -42,14 +57,18 @@ export function LongTextEditor({
   const [opened] = useState(() => value);
   const [draft, setDraft] = useState(() => initialDraft(value));
   const state = longTextDraft(draft, opened);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   // While the "Discard your changes?" question is open, the editor ignores its own Escape and outside clicks.
   const asking = useRef(false);
   const openedAt = useRef(0);
 
   const dismiss = async () => {
-    if (asking.current) return;
+    // While a save is on its way the window waits for it (it closes itself, or shows why it couldn't).
+    if (asking.current || saving) return;
     if (readOnly || !state.dirty) {
       onClose();
       return;
@@ -66,10 +85,19 @@ export function LongTextEditor({
     if (discard) onClose();
     else textareaRef.current?.focus();
   };
-  const save = () => {
-    if (readOnly || !state.canSave) return;
-    onClose();
-    if (state.changed) onSave(state.next);
+  const save = async () => {
+    if (readOnly || !state.canSave || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    const outcome = await saveLongText(state, onSave);
+    if (outcome.close) {
+      onClose();
+      return;
+    }
+    // Refused or failed: everything typed is still here, with the reason.
+    setSaving(false);
+    setSaveError(outcome.error);
+    textareaRef.current?.focus();
   };
 
   // The window listener below always calls the latest dismiss.
@@ -92,9 +120,21 @@ export function LongTextEditor({
       textRef.current?.focus();
     }
     function onKey(e: globalThis.KeyboardEvent) {
-      if (e.key !== "Escape" || e.isComposing || e.defaultPrevented) return;
-      // The confirm question answers its own Escape.
+      if (e.isComposing || e.defaultPrevented) return;
+      // The confirm question answers its own keys.
       if (document.querySelector("[data-confirm-dialog]")) return;
+      if (e.key === "Tab") {
+        // Tab stays in this window: from the last control back to the first, and into it from behind.
+        const dialog = dialogRef.current;
+        if (!dialog) return;
+        const controls = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+        const target = trappedTabTarget(controls.length, controls.indexOf(document.activeElement as HTMLElement), e.shiftKey);
+        if (target === null) return;
+        e.preventDefault();
+        controls[target].focus();
+        return;
+      }
+      if (e.key !== "Escape") return;
       // Escape belongs to this window only, not to the pane or the List under it.
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -115,11 +155,19 @@ export function LongTextEditor({
       locked={locked}
       draft={draft}
       state={state}
+      saving={saving}
+      saveError={saveError}
+      dialogRef={dialogRef}
       textareaRef={textareaRef}
       textRef={textRef}
-      onDraftChange={setDraft}
-      onSave={save}
-      onCancel={onClose}
+      onDraftChange={(next) => {
+        setDraft(next);
+        setSaveError(null);
+      }}
+      onSave={() => void save()}
+      onCancel={() => {
+        if (!saving) onClose();
+      }}
       onDismiss={() => {
         // The second click of a double-click that opened the editor lands outside it: ignore it.
         if (performance.now() - openedAt.current < 350) return;
@@ -141,6 +189,9 @@ export function LongTextEditorView({
   locked = false,
   draft,
   state,
+  saving = false,
+  saveError = null,
+  dialogRef,
   textareaRef,
   textRef,
   onDraftChange,
@@ -155,6 +206,11 @@ export function LongTextEditorView({
   locked?: boolean;
   draft: string;
   state: LongTextDraft;
+  // The save is on its way: Save reads "Saving…", nothing can be changed or closed until it's back.
+  saving?: boolean;
+  // Why the last save didn't go through (the draft is kept).
+  saveError?: string | null;
+  dialogRef?: Ref<HTMLDivElement>;
   textareaRef?: Ref<HTMLTextAreaElement>;
   textRef?: Ref<HTMLDivElement>;
   onDraftChange: (draft: string) => void;
@@ -170,6 +226,7 @@ export function LongTextEditorView({
   const taskId = useId();
   const countId = useId();
   const hintId = useId();
+  const errorId = useId();
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (isSaveShortcut(e)) {
@@ -197,10 +254,12 @@ export function LongTextEditorView({
       onDragEnd={stop}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={taskId}
+        aria-busy={saving || undefined}
         className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl border border-zinc-200 bg-white text-sm shadow-xl"
       >
         <div className="flex items-start gap-2 px-5 pt-4">
@@ -221,6 +280,7 @@ export function LongTextEditorView({
           <button
             type="button"
             onClick={onCloseButton}
+            disabled={saving}
             aria-label="Close"
             data-tooltip="Close"
             className="btn-icon -mr-1 -mt-0.5"
@@ -246,8 +306,9 @@ export function LongTextEditorView({
               value={draft}
               rows={8}
               spellCheck
+              readOnly={saving}
               aria-labelledby={titleId}
-              aria-describedby={`${taskId} ${countId} ${hintId}`}
+              aria-describedby={`${taskId} ${countId} ${hintId}${saveError ? ` ${errorId}` : ""}`}
               aria-invalid={state.over > 0 ? true : undefined}
               onChange={(e) => onDraftChange(e.currentTarget.value)}
               onKeyDown={onKeyDown}
@@ -257,6 +318,17 @@ export function LongTextEditorView({
             />
           )}
         </div>
+
+        {saveError && !readOnly ? (
+          <p
+            id={errorId}
+            role="alert"
+            data-save-error=""
+            className="mx-5 mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-800"
+          >
+            {saveError} Your text is still here.
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 pb-4 pt-3">
           {readOnly ? (
@@ -286,11 +358,11 @@ export function LongTextEditorView({
               </button>
             ) : (
               <>
-                <button type="button" onClick={onCancel} className="btn-secondary">
+                <button type="button" onClick={onCancel} disabled={saving} className="btn-secondary">
                   Cancel
                 </button>
-                <button type="button" onClick={onSave} disabled={!state.canSave} className="btn-primary">
-                  Save
+                <button type="button" onClick={onSave} disabled={!state.canSave || saving} className="btn-primary">
+                  {saving ? "Saving…" : "Save"}
                 </button>
               </>
             )}

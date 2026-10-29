@@ -1342,7 +1342,8 @@ type RowEdit = {
   everyone: Profile[];
   sections: { id: string; name: string }[];
   assign: (task: ProjectTask, assigneeId: string | null) => void;
-  setField: (task: ProjectTask, field: FieldDef, value: Json) => void;
+  // Resolves with the save's result (the text editor keeps its draft when it's refused).
+  setField: (task: ProjectTask, field: FieldDef, value: Json) => Promise<ActionResult | void>;
   moveToSection: (task: ProjectTask, sectionId: string | null) => void;
   dates: (task: ProjectTask, edit: DateEdit, close: () => void) => void;
   // Owner / Admin here: may change locked fields' values (Oct 29 notes, batch 7).

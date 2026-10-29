@@ -87,3 +87,25 @@ export function textValueLabel(what: string, value: unknown, action: string): st
 export function isSaveShortcut(e: { key: string; metaKey: boolean; ctrlKey: boolean; altKey?: boolean }): boolean {
   return e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.altKey;
 }
+
+// What Save in the editor comes to: close, or stay open with the draft and why the save didn't go through.
+export type LongTextSaveOutcome = { close: true } | { close: false; error: string };
+
+// Said when the save itself failed (a dropped connection) without a reason from the server.
+export const LONG_TEXT_SAVE_FAILED = "Couldn’t save. Check your connection and try again.";
+
+// Save: when nothing changed it only closes; otherwise it waits for the save and closes only once it went
+// through. A refused save (the field was locked meanwhile, the person's role changed, the session ended)
+// or a failed one keeps the editor open with everything typed, and the reason.
+export async function saveLongText(
+  state: Pick<LongTextDraft, "changed" | "next">,
+  save: (next: string | null) => void | Promise<{ error?: string } | void>,
+): Promise<LongTextSaveOutcome> {
+  if (!state.changed) return { close: true };
+  try {
+    const result = await save(state.next);
+    return result && result.error ? { close: false, error: result.error } : { close: true };
+  } catch {
+    return { close: false, error: LONG_TEXT_SAVE_FAILED };
+  }
+}

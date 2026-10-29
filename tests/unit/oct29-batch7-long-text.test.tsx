@@ -13,16 +13,19 @@ import { FieldValueChips } from "@/components/project/field-chips";
 import { InlineFieldCell } from "@/components/project/inline-cells";
 import { PaneTextValue } from "@/components/task/task-fields";
 import { isCutOff } from "@/components/tooltip-layer";
+import { FOCUSABLE_SELECTOR, trappedTabTarget } from "@/lib/focus-trap";
 import type { ProjectTask } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
 import {
   MAX_TEXT_FIELD_LENGTH,
   TEXT_LABEL_LENGTH,
   TEXT_TOOLTIP_LENGTH,
+  LONG_TEXT_SAVE_FAILED,
   initialDraft,
   isSaveShortcut,
   lengthCounter,
   longTextDraft,
+  saveLongText,
   normalizeLineBreaks,
   textLabel,
   textLength,
@@ -329,4 +332,111 @@ test("pane row: a few lines with the full text on hover; a click opens the edito
   const none = render(<PaneTextValue fieldName="Brief" taskTitle="Launch" value={null} canEdit={false} onSave={noop} />);
   assert.doesNotMatch(none, /<button/);
   assert.equal(textOf(none), "—");
+});
+
+// Review fixes: a refused or failed save keeps what was typed; Tab stays inside the window.
+test("Save waits for the server: closes once stored, keeps the draft (with the reason) when refused or failed", async () => {
+  const saved: (string | null)[] = [];
+  const typed = longTextDraft("A brief of many lines", "Old brief");
+  assert.deepEqual(
+    await saveLongText(typed, async (next) => {
+      saved.push(next);
+      return {};
+    }),
+    { close: true },
+    "stored: the window closes",
+  );
+  assert.deepEqual(saved, ["A brief of many lines"]);
+
+  const locked = "Locked — only project Owners and Admins can change this field";
+  assert.deepEqual(await saveLongText(typed, async () => ({ error: locked })), { close: false, error: locked }, "refused: stays open");
+  assert.deepEqual(
+    await saveLongText(typed, async () => {
+      throw new Error("Failed to fetch");
+    }),
+    { close: false, error: LONG_TEXT_SAVE_FAILED },
+    "a dropped connection: stays open",
+  );
+  assert.deepEqual(await saveLongText(typed, () => undefined), { close: true }, "a plain callback");
+
+  let called = false;
+  const untouched = longTextDraft("Same", "Same");
+  assert.deepEqual(
+    await saveLongText(untouched, async () => {
+      called = true;
+    }),
+    { close: true },
+  );
+  assert.equal(called, false, "nothing changed: nothing is saved");
+});
+
+test("while saving the window says so and can't be changed or closed; a refused save shows why", () => {
+  const draft = "A brief";
+  const saving = render(
+    <LongTextEditorView
+      fieldName="Brief"
+      taskTitle="Spring flyer"
+      readOnly={false}
+      draft={draft}
+      state={longTextDraft(draft, null)}
+      saving
+      onDraftChange={noop}
+      onSave={noop}
+      onCancel={noop}
+      onDismiss={noop}
+      onCloseButton={noop}
+    />,
+  );
+  assert.equal(isDisabled(buttonTag(saving, "Saving…")), true);
+  assert.equal(isDisabled(buttonTag(saving, "Cancel")), true);
+  assert.match(saving, /<button[^>]*disabled=""[^>]*aria-label="Close"/);
+  assert.match(/<textarea[^>]*>/.exec(saving)![0], /readOnly=""/, "the text stays as sent");
+  assert.match(saving, /role="dialog"[^>]*aria-busy="true"/);
+
+  const refused = render(
+    <LongTextEditorView
+      fieldName="Brief"
+      taskTitle="Spring flyer"
+      readOnly={false}
+      draft={draft}
+      state={longTextDraft(draft, null)}
+      saveError="Your role in this project doesn’t allow that"
+      onDraftChange={noop}
+      onSave={noop}
+      onCancel={noop}
+      onDismiss={noop}
+      onCloseButton={noop}
+    />,
+  );
+  const alert = /<p id="([^"]+)" role="alert" data-save-error=""[^>]*>([^<]*)<\/p>/.exec(refused);
+  assert.ok(alert, "the reason, announced");
+  assert.equal(alert![2], "Your role in this project doesn’t allow that Your text is still here.");
+  assert.ok(refused.includes(`>${draft}</textarea>`), "the draft is still in the box");
+  assert.match(/<textarea[^>]*>/.exec(refused)![0], new RegExp(`aria-describedby="[^"]*${alert![1]}"`), "the box points at it");
+  assert.equal(isDisabled(buttonTag(refused, "Save")), false, "try again");
+  assert.doesNotMatch(editorView(draft, null), /data-save-error/);
+});
+
+test("the callers hand the save's result to the editor (List cell, pane row)", () => {
+  const read = (path: string) => readFileSync(path, "utf8");
+  assert.match(read("src/components/project/inline-cells.tsx"), /onSave=\{\(next\) => onChange\(next\)\}/);
+  assert.match(read("src/components/project/list-view.tsx"), /setField: \(task: ProjectTask, field: FieldDef, value: Json\) => Promise<ActionResult \| void>/);
+  assert.match(read("src/components/task/task-fields.tsx"), /onSave=\{\(next\) => save\(next\)\}/);
+  assert.match(read("src/components/toast.tsx"), /new Promise\(\(resolve\) =>/, "useServerAction's run settles with the result");
+});
+
+test("Tab stays inside the editor: last → first, first ← last, and into it from behind", () => {
+  assert.equal(trappedTabTarget(4, 3, false), 0, "Tab on the last control: back to the first");
+  assert.equal(trappedTabTarget(4, 0, true), 3, "Shift+Tab on the first: to the last");
+  assert.equal(trappedTabTarget(4, 1, false), null, "in between: the browser's order");
+  assert.equal(trappedTabTarget(4, 2, true), null);
+  assert.equal(trappedTabTarget(4, -1, false), 0, "focus behind the window: Tab brings it to the first");
+  assert.equal(trappedTabTarget(4, -1, true), 3, "and Shift+Tab to the last");
+  assert.equal(trappedTabTarget(1, 0, false), 0, "one control keeps the focus");
+  assert.equal(trappedTabTarget(0, -1, false), null, "nothing to focus");
+  assert.ok(FOCUSABLE_SELECTOR.includes("button:not([disabled])") && FOCUSABLE_SELECTOR.includes("textarea"));
+  assert.ok(FOCUSABLE_SELECTOR.includes("[tabindex]:not([tabindex='-1'])"), "the read-only text region");
+  const editor = readFileSync("src/components/long-text-editor.tsx", "utf8");
+  assert.match(editor, /e\.key === "Tab"/, "the window's key listener handles Tab");
+  assert.match(editor, /trappedTabTarget\(/);
 });

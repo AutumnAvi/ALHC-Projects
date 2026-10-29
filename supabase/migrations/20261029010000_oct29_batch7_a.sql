@@ -350,17 +350,22 @@ select public.alhc_patch_function(
 -- Track T2: 47 select options, 54 colors, 49 number symbol, 48 long text
 -- =================================================================================================
 
--- 47. Select fields need at least one option: a person can't create a single- or multi-select field
---     (project fields: not the section-bound Status; portfolio fields: single-select) with no options,
---     or save one so that it has none. guard_select_field_options() (invoker; one function for both
---     tables) checks client roles only, so system paths — imports, the copy engine (templates incl. the
---     seeded Creative Requests example, whose select fields have no options, Duplicate project) — keep
---     working, and a select field that already has no options can still be renamed or described.
+-- 47. Select fields need at least one option: a person can't save a single- or multi-select field
+--     (project fields: not the section-bound Status; portfolio fields: single-select) so that it has no
+--     options. The app's editors and actions also refuse creating one without options; the database
+--     guards updates only (guard_select_field_options(), invoker, one function for both tables), so the
+--     release still on main — whose portfolio Add field always creates a single-select with no options
+--     and adds them on the row, and whose project Add field / Choose from library can too — keeps
+--     working until this release is merged (a later migration adds the insert check). Client roles
+--     only, so system paths — imports, the copy engine (templates incl. the seeded Creative Requests
+--     example, whose select fields have no options, Duplicate project) — keep working, and a select field
+--     that already has no options can still be renamed or described.
 -- 54. More option colors: a 20-color palette (option_colors()) for field options, portfolio field
 --     options, and tags; tags keep the picked color in the new tags.palette_color and the nearest of
 --     the original nine in tags.color (whose CHECK can't be widened additively).
 -- 49. Number field symbol: custom_fields.number_prefix and portfolio_fields.number_prefix (number fields
---     only; 1–4 characters, trimmed, no control characters or line breaks) shown before the value
+--     only; 1–4 characters, trimmed, no control characters, line breaks, or invisible formatting
+--     characters, no digits or plus / minus signs) shown before the value
 --     everywhere (format_number_value(); task_field_text and rule_field_value_label use it, so Inbox
 --     field changes, notification emails, and rule placeholders / emails / run logs show "$1,250").
 --     The stored value stays a plain number. Templates and Duplicate project keep the symbol.
@@ -370,15 +375,20 @@ select public.alhc_patch_function(
 -- ---------------------------------------------------------------------------------------------------
 -- 47. Select fields need at least one option.
 --
--- One BEFORE INSERT / UPDATE trigger function on custom_fields and portfolio_fields (bound_to_sections
--- is read through to_jsonb, so the same body serves portfolio_fields, which has no such column).
--- Refused for a client role (a person through the API):
---   * inserting a select field with no options;
---   * an update that leaves a select field with no options, unless it already was that same select
---     field with no options (older fields and template copies stay renameable; they just can't be
---     emptied once they have options).
--- Removed fields (deleted_at set) aren't checked. Definer code (import_batch, the copy engine, library
--- placements) runs as its owner, not a client role, so it is never refused here.
+-- One BEFORE UPDATE trigger function on custom_fields and portfolio_fields (bound_to_sections is read
+-- through to_jsonb, so the same body serves portfolio_fields, which has no such column). Refused for a
+-- client role (a person through the API): an update that leaves a select field with no options, unless
+-- it already was that same select field with no options (older fields and template copies stay
+-- renameable and removable; they just can't be emptied once they have options). Removing a field is an
+-- update like any other: emptying a select in the same update that removes it is refused too, so it
+-- can't come back (deleted_at cleared) empty. Definer code (import_batch, the copy engine, library
+-- placements and their sync) runs as its owner, not a client role, so it is never refused here.
+--
+-- Inserts aren't checked yet: the release still on main (live until this release is merged) creates
+-- portfolio single-selects with no options and adds them afterwards, and its project Add field / Choose
+-- from library can create one too. This release's editors and createField / createPortfolioField refuse
+-- an option-less select (selectOptionsProblem). The body already handles an insert (refused), so the
+-- next migration only adds a BEFORE INSERT trigger on both tables.
 -- ---------------------------------------------------------------------------------------------------
 
 create or replace function public.guard_select_field_options()
@@ -389,7 +399,7 @@ as $$
 declare
   new_bound boolean := coalesce((to_jsonb(new) ->> 'bound_to_sections')::boolean, false);
 begin
-  if not public.is_client_role() or new.deleted_at is not null then
+  if not public.is_client_role() then
     return new;
   end if;
   if new.field_type not in ('single_select', 'multi_select') or new_bound then
@@ -415,11 +425,11 @@ $$;
 revoke all on function public.guard_select_field_options() from public, anon, authenticated;
 
 create trigger custom_fields_07_select_options
-  before insert or update on public.custom_fields
+  before update on public.custom_fields
   for each row execute function public.guard_select_field_options();
 
 create trigger portfolio_fields_07_select_options
-  before insert or update on public.portfolio_fields
+  before update on public.portfolio_fields
   for each row execute function public.guard_select_field_options();
 
 -- ---------------------------------------------------------------------------------------------------
@@ -563,13 +573,17 @@ select public.alhc_patch_function(
 -- 49. Number field symbol (a prefix such as $, €, #, ₪ shown before a number field's value).
 --
 --   * custom_fields.number_prefix / portfolio_fields.number_prefix: null = none. CHECK: number fields
---     only, 1–4 characters (code points), no surrounding spaces, no control characters or line breaks.
---     The invoker trigger normalize_number_prefix() trims surrounding spaces first and turns an empty
---     symbol into null (both tables).
+--     only, 1–4 characters (code points), no surrounding spaces, no control characters, line breaks, or
+--     Unicode format characters (Cf: bidi overrides, zero-width characters, the byte order mark), and
+--     no digits or plus / minus signs (so a symbol never reads as part of the number). The invoker
+--     trigger normalize_number_prefix() trims surrounding spaces first — exactly the characters
+--     JavaScript's trim() removes — and turns an empty symbol into null (both tables). The three
+--     character classes are NUMBER_PREFIX_SPACE / _INVISIBLE / _NUMERIC in src/lib/fields.ts, written
+--     by codeRangeClass(); the unit test checks they're identical here.
 --   * public.format_number_value(value, prefix): the one SQL rendering of a number, mirroring
 --     formatNumberValue() in src/lib/fields.ts — grouped with commas, at most three decimals (rounded
 --     half away from zero), the minus sign before the symbol ("-$1,250.5"), and a space after a symbol
---     that ends in a letter ("USD 1,250").
+--     that ends in a letter, a period, or a comma ("USD 1,250", "Rs. 1,250").
 --   * task_field_text() (Inbox field changes, notification emails, rule placeholders {{field.…}},
 --     Send email's "include a field") and rule_field_value_label() (rule run logs, the dry run) render
 --     numbers through it. Numbers there are now grouped like everywhere in the app ("1,250").
@@ -588,8 +602,11 @@ alter table public.custom_fields add constraint custom_fields_number_prefix_chec
   or (
     field_type = 'number'
     and char_length(number_prefix) between 1 and 4
-    and number_prefix = btrim(number_prefix)
-    and number_prefix !~ '[\x01-\x1f\x7f-\x9f\u2028\u2029]'
+    -- Trimmed (normalize_number_prefix), no line breaks / controls / invisible formatting, and no
+    -- digits or plus / minus signs (NUMBER_PREFIX_SPACE / _INVISIBLE / _NUMERIC in src/lib/fields.ts).
+    and number_prefix !~ '^[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]|[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]$'
+    and number_prefix !~ '[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]'
+    and number_prefix !~ '[\u002d\u002b\u0030-\u0039\u00b1\u0660-\u0669\u06f0-\u06f9\u2010-\u2015\u207a-\u207b\u208a-\u208b\u2212-\u2213\ufe62-\ufe63\uff0b\uff0d\uff10-\uff19]'
   )
 );
 
@@ -598,8 +615,11 @@ alter table public.portfolio_fields add constraint portfolio_fields_number_prefi
   or (
     field_type = 'number'
     and char_length(number_prefix) between 1 and 4
-    and number_prefix = btrim(number_prefix)
-    and number_prefix !~ '[\x01-\x1f\x7f-\x9f\u2028\u2029]'
+    -- Trimmed (normalize_number_prefix), no line breaks / controls / invisible formatting, and no
+    -- digits or plus / minus signs (NUMBER_PREFIX_SPACE / _INVISIBLE / _NUMERIC in src/lib/fields.ts).
+    and number_prefix !~ '^[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]|[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]$'
+    and number_prefix !~ '[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]'
+    and number_prefix !~ '[\u002d\u002b\u0030-\u0039\u00b1\u0660-\u0669\u06f0-\u06f9\u2010-\u2015\u207a-\u207b\u208a-\u208b\u2212-\u2213\ufe62-\ufe63\uff0b\uff0d\uff10-\uff19]'
   )
 );
 
@@ -614,8 +634,9 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  -- Surrounding spaces (incl. no-break and ideographic ones) go; an empty symbol is no symbol.
-  new.number_prefix := nullif(btrim(new.number_prefix, E' \t\n\r\u00a0\u2007\u202f\u3000'), '');
+  -- Surrounding spaces go — exactly what JavaScript's trim() removes (NUMBER_PREFIX_SPACE in
+  -- src/lib/fields.ts: Unicode spaces, tab / line breaks, the byte order mark); empty = no symbol.
+  new.number_prefix := nullif(regexp_replace(new.number_prefix, '^[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]+|[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]+$', '', 'g'), '');
   return new;
 end;
 $$;
@@ -640,8 +661,8 @@ set search_path = ''
 as $$
   select case when r.n < 0 then '-' else '' end
     || coalesce(prefix, '')
-    -- A symbol ending in a letter (USD, Rs, CHF) gets a space before the digits.
-    || case when prefix ~ '[A-Za-z]$' then ' ' else '' end
+    -- A symbol ending in a letter, a period, or a comma (USD, Rs., No.) gets a space before the digits.
+    || case when prefix ~ '[A-Za-z.,]$' then ' ' else '' end
     || regexp_replace(trunc(abs(r.n))::text, '(\d)(?=(\d{3})+$)', '\1,', 'g')
     || coalesce('.' || nullif(rtrim(split_part((abs(r.n) - trunc(abs(r.n)))::text, '.', 2), '0'), ''), '')
   from (select round(value, 3) as n) r

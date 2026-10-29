@@ -3,8 +3,8 @@
 import { useOptimistic, useState } from "react";
 import { CalendarDays, Check, ChevronDown, Plus, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
-import { useServerAction } from "@/components/toast";
-import { moveTask, setFieldValue } from "@/lib/actions";
+import { useNotify, useServerAction } from "@/components/toast";
+import { moveTask, setFieldValue, type ActionResult } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { MenuItem, Popover } from "@/components/popover";
 import { PILL, isChoiceField } from "@/components/project/field-chips";
@@ -14,7 +14,9 @@ import {
   OPTION_COLOR_CLASSES,
   fieldChips,
   fieldValueEditable,
+  notANumberNote,
   numberPrefixOf,
+  readNumberBox,
   repeatedSharedFieldIds,
   type FieldDef,
   type FieldOption,
@@ -131,6 +133,7 @@ function FieldRow({
   sections: { id: string; name: string }[];
 }) {
   const [, run] = useServerAction();
+  const notify = useNotify();
   const dateText = useDateText();
   // Toggle-style editors build on this value, so quick successive clicks don't overwrite each other.
   const [value, setValue] = useOptimistic(savedValue);
@@ -208,9 +211,14 @@ function FieldRow({
             key={String(value ?? "")}
             defaultValue={typeof value === "number" ? value : ""}
             onBlur={(e) => {
-              const raw = e.currentTarget.value;
-              const next = raw === "" ? null : Number(raw);
-              if (next !== null && !Number.isFinite(next)) return;
+              // Text that isn't a number (the box then reads "") keeps the saved value instead of clearing it.
+              const entry = readNumberBox(e.currentTarget.value, e.currentTarget.validity.badInput);
+              if (entry.kind === "keep") {
+                e.currentTarget.value = typeof value === "number" ? String(value) : "";
+                notify(notANumberNote(field.name, numberPrefixOf(field)));
+                return;
+              }
+              const next = entry.kind === "clear" ? null : entry.value;
               if (next !== value) save(next);
             }}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
@@ -404,7 +412,8 @@ export function PaneTextValue({
   canEdit: boolean;
   // A locked field (item 51): the read-only view says why.
   locked?: boolean;
-  onSave: (next: string | null) => void;
+  // Its result decides whether the editor closes (a refused save keeps what was typed).
+  onSave: (next: string | null) => void | Promise<ActionResult | void>;
 }) {
   const [open, setOpen] = useState(false);
   const text = typeof value === "string" ? value : "";

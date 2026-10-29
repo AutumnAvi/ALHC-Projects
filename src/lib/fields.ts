@@ -402,15 +402,106 @@ export const MAX_FIELD_DESCRIPTION = 2000;
 
 // Oct 29 notes, item 49: a number field's symbol (custom_fields.number_prefix, portfolio_fields'
 // too). Mirrors the CHECKs and public.normalize_number_prefix(): number fields only, surrounding spaces
-// trimmed (empty = none), 1–4 characters counted as code points, no control characters or line breaks.
+// trimmed (empty = none), 1–4 characters counted as code points, no line breaks, control characters, or
+// invisible formatting characters, and no digits or plus / minus signs (a symbol must never read as part
+// of the number: "1" before 250 would read "1250", "-" before 40 would read "-40").
 export const MAX_NUMBER_PREFIX = 4;
 export const NUMBER_PREFIX_EXAMPLES = ["$", "€", "£", "#", "₪"] as const;
-// C0 / DEL / C1 controls and the Unicode line and paragraph separators.
-const PREFIX_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+// The character sets, written once as code point ranges. The migration's regular expressions
+// (normalize_number_prefix() and the number_prefix CHECKs) are these same lists written by
+// codeRangeClass(…, "sql"); the unit test checks that both sides stay identical.
+export type CodeRange = readonly [number, number];
+// What surrounds a symbol and is trimmed: exactly what JavaScript's String.prototype.trim() removes
+// (tab, line feed, vertical tab, form feed, carriage return, the Unicode spaces, the line and paragraph
+// separators, and the byte order mark).
+export const NUMBER_PREFIX_SPACE: readonly CodeRange[] = [
+  [0x0009, 0x000d],
+  [0x0020, 0x0020],
+  [0x00a0, 0x00a0],
+  [0x1680, 0x1680],
+  [0x2000, 0x200a],
+  [0x2028, 0x2029],
+  [0x202f, 0x202f],
+  [0x205f, 0x205f],
+  [0x3000, 0x3000],
+  [0xfeff, 0xfeff],
+];
+// Never inside a symbol: control characters (C0, DEL, C1), the line and paragraph separators, and every
+// Unicode format character (category Cf: bidi overrides and isolates, zero-width spaces and joiners, the
+// soft hyphen, the byte order mark, …), which reorder or hide what's around them (a right-to-left
+// override before 1,250 makes it read "052,1").
+export const NUMBER_PREFIX_INVISIBLE: readonly CodeRange[] = [
+  [0x0000, 0x001f],
+  [0x007f, 0x009f],
+  [0x00ad, 0x00ad],
+  [0x0600, 0x0605],
+  [0x061c, 0x061c],
+  [0x06dd, 0x06dd],
+  [0x070f, 0x070f],
+  [0x0890, 0x0891],
+  [0x08e2, 0x08e2],
+  [0x180e, 0x180e],
+  [0x200b, 0x200f],
+  [0x2028, 0x202e],
+  [0x2060, 0x2064],
+  [0x2066, 0x206f],
+  [0xfeff, 0xfeff],
+  [0xfff9, 0xfffb],
+  [0x110bd, 0x110bd],
+  [0x110cd, 0x110cd],
+  [0x13430, 0x1343f],
+  [0x1bca0, 0x1bca3],
+  [0x1d173, 0x1d17a],
+  [0xe0001, 0xe0001],
+  [0xe0020, 0xe007f],
+];
+// Never inside a symbol: digits (ASCII, Arabic-Indic, extended Arabic-Indic, full-width) and plus /
+// minus signs and dashes, which would read as part of the number. The hyphen-minus comes first: Postgres
+// reads it as a range's "-" anywhere else in a bracket expression, even written as an escape.
+export const NUMBER_PREFIX_NUMERIC: readonly CodeRange[] = [
+  [0x002d, 0x002d],
+  [0x002b, 0x002b],
+  [0x0030, 0x0039],
+  [0x00b1, 0x00b1],
+  [0x0660, 0x0669],
+  [0x06f0, 0x06f9],
+  [0x2010, 0x2015],
+  [0x207a, 0x207b],
+  [0x208a, 0x208b],
+  [0x2212, 0x2213],
+  [0xfe62, 0xfe63],
+  [0xff0b, 0xff0b],
+  [0xff0d, 0xff0d],
+  [0xff10, 0xff19],
+];
+
+// A bracket expression's inside for the ranges ("\u0009-\u000d\u0020…"). JavaScript (with the u flag)
+// writes a code point above U+FFFF as \u{…}, Postgres's regular expressions as \U followed by 8 digits.
+export function codeRangeClass(ranges: readonly CodeRange[], flavor: "js" | "sql"): string {
+  if (ranges.some(([from, to], index) => index > 0 && (from === 0x2d || to === 0x2d))) {
+    throw new Error("A hyphen-minus can only start a bracket expression");
+  }
+  const one = (cp: number) =>
+    cp <= 0xffff
+      ? `\\u${cp.toString(16).padStart(4, "0")}`
+      : flavor === "js"
+        ? `\\u{${cp.toString(16)}}`
+        : `\\U${cp.toString(16).padStart(8, "0")}`;
+  return ranges.map(([from, to]) => (from === to ? one(from) : `${one(from)}-${one(to)}`)).join("");
+}
+
+const PREFIX_SPACE_CLASS = codeRangeClass(NUMBER_PREFIX_SPACE, "js");
+const PREFIX_EDGE_SPACE = new RegExp(`^[${PREFIX_SPACE_CLASS}]+|[${PREFIX_SPACE_CLASS}]+$`, "gu");
+const PREFIX_INVISIBLE = new RegExp(`[${codeRangeClass(NUMBER_PREFIX_INVISIBLE, "js")}]`, "u");
+const PREFIX_NUMERIC = new RegExp(`[${codeRangeClass(NUMBER_PREFIX_NUMERIC, "js")}]`, "u");
+
+export const NUMBER_PREFIX_INVISIBLE_PROBLEM = "A symbol can’t contain line breaks, control characters, or invisible characters";
+export const NUMBER_PREFIX_NUMERIC_PROBLEM = "A symbol can’t contain digits or + / − signs (they’d read as part of the number)";
 
 // The symbol as it will be stored: trimmed, or null when there is none.
 export function normalizeNumberPrefix(raw: string | null | undefined): string | null {
-  const trimmed = (raw ?? "").trim();
+  const trimmed = (raw ?? "").replace(PREFIX_EDGE_SPACE, "");
   return trimmed === "" ? null : trimmed;
 }
 
@@ -418,18 +509,39 @@ export function normalizeNumberPrefix(raw: string | null | undefined): string | 
 export function numberPrefixProblem(raw: string | null | undefined): string | null {
   const prefix = normalizeNumberPrefix(raw);
   if (prefix === null) return null;
-  if (PREFIX_FORBIDDEN.test(prefix)) return "A symbol can’t contain line breaks or control characters";
+  if (PREFIX_INVISIBLE.test(prefix)) return NUMBER_PREFIX_INVISIBLE_PROBLEM;
+  if (PREFIX_NUMERIC.test(prefix)) return NUMBER_PREFIX_NUMERIC_PROBLEM;
   if ([...prefix].length > MAX_NUMBER_PREFIX) return `A symbol is ${MAX_NUMBER_PREFIX} characters at most`;
   return null;
 }
 
-// "1,250" with its symbol: "$1,250", "-$40" (the sign first), "USD 1,000" (a space after a symbol that
-// ends in a letter). Mirrors public.format_number_value()'s placement of the symbol.
+// "1,250" with its symbol: "$1,250", "-$40" (the sign first), "USD 1,000" and "Rs. 1,000" (a space after
+// a symbol that ends in a letter, a period, or a comma, so a symbol ending in "." never makes 250 read as
+// a decimal). Mirrors public.format_number_value()'s placement of the symbol.
 export function prefixNumberText(text: string, prefix: string | null | undefined): string {
   const symbol = normalizeNumberPrefix(prefix);
   if (!symbol) return text;
-  const spaced = /[A-Za-z]$/.test(symbol) ? `${symbol} ` : symbol;
+  const spaced = /[A-Za-z.,]$/.test(symbol) ? `${symbol} ` : symbol;
   return text.startsWith("-") ? `-${spaced}${text.slice(1)}` : `${spaced}${text}`;
+}
+
+// What a number box holds when it loses focus: an <input type="number"> reports "" both when it was
+// emptied and when its text isn't a number (validity.badInput: "1-2", or "$100" typed or pasted where the
+// browser takes any text). Only an emptied box clears the value; text that isn't a number keeps the saved
+// value (the box puts it back and says why: notANumberNote).
+export type NumberBoxEntry = { kind: "keep" } | { kind: "clear" } | { kind: "set"; value: number };
+export function readNumberBox(raw: string, badInput: boolean): NumberBoxEntry {
+  if (badInput) return { kind: "keep" };
+  const text = raw.trim();
+  if (text === "") return { kind: "clear" };
+  const value = Number(text);
+  return Number.isFinite(value) ? { kind: "set", value } : { kind: "keep" };
+}
+
+// Said when a number box's text wasn't a number and the saved value was kept.
+export function notANumberNote(fieldName: string, symbol?: string | null): string {
+  const sign = normalizeNumberPrefix(symbol);
+  return `${fieldName} wasn’t changed: type a number${sign ? ` (the ${sign} is added for you)` : ""}.`;
 }
 
 // The one way a number value reads in the app: grouped with commas, at most three decimals, and the
@@ -458,7 +570,9 @@ export function hasOptions(field: Pick<FieldDef, "fieldType" | "boundToSections"
 }
 
 // Oct 29 notes, item 47: a single- or multi-select field (not the section-bound Status) needs at
-// least one option — the editors, the actions, and the database (`guard_select_field_options`) agree.
+// least one option — the editors and the actions refuse creating or saving one without; the database
+// (`guard_select_field_options`) refuses emptying one (creating is checked there once the release
+// before this one, whose Add field can create one, is gone).
 export const SELECT_NEEDS_OPTION = "Add at least one option";
 
 // Why a select field can't be saved as drafted, or null. `optionCount` = the options in the list,
