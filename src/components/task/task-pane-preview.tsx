@@ -3,6 +3,7 @@
 import { Check, UserRound } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Skeleton } from "@/components/ui";
+import { completeModeLabel } from "@/lib/approval-complete";
 import { dayLabel } from "@/lib/date-input";
 import { OPTION_COLOR_CLASSES } from "@/lib/fields";
 import { formatRequestLabel } from "@/lib/request-numbers";
@@ -36,7 +37,7 @@ export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
             }`}
           >
             <Check className="size-4" strokeWidth={2.5} aria-hidden />
-            {seed.completed ? "Completed" : seed.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
+            {seed.completed ? "Completed" : completeModeLabel(seed.completeMode ?? "complete", seed.kind)}
           </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -57,7 +58,7 @@ export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
         </p>
 
         <dl className={`mt-3 ${PANE_FIELDS}`}>
-          <dt className={PANE_LABEL}>{seed.kind === "approval" ? "Approver" : "Assignee"}</dt>
+          <dt className={PANE_LABEL}>Assignee</dt>
           <dd className="flex min-h-8 min-w-0 items-center gap-2 px-1">
             {seed.assignee ? (
               <>

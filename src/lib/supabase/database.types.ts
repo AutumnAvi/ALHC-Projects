@@ -5349,6 +5349,10 @@ export type Database = {
         Args: { target_task: string };
         Returns: Json;
       };
+      task_approval_states: {
+        Args: { task_ids: string[] };
+        Returns: Json;
+      };
       set_task_approvers: {
         Args: { target_task: string; approvers: string[]; approval_mode?: string; approval_due?: string | null };
         Returns: Json;

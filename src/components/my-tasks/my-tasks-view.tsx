@@ -21,7 +21,6 @@ import {
 import { displayName } from "@/components/avatar";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
-import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { Segmented } from "@/components/project/view-chrome";
@@ -29,7 +28,8 @@ import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard"
 import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
-import { BlockedToggle } from "@/components/task/blockers-popover";
+import { RowCompleteControl } from "@/components/task/row-complete-control";
+import { useApprovalShortcut } from "@/components/task/approval-action";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -327,6 +327,7 @@ export function MyTasksView({
     ...(completed.length > 0 ? [{ key: "completed", title: "Recently completed", tasks: completed }] : []),
   ];
   const tasksById = new Map([...openTasks, ...completed].map((t) => [t.id, t]));
+  const approvalShortcut = useApprovalShortcut();
   const shownIds = (key: string, list: { id: string }[]) => list.slice(0, pages.limit(key)).map((task) => task.id);
   const selection = useTaskSelection(
     groups.flatMap((g) => shownIds(g.key, g.tasks)),
@@ -364,6 +365,9 @@ export function MyTasksView({
         return task ? isDone(task) : true;
       });
       if (next) {
+        // One approval task the viewer doesn't approve: its approval step instead (Oct 29 notes, batch 7).
+        const only = ids.length === 1 ? tasksById.get(ids[0]) : undefined;
+        if (only && approvalShortcut({ ...only, completedAt: isDone(only) ? (only.completedAt ?? "done") : null }, seed(only))) return;
         // Blocked tasks can't be completed: say so and leave them out (Oct 27 notes, batch 6).
         const listed = ids.flatMap((id) => {
           const task = tasksById.get(id);
@@ -1212,17 +1216,16 @@ function MyTaskRow({
         onToggle={() => onToggleExpanded?.()}
         className="-mr-1"
       />
-      {blocked > 0 ? (
-        <BlockedToggle taskId={task.id} title={task.title} count={blocked} />
-      ) : (
-        <CompleteToggle
-          kind={task.kind}
-          completed={done}
-          readOnly={!task.canEdit}
-          onToggle={() => onToggle(task)}
-          label={kindToggleLabel(task.kind, task.title, done)}
-        />
-      )}
+      {/* My tasks are assigned to the viewer: an approval task they don't approve is theirs to send. */}
+      <RowCompleteControl
+        task={task}
+        completed={done}
+        readOnly={!task.canEdit}
+        assignedToMe
+        blocked={blocked}
+        seed={seedThis}
+        onToggle={() => onToggle(task)}
+      />
       <RowTitle
         taskId={task.id}
         title={task.title}
@@ -1375,19 +1378,15 @@ function MySubtaskRow({
       style={{ paddingLeft: `${MY_SUBTASK_BASE_REM + depth * 1.5}rem` }}
     >
       <ExpandToggle expandable={row.hasChildren} expanded={row.expanded} title={subtask.title} onToggle={() => handlers.expand(subtask.id)} />
-      {blocked > 0 ? (
-        <BlockedToggle taskId={subtask.id} title={subtask.title} count={blocked} size="sm" />
-      ) : (
-        <CompleteToggle
-          size="sm"
-          kind={subtask.kind}
-          completed={done}
-          readOnly={!canEdit}
-          disabled={subtask.kind === "approval"}
-          onToggle={() => handlers.toggle(subtask)}
-          label={kindToggleLabel(subtask.kind, subtask.title, done)}
-        />
-      )}
+      <RowCompleteControl
+        task={subtask}
+        completed={done}
+        readOnly={!canEdit}
+        blocked={blocked}
+        size="sm"
+        seed={seed}
+        onToggle={() => handlers.toggle(subtask)}
+      />
       <RowTitle
         taskId={subtask.id}
         title={displayTaskTitle(subtask.title, subtask.requestLabel)}
@@ -1413,7 +1412,6 @@ function MySubtaskRow({
           assignee={assignee}
           people={profiles}
           canEdit={canEdit && profiles.length > 0}
-          approver={subtask.kind === "approval"}
           showName={false}
           onChange={(assigneeId) => handlers.assign(subtask, assigneeId)}
         />
@@ -1445,6 +1443,8 @@ function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId:
       dueOn: item.dueOn,
       projectName: item.projectName ?? (item.projectId ? undefined : "Private"),
       kind: item.isApprovalTask ? "approval" : undefined,
+      // Waiting on the viewer's decision: the pane's button is Approve (Oct 29 notes, batch 7).
+      completeMode: item.isApprovalTask ? "approve" : undefined,
     });
   const prefetch = useTaskPrefetch(item.taskId, seed);
   const open = openTaskId === item.taskId;

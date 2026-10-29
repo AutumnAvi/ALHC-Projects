@@ -214,6 +214,9 @@ export type ProjectTask = {
   approvalPaused?: boolean;
   // A pending round waits on the viewer's decision.
   approvalWaitingOnMe?: boolean;
+  // The viewer is one of its approvers (Oct 29 notes, batch 7: only approvers complete an approval task;
+  // everyone else's complete control is "Ready for approval"). Missing = not known.
+  approvalIsApprover?: boolean;
   // Active tag links (ids; look names and colors up in listTags()).
   tagIds: string[];
   // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
@@ -728,6 +731,7 @@ function projectTasksFromCards(data: Json): ProjectTask[] {
       approvalStatus: parseTaskKind(card.kind) === "approval" ? (parseApprovalTaskStatus(card.approval_status) ?? "not_sent") : null,
       approvalPaused: card.approval_paused === true,
       approvalWaitingOnMe: card.approval_waiting_on_me === true,
+      approvalIsApprover: card.approval_is_approver === true,
       tagIds: Array.isArray(card.tag_ids) ? card.tag_ids.filter((tagId): tagId is string => typeof tagId === "string") : [],
       commentCount: typeof card.comment_count === "number" ? card.comment_count : 0,
       attachmentCount: typeof card.attachment_count === "number" ? card.attachment_count : 0,
@@ -1268,6 +1272,12 @@ export type SubtaskItem = {
   requestLabel?: RequestLabel | null;
   // Open blockers (the completion check's count; Oct 27 notes, batch 6). Missing = not loaded.
   blockedBy?: number;
+  // Approval subtasks (Oct 29 notes, batch 7): the latest round's status and the viewer's part in it, so
+  // the row draws the right complete control. Missing = not loaded.
+  approvalStatus?: ApprovalTaskStatus | null;
+  approvalPaused?: boolean;
+  approvalWaitingOnMe?: boolean;
+  approvalIsApprover?: boolean;
 };
 
 const SUBTASK_COLUMNS = "id, parent_task_id, title, completed_at, assignee_id, start_on, due_on, kind, subtask_order";
@@ -1324,7 +1334,7 @@ export const listSubtaskTrees = cache(async (rootIds: string[], projectId?: stri
   );
   const blocked = await openBlockerCounts(supabase, list.filter((t) => !t.completed_at).map((t) => t.id));
   const items = toSubtaskItems(list, list).map((item) => ({ ...item, blockedBy: blocked.get(item.id) ?? 0 }));
-  return withRequestLabels(items, projectId);
+  return withRequestLabels(await withSubtaskApprovals(supabase, items), projectId);
 });
 
 // Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).
@@ -1630,7 +1640,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       ? supabase.from("forms").select("title").eq("id", submission.form_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     early,
-    withRequestLabels(toSubtaskItems(subtaskRows, grandchildren)),
+    withSubtaskApprovals(supabase, toSubtaskItems(subtaskRows, grandchildren)).then((items) => withRequestLabels(items)),
   ]);
   const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
 
@@ -2134,6 +2144,9 @@ export type MyTask = {
   subtaskDoneCount?: number;
   approvalStatus?: ApprovalTaskStatus | null;
   approvalPaused?: boolean;
+  // Oct 29 notes (batch 7): a pending round waits on the viewer, and whether they approve it.
+  approvalWaitingOnMe?: boolean;
+  approvalIsApprover?: boolean;
   // A subtask's top-level task (its expanded tree loads by that); null for a top-level task.
   rootTaskId?: string | null;
 };
@@ -6665,11 +6678,7 @@ async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask
   const [blocked, children, states, roots] = await Promise.all([
     openBlockerCounts(supabase, ids),
     supabase.from("tasks").select("parent_task_id, completed_at").in("parent_task_id", ids).is("deleted_at", null),
-    Promise.all(
-      approvalIds.slice(0, 200).map((taskId) =>
-        supabase.rpc("task_approval_state", { target_task: taskId }).then((r) => [taskId, r.data] as const),
-      ),
-    ),
+    approvalRowStates(supabase, approvalIds),
     supabase.from("tasks").select("id, root_task_id").in("id", ids).not("root_task_id", "is", null),
   ]);
   for (const [taskId, count] of blocked) extras.set(taskId, { ...extras.get(taskId), blockedBy: count });
@@ -6683,15 +6692,53 @@ async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask
       subtaskDoneCount: (prev.subtaskDoneCount ?? 0) + (c.completed_at ? 1 : 0),
     });
   }
-  for (const [taskId, state] of states) {
-    const value = state && typeof state === "object" && !Array.isArray(state) ? (state as Record<string, Json>) : {};
-    extras.set(taskId, {
-      ...extras.get(taskId),
-      approvalStatus: parseApprovalTaskStatus(value.status) ?? "not_sent",
-      approvalPaused: value.paused === true,
-    });
-  }
+  for (const [taskId, state] of states) extras.set(taskId, { ...extras.get(taskId), ...state });
   return extras;
+}
+
+// Oct 29 notes (batch 7, item 52): what an approval task's complete control needs to know — the latest
+// round's status, paused, whether it waits on the viewer, and whether the viewer approves it. One call
+// (task_approval_states); a database without it asks task_approval_state per task (at most 200), and an
+// older one leaves the viewer's part unknown.
+type ApprovalRowState = Pick<SubtaskItem, "approvalStatus" | "approvalPaused" | "approvalWaitingOnMe" | "approvalIsApprover">;
+
+function approvalRowState(value: Json | undefined): ApprovalRowState {
+  const state = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, Json>) : {};
+  return {
+    approvalStatus: parseApprovalTaskStatus(state.status) ?? "not_sent",
+    approvalPaused: state.paused === true,
+    approvalWaitingOnMe: state.waiting_on_me === true,
+    approvalIsApprover: typeof state.is_approver === "boolean" ? state.is_approver : undefined,
+  };
+}
+
+async function approvalRowStates(supabase: ServerClient, taskIds: string[]): Promise<Map<string, ApprovalRowState>> {
+  const states = new Map<string, ApprovalRowState>();
+  const ids = [...new Set(taskIds)];
+  if (ids.length === 0) return states;
+  for (let i = 0; i < ids.length; i += 500) {
+    const result = await supabase.rpc("task_approval_states", { task_ids: ids.slice(i, i + 500) });
+    if (rpcMissing(result.error)) {
+      const each = await Promise.all(
+        ids.slice(0, 200).map((taskId) =>
+          supabase.rpc("task_approval_state", { target_task: taskId }).then((r) => [taskId, r.data] as const),
+        ),
+      );
+      for (const [taskId, value] of each) states.set(taskId, approvalRowState(value ?? undefined));
+      return states;
+    }
+    if (result.error || !result.data || typeof result.data !== "object" || Array.isArray(result.data)) return states;
+    for (const [taskId, value] of Object.entries(result.data)) states.set(taskId, approvalRowState(value));
+  }
+  return states;
+}
+
+// Approval subtasks get their row state (other kinds are returned as they are).
+async function withSubtaskApprovals(supabase: ServerClient, items: SubtaskItem[]): Promise<SubtaskItem[]> {
+  const approvalIds = items.filter((item) => item.kind === "approval" && !item.completedAt).map((item) => item.id);
+  if (approvalIds.length === 0) return items;
+  const states = await approvalRowStates(supabase, approvalIds);
+  return items.map((item) => (states.has(item.id) ? { ...item, ...states.get(item.id) } : item));
 }
 
 // List / My tasks rows the viewer expanded (profile_preferences.expanded_task_ids; newest first). Empty on

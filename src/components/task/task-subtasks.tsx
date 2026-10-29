@@ -3,9 +3,9 @@
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
-import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
+import { RowCompleteControl } from "./row-complete-control";
 import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask } from "@/lib/actions";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, SubtaskItem, TaskDetail } from "@/lib/data";
@@ -254,12 +254,14 @@ export function TaskSubtasks({
                     <ShieldCheck className="size-4" aria-label="Approval" />
                   </span>
                 ) : (
-                  <CompleteToggle
+                  // Approval subtasks: only their approvers tick them (Oct 29 notes, batch 7).
+                  <RowCompleteControl
                     size="sm"
-                    kind={subtask.kind}
+                    task={subtask}
                     completed={completed}
                     readOnly={!canEdit}
-                    label={kindToggleLabel(subtask.kind, subtask.title, completed)}
+                    assignedToMe={Boolean(me) && subtask.assigneeId === me}
+                    seed={() => subtaskSeed(subtask)}
                     onToggle={() =>
                       run(
                         () => updateSubtask(subtask.id, { completed: !completed }),
@@ -452,7 +454,7 @@ function SubtaskAssignee({
   if (!canEdit) return name ? <span className="shrink-0">{face}<span className="sr-only">Assigned to {name}</span></span> : null;
   return (
     <PersonPicker
-      label={`${subtask.kind === "approval" ? "Approver" : "Assignee"} of ${subtask.title}: ${name ?? "nobody"}. Change`}
+      label={`Assignee of ${subtask.title}: ${name ?? "nobody"}. Change`}
       tooltip={name ?? "Assign"}
       align="end"
       people={people}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { startTransition, useEffect, useOptimistic, useRef, useState, type KeyboardEvent } from "react";
 import { CalendarCheck, CircleCheck, CircleCheckBig, Lock, Plus } from "lucide-react";
 import { Avatar } from "@/components/avatar";
-import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
+import { RowCompleteControl } from "@/components/task/row-complete-control";
 import { DueDate } from "@/components/project/task-meta";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
@@ -218,12 +218,14 @@ export function MyTasksWidget({
                     open ? "bg-accent-50/60" : "hover:bg-zinc-50"
                   }`}
                 >
-                  <CompleteToggle
-                    kind={task.kind}
+                  {/* Approval tasks: only their approvers tick them; the assignee sends them (Oct 29 notes, batch 7). */}
+                  <RowCompleteControl
+                    task={task}
                     completed={done}
                     readOnly={!task.canEdit}
+                    assignedToMe
+                    seed={seed}
                     onToggle={() => toggle(task)}
-                    label={kindToggleLabel(task.kind, task.title, done)}
                   />
                   <TaskLink
                     taskId={task.id}

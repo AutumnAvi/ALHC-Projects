@@ -2,14 +2,13 @@
 
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useState, type DragEvent } from "react";
-import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
-import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
+import type { TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useViewConfig } from "@/components/project/view-config";
 import { useOpenTaskId } from "@/components/shell/right-panel";
-import { BlockedToggle } from "@/components/task/blockers-popover";
+import { RowCompleteControl } from "@/components/task/row-complete-control";
 import { TaskLink } from "@/components/task/task-link";
 import { useServerAction } from "@/components/toast";
 import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
@@ -408,20 +407,17 @@ function TaskCard({
     >
       <div className="flex items-start gap-2">
         <span className="pt-0.5">
-          {blocked > 0 ? (
-            // Blocked: the completion control is locked; hovering or tapping it lists what it waits on.
-            <BlockedToggle taskId={task.id} title={task.title} count={blocked} size="sm" />
-          ) : (
-            <CompleteToggle
-              size="sm"
-              kind={task.kind}
-              completed={completed}
-              readOnly={!canEdit}
-              disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
-              onToggle={onToggle}
-              label={kindToggleLabel(task.kind, task.title, completed)}
-            />
-          )}
+          {/* Blocked: a lock listing what it waits on. Approval tasks: only their approvers tick them
+              (Oct 29 notes, batch 7); everyone else gets Ready for approval / Waiting / Approve. */}
+          <RowCompleteControl
+            task={task}
+            completed={completed}
+            readOnly={!canEdit}
+            blocked={blocked}
+            size="sm"
+            seed={seed}
+            onToggle={onToggle}
+          />
         </span>
         <TaskLink
           taskId={task.id}

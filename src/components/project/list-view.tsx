@@ -18,16 +18,16 @@ import {
 } from "lucide-react";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
-import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
-import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
+import type { TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
 import { useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
 import { useViewConfig } from "@/components/project/view-config";
 import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard";
 import { useOpenTaskId } from "@/components/shell/right-panel";
-import { BlockedToggle } from "@/components/task/blockers-popover";
+import { RowCompleteControl } from "@/components/task/row-complete-control";
+import { useApprovalShortcut } from "@/components/task/approval-action";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -297,6 +297,7 @@ export function ListView({
   const navIds = groups.filter((group) => !collapsed.has(group.key)).flatMap((group) => shownIds(group));
   const selection = useTaskSelection(allIds, navIds);
   const tasksById = new Map(optimisticTasks.map((t) => [t.id, t]));
+  const approvalShortcut = useApprovalShortcut();
 
   const toggle = (task: ProjectTask) => {
     const completed = !task.completedAt;
@@ -441,6 +442,9 @@ export function ListView({
       if (ids.length === 0) return;
       const completed = !ids.every((id) => tasksById.get(id)?.completedAt);
       if (completed) {
+        // One approval task the viewer doesn't approve: its approval step instead (Oct 29 notes, batch 7).
+        const only = ids.length === 1 ? tasksById.get(ids[0]) : undefined;
+        if (only && approvalShortcut(only, seeds.task(only))) return;
         // Blocked tasks can't be completed: say so and leave them out (item 43).
         const listed = ids.flatMap((id) => tasksById.get(id) ?? []);
         const { blocked } = splitBlocked(listed);
@@ -1362,18 +1366,15 @@ function TaskRow({
           />
         ) : null}
         <ExpandToggle expandable={task.subtaskCount > 0} expanded={expanded} title={task.title} onToggle={onToggleExpanded} />
-        {blocked > 0 ? (
-          <BlockedToggle taskId={task.id} title={task.title} count={blocked} />
-        ) : (
-          <CompleteToggle
-            kind={task.kind}
-            completed={completed}
-            readOnly={!canEdit}
-            disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
-            onToggle={() => onToggle(task)}
-            label={kindToggleLabel(task.kind, task.title, completed)}
-          />
-        )}
+        {/* Blocked tasks wear a lock (item 43); approval tasks only their approvers tick (Oct 29 notes, batch 7). */}
+        <RowCompleteControl
+          task={task}
+          completed={completed}
+          readOnly={!canEdit}
+          blocked={blocked}
+          seed={seed}
+          onToggle={() => onToggle(task)}
+        />
         <TaskTitle
           task={task}
           seed={seed}
@@ -1400,7 +1401,6 @@ function TaskRow({
                 assignee={assignee}
                 people={edit.people}
                 canEdit={canEdit}
-                approver={task.kind === "approval"}
                 onChange={(assigneeId) => edit.assign(task, assigneeId)}
               />
             </div>
@@ -1581,19 +1581,15 @@ function SubtaskRow({
           title={subtask.title}
           onToggle={() => handlers.expand(subtask.id)}
         />
-        {blocked > 0 ? (
-          <BlockedToggle taskId={subtask.id} title={subtask.title} count={blocked} size="sm" />
-        ) : (
-          <CompleteToggle
-            size="sm"
-            kind={subtask.kind}
-            completed={completed}
-            readOnly={!canEdit}
-            disabled={subtask.kind === "approval"}
-            onToggle={() => handlers.toggle(subtask)}
-            label={kindToggleLabel(subtask.kind, subtask.title, completed)}
-          />
-        )}
+        <RowCompleteControl
+          task={subtask}
+          completed={completed}
+          readOnly={!canEdit}
+          blocked={blocked}
+          size="sm"
+          seed={seed}
+          onToggle={() => handlers.toggle(subtask)}
+        />
         <TaskTitle
           task={subtask}
           seed={seed}
@@ -1622,7 +1618,6 @@ function SubtaskRow({
               assignee={assignee}
               people={people}
               canEdit={canEdit}
-              approver={subtask.kind === "approval"}
               onChange={(assigneeId) => handlers.assign(subtask, assigneeId)}
             />
           ) : column === "due" ? (
