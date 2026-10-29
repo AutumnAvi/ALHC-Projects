@@ -1174,7 +1174,7 @@ begin
     and not has_function_privilege('authenticated', 'public.fill_library_values_on_join()', 'execute'),
     'the engine is internal';
   assert public.library_field_definition_columns()
-    = array['name', 'description', 'field_type', 'options', 'notify_on_change', 'locked', 'locked_by', 'locked_at'],
+    = array['name', 'description', 'field_type', 'options', 'notify_on_change', 'number_prefix', 'locked', 'locked_by', 'locked_at'],
     'the definition columns';
   assert exists (select 1 from pg_trigger where tgname = 'task_field_values_03_library_lock' and tgrelid = 'public.task_field_values'::regclass)
     and exists (select 1 from pg_trigger where tgname = 'task_field_values_zzz_library_sync' and tgrelid = 'public.task_field_values'::regclass)
@@ -3484,8 +3484,343 @@ begin
   end loop;
 end $$;
 
+-- =================================================================================================
+-- Cross-track checks (things no single track could test)
+-- =================================================================================================
 
+reset role;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
 
+--   b7a80029…01 b7x-owner@example.com     owner of X A and X B
+--   b7a80029…02 b7x-editor@example.com    Editor of X A (an approval task's assignee; not an approver)
+--   b7a80029…03 b7x-bedit@example.com     Editor of X B only
+--   b7a80029…04 b7x-approver@example.com  Editor of X A, the approver
+
+insert into public.allowed_emails (email, note) values
+  ('b7x-owner@example.com', 'oct 29 batch 7 cross'),
+  ('b7x-editor@example.com', 'oct 29 batch 7 cross'),
+  ('b7x-bedit@example.com', 'oct 29 batch 7 cross'),
+  ('b7x-approver@example.com', 'oct 29 batch 7 cross');
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('b7a80029-0000-4000-8000-000000000001', 'b7x-owner@example.com', now(), '{"full_name":"Xena Owner"}'),
+  ('b7a80029-0000-4000-8000-000000000002', 'b7x-editor@example.com', now(), '{"full_name":"Xavi Editor"}'),
+  ('b7a80029-0000-4000-8000-000000000003', 'b7x-bedit@example.com', now(), '{"full_name":"Bex Editor"}'),
+  ('b7a80029-0000-4000-8000-000000000004', 'b7x-approver@example.com', now(), '{"full_name":"Axel Approver"}');
+
+create temporary table b7x_ids (name text primary key, id uuid);
+grant all on b7x_ids to authenticated, anon;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid;
+  b uuid;
+  sa uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'X A') returning id into a;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'X B') returning id into b;
+  insert into public.sections (project_id, name, sort_order) values (a, 'Work', 1024) returning id into sa;
+  insert into b7x_ids values ('a', a), ('b', b), ('sa', sa);
+  perform public.add_project_member(a, 'b7x-editor@example.com', 'editor');
+  perform public.add_project_member(a, 'b7x-approver@example.com', 'editor');
+  perform public.add_project_member(b, 'b7x-bedit@example.com', 'editor');
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- 52 (refined): once the latest round is approved, the task completes normally again.
+-- ---------------------------------------------------------------------------------------------
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid;
+begin
+  t := public.create_task((select id from b7x_ids where name = 'a'), (select id from b7x_ids where name = 'sa'), 'Campaign approval');
+  insert into b7x_ids values ('t', t);
+  update public.tasks set kind = 'approval', assignee_id = 'b7a80029-0000-4000-8000-000000000002' where id = t;
+  perform public.set_task_approvers(t, array['b7a80029-0000-4000-8000-000000000004'::uuid], 'any', null);
+  assert not public.approval_round_approved(t), 'no round yet';
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'no round: only approvers';
+  exception when check_violation then null;
+  end;
+  -- Ready for approval with More steps (just notify): approving won't complete it.
+  perform public.send_for_approval(t, 'Campaign, final', '{}', true, 'notify', null);
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000004', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7x_ids where name = 't')
+  and approver_id = 'b7a80029-0000-4000-8000-000000000004' and status = 'pending'), 'approved', 'Looks good');
+
+-- The approval has been given: the Editor who isn't an approver completes it, by hand and in bulk.
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7x_ids where name = 't');
+  result jsonb;
+begin
+  assert public.task_approval_state(t) ->> 'status' = 'approved', 'the latest round is approved';
+  assert public.approval_round_approved(t), 'the helper says so';
+  assert (select completed_at from public.tasks where id = t) is null, 'More steps: approving didn''t complete it';
+  assert not (public.task_approval_state(t) ->> 'is_approver')::boolean, 'the Editor still isn''t an approver';
+
+  update public.tasks set completed_at = now() where id = t;
+  assert (select completed_at from public.tasks where id = t) is not null, 'a non-approver Editor completes it now';
+  update public.tasks set completed_at = null where id = t;
+
+  result := public.bulk_update_tasks(array[t], '{"action": "complete"}'::jsonb);
+  assert result -> 'updated' ? t::text, 'bulk Complete too: ' || result::text;
+  update public.tasks set completed_at = null where id = t;
+end $$;
+
+-- A rule's Mark complete completes it too (no skip once approved).
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7x_ids where name = 't');
+  rid uuid;
+  run public.rule_runs;
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values ((select id from b7x_ids where name = 'a'), 'Finish it', true, 'manual', '[{"type": "complete_task"}]')
+  returning id into rid;
+  insert into b7x_ids values ('finish_rule', rid);
+  perform public.run_manual_rule(rid, t);
+  select * into run from public.rule_runs where rule_id = rid order by created_at desc limit 1;
+  assert run.status = 'succeeded' and run.detail -> 'actions' -> 0 ->> 'result' = 'Marked complete',
+    'the rule''s Mark complete ran: ' || coalesce(run.detail::text, '');
+  assert (select completed_at from public.tasks where id = t) is not null, 'the rule completed it';
+  update public.tasks set completed_at = null where id = t;
+end $$;
+
+-- My Tasks rules' Mark complete too.
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
+insert into public.my_task_rules (name, trigger_type, actions) values ('B7X done when assigned', 'assigned', '[{"type": "complete_task"}]');
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
+update public.tasks set assignee_id = 'b7a80029-0000-4000-8000-000000000001' where id = (select id from b7x_ids where name = 't');
+update public.tasks set assignee_id = 'b7a80029-0000-4000-8000-000000000002' where id = (select id from b7x_ids where name = 't');
+reset role;
+do $$
+declare
+  t uuid := (select id from b7x_ids where name = 't');
+  run public.my_task_rule_runs;
+begin
+  select * into run from public.my_task_rule_runs where task_id = t order by created_at desc limit 1;
+  assert found and run.status = 'succeeded', 'the My Tasks rule ran';
+  assert run.detail -> 'actions' -> 0 ->> 'outcome' is distinct from 'skipped', 'not skipped: ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = t) is not null, 'the My Tasks rule completed it';
+  update public.my_task_rules set enabled = false where name = 'B7X done when assigned';
+end $$;
+
+-- A newer round puts the rule back: pending, then changes requested, then withdrawn.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7x_ids where name = 't');
+begin
+  update public.tasks set completed_at = null where id = t;
+  perform public.send_for_approval(t, 'Campaign, v2', '{}', false, 'complete', null);
+  assert not public.approval_round_approved(t), 'the latest round is pending';
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'pending again: only the approvers decide';
+  exception when check_violation then null;
+  end;
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000004', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7x_ids where name = 't')
+  and approver_id = 'b7a80029-0000-4000-8000-000000000004' and status = 'pending'), 'changes_requested', 'One more pass');
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7x_ids where name = 't');
+  result jsonb;
+begin
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'changes requested in the latest round: the earlier approval doesn''t count';
+  exception when check_violation then null;
+  end;
+  result := public.bulk_update_tasks(array[t], '{"action": "complete"}'::jsonb);
+  assert result -> 'skipped' -> 0 ->> 'reason' = 'Only its approvers can complete an approval task. Send it with Ready for approval.',
+    'bulk skips it again: ' || result::text;
+  perform public.acknowledge_approval(t);
+  perform public.send_for_approval(t, 'Campaign, v3', '{}', false, 'complete', null);
+  perform public.withdraw_approval(t);
+  assert public.task_approval_state(t) ->> 'status' = 'not_sent', 'withdrawn reads as not sent';
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'withdrawn: only approvers';
+  exception when check_violation then null;
+  end;
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7x_ids where name = 't');
+  run public.rule_runs;
+begin
+  perform public.run_manual_rule((select id from b7x_ids where name = 'finish_rule'), t);
+  select * into run from public.rule_runs where rule_id = (select id from b7x_ids where name = 'finish_rule')
+  order by created_at desc limit 1;
+  assert run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped', 'the rule skips it again: ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = t) is null, 'still open';
+end $$;
+reset role;
+
+do $$
+begin
+  assert not (select prosecdef from pg_proc where oid = 'public.approval_round_approved(uuid)'::regprocedure), 'invoker';
+  assert has_function_privilege('authenticated', 'public.approval_round_approved(uuid)', 'execute'), 'the guard runs it as the person';
+  assert not has_function_privilege('anon', 'public.approval_round_approved(uuid)', 'execute'), 'nothing for anon';
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- 49 × 55: a shared library field has one symbol; 47 × 55: an option-less library select can be
+-- added; 54 × 55: shared options keep the new colors; 51: a locked field's symbol needs Owner / Admin.
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7x_ids where name = 'a');
+  f uuid;
+begin
+  insert into public.custom_fields (project_id, name, field_type, number_prefix, in_library)
+  values (a, 'X Budget', 'number', '$', true) returning id into f;
+  insert into b7x_ids values ('budget', f);
+  insert into public.custom_fields (project_id, name, field_type, options, in_library)
+  values (a, 'X Tone', 'single_select',
+          '[{"id": "warm", "name": "Warm", "color": "fuchsia"}, {"id": "cool", "name": "Cool", "color": "sky"}]', true)
+  returning id into f;
+  insert into b7x_ids values ('tone', f);
+end $$;
+reset role;
+
+-- An option-less select published by a system path (like the seeded template's selects).
+do $$
+declare
+  f uuid;
+begin
+  insert into public.custom_fields (project_id, name, field_type, options, in_library)
+  values ((select id from b7x_ids where name = 'a'), 'X Stage', 'single_select', '[]', true) returning id into f;
+  insert into b7x_ids values ('stage', f);
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  b uuid := (select id from b7x_ids where name = 'b');
+  pb uuid;
+  pt uuid;
+  ps uuid;
+begin
+  pb := public.add_library_field(b, (select id from b7x_ids where name = 'budget'));
+  pt := public.add_library_field(b, (select id from b7x_ids where name = 'tone'));
+  -- 47: the option guard is for people's writes; add_library_field (definer) adds an empty select.
+  ps := public.add_library_field(b, (select id from b7x_ids where name = 'stage'));
+  insert into b7x_ids values ('budget_b', pb), ('tone_b', pt), ('stage_b', ps);
+  assert (select number_prefix from public.custom_fields where id = pb) = '$', '49: the placement has the symbol';
+  assert (select options from public.custom_fields where id = pt)
+         = '[{"id": "warm", "name": "Warm", "color": "fuchsia"}, {"id": "cool", "name": "Cool", "color": "sky"}]'::jsonb,
+    '54: the placement keeps the new colors';
+  assert (select field_type = 'single_select' and options = '[]'::jsonb from public.custom_fields where id = ps),
+    '47: an option-less library select is added';
+
+  -- The symbol is part of the shared definition: only Editors of the publishing project change it.
+  begin
+    update public.custom_fields set number_prefix = '€' where id = pb;
+    raise exception 'a placement''s symbol is read-only here';
+  exception when insufficient_privilege then null;
+  end;
+  assert (select number_prefix from public.custom_fields where id = pb) = '$', 'unchanged';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  -- An Editor of the publishing project changes it everywhere, and option colors sync as they are.
+  update public.custom_fields set number_prefix = '€' where id = (select id from b7x_ids where name = 'budget');
+  update public.custom_fields
+  set options = '[{"id": "warm", "name": "Warm", "color": "rose"}, {"id": "cool", "name": "Cool", "color": "indigo"}]'
+  where id = (select id from b7x_ids where name = 'tone');
+end $$;
+reset role;
+
+do $$
+begin
+  assert (select number_prefix from public.custom_fields where id = (select id from b7x_ids where name = 'budget_b')) = '€',
+    '49 × 55: the symbol synced to the placement';
+  assert (select options -> 0 ->> 'color' from public.custom_fields where id = (select id from b7x_ids where name = 'tone_b')) = 'rose'
+     and (select options -> 1 ->> 'color' from public.custom_fields where id = (select id from b7x_ids where name = 'tone_b')) = 'indigo',
+    '54 × 55: the new colors synced';
+  assert (select format_number_value(1250, number_prefix) from public.custom_fields where id = (select id from b7x_ids where name = 'budget_b'))
+         = '€1,250', 'the placement formats with the shared symbol';
+end $$;
+
+-- Copies: Duplicate project links the copy and it carries the shared symbol.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  copy jsonb;
+begin
+  copy := public.duplicate_project((select id from b7x_ids where name = 'b'), 'X B copy', '{}');
+  assert exists (
+    select 1 from public.custom_fields f
+    where f.project_id = (copy ->> 'project_id')::uuid and f.deleted_at is null
+      and f.library_field_id = (select id from b7x_ids where name = 'budget') and f.number_prefix = '€'
+  ), 'the copy is a placement of the library field, with its symbol';
+
+  -- 51: lock the shared field; then its symbol needs an Owner / Admin of the publishing project.
+  update public.custom_fields set locked = true where id = (select id from b7x_ids where name = 'budget');
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  msg text;
+begin
+  begin
+    update public.custom_fields set number_prefix = '£' where id = (select id from b7x_ids where name = 'budget');
+    raise exception 'a locked field''s symbol is for Owners and Admins';
+  exception when insufficient_privilege then
+    get stacked diagnostics msg = message_text;
+    assert msg like 'Locked%', 'the lock''s reason: ' || msg;
+  end;
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
+update public.custom_fields set number_prefix = '£' where id = (select id from b7x_ids where name = 'budget');
+reset role;
+
+do $$
+begin
+  assert (select bool_and(number_prefix = '£' and locked) from public.custom_fields
+          where (id = (select id from b7x_ids where name = 'budget') or library_field_id = (select id from b7x_ids where name = 'budget'))
+            and deleted_at is null),
+    'the owner changed the locked symbol, and every placement follows (locked too)';
+end $$;
+
+-- 54: tags keep a new palette color (the base color for older readers) after the field library's changes.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  g uuid;
+begin
+  insert into public.tags (name, color, palette_color) values ('B7X Lime', 'green', 'lime') returning id into g;
+  assert (select (color, palette_color) = ('green', 'lime') from public.tags where id = g), 'lime kept, green as the base';
+end $$;
+reset role;
 
 reset role;
 do $$ begin raise notice 'oct 29 batch 7 smoke: all assertions passed'; end $$;

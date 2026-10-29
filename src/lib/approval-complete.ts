@@ -1,7 +1,10 @@
 // Oct 29 notes, batch 7 (item 52): only an approval task's approvers complete it (the database refuses
-// everyone else: guard_task_kind). Every complete control asks completeModeOf() what it should be:
-//   complete  the ordinary Mark complete (any task that isn't an open approval task; an approver's when
-//             no round is pending; reopening a completed task)
+// everyone else: guard_task_kind) — until its latest round is approved: then the approval has been given
+// (e.g. approved with More steps) and the task completes normally again, for anyone who can edit it.
+// Every complete control asks completeModeOf() what it should be:
+//   complete  the ordinary Mark complete (any task that isn't an open approval task; an approval task
+//             whose latest round is approved; an approver's when no round is pending; reopening a
+//             completed task)
 //   ready     "Ready for approval": opens the task's send flow (anyone who isn't an approver)
 //   waiting   "Waiting for approval", disabled (a round is pending and the viewer has nothing to decide)
 //   approve   "Approve": the viewer's own decision is open (the decision path, never a plain tick)
@@ -13,7 +16,7 @@ export type CompleteMode = "complete" | "ready" | "waiting" | "approve";
 export type CompleteModeInput = {
   kind: TaskKind;
   completed: boolean;
-  // The latest round's status (null / missing: not known — treated as not pending).
+  // The latest round's status (null / missing: not known — treated as not pending, not approved).
   status?: ApprovalTaskStatus | null;
   // The viewer is one of the task's active approvers (missing: not known — treated as no).
   isApprover?: boolean;
@@ -23,6 +26,8 @@ export type CompleteModeInput = {
 
 export function completeModeOf({ kind, completed, status, isApprover = false, waitingOnMe = false }: CompleteModeInput): CompleteMode {
   if (kind !== "approval" || completed) return "complete";
+  // The latest round was approved: the approval has been given, so anyone who can edit it finishes it.
+  if (status === "approved") return "complete";
   if (status === "pending") return waitingOnMe ? "approve" : "waiting";
   return isApprover ? "complete" : "ready";
 }

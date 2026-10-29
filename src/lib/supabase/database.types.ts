@@ -5459,6 +5459,12 @@ export type Database = {
         Args: { task_ids: string[] };
         Returns: Json;
       };
+      // Oct 29 notes, batch 7 (item 52): the task's latest approval round is approved (the approval has
+      // been given, so it completes normally again).
+      approval_round_approved: {
+        Args: { target_task: string };
+        Returns: boolean;
+      };
       set_task_approvers: {
         Args: { target_task: string; approvers: string[]; approval_mode?: string; approval_due?: string | null };
         Returns: Json;

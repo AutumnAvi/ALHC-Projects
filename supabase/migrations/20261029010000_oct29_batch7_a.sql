@@ -79,19 +79,45 @@ revoke all on function public.alhc_patch_function(regprocedure, text[]) from pub
 --     approver whose decision is still open is told to Approve (the decision path), everyone else that
 --     it's waiting for approval. With no approvers nobody completes it by hand. A statement that switches
 --     an approval task to another type and completes it at once is checked the same way.
---   * Rules never complete approval tasks: the rule engine's "Mark complete" step (and "Convert to a
---     project … and complete the task", and My Tasks rules' "Mark complete") skip them with a logged
---     reason instead of failing the run; the guard refuses a completion in rule context as a backstop.
+--   * Once the task's LATEST round is approved (e.g. approved with "More steps after approval", so the
+--     round didn't complete it), the approval has been given: the task completes normally again — anyone
+--     who can edit it, and rules' Mark complete steps (approval_round_approved(), invoker). Until then
+--     (no round, pending, changes requested, rejected, withdrawn, paused) the approver-only rule holds.
+--   * Rules never complete approval tasks before that: the rule engine's "Mark complete" step (and
+--     "Convert to a project … and complete the task", and My Tasks rules' "Mark complete") skip them with
+--     a logged reason instead of failing the run; the guard refuses a completion in rule context as a
+--     backstop.
 --   * System paths keep working: an approved round (finish_approved_round, which names its task in the
 --     transaction-local alhc.approval_finish), the older approval_completes_task / complete_approval_task
 --     decisions, imports, copies (templates, Duplicate project), and recurrence (definer code, not a
 --     client role). Reopening is unchanged.
 --   * bulk_update_tasks needs no change: the guard's message is its skip reason ("Only its approvers can
---     complete an approval task. Send it with Ready for approval.").
+--     complete an approval task. Send it with Ready for approval."), and it lets an approved one through.
 --   * Rows learn whether the viewer approves the task: project_task_cards adds approval_is_approver,
 --     task_approval_state adds is_approver, and task_approval_states (invoker) returns the state of many
 --     approval tasks at once (My tasks rows, subtask rows).
 -- ---------------------------------------------------------------------------------------------------
+
+-- Whether the task's latest approval round is approved (the approval has been given). Invoker: the guard
+-- runs as the person (an Editor reads the task's rounds through RLS); definer callers read every round.
+create or replace function public.approval_round_approved(target_task uuid)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select coalesce((
+    select r.status = 'approved'
+    from public.approval_rounds r
+    where r.task_id = target_task
+    order by r.round_number desc
+    limit 1
+  ), false);
+$$;
+
+revoke all on function public.approval_round_approved(uuid) from public, anon;
+grant execute on function public.approval_round_approved(uuid) to authenticated, service_role;
+select public.alhc_revoke_anon_execute(array['approval_round_approved(uuid)']);
 
 select public.alhc_patch_function(
   'public.guard_task_kind()'::regprocedure,
@@ -107,8 +133,9 @@ select public.alhc_patch_function(
   end if;$old$,
   $new$  -- Oct 29 notes, batch 7 (item 52): only an approval task's approvers complete it by hand, never
   -- while a round is pending, and rules never do — also when the same statement switches it to another
-  -- type. Imports, copies, and an approved round (which names its task in alhc.approval_finish) aren't
-  -- checked; other system code isn't a client role.
+  -- type — until its latest round is approved (the approval has been given: then anyone who can edit
+  -- it, rules too). Imports, copies, and an approved round (which names its task in
+  -- alhc.approval_finish) aren't checked; other system code isn't a client role.
   if (new.kind = 'approval' or (tg_op = 'UPDATE' and old.kind = 'approval'))
      and new.completed_at is not null
      and (tg_op = 'INSERT' or old.completed_at is null)
@@ -140,11 +167,12 @@ select public.alhc_patch_function(
       if not exists (
         select 1 from public.task_approvers a
         where a.task_id = new.id and a.profile_id = (select auth.uid()) and a.deleted_at is null
-      ) then
+      ) and not public.approval_round_approved(new.id) then
         raise exception 'Only its approvers can complete an approval task. Send it with Ready for approval.'
           using errcode = 'check_violation';
       end if;
-    elsif tg_op = 'UPDATE' and coalesce(current_setting('alhc.rule_id', true), '') <> '' then
+    elsif tg_op = 'UPDATE' and coalesce(current_setting('alhc.rule_id', true), '') <> ''
+          and not public.approval_round_approved(new.id) then
       raise exception 'Approval tasks are completed by their approvers'
         using errcode = 'check_violation';
     end if;
@@ -164,8 +192,8 @@ select public.alhc_patch_function(
     perform set_config('alhc.approval_finish', '', true);$new$
 );
 
--- The rule engine's "Mark complete" skips approval tasks (logged), and so does "Convert to a project …
--- and complete the task".
+-- The rule engine's "Mark complete" skips approval tasks (logged) until their latest round is approved,
+-- and so does "Convert to a project … and complete the task".
 select public.alhc_patch_function(
   'public.execute_rule_actions(public.rules,uuid,jsonb,jsonb)'::regprocedure,
   $old$        when 'complete_task' then
@@ -177,7 +205,7 @@ select public.alhc_patch_function(
             result := 'Marked complete';
           end if;$old$,
   $new$        when 'complete_task' then
-          if t.kind = 'approval' and t.completed_at is null then
+          if t.kind = 'approval' and t.completed_at is null and not public.approval_round_approved(target_task) then
             outcome := 'skipped';
             result := 'Approval tasks are completed by their approvers';
           else
@@ -192,22 +220,24 @@ select public.alhc_patch_function(
   $old$          if coalesce((a ->> 'complete_task')::boolean, false) then
             update public.tasks set completed_at = now() where id = target_task and completed_at is null;
           end if;$old$,
-  $new$          if coalesce((a ->> 'complete_task')::boolean, false) and t.kind is distinct from 'approval' then
+  $new$          if coalesce((a ->> 'complete_task')::boolean, false)
+             and (t.kind is distinct from 'approval' or public.approval_round_approved(target_task)) then
             update public.tasks set completed_at = now() where id = target_task and completed_at is null;
           end if;$new$,
   $old$            || coalesce(' in “' || (input ->> 'portfolio') || '”', '');$old$,
   $new$            || coalesce(' in “' || (input ->> 'portfolio') || '”', '')
             || case when coalesce((a ->> 'complete_task')::boolean, false) and t.kind = 'approval' and t.completed_at is null
+                   and not public.approval_round_approved(target_task)
                  then '. The task wasn’t marked complete: approval tasks are completed by their approvers' else '' end;$new$
 );
 
--- My Tasks rules' "Mark complete" skips approval tasks too.
+-- My Tasks rules' "Mark complete" skips approval tasks too (until their latest round is approved).
 select public.alhc_patch_function(
   'public.run_my_task_rule(public.my_task_rules,uuid,jsonb,text)'::regprocedure,
   $old$        when 'complete_task' then
           if not public.has_task_role(target_task, 'editor') then$old$,
   $new$        when 'complete_task' then
-          if t.kind = 'approval' then
+          if t.kind = 'approval' and not public.approval_round_approved(target_task) then
             outcome := 'skipped';
             result := 'Approval tasks are completed by their approvers';
           else
@@ -623,8 +653,9 @@ select public.alhc_patch_function(
 --     published source field), so every project-scoped feature (views, filters, rules, forms, imports,
 --     exports, reports, bulk edit, task templates, inbound webhooks, workload) works unchanged. A group
 --     is coalesce(library_field_id, id):
---     - one definition: the definition columns (library_field_definition_columns(), the one list) are
---       copied to the whole group after any change (custom_fields_zz_library_sync, definer); only
+--     - one definition: the definition columns (library_field_definition_columns(), the one list —
+--       name, description, type, options, notify, the number symbol of item 49, and the lock of item
+--       51) are copied to the whole group after any change (custom_fields_zz_library_sync, definer); only
 --       Editors+ of the source's project change them while the source is active (else Editors+ of the
 --       placement's own project) — custom_fields_05_library_guard (invoker) refuses everyone else;
 --     - one value per task: a value written through one placement is written to every other active
@@ -687,7 +718,7 @@ language sql
 immutable
 set search_path = ''
 as $$
-  select array['name', 'description', 'field_type', 'options', 'notify_on_change', 'locked', 'locked_by', 'locked_at']::text[];
+  select array['name', 'description', 'field_type', 'options', 'notify_on_change', 'number_prefix', 'locked', 'locked_by', 'locked_at']::text[];
 $$;
 
 revoke all on function public.library_field_definition_columns() from public, anon;
