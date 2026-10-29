@@ -97,12 +97,16 @@ import {
   LIST_CELL,
   LIST_GRID,
   LIST_HEADER_ROW,
+  LIST_NAME_BADGES,
+  LIST_NAME_GROUP,
+  LIST_NAME_TAGS,
   LIST_PINNED_CELL,
   LIST_RESIZE_HANDLE,
   LIST_VIEW_WIDTH_VAR,
   NAME_INDENT,
   listGridStyle,
   listHeaderCellClass,
+  pinnedCoverPx,
   subtaskIndentRem,
 } from "./list-grid";
 import { useProjectTaskSeeds } from "./task-seeds";
@@ -245,7 +249,8 @@ export function ListView({
   const widthsRef = useRef(widths);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The List's visible width, for the Name track's limit (listNameTrack): set as a CSS variable, so a
-  // window resize or the task pane opening never re-renders the rows.
+  // window resize or the task pane opening never re-renders the rows. The same element listens for
+  // keyboard focus landing under the pinned Name column (pinnedCoverPx).
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -255,10 +260,36 @@ export function ListView({
   useEffect(() => {
     const root = rootRef.current;
     const scroller = scrollParentOf(root);
-    if (!root || !scroller || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => root.style.setProperty(LIST_VIEW_WIDTH_VAR, `${scroller.clientWidth}px`));
-    observer.observe(scroller);
-    return () => observer.disconnect();
+    if (!root || !scroller) return;
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => root.style.setProperty(LIST_VIEW_WIDTH_VAR, `${scroller.clientWidth}px`));
+    observer?.observe(scroller);
+    // A control focused behind the pinned Name column (Tab into an Assignee or field cell after scrolling
+    // sideways) stays covered: the browser counts it as in view. Scroll back just enough to show it — now,
+    // and once more after the browser's own scroll-into-view. Controls inside the Name cell are pinned and
+    // never move the List (unlike scroll-padding, which would scroll back to the start for them).
+    let frame = 0;
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const reveal = () => {
+        const cover = pinnedCoverPx(target);
+        if (cover > 0) scroller.scrollLeft = Math.max(0, scroller.scrollLeft - cover);
+      };
+      reveal();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (document.activeElement === target) reveal();
+      });
+    };
+    root.addEventListener("focusin", onFocusIn);
+    return () => {
+      observer?.disconnect();
+      cancelAnimationFrame(frame);
+      root.removeEventListener("focusin", onFocusIn);
+    };
   }, []);
 
   useEffect(() => {
@@ -630,7 +661,7 @@ export function ListView({
 
   return (
     <div ref={rootRef} className="min-w-full px-gutter pb-24" style={{ width: "max-content" }}>
-      <div className={LIST_HEADER_ROW} style={gridStyle}>
+      <div data-list-header="" className={LIST_HEADER_ROW} style={gridStyle}>
         <HeaderCell
           label="Name"
           pinned
@@ -1268,6 +1299,18 @@ function TaskTitle({
   );
 }
 
+// Whether a task row has anything for its badges and counts (an empty wrapper would still add a gap).
+function hasRowBadges(task: ProjectTask): boolean {
+  return (
+    (task.kind === "approval" && Boolean(task.approvalStatus)) ||
+    task.recurring ||
+    task.subtaskCount > 0 ||
+    task.projectCount > 1 ||
+    (task.attachmentCount ?? 0) > 0 ||
+    task.commentCount > 0
+  );
+}
+
 // The ">" at the end of a Name cell: opens the task (shown on hover; always on touch screens).
 function OpenTaskLink({ taskId, title, seed, open }: { taskId: string; title: string; seed: () => TaskSeed; open: boolean }) {
   return (
@@ -1437,26 +1480,30 @@ function TaskRow({
           seed={seed}
           onToggle={() => onToggle(task)}
         />
-        <TaskTitle
-          task={task}
-          seed={seed}
-          canEdit={canEdit}
-          open={open}
-          editing={editing}
-          setEditing={setEditing}
-          onRename={(title) => onRename(task, title)}
-        />
-        <span className="flex shrink-0 items-center gap-2">
-          <TaskBadges task={task} />
-          <AttachmentCount count={task.attachmentCount} />
-          <CommentCount count={task.commentCount} />
+        {/* The name keeps ~4rem: tags give way first, then badges (clipped); the ">" never does. */}
+        <span className={LIST_NAME_GROUP}>
+          <TaskTitle
+            task={task}
+            seed={seed}
+            canEdit={canEdit}
+            open={open}
+            editing={editing}
+            setEditing={setEditing}
+            onRename={(title) => onRename(task, title)}
+          />
+          {hasRowBadges(task) ? (
+            <span className={LIST_NAME_BADGES}>
+              <TaskBadges task={task} />
+              <AttachmentCount count={task.attachmentCount} />
+              <CommentCount count={task.commentCount} />
+            </span>
+          ) : null}
+          {tagsInline && task.tagIds.length > 0 ? (
+            <span className={LIST_NAME_TAGS}>
+              <TagChips ids={task.tagIds} byId={tagsById} />
+            </span>
+          ) : null}
         </span>
-        {tagsInline && task.tagIds.length > 0 ? (
-          // Tags give way first (the cell never grows past its column), so the ">" stays in view.
-          <span className="flex min-w-0 overflow-hidden">
-            <TagChips ids={task.tagIds} byId={tagsById} />
-          </span>
-        ) : null}
         <OpenTaskLink taskId={task.id} title={task.title} seed={seed} open={open} />
       </div>
       {columns.map((column) => {
@@ -1660,24 +1707,28 @@ function SubtaskRow({
           seed={seed}
           onToggle={() => handlers.toggle(subtask)}
         />
-        <TaskTitle
-          task={subtask}
-          seed={seed}
-          canEdit={canEdit}
-          open={open}
-          editing={editing}
-          setEditing={setEditing}
-          onRename={(title) => handlers.rename(subtask, title)}
-          subtask
-        />
-        {subtask.subtaskCount > 0 ? (
-          <span
-            className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500"
-            title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
-          >
-            {subtask.subtaskDoneCount}/{subtask.subtaskCount}
-          </span>
-        ) : null}
+        <span className={LIST_NAME_GROUP}>
+          <TaskTitle
+            task={subtask}
+            seed={seed}
+            canEdit={canEdit}
+            open={open}
+            editing={editing}
+            setEditing={setEditing}
+            onRename={(title) => handlers.rename(subtask, title)}
+            subtask
+          />
+          {subtask.subtaskCount > 0 ? (
+            <span className={LIST_NAME_BADGES}>
+              <span
+                className="inline-flex items-center text-xs tabular-nums text-zinc-500"
+                title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
+              >
+                {subtask.subtaskDoneCount}/{subtask.subtaskCount}
+              </span>
+            </span>
+          ) : null}
+        </span>
         <OpenTaskLink taskId={subtask.id} title={subtask.title} seed={seed} open={open} />
       </div>
       {columns.map((column) => (
