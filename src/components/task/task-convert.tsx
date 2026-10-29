@@ -272,7 +272,8 @@ export function ConvertToMainTaskDialog({
   const [pending, run] = useServerAction();
   const notify = useNotify();
   const editable = editableTreeProjects(memberships, editableProjectIds);
-  const fallback = editable.find((m) => m.isHome) ?? editable[0];
+  // The first of them in the stable order (Oct 29 notes, 55b: no home project).
+  const fallback = editable[0];
   const [projectId, setProjectId] = useState(fallback?.projectId ?? "");
   const [sectionId, setSectionId] = useState("");
   const project = editable.find((m) => m.projectId === projectId) ?? fallback;

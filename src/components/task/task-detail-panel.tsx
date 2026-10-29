@@ -103,9 +103,9 @@ export function TaskDetailPanel({
   }
 
   async function copyLink() {
-    // The task in its home project (else another of its projects the viewer can open); a private task in
-    // My tasks. People still need access to open it.
-    const project = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+    // The task in the first project it was added to that the viewer can open (Oct 29 notes, 55b: the
+    // stable rule; memberships come in that order); a private task in My tasks. People still need access.
+    const project = task.memberships[0];
     const path = project ? `/projects/${project.projectId}?task=${task.id}` : `/my-tasks?task=${task.id}`;
     try {
       await navigator.clipboard.writeText(`${window.location.origin}${path}`);

@@ -79,7 +79,8 @@ export function TaskMoreMenu({
   const notify = useNotify();
   const confirm = useConfirm();
   const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | "rule" | "review" | null>(null);
-  const home = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+  // The first project the task was added to that the viewer can read (Oct 29 notes, 55b: the stable rule).
+  const home = task.memberships[0];
   const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
   // Oct 27 notes (batch 6): a task → "Make a subtask of…", a subtask → "Convert to main task…".
   const convert = convertMenuItem(task);
@@ -244,7 +245,7 @@ export function TaskMoreMenu({
           title={displayTaskTitle(task.title, task.requestLabel, { show: false })}
           hasAssignee={Boolean(task.assigneeId)}
           projects={editableProjects.map((m) => ({ id: m.projectId, name: m.projectName }))}
-          defaultProjectId={editableProjects.find((m) => m.isHome)?.projectId ?? editableProjects[0].projectId}
+          defaultProjectId={editableProjects[0].projectId}
           onClose={() => setDialog(null)}
         />
       ) : null}

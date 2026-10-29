@@ -136,6 +136,7 @@ async function taskKeys(supabase: Supabase, projectId: string): Promise<ProjectT
         startOn: m.task.start_on,
         dueOn: m.task.due_on,
         assigneeId: m.task.assignee_id,
+        // The database's internal pointer (not in the CSV; Oct 29 notes, 55b: never shown).
         homeProjectId: m.task.home_project_id ?? projectId,
         createdAt: m.task.created_at,
         sectionId: m.section_id,
@@ -336,7 +337,9 @@ export async function exportList(projectId: string, viewId: string | null, draft
   return { title: `${project.name} ${view?.name ?? "List"}`, header, rows: rows() };
 }
 
-// Search: the same results as the search page (search_tasks under RLS, up to 50).
+// Search: the same results as the search page (search_tasks under RLS, up to 50). Project = the first one
+// the task was added to that the viewer can read (search_tasks' home_project_name column; Oct 29 notes,
+// 55b: there's no home project); the name carries that task's first number.
 export async function exportSearch(query: string): Promise<ExportResult> {
   const trimmed = query.trim();
   const header = ["Task", "Project", "Completed", "Due date", "Task ID"];

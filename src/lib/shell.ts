@@ -1,4 +1,4 @@
-import type { RequestLabel } from "@/lib/request-numbers";
+import type { RequestLabel, TaskNumber } from "@/lib/request-numbers";
 // The app shell's shared vocabulary (Asana parity, batch 1): search palette results, recents, the
 // Settings modal's tabs and links, and the Create menu's dialogs. Browser + server.
 
@@ -13,13 +13,15 @@ export const isSearchKind = (value: unknown): value is SearchKind =>
 
 export type QuickTask = {
   id: string;
-  // The name without its number; `label` is the number (shown as a badge; Oct 26 notes, batch 4).
+  // The name without its number; `label` is the number (shown as a badge; Oct 26 notes, batch 4). Since
+  // Oct 29 notes (55b) the first of `numbers` (every number the person can read, in the stable order).
   title: string;
   label?: RequestLabel | null;
+  numbers?: TaskNumber[];
   completed: boolean;
   // A private task (no project): only its creator and assignee can read it.
   isPrivate: boolean;
-  // A project of the task the person can read (its home project when they can), else null.
+  // The first project the task was added to that the person can read (the stable rule), else null.
   projectId: string | null;
   projectName: string | null;
   // Where the task opens: its project's pane, My tasks for a private task (decided on the server).

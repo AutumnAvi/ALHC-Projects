@@ -69,7 +69,7 @@ async function emailRound(
   try {
     const { user } = await getViewer();
     const [task, sender, attachments] = await Promise.all([
-      supabase.from("tasks").select("title, home_project_id, root_task_id").eq("id", taskId).maybeSingle(),
+      supabase.from("tasks").select("title, root_task_id").eq("id", taskId).maybeSingle(),
       supabase.from("profiles").select("full_name, email").eq("id", user?.id ?? "").maybeSingle(),
       supabase
         .from("task_attachments")
@@ -77,12 +77,33 @@ async function emailRound(
         .in("id", assetIds.map((a) => a.attachmentId)),
     ]);
     const rootId = task.data?.root_task_id ?? taskId;
-    const root = rootId === taskId ? task.data : (await supabase.from("tasks").select("home_project_id").eq("id", rootId).maybeSingle()).data;
-    const projectId = root?.home_project_id ?? null;
-    const [project, form] = await Promise.all([
-      projectId ? supabase.from("projects").select("name").eq("id", projectId).maybeSingle() : Promise.resolve({ data: null }),
-      supabase.from("form_submissions").select("form_id").eq("task_id", rootId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    // The request's project (Oct 29 notes, 55b: no home project): its form's project when it came from a
+    // form, else the first project the task was added to that the sender can read (the stable rule).
+    const [form, firstProject] = await Promise.all([
+      supabase
+        .from("form_submissions")
+        .select("form_id")
+        .eq("task_id", rootId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("task_projects")
+        .select("project_id, project:projects!inner(deleted_at)")
+        .eq("task_id", rootId)
+        .is("deleted_at", null)
+        .is("project.deleted_at", null)
+        .order("created_at")
+        .order("project_id")
+        .limit(1)
+        .maybeSingle(),
     ]);
+    const formProject = form.data?.form_id
+      ? (await supabase.from("forms").select("project_id").eq("id", form.data.form_id).maybeSingle()).data?.project_id
+      : null;
+    const projectId = formProject ?? firstProject.data?.project_id ?? null;
+    const project = projectId ? await supabase.from("projects").select("name").eq("id", projectId).maybeSingle() : { data: null };
     const design = projectId
       ? await supabase.rpc("resolve_email_design", {
           design_kind: "requester",

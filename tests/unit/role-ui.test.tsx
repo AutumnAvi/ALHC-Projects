@@ -247,7 +247,7 @@ const paneTask = (viewerRole: ProjectRole): TaskDetail => ({
   parentTaskId: null,
   ancestors: [],
   isSubtask: false,
-  memberships: [{ projectId: "p1", projectName: "Launch", sectionId: "s1", isHome: true, sections: [{ id: "s1", name: "To do" }] }],
+  memberships: [{ projectId: "p1", projectName: "Launch", sectionId: "s1", sections: [{ id: "s1", name: "To do" }] }],
   fields: [],
   fieldValues: {},
   followerIds: [],

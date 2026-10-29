@@ -113,16 +113,17 @@ begin
   assert (select section_id from public.task_projects where task_id = t1 and project_id = p2) = s_p2,
     'moving within one project leaves the other membership alone';
 
+  update public.task_projects set deleted_at = now() where task_id = t1 and project_id = p2;
+  assert (select count(*) from public.task_projects where task_id = t1 and deleted_at is null) = 1,
+    'a membership can be soft-removed';
+
+  -- Since Oct 29 notes (55b) any project can be removed but the task's last one.
   begin
     update public.task_projects set deleted_at = now() where task_id = t1 and project_id = p1;
-    raise exception 'removing home membership should have failed';
+    raise exception 'removing the last project should have failed';
   exception when check_violation then
     null;
   end;
-
-  update public.task_projects set deleted_at = now() where task_id = t1 and project_id = p2;
-  assert (select count(*) from public.task_projects where task_id = t1 and deleted_at is null) = 1,
-    'non-home membership can be soft-removed';
 
   update public.tasks set completed_at = now() where id = t1;
   update public.tasks set completed_at = null where id = t1;

@@ -15,7 +15,7 @@ import {
   listSubtaskTrees,
   listTeams,
   loadTaskCommentPage,
-  visibleRequestLabels,
+  firstVisibleNumbers,
   visibleRequestLabelsIn,
   type SubtaskItem,
   type TaskComment,
@@ -150,6 +150,7 @@ import {
 import type { Json, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import { TASK_KINDS, type TaskKind } from "@/lib/task-kinds";
+import { LAST_PROJECT_CODE, LAST_PROJECT_MESSAGE, isLastProjectError } from "@/lib/task-projects";
 import {
   DEFAULT_WIDGET_TITLES,
   isPersonalWidgetKind,
@@ -2146,32 +2147,28 @@ export async function addTaskToProject(taskId: string, projectId: string): Promi
   });
 }
 
+// Removes the task from one project only (Oct 29 notes, 55b: there is no home project; the database
+// keeps its internal pointer on one of the task's other projects). The task's last project can't be
+// removed: then `code` is "last_project" and the pane offers to delete the task instead.
 export async function removeTaskFromProject(
   taskId: string,
   projectId: string,
-): Promise<ActionResult> {
-  return run(async () => {
+): Promise<ActionResult & { code?: typeof LAST_PROJECT_CODE }> {
+  let lastProject = false;
+  const result = await run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase
-        .from("task_projects")
-        .update({ deleted_at: now() })
-        .eq("task_id", id(taskId))
-        .eq("project_id", id(projectId)),
-    );
+    const response = await supabase
+      .from("task_projects")
+      .update({ deleted_at: now() })
+      .eq("task_id", id(taskId))
+      .eq("project_id", id(projectId));
+    if (isLastProjectError(response.error)) {
+      lastProject = true;
+      throw new InputError(LAST_PROJECT_MESSAGE);
+    }
+    check(response);
   });
-}
-
-export async function setHomeProject(taskId: string, projectId: string): Promise<ActionResult> {
-  return run(async () => {
-    const supabase = await createClient();
-    check(
-      await supabase
-        .from("tasks")
-        .update({ home_project_id: id(projectId) })
-        .eq("id", id(taskId)),
-    );
-  });
+  return lastProject ? { ...result, code: LAST_PROJECT_CODE } : result;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -4820,7 +4817,8 @@ export async function installRulePreset(
 
 // "Run manually" rules (Automations V2) a task can run from the pane's "…" menu: enabled rules with
 // the manual trigger in the task's projects where the viewer is an Editor (run_manual_rule's own check;
-// archived projects cap everyone at Viewer), the home project's first. Read with the person's own
+// archived projects cap everyone at Viewer), in the order the task was added to them (Oct 29 notes, 55b:
+// no home project). Read with the person's own
 // client, so RLS decides; a subtask or a private task has no projects and gets none, and a database
 // without the manual trigger simply has no such rules.
 export type ManualRule = { id: string; name: string; projectId: string; projectName: string };
@@ -4829,8 +4827,14 @@ export async function listManualRules(taskId: string): Promise<ActionResult & { 
   const outcome = await read(async (): Promise<ManualRule[]> => {
     const supabase = await createClient();
     const [task, memberships] = await Promise.all([
-      supabase.from("tasks").select("home_project_id, parent_task_id").eq("id", id(taskId, "task")).maybeSingle(),
-      supabase.from("task_projects").select("project_id").eq("task_id", taskId).is("deleted_at", null),
+      supabase.from("tasks").select("parent_task_id").eq("id", id(taskId, "task")).maybeSingle(),
+      supabase
+        .from("task_projects")
+        .select("project_id")
+        .eq("task_id", taskId)
+        .is("deleted_at", null)
+        .order("created_at")
+        .order("project_id"),
     ]);
     check(task);
     check(memberships);
@@ -4854,10 +4858,8 @@ export async function listManualRules(taskId: string): Promise<ActionResult & { 
     ]);
     check(projects);
     check(rules);
-    const home = task.data.home_project_id;
-    const ordered = [...(projects.data ?? [])].sort(
-      (a, b) => Number(b.id === home) - Number(a.id === home) || a.name.localeCompare(b.name),
-    );
+    const position = new Map(projectIds.map((p, i) => [p, i] as const));
+    const ordered = [...(projects.data ?? [])].sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
     return ordered.flatMap((project) =>
       (rules.data ?? [])
         .filter((rule) => rule.project_id === project.id)
@@ -6433,7 +6435,7 @@ export async function loadTaskBlockers(taskId: string): Promise<{ error?: string
     const rowsOf = list.filter((b): b is Record<string, Json> => Boolean(b) && typeof b === "object" && !Array.isArray(b));
     const projectIds = [...new Set(rowsOf.map((b) => (typeof b.home_project_id === "string" ? b.home_project_id : "")).filter(Boolean))];
     const [labels, projects] = await Promise.all([
-      visibleRequestLabels(rowsOf.map((b) => String(b.id))),
+      firstVisibleNumbers(rowsOf.map((b) => String(b.id))),
       projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
     ]);
     const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
@@ -6463,7 +6465,7 @@ export async function searchSubtaskParents(taskId: string, query: string): Promi
     const found = result.data ?? [];
     const projectIds = [...new Set(found.map((c) => c.home_project_id).filter((p): p is string => Boolean(p)))];
     const [labels, projects] = await Promise.all([
-      visibleRequestLabels(found.map((c) => c.id)),
+      firstVisibleNumbers(found.map((c) => c.id)),
       projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
     ]);
     const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));

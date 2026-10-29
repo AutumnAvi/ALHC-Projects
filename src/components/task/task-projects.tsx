@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useOptimistic, useState } from "react";
-import { Check, ChevronDown, Home, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
+import { Check, ChevronDown, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
-import { addTaskToProject, moveTask, removeTaskFromProject, setHomeProject } from "@/lib/actions";
+import { addTaskToProject, moveTask, removeTaskFromProject } from "@/lib/actions";
 import type { TaskDetail, TaskMembership } from "@/lib/data";
 import type { RequestLabel } from "@/lib/request-numbers";
 import { projectColorClass } from "@/lib/project-colors";
@@ -17,9 +17,10 @@ import { TaskNumberBadge, taskNumberText } from "./task-number";
 export type ProjectOption = { id: string; name: string; canAdd: boolean };
 
 // The pane's Projects row (Asana parity, batch 3): each project as a colored chip with its section in a
-// dropdown, "Add to projects" below. Home project and removal sit in a small menu per project. Since Oct 27
-// notes (batch 6) each project numbers the tasks it holds, so each chip shows the task's number there
-// ("Website · Task #12").
+// dropdown, "Add to projects" below. Removal sits in a small menu per project. Since Oct 27 notes (batch 6)
+// each project numbers the tasks it holds, so each chip shows the task's number there ("Website · Task
+// #12"). Since Oct 29 notes (55b) there's no home project: projects are listed in the order the task was
+// added to them, and any of them can be removed but the last (removeTaskFromProject's "last_project").
 export function TaskProjects({
   task,
   addableProjects,
@@ -62,11 +63,6 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
   return (
     <li className="group/membership flex min-w-0 flex-wrap items-center gap-1">
       <ProjectChip taskId={task.id} membership={membership} number={task.projectNumbers?.[membership.projectId] ?? null} />
-      {membership.isHome && task.memberships.length > 1 ? (
-        <span data-tooltip="Home project: the task's main project" className="inline-flex text-zinc-400">
-          <Home className="size-3.5" aria-label="Home project" />
-        </span>
-      ) : null}
       {canEdit ? (
         <Popover
           label={`Section in ${membership.projectName}: ${sectionName}. Change`}
@@ -104,7 +100,7 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
       ) : (
         <span className="px-1 text-xs text-zinc-500">{sectionName}</span>
       )}
-      {canEdit && !membership.isHome ? (
+      {canEdit ? (
         <Popover
           label={`More for ${membership.projectName}`}
           tooltip="Project options"
@@ -115,14 +111,6 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
         >
           {(close) => (
             <>
-              <MenuItem
-                onClick={() => {
-                  close();
-                  run(() => setHomeProject(task.id, membership.projectId));
-                }}
-              >
-                <Home className="size-4 text-zinc-500" aria-hidden /> Make it the home project
-              </MenuItem>
               <MenuItem
                 danger
                 onClick={() => {
