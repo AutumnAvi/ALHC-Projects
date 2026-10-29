@@ -1,12 +1,12 @@
 "use client";
 
-import { useServerAction } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
 import { SmartPicker } from "@/components/smart-picker";
 import { setPortfolioFieldValue } from "@/lib/actions";
 import { formatDueDate } from "@/lib/dates";
 import type { PortfolioField } from "@/lib/data";
 import { NumberInput } from "@/components/number-input";
-import { OPTION_COLOR_CLASSES, formatNumberValue, numberPrefixOf } from "@/lib/fields";
+import { OPTION_COLOR_CLASSES, formatNumberValue, notANumberNote, numberPrefixOf, readNumberBox } from "@/lib/fields";
 import { MAX_PORTFOLIO_FIELD_TEXT } from "@/lib/portfolios";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -46,6 +46,7 @@ export function PortfolioFieldInput({
   value: Json | undefined;
 }) {
   const [pending, run] = useServerAction();
+  const notify = useNotify();
   const label = `${field.name} for ${projectName}`;
   const save = (next: string | number | null) => run(() => setPortfolioFieldValue(field.id, projectId, next));
   const current = value === undefined || value === null ? "" : String(value);
@@ -86,14 +87,20 @@ export function PortfolioFieldInput({
     disabled: pending,
     placeholder: "—",
     onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
-      const raw = e.currentTarget.value.trim();
-      if (raw === current.trim()) return;
       if (field.fieldType === "number") {
-        if (raw === "") return save(null);
-        const n = Number(raw);
-        if (Number.isFinite(n)) save(n);
+        // Text that isn't a number (the box then reads "") keeps the saved value instead of clearing it.
+        const entry = readNumberBox(e.currentTarget.value, e.currentTarget.validity.badInput);
+        if (entry.kind === "keep") {
+          e.currentTarget.value = current;
+          notify(notANumberNote(field.name, numberPrefixOf(field)));
+          return;
+        }
+        const next = entry.kind === "clear" ? null : entry.value;
+        if (next !== (typeof value === "number" ? value : null)) save(next);
         return;
       }
+      const raw = e.currentTarget.value.trim();
+      if (raw === current.trim()) return;
       save(raw || null);
     },
     onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {

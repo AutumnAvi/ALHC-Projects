@@ -462,22 +462,25 @@ do $$
 declare
   a uuid := (select id from b7f_ids where name = 'a');
   f uuid;
+  early uuid;
   status_field uuid;
   t uuid;
   opts jsonb := '[{"id": "o1", "name": "High", "color": "red"}, {"id": "o2", "name": "Low", "color": "zinc"}]';
 begin
-  -- No options: refused for single- and multi-select, whether options are left out or sent empty.
+  -- Creating one without options: this release's editors and createField refuse it, but the database
+  -- lets people's inserts through while the release still on main (whose Add field and Choose from
+  -- library can create one) is live; a later migration adds the insert check. Like that release, the
+  -- options then come with an edit, and from then on the field can't be emptied.
+  insert into public.custom_fields (project_id, name, field_type) values (a, 'Early pick', 'single_select')
+  returning id into early;
+  update public.custom_fields set options = '[{"id": "e1", "name": "One", "color": "blue"}]' where id = early;
   begin
-    insert into public.custom_fields (project_id, name, field_type) values (a, 'Priority', 'single_select');
-    raise exception 'a single-select with no options must be refused';
+    update public.custom_fields set options = '[]' where id = early;
+    raise exception 'emptying it once it has an option must be refused';
   exception when check_violation then
-    assert sqlerrm like 'Add at least one option to the “Priority” field%', 'says what to do: ' || sqlerrm;
+    assert sqlerrm like 'Add at least one option to the “Early pick” field%', 'says what to do: ' || sqlerrm;
   end;
-  begin
-    insert into public.custom_fields (project_id, name, field_type, options) values (a, 'Channels', 'multi_select', '[]');
-    raise exception 'a multi-select with no options must be refused';
-  exception when check_violation then null;
-  end;
+  insert into public.custom_fields (project_id, name, field_type, options) values (a, 'Early channels', 'multi_select', '[]');
 
   -- With an option it's fine; other types and the section-bound Status need none.
   insert into public.custom_fields (project_id, name, field_type, options) values (a, 'Priority', 'single_select', opts)
@@ -521,6 +524,26 @@ begin
   update public.custom_fields set deleted_at = now() where project_id = a and name = 'Channels';
   assert (select deleted_at is not null from public.custom_fields where project_id = a and name = 'Channels'),
     'a select field can still be removed';
+
+  -- Removing a field doesn't skip the check: emptying it in the same update would let it come back
+  -- (deleted_at cleared) with no options.
+  begin
+    update public.custom_fields set deleted_at = now(), options = '[]' where id = f;
+    raise exception 'emptying a select field while removing it must be refused';
+  exception when check_violation then null;
+  end;
+  assert (select deleted_at is null and jsonb_array_length(options) = 1 from public.custom_fields where id = f),
+    'still live, with its option';
+  begin
+    update public.custom_fields set deleted_at = now(), options = '[]' where project_id = a and name = 'Channels';
+    raise exception 'emptying a removed select field must be refused too';
+  exception when check_violation then null;
+  end;
+  -- Removed with its options, it comes back with them.
+  update public.custom_fields set deleted_at = now() where id = early;
+  update public.custom_fields set deleted_at = null where id = early;
+  assert (select deleted_at is null and jsonb_array_length(options) = 1 from public.custom_fields where id = early),
+    'removed and back, with its option';
 end $$;
 
 -- Viewers still can't write fields at all (RLS, unchanged).
@@ -563,6 +586,9 @@ begin
   update public.custom_fields set name = 'Legacy choice', description = 'Older field' where id = legacy;
   assert (select name from public.custom_fields where id = legacy) = 'Legacy choice', 'an empty select is renameable';
   update public.custom_fields set options = '[]' where id = legacy;
+  -- It can be removed and brought back as it is (it already was that empty select).
+  update public.custom_fields set deleted_at = now() where id = legacy;
+  update public.custom_fields set deleted_at = null where id = legacy;
   update public.custom_fields set options = '[{"id": "l1", "name": "Yes", "color": "green"}]' where id = legacy;
   begin
     update public.custom_fields set options = '[]' where id = legacy;
@@ -598,24 +624,27 @@ begin
     'Duplicate project copies option-less select fields';
 end $$;
 
--- Portfolio fields: single-select needs an option too.
+-- Portfolio fields: a single-select keeps at least one option too.
 do $$
 declare
   p uuid := (select id from b7f_ids where name = 'p');
   pf uuid;
 begin
-  begin
-    insert into public.portfolio_fields (portfolio_id, name, field_type) values (p, 'Phase', 'single_select');
-    raise exception 'an option-less portfolio single-select must be refused';
-  exception when check_violation then
-    assert sqlerrm like 'Add at least one option to the “Phase” field%', 'says what to do: ' || sqlerrm;
-  end;
-  insert into public.portfolio_fields (portfolio_id, name, field_type, options)
-  values (p, 'Phase', 'single_select', '[{"id": "ph1", "name": "Plan", "color": "blue"}]') returning id into pf;
+  -- The release still on main adds a portfolio single-select with no options, then its options on the
+  -- row: that keeps working until this release is merged (createPortfolioField refuses an option-less one).
+  insert into public.portfolio_fields (portfolio_id, name, field_type) values (p, 'Phase', 'single_select')
+  returning id into pf;
+  update public.portfolio_fields set options = '[{"id": "ph1", "name": "Plan", "color": "blue"}]' where id = pf;
   insert into public.portfolio_fields (portfolio_id, name, field_type) values (p, 'Spend', 'number');
   begin
     update public.portfolio_fields set options = '[]' where id = pf;
     raise exception 'emptying a portfolio single-select must be refused';
+  exception when check_violation then
+    assert sqlerrm like 'Add at least one option to the “Phase” field%', 'says what to do: ' || sqlerrm;
+  end;
+  begin
+    update public.portfolio_fields set deleted_at = now(), options = '[]' where id = pf;
+    raise exception 'emptying it while removing it must be refused';
   exception when check_violation then null;
   end;
   update public.portfolio_fields set name = 'Stage of work' where id = pf;
@@ -653,6 +682,10 @@ begin
     'authenticated can''t execute the guard';
   assert exists (select 1 from pg_trigger where tgname = 'custom_fields_07_select_options' and not tgisinternal), 'project trigger';
   assert exists (select 1 from pg_trigger where tgname = 'portfolio_fields_07_select_options' and not tgisinternal), 'portfolio trigger';
+  -- Updates only (tgtype: 4 = insert, 16 = update), so the release still on main can add fields.
+  assert (select bool_and(tgtype::int & 4 = 0 and tgtype::int & 16 <> 0) from pg_trigger
+           where tgname in ('custom_fields_07_select_options', 'portfolio_fields_07_select_options') and not tgisinternal),
+    'the select-option triggers run on updates only';
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
@@ -1099,6 +1132,79 @@ begin
   assert (select value from public.task_field_values where task_id = t and field_id = f) is null, 'cleared';
 end $$;
 
+
+-- ---------------------------------------------------------------------------------------------
+-- 49 (review): a symbol can't change how the number reads (no bidi or other invisible formatting
+-- characters, no digits, no plus / minus signs), the database trims exactly what the app trims
+-- (JavaScript's trim(): NUMBER_PREFIX_SPACE), and a symbol ending in a period or a comma is spaced
+-- like one ending in a letter. Same vectors as tests/unit/oct29-batch7-number-prefix.test.tsx.
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  assert public.format_number_value(1250, 'Rs.') = 'Rs. 1,250', 'a space after a period';
+  assert public.format_number_value(-3, 'No.') = '-No. 3', 'and the sign still first';
+  assert public.format_number_value(250, '$.') = '$. 250', 'never "$.250"';
+  assert public.format_number_value(250, '$,') = '$, 250', 'nor "$,250"';
+  assert public.format_number_value(250, '%') = '%250', 'other symbols as before';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  f uuid := (select id from b7f_ids where name = 'cost');
+  p uuid := (select id from b7f_ids where name = 'p');
+  pf uuid;
+  bad text;
+  good text;
+begin
+  -- Refused: right-to-left override, zero-width space, pop directional isolate, soft hyphen, a byte
+  -- order mark inside, a language tag, digits (ASCII, full-width, Arabic-Indic), and signs (+, -, the
+  -- minus sign, an en dash, plus-minus).
+  foreach bad in array array[
+    chr(8238) || '$', chr(8203) || '$', '$' || chr(8297), chr(173) || '$', '$' || chr(65279) || '$', chr(917505) || '$',
+    '1', '$1', chr(65301), chr(1635),
+    '+', '-', '$-', '-$', chr(8722), chr(8211), chr(177)
+  ] loop
+    begin
+      update public.custom_fields set number_prefix = bad where id = f;
+      raise exception 'the symbol % (U+%) must be refused', bad, to_hex(ascii(bad));
+    exception when check_violation then null;
+    end;
+  end loop;
+  assert (select number_prefix from public.custom_fields where id = f) = '$', 'still $';
+
+  -- Accepted: currency signs, letters, a period or comma, superscripts, an emoji with its variation selector.
+  foreach good in array array['€', '#', '₪', '£', 'USD', 'Rs.', 'No.', 'm' || chr(178), chr(10084) || chr(65039), '%'] loop
+    update public.custom_fields set number_prefix = good where id = f;
+    assert (select number_prefix from public.custom_fields where id = f) = good, good || ' is kept as typed';
+  end loop;
+
+  -- Trimmed like the app: a byte order mark, thin / em / ogham / medium math spaces, vertical tab, form
+  -- feed, and the line separator at the ends go; a symbol of only those is no symbol.
+  update public.custom_fields set number_prefix = chr(65279) || '$' || chr(8201) where id = f;
+  assert (select number_prefix from public.custom_fields where id = f) = '$', 'byte order mark and thin space trimmed';
+  update public.custom_fields set number_prefix = chr(8195) || chr(5760) || '€' || chr(8287) where id = f;
+  assert (select number_prefix from public.custom_fields where id = f) = '€', 'em, ogham, and math spaces trimmed';
+  update public.custom_fields set number_prefix = chr(11) || chr(12) || '#' || chr(8232) where id = f;
+  assert (select number_prefix from public.custom_fields where id = f) = '#', 'vertical tab, form feed, line separator trimmed';
+  update public.custom_fields set number_prefix = chr(65279) where id = f;
+  assert (select number_prefix is null from public.custom_fields where id = f), 'a lone byte order mark is no symbol';
+  update public.custom_fields set number_prefix = '$' where id = f;
+
+  -- Portfolio number fields follow the same rules.
+  insert into public.portfolio_fields (portfolio_id, name, field_type, number_prefix)
+  values (p, 'Spend review', 'number', chr(8201) || '₪' || chr(65279)) returning id into pf;
+  assert (select number_prefix from public.portfolio_fields where id = pf) = '₪', 'trimmed like the app';
+  foreach bad in array array[chr(8238) || '$', '1', '-', chr(8722)] loop
+    begin
+      update public.portfolio_fields set number_prefix = bad where id = pf;
+      raise exception 'the portfolio symbol % must be refused', bad;
+    exception when check_violation then null;
+    end;
+  end loop;
+end $$;
 
 -- =================================================================================================
 -- Track T3: 55 shared library fields, 51 field lock
