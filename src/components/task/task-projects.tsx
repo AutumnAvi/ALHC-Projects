@@ -12,7 +12,7 @@ import type { RequestLabel } from "@/lib/request-numbers";
 import { projectColorClass } from "@/lib/project-colors";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
-import { LAST_PROJECT_CODE, lastProjectQuestion, removeFromProjectOrDelete } from "@/lib/task-projects";
+import { isLastProjectCode, lastProjectQuestion, removeFromProjectOrDelete } from "@/lib/task-projects";
 import { useClosePane } from "./task-pane-frame";
 import { TaskNumberBadge, taskNumberText } from "./task-number";
 
@@ -81,13 +81,13 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
     );
   }
 
-  // Removes the task from this project only. On its last project the database refuses, and the person is
-  // asked whether to delete the task instead (to the Trash, with Undo; Oct 29 notes, 55b). The question
-  // waits outside any write.
+  // Removes the task from this project only. On its last project (or its last one that isn't archived)
+  // the database refuses, and the person is asked whether to delete the task instead (to the Trash, with
+  // Undo; Oct 29 notes, 55b). The question waits outside any write.
   async function removeHere() {
     const outcome = await removeFromProjectOrDelete({
-      remove: () => write(() => removeTaskFromProject(task.id, membership.projectId), (r) => r.code === LAST_PROJECT_CODE),
-      ask: () => confirm(lastProjectQuestion(task.title, membership.projectName)),
+      remove: () => write(() => removeTaskFromProject(task.id, membership.projectId), (r) => isLastProjectCode(r.code)),
+      ask: (refusal) => confirm(lastProjectQuestion(task.title, membership.projectName, refusal)),
       deleteTask: () => write(() => deleteTask(task.id)),
     });
     if (outcome.kind === "deleted") {

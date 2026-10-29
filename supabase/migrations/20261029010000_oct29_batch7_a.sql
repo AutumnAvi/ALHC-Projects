@@ -2063,7 +2063,9 @@ $do$;
 --     project's number onto tasks.req_*), and never renumbers (maybe_renumber_on_move stands down while
 --     the pointer moves).
 --   * Removing the task's LAST active project is refused (check_violation, detail last_project): "This is
---     the task's only project. Add it to another project first, or move the task to the Trash." The guard
+--     the task's only project. Add it to another project first, or move the task to the Trash." So is
+--     removing the last one that isn't archived (detail archived_only: archived projects are read-only
+--     for everyone, so the task would be frozen until one is unarchived). The guard
 --     (guard_home_membership) became SECURITY DEFINER so it counts memberships the caller can't see, and
 --     it locks the task's row first, so two removals at the same time run one after the other (the
 --     second sees the first). While the pointer moves, ensure_home_membership leaves the memberships
@@ -2077,16 +2079,20 @@ $do$;
 --   * Links and defaults follow the stable rule instead of "home first": comment_email_project (the
 --     recipient's project), calendar_feed, duplicate_task, my_task_cards, portfolio_workload,
 --     report_overdue_tasks(_after), search_tasks, subtask_parent_candidates, task_open_blockers,
---     review_check_view (the form's project, else the first), dependency_shift_mode (the first project),
---     restore_task (refuses only when none of the task's projects is active), the rule
+--     review_check_view (the project the link's email named: review_checks.project_id, chosen once with
+--     the sender's access — its form's project, else the first they can read), dependency_shift_mode
+--     (the first project), restore_task (refuses only when none of the task's projects is active), the rule
 --     actions Move to another project / Remove from this project (the database moves the pointer).
+--   * A membership's task and project never change (task_projects_01_fixed_keys): moving a row would
+--     skip the guard and the pointer's move, or pull someone else's task into your project.
 --   * Emails: email_design_context returns task_numbers — the first number the recipient can read with
 --     the rest for "+N" (recipient_task_numbers, run as the recipient), or the request's own number (its
 --     form's project) for requester emails; submitter_response_subject uses the form's project too.
 --
 -- New internal helpers (revoked from clients): task_first_project, task_number_in, recipient_task_numbers,
--- move_task_pointer_on_removal. No new client SECURITY DEFINER function (suite 60 unchanged); nothing for
--- anon. No row-removal or object-removal keywords anywhere in this file. Additive: no tail.
+-- move_task_pointer_on_removal, review_check_project. New column review_checks.project_id. No new client
+-- SECURITY DEFINER function (suite 60 unchanged); nothing for anon. No row-removal or object-removal
+-- keywords anywhere in this file. Additive: no tail.
 -- ---------------------------------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------------------------------
@@ -2273,13 +2279,28 @@ select public.alhc_patch_function(
     perform 1 from public.tasks t
     where t.id = new.task_id and t.parent_task_id is null and t.home_project_id is not null
     for no key update;
-    if found and not exists (
-      select 1 from public.task_projects o
-      join public.projects p on p.id = o.project_id and p.deleted_at is null
-      where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
-    ) then
-      raise exception 'This is the task’s only project. Add it to another project first, or move the task to the Trash.'
-        using errcode = 'check_violation', detail = 'last_project';
+    if found then
+      if not exists (
+        select 1 from public.task_projects o
+        join public.projects p on p.id = o.project_id and p.deleted_at is null
+        where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
+      ) then
+        raise exception 'This is the task’s only project. Add it to another project first, or move the task to the Trash.'
+          using errcode = 'check_violation', detail = 'last_project';
+      end if;
+      -- Its other projects are all archived (read-only for everyone): without this one nobody could
+      -- edit, complete, or trash the task until one is unarchived. An archived project's own membership
+      -- (only the system removes one) changes nothing about that.
+      if not exists (
+        select 1 from public.task_projects o
+        join public.projects p on p.id = o.project_id and p.deleted_at is null and p.archived_at is null
+        where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
+      ) and not exists (
+        select 1 from public.projects p where p.id = new.project_id and p.archived_at is not null
+      ) then
+        raise exception 'This is the task’s only active project: its other projects are archived. Unarchive one or add the task to another project first, or move the task to the Trash.'
+          using errcode = 'check_violation', detail = 'archived_only';
+      end if;
     end if;
   end if;$new$
 );
@@ -2576,14 +2597,14 @@ select public.alhc_patch_function(
   end if;$new$
 );
 
--- The review page names the request's project: its form's, else the first of the task's projects.
+-- The review page names the project its email named: the one chosen with the sender's access when the
+-- link was sent (review_checks.project_id, below: its form's project, else the first of the task's
+-- projects — each only when the sender can read it). Rounds sent before that column existed choose the
+-- same way now, as their sender. Never a project the sender can't read.
 select public.alhc_patch_function(
   'public.review_check_view(text)'::regprocedure,
   $old$  where p.id = coalesce((select root.home_project_id from public.tasks root where root.id = coalesce(t.root_task_id, t.id)), t.home_project_id);$old$,
-  $new$  where p.id = coalesce(
-    (select f.project_id from public.task_submitter(t.id) s join public.forms f on f.id = s.form_id),
-    public.task_first_project(t.id)
-  );$new$
+  $new$  where p.id = coalesce(r.project_id, public.review_check_project(t.id, r.created_by));$new$
 );
 
 -- A response's subject: the request's own project (its form's) and its number there.
@@ -2669,4 +2690,114 @@ select public.alhc_patch_function(
         true
       ),
       'task_numbers', numbers,$new$
+);
+
+-- ---------------------------------------------------------------------------------------------------
+-- 55b. A membership's task and project never change. The column grants let clients send them (the
+--      app's "Add to projects" upsert sets both to the values they already have, so the grants stay),
+--      but moving a row to another project would skip the last-project guard and the pointer's move
+--      (both fire on deleted_at), and pointing a row of your project at another task would pull that
+--      task — maybe someone else's private one — into your project. Nothing in the database changes them
+--      either. Invoker; runs first.
+-- ---------------------------------------------------------------------------------------------------
+
+create or replace function public.guard_task_project_keys()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.task_id is distinct from old.task_id or new.project_id is distinct from old.project_id then
+    raise exception 'A task’s project membership can’t move to another task or project'
+      using errcode = 'insufficient_privilege', hint = 'Add the task to the other project instead.';
+  end if;
+  return new;
+end;
+$$;
+
+select public.alhc_revoke_anon_execute(array['guard_task_project_keys()']);
+grant execute on function public.guard_task_project_keys() to authenticated;
+
+create trigger task_projects_01_fixed_keys
+  before update of task_id, project_id on public.task_projects
+  for each row
+  execute function public.guard_task_project_keys();
+
+-- ---------------------------------------------------------------------------------------------------
+-- 55b. A review link's project, chosen once with the sender's access and shared by its email and its
+--      page (review_check_view above): the request's form's project when the sender can read it, else
+--      the first of the task's projects (stable rule) the sender can read. Null when they can read none
+--      (a private task). "Send again" keeps it while the person sending can read it, else chooses again
+--      as them, so neither the email nor the page ever names a project its sender can't open.
+-- ---------------------------------------------------------------------------------------------------
+
+alter table public.review_checks add column if not exists project_id uuid references public.projects (id);
+create index if not exists review_checks_project_id_idx on public.review_checks (project_id);
+
+create or replace function public.review_check_project(target_task uuid, sender uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    (
+      select f.project_id
+      from public.task_submitter(target_task) s
+      join public.forms f on f.id = s.form_id
+      join public.projects p on p.id = f.project_id and p.deleted_at is null
+      where public.profile_project_role(sender, f.project_id) is not null
+    ),
+    (
+      select tp.project_id
+      from public.tasks t
+      join public.task_projects tp on tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+      join public.projects p on p.id = tp.project_id and p.deleted_at is null
+      where t.id = target_task
+        and public.profile_project_role(sender, tp.project_id) is not null
+      order by tp.created_at, tp.project_id
+      limit 1
+    )
+  );
+$$;
+
+revoke all on function public.review_check_project(uuid, uuid) from public, anon, authenticated;
+
+select public.alhc_patch_function(
+  'public.create_review_check(uuid, uuid[], text, text, text)'::regprocedure,
+  $old$    task_id, round, recipient_email, recipient_name, message, token_hash, token_hint, expires_at, created_by
+  ) values ($old$,
+  $new$    task_id, round, recipient_email, recipient_name, message, token_hash, token_hint, expires_at, created_by,
+    project_id
+  ) values ($new$,
+  $old$    '…' || right(token, 4), now() + interval '30 days', me
+  )
+  returning * into r;$old$,
+  $new$    '…' || right(token, 4), now() + interval '30 days', me,
+    -- Oct 29 notes (55b): the project its email and its page name, chosen with the sender's access.
+    public.review_check_project(t.id, me)
+  )
+  returning * into r;$new$,
+  $old$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', r.expires_at,$old$,
+  $new$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', r.expires_at,
+    'project_id', r.project_id, 'project_name', (select p.name from public.projects p where p.id = r.project_id),$new$
+);
+
+select public.alhc_patch_function(
+  'public.rotate_review_check_token(uuid)'::regprocedure,
+  $old$      expires_at = now() + interval '30 days', hits = 0, hits_window_started_at = null, updated_at = now()
+  where x.id = r.id;$old$,
+  $new$      expires_at = now() + interval '30 days', hits = 0, hits_window_started_at = null, updated_at = now(),
+      -- Oct 29 notes (55b): the round's project while the person sending again can read it, else the one
+      -- they'd choose (the email and the page name the same project, never one its sender can't open).
+      project_id = case
+        when x.project_id is not null and public.profile_project_role(auth.uid(), x.project_id) is not null then x.project_id
+        else public.review_check_project(x.task_id, auth.uid())
+      end
+  where x.id = r.id
+  returning x.project_id into r.project_id;$new$,
+  $old$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', now() + interval '30 days',$old$,
+  $new$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', now() + interval '30 days',
+    'project_id', r.project_id, 'project_name', (select p.name from public.projects p where p.id = r.project_id),$new$
 );

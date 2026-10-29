@@ -96,13 +96,16 @@ export function TeamCalendar({
     const overdue = !completed && task.dueOn < today;
     const milestone = task.kind === "milestone";
     const fullTitle = displayTaskTitle(task.title, task.requestLabel);
+    // The number's own project (Oct 29 notes, 55b): the bar's project numbers it, or the badge names the
+    // project the shown number is from — never one project's number next to another's name.
+    const numberedElsewhere = Boolean(task.requestLabel && task.numberProjectName);
     return {
       id: task.id,
       title: task.title,
       // The number (when its project numbers tasks) and the project, tiny after the name.
       label: task.requestLabel,
       numbers: task.taskNumbers,
-      projectName: task.projectName,
+      projectName: numberedElsewhere ? task.numberProjectName : task.projectName,
       startOn: milestone ? null : task.startOn,
       dueOn: task.dueOn,
       completed,
@@ -122,8 +125,8 @@ export function TeamCalendar({
         projectName: task.projectName,
       }),
       dotClass: projectColorClass(task.projectId),
-      srDetail: ` in ${task.projectName}`,
-      tooltip: `${fullTitle} · ${task.projectName}`,
+      srDetail: ` in ${task.projectName}${numberedElsewhere ? `, numbered in ${task.numberProjectName}` : ""}`,
+      tooltip: `${fullTitle} · ${task.projectName}${numberedElsewhere ? ` (numbered in ${task.numberProjectName})` : ""}`,
     };
   });
   const label = monthLabel(month);

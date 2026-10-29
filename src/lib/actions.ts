@@ -18,6 +18,7 @@ import {
   loadTaskCommentPage,
   firstVisibleNumbers,
   visibleRequestLabelsIn,
+  visibleTaskPlacesOrNull,
   type SubtaskItem,
   type TaskComment,
 } from "@/lib/data";
@@ -26,7 +27,7 @@ import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/
 import { safeDownload } from "@/lib/safe-fetch";
 import { drainOutbox, isEmailConfigured } from "@/lib/email";
 import { forwardingAddress } from "@/lib/email-reply";
-import { templateProblem } from "@/lib/request-numbers";
+import { numberWithItsProject, templateProblem } from "@/lib/request-numbers";
 import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
 import { ImportParseError, buildImportPlan, importSteps, planExternalIds, type ImportPlan } from "@/lib/asana-import";
 import {
@@ -165,7 +166,7 @@ import {
 import type { Json, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import { TASK_KINDS, type TaskKind } from "@/lib/task-kinds";
-import { LAST_PROJECT_CODE, LAST_PROJECT_MESSAGE, isLastProjectError } from "@/lib/task-projects";
+import { ARCHIVED_ONLY_MESSAGE, LAST_PROJECT_MESSAGE, lastProjectRefusal, type LastProjectCode } from "@/lib/task-projects";
 import {
   DEFAULT_WIDGET_TITLES,
   isPersonalWidgetKind,
@@ -2213,12 +2214,13 @@ export async function addTaskToProject(taskId: string, projectId: string): Promi
 
 // Removes the task from one project only (Oct 29 notes, 55b: there is no home project; the database
 // keeps its internal pointer on one of the task's other projects). The task's last project can't be
-// removed: then `code` is "last_project" and the pane offers to delete the task instead.
+// removed: then `code` is "last_project" and the pane offers to delete the task instead. Nor can its last
+// project that isn't archived ("archived_only": nobody could edit it in the archived ones).
 export async function removeTaskFromProject(
   taskId: string,
   projectId: string,
-): Promise<ActionResult & { code?: typeof LAST_PROJECT_CODE }> {
-  let lastProject = false;
+): Promise<ActionResult & { code?: LastProjectCode }> {
+  const refused: { code: LastProjectCode | null } = { code: null };
   const result = await run(async () => {
     const supabase = await createClient();
     const response = await supabase
@@ -2228,10 +2230,8 @@ export async function removeTaskFromProject(
       .eq("project_id", id(projectId))
       .is("deleted_at", null)
       .select("task_id");
-    if (isLastProjectError(response.error)) {
-      lastProject = true;
-      throw new InputError(LAST_PROJECT_MESSAGE);
-    }
+    refused.code = lastProjectRefusal(response.error);
+    if (refused.code) throw new InputError(refused.code === "archived_only" ? ARCHIVED_ONLY_MESSAGE : LAST_PROJECT_MESSAGE);
     check(response);
     if (!response.data?.length) {
       // Nothing changed: it was already out of that project (fine), or the person's role there (RLS:
@@ -2246,7 +2246,7 @@ export async function removeTaskFromProject(
       if (still.data) throw new DbError(NOT_ALLOWED);
     }
   });
-  return lastProject ? { ...result, code: LAST_PROJECT_CODE } : result;
+  return refused.code ? { ...result, code: refused.code } : result;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -6625,21 +6625,48 @@ export async function loadTaskBlockers(taskId: string): Promise<{ error?: string
     const value = (result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {}) as Record<string, Json>;
     const list = Array.isArray(value.blockers) ? value.blockers : [];
     const rowsOf = list.filter((b): b is Record<string, Json> => Boolean(b) && typeof b === "object" && !Array.isArray(b));
-    const projectIds = [...new Set(rowsOf.map((b) => (typeof b.home_project_id === "string" ? b.home_project_id : "")).filter(Boolean))];
-    const [labels, projects] = await Promise.all([
-      firstVisibleNumbers(rowsOf.map((b) => String(b.id))),
-      projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-    ]);
-    const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+    const named = await numbersWithTheirProjects(
+      supabase,
+      rowsOf.map((b) => ({ id: String(b.id), projectId: typeof b.home_project_id === "string" ? b.home_project_id : null })),
+    );
     const blockers = rowsOf.map((b) => ({
       id: String(b.id),
       title: typeof b.title === "string" ? b.title : "",
-      label: labels.get(String(b.id)) ?? null,
-      projectName: typeof b.home_project_id === "string" ? (names.get(b.home_project_id) ?? null) : null,
+      label: named.get(String(b.id))?.label ?? null,
+      projectName: named.get(String(b.id))?.projectName ?? null,
       isSubtask: typeof b.parent_task_id === "string",
     }));
     return { total: typeof value.total === "number" ? value.total : blockers.length, blockers };
   });
+}
+
+// A task's number and the project named next to it, picked together (Oct 29 notes, 55b): the first
+// number the viewer can read with the project that issued it, else (no number) the first project they can
+// read. A database without task_project_labels: the release before this one — each task's home-project
+// label, next to the project the RPC named.
+async function numbersWithTheirProjects(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tasks: { id: string; projectId: string | null }[],
+): Promise<Map<string, { label: RequestLabel | null; projectName: string | null }>> {
+  const ids = tasks.map((t) => t.id);
+  const places = await visibleTaskPlacesOrNull(ids);
+  if (places) {
+    return new Map(
+      tasks.map((t) => {
+        const paired = numberWithItsProject(places.get(t.id));
+        return [t.id, { label: paired.label, projectName: paired.projectName }] as const;
+      }),
+    );
+  }
+  const projectIds = [...new Set(tasks.map((t) => t.projectId).filter((p): p is string => Boolean(p)))];
+  const [labels, projects] = await Promise.all([
+    firstVisibleNumbers(ids),
+    projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  ]);
+  const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+  return new Map(
+    tasks.map((t) => [t.id, { label: labels.get(t.id) ?? null, projectName: t.projectId ? (names.get(t.projectId) ?? null) : null }] as const),
+  );
 }
 
 // 42. "Make a subtask of…": tasks the viewer edits that this task can go under (searchable).
@@ -6655,17 +6682,15 @@ export async function searchSubtaskParents(taskId: string, query: string): Promi
     });
     check(result);
     const found = result.data ?? [];
-    const projectIds = [...new Set(found.map((c) => c.home_project_id).filter((p): p is string => Boolean(p)))];
-    const [labels, projects] = await Promise.all([
-      firstVisibleNumbers(found.map((c) => c.id)),
-      projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-    ]);
-    const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+    const named = await numbersWithTheirProjects(
+      supabase,
+      found.map((c) => ({ id: c.id, projectId: c.home_project_id })),
+    );
     return found.map((c) => ({
       id: c.id,
       title: c.title,
-      label: labels.get(c.id) ?? null,
-      projectName: c.home_project_id ? (names.get(c.home_project_id) ?? null) : null,
+      label: named.get(c.id)?.label ?? null,
+      projectName: named.get(c.id)?.projectName ?? null,
       isSubtask: c.parent_task_id !== null,
       completed: c.completed_at !== null,
     }));

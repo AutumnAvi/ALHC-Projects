@@ -44,7 +44,9 @@ import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import {
   bareTaskTitle,
   displayTaskTitle,
+  numbersLedBy,
   numbersOf,
+  numberWithItsProject,
   requestLabelFrom,
   taskPlacesFrom,
   templateFromPrefix,
@@ -2021,9 +2023,31 @@ async function listDependencyCandidates(
   }
   if (others.length === 0 && treeGroup.tasks.length) groups.push(treeGroup);
   const shown = groups.filter((g) => g.tasks.length > 0);
-  // Numbers for every task offered (labels the viewer may see), so the picker shows and searches them.
-  const labels = await firstVisibleNumbers(shown.flatMap((g) => g.tasks.map((t) => t.id)));
-  return shown.map((g) => ({ ...g, tasks: g.tasks.map((t) => ({ ...t, label: labels.get(t.id) ?? null })) }));
+  // Numbers for every task offered (labels the viewer may see), so the picker shows and searches them. A
+  // project's group shows each task's number there; a task it doesn't number shows its first number with
+  // that number's own project, so a project's name never sits next to another project's number (Oct 29
+  // notes, 55b). The tree's tasks show their first number.
+  const ids = shown.flatMap((g) => g.tasks.map((t) => t.id));
+  const places = await visibleTaskPlacesOrNull(ids);
+  if (!places) {
+    const labels = await firstVisibleNumbers(ids);
+    return shown.map((g) => ({ ...g, tasks: g.tasks.map((t) => ({ ...t, label: labels.get(t.id) ?? null })) }));
+  }
+  const byId = new Map(all.map((p) => [p.id, p] as const));
+  return shown.map((g) => {
+    const project = byId.get(g.key);
+    return {
+      ...g,
+      tasks: g.tasks.map((t) => {
+        if (!project) return { ...t, label: numberWithItsProject(places.get(t.id)).label };
+        const paired = numberWithItsProject(places.get(t.id), { projectId: project.id, projectName: project.name });
+        // The task's own projects come without a name (the group's heading says it), unless the number
+        // is another project's.
+        const named = own.includes(project) ? paired.projectId !== project.id : true;
+        return { ...t, label: paired.label, projectName: named ? paired.projectName : null };
+      }),
+    };
+  });
 }
 
 // Dependency stories only store the other task's title when every reader of this task can read it
@@ -3851,6 +3875,12 @@ async function taskPlacesWith(supabase: ServerClient, ids: string[]): Promise<Ma
 // home-project label as its only number (the release before this one).
 export async function visibleTaskPlaces(ids: string[]): Promise<Map<string, TaskPlace[]>> {
   return (await taskPlacesWith(await createClient(), ids)) ?? new Map();
+}
+
+// The same, but null on a database without task_project_labels, so a caller can fall back to the
+// release before this one (each task's home-project label, and the project it already names).
+export async function visibleTaskPlacesOrNull(ids: string[]): Promise<Map<string, TaskPlace[]> | null> {
+  return taskPlacesWith(await createClient(), ids);
 }
 
 export async function visibleTaskNumbers(ids: string[]): Promise<Map<string, TaskNumber[]>> {
@@ -6025,14 +6055,18 @@ export async function listTeamCalendarTasks(
   }
   // Oct 26 notes (batch 4): the number is drawn as a tiny badge after the name, so the bar keeps the
   // bare name (a label baked into an older title is taken off) and the label travels next to it.
-  // Oct 29 notes (55b): the first number the viewer can read (stable order) and the rest for "+N".
+  // Oct 29 notes (55b): the bar's project's own number first, else the first number the viewer can read
+  // (stable order) — named with its own project (numberProjectName), so the badge never pairs one
+  // project's number with another's name — and the rest for "+N".
   const numbers = await visibleTaskNumbers([...tasks.keys()]);
   for (const task of tasks.values()) {
     const taskNumbers = numbers.get(task.id) ?? [];
-    const label = taskNumbers[0]?.label ?? null;
-    task.requestLabel = label;
-    task.taskNumbers = taskNumbers;
-    task.title = bareTaskTitle(task.title, label);
+    const ordered = numbersLedBy(taskNumbers, task.projectId);
+    const lead = ordered[0];
+    task.requestLabel = lead?.label ?? null;
+    task.taskNumbers = ordered;
+    task.numberProjectName = lead && lead.projectId && lead.projectId !== task.projectId ? lead.projectName : null;
+    task.title = bareTaskTitle(task.title, taskNumbers[0]?.label ?? null);
   }
   const sorted = [...tasks.values()].sort(
     (a, b) => (a.startOn ?? a.dueOn).localeCompare(b.startOn ?? b.dueOn) || a.dueOn.localeCompare(b.dueOn) || a.title.localeCompare(b.title),
