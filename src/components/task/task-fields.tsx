@@ -8,7 +8,16 @@ import { moveTask, setFieldValue } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { MenuItem, Popover } from "@/components/popover";
 import { PILL, isChoiceField } from "@/components/project/field-chips";
-import { OPTION_COLOR_CLASSES, fieldChips, repeatedSharedFieldIds, type FieldDef, type FieldOption } from "@/lib/fields";
+import {
+  OPTION_COLOR_CLASSES,
+  fieldChips,
+  fieldValueEditable,
+  repeatedSharedFieldIds,
+  type FieldDef,
+  type FieldOption,
+} from "@/lib/fields";
+import { permissionsFor } from "@/lib/permissions";
+import { FieldLockIcon } from "@/components/project/field-lock";
 import type { Json } from "@/lib/supabase/database.types";
 import { formatDueDate } from "@/lib/dates";
 import { SingleDatePicker } from "./date-picker";
@@ -26,15 +35,25 @@ const FIELDS_SHOWN = 5;
 export function TaskFields({ task, profiles, canEdit }: { task: TaskDetail; profiles: Profile[]; canEdit: boolean }) {
   const [expanded, setExpanded] = useState(false);
   if (task.fields.length === 0) return null;
+  // A field's value is written through its project: Editors+ there, and only Owners and Admins while the
+  // field is locked (Oct 29 notes, batch 7). Without per-project roles, the task's role decides (and a
+  // locked field stays read-only).
+  const editable = (field: FieldDef) => {
+    const role = task.viewerProjectRoles?.[field.projectId];
+    const perms = role ? permissionsFor(role) : { canEdit, canManage: false };
+    return canEdit && fieldValueEditable(field, perms);
+  };
   const grouped = task.memberships.map((m) => ({
     membership: m,
     fields: task.fields.filter((f) => f.projectId === m.projectId),
   }));
   // Oct 29 notes (batch 7): a shared library field in several of the task's projects is one field with
   // one value (the database keeps them in step), so it shows once, in its first project.
+  // The copy kept is one the viewer can change, when there is one.
   const repeated = repeatedSharedFieldIds(
     grouped.flatMap((g) => g.fields),
     task.fieldValues,
+    (field) => (editable(field) ? 0 : 1),
   );
   const byProject = grouped
     .map((group) => ({ ...group, fields: group.fields.filter((f) => !repeated.has(f.id)) }))
@@ -65,7 +84,7 @@ export function TaskFields({ task, profiles, canEdit }: { task: TaskDetail; prof
                   field={field}
                   task={task}
                   profiles={profiles}
-                  canEdit={canEdit}
+                  canEdit={editable(field)}
                   value={task.fieldValues[field.id] ?? null}
                   sectionId={membership.sectionId}
                   sections={membership.sections}
@@ -331,18 +350,28 @@ function FieldRow({
     }
   }
 
+  const name =
+    !canEdit ||
+    field.boundToSections ||
+    field.fieldType === "single_select" ||
+    field.fieldType === "multi_select" ||
+    field.fieldType === "date" ||
+    field.fieldType === "people" ? (
+      field.name
+    ) : (
+      <label htmlFor={inputId}>{field.name}</label>
+    );
   return (
     <>
       <dt className={PANE_LABEL}>
-        {!canEdit ||
-        field.boundToSections ||
-        field.fieldType === "single_select" ||
-        field.fieldType === "multi_select" ||
-        field.fieldType === "date" ||
-        field.fieldType === "people" ? (
-          field.name
+        {field.locked ? (
+          // Oct 29 notes (batch 7): a locked field says so for everyone (read-only below Owner / Admin).
+          <span className="inline-flex min-w-0 items-center gap-1">
+            <span className="truncate">{name}</span>
+            <FieldLockIcon />
+          </span>
         ) : (
-          <label htmlFor={inputId}>{field.name}</label>
+          name
         )}
       </dt>
       <dd className="min-w-0">{control}</dd>

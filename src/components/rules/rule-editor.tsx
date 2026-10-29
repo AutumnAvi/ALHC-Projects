@@ -3,12 +3,12 @@
 // The rule builder's building blocks (trigger settings, a condition, an action's settings, and the
 // one-time signing-secret reveal), laid out by the rule canvas (rule-canvas.tsx).
 
-import { FolderClosed, Plus, X } from "lucide-react";
+import { FolderClosed, Lock, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useId, useState, useSyncExternalStore } from "react";
 import type { RevealedSigningSecret } from "@/lib/actions";
 import { dayLabel, isoDate, weekdayOf } from "@/lib/date-input";
-import type { FieldDef } from "@/lib/fields";
+import { RULE_LOCKED_FIELD_NOTE, type FieldDef } from "@/lib/fields";
 import {
   DEFAULT_SECRET_HEADER,
   SIGNATURE_HEADER,
@@ -1342,6 +1342,12 @@ export function ActionFields({
           </ParamSlot>
           {fields.find((f) => f.id === action.field_id)?.boundToSections ? (
             <span className="text-xs text-zinc-500">Status follows the section, so this moves the task.</span>
+          ) : null}
+          {fields.find((f) => f.id === action.field_id)?.locked ? (
+            <span className="inline-flex basis-full items-start gap-1 text-xs text-zinc-500">
+              <Lock className="mt-0.5 size-3 shrink-0" aria-hidden />
+              {RULE_LOCKED_FIELD_NOTE}
+            </span>
           ) : null}
         </Row>
       );

@@ -66,7 +66,8 @@ begin
     and not has_function_privilege('authenticated', 'public.lock_library_field_value()', 'execute')
     and not has_function_privilege('authenticated', 'public.fill_library_values_on_join()', 'execute'),
     'the engine is internal';
-  assert public.library_field_definition_columns() = array['name', 'description', 'field_type', 'options', 'notify_on_change'],
+  assert public.library_field_definition_columns()
+    = array['name', 'description', 'field_type', 'options', 'notify_on_change', 'locked', 'locked_by', 'locked_at'],
     'the definition columns';
   assert exists (select 1 from pg_trigger where tgname = 'task_field_values_03_library_lock' and tgrelid = 'public.task_field_values'::regclass)
     and exists (select 1 from pg_trigger where tgname = 'task_field_values_zzz_library_sync' and tgrelid = 'public.task_field_values'::regclass)
@@ -1191,6 +1192,491 @@ begin
   assert (select name from public.custom_fields where id = pd) = 'Bigness', 'the placement is unchanged';
 end $$;
 reset role;
+
+-- =============================================================================================
+-- 51. Field lock
+--   Olive owns SF L1 and SF L2; Eddie is an Editor of both; Bea is an Admin of SF L2 only; Vera is a
+--   Viewer of SF L1. SF L1 has Stage (single-select, project-only) and publishes Rate (number), which
+--   SF L2 uses.
+-- =============================================================================================
+
+do $$
+begin
+  assert exists (
+    select 1 from pg_attribute where attrelid = 'public.custom_fields'::regclass and attname = 'locked' and not attisdropped
+  ) and exists (
+    select 1 from pg_attribute where attrelid = 'public.custom_fields'::regclass and attname = 'locked_by' and not attisdropped
+  ) and exists (
+    select 1 from pg_attribute where attrelid = 'public.custom_fields'::regclass and attname = 'locked_at' and not attisdropped
+  ), 'custom_fields.locked, locked_by, locked_at exist';
+  assert exists (select 1 from pg_constraint where conname = 'custom_fields_lock_check'), 'Status can''t be locked (CHECK)';
+  assert exists (select 1 from pg_trigger where tgname = 'custom_fields_06_lock_guard' and tgrelid = 'public.custom_fields'::regclass)
+    and exists (select 1 from pg_trigger where tgname = 'task_field_values_02_field_lock' and tgrelid = 'public.task_field_values'::regclass),
+    'the lock triggers are in place';
+  assert not (select prosecdef from pg_proc where oid = 'public.guard_locked_field_value()'::regprocedure)
+    and not (select prosecdef from pg_proc where oid = 'public.guard_custom_field_lock()'::regprocedure),
+    'the guards run as the caller';
+  assert (select prosecdef from pg_proc where oid = 'public.rule_owner_manages_project(uuid, uuid)'::regprocedure)
+    and not has_function_privilege('authenticated', 'public.rule_owner_manages_project(uuid, uuid)', 'execute')
+    and not has_function_privilege('anon', 'public.rule_owner_manages_project(uuid, uuid)', 'execute'),
+    'the rule owner check is internal';
+  assert not has_function_privilege('anon', 'public.guard_locked_field_value()', 'execute')
+    and not has_function_privilege('anon', 'public.guard_custom_field_lock()', 'execute'), 'anon runs neither guard';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  l1 uuid;
+  l2 uuid;
+  s1 uuid;
+  s2 uuid;
+  stage uuid;
+  rate uuid;
+  rate2 uuid;
+  t1 uuid;
+  t2 uuid;
+  ts uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF L1') returning id into l1;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF L2') returning id into l2;
+  insert into public.sections (project_id, name, sort_order) values (l1, 'L1', 1024) returning id into s1;
+  insert into public.sections (project_id, name, sort_order) values (l2, 'L2', 1024) returning id into s2;
+  perform public.add_project_member(l1, 'sf-editor@example.com', 'editor');
+  perform public.add_project_member(l2, 'sf-editor@example.com', 'editor');
+  perform public.add_project_member(l2, 'sf-bedit@example.com', 'admin');
+  perform public.add_project_member(l1, 'sf-viewer@example.com', 'viewer');
+  insert into public.custom_fields (project_id, name, field_type, options, sort_order, show_in_views)
+  values (l1, 'Stage', 'single_select',
+    '[{"id": "st-draft", "name": "Draft", "color": "zinc"}, {"id": "st-final", "name": "Final", "color": "green"}]', 1024, true)
+  returning id into stage;
+  insert into public.custom_fields (project_id, name, field_type, in_library, sort_order)
+  values (l1, 'Rate', 'number', true, 2048) returning id into rate;
+  rate2 := public.add_library_field(l2, rate);
+  t1 := public.create_task(l1, s1, 'Locked one');
+  t2 := public.create_task(l1, s1, 'Locked two');
+  ts := public.create_task(l1, s1, 'Shared locked');
+  insert into public.task_projects (task_id, project_id, section_id) values (ts, l2, s2);
+  insert into sf_ids values ('l1', l1), ('l2', l2), ('ls1', s1), ('ls2', s2), ('stage', stage), ('rate', rate), ('rate2', rate2),
+    ('lt1', t1), ('lt2', t2), ('lts', ts);
+end $$;
+
+-- Eddie (Editor) can't lock; Olive (Owner) can, and the guard records who and when.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+begin
+  begin
+    update public.custom_fields set locked = true where id = stage;
+    raise exception 'an Editor locked a field';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Only project Owners and Admins can lock or unlock a field', sqlerrm;
+  end;
+  begin
+    insert into public.custom_fields (project_id, name, field_type, locked)
+    values ((select id from sf_ids where name = 'l1'), 'Born locked', 'text', true);
+    raise exception 'an Editor made a locked field';
+  exception when insufficient_privilege then
+    null;
+  end;
+  -- Before the lock, Eddie sets values freely.
+  insert into public.task_field_values (task_id, field_id, value) values ((select id from sf_ids where name = 'lt1'), stage, '"st-draft"');
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+begin
+  update public.custom_fields set locked = true, locked_by = 'b7c30029-0000-4000-8000-000000000002' where id = stage;
+  assert (select locked from public.custom_fields where id = stage), 'Olive locked Stage';
+  assert (select locked_by from public.custom_fields where id = stage) = 'b7c30029-0000-4000-8000-000000000001'
+    and (select locked_at from public.custom_fields where id = stage) is not null, 'the guard records who locked it (not what was sent)';
+  begin
+    insert into public.custom_fields (project_id, name, field_type, bound_to_sections, locked)
+    values ((select id from sf_ids where name = 'l1'), 'Status', 'single_select', true, true);
+    raise exception 'a section-bound field was locked';
+  exception when check_violation then
+    null;
+  end;
+end $$;
+
+-- While locked, Eddie can't change values (insert, upsert, update, clear), the definition, or remove it;
+-- show it in List / Board is still his to change. A value that doesn't change isn't refused.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+  t1 uuid := (select id from sf_ids where name = 'lt1');
+  t2 uuid := (select id from sf_ids where name = 'lt2');
+begin
+  begin
+    insert into public.task_field_values (task_id, field_id, value) values (t2, stage, '"st-final"');
+    raise exception 'an Editor set a locked value';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Locked — only project Owners and Admins can change this field', sqlerrm;
+  end;
+  begin
+    insert into public.task_field_values (task_id, field_id, value) values (t1, stage, '"st-final"')
+    on conflict (task_id, field_id) do update set value = excluded.value;
+    raise exception 'an Editor changed a locked value (upsert)';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    update public.task_field_values set value = 'null' where task_id = t1 and field_id = stage;
+    raise exception 'an Editor cleared a locked value';
+  exception when insufficient_privilege then
+    null;
+  end;
+  update public.task_field_values set value = '"st-draft"' where task_id = t1 and field_id = stage;
+  insert into public.task_field_values (task_id, field_id, value) values (t2, stage, 'null');
+  assert (select value from public.task_field_values where task_id = t1 and field_id = stage) = '"st-draft"', 'the value is unchanged';
+  begin
+    update public.custom_fields set name = 'Phase' where id = stage;
+    raise exception 'an Editor renamed a locked field';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Locked — only project Owners and Admins can change this field', sqlerrm;
+  end;
+  begin
+    update public.custom_fields set options = options || '[{"id": "st-x", "name": "Extra", "color": "red"}]' where id = stage;
+    raise exception 'an Editor added an option to a locked field';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    update public.custom_fields set deleted_at = now() where id = stage;
+    raise exception 'an Editor removed a locked field';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    update public.custom_fields set locked = false where id = stage;
+    raise exception 'an Editor unlocked a field';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Only project Owners and Admins can lock or unlock a field', sqlerrm;
+  end;
+  update public.custom_fields set show_in_views = false where id = stage;
+  assert found and not (select show_in_views from public.custom_fields where id = stage), 'an Editor still hides it from views';
+  update public.custom_fields set show_in_views = true where id = stage;
+end $$;
+
+-- Bulk Field: Eddie's run skips both tasks with the reason; Olive's sets them.
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+  result jsonb;
+begin
+  result := public.bulk_update_tasks(array[(select id from sf_ids where name = 'lt1'), (select id from sf_ids where name = 'lt2')],
+    jsonb_build_object('action', 'set_field', 'field_id', stage, 'value', 'st-final'));
+  assert jsonb_array_length(result -> 'updated') = 0 and jsonb_array_length(result -> 'skipped') = 2, format('both skipped: %s', result);
+  assert (select bool_and(s ->> 'reason' = 'Locked — only project Owners and Admins can change this field')
+          from jsonb_array_elements(result -> 'skipped') s), format('with the reason: %s', result);
+end $$;
+
+-- Olive (Owner) changes values, the definition, and runs bulk.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+  result jsonb;
+begin
+  insert into public.task_field_values (task_id, field_id, value) values ((select id from sf_ids where name = 'lt2'), stage, '"st-draft"')
+  on conflict (task_id, field_id) do update set value = excluded.value;
+  result := public.bulk_update_tasks(array[(select id from sf_ids where name = 'lt1'), (select id from sf_ids where name = 'lt2')],
+    jsonb_build_object('action', 'set_field', 'field_id', stage, 'value', 'st-final'));
+  assert jsonb_array_length(result -> 'updated') = 2, format('Olive''s bulk edit sets both: %s', result);
+  update public.custom_fields set description = 'Where it is' where id = stage;
+  assert (select description from public.custom_fields where id = stage) = 'Where it is', 'the Owner edits a locked definition';
+end $$;
+
+-- Duplicate task and task templates leave a locked value out for Eddie (Duplicate counts it); Olive's
+-- copies keep it. Recurrence (a system path) keeps it whoever completes the task.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+  t1 uuid := (select id from sf_ids where name = 'lt1');
+  result jsonb;
+  tpl uuid;
+  made uuid;
+  next_t uuid;
+begin
+  result := public.duplicate_task(t1, '{}'::jsonb);
+  assert (result -> 'skipped' ->> 'fields')::integer = 1, format('the locked value is left out and counted: %s', result);
+  assert not exists (select 1 from public.task_field_values where task_id = (result ->> 'task_id')::uuid and field_id = stage),
+    'the copy has no Stage';
+
+  insert into public.task_templates (project_id, name, title, field_values)
+  values ((select id from sf_ids where name = 'l1'), 'Locked template', 'From template',
+    jsonb_build_array(jsonb_build_object('field_id', stage, 'value', 'st-final')))
+  returning id into tpl;
+  insert into sf_ids values ('ltpl', tpl);
+  made := public.create_task_from_template(tpl, (select id from sf_ids where name = 'ls1'), 'Templated by Eddie');
+  assert made is not null, 'the task is made';
+  assert not exists (select 1 from public.task_field_values where task_id = made and field_id = stage),
+    'the template''s locked value is left out';
+
+  update public.tasks set recurrence = '{"freq": "daily", "interval": 1, "ends": {"type": "never"}}', due_on = current_date
+  where id = t1;
+  update public.tasks set completed_at = now() where id = t1;
+  next_t := (select recurrence_next_id from public.tasks where id = t1);
+  assert (select value from public.task_field_values where task_id = next_t and field_id = stage) = '"st-final"',
+    'the next occurrence keeps the locked value';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+  result jsonb;
+  made uuid;
+begin
+  result := public.duplicate_task((select id from sf_ids where name = 'lt2'), '{}'::jsonb);
+  assert (result -> 'skipped' ->> 'fields')::integer = 0, format('nothing left out for the Owner: %s', result);
+  assert (select value from public.task_field_values where task_id = (result ->> 'task_id')::uuid and field_id = stage) = '"st-final"',
+    'the Owner''s copy keeps Stage';
+  made := public.create_task_from_template((select id from sf_ids where name = 'ltpl'), (select id from sf_ids where name = 'ls1'), 'Templated by Olive');
+  assert (select value from public.task_field_values where task_id = made and field_id = stage) = '"st-final"',
+    'the Owner''s template task has Stage';
+end $$;
+
+-- Rules: Set field on a locked field runs only while the rule's owner is an Owner / Admin of it; else the
+-- step is skipped with a logged reason and the run goes on.
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+  l1 uuid := (select id from sf_ids where name = 'l1');
+  r_editor uuid;
+  r_owner uuid;
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, owner_id, actions)
+  values (l1, 'Editor-owned stage rule', true, 'manual', 'b7c30029-0000-4000-8000-000000000002',
+    jsonb_build_array(jsonb_build_object('type', 'set_field', 'field_id', stage, 'value', 'st-draft'),
+                      jsonb_build_object('type', 'add_comment', 'body', 'Rule went on')))
+  returning id into r_editor;
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values (l1, 'Owner-owned stage rule', true, 'manual',
+    jsonb_build_array(jsonb_build_object('type', 'set_field', 'field_id', stage, 'value', 'st-draft')))
+  returning id into r_owner;
+  insert into sf_ids values ('r_editor', r_editor), ('r_owner', r_owner);
+end $$;
+
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+  t2 uuid := (select id from sf_ids where name = 'lt2');
+  result jsonb;
+begin
+  result := public.run_manual_rule((select id from sf_ids where name = 'r_editor'), t2);
+  assert result ->> 'status' = 'succeeded', format('the run goes on: %s', result);
+  assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'locked', format('the step is skipped as locked: %s', result);
+  assert (result -> 'detail' -> 'actions' -> 0 ->> 'result') like 'Skipped: “Stage” is locked%', format('with the reason: %s', result);
+  assert result -> 'detail' -> 'actions' -> 1 ->> 'outcome' = 'done', 'the next step still runs';
+  assert (select value from public.task_field_values where task_id = t2 and field_id = stage) = '"st-final"', 'Stage is unchanged';
+  assert exists (select 1 from public.comments c where c.task_id = t2 and c.body = 'Rule went on'), 'the comment was posted';
+end $$;
+
+-- (run_manual_rule reports the transaction's first run of a rule on a task, so each run is its own statement.)
+do $$
+declare
+  result jsonb;
+begin
+  result := public.run_manual_rule((select id from sf_ids where name = 'r_owner'), (select id from sf_ids where name = 'lt2'));
+  assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done', format('the Owner''s rule writes: %s', result);
+  assert (select value from public.task_field_values
+          where task_id = (select id from sf_ids where name = 'lt2') and field_id = (select id from sf_ids where name = 'stage')) = '"st-draft"',
+    'Stage changed';
+end $$;
+
+-- The Editor-owned rule's owner becomes an Admin: its step now writes.
+do $$
+begin
+  perform public.update_project_member_role((select id from sf_ids where name = 'l1'), 'b7c30029-0000-4000-8000-000000000002', 'admin');
+  update public.task_field_values set value = '"st-final"'
+  where task_id = (select id from sf_ids where name = 'lt2') and field_id = (select id from sf_ids where name = 'stage');
+end $$;
+
+do $$
+declare
+  result jsonb;
+begin
+  result := public.run_manual_rule((select id from sf_ids where name = 'r_editor'), (select id from sf_ids where name = 'lt2'));
+  assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done', format('an Admin owner''s rule writes: %s', result);
+  assert (select value from public.task_field_values
+          where task_id = (select id from sf_ids where name = 'lt2') and field_id = (select id from sf_ids where name = 'stage')) = '"st-draft"',
+    'Stage changed again';
+  perform public.update_project_member_role((select id from sf_ids where name = 'l1'), 'b7c30029-0000-4000-8000-000000000002', 'editor');
+end $$;
+
+-- A rule's other writes are held to the same lock: an Editor-owned rule applying a task template leaves
+-- the locked value out (the step still runs). A public form fills a locked field (forms are set up by
+-- Admins): a system path.
+do $$
+declare
+  rule_id uuid;
+  result jsonb;
+  form_id uuid;
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, owner_id, actions)
+  values ((select id from sf_ids where name = 'l1'), 'Editor-owned template rule', true, 'manual', 'b7c30029-0000-4000-8000-000000000002',
+    jsonb_build_array(jsonb_build_object('type', 'apply_task_template', 'template_id', (select id from sf_ids where name = 'ltpl'))))
+  returning id into rule_id;
+  result := public.run_manual_rule(rule_id, (select id from sf_ids where name = 'lt2'));
+  assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done'
+    and (result -> 'detail' -> 'actions' -> 0 ->> 'result') like '%0 field values', format('the template step leaves Stage alone: %s', result);
+  assert (select value from public.task_field_values
+          where task_id = (select id from sf_ids where name = 'lt2') and field_id = (select id from sf_ids where name = 'stage')) = '"st-draft"',
+    'Stage is unchanged';
+
+  insert into public.forms (project_id, title, accepting_responses, send_confirmation, destination_section_id, questions)
+  values ((select id from sf_ids where name = 'l1'), 'Stage form', true, false, (select id from sf_ids where name = 'ls1'),
+    jsonb_build_array(jsonb_build_object('id', 'q-stage', 'type', 'single_select', 'label', 'Stage',
+      'options', jsonb_build_array(jsonb_build_object('id', 'st-final', 'label', 'Final')),
+      'maps_to', jsonb_build_object('target', 'field', 'field_id', (select id from sf_ids where name = 'stage')))))
+  returning id into form_id;
+  insert into sf_ids values ('lform', form_id);
+end $$;
+reset role;
+
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+insert into sf_ids select 'lformtask',
+  (public.submit_form((select id from sf_ids where name = 'lform'), 'stage-requester@example.org', '{"q-stage": "st-final"}') ->> 'task_id')::uuid;
+reset role;
+
+do $$
+begin
+  assert (select value from public.task_field_values
+          where task_id = (select id from sf_ids where name = 'lformtask') and field_id = (select id from sf_ids where name = 'stage')) = '"st-final"',
+    'the form filled the locked field';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+
+-- Duplicate project keeps the lock (the copy's Owner can unlock it).
+do $$
+declare
+  result jsonb;
+  copied uuid;
+begin
+  result := public.duplicate_project((select id from sf_ids where name = 'l1'), 'SF L1 copy', '{}'::jsonb);
+  copied := (select f.id from public.custom_fields f where f.project_id = (result ->> 'project_id')::uuid and f.name = 'Stage');
+  assert (select locked from public.custom_fields where id = copied), 'the copy''s Stage is locked';
+  update public.custom_fields set locked = false where id = copied;
+  assert not (select locked from public.custom_fields where id = copied), 'and its Owner unlocks it';
+end $$;
+
+-- Unlocking: Eddie edits values and the definition again; who / when are cleared.
+do $$
+begin
+  update public.custom_fields set locked = false where id = (select id from sf_ids where name = 'stage');
+  assert (select locked_by is null and locked_at is null from public.custom_fields where id = (select id from sf_ids where name = 'stage')),
+    'unlocking clears who and when';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  stage uuid := (select id from sf_ids where name = 'stage');
+begin
+  update public.task_field_values set value = '"st-final"' where task_id = (select id from sf_ids where name = 'lt2') and field_id = stage;
+  assert found, 'unlocked: an Editor sets values again';
+  update public.custom_fields set name = 'Stage name' where id = stage;
+  assert found, 'and changes the definition';
+end $$;
+
+-- A shared library field: locking it at the source locks every placement. Bea (Admin of SF L2 only)
+-- can't unlock it from there, but writes values through SF L2 (and they reach SF L1: the library's
+-- copy isn't refused); Eddie (Editor) writes through neither project.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  rate uuid := (select id from sf_ids where name = 'rate');
+  rate2 uuid := (select id from sf_ids where name = 'rate2');
+begin
+  update public.custom_fields set locked = true where id = rate;
+  assert (select locked and locked_by = 'b7c30029-0000-4000-8000-000000000001' from public.custom_fields where id = rate2),
+    'the placement is locked too (and says who locked it)';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  rate uuid := (select id from sf_ids where name = 'rate');
+  rate2 uuid := (select id from sf_ids where name = 'rate2');
+  ts uuid := (select id from sf_ids where name = 'lts');
+  share record;
+begin
+  select * into share from public.project_field_sharing((select id from sf_ids where name = 'l2')) s where s.field_id = rate2;
+  assert not share.definition_manageable and not share.definition_editable, 'Bea doesn''t manage the shared definition';
+  begin
+    update public.custom_fields set locked = false where id = rate2;
+    raise exception 'Bea unlocked a shared field from a placement';
+  exception when insufficient_privilege then
+    null;
+  end;
+  insert into public.task_field_values (task_id, field_id, value) values (ts, rate2, '42');
+  assert found, 'an Admin of SF L2 writes the locked value there';
+end $$;
+reset role;
+do $$
+begin
+  assert (select value from public.task_field_values
+          where task_id = (select id from sf_ids where name = 'lts') and field_id = (select id from sf_ids where name = 'rate')) = '42',
+    'the value reached SF L1 (sync writes still happen)';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  ts uuid := (select id from sf_ids where name = 'lts');
+begin
+  begin
+    update public.task_field_values set value = '7' where task_id = ts and field_id = (select id from sf_ids where name = 'rate2');
+    raise exception 'an Editor changed a locked shared value through SF L2';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    update public.task_field_values set value = '7' where task_id = ts and field_id = (select id from sf_ids where name = 'rate');
+    raise exception 'an Editor changed a locked shared value through SF L1';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    update public.custom_fields set name = 'Fee' where id = (select id from sf_ids where name = 'rate');
+    raise exception 'an Editor of the publishing project renamed a locked shared field';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Locked — only project Owners and Admins can change this field', sqlerrm;
+  end;
+end $$;
+
+-- A rule in SF L2 owned by Bea (its Admin) sets the locked shared value; it reaches SF L1.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  rule_id uuid;
+  result jsonb;
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values ((select id from sf_ids where name = 'l2'), 'Rate to 99', true, 'manual',
+    jsonb_build_array(jsonb_build_object('type', 'set_field', 'field_id', (select id from sf_ids where name = 'rate2'), 'value', 99)))
+  returning id into rule_id;
+  result := public.run_manual_rule(rule_id, (select id from sf_ids where name = 'lts'));
+  assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done', format('Bea''s rule writes: %s', result);
+end $$;
+reset role;
+do $$
+begin
+  assert (select value from public.task_field_values
+          where task_id = (select id from sf_ids where name = 'lts') and field_id = (select id from sf_ids where name = 'rate')) = '99',
+    'the rule''s value reached SF L1';
+end $$;
 
 do $$
 begin

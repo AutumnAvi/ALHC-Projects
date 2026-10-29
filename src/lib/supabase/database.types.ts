@@ -294,6 +294,11 @@ export type Database = {
           // Oct 29 notes, batch 7: a placement of a shared library field points at the published source
           // field (null on the source and on project-only fields); absent on a database without it.
           library_field_id?: string | null;
+          // Oct 29 notes, batch 7 (51): a locked field's values, definition, and removal are for the
+          // project's Owners and Admins; who locked it and when (kept by the database).
+          locked?: boolean;
+          locked_by?: string | null;
+          locked_at?: string | null;
         };
         Insert: {
           id?: string;
@@ -311,6 +316,9 @@ export type Database = {
           notify_on_change?: boolean;
           in_library?: boolean;
           library_field_id?: string | null;
+          locked?: boolean;
+          locked_by?: string | null;
+          locked_at?: string | null;
         };
         Update: {
           id?: string;
@@ -324,6 +332,9 @@ export type Database = {
           notify_on_change?: boolean;
           in_library?: boolean;
           library_field_id?: string | null;
+          locked?: boolean;
+          locked_by?: string | null;
+          locked_at?: string | null;
           sort_order?: number;
           created_at?: string;
           updated_at?: string;
@@ -342,6 +353,13 @@ export type Database = {
             columns: ["library_field_id"];
             isOneToOne: false;
             referencedRelation: "custom_fields";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "custom_fields_locked_by_fkey";
+            columns: ["locked_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
         ];

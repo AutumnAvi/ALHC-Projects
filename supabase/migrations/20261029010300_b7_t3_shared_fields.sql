@@ -28,6 +28,14 @@
 --       library_field_links, library_field_link_conflicts; values are never lost: differing values are
 --       both kept and recorded).
 --
+-- 51. Field lock (custom_fields.locked / locked_by / locked_at, a definition column, so it's shared across a
+--     library group): a locked field's values, definition, and removal are for the Owners and Admins of
+--     the field's project (custom_fields_06_lock_guard, task_field_values_02_field_lock; a shared field's
+--     definition and lock: of its publishing project); rules change one only while their owner is an
+--     Owner / Admin there (the Set field step is skipped and logged otherwise); bulk Field skips its
+--     tasks with the reason; Duplicate task and task templates leave its values out; every other system
+--     path (imports, copies, recurrence, forms, inbound webhooks, the library sync) writes as before.
+--
 -- No row-removal or object-removal keywords anywhere in this file (the hosted connector refuses them).
 -- Additive: no tail.
 
@@ -92,7 +100,7 @@ language sql
 immutable
 set search_path = ''
 as $$
-  select array['name', 'description', 'field_type', 'options', 'notify_on_change']::text[];
+  select array['name', 'description', 'field_type', 'options', 'notify_on_change', 'locked', 'locked_by', 'locked_at']::text[];
 $$;
 
 revoke all on function public.library_field_definition_columns() from public, anon;
@@ -363,13 +371,14 @@ create trigger custom_fields_zz_library_sync
 -- The Asana importer matches a field by name and appends the select options it's missing. On a shared
 -- library field that would change the definition in every project that uses it, so it does so only
 -- when the importer may change that definition (Editor+ of the project that published it, the guard's
--- rule); otherwise values naming an option the field lacks are skipped and counted like any value
--- that doesn't fit.
+-- rule; Owner / Admin while the field is locked — item 51); otherwise values naming an option the
+-- field lacks are skipped and counted like any value that doesn't fit.
 select public.alhc_patch_function(
   'public.import_batch(uuid, jsonb)'::regprocedure,
   $old$      if merged_options is distinct from fld.options then$old$,
   $new$      if merged_options is distinct from fld.options
-         and public.has_project_role(public.library_field_governing_project(fld.id), 'editor') then$new$
+         and public.has_project_role(public.library_field_governing_project(fld.id),
+               case when fld.locked then 'admin' else 'editor' end) then$new$
 );
 
 -- 55.5 One value per task.
@@ -892,7 +901,11 @@ select public.alhc_patch_function(
 select public.alhc_patch_function(
   'public.instantiate_project_snapshot(jsonb, text, date, uuid, text, jsonb)'::regprocedure,
   $old$    n_fields := n_fields + 1;$old$,
-  $new$    if coalesce(item ->> 'library_field_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+  $new$    -- 51. A locked field stays locked in the copy (the copy's owner can unlock it).
+    if item ->> 'locked' = 'true' and not coalesce((item ->> 'bound_to_sections')::boolean, false) then
+      update public.custom_fields set locked = true where id = found_id;
+    end if;
+    if coalesce(item ->> 'library_field_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
       perform public.link_library_placement(found_id, (item ->> 'library_field_id')::uuid);
     end if;
     n_fields := n_fields + 1;$new$
@@ -1116,6 +1129,225 @@ $$;
 
 revoke all on function public.link_library_field_copies() from public, anon, authenticated;
 
+-- (The existing copies are linked at the end of this file, once every definition column exists.)
+
+-- ---------------------------------------------------------------------------------------------------
+-- 51. Field lock
+-- ---------------------------------------------------------------------------------------------------
+-- A locked field's values are changed only by the Owners and Admins of the project they're written
+-- through (the field's project); its definition (name, description, options, notifications) and
+-- removing it need Owner / Admin too. Locking and unlocking are Owner / Admin of the project whose
+-- Editors change the definition (library_field_governing_project: a shared field's publishing project
+-- while its source is live, else its own). `locked` is a definition column, so locking a shared library
+-- field locks it in every project that uses it.
+-- Values (task_field_values_02_field_lock, invoker): people → Admin+ of the field's project; rules →
+-- only while the rule's owner is an Owner / Admin of it (execute_rule_actions skips the step with a
+-- logged reason before it gets there); every other system path (imports, copies, recurrence, form
+-- submissions, inbound webhooks, the library sync) writes as before. Bulk Field skips a locked field's
+-- tasks with the reason; Duplicate task and task templates leave locked values out (they already skip
+-- values the caller may not write, and Duplicate task counts them).
+
+-- 51.1 The lock (who and when are kept by the guard; people can't set them).
+alter table public.custom_fields
+  add column locked boolean not null default false,
+  add column locked_by uuid references public.profiles (id),
+  add column locked_at timestamptz;
+
+alter table public.custom_fields
+  add constraint custom_fields_lock_check check (not (bound_to_sections and locked));
+
+create index custom_fields_locked_by_idx on public.custom_fields (locked_by);
+
+comment on column public.custom_fields.locked is
+  'Field lock (Oct 29 notes, batch 7): values, definition, and removal only by the project''s Owners and '
+  'Admins (rules only while their owner is one). A definition column: shared across a library group.';
+
+-- 51.2 People's writes to a locked field's definition (invoker; system code passes, the guard's
+-- bookkeeping included). Runs after custom_fields_05_library_guard (which refuses a shared definition
+-- to people who aren't Editors of the publishing project).
+create or replace function public.guard_custom_field_lock()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  share record;
+  lock_changed boolean;
+  definition_changed boolean;
+begin
+  -- Who locked it and when (copied as they are inside a library group).
+  if coalesce(current_setting('alhc.library_definition_sync', true), '') <> 'on' then
+    lock_changed := tg_op = 'INSERT' or new.locked is distinct from old.locked;
+    if not new.locked then
+      new.locked_by := null;
+      new.locked_at := null;
+    elsif lock_changed then
+      new.locked_by := (select p.id from public.profiles p where p.id = auth.uid());
+      new.locked_at := now();
+    else
+      new.locked_by := old.locked_by;
+      new.locked_at := old.locked_at;
+    end if;
+  end if;
+
+  if not public.is_client_role() then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.locked and not public.has_project_role(new.project_id, 'admin') then
+      raise exception 'Only project Owners and Admins can lock a field' using errcode = 'insufficient_privilege';
+    end if;
+    return new;
+  end if;
+  if not old.locked and not new.locked then
+    return new;
+  end if;
+
+  lock_changed := new.locked is distinct from old.locked;
+  definition_changed := exists (
+    select 1 from unnest(public.library_field_definition_columns()) c
+    where c not in ('locked_by', 'locked_at') and to_jsonb(new) -> c is distinct from to_jsonb(old) -> c
+  );
+  if definition_changed then
+    select * into share from public.project_field_sharing(old.project_id) s where s.field_id = old.id;
+    if not coalesce(share.definition_manageable, false) then
+      if lock_changed then
+        raise exception '%', case when old.library_field_id is not null
+            then 'Shared from the field library. Only Owners and Admins of the project that published it can lock or unlock it.'
+            else 'Only project Owners and Admins can lock or unlock a field' end
+          using errcode = 'insufficient_privilege';
+      end if;
+      raise exception '%', case when old.library_field_id is not null
+          then 'Locked — only Owners and Admins of the project that published it can change this field'
+          else 'Locked — only project Owners and Admins can change this field' end
+        using errcode = 'insufficient_privilege';
+    end if;
+  end if;
+  -- Removing it (or bringing it back) here: this project's Owners and Admins.
+  if new.deleted_at is distinct from old.deleted_at and not public.has_project_role(old.project_id, 'admin') then
+    raise exception 'Locked — only project Owners and Admins can change this field' using errcode = 'insufficient_privilege';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.guard_custom_field_lock() from public, anon;
+grant execute on function public.guard_custom_field_lock() to authenticated;
+
+create trigger custom_fields_06_lock_guard
+  before insert or update on public.custom_fields
+  for each row execute function public.guard_custom_field_lock();
+
+-- 51.3 A rule changes a locked field only while its owner (else its creator) is still an allowlisted
+-- Owner or Admin of the field's project.
+create or replace function public.rule_owner_manages_project(target_rule uuid, target_project uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select public.profile_is_allowlisted(coalesce(r.owner_id, r.created_by))
+      and coalesce(public.profile_project_role(coalesce(r.owner_id, r.created_by), target_project), '') in ('admin', 'owner')
+    from public.rules r
+    where r.id = target_rule
+  ), false);
+$$;
+
+revoke all on function public.rule_owner_manages_project(uuid, uuid) from public, anon, authenticated;
+
+-- 51.4 Values of a locked field (invoker: people are checked with their own role; definer code — the
+-- system paths — passes, except a rule, which is checked against its owner).
+create or replace function public.guard_locked_field_value()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  client boolean := public.is_client_role();
+  rule uuid;
+  f record;
+begin
+  if not client then
+    -- The library's quiet copy of a shared value (the write it copies was checked), and every other
+    -- system path but a rule.
+    if public.library_value_sync_write(new.task_id, new.field_id) then
+      return new;
+    end if;
+    rule := public.rule_context_id();
+    if rule is null then
+      return new;
+    end if;
+  end if;
+  select cf.locked, cf.project_id into f from public.custom_fields cf where cf.id = new.field_id;
+  if not coalesce(f.locked, false) then
+    return new;
+  end if;
+  -- Nothing changes (an unchanged upsert, or no value written where there was none).
+  if tg_op = 'UPDATE' and new.value is not distinct from old.value then
+    return new;
+  end if;
+  if tg_op = 'INSERT' and (new.value is null or new.value = 'null'::jsonb) then
+    return new;
+  end if;
+  if client then
+    if public.has_project_role(f.project_id, 'admin') then
+      return new;
+    end if;
+  elsif public.rule_owner_manages_project(rule, f.project_id) then
+    return new;
+  end if;
+  raise exception 'Locked — only project Owners and Admins can change this field' using errcode = 'insufficient_privilege';
+end;
+$$;
+
+revoke all on function public.guard_locked_field_value() from public, anon;
+grant execute on function public.guard_locked_field_value() to authenticated;
+
+create trigger task_field_values_02_field_lock
+  before insert or update on public.task_field_values
+  for each row execute function public.guard_locked_field_value();
+
+-- 51.5 Rules: Set field on a locked field is skipped (logged, the run goes on) unless the rule's owner
+-- is an Owner or Admin of the field's project.
+select public.alhc_patch_function(
+  'public.execute_rule_actions(public.rules, uuid, jsonb, jsonb)'::regprocedure,
+  $old$          elsif field.bound_to_sections then
+            -- The section-bound Status field IS the section: setting it moves the task, nothing is stored.$old$,
+  $new$          elsif field.locked and not public.rule_owner_manages_project(r.id, field.project_id) then
+            outcome := 'locked';
+            result := 'Skipped: “' || field.name || '” is locked, and only project Owners and Admins change it. '
+              || 'This rule''s owner isn''t one.';
+          elsif field.bound_to_sections then
+            -- The section-bound Status field IS the section: setting it moves the task, nothing is stored.$new$,
+  $old$          if field.id is not null then
+            result := case when outcome = 'unchanged'$old$,
+  $new$          if field.id is not null and outcome <> 'locked' then
+            result := case when outcome = 'unchanged'$new$
+);
+
+-- 51.6 Bulk Field: a locked field's tasks are skipped with the reason (below Owner / Admin).
+select public.alhc_patch_function(
+  'public.bulk_update_tasks(uuid[], jsonb)'::regprocedure,
+  $old$reason := 'It isn’t in the field’s project';$old$,
+  $new$reason := 'It isn’t in the field’s project';
+            elsif exists (select 1 from public.custom_fields lf where lf.id = arg_field and lf.locked)
+                  and not public.has_project_role(arg_project, 'admin') then
+              outcome := 'skipped';
+              reason := 'Locked — only project Owners and Admins can change this field';$new$
+);
+
+-- 51.7 Templates and Duplicate project keep the lock (instantiate_project_snapshot sets it: see 55.8).
+select public.alhc_patch_function(
+  'public.project_snapshot(uuid, jsonb)'::regprocedure,
+  $old$'bound_to_sections', f.bound_to_sections, 'show_in_views', f.show_in_views$old$,
+  $new$'bound_to_sections', f.bound_to_sections, 'show_in_views', f.show_in_views, 'locked', f.locked$new$
+);
+
+-- ---------------------------------------------------------------------------------------------------
+-- 55.9 (continued) Link the existing copies, now that every definition column exists.
+-- ---------------------------------------------------------------------------------------------------
 do $do$
 declare
   result jsonb := public.link_library_field_copies();

@@ -316,6 +316,10 @@ export type TaskDetail = {
   viewerRole: ProjectRole | null;
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
   memberRoles: Record<string, ProjectRole>;
+  // The viewer's own role in each of the task's projects (archived = Viewer): a field's values are
+  // changed through its project, so a locked field only by that project's Owners and Admins (Oct 29
+  // notes, batch 7). Absent = unknown (the task-level role decides).
+  viewerProjectRoles?: Record<string, ProjectRole>;
   tagIds: string[];
   // A private task (no project; for a subtask: its top-level task is private). Only its top-level task's
   // creator and assignee (privateReaderIds) can read it, so only they can be assigned or follow.
@@ -1796,6 +1800,12 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     projectNumbers,
     viewerRole: viewerProjectRole,
     memberRoles,
+    viewerProjectRoles: Object.fromEntries(
+      membershipRows.flatMap((m) => {
+        const projectRole = myRoles.get(m.project_id);
+        return projectRole ? [[m.project_id, projectRole] as const] : [];
+      }),
+    ),
     tagIds: tagIds.get(taskId) ?? [],
     isPrivate,
     privateReaderIds: [
@@ -2069,6 +2079,9 @@ function toFieldDef(row: Tables<"custom_fields">): FieldDef {
     notifyOnChange: row.notify_on_change ?? false,
     inLibrary: row.in_library ?? false,
     libraryFieldId: row.library_field_id ?? null,
+    locked: row.locked ?? false,
+    lockedBy: row.locked_by ?? null,
+    lockedAt: row.locked_at ?? null,
   };
 }
 

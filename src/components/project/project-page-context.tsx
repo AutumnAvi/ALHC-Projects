@@ -109,6 +109,12 @@ export function useProjectPage(): ProjectPage {
   return page;
 }
 
+// The project's fields shared through the field library (project_field_sharing, by field id), or none
+// outside a project page — for views that only read it (the List's column menu: who may lock a field).
+export function useFieldSharing(): Record<string, FieldSharing> {
+  return useContext(ProjectPageContext)?.fieldSharing ?? NO_SHARING;
+}
+
 // Copies the signed-in link to the project (people still need access to open it).
 export async function copyProjectLink(projectId: string): Promise<boolean> {
   try {

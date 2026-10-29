@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Columns3, Contact, PenLine, User, UserMinus } from "lucide-react";
+import { CalendarDays, Columns3, Contact, Lock, PenLine, User, UserMinus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Avatar } from "@/components/avatar";
 import { useParamSlot } from "@/components/param-slot";
@@ -684,9 +684,12 @@ export function fieldOptions(fields: FieldDef[]): SmartOption[] {
   return fields.map((f) => ({
     value: f.id,
     label: f.boundToSections ? `${f.name} (Status)` : f.name,
-    description: f.boundToSections ? "Follows the section" : FIELD_TYPE_LABELS[f.fieldType] ?? undefined,
-    keywords: [f.fieldType.replace("_", " ")],
-    icon: <PenLine className="size-4" />,
+    // Oct 29 notes (batch 7): a locked field says so (a rule changes it only for an Owner / Admin owner).
+    description: f.boundToSections
+      ? "Follows the section"
+      : `${f.locked ? "Locked · " : ""}${FIELD_TYPE_LABELS[f.fieldType] ?? f.fieldType}`,
+    keywords: [f.fieldType.replace("_", " "), ...(f.locked ? ["locked"] : [])],
+    icon: f.locked ? <Lock className="size-4" aria-label="Locked" /> : <PenLine className="size-4" />,
   }));
 }
 

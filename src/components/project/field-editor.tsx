@@ -9,6 +9,7 @@ import {
   Hash,
   Library,
   Link2,
+  Lock,
   ListChecks,
   Plus,
   Search,
@@ -20,6 +21,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ColorPicker } from "@/components/color-picker";
+import { FieldLockIcon } from "@/components/project/field-lock";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useConfirm } from "@/components/confirm";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
@@ -28,11 +31,15 @@ import { EmptyState } from "@/components/ui";
 import { addLibraryField, createField, deleteField, loadFieldLibrary, updateField } from "@/lib/actions";
 import {
   FIELD_TYPES,
+  LOCK_FIELD_HINT,
+  LOCKED_FIELD_NOTE,
   MAX_FIELD_DESCRIPTION,
   OPTION_COLORS,
   OPTION_COLOR_CLASSES,
+  fieldLockManageable,
   fieldTypeLabel,
   hasOptions,
+  lockFieldUnavailable,
   libraryChoices,
   removeFieldWording,
   searchLibrary,
@@ -139,6 +146,7 @@ export function FieldList({
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate font-medium text-zinc-900">{field.name}</span>
                   {sharedTip ? <SharedFieldMarker tooltip={sharedTip} /> : null}
+                  {field.locked ? <FieldLockIcon className="size-3.5" /> : null}
                   {field.inLibrary ? (
                     <Library className="size-3.5 shrink-0 text-zinc-400" aria-label="In the field library" />
                   ) : null}
@@ -166,7 +174,7 @@ export function FieldList({
                 <button
                   type="button"
                   onClick={() => setEditingId(field.id)}
-                  aria-label={`Edit field ${field.name}${sharedTip ? ` (${sharedTip.toLowerCase()})` : ""}`}
+                  aria-label={`Edit field ${field.name}${sharedTip ? ` (${sharedTip.toLowerCase()})` : ""}${field.locked ? " (locked)" : ""}`}
                   className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-zinc-50"
                 >
                   {body}
@@ -205,6 +213,7 @@ type Draft = {
   showInViews: boolean;
   inLibrary: boolean;
   notifyOnChange: boolean;
+  locked: boolean;
 };
 
 function draftOf(field: FieldDef | null): Draft {
@@ -216,6 +225,7 @@ function draftOf(field: FieldDef | null): Draft {
     showInViews: field ? field.showInViews : true,
     inLibrary: field?.inLibrary ?? false,
     notifyOnChange: field?.notifyOnChange ?? false,
+    locked: field?.locked ?? false,
   };
 }
 
@@ -337,7 +347,13 @@ function FieldForm({
   // Oct 29 notes (batch 7): a shared library field. Its definition (name, description, options,
   // notifications) is read-only for people who can't change it; Show in List and Board stays theirs.
   const view = field ? sharedFieldView(field, sharing) : null;
-  const readOnly = view?.definitionReadOnly ?? false;
+  // Oct 29 notes (batch 7, 51): a locked field's definition and removal are for Owners and Admins (of
+  // the publishing project, for a shared field's definition and the lock itself).
+  const { canManage } = useProjectPermissions();
+  const lockManageable = field ? fieldLockManageable(field, sharing, { canManage }) : false;
+  const lockedReadOnly = Boolean(field?.locked) && !lockManageable;
+  const readOnly = (view?.definitionReadOnly ?? false) || lockedReadOnly;
+  const removeLocked = Boolean(field?.locked) && !canManage;
   const sharedNote = view ? sharedFieldNote(view) : null;
   const removal = field && view ? removeFieldWording(field.name, view) : null;
   const noteId = `${prefix}-shared`;
@@ -406,6 +422,7 @@ function FieldForm({
       }
       if ("inLibrary" in extras && extras.inLibrary !== field.inLibrary) patch.inLibrary = extras.inLibrary;
       if ("notifyOnChange" in extras && extras.notifyOnChange !== field.notifyOnChange) patch.notifyOnChange = extras.notifyOnChange;
+      if (lockManageable && draft.locked !== Boolean(field.locked)) patch.locked = draft.locked;
       if (Object.keys(patch).length === 0) {
         onClose();
         return {};
@@ -419,14 +436,21 @@ function FieldForm({
   return (
     // Not a <form>: Enter in the option box adds an option instead of saving.
     <div className="flex flex-col gap-4">
-      {sharedNote ? (
-        <p
-          id={noteId}
-          className="flex items-start gap-2 rounded-lg border border-accent-100 bg-accent-50 px-3 py-2 text-xs text-accent-900"
-        >
-          <Link2 className="mt-px size-3.5 shrink-0 text-accent-700" aria-hidden />
-          <span>{sharedNote}</span>
-        </p>
+      {sharedNote || lockedReadOnly ? (
+        <div id={noteId} className="flex flex-col gap-1.5">
+          {sharedNote ? (
+            <p className="flex items-start gap-2 rounded-lg border border-accent-100 bg-accent-50 px-3 py-2 text-xs text-accent-900">
+              <Link2 className="mt-px size-3.5 shrink-0 text-accent-700" aria-hidden />
+              <span>{sharedNote}</span>
+            </p>
+          ) : null}
+          {lockedReadOnly ? (
+            <p className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+              <Lock className="mt-px size-3.5 shrink-0 text-zinc-500" aria-hidden />
+              <span>{LOCKED_FIELD_NOTE}.</span>
+            </p>
+          ) : null}
+        </div>
       ) : null}
       <div>
         <label htmlFor={`${prefix}-name`} className={DIALOG_LABEL}>
@@ -641,13 +665,29 @@ function FieldForm({
             Descriptions, the field library, and notifications arrive with this release’s database update.
           </p>
         ) : null}
+        {/* Oct 29 notes (batch 7): lock an existing field (never the section-bound Status). */}
+        {field && !bound ? (
+          <Toggle
+            id={`${prefix}-locked`}
+            checked={draft.locked}
+            disabled={!lockManageable}
+            onChange={(v) => set("locked", v)}
+            label="Lock field"
+            hint={
+              lockManageable
+                ? `${LOCK_FIELD_HINT}${view?.shared ? " Locks it in every project that uses it." : ""}${lockedSince(field)}`
+                : `${lockFieldUnavailable(field)}${lockedSince(field)}`
+            }
+          />
+        ) : null}
       </div>
 
       <div className="flex items-center gap-2">
         {!creating ? (
           <button
             type="button"
-            disabled={pending}
+            disabled={pending || removeLocked}
+            data-tooltip={removeLocked ? LOCKED_FIELD_NOTE : undefined}
             onClick={async () => {
               if (!removal) return;
               const ok = await confirm({
@@ -723,6 +763,14 @@ function Toggle({
       </span>
     </div>
   );
+}
+
+// " Locked since Oct 29." for a locked field (empty otherwise).
+function lockedSince(field: FieldDef): string {
+  if (!field.locked || !field.lockedAt) return "";
+  const day = new Date(field.lockedAt);
+  if (Number.isNaN(day.getTime())) return "";
+  return ` Locked since ${day.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.`;
 }
 
 // Choose from library (Oct 29 notes, batch 7): the library field is shared with this project

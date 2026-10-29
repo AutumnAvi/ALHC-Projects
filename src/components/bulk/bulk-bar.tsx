@@ -6,6 +6,7 @@ import {
   Check,
   FolderPlus,
   ListChecks,
+  Lock,
   MoveRight,
   RotateCcw,
   SlidersHorizontal,
@@ -24,7 +25,7 @@ import { addProjectMemberByProfile, bulkEditTasks } from "@/lib/actions";
 import { Dialog } from "@/components/dialog";
 import { MAX_BULK_TASKS, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import type { Section } from "@/lib/data";
-import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
+import { LOCKED_FIELD_NOTE, OPTION_COLOR_CLASSES, fieldLockedFor, type FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { TagChip } from "@/components/tags/tag-chip";
 import { addableTags, type Tag } from "@/lib/tags";
@@ -36,7 +37,7 @@ export type BulkContext = {
   people: BulkPerson[];
   // List only: who is already a member of the project (anyone else is offered "Add … and assign?").
   memberIds?: string[];
-  // List only: the viewer is Admin+ of the project, so they can add members.
+  // List only: the viewer is Admin+ of the project, so they can add members (and set locked fields).
   canAddMembers?: boolean;
   // Projects the viewer can add tasks to (Editor+), for "Add to project".
   projects: { id: string; name: string }[];
@@ -413,6 +414,7 @@ export function BulkBar({
                 ) : (
                   <FieldPicker
                     fields={fields}
+                    canManage={Boolean(context.canAddMembers)}
                     people={context.people}
                     onPick={(fieldId, value) => {
                       close();
@@ -603,15 +605,19 @@ function DuePicker({ onPick }: { onPick: (dueOn: string | null) => void }) {
 
 function FieldPicker({
   fields,
+  canManage,
   people,
   onPick,
 }: {
   fields: FieldDef[];
+  // Owner / Admin of the project: locked fields can be set too (Oct 29 notes, batch 7).
+  canManage: boolean;
   people: BulkPerson[];
   onPick: (fieldId: string, value: Json) => void;
 }) {
-  const [fieldId, setFieldId] = useState(fields[0]?.id ?? "");
-  const field = fields.find((f) => f.id === fieldId);
+  const locked = (f: FieldDef) => fieldLockedFor(f, { canManage });
+  const [fieldId, setFieldId] = useState((fields.find((f) => !locked(f)) ?? fields[0])?.id ?? "");
+  const field = fields.find((f) => f.id === fieldId && !locked(f));
   return (
     <div className="flex flex-col gap-2">
       <label htmlFor="bulk-field" className="text-xs font-medium text-zinc-500">
@@ -623,8 +629,13 @@ function FieldPicker({
         value={fieldId}
         onChange={setFieldId}
         className="w-full"
-        options={fields.map((f) => ({ value: f.id, label: f.name }))}
+        options={fields.map((f) => ({
+          value: f.id,
+          label: f.name,
+          ...(locked(f) ? { disabled: true, disabledReason: LOCKED_FIELD_NOTE, icon: <Lock className="size-3.5 text-zinc-400" aria-hidden /> } : {}),
+        }))}
       />
+      {fields.length > 0 && fields.every(locked) ? <p className="text-xs text-zinc-500">{LOCKED_FIELD_NOTE}.</p> : null}
       {field ? <FieldValueInput key={field.id} field={field} people={people} onPick={(v) => onPick(field.id, v)} /> : null}
     </div>
   );
