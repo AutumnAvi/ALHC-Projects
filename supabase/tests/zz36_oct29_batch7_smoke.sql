@@ -3439,7 +3439,7 @@ declare
   r record;
 begin
   if not exists (select 1 from pg_extension where extname = 'dblink') then
-    raise notice 'zz36_b7_t4: dblink isn''t available here, the concurrent removal check is skipped';
+    raise notice 'zz36 (55b): dblink isn''t available here, the concurrent removal check is skipped';
     return;
   end if;
   for r in select * from b7t4_race loop
