@@ -852,6 +852,346 @@ begin
 end $$;
 reset role;
 
+-- ---------------------------------------------------------------------------------------------
+-- Review fixes. SF R1 (Olive) publishes Review state; Otto is a Viewer of SF R1 and an Admin of
+-- SF R2. A Viewer of the publishing project, restoring a placement, the Asana importer, a task moved
+-- under a task of another project, and empty values when existing copies are linked.
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  r1 uuid;
+  r2 uuid;
+  f uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF R1') returning id into r1;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF R2') returning id into r2;
+  insert into sf_ids values ('r1', r1), ('r2', r2);
+  with x as (insert into public.sections (project_id, name, sort_order) values (r1, 'R1 work', 1024) returning id) insert into sf_ids select 'sr1', id from x;
+  with x as (insert into public.sections (project_id, name, sort_order) values (r2, 'R2 work', 1024) returning id) insert into sf_ids select 'sr2', id from x;
+  perform public.add_project_member(r1, 'sf-outsider@example.com', 'viewer');
+  perform public.add_project_member(r2, 'sf-outsider@example.com', 'admin');
+  insert into public.custom_fields (project_id, name, field_type, options, in_library, sort_order)
+  values (r1, 'Review state', 'single_select',
+    '[{"id": "rv-draft", "name": "Draft", "color": "blue"}, {"id": "rv-done", "name": "Done", "color": "green"}]', true, 1024)
+  returning id into f;
+  insert into sf_ids values ('review', f);
+end $$;
+
+-- Otto shares it into SF R2. Reading the publishing project isn't enough to change its definition.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000005', false) is not null as ok \gset
+do $$
+declare
+  r2 uuid := (select id from sf_ids where name = 'r2');
+  pr uuid;
+  s record;
+begin
+  pr := public.add_library_field(r2, (select id from sf_ids where name = 'review'));
+  insert into sf_ids values ('pr', pr);
+  select * into s from public.project_field_sharing(r2) where field_id = pr;
+  assert s.is_shared and not s.definition_editable and not s.definition_manageable,
+    format('a Viewer of the publishing project doesn''t change the shared definition (%s)', row_to_json(s));
+  begin
+    update public.custom_fields set name = 'Otto''s state' where id = pr;
+    raise exception 'a Viewer of the publishing project renamed the shared field';
+  exception when insufficient_privilege then
+    assert sqlerrm like 'Shared from the field library.%', sqlerrm;
+  end;
+  update public.custom_fields set deleted_at = now() where id = pr;
+  assert found, 'Otto removes the field from SF R2';
+end $$;
+
+-- While it's out of SF R2, Olive changes the definition.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  update public.custom_fields
+  set name = 'Review stage', options = options || '[{"id": "rv-hold", "name": "On hold", "color": "amber"}]'::jsonb
+  where id = (select id from sf_ids where name = 'review');
+  assert found, 'Olive changes the library field';
+end $$;
+
+-- Putting it back can't bring a definition of its own (that was a way around the guard), and it comes
+-- back with the group's current definition.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000005', false) is not null as ok \gset
+do $$
+declare
+  pr uuid := (select id from sf_ids where name = 'pr');
+begin
+  begin
+    update public.custom_fields set deleted_at = null, name = 'Hijacked' where id = pr;
+    raise exception 'a restore brought its own definition';
+  exception when check_violation then
+    assert sqlerrm = 'Restore the shared field first, then change it', sqlerrm;
+  end;
+  update public.custom_fields set deleted_at = null where id = pr;
+  assert found, 'Otto puts the field back in SF R2';
+  assert (select name = 'Review stage' and jsonb_array_length(options) = 3 from public.custom_fields where id = pr),
+    'it comes back with the group''s current definition';
+end $$;
+reset role;
+do $$
+begin
+  assert (select name = 'Review stage' and jsonb_array_length(options) = 3
+          from public.custom_fields where id = (select id from sf_ids where name = 'review')),
+    'the library field kept its definition';
+end $$;
+
+-- The Asana importer matches the placement by name. Otto (Admin of SF R2, Viewer of SF R1) can't
+-- change the shared definition, so the option the field lacks isn't added (anywhere) and the value
+-- naming it is skipped; the other value lands.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000005', false) is not null as ok \gset
+do $$
+declare
+  run uuid;
+  result jsonb;
+begin
+  run := public.start_import_run((select id from sf_ids where name = 'r2'), 'asana', array['review.json']);
+  result := public.import_batch(run, $json$
+  {
+    "project": {"gid": "asana-review", "name": "Review"},
+    "sections": [{"key": "s-r", "name": "R2 work"}],
+    "fields": [{"key": "f-review", "name": "review stage", "type": "single_select", "options": ["Draft", "Blocked"]}],
+    "tasks": [
+      {"gid": "rv-1", "title": "Imported blocked", "section_key": "s-r", "fields": [{"key": "f-review", "value": "Blocked"}]},
+      {"gid": "rv-2", "title": "Imported draft", "section_key": "s-r", "fields": [{"key": "f-review", "value": "draft"}]}
+    ]
+  }
+  $json$);
+  assert (result ->> 'values_skipped')::integer = 1, format('the value naming a missing option is skipped: %s', result);
+  perform public.finish_import_run(run, 'completed', result);
+end $$;
+reset role;
+do $$
+declare
+  pr uuid := (select id from sf_ids where name = 'pr');
+begin
+  assert (select jsonb_array_length(options) from public.custom_fields where id = (select id from sf_ids where name = 'review')) = 3
+    and (select jsonb_array_length(options) from public.custom_fields where id = pr) = 3,
+    'an importer who can''t change the shared definition adds no option to it';
+  assert (select v.value from public.task_field_values v join public.tasks t on t.id = v.task_id
+          where t.title = 'Imported draft' and v.field_id = pr) = '"rv-draft"', 'the value that fits is imported';
+end $$;
+
+-- Olive may change it (Owner of SF R1): her import into SF R2 adds the option, and every project gets it.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  run uuid;
+  result jsonb;
+begin
+  run := public.start_import_run((select id from sf_ids where name = 'r2'), 'asana', array['review-2.json']);
+  result := public.import_batch(run,
+    '{"fields": [{"key": "f-review", "name": "Review stage", "type": "single_select", "options": ["Blocked"]}]}'::jsonb);
+  perform public.finish_import_run(run, 'completed', result);
+end $$;
+reset role;
+do $$
+begin
+  assert (select options @> '[{"name": "Blocked"}]' from public.custom_fields where id = (select id from sf_ids where name = 'review'))
+    and (select options from public.custom_fields where id = (select id from sf_ids where name = 'review'))
+      = (select options from public.custom_fields where id = (select id from sf_ids where name = 'pr')),
+    'an importer who may change it adds the option to the shared definition';
+end $$;
+
+-- A task (with a subtask) in SF R1 becomes a subtask of a task in SF R2: SF R2's placement gets their
+-- values, quietly.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  review uuid := (select id from sf_ids where name = 'review');
+  pr uuid := (select id from sf_ids where name = 'pr');
+  t uuid;
+  child uuid;
+  parent uuid;
+  stories integer;
+begin
+  t := public.create_task((select id from sf_ids where name = 'r1'), (select id from sf_ids where name = 'sr1'), 'Moving review');
+  child := public.create_subtask(t, 'Moving review child', null);
+  parent := public.create_task((select id from sf_ids where name = 'r2'), (select id from sf_ids where name = 'sr2'), 'New parent');
+  insert into sf_ids values ('mv', t), ('mv_child', child);
+  insert into public.task_field_values (task_id, field_id, value) values (t, review, '"rv-done"'), (child, review, '"rv-hold"');
+  select count(*) into stories from public.task_stories where task_id = t and kind = 'field_changed';
+  perform public.convert_to_subtask(t, parent);
+  assert (select root_task_id from public.tasks where id = child) = parent, 'the subtree moved';
+  assert (select value from public.task_field_values where task_id = t and field_id = pr) = '"rv-done"',
+    'the moved task has its value in SF R2';
+  assert (select value from public.task_field_values where task_id = child and field_id = pr) = '"rv-hold"',
+    'and so does its subtask';
+  assert (select count(*) from public.task_stories where task_id = t and kind = 'field_changed') = stories, 'quietly';
+end $$;
+
+-- When the publishing project is archived (read-only for everyone), the placements' own Editors look
+-- after the definition.
+do $$
+begin
+  perform public.set_project_archived((select id from sf_ids where name = 'r1'), true);
+end $$;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000005', false) is not null as ok \gset
+do $$
+declare
+  s record;
+begin
+  select * into s from public.project_field_sharing((select id from sf_ids where name = 'r2'))
+  where field_id = (select id from sf_ids where name = 'pr');
+  assert s.definition_editable, 'with the publishing project archived, SF R2''s Editors edit the definition';
+end $$;
+reset role;
+
+-- Linking existing copies: an empty value (none, "", [], false) is no value, so the other side's value
+-- fills it instead of being recorded as a conflict.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  e1 uuid;
+  e2 uuid;
+  t uuid;
+  opts jsonb := '[{"id": "ch-web", "name": "Web", "color": "blue"}, {"id": "ch-print", "name": "Print", "color": "red"}]';
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF E1') returning id into e1;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF E2') returning id into e2;
+  insert into sf_ids values ('e1', e1), ('e2', e2);
+  with x as (insert into public.sections (project_id, name, sort_order) values (e1, 'E1', 1024) returning id) insert into sf_ids select 'se1', id from x;
+  with x as (insert into public.sections (project_id, name, sort_order) values (e2, 'E2', 1024) returning id) insert into sf_ids select 'se2', id from x;
+  with x as (insert into public.custom_fields (project_id, name, field_type, options, in_library)
+    values (e1, 'Channels', 'multi_select', opts, true) returning id) insert into sf_ids select 's_channels', id from x;
+  with x as (insert into public.custom_fields (project_id, name, field_type, description, in_library)
+    values (e1, 'Summary', 'text', 'Short summary', true) returning id) insert into sf_ids select 's_summary', id from x;
+  with x as (insert into public.custom_fields (project_id, name, field_type, options)
+    values (e2, 'Channels', 'multi_select', opts) returning id) insert into sf_ids select 'c_channels', id from x;
+  with x as (insert into public.custom_fields (project_id, name, field_type, description)
+    values (e2, 'Summary', 'text', 'Short summary') returning id) insert into sf_ids select 'c_summary', id from x;
+  t := public.create_task(e1, (select id from sf_ids where name = 'se1'), 'Empty sides');
+  insert into sf_ids values ('ve', t);
+  insert into public.task_projects (task_id, project_id, section_id) values (t, e2, (select id from sf_ids where name = 'se2'));
+  insert into public.task_field_values (task_id, field_id, value) values
+    (t, (select id from sf_ids where name = 's_channels'), '["ch-web"]'),
+    (t, (select id from sf_ids where name = 'c_channels'), '[]'),
+    (t, (select id from sf_ids where name = 's_summary'), '""'),
+    (t, (select id from sf_ids where name = 'c_summary'), '"Two lines"');
+end $$;
+reset role;
+do $$
+declare
+  ve uuid := (select id from sf_ids where name = 've');
+begin
+  update public.custom_fields set created_at = now() - interval '10 days'
+  where id in (select id from sf_ids where name in ('s_channels', 's_summary'));
+  perform public.link_library_field_copies();
+  assert (select library_field_id from public.custom_fields where id = (select id from sf_ids where name = 'c_channels'))
+      = (select id from sf_ids where name = 's_channels')
+    and (select library_field_id from public.custom_fields where id = (select id from sf_ids where name = 'c_summary'))
+      = (select id from sf_ids where name = 's_summary'), 'both copies linked';
+  assert (select value from public.task_field_values where task_id = ve and field_id = (select id from sf_ids where name = 'c_channels'))
+    = '["ch-web"]', 'an empty multi-select is filled';
+  assert (select value from public.task_field_values where task_id = ve and field_id = (select id from sf_ids where name = 's_summary'))
+    = '"Two lines"', 'an empty text is filled';
+  assert not exists (select 1 from public.library_field_link_conflicts where task_id = ve), 'no conflict for an empty side';
+end $$;
+
+-- Recurrence and Duplicate task copy values field by field into a task already in both projects: the
+-- shared value reaches the other placement first, and the copy must not fail on it (it did: completing
+-- the recurring task raised a duplicate key).
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  d1 uuid;
+  d2 uuid;
+  sd1 uuid;
+  sd2 uuid;
+  f uuid;
+  pd uuid;
+  t uuid;
+  child uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF D1') returning id into d1;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF D2') returning id into d2;
+  insert into public.sections (project_id, name, sort_order) values (d1, 'D1', 1024) returning id into sd1;
+  insert into public.sections (project_id, name, sort_order) values (d2, 'D2', 1024) returning id into sd2;
+  insert into public.custom_fields (project_id, name, field_type, options, in_library, sort_order)
+  values (d1, 'Size', 'single_select', '[{"id": "sz-s", "name": "Small", "color": "blue"}, {"id": "sz-l", "name": "Large", "color": "red"}]',
+    true, 1024)
+  returning id into f;
+  pd := public.add_library_field(d2, f);
+  t := public.create_task(d1, sd1, 'Weekly report');
+  insert into public.task_projects (task_id, project_id, section_id) values (t, d2, sd2);
+  child := public.create_subtask(t, 'Weekly report part', null);
+  insert into public.task_field_values (task_id, field_id, value) values (t, f, '"sz-l"'), (child, pd, '"sz-s"');
+  update public.tasks set recurrence = '{"freq": "weekly", "interval": 1, "ends": {"type": "never"}}', due_on = current_date
+  where id = t;
+  insert into sf_ids values ('size', f), ('pd', pd), ('weekly', t);
+end $$;
+
+do $$
+declare
+  t uuid := (select id from sf_ids where name = 'weekly');
+  f uuid := (select id from sf_ids where name = 'size');
+  pd uuid := (select id from sf_ids where name = 'pd');
+  next_t uuid;
+  next_child uuid;
+begin
+  update public.tasks set completed_at = now() where id = t;
+  assert found, 'the recurring task completes';
+  next_t := (select recurrence_next_id from public.tasks where id = t);
+  assert next_t is not null, 'its next occurrence was made';
+  assert (select value from public.task_field_values where task_id = next_t and field_id = f) = '"sz-l"'
+    and (select value from public.task_field_values where task_id = next_t and field_id = pd) = '"sz-l"',
+    'the next occurrence has the value in both projects';
+  next_child := (select id from public.tasks where parent_task_id = next_t and deleted_at is null);
+  assert (select value from public.task_field_values where task_id = next_child and field_id = f) = '"sz-s"'
+    and (select value from public.task_field_values where task_id = next_child and field_id = pd) = '"sz-s"',
+    'and so does its subtask';
+end $$;
+
+do $$
+declare
+  t uuid := (select id from sf_ids where name = 'weekly');
+  f uuid := (select id from sf_ids where name = 'size');
+  pd uuid := (select id from sf_ids where name = 'pd');
+  result jsonb;
+  copy_t uuid;
+  copy_child uuid;
+begin
+  result := public.duplicate_task(t, '{}'::jsonb);
+  copy_t := (result ->> 'task_id')::uuid;
+  assert (result -> 'skipped' ->> 'fields')::integer = 0, format('nothing skipped: %s', result);
+  assert (select value from public.task_field_values where task_id = copy_t and field_id = f) = '"sz-l"'
+    and (select value from public.task_field_values where task_id = copy_t and field_id = pd) = '"sz-l"',
+    'the duplicate has the value in both projects';
+  copy_child := (select id from public.tasks where parent_task_id = copy_t and deleted_at is null);
+  assert (select value from public.task_field_values where task_id = copy_child and field_id = pd) = '"sz-s"',
+    'and so does its subtask';
+end $$;
+
+-- A removed source that comes back takes the definition its placements moved on to (it can't push an
+-- old one, or a new one in the same step, onto them).
+do $$
+declare
+  f uuid := (select id from sf_ids where name = 'size');
+  pd uuid := (select id from sf_ids where name = 'pd');
+begin
+  update public.custom_fields set deleted_at = now() where id = f;
+  update public.custom_fields set name = 'Bigness' where id = pd;
+  assert found, 'with the source removed, SF D2''s Editors rename it';
+  begin
+    update public.custom_fields set deleted_at = null, name = 'Size again' where id = f;
+    raise exception 'a restored source pushed a definition of its own';
+  exception when check_violation then
+    assert sqlerrm = 'Restore the shared field first, then change it', sqlerrm;
+  end;
+  update public.custom_fields set deleted_at = null where id = f;
+  assert (select name from public.custom_fields where id = f) = 'Bigness', 'the source comes back with the group''s definition';
+  assert (select name from public.custom_fields where id = pd) = 'Bigness', 'the placement is unchanged';
+end $$;
+reset role;
+
 do $$
 begin
   raise notice 'oct 29 batch 7 t3 shared fields smoke: all assertions passed';

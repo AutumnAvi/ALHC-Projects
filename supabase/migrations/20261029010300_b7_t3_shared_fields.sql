@@ -14,7 +14,10 @@
 --       definer), quietly (no second story or notification; the other projects' rules fire for their
 --       own placement); writers serialize on a transaction advisory lock per task and group
 --       (task_field_values_03_library_lock); a task joining a project gets the group's newest value
---       (task_projects_14_library_values);
+--       (task_projects_14_library_values), and so does a subtask moved under a task of other
+--       projects (tasks_zzz_library_values); a placement that comes back takes the group's definition;
+--       the Asana importer adds options to a shared field only for people who may change it
+--       (import_batch, asserted patch);
 --     - add_library_field(target_project, library_field) (definer, Editor+ by own role; pinned in suite
 --       60) adds a placement and fills its values; project_field_sharing(target_project) (definer,
 --       pinned) tells the app which of a project's fields are shared and who may change them —
@@ -244,6 +247,14 @@ begin
     if new.project_id is distinct from old.project_id then
       raise exception 'A shared library field stays in its project' using errcode = 'check_violation';
     end if;
+    -- A placement that comes back takes the group's current definition (sync_library_field_definition),
+    -- so it can't bring a definition of its own with it.
+    if old.deleted_at is not null and new.deleted_at is null and exists (
+      select 1 from unnest(public.library_field_definition_columns()) c
+      where to_jsonb(new) -> c is distinct from to_jsonb(old) -> c
+    ) then
+      raise exception 'Restore the shared field first, then change it' using errcode = 'check_violation';
+    end if;
     if old.deleted_at is null and new.deleted_at is null and exists (
       select 1 from unnest(public.library_field_definition_columns()) c
       where to_jsonb(new) -> c is distinct from to_jsonb(old) -> c
@@ -278,7 +289,9 @@ create trigger custom_fields_05_library_guard
   for each row execute function public.guard_custom_field_library();
 
 -- One definition: after a live field of a group changes a definition column, the rest of the live
--- group (its source and every placement) gets the same values. Removed fields are left as they were.
+-- group (its source and every placement) gets the same values. Removed fields are left as they were;
+-- one that comes back (restored) takes the live group's definition instead — a restore never pushes
+-- an old definition (or one changed while it was removed) to the others.
 create or replace function public.sync_library_field_definition()
 returns trigger
 language plpgsql
@@ -290,8 +303,28 @@ declare
   prev text;
   set_list text;
   diff_list text;
+  donor uuid;
 begin
   if coalesce(current_setting('alhc.library_definition_sync', true), '') = 'on' or new.deleted_at is not null then
+    return null;
+  end if;
+  if old.deleted_at is not null then
+    -- The source when it is live (it always holds the current definition), else another live member.
+    select g.id into donor
+    from public.custom_fields g
+    where (g.id = coalesce(new.library_field_id, new.id) or g.library_field_id = coalesce(new.library_field_id, new.id))
+      and g.id <> new.id and g.deleted_at is null
+    order by (g.id = coalesce(new.library_field_id, new.id)) desc, g.updated_at desc, g.id
+    limit 1;
+    if donor is not null then
+      if exists (
+        select 1 from unnest(public.library_field_definition_columns()) c
+        where to_jsonb(new) -> c is distinct from to_jsonb(old) -> c
+      ) then
+        raise exception 'Restore the shared field first, then change it' using errcode = 'check_violation';
+      end if;
+      perform public.copy_library_definition(new.id, donor);
+    end if;
     return null;
   end if;
   if not exists (
@@ -326,6 +359,18 @@ revoke all on function public.sync_library_field_definition() from public, anon,
 create trigger custom_fields_zz_library_sync
   after update on public.custom_fields
   for each row execute function public.sync_library_field_definition();
+
+-- The Asana importer matches a field by name and appends the select options it's missing. On a shared
+-- library field that would change the definition in every project that uses it, so it does so only
+-- when the importer may change that definition (Editor+ of the project that published it, the guard's
+-- rule); otherwise values naming an option the field lacks are skipped and counted like any value
+-- that doesn't fit.
+select public.alhc_patch_function(
+  'public.import_batch(uuid, jsonb)'::regprocedure,
+  $old$      if merged_options is distinct from fld.options then$old$,
+  $new$      if merged_options is distinct from fld.options
+         and public.has_project_role(public.library_field_governing_project(fld.id), 'editor') then$new$
+);
 
 -- 55.5 One value per task.
 
@@ -490,6 +535,38 @@ select public.alhc_patch_function(
   if tg_op = 'UPDATE' and new.value is not distinct from old.value then$new$
 );
 
+-- Recurrence and Duplicate task copy a task's values one field at a time into a task that is already
+-- in all of its projects, so a shared field's value written through one placement has already reached
+-- the others by the time their own value comes: that one is left as it is (one value per task)
+-- instead of failing the completion or the duplicate with a duplicate key.
+select public.alhc_patch_function(
+  'public.spawn_next_occurrence()'::regprocedure,
+  $old$insert into public.task_field_values (task_id, field_id, value) values (next_id, r.field_id, r.value);$old$,
+  $new$insert into public.task_field_values (task_id, field_id, value) values (next_id, r.field_id, r.value)
+        on conflict (task_id, field_id) do nothing;$new$
+);
+
+select public.alhc_patch_function(
+  'public.copy_subtask_tree(uuid, uuid, integer)'::regprocedure,
+  $old$insert into public.task_field_values (task_id, field_id, value) values (new_id, r.field_id, r.value);$old$,
+  $new$insert into public.task_field_values (task_id, field_id, value) values (new_id, r.field_id, r.value)
+          on conflict (task_id, field_id) do nothing;$new$
+);
+
+select public.alhc_patch_function(
+  'public.duplicate_task(uuid, jsonb)'::regprocedure,
+  $old$insert into public.task_field_values (task_id, field_id, value) values (created, r.field_id, r.value);$old$,
+  $new$insert into public.task_field_values (task_id, field_id, value) values (created, r.field_id, r.value)
+          on conflict (task_id, field_id) do nothing;$new$
+);
+
+select public.alhc_patch_function(
+  'public.duplicate_subtask_tree(uuid, uuid, jsonb)'::regprocedure,
+  $old$insert into public.task_field_values (task_id, field_id, value) values (new_id, r.field_id, r.value);$old$,
+  $new$insert into public.task_field_values (task_id, field_id, value) values (new_id, r.field_id, r.value)
+            on conflict (task_id, field_id) do nothing;$new$
+);
+
 -- The group's newest value for one field's tasks: the given top-level tasks (null = every task of the
 -- field's project) and their subtasks, written quietly where the field's own row differs. Returns how
 -- many values it wrote.
@@ -593,6 +670,90 @@ revoke all on function public.fill_library_values_on_join() from public, anon, a
 create trigger task_projects_14_library_values
   after insert or update of deleted_at on public.task_projects
   for each row execute function public.fill_library_values_on_join();
+
+-- One task (a subtask that moved under another top-level task, or a task that became one): each shared
+-- field of the projects now holding its top-level task gets the group's newest value for it, quietly.
+-- Returns how many values it wrote.
+create or replace function public.fill_library_task_values(target_task uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r record;
+  prev text := coalesce(current_setting('alhc.library_value_sync', true), '');
+  n integer := 0;
+begin
+  for r in
+    with root as (
+      select coalesce(t.root_task_id, t.id) as id from public.tasks t where t.id = target_task and t.deleted_at is null
+    ), targets as (
+      select f.id as field_id, coalesce(f.library_field_id, f.id) as grp
+      from public.custom_fields f
+      join public.projects p on p.id = f.project_id and p.deleted_at is null
+      where f.deleted_at is null and not f.bound_to_sections
+        and exists (
+          select 1 from public.task_projects tp, root
+          where tp.task_id = root.id and tp.project_id = f.project_id and tp.deleted_at is null
+        )
+        and (
+          f.library_field_id is not null
+          or exists (select 1 from public.custom_fields c where c.library_field_id = f.id and c.deleted_at is null)
+        )
+    ), latest as (
+      select distinct on (tg.field_id) tg.field_id, v.field_id as from_field, v.value
+      from targets tg
+      join public.custom_fields g on g.deleted_at is null and (g.id = tg.grp or g.library_field_id = tg.grp)
+      join public.task_field_values v on v.task_id = target_task and v.field_id = g.id
+      order by tg.field_id, v.updated_at desc, (v.field_id = tg.field_id) desc, v.field_id
+    )
+    select l.field_id, l.value, x.task_id is not null as has_row, x.value as own_value
+    from latest l
+    left join public.task_field_values x on x.task_id = target_task and x.field_id = l.field_id
+    where l.from_field <> l.field_id
+    order by l.field_id
+  loop
+    continue when r.has_row and r.own_value is not distinct from r.value;
+    continue when not r.has_row and r.value is null;
+    perform set_config('alhc.library_value_sync', target_task::text || ':' || r.field_id::text, true);
+    begin
+      insert into public.task_field_values (task_id, field_id, value)
+      values (target_task, r.field_id, r.value)
+      on conflict (task_id, field_id) do update set value = excluded.value;
+      n := n + 1;
+    exception when others then
+      null;
+    end;
+    perform set_config('alhc.library_value_sync', prev, true);
+  end loop;
+  return n;
+end;
+$$;
+
+revoke all on function public.fill_library_task_values(uuid) from public, anon, authenticated;
+
+create or replace function public.fill_library_values_on_reparent()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.fill_library_task_values(new.id);
+  return null;
+end;
+$$;
+
+revoke all on function public.fill_library_values_on_reparent() from public, anon, authenticated;
+
+-- The subtree's roots change one level per update (tasks_cascade_subtasks), so each moved task fills
+-- itself. A task that became a top-level task is filled when it joins its project (above).
+create trigger tasks_zzz_library_values
+  after update of parent_task_id, root_task_id on public.tasks
+  for each row
+  when (new.root_task_id is distinct from old.root_task_id and new.root_task_id is not null and new.deleted_at is null)
+  execute function public.fill_library_values_on_reparent();
 
 -- 55.6 Linking a field to a library field (the copy engine and the existing-copies migration; people
 -- use add_library_field). Only when the source is a live library field of a live project in the same
@@ -745,7 +906,8 @@ select public.alhc_patch_function(
 -- else the same non-empty description. A C matching more than one S, or a project with more than one
 -- C for the same S, is left alone (counted as ambiguous). After linking, for each task in more than
 -- one of the group's projects: one value → copied to the placements without one (quietly); equal
--- values → nothing; different values → both kept and recorded in library_field_link_conflicts.
+-- values → nothing; different values → both kept and recorded in library_field_link_conflicts. An
+-- empty value (none, "", [], or false — what views count as empty, view_value_is_empty) is no value.
 
 do $do$
 begin
@@ -903,17 +1065,17 @@ begin
       from public.task_field_values v
       join public.custom_fields f on f.id = v.field_id and f.deleted_at is null
         and (f.id = grp or f.library_field_id = grp)
-      where v.value is not null
+      where not public.view_value_is_empty(v.value)
       order by v.task_id
     loop
-      select count(*), count(distinct mm.value) filter (where mm.value is not null)
+      select count(*), count(distinct mm.value) filter (where not public.view_value_is_empty(mm.value))
       into n_members, distinct_values
       from public.library_group_task_members(grp, t.task_id) mm;
       continue when n_members < 2;
       if distinct_values = 1 then
         select mm.value into the_value from public.library_group_task_members(grp, t.task_id) mm
-        where mm.value is not null limit 1;
-        for m in select * from public.library_group_task_members(grp, t.task_id) mm where mm.value is null loop
+        where not public.view_value_is_empty(mm.value) limit 1;
+        for m in select * from public.library_group_task_members(grp, t.task_id) mm where public.view_value_is_empty(mm.value) loop
           perform set_config('alhc.library_value_sync', t.task_id::text || ':' || m.field_id::text, true);
           begin
             insert into public.task_field_values (task_id, field_id, value)
@@ -929,12 +1091,12 @@ begin
         -- Both kept. The reference is the source's value when it has one, else the oldest field's.
         select mm.field_id, mm.value into ref_field, ref_value
         from public.library_group_task_members(grp, t.task_id) mm
-        where mm.value is not null
+        where not public.view_value_is_empty(mm.value)
         order by mm.is_source desc, mm.created_at, mm.field_id
         limit 1;
         for m in
           select * from public.library_group_task_members(grp, t.task_id) mm
-          where mm.value is not null and mm.field_id <> ref_field and mm.value is distinct from ref_value
+          where not public.view_value_is_empty(mm.value) and mm.field_id <> ref_field and mm.value is distinct from ref_value
         loop
           insert into public.library_field_link_conflicts (task_id, field_id, value, other_field_id, other_value)
           values (t.task_id, m.field_id, m.value, ref_field, ref_value)
