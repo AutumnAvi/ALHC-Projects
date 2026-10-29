@@ -13,6 +13,7 @@ import {
   listWorkloadCapacities,
   portfolioWorkload,
 } from "@/lib/data";
+import { numberPrefixOf } from "@/lib/fields";
 import { hasPortfolioRole } from "@/lib/roles";
 
 export async function generateMetadata({ params }: PageProps<"/portfolios/[portfolioId]/workload">): Promise<Metadata> {
@@ -36,9 +37,13 @@ export default async function PortfolioWorkloadPage({ params, searchParams }: Pa
     countHiddenPortfolioProjects(portfolioId),
   ]);
   const fieldNames = new Map<string, string>();
+  // A measure's symbol (item 49) when every same-named number field shares it; none when they differ.
+  const fieldSymbols = new Map<string, string | null>();
   for (const field of await listNumberFields(projects.map((p) => p.id))) {
     const key = field.name.trim().toLowerCase();
     if (!fieldNames.has(key)) fieldNames.set(key, field.name.trim());
+    const symbol = numberPrefixOf(field);
+    fieldSymbols.set(key, fieldSymbols.has(key) && fieldSymbols.get(key) !== symbol ? null : symbol);
   }
   const measure = fieldNames.get(state.measure.trim().toLowerCase()) ?? "";
   const tasks = await portfolioWorkload(portfolioId, state.start, state.end, measure || null);
@@ -58,7 +63,13 @@ export default async function PortfolioWorkloadPage({ params, searchParams }: Pa
         )}
         tasks={tasks}
         capacities={capacities}
-        measures={[{ value: "", label: "Task count" }, ...[...fieldNames.values()].map((name) => ({ value: name, label: name }))]}
+        measures={[
+          { value: "", label: "Task count" },
+          ...[...fieldNames.entries()].map(([key, name]) => {
+            const symbol = fieldSymbols.get(key) ?? null;
+            return { value: name, label: symbol ? `${name} (${symbol})` : name, symbol };
+          }),
+        ]}
         measure={measure}
         canEditCapacity={hasPortfolioRole(role, "editor")}
         projectNames={Object.fromEntries(projects.map((p) => [p.id, p.name]))}

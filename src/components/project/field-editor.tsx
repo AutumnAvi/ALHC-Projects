@@ -28,10 +28,16 @@ import { createField, deleteField, loadFieldLibrary, updateField } from "@/lib/a
 import {
   FIELD_TYPES,
   MAX_FIELD_DESCRIPTION,
+  NUMBER_PREFIX_EXAMPLES,
   OPTION_COLORS,
   OPTION_COLOR_CLASSES,
   fieldTypeLabel,
+  formatNumberValue,
   hasOptions,
+  normalizeNumberPrefix,
+  numberPrefixOf,
+  numberPrefixProblem,
+  selectOptionsProblem,
   type FieldDef,
   type FieldOption,
   type FieldType,
@@ -78,6 +84,12 @@ export function OptionPreview({ options, max = 3 }: { options: FieldOption[]; ma
   );
 }
 
+// "Number", or "Number · $" for a number field with a symbol (item 49).
+function typeWithSymbol(field: FieldDef) {
+  const symbol = numberPrefixOf(field);
+  return symbol ? `${fieldTypeLabel(field)} · ${symbol}` : fieldTypeLabel(field);
+}
+
 // Asana's Fields list: type icon, name, option preview. Editors click a row to edit it (the Edit field
 // modal); everyone else reads. Used by the Fields page and Customize → Fields.
 export function FieldList({
@@ -120,10 +132,10 @@ export function FieldList({
                 {hasOptions(field) || field.boundToSections ? (
                   <OptionPreview options={options} max={dense ? 3 : 4} />
                 ) : field.description || dense ? (
-                  <span className="truncate text-xs text-zinc-500">{field.description || fieldTypeLabel(field)}</span>
+                  <span className="truncate text-xs text-zinc-500">{field.description || typeWithSymbol(field)}</span>
                 ) : null}
               </span>
-              {!dense ? <span className="hidden shrink-0 text-xs text-zinc-500 sm:inline">{fieldTypeLabel(field)}</span> : null}
+              {!dense ? <span className="hidden shrink-0 text-xs text-zinc-500 sm:inline">{typeWithSymbol(field)}</span> : null}
               {!dense && field.showInViews ? (
                 <span className="hidden shrink-0 text-2xs text-zinc-400 md:inline" title="Shown in List and Board">
                   <Columns3 className="size-3.5" aria-label="Shown in List and Board" />
@@ -170,6 +182,8 @@ type Draft = {
   showInViews: boolean;
   inLibrary: boolean;
   notifyOnChange: boolean;
+  // Item 49: a number field's symbol as typed ("" = none).
+  numberPrefix: string;
 };
 
 function draftOf(field: FieldDef | null): Draft {
@@ -181,7 +195,77 @@ function draftOf(field: FieldDef | null): Draft {
     showInViews: field ? field.showInViews : true,
     inLibrary: field?.inLibrary ?? false,
     notifyOnChange: field?.notifyOnChange ?? false,
+    numberPrefix: field?.numberPrefix ?? "",
   };
+}
+
+// The number shown in the Symbol preview.
+export const SYMBOL_PREVIEW_VALUE = 1250;
+
+// Item 49: a number field's symbol, with quick picks and a live preview ("$1,250"). The value stays a
+// plain number; the symbol is only shown in front of it.
+export function NumberSymbolInput({
+  id,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const problem = numberPrefixProblem(value);
+  const symbol = normalizeNumberPrefix(value);
+  return (
+    <div>
+      <label htmlFor={id} className={DIALOG_LABEL}>
+        Symbol <span className="font-normal text-zinc-400">(optional)</span>
+      </label>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <input
+          id={id}
+          value={value}
+          maxLength={8}
+          disabled={disabled}
+          placeholder="e.g. $"
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={`${id}-hint`}
+          onChange={(e) => onChange(e.currentTarget.value)}
+          className="field w-24"
+        />
+        <span role="group" aria-label="Common symbols" className="flex items-center gap-1">
+          {NUMBER_PREFIX_EXAMPLES.map((example) => (
+            <button
+              key={example}
+              type="button"
+              disabled={disabled}
+              aria-pressed={symbol === example}
+              aria-label={`Use ${example}`}
+              data-tooltip={`Use ${example}`}
+              onClick={() => onChange(symbol === example ? "" : example)}
+              className="btn-ghost size-8 justify-center px-0 text-sm aria-pressed:bg-accent-50 aria-pressed:text-accent-700"
+            >
+              {example}
+            </button>
+          ))}
+        </span>
+      </div>
+      <p id={`${id}-hint`} className={problem ? "mt-1.5 text-xs text-amber-700" : DIALOG_HINT}>
+        {problem ? (
+          `${problem}.`
+        ) : (
+          <>
+            Shown before every value:{" "}
+            <span className="font-medium tabular-nums text-zinc-800" data-symbol-preview>
+              {formatNumberValue(SYMBOL_PREVIEW_VALUE, symbol)}
+            </span>
+            . Values stay numbers, so sorting, filters, and rules work the same.
+          </>
+        )}
+      </p>
+    </div>
+  );
 }
 
 // Asana's Add field / Edit field modal: title, type, description, options with color dots, "Add to
@@ -289,6 +373,19 @@ function FieldForm({
   const withOptions = hasOptions({ fieldType: draft.fieldType, boundToSections: bound });
   const removed = field ? field.options.filter((o) => !draft.options.some((d) => d.id === o.id)) : [];
   const prefix = field ? `field-${field.id}` : "field-new";
+  // Item 47: a select field needs at least one option (a name typed in "Add an option" counts). An
+  // existing field that never had any can still be renamed; it just can't be emptied.
+  const optionsProblem = selectOptionsProblem({
+    fieldType: draft.fieldType,
+    boundToSections: bound,
+    optionCount: draft.options.length,
+    pendingOption: newOption,
+    previousCount: field ? field.options.length : null,
+  });
+  const stillEmpty = withOptions && !optionsProblem && draft.options.length === 0 && !newOption.trim();
+  // Item 49: number fields can show a symbol before their values.
+  const numeric = draft.fieldType === "number" && !bound;
+  const symbolProblem = numeric ? numberPrefixProblem(draft.numberPrefix) : null;
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -312,7 +409,8 @@ function FieldForm({
 
   function save() {
     const name = draft.name.trim();
-    if (!name || pending) return;
+    if (!name || pending || optionsProblem || symbolProblem) return;
+    const numberPrefix = numeric ? normalizeNumberPrefix(draft.numberPrefix) : null;
     // A name typed in the "Add an option" box but not added yet still counts.
     const pendingOption = newOption.trim();
     const options =
@@ -331,6 +429,7 @@ function FieldForm({
           fieldType: draft.fieldType,
           showInViews: draft.showInViews,
           options: withOptions ? options : undefined,
+          ...(numberPrefix ? { numberPrefix } : {}),
           ...extras,
         });
         if (!result.error && result.fieldId) {
@@ -343,6 +442,7 @@ function FieldForm({
       if (name !== field.name) patch.name = name;
       if (withOptions && JSON.stringify(options) !== JSON.stringify(field.options)) patch.options = options;
       if (draft.showInViews !== field.showInViews) patch.showInViews = draft.showInViews;
+      if (numeric && numberPrefix !== numberPrefixOf(field)) patch.numberPrefix = numberPrefix;
       if ("description" in extras && (extras.description ?? null) !== (field.description ?? null)) {
         patch.description = extras.description;
       }
@@ -414,6 +514,9 @@ function FieldForm({
           </p>
         ) : null}
       </div>
+      {numeric ? (
+        <NumberSymbolInput id={`${prefix}-symbol`} value={draft.numberPrefix} onChange={(v) => set("numberPrefix", v)} />
+      ) : null}
       {batch4 ? (
         <div>
           <label htmlFor={`${prefix}-description`} className={DIALOG_LABEL}>
@@ -515,6 +618,15 @@ function FieldForm({
               </button>
             </li>
           </ul>
+          {optionsProblem ? (
+            <p id={`${prefix}-options-hint`} className="mt-1.5 text-xs text-amber-700">
+              {optionsProblem} so people can pick a value.
+            </p>
+          ) : stillEmpty ? (
+            <p id={`${prefix}-options-hint`} className="mt-1.5 text-xs text-zinc-500">
+              This field has no options yet. Add at least one so people can pick a value.
+            </p>
+          ) : null}
           {removed.length ? (
             <p className="mt-1.5 text-xs text-amber-700">
               Tasks set to {removed.map((o) => `“${o.name}”`).join(", ")} lose that value when you save.
@@ -585,7 +697,15 @@ function FieldForm({
         <button type="button" onClick={onClose} className="btn-secondary h-8 px-3">
           Cancel
         </button>
-        <button type="button" onClick={save} disabled={pending || !draft.name.trim()} className="btn-primary h-8 px-3">
+        <button
+          type="button"
+          onClick={save}
+          disabled={pending || !draft.name.trim() || Boolean(optionsProblem) || Boolean(symbolProblem)}
+          aria-describedby={
+            optionsProblem ? `${prefix}-options-hint` : symbolProblem ? `${prefix}-symbol-hint` : undefined
+          }
+          className="btn-primary h-8 px-3"
+        >
           {pending ? "Saving…" : creating ? "Create field" : "Save"}
         </button>
       </div>

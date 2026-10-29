@@ -1206,13 +1206,23 @@ async function loadReplyThread(supabase: Supabase, taskId: string): Promise<Task
 // ---------------------------------------------------------------------------------------------
 
 // Every tag of the workspace, archived ones included (they stay on tasks), by name.
+// A tag's color is coalesce(palette_color, color) (Oct 29 notes, item 54); a database without that
+// column still reads the nine colors it had.
 export const listTags = cache(async (): Promise<Tag[]> => {
   const supabase = await createClient();
   const result = await supabase
     .from("tags")
-    .select("id, name, color, archived_at, created_by")
+    .select("id, name, color, palette_color, archived_at, created_by")
     .is("deleted_at", null)
     .order("name");
+  if (isMissingColumn(result.error)) {
+    const older = await supabase
+      .from("tags")
+      .select("id, name, color, archived_at, created_by")
+      .is("deleted_at", null)
+      .order("name");
+    return rows(older, "tags").map(toTag);
+  }
   return rows(result, "tags").map(toTag);
 });
 
@@ -2070,6 +2080,7 @@ function toFieldDef(row: Tables<"custom_fields">): FieldDef {
     description: row.description ?? null,
     notifyOnChange: row.notify_on_change ?? false,
     inLibrary: row.in_library ?? false,
+    numberPrefix: row.number_prefix ?? null,
   };
 }
 
@@ -4346,22 +4357,44 @@ export type PortfolioField = {
   fieldType: PortfolioFieldType;
   options: FieldOption[];
   sortOrder: number;
+  // Oct 29 notes, item 49: a number field's symbol; null = none (and before this release's migration).
+  numberPrefix?: string | null;
 };
 
 export const listPortfolioFields = cache(async (portfolioId: string): Promise<PortfolioField[]> => {
   const supabase = await createClient();
+  const toField = (f: { id: string; name: string; field_type: string; options: Json; sort_order: number; number_prefix?: string | null }) =>
+    isPortfolioFieldType(f.field_type)
+      ? [
+          {
+            id: f.id,
+            name: f.name,
+            fieldType: f.field_type,
+            options: parseOptions(f.options),
+            sortOrder: f.sort_order,
+            numberPrefix: f.number_prefix ?? null,
+          },
+        ]
+      : [];
   const result = await supabase
     .from("portfolio_fields")
-    .select("id, name, field_type, options, sort_order")
+    .select("id, name, field_type, options, sort_order, number_prefix")
     .eq("portfolio_id", portfolioId)
     .is("deleted_at", null)
     .order("sort_order")
     .order("created_at");
-  return rows(result, "portfolio fields").flatMap((f) =>
-    isPortfolioFieldType(f.field_type)
-      ? [{ id: f.id, name: f.name, fieldType: f.field_type, options: parseOptions(f.options), sortOrder: f.sort_order }]
-      : [],
-  );
+  if (isMissingColumn(result.error)) {
+    // Before 20261029010000_oct29_batch7_a.sql there is no symbol column.
+    const older = await supabase
+      .from("portfolio_fields")
+      .select("id, name, field_type, options, sort_order")
+      .eq("portfolio_id", portfolioId)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    return rows(older, "portfolio fields").flatMap(toField);
+  }
+  return rows(result, "portfolio fields").flatMap(toField);
 });
 
 // Values by project id, then field id. RLS leaves out projects the viewer can't read.

@@ -36,7 +36,9 @@ declare
 begin
   insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'AF P') returning id into p;
   perform public.add_project_member(p, 'af-viewer@example.com', 'viewer');
-  insert into public.custom_fields (project_id, name, field_type) values (p, 'Priority', 'single_select') returning id into f;
+  -- A select field needs an option (Oct 29 notes, item 47).
+  insert into public.custom_fields (project_id, name, field_type, options)
+  values (p, 'Priority', 'single_select', '[{"id": "hi", "name": "High", "color": "red"}]') returning id into f;
   insert into af_ids values ('p', p), ('f', f);
 
   insert into public.project_views (project_id, name, layout, config)

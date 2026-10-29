@@ -8,7 +8,10 @@ import { moveTask, setFieldValue } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { MenuItem, Popover } from "@/components/popover";
 import { PILL, isChoiceField } from "@/components/project/field-chips";
-import { OPTION_COLOR_CLASSES, fieldChips, type FieldDef, type FieldOption } from "@/lib/fields";
+import { LongTextEditor } from "@/components/long-text-editor";
+import { NumberInput } from "@/components/number-input";
+import { OPTION_COLOR_CLASSES, fieldChips, numberPrefixOf, type FieldDef, type FieldOption } from "@/lib/fields";
+import { TEXT_TOOLTIP_LENGTH, textPreview, textValueLabel } from "@/lib/long-text";
 import type { Json } from "@/lib/supabase/database.types";
 import { formatDueDate } from "@/lib/dates";
 import { SingleDatePicker } from "./date-picker";
@@ -110,7 +113,19 @@ function FieldRow({
     );
 
   let control: React.ReactNode;
-  if (!canEdit) {
+  if (field.fieldType === "text" && !field.boundToSections) {
+    // Text (item 48): a few lines; a click opens the pop-out editor (the whole text to read below Editor).
+    control = (
+      <PaneTextValue
+        id={inputId}
+        fieldName={field.name}
+        taskTitle={task.title}
+        value={value}
+        canEdit={canEdit}
+        onSave={(next) => save(next)}
+      />
+    );
+  } else if (!canEdit) {
     // Below Editor: the value as it reads in List and Board (pills for choices, plain text otherwise).
     const chips = fieldChips(field, field.boundToSections ? null : value, {
       personName: (personId) => {
@@ -152,27 +167,13 @@ function FieldRow({
     );
   } else {
     switch (field.fieldType) {
-      case "text":
-        control = (
-          <input
-            id={inputId}
-            key={String(value ?? "")}
-            defaultValue={typeof value === "string" ? value : ""}
-            onBlur={(e) => {
-              const next = e.currentTarget.value.trim();
-              if (next !== (value ?? "")) save(next || null);
-            }}
-            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            className={INPUT}
-          />
-        );
-        break;
       case "number":
+        // The field's symbol (item 49) sits inside the box; the value stays a plain number.
         control = (
-          <input
+          <NumberInput
             id={inputId}
-            type="number"
-            step="any"
+            symbol={numberPrefixOf(field)}
+            wrapperClassName="w-full max-w-64"
             key={String(value ?? "")}
             defaultValue={typeof value === "number" ? value : ""}
             onBlur={(e) => {
@@ -321,10 +322,13 @@ function FieldRow({
     }
   }
 
+  const text = field.fieldType === "text" && !field.boundToSections;
   return (
     <>
-      <dt className={PANE_LABEL}>
+      {/* A text value can run to a few lines: its label stays by the first one. */}
+      <dt className={`${PANE_LABEL} ${text ? "self-start" : ""}`}>
         {!canEdit ||
+        text ||
         field.boundToSections ||
         field.fieldType === "single_select" ||
         field.fieldType === "multi_select" ||
@@ -336,6 +340,68 @@ function FieldRow({
         )}
       </dt>
       <dd className="min-w-0">{control}</dd>
+    </>
+  );
+}
+
+// A text field's value in the pane (Oct 29 notes, batch 7, item 48): up to three lines, with the whole
+// text on hover when it's cut off; a click opens the pop-out editor (Editors) or the whole text to read
+// (everyone else). Below Editor an empty value is a dash, as other fields read.
+export function PaneTextValue({
+  id,
+  fieldName,
+  taskTitle,
+  value,
+  canEdit,
+  onSave,
+}: {
+  id?: string;
+  fieldName: string;
+  taskTitle: string;
+  value: Json;
+  canEdit: boolean;
+  onSave: (next: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const text = typeof value === "string" ? value : "";
+  if (!canEdit && !text) return <span className="px-1 text-sm text-zinc-500">—</span>;
+  return (
+    <>
+      <button
+        id={id}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={textValueLabel(fieldName, text, canEdit ? "Edit" : "Show full text")}
+        onClick={() => setOpen(true)}
+        className={`flex min-h-8 w-full min-w-0 items-start rounded-md py-1.5 text-left text-sm focus-visible:outline-2 focus-visible:outline-accent-500 ${
+          canEdit
+            ? "border border-transparent px-2 hover:border-zinc-200 aria-expanded:border-accent-500/60"
+            : "-mx-1 px-2 hover:bg-zinc-100 aria-expanded:bg-zinc-100"
+        }`}
+      >
+        {text ? (
+          <span
+            data-tooltip={textPreview(text, TEXT_TOOLTIP_LENGTH)}
+            data-tooltip-truncated=""
+            className="line-clamp-3 min-w-0 whitespace-pre-wrap break-words text-zinc-800 print:line-clamp-none"
+          >
+            {text}
+          </span>
+        ) : (
+          <span className="text-zinc-400 print:hidden">Add text</span>
+        )}
+      </button>
+      {open ? (
+        <LongTextEditor
+          fieldName={fieldName}
+          taskTitle={taskTitle}
+          value={value}
+          readOnly={!canEdit}
+          onSave={onSave}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
     </>
   );
 }

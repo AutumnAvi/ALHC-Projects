@@ -126,7 +126,8 @@ function TagRow({ tag, creatorName, canManage }: { tag: Tag; creatorName: string
           onSubmit={(e) => {
             e.preventDefault();
             setEditing(false);
-            run(() => updateTag(tag.id, { name, color }));
+            // Only a changed color is sent, so renaming never rewrites how the color is stored.
+            run(() => updateTag(tag.id, color === tag.color ? { name } : { name, color }));
           }}
         >
           <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600" htmlFor={`tag-name-${tag.id}`}>
@@ -170,7 +171,7 @@ function TagRow({ tag, creatorName, canManage }: { tag: Tag; creatorName: string
       </span>
       {canManage ? (
         <span className="flex items-center gap-1">
-          <button type="button" className="btn-icon" onClick={() => setEditing(true)} aria-label={`Rename or change the color of ${tag.name}`}>
+          <button type="button" className="btn-icon" onClick={() => setEditing(true)} aria-label={`Rename or change the color of ${tag.name}`} data-tooltip="Rename or recolor">
             <Pencil className="size-3.5" aria-hidden />
           </button>
           <button
@@ -178,7 +179,7 @@ function TagRow({ tag, creatorName, canManage }: { tag: Tag; creatorName: string
             className="btn-icon"
             onClick={() => run(() => updateTag(tag.id, { archived: !tag.archivedAt }))}
             aria-label={tag.archivedAt ? `Unarchive ${tag.name}` : `Archive ${tag.name}`}
-            title={tag.archivedAt ? "Unarchive" : "Archive"}
+            data-tooltip={tag.archivedAt ? "Unarchive" : "Archive"}
           >
             {tag.archivedAt ? <ArchiveRestore className="size-3.5" aria-hidden /> : <Archive className="size-3.5" aria-hidden />}
           </button>

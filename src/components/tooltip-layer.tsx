@@ -5,10 +5,20 @@ import { createPortal } from "react-dom";
 
 type Tip = { text: string; anchor: DOMRect };
 
+// Past this many characters a tooltip gets a wider bubble.
+const LONG_TOOLTIP = 80;
+
+// Whether an element's text overflows its box (truncate / line-clamp cut it off).
+export function isCutOff(el: Pick<HTMLElement, "scrollWidth" | "clientWidth" | "scrollHeight" | "clientHeight">): boolean {
+  return el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+}
+
 // Asana-style dark tooltips for icon buttons (Asana parity, batch 3): any element with
 // data-tooltip="Copy task link" shows that text below it (above when there's no room) after a short
 // hover, or right away on keyboard focus. One layer for the whole app, drawn on <body>, so scrolling
 // containers and tab rows never clip it. The element keeps its own aria-label for screen readers.
+// Oct 29 notes, batch 7 (item 48): with data-tooltip-truncated the tooltip shows only while the element's
+// text is cut off (a long value on one line or a few), and long tooltips wrap wider, keeping line breaks.
 export function TooltipLayer() {
   const [tip, setTip] = useState<Tip | null>(null);
 
@@ -17,6 +27,8 @@ export function TooltipLayer() {
     let current: HTMLElement | null = null;
     const show = (el: HTMLElement) => {
       const text = el.dataset.tooltip;
+      // data-tooltip-truncated: only when the element's own text is cut off (a long field value).
+      if (el.hasAttribute("data-tooltip-truncated") && !isCutOff(el)) return;
       if (text && el.isConnected) setTip({ text, anchor: el.getBoundingClientRect() });
     };
     const hide = () => {
@@ -90,7 +102,9 @@ function TooltipBubble({ tip }: { tip: Tip }) {
       ref={ref}
       role="tooltip"
       style={position ?? { top: 0, left: 0, visibility: "hidden" }}
-      className="pointer-events-none fixed z-[70] max-w-64 rounded-md bg-zinc-900 px-2 py-1 text-xs font-medium text-white shadow-md print:hidden"
+      className={`pointer-events-none fixed z-[70] ${
+        tip.text.length > LONG_TOOLTIP ? "max-w-80" : "max-w-64"
+      } whitespace-pre-line rounded-md bg-zinc-900 px-2 py-1 text-xs font-medium text-white shadow-md [overflow-wrap:anywhere] print:hidden`}
     >
       {tip.text}
     </div>

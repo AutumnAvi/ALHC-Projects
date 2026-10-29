@@ -291,6 +291,8 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          // Oct 29 notes, batch 7 (item 49): a number field's symbol; absent on a database without it.
+          number_prefix?: string | null;
         };
         Insert: {
           id?: string;
@@ -307,6 +309,7 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          number_prefix?: string | null;
         };
         Update: {
           id?: string;
@@ -319,6 +322,7 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          number_prefix?: string | null;
           sort_order?: number;
           created_at?: string;
           updated_at?: string;
@@ -4195,6 +4199,8 @@ export type Database = {
           field_type: string;
           options: Json;
           sort_order: number;
+          // Oct 29 notes, batch 7 (item 49): a number field's symbol; absent on a database without it.
+          number_prefix?: string | null;
           created_by: string | null;
           created_at: string;
           updated_at: string;
@@ -4207,6 +4213,7 @@ export type Database = {
           field_type: string;
           options?: Json;
           sort_order?: number;
+          number_prefix?: string | null;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -4219,6 +4226,7 @@ export type Database = {
           field_type?: string;
           options?: Json;
           sort_order?: number;
+          number_prefix?: string | null;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -4309,6 +4317,7 @@ export type Database = {
           workspace_id: string;
           name: string;
           color: string;
+          palette_color: string | null;
           archived_at: string | null;
           created_by: string | null;
           created_at: string;
@@ -4320,6 +4329,7 @@ export type Database = {
           workspace_id?: string;
           name: string;
           color?: string;
+          palette_color?: string | null;
           archived_at?: string | null;
           created_by?: string | null;
           created_at?: string;
@@ -4331,6 +4341,7 @@ export type Database = {
           workspace_id?: string;
           name?: string;
           color?: string;
+          palette_color?: string | null;
           archived_at?: string | null;
           created_by?: string | null;
           created_at?: string;

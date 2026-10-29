@@ -51,7 +51,19 @@ import {
   toProjectIntegrations,
   type ProjectIntegrations,
 } from "@/lib/integrations-shared";
-import { MAX_FIELD_DESCRIPTION, isFieldType, isOptionColor, type FieldOption, type LibraryField } from "@/lib/fields";
+import {
+  MAX_FIELD_DESCRIPTION,
+  isFieldType,
+  isBaseOptionColor,
+  isOptionColor,
+  normalizeNumberPrefix,
+  numberPrefixProblem,
+  parseOptions,
+  selectOptionsProblem,
+  type FieldOption,
+  type LibraryField,
+} from "@/lib/fields";
+import { MAX_TEXT_FIELD_LENGTH, textLength } from "@/lib/long-text";
 import {
   isChoice,
   isQuestionType,
@@ -84,7 +96,7 @@ import {
   type ShiftResult,
   type UndoResult,
 } from "@/lib/dependencies";
-import { MAX_TAG_NAME } from "@/lib/tags";
+import { MAX_TAG_NAME, tagColorColumns } from "@/lib/tags";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import {
   isDuplicateTaskOptionKey,
@@ -1063,11 +1075,14 @@ function portfolioFieldOptions(value: unknown): FieldOption[] {
 
 export async function createPortfolioField(
   portfolioId: string,
-  input: { name: string; fieldType: string; options?: FieldOption[] },
+  input: { name: string; fieldType: string; options?: FieldOption[]; numberPrefix?: string | null },
 ): Promise<ActionResult> {
   return run(async () => {
     if (!isPortfolioFieldType(input.fieldType)) throw new InputError("Choose a field type");
     const options = input.fieldType === "single_select" ? portfolioFieldOptions(input.options ?? []) : [];
+    const optionsProblem = selectOptionsProblem({ fieldType: input.fieldType, optionCount: options.length });
+    if (optionsProblem) throw new InputError(optionsProblem);
+    const numberPrefix = numberPrefixInput(input.numberPrefix, input.fieldType);
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("portfolio_fields")
@@ -1076,32 +1091,50 @@ export async function createPortfolioField(
       .is("deleted_at", null)
       .order("sort_order", { ascending: false })
       .limit(1);
-    check(
-      await supabase.from("portfolio_fields").insert({
-        portfolio_id: portfolioId,
-        name: text(input.name, "Field name", { max: 100 }),
-        field_type: input.fieldType,
-        options,
-        sort_order: (last?.[0]?.sort_order ?? 0) + ORDER_STEP,
-      }),
-      "Only portfolio editors and above can add fields",
-    );
+    const inserted = await supabase.from("portfolio_fields").insert({
+      portfolio_id: portfolioId,
+      name: text(input.name, "Field name", { max: 100 }),
+      field_type: input.fieldType,
+      options,
+      ...(numberPrefix !== null ? { number_prefix: numberPrefix } : {}),
+      sort_order: (last?.[0]?.sort_order ?? 0) + ORDER_STEP,
+    });
+    if (inserted.error?.code === "PGRST204") throw new InputError(NUMBER_PREFIX_MISSING);
+    check(inserted, "Only portfolio editors and above can add fields");
   });
 }
 
 export async function updatePortfolioField(
   fieldId: string,
-  patch: { name?: string; options?: FieldOption[] },
+  patch: { name?: string; options?: FieldOption[]; numberPrefix?: string | null },
 ): Promise<ActionResult> {
   return run(async () => {
     const update: TablesUpdate<"portfolio_fields"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
+    if (patch.numberPrefix !== undefined) update.number_prefix = numberPrefixInput(patch.numberPrefix);
     if (patch.options !== undefined) update.options = portfolioFieldOptions(patch.options);
     const supabase = await createClient();
-    checkUpdated(
-      await supabase.from("portfolio_fields").update(update).eq("id", id(fieldId, "field")).select("id"),
-      "Only portfolio editors and above can change fields",
-    );
+    if (Array.isArray(update.options) && update.options.length === 0) {
+      // A single-select keeps at least one option (item 47); one that never had any stays as it is.
+      const { data: current } = await supabase
+        .from("portfolio_fields")
+        .select("field_type, options")
+        .eq("id", id(fieldId, "field"))
+        .maybeSingle();
+      const problem = current
+        ? selectOptionsProblem({
+            fieldType: current.field_type,
+            optionCount: 0,
+            previousCount: parseOptions(current.options).length,
+          })
+        : null;
+      if (problem) throw new InputError(problem);
+    }
+    const result = await supabase.from("portfolio_fields").update(update).eq("id", id(fieldId, "field")).select("id");
+    if (result.error?.code === "PGRST204") throw new InputError(NUMBER_PREFIX_MISSING);
+    // portfolio_fields_number_prefix_check: a symbol on a field that isn't a number field.
+    if (result.error?.code === "23514" && update.number_prefix) throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
+    checkUpdated(result, "Only portfolio editors and above can change fields");
   });
 }
 
@@ -2401,16 +2434,25 @@ function tagError(result: DbResult) {
   check(result, "Only the tag’s creator or a workspace admin can change it");
 }
 
+// Oct 29 notes, item 54: a tag keeps the picked color in palette_color and the nearest of the first nine
+// in color (tagColorColumns). A database without palette_color (PGRST204) still takes the first nine.
+const TAG_COLOR_MISSING = "This color needs this release’s database update. Pick another color for now.";
+
 export async function createTag(name: string, color: string = "zinc"): Promise<ActionResult & { tagId?: string }> {
   let tagId: string | undefined;
   const outcome = await run(async () => {
     if (!isOptionColor(color)) throw new InputError("Unknown color");
     const supabase = await createClient();
-    const result = await supabase
+    const tagName = text(name, "Tag name", { max: MAX_TAG_NAME });
+    let result = await supabase
       .from("tags")
-      .insert({ name: text(name, "Tag name", { max: MAX_TAG_NAME }), color })
+      .insert({ name: tagName, ...tagColorColumns(color) })
       .select("id")
       .single();
+    if (result.error?.code === "PGRST204") {
+      if (!isBaseOptionColor(color)) throw new InputError(TAG_COLOR_MISSING);
+      result = await supabase.from("tags").insert({ name: tagName, color }).select("id").single();
+    }
     tagError(result);
     tagId = result.data?.id;
   });
@@ -2424,13 +2466,20 @@ export async function updateTag(
   return run(async () => {
     const update: TablesUpdate<"tags"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Tag name", { max: MAX_TAG_NAME });
-    if (patch.color !== undefined) {
-      if (!isOptionColor(patch.color)) throw new InputError("Unknown color");
-      update.color = patch.color;
+    const color = patch.color;
+    if (color !== undefined) {
+      if (!isOptionColor(color)) throw new InputError("Unknown color");
+      Object.assign(update, tagColorColumns(color));
     }
     if (patch.archived !== undefined) update.archived_at = patch.archived ? now() : null;
     const supabase = await createClient();
-    const result = await supabase.from("tags").update(update).eq("id", id(tagId, "tag")).is("deleted_at", null).select("id");
+    const target = id(tagId, "tag");
+    let result = await supabase.from("tags").update(update).eq("id", target).is("deleted_at", null).select("id");
+    if (result.error?.code === "PGRST204" && color !== undefined) {
+      if (!isBaseOptionColor(color)) throw new InputError(TAG_COLOR_MISSING);
+      const older: TablesUpdate<"tags"> = { name: update.name, color, archived_at: update.archived_at };
+      result = await supabase.from("tags").update(older).eq("id", target).is("deleted_at", null).select("id");
+    }
     tagError(result);
     if (!result.data?.length) throw new InputError("Only the tag’s creator or a workspace admin can change it");
   });
@@ -2814,6 +2863,18 @@ function fieldOptions(value: unknown): FieldOption[] {
 }
 
 const FIELD_EXTRAS_MISSING = "Field descriptions, the field library, and notifications need this release’s database update, which isn’t applied yet";
+const NUMBER_PREFIX_MISSING = "Number symbols need this release’s database update, which isn’t applied yet";
+const NUMBER_PREFIX_NUMBERS_ONLY = "Only number fields have a symbol";
+
+// Item 49: a number field's symbol as it will be stored (trimmed; null = none). Refuses a symbol that
+// is too long or has line breaks / control characters, and one on another type of field (when known).
+function numberPrefixInput(raw: string | null | undefined, fieldType?: string): string | null {
+  const problem = numberPrefixProblem(raw);
+  if (problem) throw new InputError(problem);
+  const prefix = normalizeNumberPrefix(raw);
+  if (prefix !== null && fieldType !== undefined && fieldType !== "number") throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
+  return prefix;
+}
 
 // Description, library, and notify (Asana parity, batch 4): only the keys that were given.
 function fieldExtras(input: { description?: string | null; inLibrary?: boolean; notifyOnChange?: boolean }, bound: boolean) {
@@ -2846,6 +2907,8 @@ export async function createField(
     description?: string | null;
     inLibrary?: boolean;
     notifyOnChange?: boolean;
+    // Item 49: a number field's symbol ("$"); empty / null = none.
+    numberPrefix?: string | null;
   },
 ): Promise<ActionResult & { fieldId?: string }> {
   let fieldId: string | undefined;
@@ -2856,7 +2919,12 @@ export async function createField(
       throw new InputError("Only single-select fields can mirror sections");
     }
     const extras = fieldExtras(input, bound);
+    // Sent only when there is one, so a database without the column still takes every other field.
+    const numberPrefix = numberPrefixInput(input.numberPrefix, input.fieldType);
     const withOptions = (input.fieldType === "single_select" || input.fieldType === "multi_select") && !bound;
+    const options = withOptions ? fieldOptions(input.options ?? []) : [];
+    const optionsProblem = selectOptionsProblem({ fieldType: input.fieldType, boundToSections: bound, optionCount: options.length });
+    if (optionsProblem) throw new InputError(optionsProblem);
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("custom_fields")
@@ -2874,8 +2942,9 @@ export async function createField(
         field_type: input.fieldType,
         bound_to_sections: bound,
         show_in_views: bound || Boolean(input.showInViews),
-        ...(withOptions && input.options?.length ? { options: fieldOptions(input.options) } : {}),
+        ...(withOptions ? { options } : {}),
         ...extras,
+        ...(numberPrefix !== null ? { number_prefix: numberPrefix } : {}),
         sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
       })
       .select("id")
@@ -2883,7 +2952,9 @@ export async function createField(
     if (inserted.error?.code === "23505") {
       throw new InputError("This project already has a section-bound field");
     }
-    if (inserted.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
+    if (inserted.error?.code === "PGRST204") {
+      throw new InputError(numberPrefix !== null ? NUMBER_PREFIX_MISSING : FIELD_EXTRAS_MISSING);
+    }
     check(inserted);
     fieldId = inserted.data?.id;
   });
@@ -2899,18 +2970,42 @@ export async function updateField(
     description?: string | null;
     inLibrary?: boolean;
     notifyOnChange?: boolean;
+    // Item 49: a number field's symbol; null / empty removes it.
+    numberPrefix?: string | null;
   },
 ): Promise<ActionResult> {
   return run(async () => {
     const update: TablesUpdate<"custom_fields"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
+    if (patch.numberPrefix !== undefined) update.number_prefix = numberPrefixInput(patch.numberPrefix);
     if (patch.options !== undefined) update.options = fieldOptions(patch.options);
     if (patch.showInViews !== undefined) update.show_in_views = Boolean(patch.showInViews);
     // The database refuses library / notify on the section-bound Status (CHECKs); say so plainly.
     Object.assign(update, fieldExtras(patch, false));
     const supabase = await createClient();
+    if (Array.isArray(update.options) && update.options.length === 0) {
+      // Emptying a select field's options is refused (item 47); one that never had any stays as it is.
+      const { data: current } = await supabase
+        .from("custom_fields")
+        .select("field_type, bound_to_sections, options")
+        .eq("id", id(fieldId))
+        .maybeSingle();
+      const problem = current
+        ? selectOptionsProblem({
+            fieldType: current.field_type,
+            boundToSections: current.bound_to_sections,
+            optionCount: 0,
+            previousCount: parseOptions(current.options).length,
+          })
+        : null;
+      if (problem) throw new InputError(problem);
+    }
     const result = await supabase.from("custom_fields").update(update).eq("id", id(fieldId)).select("id");
-    if (result.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
+    if (result.error?.code === "PGRST204") {
+      throw new InputError("number_prefix" in update ? NUMBER_PREFIX_MISSING : FIELD_EXTRAS_MISSING);
+    }
+    // custom_fields_number_prefix_check: a symbol on a field that isn't a number field.
+    if (result.error?.code === "23514" && update.number_prefix) throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
     if (result.error?.code === "23514" && (update.in_library || update.notify_on_change)) {
       throw new InputError("The Status field follows the sections, so it can’t notify or join the field library");
     }
@@ -2940,6 +3035,10 @@ export async function setFieldValue(
   value: Json,
 ): Promise<ActionResult> {
   return run(async () => {
+    // A text field's limit (item 48; the database checks it too): no other value is a string this long.
+    if (typeof value === "string" && textLength(value) > MAX_TEXT_FIELD_LENGTH) {
+      throw new InputError(`Text fields hold up to ${MAX_TEXT_FIELD_LENGTH.toLocaleString("en-US")} characters`);
+    }
     const supabase = await createClient();
     check(
       await supabase.from("task_field_values").upsert(

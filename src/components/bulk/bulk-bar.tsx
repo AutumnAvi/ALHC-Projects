@@ -24,7 +24,8 @@ import { addProjectMemberByProfile, bulkEditTasks } from "@/lib/actions";
 import { Dialog } from "@/components/dialog";
 import { MAX_BULK_TASKS, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import type { Section } from "@/lib/data";
-import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
+import { NumberInput } from "@/components/number-input";
+import { OPTION_COLOR_CLASSES, numberPrefixOf, type FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { TagChip } from "@/components/tags/tag-chip";
 import { addableTags, type Tag } from "@/lib/tags";
@@ -729,14 +730,19 @@ function FieldValueInput({
       <label className="sr-only" htmlFor="bulk-field-value">
         {field.name} value
       </label>
-      <input
-        id="bulk-field-value"
-        type={type}
-        step={type === "number" ? "any" : undefined}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        className="control w-full"
-      />
+      {type === "number" ? (
+        // A number field's symbol (item 49) sits inside the box.
+        <NumberInput
+          id="bulk-field-value"
+          symbol={numberPrefixOf(field)}
+          wrapperClassName="w-full"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          className="control w-full"
+        />
+      ) : (
+        <input id="bulk-field-value" type={type} value={text} onChange={(e) => setText(e.target.value)} className="control w-full" />
+      )}
       <div className="flex gap-2">
         <button type="submit" className="btn-primary" disabled={!text.trim()}>
           Set

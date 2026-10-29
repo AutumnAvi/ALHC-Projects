@@ -1,6 +1,7 @@
 import { displayName } from "@/components/avatar";
 import { OPTION_COLOR_CLASSES, fieldChips, type FieldDef } from "@/lib/fields";
 import type { Profile, ProjectTask } from "@/lib/data";
+import { TEXT_TOOLTIP_LENGTH, textPreview } from "@/lib/long-text";
 
 export type FieldContext = {
   profilesById: Map<string, Profile>;
@@ -26,12 +27,19 @@ export function FieldValueChips({
     sectionName: task.sectionId ? context.sectionNames.get(task.sectionId) : null,
   });
   if (chips.length === 0) return null;
-  // Asana: choice values are colored pastel pills; text, numbers, dates, and people read as plain text.
+  // Asana: choice values are colored pastel pills; text, numbers, dates, and people read as plain text,
+  // on one line — the whole value shows on hover when it's cut off (item 48: long text).
   if (!isChoiceField(field)) {
+    const text = chips.map((chip) => chip.label).join(", ");
     return (
-      <span className="min-w-0 truncate text-xs text-zinc-700" data-field-value={field.name}>
+      <span
+        className="min-w-0 truncate text-xs text-zinc-700"
+        data-field-value={field.name}
+        data-tooltip={textPreview(text, TEXT_TOOLTIP_LENGTH)}
+        data-tooltip-truncated=""
+      >
         {showName ? <span className="sr-only">{field.name}: </span> : null}
-        {chips.map((chip) => chip.label).join(", ")}
+        {text}
       </span>
     );
   }

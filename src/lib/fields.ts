@@ -12,7 +12,14 @@ export const FIELD_TYPES = [
 
 export type FieldType = (typeof FIELD_TYPES)[number]["value"];
 
-export const OPTION_COLORS = [
+// Oct 29 notes, item 54: one palette for every color people pick — project field options, portfolio
+// field options, and tags (ColorPicker). The first nine are the original colors in their original order
+// (new options cycle through OPTION_COLORS, so existing fields keep coloring the same way); the rest were
+// added in batch 7. Mirrored by public.option_colors(); `tags.color` only accepts the first nine (its
+// CHECK predates batch 7), so a tag keeps the picked color in `tags.palette_color` and the nearest of the
+// nine in `color` (OPTION_BASE_COLOR, mirrored by public.option_color_base()). A stored color the app
+// doesn't know reads as Gray.
+export const BASE_OPTION_COLORS = [
   "zinc",
   "red",
   "orange",
@@ -24,9 +31,53 @@ export const OPTION_COLORS = [
   "pink",
 ] as const;
 
-export type OptionColor = (typeof OPTION_COLORS)[number];
+export const OPTION_COLORS = [
+  ...BASE_OPTION_COLORS,
+  "lime",
+  "emerald",
+  "cyan",
+  "sky",
+  "indigo",
+  "purple",
+  "fuchsia",
+  "rose",
+  "yellow",
+  "slate",
+  "stone",
+] as const;
 
-// Literal class names so Tailwind can see them.
+export type OptionColor = (typeof OPTION_COLORS)[number];
+export type BaseOptionColor = (typeof BASE_OPTION_COLORS)[number];
+
+// The color picker's grid: five columns in hue order, grays first.
+export const OPTION_COLOR_GRID: readonly OptionColor[] = [
+  "zinc",
+  "slate",
+  "stone",
+  "red",
+  "rose",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+];
+export const OPTION_COLOR_GRID_COLUMNS = 5;
+
+// Literal class names so Tailwind can see them. Chips are a light background with dark text of the same
+// hue (100 + 800, or 200 + 900 where the 100 would look like a neighbor's: rose next to red, emerald
+// next to green, indigo / purple next to blue / violet, yellow next to amber, sky next to blue, and the
+// two extra grays next to Gray) — all well above 4.5:1.
 export const OPTION_COLOR_CLASSES: Record<OptionColor, string> = {
   zinc: "bg-zinc-100 text-zinc-700",
   red: "bg-red-100 text-red-800",
@@ -37,6 +88,17 @@ export const OPTION_COLOR_CLASSES: Record<OptionColor, string> = {
   blue: "bg-blue-100 text-blue-800",
   violet: "bg-violet-100 text-violet-800",
   pink: "bg-pink-100 text-pink-800",
+  lime: "bg-lime-100 text-lime-800",
+  emerald: "bg-emerald-200 text-emerald-900",
+  cyan: "bg-cyan-100 text-cyan-800",
+  sky: "bg-sky-200 text-sky-900",
+  indigo: "bg-indigo-200 text-indigo-900",
+  purple: "bg-purple-200 text-purple-900",
+  fuchsia: "bg-fuchsia-100 text-fuchsia-800",
+  rose: "bg-rose-200 text-rose-900",
+  yellow: "bg-yellow-200 text-yellow-900",
+  slate: "bg-slate-200 text-slate-800",
+  stone: "bg-stone-200 text-stone-800",
 };
 
 // Names and solid swatches for color pickers (American spelling in the UI: "Color", "Gray").
@@ -50,8 +112,21 @@ export const OPTION_COLOR_LABELS: Record<OptionColor, string> = {
   blue: "Blue",
   violet: "Violet",
   pink: "Pink",
+  lime: "Lime",
+  emerald: "Emerald",
+  cyan: "Cyan",
+  sky: "Sky",
+  indigo: "Indigo",
+  purple: "Purple",
+  fuchsia: "Fuchsia",
+  rose: "Rose",
+  yellow: "Yellow",
+  slate: "Slate",
+  stone: "Stone",
 };
 
+// Swatch shades are picked so neighbors in the grid stay apart (rose lighter than red, yellow lighter
+// than amber, emerald / indigo / purple deeper than green / blue / violet).
 export const OPTION_SWATCH_CLASSES: Record<OptionColor, string> = {
   zinc: "bg-zinc-400",
   red: "bg-red-500",
@@ -62,6 +137,42 @@ export const OPTION_SWATCH_CLASSES: Record<OptionColor, string> = {
   blue: "bg-blue-500",
   violet: "bg-violet-500",
   pink: "bg-pink-500",
+  lime: "bg-lime-500",
+  emerald: "bg-emerald-600",
+  cyan: "bg-cyan-400",
+  sky: "bg-sky-500",
+  indigo: "bg-indigo-600",
+  purple: "bg-purple-600",
+  fuchsia: "bg-fuchsia-500",
+  rose: "bg-rose-400",
+  yellow: "bg-yellow-300",
+  slate: "bg-slate-500",
+  stone: "bg-stone-500",
+};
+
+// The nearest of the first nine colors (closest in OKLab at the 500 shades), stored in `tags.color` for
+// readers that don't know `tags.palette_color`. Mirrors public.option_color_base().
+export const OPTION_BASE_COLOR: Record<OptionColor, BaseOptionColor> = {
+  zinc: "zinc",
+  red: "red",
+  orange: "orange",
+  amber: "amber",
+  green: "green",
+  teal: "teal",
+  blue: "blue",
+  violet: "violet",
+  pink: "pink",
+  lime: "green",
+  emerald: "teal",
+  cyan: "teal",
+  sky: "blue",
+  indigo: "violet",
+  purple: "violet",
+  fuchsia: "pink",
+  rose: "red",
+  yellow: "amber",
+  slate: "zinc",
+  stone: "zinc",
 };
 
 export type FieldOption = { id: string; name: string; color: OptionColor };
@@ -81,6 +192,9 @@ export type FieldDef = {
   notifyOnChange: boolean;
   // Listed in the workspace field library (name, type, description, and options only).
   inLibrary: boolean;
+  // Oct 29 notes, item 49: a number field's symbol ("$", "€", "#"), shown before its values; null /
+  // absent = none (and on a database without 20261029010000_oct29_batch7_a.sql).
+  numberPrefix?: string | null;
 };
 
 // A field from the workspace library (list_field_library): a definition other projects can copy.
@@ -94,9 +208,84 @@ export type LibraryField = {
 
 export const MAX_FIELD_DESCRIPTION = 2000;
 
+// Oct 29 notes, item 49: a number field's symbol (custom_fields.number_prefix, portfolio_fields'
+// too). Mirrors the CHECKs and public.normalize_number_prefix(): number fields only, surrounding spaces
+// trimmed (empty = none), 1–4 characters counted as code points, no control characters or line breaks.
+export const MAX_NUMBER_PREFIX = 4;
+export const NUMBER_PREFIX_EXAMPLES = ["$", "€", "£", "#", "₪"] as const;
+// C0 / DEL / C1 controls and the Unicode line and paragraph separators.
+const PREFIX_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+// The symbol as it will be stored: trimmed, or null when there is none.
+export function normalizeNumberPrefix(raw: string | null | undefined): string | null {
+  const trimmed = (raw ?? "").trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+// Why a typed symbol can't be saved, or null.
+export function numberPrefixProblem(raw: string | null | undefined): string | null {
+  const prefix = normalizeNumberPrefix(raw);
+  if (prefix === null) return null;
+  if (PREFIX_FORBIDDEN.test(prefix)) return "A symbol can’t contain line breaks or control characters";
+  if ([...prefix].length > MAX_NUMBER_PREFIX) return `A symbol is ${MAX_NUMBER_PREFIX} characters at most`;
+  return null;
+}
+
+// "1,250" with its symbol: "$1,250", "-$40" (the sign first), "USD 1,000" (a space after a symbol that
+// ends in a letter). Mirrors public.format_number_value()'s placement of the symbol.
+export function prefixNumberText(text: string, prefix: string | null | undefined): string {
+  const symbol = normalizeNumberPrefix(prefix);
+  if (!symbol) return text;
+  const spaced = /[A-Za-z]$/.test(symbol) ? `${symbol} ` : symbol;
+  return text.startsWith("-") ? `-${spaced}${text.slice(1)}` : `${spaced}${text}`;
+}
+
+// The one way a number value reads in the app: grouped with commas, at most three decimals, and the
+// field's symbol before it ("$1,250.5"). Mirrors public.format_number_value() (task_field_text, rule
+// logs, the Inbox, emails). A value that rounds to zero has no sign.
+export function formatNumberValue(value: number, prefix?: string | null): string {
+  const digits = Math.abs(value).toLocaleString("en-US");
+  return prefixNumberText(value < 0 && /[1-9]/.test(digits) ? `-${digits}` : digits, prefix);
+}
+
+// A field's symbol when it has one (number fields only; the section-bound Status never does).
+export function numberPrefixOf(field: { fieldType: string; boundToSections?: boolean; numberPrefix?: string | null }) {
+  return field.fieldType === "number" && !field.boundToSections ? normalizeNumberPrefix(field.numberPrefix) : null;
+}
+
+// A column / measure name with the symbol: "Budget ($)" (CSV headers keep the numbers raw so
+// spreadsheets can add them up; the workload measure picker).
+export function fieldNameWithSymbol(field: { name: string; fieldType: string; boundToSections?: boolean; numberPrefix?: string | null }) {
+  const symbol = numberPrefixOf(field);
+  return symbol ? `${field.name} (${symbol})` : field.name;
+}
+
 // Field types with options (the section-bound Status's options are the sections, not stored here).
 export function hasOptions(field: Pick<FieldDef, "fieldType" | "boundToSections">) {
   return !field.boundToSections && (field.fieldType === "single_select" || field.fieldType === "multi_select");
+}
+
+// Oct 29 notes, item 47: a single- or multi-select field (not the section-bound Status) needs at
+// least one option — the editors, the actions, and the database (`guard_select_field_options`) agree.
+export const SELECT_NEEDS_OPTION = "Add at least one option";
+
+// Why a select field can't be saved as drafted, or null. `optionCount` = the options in the list,
+// `pendingOption` = a name typed in the "Add an option" box but not added yet (it's added on save, so it
+// counts). `previousCount` = how many options the saved field has (null / absent while creating): a
+// field that never had any (older data, the Creative Requests template) can still be renamed — it just
+// can't be emptied, mirroring the database guard. Portfolio fields pass no `boundToSections`.
+export function selectOptionsProblem(input: {
+  fieldType: string;
+  boundToSections?: boolean;
+  optionCount: number;
+  pendingOption?: string;
+  previousCount?: number | null;
+}): string | null {
+  const select = input.fieldType === "single_select" || input.fieldType === "multi_select";
+  if (!select || input.boundToSections) return null;
+  if (input.optionCount > 0 || (input.pendingOption ?? "").trim()) return null;
+  if (input.previousCount === 0) return null;
+  return SELECT_NEEDS_OPTION;
 }
 
 export function isFieldType(value: unknown): value is FieldType {
@@ -105,6 +294,10 @@ export function isFieldType(value: unknown): value is FieldType {
 
 export function isOptionColor(value: unknown): value is OptionColor {
   return OPTION_COLORS.includes(value as OptionColor);
+}
+
+export function isBaseOptionColor(value: unknown): value is BaseOptionColor {
+  return BASE_OPTION_COLORS.includes(value as BaseOptionColor);
 }
 
 export function fieldTypeLabel(field: Pick<FieldDef, "fieldType" | "boundToSections">) {
@@ -138,7 +331,7 @@ export function fieldChips(
     case "text":
       return typeof value === "string" && value ? [{ label: value, color: "zinc" }] : [];
     case "number":
-      return typeof value === "number" ? [{ label: value.toLocaleString("en-US"), color: "zinc" }] : [];
+      return typeof value === "number" ? [{ label: formatNumberValue(value, field.numberPrefix), color: "zinc" }] : [];
     case "date":
       return typeof value === "string" ? [{ label: value, color: "zinc" }] : [];
     case "boolean":

@@ -56,10 +56,13 @@ test("the preview's samples cover fields and form questions", () => {
     fields: [
       { name: "Priority", fieldType: "single_select", options: [{ name: "High" }] },
       { name: "Budget", fieldType: "number" },
+      { name: "Cost", fieldType: "number", numberPrefix: "$" },
     ],
     questions: [{ label: "What do you need?" }],
   });
-  assert.equal(renderPlaceholders("{{project.name}} · {{field.Priority}} · {{field.budget}}", sample), "Marketing · High · 1500");
+  // Numbers read as task_field_text writes them (Oct 29 notes, item 49): grouped, with the field's symbol.
+  assert.equal(renderPlaceholders("{{project.name}} · {{field.Priority}} · {{field.budget}}", sample), "Marketing · High · 1,500");
+  assert.equal(renderPlaceholders("{{field.Cost}}", sample), "$1,500");
   assert.match(renderPlaceholders("{{form.field.What do you need?}}", sample), /Sample answer/);
 });
 
