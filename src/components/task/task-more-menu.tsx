@@ -79,8 +79,8 @@ export function TaskMoreMenu({
   const notify = useNotify();
   const confirm = useConfirm();
   const [dialog, setDialog] = useState<"duplicate" | "convert" | "template" | "rule" | "review" | null>(null);
-  // The first project the task was added to that the viewer can read (Oct 29 notes, 55b: the stable rule).
-  const home = task.memberships[0];
+  // Projects the viewer edits, in the order the task was added to them (Oct 29 notes, 55b: the stable rule;
+  // the first one is the template dialog's default).
   const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
   // Oct 27 notes (batch 6): a task → "Make a subtask of…", a subtask → "Convert to main task…".
   const convert = convertMenuItem(task);
@@ -203,7 +203,7 @@ export function TaskMoreMenu({
                 </div>
                 <div role="separator" className="my-1 border-t border-zinc-100" />
                 {convert ? item(GitBranch, convert.label, () => setDialog("convert"), close) : null}
-                {home && editableProjects.length ? item(LayoutTemplate, "Save as task template…", () => setDialog("template"), close) : null}
+                {editableProjects.length ? item(LayoutTemplate, "Save as task template…", () => setDialog("template"), close) : null}
                 {item(Copy, task.isSubtask ? "Duplicate subtask…" : "Duplicate task…", () => setDialog("duplicate"), close)}
                 {/* "Run manually" rules (Automations V2) run on top-level tasks of their project only. */}
                 {!task.isSubtask && task.memberships.length ? item(Workflow, "Run a rule…", () => setDialog("rule"), close) : null}
@@ -239,7 +239,7 @@ export function TaskMoreMenu({
       {dialog === "convert" ? <ConvertTaskDialog task={task} onClose={() => setDialog(null)} /> : null}
       {dialog === "rule" ? <RunRuleDialog taskId={task.id} onClose={() => setDialog(null)} /> : null}
       {dialog === "review" ? <SendReviewDialog task={task} onClose={() => setDialog(null)} /> : null}
-      {dialog === "template" && home ? (
+      {dialog === "template" && editableProjects.length ? (
         <SaveTaskTemplateDialog
           taskId={task.id}
           title={displayTaskTitle(task.title, task.requestLabel, { show: false })}

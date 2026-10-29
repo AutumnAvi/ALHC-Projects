@@ -29,5 +29,5 @@ export default async function ProjectTrashPage({ params }: PageProps<"/projects/
   }
 
   const [tasks, profiles] = await Promise.all([listTrashedTasks(projectId), listProfiles()]);
-  return <TrashView projectId={projectId} tasks={tasks} profiles={profiles} />;
+  return <TrashView tasks={tasks} profiles={profiles} />;
 }

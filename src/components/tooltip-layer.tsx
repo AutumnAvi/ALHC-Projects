@@ -8,7 +8,8 @@ type Tip = { text: string; anchor: DOMRect };
 // Asana-style dark tooltips for icon buttons (Asana parity, batch 3): any element with
 // data-tooltip="Copy task link" shows that text below it (above when there's no room) after a short
 // hover, or right away on keyboard focus. One layer for the whole app, drawn on <body>, so scrolling
-// containers and tab rows never clip it. The element keeps its own aria-label for screen readers.
+// containers and tab rows never clip it. The element keeps its own aria-label for screen readers. A line
+// break in the text starts a new line (a task's numbers, one per project; Oct 29 notes, 55b).
 export function TooltipLayer() {
   const [tip, setTip] = useState<Tip | null>(null);
 
@@ -90,7 +91,7 @@ function TooltipBubble({ tip }: { tip: Tip }) {
       ref={ref}
       role="tooltip"
       style={position ?? { top: 0, left: 0, visibility: "hidden" }}
-      className="pointer-events-none fixed z-[70] max-w-64 rounded-md bg-zinc-900 px-2 py-1 text-xs font-medium text-white shadow-md print:hidden"
+      className="pointer-events-none fixed z-[70] max-w-64 whitespace-pre-line rounded-md bg-zinc-900 px-2 py-1 text-xs font-medium text-white shadow-md print:hidden"
     >
       {tip.text}
     </div>

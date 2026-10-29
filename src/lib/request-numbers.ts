@@ -251,3 +251,67 @@ export function taskNumbersText(numbers: TaskNumber[] | null | undefined): strin
     .all.map((n) => (n.projectName ? `${n.text} (${n.projectName})` : n.text))
     .join(" · ");
 }
+
+/**
+ * The "+N" after a task's first number (the number chips' tight form): its text, the hover / tap list (every
+ * number on its own line with its project, first one included), the others inline ("Design #14 · WEB-3",
+ * shown when the row has keyboard focus), and the others as a screen reader hears them ("Design #14 in
+ * Design, WEB-3 in Website"). Null when the task has one number or none.
+ */
+export type MoreNumbers = { count: number; text: string; list: string; others: string; spoken: string };
+
+export function moreTaskNumbers(numbers: TaskNumber[] | null | undefined): MoreNumbers | null {
+  const list = (numbers ?? []).filter((n) => n.label.text.trim());
+  if (list.length < 2) return null;
+  const rest = list.slice(1);
+  const shown = (n: TaskNumber) => formatRequestLabel(n.label);
+  return {
+    count: rest.length,
+    text: `+${rest.length}`,
+    list: list.map((n) => (n.projectName ? `${shown(n)} · ${n.projectName}` : shown(n))).join("\n"),
+    others: rest.map(shown).join(" · "),
+    spoken: rest.map((n) => (n.projectName ? `${shown(n)} in ${n.projectName}` : shown(n))).join(", "),
+  };
+}
+
+/** One of the pane's number chips: the number, its project, and whether it's the project on screen. */
+export type NumberChip = { key: string; text: string; projectId: string | null; projectName: string | null; current: boolean; spoken: string };
+
+/**
+ * The pane's chips ("Req #1 · Design #14"): every number the viewer can read, in the stable order; the
+ * project on screen (inside a project's own views) is marked current, nothing moves.
+ */
+export function numberChips(numbers: TaskNumber[] | null | undefined, currentProjectId: string | null = null): NumberChip[] {
+  return (numbers ?? [])
+    .filter((n) => n.label.text.trim())
+    .map((n, i) => {
+      const text = formatRequestLabel(n.label);
+      return {
+        key: n.projectId ?? `number-${i}`,
+        text,
+        projectId: n.projectId,
+        projectName: n.projectName,
+        current: Boolean(currentProjectId && n.projectId === currentProjectId),
+        spoken: n.projectName ? `${text} in ${n.projectName}` : text,
+      };
+    });
+}
+
+/**
+ * The pane's numbers: task_project_labels' list when the database has it; else each listed project's own
+ * number (task_request_labels_in, Oct 27 notes), else the one label the task has.
+ */
+export function paneTaskNumbers(task: {
+  taskNumbers?: TaskNumber[] | null;
+  memberships: { projectId: string; projectName: string }[];
+  projectNumbers?: Record<string, RequestLabel> | null;
+  requestLabel: RequestLabel | null;
+}): TaskNumber[] {
+  if (task.taskNumbers?.length) return task.taskNumbers;
+  const own = task.memberships.flatMap((m): TaskNumber[] => {
+    const label = task.projectNumbers?.[m.projectId];
+    return label?.text.trim() ? [{ projectId: m.projectId, projectName: m.projectName, label }] : [];
+  });
+  if (own.length) return own;
+  return task.requestLabel?.text.trim() ? [{ projectId: null, projectName: null, label: task.requestLabel }] : [];
+}

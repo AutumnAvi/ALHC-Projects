@@ -78,9 +78,11 @@ test("removing a task's last project: the database's refusal is recognized and t
   assert.equal(LAST_PROJECT_MESSAGE, "This is the task’s only project. Add it to another project first, or move the task to the Trash.");
 
   const question = lastProjectQuestion("Spring flyer", "Marketing");
-  assert.equal(question.body, "Spring flyer is only in Marketing. Delete the task instead? It goes to the Trash and you can restore it.");
-  assert.equal(question.confirm, "Delete task");
-  assert.match(lastProjectQuestion("  ", "Marketing").body, /^This task is only in Marketing/);
+  assert.equal(question.title, "“Spring flyer” is only in Marketing");
+  assert.equal(question.message, "Delete the task instead? It goes to the Trash and you can restore it.");
+  assert.equal(question.confirmLabel, "Delete task");
+  assert.equal(question.tone, "danger");
+  assert.match(lastProjectQuestion("  ", "Marketing").title, /^This task is only in Marketing/);
 });
 
 function row(extra: Partial<OutboxRow>): OutboxRow {

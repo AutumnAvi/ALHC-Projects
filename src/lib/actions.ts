@@ -2214,7 +2214,8 @@ export async function convertToSubtask(taskId: string, parentId: string): Promis
   });
 }
 
-// Makes a subtask a top-level task of a project the viewer edits (default: its parent's home project).
+// Makes a subtask a top-level task of a project the viewer edits. The pane always names one (the first of
+// the tree's projects the viewer edits, by default; Oct 29 notes, 55b); without one the database picks.
 export async function convertToTask(
   taskId: string,
   projectId?: string | null,

@@ -107,7 +107,7 @@ export const ACTIONS = [
   { value: "set_title", label: "Rename task", group: "Task", description: "Changes the task's name (placeholders work here).", keywords: ["title", "name", "prefix"] },
   { value: "create_subtasks", label: "Create subtasks", group: "Task", description: "Adds a checklist of subtasks, optionally assigned.", keywords: ["checklist", "steps", "children", "todo"] },
   { value: "apply_task_template", label: "Apply task template", group: "Task", description: "Adds a task template's subtasks, tags, and field values.", keywords: ["template", "checklist", "preset"] },
-  { value: "add_to_project", label: "Add to another project", group: "Task", description: "Also lists the task in another project (multi-home), in a section you pick.", keywords: ["multi-home", "copy", "calendar", "cross-project"] },
+  { value: "add_to_project", label: "Add to another project", group: "Task", description: "Also lists the task in another project, in a section you pick. It stays in this one too.", keywords: ["multi-home", "copy", "calendar", "cross-project"] },
   { value: "set_due_date", label: "Set due date", group: "Dates", description: "Sets the due date a number of days (or business days) from today or another date, or clears it.", keywords: ["deadline", "relative", "business days", "workdays", "clear"] },
   { value: "add_tag", label: "Add tag", group: "Fields", description: "Tags the task.", keywords: ["label"] },
   { value: "remove_tag", label: "Remove tag", group: "Fields", description: "Removes a tag from the task.", keywords: ["label", "untag"] },

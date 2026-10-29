@@ -22,6 +22,7 @@ import {
 import { Avatar, displayName } from "@/components/avatar";
 import { ApprovalDecisionForm, type Decision } from "@/components/task/task-approval-banner";
 import { TaskLink } from "@/components/task/task-link";
+import { MoreTaskNumbers } from "@/components/task/task-number";
 import { Timestamp } from "@/components/timestamp";
 import type { InboxItem, Profile } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
@@ -221,10 +222,14 @@ export function InboxCard({
         ? UserPlus
         : KIND[item.kind].icon;
   const strong = read ? "font-medium text-zinc-800" : "font-semibold text-zinc-900";
+  // A task numbered in several projects (Oct 29 notes, 55b): its name starts with the first number, "+N"
+  // lists them all (on hover, spelled out while the card has keyboard focus, read to screen readers).
+  const moreNumbers = <MoreTaskNumbers numbers={item.taskNumbers} mode="inline" className="ml-1 align-baseline" />;
   const linkText = reminder ? (
     <>
       <span className={reminder === "overdue" ? `${strong} text-red-700` : strong}>{verb}</span> ·{" "}
       <span className={strong}>{item.taskTitle}</span>
+      {moreNumbers}
       {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
       {read ? null : <span className="sr-only"> (unread)</span>}
       {bookmarked ? <span className="sr-only"> (bookmarked)</span> : null}
@@ -232,6 +237,7 @@ export function InboxCard({
   ) : (
     <>
       <span className={strong}>{actorName}</span> {verb} <span className={strong}>{item.taskTitle}</span>
+      {moreNumbers}
       {item.parentTitle ? <span className="text-zinc-500"> (subtask of {item.parentTitle})</span> : null}
       {item.message ? <span className="text-zinc-500"> · Messages in {item.message.projectName}</span> : null}
       {item.teamMessage ? <span className="text-zinc-500"> · {item.teamMessage.teamName} team messages</span> : null}

@@ -3232,8 +3232,9 @@ export type TrashedTask = {
   title: string;
   deletedAt: string;
   deletedBy: string | null;
-  homeProjectId: string | null;
-  homeProjectName: string | null;
+  // The task's other projects the viewer can read (Oct 29 notes, 55b: no home project), in the order it
+  // was added to them; restoring brings it back there too.
+  otherProjectNames: string[];
   completedAt: string | null;
   // Subtasks trashed on their own (with their parent still active): the parent's title.
   parentTitle: string | null;
@@ -3248,7 +3249,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
   const trashed = rows(
     await supabase
       .from("tasks")
-      .select("id, title, deleted_at, completed_at, home_project_id, task_projects!inner(project_id)")
+      .select("id, title, deleted_at, completed_at, task_projects!inner(project_id)")
       .eq("task_projects.project_id", projectId)
       .is("task_projects.deleted_at", null)
       .not("deleted_at", "is", null)
@@ -3263,7 +3264,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
     await supabase
       .from("tasks")
       .select(
-        "id, title, deleted_at, completed_at, home_project_id, root_task_id, parent_task_id",
+        "id, title, deleted_at, completed_at, root_task_id, parent_task_id",
       )
       .not("root_task_id", "is", null)
       .not("deleted_at", "is", null)
@@ -3302,7 +3303,8 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
     .slice(0, TRASH_LIMIT);
   if (all.length === 0) return [];
 
-  const [stories, projects] = await Promise.all([
+  const topLevelIds = all.filter((t) => !t.parentTitle).map((t) => t.id);
+  const [stories, projects, otherMemberships] = await Promise.all([
     supabase
       .from("task_stories")
       .select("task_id, actor_id, created_at")
@@ -3313,19 +3315,34 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
       .eq("kind", "deleted")
       .order("created_at", { ascending: false }),
     listReadableProjects(),
+    // Their other active projects (RLS shows the memberships of projects the viewer can read).
+    topLevelIds.length
+      ? supabase
+          .from("task_projects")
+          .select("task_id, project_id, created_at")
+          .in("task_id", topLevelIds)
+          .neq("project_id", projectId)
+          .is("deleted_at", null)
+          .order("created_at")
+          .order("project_id")
+      : Promise.resolve({ data: [] as { task_id: string; project_id: string; created_at: string }[], error: null }),
   ]);
   const deletedBy = new Map<string, string | null>();
   for (const story of rows(stories, "deletions")) {
     if (!deletedBy.has(story.task_id)) deletedBy.set(story.task_id, story.actor_id);
   }
   const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
+  const others = new Map<string, string[]>();
+  for (const m of otherMemberships.error ? [] : (otherMemberships.data ?? [])) {
+    const name = projectName.get(m.project_id);
+    if (name) others.set(m.task_id, [...(others.get(m.task_id) ?? []), name]);
+  }
   return all.map((t) => ({
     id: t.id,
     title: t.title,
     deletedAt: t.deleted_at!,
     deletedBy: deletedBy.get(t.id) ?? null,
-    homeProjectId: t.home_project_id,
-    homeProjectName: t.home_project_id ? (projectName.get(t.home_project_id) ?? null) : null,
+    otherProjectNames: others.get(t.id) ?? [],
     completedAt: t.completed_at,
     parentTitle: t.parentTitle,
   }));
