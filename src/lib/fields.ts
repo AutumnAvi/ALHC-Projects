@@ -81,7 +81,44 @@ export type FieldDef = {
   notifyOnChange: boolean;
   // Listed in the workspace field library (name, type, description, and options only).
   inLibrary: boolean;
+  // Oct 29 notes, batch 7: set on this project's placement of a shared library field (the published
+  // source field's id); null on the source and on project-only fields. Placements of one library field
+  // share its definition and one value per task (see fieldGroupId).
+  libraryFieldId?: string | null;
 };
+
+// The library group a field belongs to: placements of a shared library field have their source's id,
+// every other field its own. Two fields of one group are the same field in different projects.
+export function fieldGroupId(field: Pick<FieldDef, "id" | "libraryFieldId">): string {
+  return field.libraryFieldId ?? field.id;
+}
+
+// Whether a project already uses a library field (as its source or a placement of it).
+export function projectHasLibraryField(fields: Pick<FieldDef, "id" | "libraryFieldId">[], libraryFieldId: string): boolean {
+  return fields.some((f) => fieldGroupId(f) === libraryFieldId);
+}
+
+// project_field_sharing (Oct 29 notes, batch 7): which of a project's fields are shared with other
+// projects and whether the viewer may change the shared definition. Booleans and counts only — never
+// another project's name.
+export type FieldSharing = {
+  fieldId: string;
+  // The source field's id on a placement; null on the source and on project-only fields.
+  libraryFieldId: string | null;
+  // Published from this project (in the library, or used by other projects).
+  isSource: boolean;
+  // Linked to other projects (a placement, or a source other projects use).
+  isShared: boolean;
+  // Live fields of the group in live projects (1 = only this one).
+  placementCount: number;
+  // Name, description, type, options, notify: Editor+ of the project that published it (else this one).
+  definitionEditable: boolean;
+  // Owner / Admin of that project.
+  definitionManageable: boolean;
+};
+
+export const SHARED_FIELD_READ_ONLY =
+  "Shared from the field library. Only editors of the project that published it can change its name, description, and options.";
 
 // A field from the workspace library (list_field_library): a definition other projects can copy.
 export type LibraryField = {

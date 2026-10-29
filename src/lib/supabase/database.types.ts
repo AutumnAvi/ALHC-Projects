@@ -291,6 +291,9 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          // Oct 29 notes, batch 7: a placement of a shared library field points at the published source
+          // field (null on the source and on project-only fields); absent on a database without it.
+          library_field_id?: string | null;
         };
         Insert: {
           id?: string;
@@ -307,6 +310,7 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          library_field_id?: string | null;
         };
         Update: {
           id?: string;
@@ -319,6 +323,7 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          library_field_id?: string | null;
           sort_order?: number;
           created_at?: string;
           updated_at?: string;
@@ -332,7 +337,73 @@ export type Database = {
             referencedRelation: "projects";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "custom_fields_library_field_id_fkey";
+            columns: ["library_field_id"];
+            isOneToOne: false;
+            referencedRelation: "custom_fields";
+            referencedColumns: ["id"];
+          },
         ];
+      };
+      // Oct 29 notes, batch 7: existing copies linked to a library field, and the tasks whose values
+      // differed when they were (both kept). No client access.
+      library_field_links: {
+        Row: {
+          id: string;
+          field_id: string;
+          library_field_id: string;
+          matched_by: string;
+          previous_definition: Json;
+          linked_at: string;
+        };
+        Insert: {
+          id?: string;
+          field_id: string;
+          library_field_id: string;
+          matched_by: string;
+          previous_definition?: Json;
+          linked_at?: string;
+        };
+        Update: {
+          id?: string;
+          field_id?: string;
+          library_field_id?: string;
+          matched_by?: string;
+          previous_definition?: Json;
+          linked_at?: string;
+        };
+        Relationships: [];
+      };
+      library_field_link_conflicts: {
+        Row: {
+          id: string;
+          task_id: string;
+          field_id: string;
+          value: Json | null;
+          other_field_id: string;
+          other_value: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          field_id: string;
+          value?: Json | null;
+          other_field_id: string;
+          other_value?: Json | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          field_id?: string;
+          value?: Json | null;
+          other_field_id?: string;
+          other_value?: Json | null;
+          created_at?: string;
+        };
+        Relationships: [];
       };
       dashboard_widgets: {
         Row: {
@@ -5649,6 +5720,27 @@ export type Database = {
       list_field_library: {
         Args: Record<PropertyKey, never>;
         Returns: { field_id: string; name: string; field_type: string; description: string | null; options: Json }[];
+      };
+      // Oct 29 notes, batch 7: shared library fields.
+      add_library_field: {
+        Args: { target_project: string; library_field: string };
+        Returns: string;
+      };
+      project_field_sharing: {
+        Args: { target_project: string };
+        Returns: {
+          field_id: string;
+          library_field_id: string | null;
+          is_source: boolean;
+          is_shared: boolean;
+          placement_count: number;
+          definition_editable: boolean;
+          definition_manageable: boolean;
+        }[];
+      };
+      library_field_definition_columns: {
+        Args: Record<PropertyKey, never>;
+        Returns: string[];
       };
       list_member_last_activity: {
         Args: { target_profile?: string | null };

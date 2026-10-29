@@ -10,6 +10,7 @@ import {
   hasBatch4Schema,
   listFieldLibrary,
   listMyProjectRoles,
+  listProjectFieldSharing,
   listMyTeamIds,
   listProjectTemplates,
   listSubtaskTrees,
@@ -51,7 +52,14 @@ import {
   toProjectIntegrations,
   type ProjectIntegrations,
 } from "@/lib/integrations-shared";
-import { MAX_FIELD_DESCRIPTION, isFieldType, isOptionColor, type FieldOption, type LibraryField } from "@/lib/fields";
+import {
+  MAX_FIELD_DESCRIPTION,
+  isFieldType,
+  isOptionColor,
+  type FieldOption,
+  type FieldSharing,
+  type LibraryField,
+} from "@/lib/fields";
 import {
   isChoice,
   isQuestionType,
@@ -2923,6 +2931,36 @@ export async function updateField(
 // projects they come from). Null on a database without this release's migration.
 export async function loadFieldLibrary(): Promise<LibraryField[] | null> {
   return listFieldLibrary();
+}
+
+// Add field → Choose from library (Oct 29 notes, batch 7): this project's placement of a shared
+// library field — one definition and one value per task across every project that uses it (values
+// the project's tasks already have elsewhere come along). Returns the field's id: the existing one when
+// the project already uses that library field. Editor+ (the database decides).
+export async function addLibraryField(
+  projectId: string,
+  libraryFieldId: string,
+): Promise<ActionResult & { fieldId?: string }> {
+  let fieldId: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("add_library_field", {
+      target_project: id(projectId, "project"),
+      library_field: id(libraryFieldId, "field"),
+    });
+    if (error?.code === "PGRST202") throw new InputError("Shared library fields need this release’s database update");
+    if (error?.code === "P0002") throw new InputError("This field isn’t in the field library any more");
+    if (error?.code === "42501") throw new InputError("Only Editors and above can add fields to this project");
+    check({ error });
+    fieldId = typeof data === "string" ? data : undefined;
+  });
+  return result.error ? result : { fieldId };
+}
+
+// Which of a project's fields are shared through the field library, and whether the viewer may change
+// their definition (for client components that open the field editor). Null without the update.
+export async function loadFieldSharing(projectId: string): Promise<Record<string, FieldSharing> | null> {
+  return listProjectFieldSharing(id(projectId, "project"));
 }
 
 export async function deleteField(fieldId: string): Promise<ActionResult> {

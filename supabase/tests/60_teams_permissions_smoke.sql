@@ -585,15 +585,18 @@ begin
   -- and decide_team_join_request (the team's leads and workspace admins).
   -- Oct 27 notes (batch 6) added acknowledge_approval, hand_off_approval, send_for_approval, set_task_approvers,
   -- withdraw_approval (approval tasks: approvers, Ready for approval, Withdraw, Feedback received, Hand off).
+  -- Oct 29 notes (batch 7) added add_library_field (a project's placement of a shared library field;
+  -- Editor+ by own role) and project_field_sharing (which of a project's fields are shared and who may
+  -- change them: booleans and counts only).
   assert exposed =
-    'acknowledge_approval,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
+    'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
     'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
     'convert_commenter_members,create_project_from_template,create_review_check,custom_field_has_role,decide_approval,decide_project_access_request,decide_team_join_request,'
     'delete_project_template,duplicate_project,finish_import_run,get_project_integrations,get_public_form,goal_hidden_project_count,hand_off_approval,has_portfolio_role,'
     'has_project_role,has_task_role,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,'
     'is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,'
     'list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,move_portfolio_project,my_task_cards,my_tasks_layout,open_blocker_count,'
-    'portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_access_status,project_role,project_schedule_cards,project_section_task_counts,'
+    'portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_access_status,project_field_sharing,project_role,project_schedule_cards,project_section_task_counts,'
     'project_task_card_page,project_task_cards,receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,'
     'remove_workspace_admin,remove_workspace_member,request_approval,request_project_access,request_team_join,resend_workspace_invite,restore_task,resubmit_approval,'
     'retry_email_delivery,retry_integration_delivery,rotate_review_check_token,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,send_for_approval,'
