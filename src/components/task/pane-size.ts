@@ -67,3 +67,15 @@ export function useActivityTab(): ActivityTab {
 export function setActivityTab(tab: ActivityTab) {
   write(ACTIVITY_TAB_KEY, tab);
 }
+
+// Oct 29 notes (batch 7): the approval banner's Details (who decides, due date, what's being approved,
+// history, changing approvers), open or closed, remembered per browser. Closed by default.
+const APPROVAL_DETAILS_KEY = "alhc.taskPane.approvalDetails";
+
+export function useApprovalDetailsOpen(): boolean {
+  return useSyncExternalStore(subscribePaneSize, () => read(APPROVAL_DETAILS_KEY) === "1", () => false);
+}
+
+export function setApprovalDetailsOpen(open: boolean) {
+  write(APPROVAL_DETAILS_KEY, open ? "1" : "0");
+}

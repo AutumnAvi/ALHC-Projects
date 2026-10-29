@@ -6,7 +6,7 @@
 // project the person can't open is ever returned, workspace admins included.
 
 import { displayName } from "@/components/avatar";
-import { bareTaskTitle } from "@/lib/request-numbers";
+import { bareTaskTitle, numbersOf } from "@/lib/request-numbers";
 import { getViewer } from "@/lib/auth";
 import {
   getGoalViewer,
@@ -17,7 +17,8 @@ import {
   listGoals,
   listMyProjectRoles,
   listProfiles,
-  visibleRequestLabels,
+  visibleTaskNumbers,
+  visibleTaskPlaces,
   listProjects,
   listProjectTemplates,
   listReadableProjects,
@@ -81,18 +82,24 @@ export async function quickSearch(query: string, only: SearchKind | null = null)
   ]);
 
   const taskRows = taskResult && !taskResult.error ? (taskResult.data ?? []) : [];
-  const taskLabels = await visibleRequestLabels(taskRows.map((task) => task.id));
-  const tasks: QuickTask[] = taskRows.map((t) => ({
-          id: t.id,
-          title: bareTaskTitle(t.title, taskLabels.get(t.id) ?? null),
-          label: taskLabels.get(t.id) ?? null,
-          completed: Boolean(t.completed_at),
-          // search_tasks labels every project task with a project the person can read; null = private.
-          isPrivate: !t.home_project_id,
-          projectId: t.home_project_id,
-          projectName: t.home_project_name,
-          href: t.home_project_id ? `/projects/${t.home_project_id}?task=${t.id}` : `/my-tasks?task=${t.id}`,
-        }));
+  const taskNumbers = await visibleTaskNumbers(taskRows.map((task) => task.id));
+  const tasks: QuickTask[] = taskRows.map((t) => {
+    const numbers = taskNumbers.get(t.id) ?? [];
+    const label = numbers[0]?.label ?? null;
+    return {
+      id: t.id,
+      title: bareTaskTitle(t.title, label),
+      label,
+      numbers,
+      completed: Boolean(t.completed_at),
+      // search_tasks names each project task with the first project it was added to that the person can
+      // read (its home_project_* columns; Oct 29 notes, 55b: there's no home project); null = private.
+      isPrivate: !t.home_project_id,
+      projectId: t.home_project_id,
+      projectName: t.home_project_name,
+      href: t.home_project_id ? `/projects/${t.home_project_id}?task=${t.id}` : `/my-tasks?task=${t.id}`,
+    };
+  });
   const matchedProjects: QuickProject[] = projects
     ? rank(
         projects.filter((p) => p.name.toLowerCase().includes(needle)),
@@ -129,30 +136,16 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
     taskIds.length
       ? supabase
           .from("tasks")
-          .select("id, title, completed_at, home_project_id, root_task_id")
+          .select("id, title, completed_at, home_project_id")
           .in("id", taskIds)
           .is("deleted_at", null)
       : null,
   ]);
   const projectsById = new Map(projects.map((p) => [p.id, p] as const));
   const tasks = taskResult && !taskResult.error ? taskResult.data ?? [] : [];
-  const recentLabels = await visibleRequestLabels(tasks.map((t) => t.id));
-
-  // A task read through a project other than its home (multi-homed, or a subtask of such a task) is
-  // labelled and opened with one of its own (its root's) memberships that RLS shows the person.
-  const needOther = tasks.filter((t) => t.home_project_id && !projectsById.has(t.home_project_id));
-  const otherProject = new Map<string, string>();
-  if (needOther.length) {
-    const roots = [...new Set(needOther.map((t) => t.root_task_id ?? t.id))];
-    const memberships = await supabase
-      .from("task_projects")
-      .select("task_id, project_id")
-      .in("task_id", roots)
-      .is("deleted_at", null);
-    for (const row of memberships.error ? [] : memberships.data ?? []) {
-      if (projectsById.has(row.project_id) && !otherProject.has(row.task_id)) otherProject.set(row.task_id, row.project_id);
-    }
-  }
+  // Every project of each task the person can read, in the order it was added to them (Oct 29 notes, 55b:
+  // no home project): the first one labels and opens it, and its numbers are the badges.
+  const places = await visibleTaskPlaces(tasks.map((t) => t.id));
   const tasksById = new Map(tasks.map((t) => [t.id, t] as const));
 
   return wanted.flatMap((ref): RecentItem[] => {
@@ -163,18 +156,18 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
     const task = tasksById.get(ref.id);
     if (!task) return [];
     const isPrivate = !task.home_project_id;
-    const projectId = isPrivate
-      ? null
-      : projectsById.has(task.home_project_id!)
-        ? task.home_project_id
-        : (otherProject.get(task.root_task_id ?? task.id) ?? null);
+    const place = places.get(task.id) ?? [];
+    const projectId = isPrivate ? null : (place.find((p) => projectsById.has(p.projectId))?.projectId ?? null);
     const project = projectId ? projectsById.get(projectId) : undefined;
+    const numbers = numbersOf(place);
+    const label = numbers[0]?.label ?? null;
     return [
       {
         kind: "task",
         id: task.id,
-        title: bareTaskTitle(task.title, recentLabels.get(task.id) ?? null),
-        label: recentLabels.get(task.id) ?? null,
+        title: bareTaskTitle(task.title, label),
+        label,
+        numbers,
         completed: Boolean(task.completed_at),
         isPrivate,
         projectId: project?.id ?? null,

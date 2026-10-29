@@ -3,13 +3,14 @@
 import { Check, UserRound } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Skeleton } from "@/components/ui";
+import { completeModeLabel } from "@/lib/approval-complete";
 import { dayLabel } from "@/lib/date-input";
 import { OPTION_COLOR_CLASSES } from "@/lib/fields";
-import { formatRequestLabel } from "@/lib/request-numbers";
 import { tagClass } from "@/lib/tags";
 import type { TaskSeed } from "@/lib/task-seed";
 import { PANE_FIELDS, PANE_LABEL } from "./pane-styles";
 import { CloseButton, ExpandButton, PANE_HEADER, PaneShell } from "./task-pane-frame";
+import { TaskNumberChips } from "./task-number";
 
 // The pane the moment a task is clicked (Oct 19 notes: opening a task must feel instant): the same
 // frame and field grid as the full pane, filled from what the clicked row already showed — name, request
@@ -18,7 +19,6 @@ import { CloseButton, ExpandButton, PANE_HEADER, PaneShell } from "./task-pane-f
 // already cached from hovering the row). Nothing here can be edited, so no draft is ever lost.
 export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
   const year = new Date().getFullYear();
-  const label = formatRequestLabel(seed.requestLabel);
   const dates =
     seed.startOn && seed.dueOn
       ? `${dayLabel(seed.startOn, year)} – ${dayLabel(seed.dueOn, year)}`
@@ -36,7 +36,7 @@ export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
             }`}
           >
             <Check className="size-4" strokeWidth={2.5} aria-hidden />
-            {seed.completed ? "Completed" : seed.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
+            {seed.completed ? "Completed" : completeModeLabel(seed.completeMode ?? "complete", seed.kind)}
           </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -47,7 +47,11 @@ export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
       <div role="status" className="min-h-0 flex-1 overflow-y-auto px-gutter py-4">
         <span className="sr-only">Loading the rest of the task…</span>
         {seed.parentTitle ? <p className="mb-1 truncate text-xs text-zinc-500">{seed.parentTitle}</p> : null}
-        {label ? <p className="mb-1 text-sm font-medium text-zinc-500">{label}</p> : null}
+        {/* The number the row showed, as the full pane's chip (it adds the task's other projects' numbers). */}
+        <TaskNumberChips
+          numbers={seed.requestLabel ? [{ projectId: null, projectName: null, label: seed.requestLabel }] : []}
+          className="mb-1.5"
+        />
         <p
           className={`-mx-2 rounded-md border border-transparent px-2 py-1 text-2xl font-semibold leading-tight tracking-tight ${
             seed.completed ? "text-zinc-500" : "text-zinc-900"
@@ -57,7 +61,7 @@ export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
         </p>
 
         <dl className={`mt-3 ${PANE_FIELDS}`}>
-          <dt className={PANE_LABEL}>{seed.kind === "approval" ? "Approver" : "Assignee"}</dt>
+          <dt className={PANE_LABEL}>Assignee</dt>
           <dd className="flex min-h-8 min-w-0 items-center gap-2 px-1">
             {seed.assignee ? (
               <>

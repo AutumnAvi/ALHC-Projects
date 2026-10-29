@@ -152,7 +152,7 @@ function approvalTask(viewerRole: ProjectRole, approval: TaskApprovalInfo | null
     ancestors: [],
     isSubtask: false,
     memberships: [
-      { projectId: "p1", projectName: "Launch", sectionId: "s1", isHome: true, sections: [{ id: "s1", name: "To do" }, { id: "s2", name: "Review" }] },
+      { projectId: "p1", projectName: "Launch", sectionId: "s1", sections: [{ id: "s1", name: "To do" }, { id: "s2", name: "Review" }] },
     ],
     fields: [],
     fieldValues: {},
@@ -504,17 +504,28 @@ test("the pane: Mark complete waits for a pending approval; a blocked task's but
   assert.ok(!/data-blocked-complete=""[^>]*disabled=""/.test(blocked), "focusable, so hover / focus / tap show the blockers");
 });
 
-test("item 39: inside a project the pane shows that project's number", () => {
+// Since Oct 29 notes (55b) the pane shows every number as chips in the stable order; inside a project its
+// own chip is the marked (darker) one.
+test("item 39: inside a project the pane marks that project's number", () => {
   const task = approvalTask("editor", info(), {
     requestLabel: { text: "Task #3", wrap: true },
     projectNumbers: { p1: { text: "Task #3", wrap: true }, p2: { text: "WEB-12", wrap: false } },
+    memberships: [
+      { projectId: "p1", projectName: "Launch", sectionId: "s1", sections: [{ id: "s1", name: "To do" }] },
+      { projectId: "p2", projectName: "Website", sectionId: null, sections: [] },
+    ],
   });
   const inP2 = render(<TaskDetailPanel task={task} projects={[]} profiles={people} memberId="me" tags={[]} />, "/projects/p2/views/v1");
-  assert.match(inP2, /data-task-number="">WEB-12</);
-  const home = render(<TaskDetailPanel task={task} projects={[]} profiles={people} memberId="me" tags={[]} />, "/my-tasks");
-  assert.match(home, /data-task-number="">\[Task #3\]</, "outside projects: the home project's number");
+  const chips = [...inP2.matchAll(/<li[^>]*>((?:(?!<\/li>).)*?)<\/li>/g)].map((m) => m[1]).filter((c) => c.includes("data-task-number"));
+  assert.ok(chips.find((c) => c.includes(">WEB-12<"))?.includes("data-current-number"), "WEB-12 is this project's");
+  assert.ok(!chips.find((c) => c.includes(">[Task #3]<"))?.includes("data-current-number"));
+  assert.ok(inP2.indexOf('data-task-number="">[Task #3]<') < inP2.indexOf('data-task-number="">WEB-12<'), "the stable order");
+  const outside = render(<TaskDetailPanel task={task} projects={[]} profiles={people} memberId="me" tags={[]} />, "/my-tasks");
+  assert.match(outside, /data-task-number="">\[Task #3\]</, "outside projects: every number");
+  assert.match(outside, /data-task-number="">WEB-12</);
+  assert.doesNotMatch(outside, /data-current-number/, "none is marked outside a project");
   const unknown = render(<TaskDetailPanel task={task} projects={[]} profiles={people} memberId="me" tags={[]} />, "/projects/p9/list");
-  assert.match(unknown, /data-task-number="">\[Task #3\]</, "a project without its own number falls back");
+  assert.doesNotMatch(unknown, /data-current-number/, "a project without its own number marks none");
 });
 
 // ---------------------------------------------------------------------------------------------

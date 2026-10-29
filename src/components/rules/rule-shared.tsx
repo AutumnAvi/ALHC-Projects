@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Columns3, Contact, PenLine, User, UserMinus } from "lucide-react";
+import { CalendarDays, Columns3, Contact, Lock, PenLine, User, UserMinus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Avatar } from "@/components/avatar";
 import { useParamSlot } from "@/components/param-slot";
@@ -8,7 +8,7 @@ import { Popover } from "@/components/popover";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { SingleDatePicker } from "@/components/task/date-picker";
 import { dayLabel, formatTime } from "@/lib/date-input";
-import { OPTION_SWATCH_CLASSES, type FieldDef, type OptionColor } from "@/lib/fields";
+import { OPTION_SWATCH_CLASSES, formatNumberValue, numberPrefixOf, type FieldDef, type OptionColor } from "@/lib/fields";
 import type { ProjectIntegrations } from "@/lib/integrations-shared";
 import {
   ACTIONS,
@@ -177,7 +177,26 @@ export function fieldValueLabel(ctx: RuleContext, fieldId: Json | undefined, val
     return ids.map((id) => field.options.find((o) => o.id === id)?.name ?? "?").join(", ");
   }
   if (field.fieldType === "boolean") return value === true ? "checked" : "unchecked";
+  if (field.fieldType === "number" && typeof value === "number") return formatNumberValue(value, numberPrefixOf(field));
   return String(value);
+}
+
+// A number field's symbol (item 49) before a rule's number box ("$ [1250]"); the box's label says it.
+export function WithSymbol({ symbol, children }: { symbol: string | null; children: ReactNode }) {
+  if (!symbol) return <>{children}</>;
+  return (
+    <span className="inline-flex items-center gap-1" data-number-prefix={symbol}>
+      <span aria-hidden className="text-sm text-zinc-500">
+        {symbol}
+      </span>
+      {children}
+    </span>
+  );
+}
+
+// "Budget value" / "Budget value in $".
+export function numberValueLabel(base: string, symbol: string | null) {
+  return symbol ? `${base} in ${symbol}` : base;
 }
 
 // Automations V2 names: tags, task templates, other projects, form questions.
@@ -684,9 +703,12 @@ export function fieldOptions(fields: FieldDef[]): SmartOption[] {
   return fields.map((f) => ({
     value: f.id,
     label: f.boundToSections ? `${f.name} (Status)` : f.name,
-    description: f.boundToSections ? "Follows the section" : FIELD_TYPE_LABELS[f.fieldType] ?? undefined,
-    keywords: [f.fieldType.replace("_", " ")],
-    icon: <PenLine className="size-4" />,
+    // Oct 29 notes (batch 7): a locked field says so (a rule changes it only for an Owner / Admin owner).
+    description: f.boundToSections
+      ? "Follows the section"
+      : `${f.locked ? "Locked · " : ""}${FIELD_TYPE_LABELS[f.fieldType] ?? f.fieldType}`,
+    keywords: [f.fieldType.replace("_", " "), ...(f.locked ? ["locked"] : [])],
+    icon: f.locked ? <Lock className="size-4" aria-label="Locked" /> : <PenLine className="size-4" />,
   }));
 }
 
@@ -964,17 +986,21 @@ export function FieldValueInput({
           placeholder="choose checked or unchecked"
         />
       );
-    case "number":
+    case "number": {
+      const symbol = numberPrefixOf(field);
       return (
-        <SlotInput
-          id={id}
-          label={`${field.name} value`}
-          type="number"
-          value={typeof value === "number" ? String(value) : ""}
-          onChange={(v) => onChange(v === "" || !Number.isFinite(Number(v)) ? null : Number(v))}
-          className="w-28"
-        />
+        <WithSymbol symbol={symbol}>
+          <SlotInput
+            id={id}
+            label={numberValueLabel(`${field.name} value`, symbol)}
+            type="number"
+            value={typeof value === "number" ? String(value) : ""}
+            onChange={(v) => onChange(v === "" || !Number.isFinite(Number(v)) ? null : Number(v))}
+            className="w-28"
+          />
+        </WithSymbol>
       );
+    }
     case "date":
       return <RuleDateInput id={id} label={`${field.name} value`} value={value} onChange={onChange} highlight={highlight} />;
     default:

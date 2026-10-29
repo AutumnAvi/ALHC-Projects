@@ -21,7 +21,15 @@ import {
   type EmailDesignSettings,
 } from "@/lib/email-design";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
-import { isFieldType, parseOptions, type FieldDef, type FieldOption, type FieldType, type LibraryField } from "@/lib/fields";
+import {
+  isFieldType,
+  parseOptions,
+  type FieldDef,
+  type FieldOption,
+  type FieldSharing,
+  type FieldType,
+  type LibraryField,
+} from "@/lib/fields";
 import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
 import {
   parsePresetInputs,
@@ -36,10 +44,16 @@ import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import {
   bareTaskTitle,
   displayTaskTitle,
+  numbersLedBy,
+  numbersOf,
+  numberWithItsProject,
   requestLabelFrom,
+  taskPlacesFrom,
   templateFromPrefix,
   type RequestLabel,
+  type TaskNumber,
   type TaskNumbering,
+  type TaskPlace,
 } from "@/lib/request-numbers";
 import { isReactionKey, REACTIONS, type ReactionKey } from "@/lib/reactions";
 import { commentEmailStatus, parseCommentEmail, type CommentEmail } from "@/lib/comment-email";
@@ -214,6 +228,9 @@ export type ProjectTask = {
   approvalPaused?: boolean;
   // A pending round waits on the viewer's decision.
   approvalWaitingOnMe?: boolean;
+  // The viewer is one of its approvers (Oct 29 notes, batch 7: only approvers complete an approval task;
+  // everyone else's complete control is "Ready for approval"). Missing = not known.
+  approvalIsApprover?: boolean;
   // Active tag links (ids; look names and colors up in listTags()).
   tagIds: string[];
   // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
@@ -226,11 +243,13 @@ export type ProjectTask = {
   requestLabel?: RequestLabel | null;
 };
 
+// One project of the task the viewer can read. TaskDetail.memberships lists them in the stable order
+// (Oct 29 notes, 55b: the order the task was added to them; there's no home project), so the first one is
+// the task's link / default project.
 export type TaskMembership = {
   projectId: string;
   projectName: string;
   sectionId: string | null;
-  isHome: boolean;
   sections: Pick<Section, "id" | "name">[];
 };
 
@@ -255,12 +274,15 @@ export type TaskDetail = {
   // Projects (with sections) where the viewer is an Editor among the task's projects (a subtask: its root's).
   editableProjectIds: string[];
   assigneeId: string | null;
-  // Null for a private task (and its subtasks): no project; only its creator and assignee can read it.
+  // The first of the task's projects the viewer can read (Oct 29 notes, 55b: memberships[0], the stable
+  // rule; never the database's internal pointer, which may be a project the viewer can't open). Null for a
+  // private task (and its subtasks): no project; only its creator and assignee can read it.
   homeProjectId: string | null;
   createdAt: string;
   updatedAt: string;
   source: string;
-  // The request number with its project's bracket setting (task numbering on), else null.
+  // The request number with its project's bracket setting (task numbering on), else null. Since Oct 29
+  // notes (55b) the first number the viewer can read in the stable order (no home project).
   requestLabel: RequestLabel | null;
   canAssignRequestNumber: boolean;
   submission: { email: string; formId: string; formTitle: string | null; createdAt: string } | null;
@@ -282,6 +304,9 @@ export type TaskDetail = {
   approval: TaskApprovalInfo | null;
   // The task's number in each of its projects the viewer can read (projectId → label; Oct 27 notes, batch 6).
   projectNumbers: Record<string, RequestLabel>;
+  // The same numbers as a list in the stable order (Oct 29 notes, 55b: the pane's number chips, "Req #1 ·
+  // Design #14"); subtasks carry their path in each project. requestLabel is the first one.
+  taskNumbers?: TaskNumber[];
   // Direct subtasks, in order.
   subtasks: SubtaskItem[];
   // Set for a subtask: its parent, and the way up from the top-level task (root first) for the breadcrumb.
@@ -308,6 +333,10 @@ export type TaskDetail = {
   viewerRole: ProjectRole | null;
   // Best role of each member of the task's visible projects: who can be assigned, follow, approve.
   memberRoles: Record<string, ProjectRole>;
+  // The viewer's own role in each of the task's projects (archived = Viewer): a field's values are
+  // changed through its project, so a locked field only by that project's Owners and Admins (Oct 29
+  // notes, batch 7). Absent = unknown (the task-level role decides).
+  viewerProjectRoles?: Record<string, ProjectRole>;
   tagIds: string[];
   // A private task (no project; for a subtask: its top-level task is private). Only its top-level task's
   // creator and assignee (privateReaderIds) can read it, so only they can be assigned or follow.
@@ -728,6 +757,7 @@ function projectTasksFromCards(data: Json): ProjectTask[] {
       approvalStatus: parseTaskKind(card.kind) === "approval" ? (parseApprovalTaskStatus(card.approval_status) ?? "not_sent") : null,
       approvalPaused: card.approval_paused === true,
       approvalWaitingOnMe: card.approval_waiting_on_me === true,
+      approvalIsApprover: card.approval_is_approver === true,
       tagIds: Array.isArray(card.tag_ids) ? card.tag_ids.filter((tagId): tagId is string => typeof tagId === "string") : [],
       commentCount: typeof card.comment_count === "number" ? card.comment_count : 0,
       attachmentCount: typeof card.attachment_count === "number" ? card.attachment_count : 0,
@@ -975,13 +1005,14 @@ function legacyPaneLabel(
   return text ? { text, wrap: sequence?.wrap_brackets !== false } : null;
 }
 
-// projectId: the labels shown inside that project (its own numbers; Oct 27 notes, batch 6).
+// projectId: the labels shown inside that project (its own numbers; Oct 27 notes, batch 6). Without one,
+// each task's first number the viewer can read (Oct 29 notes, 55b: the stable order, no home project).
 async function withRequestLabels<T extends { id: string }>(
   tasks: T[],
   projectId?: string,
 ): Promise<Array<T & { requestLabel: RequestLabel | null }>> {
   const ids = tasks.map((task) => task.id);
-  const labels = projectId ? await visibleRequestLabelsIn(projectId, ids) : await visibleRequestLabels(ids);
+  const labels = projectId ? await visibleRequestLabelsIn(projectId, ids) : await firstVisibleNumbers(ids);
   return tasks.map((task) => ({ ...task, requestLabel: labels.get(task.id) ?? null }));
 }
 
@@ -1202,13 +1233,23 @@ async function loadReplyThread(supabase: Supabase, taskId: string): Promise<Task
 // ---------------------------------------------------------------------------------------------
 
 // Every tag of the workspace, archived ones included (they stay on tasks), by name.
+// A tag's color is coalesce(palette_color, color) (Oct 29 notes, item 54); a database without that
+// column still reads the nine colors it had.
 export const listTags = cache(async (): Promise<Tag[]> => {
   const supabase = await createClient();
   const result = await supabase
     .from("tags")
-    .select("id, name, color, archived_at, created_by")
+    .select("id, name, color, palette_color, archived_at, created_by")
     .is("deleted_at", null)
     .order("name");
+  if (isMissingColumn(result.error)) {
+    const older = await supabase
+      .from("tags")
+      .select("id, name, color, archived_at, created_by")
+      .is("deleted_at", null)
+      .order("name");
+    return rows(older, "tags").map(toTag);
+  }
   return rows(result, "tags").map(toTag);
 });
 
@@ -1268,6 +1309,12 @@ export type SubtaskItem = {
   requestLabel?: RequestLabel | null;
   // Open blockers (the completion check's count; Oct 27 notes, batch 6). Missing = not loaded.
   blockedBy?: number;
+  // Approval subtasks (Oct 29 notes, batch 7): the latest round's status and the viewer's part in it, so
+  // the row draws the right complete control. Missing = not loaded.
+  approvalStatus?: ApprovalTaskStatus | null;
+  approvalPaused?: boolean;
+  approvalWaitingOnMe?: boolean;
+  approvalIsApprover?: boolean;
 };
 
 const SUBTASK_COLUMNS = "id, parent_task_id, title, completed_at, assignee_id, start_on, due_on, kind, subtask_order";
@@ -1324,7 +1371,7 @@ export const listSubtaskTrees = cache(async (rootIds: string[], projectId?: stri
   );
   const blocked = await openBlockerCounts(supabase, list.filter((t) => !t.completed_at).map((t) => t.id));
   const items = toSubtaskItems(list, list).map((item) => ({ ...item, blockedBy: blocked.get(item.id) ?? 0 }));
-  return withRequestLabels(items, projectId);
+  return withRequestLabels(await withSubtaskApprovals(supabase, items), projectId);
 });
 
 // Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).
@@ -1393,7 +1440,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
           .then((r) => maybe(r, "private task"))
       : Promise.resolve(null),
     listTeams(),
-    visibleRequestLabels([taskId]),
+    visibleTaskNumbers([taskId]),
     loadTaskNumbers(supabase, taskId),
     task.kind === "approval" ? loadApprovalInfo(supabase, taskId) : Promise.resolve(null),
   ]);
@@ -1413,7 +1460,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .eq("task_id", scopeTaskId)
       .is("deleted_at", null)
       .is("project.deleted_at", null)
-      .order("created_at"),
+      .order("created_at")
+      .order("project_id"),
     // The whole task tree (root first): the breadcrumb, subtask counts, and Convert's candidates.
     supabase
       .from("tasks")
@@ -1616,7 +1664,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     pagedComments,
     approvalRuleNames,
     formTitle,
-    [myRoles, tagIds, blockerCount, privateRoot, teams, taskLabels, projectNumbers, approvalInfo],
+    [myRoles, tagIds, blockerCount, privateRoot, teams, taskNumberLists, projectNumbers, approvalInfo],
     subtaskItems,
   ] = await Promise.all([
     loadReplyThread(supabase, taskId),
@@ -1630,7 +1678,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       ? supabase.from("forms").select("title").eq("id", submission.form_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     early,
-    withRequestLabels(toSubtaskItems(subtaskRows, grandchildren)),
+    withSubtaskApprovals(supabase, toSubtaskItems(subtaskRows, grandchildren)).then((items) => withRequestLabels(items)),
   ]);
   const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
 
@@ -1752,11 +1800,12 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     hiddenBlockers: Math.max(0, (maybe(blockerCount, "blockers") ?? 0) - visibleBlockers),
     editableProjectIds,
     assigneeId: task.assignee_id,
-    homeProjectId: task.home_project_id,
+    homeProjectId: task.home_project_id === null ? null : (membershipRows[0]?.project_id ?? null),
     createdAt: task.created_at,
     updatedAt: task.updated_at,
     source: task.source,
-    requestLabel: taskLabels.get(task.id) ?? legacyPaneLabel(numbering, label),
+    requestLabel: taskNumberLists.get(task.id)?.[0]?.label ?? legacyPaneLabel(numbering, label),
+    taskNumbers: taskNumberLists.get(task.id) ?? [],
     canAssignRequestNumber: !task.req_number && !isSubtask && Boolean(maybe(numbering, "request numbering")),
     submission: submission
       ? {
@@ -1788,6 +1837,12 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     projectNumbers,
     viewerRole: viewerProjectRole,
     memberRoles,
+    viewerProjectRoles: Object.fromEntries(
+      membershipRows.flatMap((m) => {
+        const projectRole = myRoles.get(m.project_id);
+        return projectRole ? [[m.project_id, projectRole] as const] : [];
+      }),
+    ),
     tagIds: tagIds.get(taskId) ?? [],
     isPrivate,
     privateReaderIds: [
@@ -1797,17 +1852,14 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     parentTaskId: task.parent_task_id,
     ancestors,
     isSubtask,
-    memberships: membershipRows
-      .map((m) => ({
-        projectId: m.project_id,
-        projectName: m.project.name,
-        sectionId: m.section_id,
-        isHome: m.project_id === task.home_project_id,
-        sections: sections
-          .filter((s) => s.project_id === m.project_id)
-          .map(({ id, name }) => ({ id, name })),
-      }))
-      .sort((a, b) => Number(b.isHome) - Number(a.isHome)),
+    memberships: membershipRows.map((m) => ({
+      projectId: m.project_id,
+      projectName: m.project.name,
+      sectionId: m.section_id,
+      sections: sections
+        .filter((s) => s.project_id === m.project_id)
+        .map(({ id, name }) => ({ id, name })),
+    })),
   };
 });
 
@@ -1954,8 +2006,8 @@ async function listDependencyCandidates(
     label: "This task’s tree",
     tasks: tree.slice(0, MAX_DEPENDENCY_CANDIDATES),
   };
-  // Oct 26 notes (batch 4): the task's own projects come first (its home project first), then its tree,
-  // then the other projects the viewer edits.
+  // Oct 26 notes (batch 4): the task's own projects come first (in the order it was added to them; Oct 29
+  // notes, 55b), then its tree, then the other projects the viewer edits.
   for (const p of all) {
     const limit = own.includes(p) ? MAX_DEPENDENCY_CANDIDATES : MAX_OTHER_PROJECT_CANDIDATES;
     if (p === others[0] && treeGroup.tasks.length) groups.push(treeGroup);
@@ -1971,9 +2023,31 @@ async function listDependencyCandidates(
   }
   if (others.length === 0 && treeGroup.tasks.length) groups.push(treeGroup);
   const shown = groups.filter((g) => g.tasks.length > 0);
-  // Numbers for every task offered (labels the viewer may see), so the picker shows and searches them.
-  const labels = await visibleRequestLabels(shown.flatMap((g) => g.tasks.map((t) => t.id)));
-  return shown.map((g) => ({ ...g, tasks: g.tasks.map((t) => ({ ...t, label: labels.get(t.id) ?? null })) }));
+  // Numbers for every task offered (labels the viewer may see), so the picker shows and searches them. A
+  // project's group shows each task's number there; a task it doesn't number shows its first number with
+  // that number's own project, so a project's name never sits next to another project's number (Oct 29
+  // notes, 55b). The tree's tasks show their first number.
+  const ids = shown.flatMap((g) => g.tasks.map((t) => t.id));
+  const places = await visibleTaskPlacesOrNull(ids);
+  if (!places) {
+    const labels = await firstVisibleNumbers(ids);
+    return shown.map((g) => ({ ...g, tasks: g.tasks.map((t) => ({ ...t, label: labels.get(t.id) ?? null })) }));
+  }
+  const byId = new Map(all.map((p) => [p.id, p] as const));
+  return shown.map((g) => {
+    const project = byId.get(g.key);
+    return {
+      ...g,
+      tasks: g.tasks.map((t) => {
+        if (!project) return { ...t, label: numberWithItsProject(places.get(t.id)).label };
+        const paired = numberWithItsProject(places.get(t.id), { projectId: project.id, projectName: project.name });
+        // The task's own projects come without a name (the group's heading says it), unless the number
+        // is another project's.
+        const named = own.includes(project) ? paired.projectId !== project.id : true;
+        return { ...t, label: paired.label, projectName: named ? paired.projectName : null };
+      }),
+    };
+  });
 }
 
 // Dependency stories only store the other task's title when every reader of this task can read it
@@ -2060,6 +2134,11 @@ function toFieldDef(row: Tables<"custom_fields">): FieldDef {
     description: row.description ?? null,
     notifyOnChange: row.notify_on_change ?? false,
     inLibrary: row.in_library ?? false,
+    numberPrefix: row.number_prefix ?? null,
+    libraryFieldId: row.library_field_id ?? null,
+    locked: row.locked ?? false,
+    lockedBy: row.locked_by ?? null,
+    lockedAt: row.locked_at ?? null,
   };
 }
 
@@ -2085,6 +2164,30 @@ export const listFieldLibrary = cache(async (): Promise<LibraryField[] | null> =
       : [],
   );
 });
+
+// Which of a project's fields are shared through the field library, and whether the viewer may change
+// their definition (project_field_sharing: booleans and counts only). Keyed by field id. Null on a
+// database without the Oct 29 notes (batch 7) update.
+export const listProjectFieldSharing = cache(
+  async (projectId: string): Promise<Record<string, FieldSharing> | null> => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("project_field_sharing", { target_project: projectId });
+    if (result.error?.code === "PGRST202") return null;
+    const sharing: Record<string, FieldSharing> = {};
+    for (const r of rows(result, "field sharing")) {
+      sharing[r.field_id] = {
+        fieldId: r.field_id,
+        libraryFieldId: r.library_field_id,
+        isSource: r.is_source,
+        isShared: r.is_shared,
+        placementCount: r.placement_count,
+        definitionEditable: r.definition_editable,
+        definitionManageable: r.definition_manageable,
+      };
+    }
+    return sharing;
+  },
+);
 
 async function listFieldsForProjects(projectIds: string[]): Promise<FieldDef[]> {
   const supabase = await createClient();
@@ -2122,11 +2225,18 @@ export type MyTask = {
   kind: TaskKind;
   // Subtasks: the parent task's title ("in <parent>").
   parentTitle: string | null;
-  // The request number with its project's bracket setting (task numbering on), else null.
+  // The request number with its project's bracket setting (task numbering on), else null. Since Oct 29
+  // notes (55b) the first of taskNumbers (no home project).
   requestLabel?: RequestLabel | null;
+  // Every number the task has in projects the viewer can read, in the stable order (the chips' "+N").
+  taskNumbers?: TaskNumber[];
   // The viewer may edit it (task_role() ≥ Editor; editableTaskIds()). Being assigned only needs read
   // access, so a Viewer or Commenter sees the task without a checkbox or a clickable complete control.
   canEdit: boolean;
+  // The viewer may comment on it (task_role() ≥ Commenter; taskAccessSets()). An approval task's assignee
+  // sends it for approval with Commenter+ (approval_can_act), so a Viewer assignee gets a read-only mark
+  // (Oct 29 notes, batch 7). Missing: the same as canEdit.
+  canComment?: boolean;
   // Oct 27 notes (batch 6): open blockers (the completion check's count), direct subtasks (the row's
   // expand arrow), and an approval task's status.
   blockedBy?: number;
@@ -2134,6 +2244,9 @@ export type MyTask = {
   subtaskDoneCount?: number;
   approvalStatus?: ApprovalTaskStatus | null;
   approvalPaused?: boolean;
+  // Oct 29 notes (batch 7): a pending round waits on the viewer, and whether they approve it.
+  approvalWaitingOnMe?: boolean;
+  approvalIsApprover?: boolean;
   // A subtask's top-level task (its expanded tree loads by that); null for a top-level task.
   rootTaskId?: string | null;
 };
@@ -2168,23 +2281,27 @@ function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
 
 async function labelMyTasks(page: { open: MyTask[]; completed: MyTask[] }) {
   const ids = [...page.open, ...page.completed].map((task) => task.id);
-  const [labels, editable, extras] = await Promise.all([visibleRequestLabels(ids), editableTaskIds(ids), myTaskExtras(page.open)]);
+  const [numbers, access, extras] = await Promise.all([visibleTaskNumbers(ids), taskAccessSets(ids), myTaskExtras(page.open)]);
   const apply = (task: MyTask): MyTask => {
-    const label = labels.get(task.id) ?? null;
+    const taskNumbers = numbers.get(task.id) ?? [];
+    const label = taskNumbers[0]?.label ?? null;
     return {
       ...task,
       ...extras.get(task.id),
       requestLabel: label,
+      taskNumbers,
       title: displayTaskTitle(task.title, label),
-      canEdit: editable.has(task.id),
+      canEdit: access.editable.has(task.id),
+      canComment: access.commentable.has(task.id),
     };
   };
   return { open: page.open.map(apply), completed: page.completed.map(apply) };
 }
 
 // Tasks come back only when the viewer can read them (membership in one of their projects, or a
-// private task they created or are assigned). Each is labelled with its home project when the viewer can
-// see it, else another visible project; private tasks (and their subtasks) have no project.
+// private task they created or are assigned). Each is labelled with the first project it was added to
+// that the viewer can see (Oct 29 notes, 55b: the stable rule); private tasks (and their subtasks) have
+// no project.
 // my_task_cards does that in one read. A database without the function uses the row queries.
 export const listMyTasks = cache(async (profileId: string) => {
   const { user } = await getViewer();
@@ -2234,6 +2351,7 @@ async function listMyTasksFromRows(profileId: string) {
           .in("task_id", taskIds)
           .is("deleted_at", null)
           .order("created_at")
+          .order("project_id")
           .then((result) => rows(result, "task projects"))
       : [],
     taskTitles([...openRows, ...doneRows].map((t) => t.parent_task_id)),
@@ -2241,10 +2359,7 @@ async function listMyTasksFromRows(profileId: string) {
 
   const toMyTask = (t: (typeof openRows)[number]): MyTask | null => {
     const isPrivate = t.home_project_id === null;
-    const projectId =
-      t.home_project_id && projectName.has(t.home_project_id)
-        ? t.home_project_id
-        : memberships.find((m) => m.task_id === scopeId(t) && projectName.has(m.project_id))?.project_id;
+    const projectId = memberships.find((m) => m.task_id === scopeId(t) && projectName.has(m.project_id))?.project_id;
     if (!projectId && !isPrivate) return null;
     return {
       id: t.id,
@@ -2266,15 +2381,24 @@ async function listMyTasksFromRows(profileId: string) {
 }
 
 // Which of these tasks the viewer can edit, like task_role() ≥ Editor without a call per task: a task
-// (a subtask through its top-level task) counts the viewer's best role over its home project and its
-// other projects (archived projects count as Viewer — listMyProjectRoles()); a private task is the
+// (a subtask through its top-level task) counts the viewer's best role over its projects (the database's
+// internal pointer included, like profile_task_role; archived projects count as Viewer —
+// listMyProjectRoles()); a private task is the
 // creator's and the assignee's to edit. Only hides controls: RLS decides every write.
 export async function editableTaskIds(taskIds: string[]): Promise<Set<string>> {
+  return (await taskAccessSets(taskIds)).editable;
+}
+
+// editableTaskIds() and, from the same roles, the tasks the viewer can comment on (Commenter+: decide an
+// approval they're asked for, send their own approval task; Oct 29 notes, batch 7).
+export async function taskAccessSets(taskIds: string[]): Promise<{ editable: Set<string>; commentable: Set<string> }> {
   const editable = new Set<string>();
+  const commentable = new Set<string>();
+  const access = { editable, commentable };
   const ids = [...new Set(taskIds)];
-  if (ids.length === 0) return editable;
+  if (ids.length === 0) return access;
   const { user } = await getViewer();
-  if (!user) return editable;
+  if (!user) return access;
   const supabase = await createClient();
   type Row = { id: string; root_task_id: string | null; home_project_id: string | null; created_by: string | null; assignee_id: string | null };
   const read = async (want: string[]) => {
@@ -2315,13 +2439,18 @@ export async function editableTaskIds(taskIds: string[]): Promise<Set<string>> {
     const root = byId.get(rootOf(task));
     if (!root) continue;
     if (root.home_project_id === null) {
-      if (root.created_by === user.id || root.assignee_id === user.id) editable.add(task.id);
+      if (root.created_by === user.id || root.assignee_id === user.id) {
+        editable.add(task.id);
+        commentable.add(task.id);
+      }
       continue;
     }
     const role = bestRole([root.home_project_id, ...(projectsOf.get(root.id) ?? [])].map((p) => roles.get(p)));
-    if (permissionsFor(role).canEdit) editable.add(task.id);
+    const permissions = permissionsFor(role);
+    if (permissions.canEdit) editable.add(task.id);
+    if (permissions.canComment) commentable.add(task.id);
   }
-  return editable;
+  return access;
 }
 
 // The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()
@@ -2384,6 +2513,9 @@ export type InboxItem = {
   approval: { id: string; status: TaskApproval["status"]; approverId: string } | null;
   // A form submitter's emailed reply (Comments and reply by email): who sent it (no actor).
   emailFrom: string | null;
+  // Task items: every number the task has in projects the viewer can read, in the stable order (Oct 29
+  // notes, 55b); taskTitle carries the first one in front of the name.
+  taskNumbers?: TaskNumber[];
 };
 
 export type { InboxTab } from "@/lib/inbox";
@@ -2635,11 +2767,13 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
 });
 
 async function labelInbox(items: InboxItem[]): Promise<InboxItem[]> {
-  const labels = await visibleRequestLabels(items.map((item) => item.taskId).filter((id): id is string => Boolean(id)));
-  if (labels.size === 0) return items;
+  const numbers = await visibleTaskNumbers(items.map((item) => item.taskId).filter((id): id is string => Boolean(id)));
+  if (numbers.size === 0) return items;
   return items.map((item) => {
-    const label = item.taskId ? labels.get(item.taskId) : undefined;
-    return label ? { ...item, taskTitle: displayTaskTitle(item.taskTitle, label) } : item;
+    const taskNumbers = item.taskId ? numbers.get(item.taskId) : undefined;
+    return taskNumbers?.length
+      ? { ...item, taskTitle: displayTaskTitle(item.taskTitle, taskNumbers[0].label), taskNumbers }
+      : item;
   });
 }
 
@@ -3183,14 +3317,22 @@ export const searchTasks = cache(async (query: string) => {
   const supabase = await createClient();
   const result = await supabase.rpc("search_tasks", { query, max_results: 50 });
   const found = rows(result, "search results");
-  const labels = await visibleRequestLabels(found.map((task) => task.id));
-  return found.map((task) => ({
-    ...task,
-    title: displayTaskTitle(task.title, labels.get(task.id) ?? null),
-    // The name and the number apart, for screens that draw the number as a badge (Oct 26 notes, batch 4).
-    bareTitle: bareTaskTitle(task.title, labels.get(task.id) ?? null),
-    requestLabel: labels.get(task.id) ?? null,
-  }));
+  // search_tasks names each task's first project the viewer can read (its home_project_* columns; Oct 29
+  // notes, 55b: there's no home project, the names are the database's); the numbers come from the same
+  // projects, first one in front.
+  const numbers = await visibleTaskNumbers(found.map((task) => task.id));
+  return found.map((task) => {
+    const taskNumbers = numbers.get(task.id) ?? [];
+    const label = taskNumbers[0]?.label ?? null;
+    return {
+      ...task,
+      title: displayTaskTitle(task.title, label),
+      // The name and the number apart, for screens that draw the number as a badge (Oct 26 notes, batch 4).
+      bareTitle: bareTaskTitle(task.title, label),
+      requestLabel: label,
+      taskNumbers,
+    };
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -3202,8 +3344,9 @@ export type TrashedTask = {
   title: string;
   deletedAt: string;
   deletedBy: string | null;
-  homeProjectId: string | null;
-  homeProjectName: string | null;
+  // The task's other projects the viewer can read (Oct 29 notes, 55b: no home project), in the order it
+  // was added to them; restoring brings it back there too.
+  otherProjectNames: string[];
   completedAt: string | null;
   // Subtasks trashed on their own (with their parent still active): the parent's title.
   parentTitle: string | null;
@@ -3218,7 +3361,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
   const trashed = rows(
     await supabase
       .from("tasks")
-      .select("id, title, deleted_at, completed_at, home_project_id, task_projects!inner(project_id)")
+      .select("id, title, deleted_at, completed_at, task_projects!inner(project_id)")
       .eq("task_projects.project_id", projectId)
       .is("task_projects.deleted_at", null)
       .not("deleted_at", "is", null)
@@ -3233,7 +3376,7 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
     await supabase
       .from("tasks")
       .select(
-        "id, title, deleted_at, completed_at, home_project_id, root_task_id, parent_task_id",
+        "id, title, deleted_at, completed_at, root_task_id, parent_task_id",
       )
       .not("root_task_id", "is", null)
       .not("deleted_at", "is", null)
@@ -3272,7 +3415,8 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
     .slice(0, TRASH_LIMIT);
   if (all.length === 0) return [];
 
-  const [stories, projects] = await Promise.all([
+  const topLevelIds = all.filter((t) => !t.parentTitle).map((t) => t.id);
+  const [stories, projects, otherMemberships] = await Promise.all([
     supabase
       .from("task_stories")
       .select("task_id, actor_id, created_at")
@@ -3283,19 +3427,34 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
       .eq("kind", "deleted")
       .order("created_at", { ascending: false }),
     listReadableProjects(),
+    // Their other active projects (RLS shows the memberships of projects the viewer can read).
+    topLevelIds.length
+      ? supabase
+          .from("task_projects")
+          .select("task_id, project_id, created_at")
+          .in("task_id", topLevelIds)
+          .neq("project_id", projectId)
+          .is("deleted_at", null)
+          .order("created_at")
+          .order("project_id")
+      : Promise.resolve({ data: [] as { task_id: string; project_id: string; created_at: string }[], error: null }),
   ]);
   const deletedBy = new Map<string, string | null>();
   for (const story of rows(stories, "deletions")) {
     if (!deletedBy.has(story.task_id)) deletedBy.set(story.task_id, story.actor_id);
   }
   const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
+  const others = new Map<string, string[]>();
+  for (const m of otherMemberships.error ? [] : (otherMemberships.data ?? [])) {
+    const name = projectName.get(m.project_id);
+    if (name) others.set(m.task_id, [...(others.get(m.task_id) ?? []), name]);
+  }
   return all.map((t) => ({
     id: t.id,
     title: t.title,
     deletedAt: t.deleted_at!,
     deletedBy: deletedBy.get(t.id) ?? null,
-    homeProjectId: t.home_project_id,
-    homeProjectName: t.home_project_id ? (projectName.get(t.home_project_id) ?? null) : null,
+    otherProjectNames: others.get(t.id) ?? [],
     completedAt: t.completed_at,
     parentTitle: t.parentTitle,
   }));
@@ -3705,6 +3864,62 @@ async function legacyRequestLabels(supabase: ServerClient, unique: string[]): Pr
     if (task.req_label && wrap !== undefined) labels.set(task.id, { text: task.req_label, wrap });
   }
   return labels;
+}
+
+// Oct 29 notes (batch 7, 55b): no home project. Every project of each task the viewer can read, in the
+// stable order (the order the task was added to them: task_projects.created_at, then project id), with
+// the number each one gives it — one invoker RPC (task_project_labels: RLS plus an explicit role check per
+// project, so a project the viewer can't read, or its number, never comes back). Private tasks (no
+// project) have no entry. Null when this database doesn't have the function yet.
+async function taskPlacesWith(supabase: ServerClient, ids: string[]): Promise<Map<string, TaskPlace[]> | null> {
+  const unique = [...new Set(ids.filter((id) => isUuid(id)))];
+  const places = new Map<string, TaskPlace[]>();
+  for (let i = 0; i < unique.length; i += 2000) {
+    const result = await supabase.rpc("task_project_labels", { task_ids: unique.slice(i, i + 2000) });
+    if (rpcMissing(result.error)) return null;
+    if (result.error) return places;
+    const map = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {};
+    for (const [taskId, value] of Object.entries(map)) {
+      const list = taskPlacesFrom(value);
+      if (list.length) places.set(taskId, list);
+    }
+  }
+  return places;
+}
+
+// The one helper behind every list outside a project (My tasks, Home, search, the palette, the Inbox, the
+// team Calendar, Waiting on me, blockers, profile pages): where each task is (links and labels use the
+// first place) and its numbers. A database without task_project_labels: no places, and each task's
+// home-project label as its only number (the release before this one).
+export async function visibleTaskPlaces(ids: string[]): Promise<Map<string, TaskPlace[]>> {
+  return (await taskPlacesWith(await createClient(), ids)) ?? new Map();
+}
+
+// The same, but null on a database without task_project_labels, so a caller can fall back to the
+// release before this one (each task's home-project label, and the project it already names).
+export async function visibleTaskPlacesOrNull(ids: string[]): Promise<Map<string, TaskPlace[]> | null> {
+  return taskPlacesWith(await createClient(), ids);
+}
+
+export async function visibleTaskNumbers(ids: string[]): Promise<Map<string, TaskNumber[]>> {
+  const supabase = await createClient();
+  const places = await taskPlacesWith(supabase, ids);
+  if (places) {
+    const numbers = new Map<string, TaskNumber[]>();
+    for (const [taskId, list] of places) {
+      const found = numbersOf(list);
+      if (found.length) numbers.set(taskId, found);
+    }
+    return numbers;
+  }
+  const labels = await requestLabelsWith(supabase, ids);
+  return new Map([...labels].map(([taskId, label]) => [taskId, [{ projectId: null, projectName: null, label }]] as const));
+}
+
+// The first number of each task the viewer can read (stable order), for places that show one number.
+export async function firstVisibleNumbers(ids: string[]): Promise<Map<string, RequestLabel>> {
+  const numbers = await visibleTaskNumbers(ids);
+  return new Map([...numbers].map(([taskId, list]) => [taskId, list[0].label] as const));
 }
 
 // Redacted Slack / webhook defaults (hosts + last 4 characters, never the URL or secret). Admin+ only:
@@ -4333,22 +4548,44 @@ export type PortfolioField = {
   fieldType: PortfolioFieldType;
   options: FieldOption[];
   sortOrder: number;
+  // Oct 29 notes, item 49: a number field's symbol; null = none (and before this release's migration).
+  numberPrefix?: string | null;
 };
 
 export const listPortfolioFields = cache(async (portfolioId: string): Promise<PortfolioField[]> => {
   const supabase = await createClient();
+  const toField = (f: { id: string; name: string; field_type: string; options: Json; sort_order: number; number_prefix?: string | null }) =>
+    isPortfolioFieldType(f.field_type)
+      ? [
+          {
+            id: f.id,
+            name: f.name,
+            fieldType: f.field_type,
+            options: parseOptions(f.options),
+            sortOrder: f.sort_order,
+            numberPrefix: f.number_prefix ?? null,
+          },
+        ]
+      : [];
   const result = await supabase
     .from("portfolio_fields")
-    .select("id, name, field_type, options, sort_order")
+    .select("id, name, field_type, options, sort_order, number_prefix")
     .eq("portfolio_id", portfolioId)
     .is("deleted_at", null)
     .order("sort_order")
     .order("created_at");
-  return rows(result, "portfolio fields").flatMap((f) =>
-    isPortfolioFieldType(f.field_type)
-      ? [{ id: f.id, name: f.name, fieldType: f.field_type, options: parseOptions(f.options), sortOrder: f.sort_order }]
-      : [],
-  );
+  if (isMissingColumn(result.error)) {
+    // Before 20261029010000_oct29_batch7_a.sql there is no symbol column.
+    const older = await supabase
+      .from("portfolio_fields")
+      .select("id, name, field_type, options, sort_order")
+      .eq("portfolio_id", portfolioId)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at");
+    return rows(older, "portfolio fields").flatMap(toField);
+  }
+  return rows(result, "portfolio fields").flatMap(toField);
 });
 
 // Values by project id, then field id. RLS leaves out projects the viewer can't read.
@@ -5795,7 +6032,7 @@ export async function listTeamCalendarTasks(
   // Tasks whose span (start date, else due date, through the due date) touches the visible weeks.
   const result = await supabase
     .from("task_projects")
-    .select("project_id, task:tasks!inner(id, title, start_on, due_on, completed_at, assignee_id, kind, deleted_at)")
+    .select("project_id, created_at, task:tasks!inner(id, title, start_on, due_on, completed_at, assignee_id, kind, deleted_at)")
     .in("project_id", [...byId.keys()])
     .is("deleted_at", null)
     .is("task.deleted_at", null)
@@ -5805,7 +6042,10 @@ export async function listTeamCalendarTasks(
     .limit(TEAM_CALENDAR_LIMIT);
   const tasks = new Map<string, TeamCalendarTask>();
   const list = rows(result, "team calendar");
-  for (const row of list) {
+  // A task in several of the team's projects is labelled with the first one it was added to (Oct 29
+  // notes, 55b: the stable rule).
+  const ordered = [...list].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.project_id.localeCompare(b.project_id));
+  for (const row of ordered) {
     const t = row.task;
     if (!t.due_on) continue;
     const project = byId.get(row.project_id);
@@ -5833,11 +6073,18 @@ export async function listTeamCalendarTasks(
   }
   // Oct 26 notes (batch 4): the number is drawn as a tiny badge after the name, so the bar keeps the
   // bare name (a label baked into an older title is taken off) and the label travels next to it.
-  const labels = await visibleRequestLabels([...tasks.keys()]);
+  // Oct 29 notes (55b): the bar's project's own number first, else the first number the viewer can read
+  // (stable order) — named with its own project (numberProjectName), so the badge never pairs one
+  // project's number with another's name — and the rest for "+N".
+  const numbers = await visibleTaskNumbers([...tasks.keys()]);
   for (const task of tasks.values()) {
-    const label = labels.get(task.id) ?? null;
-    task.requestLabel = label;
-    task.title = bareTaskTitle(task.title, label);
+    const taskNumbers = numbers.get(task.id) ?? [];
+    const ordered = numbersLedBy(taskNumbers, task.projectId);
+    const lead = ordered[0];
+    task.requestLabel = lead?.label ?? null;
+    task.taskNumbers = ordered;
+    task.numberProjectName = lead && lead.projectId && lead.projectId !== task.projectId ? lead.projectName : null;
+    task.title = bareTaskTitle(task.title, taskNumbers[0]?.label ?? null);
   }
   const sorted = [...tasks.values()].sort(
     (a, b) => (a.startOn ?? a.dueOn).localeCompare(b.startOn ?? b.dueOn) || a.dueOn.localeCompare(b.dueOn) || a.title.localeCompare(b.title),
@@ -6131,8 +6378,8 @@ export type PersonTask = {
   dueOn: string | null;
   completedAt: string | null;
   kind: string;
-  // The project to name: the home project when the viewer can read it, else another readable one;
-  // null for a private task.
+  // The project to name: the first one the task was added to that the viewer can read (Oct 29 notes,
+  // 55b: the stable rule); null for a private task.
   projectName: string | null;
   isSubtask: boolean;
 };
@@ -6171,7 +6418,7 @@ export type PersonProfile = {
   lastActivity: { at: string | null; signedInAt: string | null; scope: "workspace" | "visible" };
 };
 
-const PERSON_TASK_COLUMNS = "id, title, due_on, completed_at, kind, home_project_id, parent_task_id, root_task_id";
+const PERSON_TASK_COLUMNS = "id, title, due_on, completed_at, kind, parent_task_id, root_task_id";
 
 export const getPersonProfile = cache(async (profileId: string): Promise<PersonProfile | null> => {
   if (!isUuid(profileId)) return null;
@@ -6185,7 +6432,7 @@ export const getPersonProfile = cache(async (profileId: string): Promise<PersonP
   if (!profile) return null;
   const email = profile.email.toLowerCase();
   const self = profileId === user.id;
-  const [allowed, admin, viewerIsAdmin, teamRows, memberRows, openResult, doneResult, stories, comments, readable] =
+  const [allowed, admin, viewerIsAdmin, teamRows, memberRows, openResult, doneResult, stories, comments] =
     await Promise.all([
       supabase.from("allowed_emails").select("removed_at").eq("email", email).maybeSingle(),
       supabase.from("workspace_admins").select("id").eq("profile_id", profileId).is("deleted_at", null).limit(1),
@@ -6234,35 +6481,18 @@ export const getPersonProfile = cache(async (profileId: string): Promise<PersonP
         .is("task.deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(PROFILE_ACTIVITY_LIMIT),
-      listReadableProjects(),
     ]);
 
-  const projectNames = new Map(readable.map((p) => [p.id, p.name] as const));
   const openRows = rows(openResult, "their open tasks");
   const doneRows = rows(doneResult, "their completed tasks");
-  // Tasks whose home project the viewer can't open (multi-homed into one they can): name a readable one.
-  const unnamed = [...openRows, ...doneRows]
-    .filter((t) => t.home_project_id && !projectNames.has(t.home_project_id))
-    .map((t) => t.root_task_id ?? t.id);
-  const otherProject = new Map<string, string>();
-  if (unnamed.length) {
-    for (const m of rows(
-      await supabase.from("task_projects").select("task_id, project_id").in("task_id", [...new Set(unnamed)]).is("deleted_at", null),
-      "task projects",
-    )) {
-      const name = projectNames.get(m.project_id);
-      if (name && !otherProject.has(m.task_id)) otherProject.set(m.task_id, name);
-    }
-  }
+  const places = await visibleTaskPlaces([...openRows, ...doneRows].map((t) => t.id));
   const toTask = (t: (typeof openRows)[number]): PersonTask => ({
     id: t.id,
     title: t.title,
     dueOn: t.due_on,
     completedAt: t.completed_at,
     kind: t.kind,
-    projectName: t.home_project_id
-      ? (projectNames.get(t.home_project_id) ?? otherProject.get(t.root_task_id ?? t.id) ?? null)
-      : null,
+    projectName: places.get(t.id)?.[0]?.projectName ?? null,
     isSubtask: t.parent_task_id !== null,
   });
 
@@ -6665,11 +6895,7 @@ async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask
   const [blocked, children, states, roots] = await Promise.all([
     openBlockerCounts(supabase, ids),
     supabase.from("tasks").select("parent_task_id, completed_at").in("parent_task_id", ids).is("deleted_at", null),
-    Promise.all(
-      approvalIds.slice(0, 200).map((taskId) =>
-        supabase.rpc("task_approval_state", { target_task: taskId }).then((r) => [taskId, r.data] as const),
-      ),
-    ),
+    approvalRowStates(supabase, approvalIds),
     supabase.from("tasks").select("id, root_task_id").in("id", ids).not("root_task_id", "is", null),
   ]);
   for (const [taskId, count] of blocked) extras.set(taskId, { ...extras.get(taskId), blockedBy: count });
@@ -6683,15 +6909,53 @@ async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask
       subtaskDoneCount: (prev.subtaskDoneCount ?? 0) + (c.completed_at ? 1 : 0),
     });
   }
-  for (const [taskId, state] of states) {
-    const value = state && typeof state === "object" && !Array.isArray(state) ? (state as Record<string, Json>) : {};
-    extras.set(taskId, {
-      ...extras.get(taskId),
-      approvalStatus: parseApprovalTaskStatus(value.status) ?? "not_sent",
-      approvalPaused: value.paused === true,
-    });
-  }
+  for (const [taskId, state] of states) extras.set(taskId, { ...extras.get(taskId), ...state });
   return extras;
+}
+
+// Oct 29 notes (batch 7, item 52): what an approval task's complete control needs to know — the latest
+// round's status, paused, whether it waits on the viewer, and whether the viewer approves it. One call
+// (task_approval_states); a database without it asks task_approval_state per task (at most 200), and an
+// older one leaves the viewer's part unknown.
+type ApprovalRowState = Pick<SubtaskItem, "approvalStatus" | "approvalPaused" | "approvalWaitingOnMe" | "approvalIsApprover">;
+
+function approvalRowState(value: Json | undefined): ApprovalRowState {
+  const state = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, Json>) : {};
+  return {
+    approvalStatus: parseApprovalTaskStatus(state.status) ?? "not_sent",
+    approvalPaused: state.paused === true,
+    approvalWaitingOnMe: state.waiting_on_me === true,
+    approvalIsApprover: typeof state.is_approver === "boolean" ? state.is_approver : undefined,
+  };
+}
+
+async function approvalRowStates(supabase: ServerClient, taskIds: string[]): Promise<Map<string, ApprovalRowState>> {
+  const states = new Map<string, ApprovalRowState>();
+  const ids = [...new Set(taskIds)];
+  if (ids.length === 0) return states;
+  for (let i = 0; i < ids.length; i += 500) {
+    const result = await supabase.rpc("task_approval_states", { task_ids: ids.slice(i, i + 500) });
+    if (rpcMissing(result.error)) {
+      const each = await Promise.all(
+        ids.slice(0, 200).map((taskId) =>
+          supabase.rpc("task_approval_state", { target_task: taskId }).then((r) => [taskId, r.data] as const),
+        ),
+      );
+      for (const [taskId, value] of each) states.set(taskId, approvalRowState(value ?? undefined));
+      return states;
+    }
+    if (result.error || !result.data || typeof result.data !== "object" || Array.isArray(result.data)) return states;
+    for (const [taskId, value] of Object.entries(result.data)) states.set(taskId, approvalRowState(value));
+  }
+  return states;
+}
+
+// Approval subtasks get their row state (other kinds are returned as they are).
+async function withSubtaskApprovals(supabase: ServerClient, items: SubtaskItem[]): Promise<SubtaskItem[]> {
+  const approvalIds = items.filter((item) => item.kind === "approval" && !item.completedAt).map((item) => item.id);
+  if (approvalIds.length === 0) return items;
+  const states = await approvalRowStates(supabase, approvalIds);
+  return items.map((item) => (states.has(item.id) ? { ...item, ...states.get(item.id) } : item));
 }
 
 // List / My tasks rows the viewer expanded (profile_preferences.expanded_task_ids; newest first). Empty on
@@ -6718,6 +6982,9 @@ export type AwaitingApproval = {
   taskId: string;
   title: string;
   requestLabel: RequestLabel | null;
+  // Every number the viewer can read, stable order (Oct 29 notes, 55b); requestLabel is the first.
+  taskNumbers?: TaskNumber[];
+  // The first project the task was added to that the viewer can read (the stable rule).
   projectId: string | null;
   projectName: string | null;
   // The approval due date (approval tasks), else the task's due date.
@@ -6742,33 +7009,35 @@ export const listAwaitingMyApproval = cache(async (): Promise<AwaitingApproval[]
   if (requests.error || !requests.data?.length) return [];
   const taskIds = [...new Set(requests.data.map((r) => r.task_id))];
   const roundIds = [...new Set(requests.data.map((r) => r.round_id).filter((r): r is string => Boolean(r)))];
-  const [tasks, rounds, labels] = await Promise.all([
-    supabase.from("tasks").select("id, title, kind, due_on, home_project_id, completed_at").in("id", taskIds).is("deleted_at", null),
+  const [tasks, rounds, places, access] = await Promise.all([
+    supabase.from("tasks").select("id, title, kind, due_on, completed_at").in("id", taskIds).is("deleted_at", null),
     roundIds.length
       ? supabase.from("approval_rounds").select("id, status, due_on, round_number").in("id", roundIds)
       : Promise.resolve({ data: [] as { id: string; status: string; due_on: string | null; round_number: number }[], error: null }),
-    visibleRequestLabels(taskIds),
+    visibleTaskPlaces(taskIds),
+    // decide_approval needs Commenter+: an approver lowered to Viewer isn't waited on (Oct 29 notes, batch 7).
+    taskAccessSets(taskIds),
   ]);
   const taskById = new Map((tasks.data ?? []).map((t) => [t.id, t] as const));
   const roundById = new Map((rounds.data ?? []).map((r) => [r.id, r] as const));
-  const projectIds = [...new Set((tasks.data ?? []).map((t) => t.home_project_id).filter((p): p is string => Boolean(p)))];
-  const projects = projectIds.length ? ((await supabase.from("projects").select("id, name").in("id", projectIds)).data ?? []) : [];
-  const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
   const seen = new Set<string>();
   const out: AwaitingApproval[] = [];
   for (const r of requests.data) {
     const task = taskById.get(r.task_id);
-    if (!task || seen.has(task.id)) continue;
+    if (!task || seen.has(task.id) || !access.commentable.has(task.id)) continue;
     const round = r.round_id ? roundById.get(r.round_id) : null;
     if (r.round_id && round?.status !== "pending") continue;
     seen.add(task.id);
+    const place = places.get(task.id) ?? [];
+    const taskNumbers = numbersOf(place);
     out.push({
       requestId: r.id,
       taskId: task.id,
       title: task.title,
-      requestLabel: labels.get(task.id) ?? null,
-      projectId: task.home_project_id,
-      projectName: task.home_project_id ? (projectName.get(task.home_project_id) ?? null) : null,
+      requestLabel: taskNumbers[0]?.label ?? null,
+      taskNumbers,
+      projectId: place[0]?.projectId ?? null,
+      projectName: place[0]?.projectName ?? null,
       dueOn: round?.due_on ?? task.due_on,
       sentAt: r.created_at,
       roundNumber: round?.round_number ?? null,

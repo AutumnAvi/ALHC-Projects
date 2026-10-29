@@ -25,7 +25,13 @@ export async function loadPortfolioRuleContext(portfolioId: string): Promise<Por
   ]);
   return {
     portfolioName: portfolio?.name ?? "",
-    fields: fields.map((f) => ({ id: f.id, name: f.name, fieldType: f.fieldType, options: f.options.map((o) => ({ id: o.id, name: o.name, color: o.color })) })),
+    fields: fields.map((f) => ({
+      id: f.id,
+      name: f.name,
+      fieldType: f.fieldType,
+      options: f.options.map((o) => ({ id: o.id, name: o.name, color: o.color })),
+      numberPrefix: f.numberPrefix ?? null,
+    })),
     people: profiles.map((p) => ({ id: p.id, name: p.full_name || p.email })),
     members: members.map((m) => ({ id: m.profileId, name: m.fullName || m.email })),
     otherPortfolios: others,

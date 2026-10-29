@@ -25,7 +25,7 @@ import {
   type Profile,
   type ProjectTask,
 } from "@/lib/data";
-import { fieldChips, type FieldDef } from "@/lib/fields";
+import { fieldChips, fieldNameWithSymbol, type FieldDef } from "@/lib/fields";
 import { PROJECT_STATUS_LABELS, isProjectStatus, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
 import { isSeriesInterval, reportFiltersJson, seriesLabel, type ReportFilters } from "@/lib/reports";
 import type { Json } from "@/lib/supabase/database.types";
@@ -136,6 +136,7 @@ async function taskKeys(supabase: Supabase, projectId: string): Promise<ProjectT
         startOn: m.task.start_on,
         dueOn: m.task.due_on,
         assigneeId: m.task.assignee_id,
+        // The database's internal pointer (not in the CSV; Oct 29 notes, 55b: never shown).
         homeProjectId: m.task.home_project_id ?? projectId,
         createdAt: m.task.created_at,
         sectionId: m.section_id,
@@ -271,7 +272,9 @@ export async function exportList(projectId: string, viewId: string | null, draft
     } else {
       const field = fields.find((f) => f.id === refFieldId(column));
       if (!field) continue;
-      header.push(field.name);
+      // A number field's symbol goes in the header ("Budget ($)"); its cells stay raw numbers so
+      // spreadsheets can add them up (item 49).
+      header.push(fieldNameWithSymbol(field));
       if (!field.boundToSections) columnFieldIds.push(field.id);
       cells.push((t) =>
         fieldCell(field, t.fieldValues[field.id], personName, t.sectionId ? (sectionNames.get(t.sectionId) ?? null) : null),
@@ -336,7 +339,9 @@ export async function exportList(projectId: string, viewId: string | null, draft
   return { title: `${project.name} ${view?.name ?? "List"}`, header, rows: rows() };
 }
 
-// Search: the same results as the search page (search_tasks under RLS, up to 50).
+// Search: the same results as the search page (search_tasks under RLS, up to 50). Project = the first one
+// the task was added to that the viewer can read (search_tasks' home_project_name column; Oct 29 notes,
+// 55b: there's no home project); the name carries that task's first number.
 export async function exportSearch(query: string): Promise<ExportResult> {
   const trimmed = query.trim();
   const header = ["Task", "Project", "Completed", "Due date", "Task ID"];

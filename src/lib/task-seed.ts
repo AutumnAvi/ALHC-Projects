@@ -1,6 +1,7 @@
 // What a list row, card, or bar already knows about a task (Oct 19 notes: opening a task must feel
 // instant). The pane draws these at once, read-only, while the full detail loads; nothing here is ever
 // written back. Every field is optional except the id and the name.
+import { rowCompleteMode, type CompleteMode } from "@/lib/approval-complete";
 import type { MyTask, ProjectTask, SubtaskItem } from "@/lib/data";
 import { fieldChips, type FieldDef, type OptionColor } from "@/lib/fields";
 import type { RequestLabel } from "@/lib/request-numbers";
@@ -28,6 +29,9 @@ export type TaskSeed = {
   parentTitle?: string | null;
   // false: the viewer can't edit it, so the preview draws no "Mark complete" (unknown = drawn).
   canEdit?: boolean;
+  // What the complete button is for the viewer (Oct 29 notes, batch 7: an approval task's is "Ready for
+  // approval" for everyone but its approvers). Missing = Mark complete.
+  completeMode?: CompleteMode;
 };
 
 // Lookups a view already has (people, tags, fields, sections, the project's name).
@@ -86,6 +90,7 @@ export function seedFromProjectTask(task: ProjectTask, lookups: SeedLookups = {}
     subtaskDoneCount: task.subtaskDoneCount,
     commentCount: task.commentCount,
     canEdit: lookups.canEdit,
+    completeMode: rowCompleteMode(task),
   };
 }
 
@@ -103,6 +108,7 @@ export function seedFromMyTask(task: MyTask, viewer?: { id: string; name: string
     projectName: task.projectName ?? (task.projectId ? undefined : "Private"),
     parentTitle: task.parentTitle,
     canEdit: task.canEdit,
+    completeMode: rowCompleteMode(task),
   };
 }
 
@@ -126,6 +132,7 @@ export function seedFromSubtask(
     subtaskDoneCount: subtask.subtaskDoneCount,
     parentTitle: parent.title,
     canEdit: lookups.canEdit,
+    completeMode: rowCompleteMode(subtask),
   };
 }
 

@@ -457,7 +457,7 @@ function RulesView({ base, back, rules }: { base: string; back: string; rules: C
 
 function FieldsView({ projectId, base, summary }: { projectId: string; base: string; summary: CustomizeSummary }) {
   const canEdit = useProjectPermissions().canEdit;
-  const { batch4 } = useProjectPage();
+  const { batch4, fieldSharing } = useProjectPage();
   const [adding, setAdding] = useState(false);
   return (
     <div>
@@ -470,7 +470,7 @@ function FieldsView({ projectId, base, summary }: { projectId: string; base: str
       ) : null}
       {summary.fields.length === 0 ? (
         <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">
-          No fields yet. Add one like Priority, Channel, or Reviewer, or copy one from the workspace field library.
+          No fields yet. Add one like Priority, Channel, or Reviewer, or add a shared one from the workspace field library.
         </p>
       ) : (
         <FieldList
@@ -479,6 +479,7 @@ function FieldsView({ projectId, base, summary }: { projectId: string; base: str
           sectionNames={summary.sectionNames}
           canEdit={canEdit}
           batch4={batch4}
+          sharing={fieldSharing}
           dense
         />
       )}
@@ -489,7 +490,7 @@ function FieldsView({ projectId, base, summary }: { projectId: string; base: str
           field={null}
           sectionNames={summary.sectionNames}
           batch4={batch4}
-          existingFieldIds={summary.fields.map((f) => f.id)}
+          existingFields={summary.fields}
           onClose={() => setAdding(false)}
         />
       ) : null}

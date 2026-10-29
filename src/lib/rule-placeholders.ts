@@ -4,6 +4,8 @@
 // live preview with sample values. Keys are case-insensitive; unknown ones render empty. The original
 // single-brace tokens ({task}, {assignee}, …) keep working, in the same single pass.
 
+import { formatNumberValue } from "@/lib/fields";
+
 export type PlaceholderDef = {
   key: string;
   label: string;
@@ -139,7 +141,7 @@ export function unknownPlaceholders(template: string, known: ReadonlySet<string>
 // Sample values for the preview: the fixed list's samples, plus one per custom field and form question.
 export function samplePlaceholderValues(input: {
   projectName?: string;
-  fields?: { name: string; fieldType: string; options?: { name: string }[] }[];
+  fields?: { name: string; fieldType: string; options?: { name: string }[]; numberPrefix?: string | null }[];
   questions?: { label: string }[];
 }): PlaceholderValues {
   const values: PlaceholderValues = Object.fromEntries(PLACEHOLDERS.map((p) => [p.key, p.sample]));
@@ -147,7 +149,9 @@ export function samplePlaceholderValues(input: {
   for (const f of input.fields ?? []) {
     values[`field.${f.name.trim().toLowerCase()}`] =
       f.options?.[0]?.name ??
-      { number: "1500", date: "2026-10-24", boolean: "Yes", people: "Dana Diaz" }[f.fieldType] ??
+      // A number reads as the rule will write it (task_field_text: grouped, with the field's symbol).
+      (f.fieldType === "number" ? formatNumberValue(1500, f.numberPrefix) : undefined) ??
+      { date: "2026-10-24", boolean: "Yes", people: "Dana Diaz" }[f.fieldType] ??
       `Sample ${f.name}`;
   }
   for (const q of input.questions ?? []) values[`form.field.${q.label.trim().toLowerCase()}`] = `Sample answer to “${q.label}”`;

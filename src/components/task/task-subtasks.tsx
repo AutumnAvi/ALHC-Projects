@@ -3,9 +3,9 @@
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
-import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
+import { RowCompleteControl } from "./row-complete-control";
 import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask } from "@/lib/actions";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile, SubtaskItem, TaskDetail } from "@/lib/data";
@@ -70,12 +70,13 @@ export function TaskSubtasks({
 }) {
   const [, run] = useServerAction();
   // What a subtask row knows, drawn at once when it's opened (no navigation; Oct 19 notes).
-  const homeProject = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+  // The task's first project the viewer can read (stable order; Oct 29 notes, 55b).
+  const firstProject = task.memberships[0];
   const subtaskSeed = (subtask: SubtaskItem) => {
     const assignee = subtask.assigneeId ? profiles.find((p) => p.id === subtask.assigneeId) : undefined;
     return seedFromSubtask(
       subtask,
-      { title: task.title, projectName: homeProject?.projectName ?? (task.isPrivate ? "Private" : null) },
+      { title: task.title, projectName: firstProject?.projectName ?? (task.isPrivate ? "Private" : null) },
       { personName: () => (assignee ? displayName(assignee) : null), canEdit: taskPermissions(task).canEdit },
     );
   };
@@ -136,7 +137,7 @@ export function TaskSubtasks({
         moves
           .filter((m) => shown.has(m.taskId))
           .forEach((m) => change({ type: "patch", id: m.taskId, patch: { startOn: m.startOn, dueOn: m.dueOn } })),
-      projectId: task.homeProjectId,
+      projectId: task.memberships[0]?.projectId ?? null,
     });
   }
 
@@ -254,12 +255,14 @@ export function TaskSubtasks({
                     <ShieldCheck className="size-4" aria-label="Approval" />
                   </span>
                 ) : (
-                  <CompleteToggle
+                  // Approval subtasks: only their approvers tick them (Oct 29 notes, batch 7).
+                  <RowCompleteControl
                     size="sm"
-                    kind={subtask.kind}
+                    task={subtask}
                     completed={completed}
                     readOnly={!canEdit}
-                    label={kindToggleLabel(subtask.kind, subtask.title, completed)}
+                    assignedToMe={Boolean(me) && subtask.assigneeId === me && taskPermissions(task).canComment}
+                    seed={() => subtaskSeed(subtask)}
                     onToggle={() =>
                       run(
                         () => updateSubtask(subtask.id, { completed: !completed }),
@@ -452,7 +455,7 @@ function SubtaskAssignee({
   if (!canEdit) return name ? <span className="shrink-0">{face}<span className="sr-only">Assigned to {name}</span></span> : null;
   return (
     <PersonPicker
-      label={`${subtask.kind === "approval" ? "Approver" : "Assignee"} of ${subtask.title}: ${name ?? "nobody"}. Change`}
+      label={`Assignee of ${subtask.title}: ${name ?? "nobody"}. Change`}
       tooltip={name ?? "Assign"}
       align="end"
       people={people}

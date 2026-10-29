@@ -11,6 +11,7 @@ import {
   listWorkloadCapacities,
   projectWorkload,
 } from "@/lib/data";
+import { fieldNameWithSymbol, numberPrefixOf } from "@/lib/fields";
 import { hasRole } from "@/lib/roles";
 
 export async function generateMetadata({ params }: PageProps<"/projects/[projectId]/workload">): Promise<Metadata> {
@@ -49,7 +50,10 @@ export default async function ProjectWorkloadPage({ params, searchParams }: Page
         )}
         tasks={tasks}
         capacities={capacities}
-        measures={[{ value: "", label: "Task count" }, ...fields.map((f) => ({ value: f.id, label: f.name }))]}
+        measures={[
+          { value: "", label: "Task count" },
+          ...fields.map((f) => ({ value: f.id, label: fieldNameWithSymbol(f), symbol: numberPrefixOf(f) })),
+        ]}
         measure={measure}
         canEditCapacity={hasRole(role, "editor")}
       />

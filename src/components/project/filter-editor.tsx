@@ -6,7 +6,8 @@ import { displayName } from "@/components/avatar";
 import { SmartPicker } from "@/components/smart-picker";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile, Section } from "@/lib/data";
-import type { FieldDef } from "@/lib/fields";
+import { NumberInput } from "@/components/number-input";
+import { formatNumberValue, numberPrefixOf, type FieldDef } from "@/lib/fields";
 import { TagChip } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
 import { APPROVAL_FILTER_KEYS, APPROVAL_FILTER_LABELS, type ApprovalFilterKey } from "@/lib/task-kinds";
@@ -80,6 +81,9 @@ function fieldFilterLabel(filter: FieldFilter, field: FieldDef, context: FilterC
   if (filter.op === "not_empty") return `${field.name} is set`;
   if (filter.op === "equals") {
     if (field.fieldType === "boolean") return `${field.name}: ${filter.value === false ? "unchecked" : "checked"}`;
+    if (field.fieldType === "number" && typeof filter.value === "number") {
+      return `${field.name} = ${formatNumberValue(filter.value, numberPrefixOf(field))}`;
+    }
     return `${field.name} = ${String(filter.value)}`;
   }
   const names = (filter.values ?? []).map((v) => {
@@ -223,10 +227,13 @@ function Check({ checked, onChange, children }: { checked: boolean; onChange: ()
 function LazyInput({
   value,
   onCommit,
+  symbol,
   ...props
-}: Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
+}: Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "prefix"> & {
   value: string;
   onCommit: (value: string) => void;
+  // A number field's symbol (item 49): a number box with the symbol inside.
+  symbol?: string | null;
 }) {
   const [draft, setDraft] = useState(value);
   const [synced, setSynced] = useState(value);
@@ -234,21 +241,22 @@ function LazyInput({
     setSynced(value);
     setDraft(value);
   }
-  return (
-    <input
-      {...props}
-      value={draft}
-      onChange={(e) => setDraft(e.currentTarget.value)}
-      onBlur={() => draft !== value && onCommit(draft)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          if (draft !== value) onCommit(draft);
-        }
-      }}
-      className={inputClass}
-    />
-  );
+  const { type, ...rest } = props;
+  const box = {
+    ...rest,
+    value: draft,
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setDraft(e.currentTarget.value),
+    onBlur: () => draft !== value && onCommit(draft),
+    onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (draft !== value) onCommit(draft);
+      }
+    },
+    className: inputClass,
+  };
+  if (type === "number" && symbol) return <NumberInput {...box} symbol={symbol} wrapperClassName="w-full" />;
+  return <input type={type} {...box} />;
 }
 
 export function FilterEditor({
@@ -611,6 +619,7 @@ function FieldFilterRow({
         <div className="mt-1.5">
           <LazyInput
             type={field.fieldType === "number" ? "number" : field.fieldType === "date" ? "date" : "text"}
+            symbol={numberPrefixOf(field)}
             aria-label={`${field.name} value`}
             value={filter.value === undefined ? "" : String(filter.value)}
             onCommit={(value) => {

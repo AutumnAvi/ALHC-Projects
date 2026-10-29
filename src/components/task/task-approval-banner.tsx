@@ -1,12 +1,14 @@
 "use client";
 
-import { useId, useOptimistic, useState } from "react";
-import { CalendarDays, Check, ChevronRight, Clock, History, Paperclip, Send, ThumbsUp, UserRound, Users } from "lucide-react";
+import { useId, useOptimistic, useRef, useState } from "react";
+import { CalendarDays, Check, ChevronDown, ChevronRight, Clock, History, Lock, Paperclip, Send, ThumbsUp, UserRound, Users } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
 import { ApprovalStatusBadge } from "@/components/project/task-meta";
 import { SmartPicker } from "@/components/smart-picker";
+import { useApprovalActionListener } from "./approval-action";
+import { setApprovalDetailsOpen, useApprovalDetailsOpen } from "./pane-size";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
@@ -16,6 +18,7 @@ import {
   setTaskApprovers,
   withdrawApproval,
 } from "@/lib/actions";
+import { cantDecideMessage, cantSendMessage } from "@/lib/approval-complete";
 import type { ApprovalRound, Profile, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/data";
 import { formatDueDate, useToday } from "@/lib/dates";
 import { taskPermissions } from "@/lib/permissions";
@@ -116,14 +119,46 @@ export function ApprovalTaskBanner({
   profiles: Profile[];
   memberId: string;
 }) {
+  const info = task.approval;
+  if (!info) {
+    return (
+      <section aria-label="Approval" className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/70 px-3 py-2.5">
+        <p className="flex items-center gap-2 text-sm text-zinc-700">
+          <ThumbsUp className="size-4 shrink-0 text-zinc-500" aria-hidden />
+          Approvals need this release’s database update.
+        </p>
+      </section>
+    );
+  }
+  return <ApprovalPanel task={task} info={info} profiles={profiles} memberId={memberId} />;
+}
+
+// Oct 29 notes (batch 7, item 52): one slim row — the approvers (each locked in), the status, and what the
+// viewer can do now — with everything else (how they decide, the approval due date, what's being
+// approved, history, changing approvers) behind Details, open or closed as this browser last left it.
+function ApprovalPanel({
+  task,
+  info,
+  profiles,
+  memberId,
+}: {
+  task: TaskDetail;
+  info: TaskApprovalInfo;
+  profiles: Profile[];
+  memberId: string;
+}) {
   const [pending, run] = useServerAction();
   const notify = useNotify();
   const confirm = useConfirm();
   const today = useToday();
+  const detailsId = useId();
+  const sectionRef = useRef<HTMLElement>(null);
   const [sending, setSending] = useState(false);
-  const info = task.approval;
+  // The decision the approver started (Approve / Request changes / Reject): its note step shows under the row.
+  const [decision, setDecision] = useState<{ choice: Decision; nonce: number } | null>(null);
+  const detailsOpen = useApprovalDetailsOpen();
   const [settings, patchSettings] = useOptimistic<Settings, Partial<Settings>>(
-    { approverIds: info?.approverIds ?? [], mode: info?.mode ?? "any", dueOn: info?.dueOn ?? null },
+    { approverIds: info.approverIds, mode: info.mode, dueOn: info.dueOn },
     (current, patch) => ({ ...current, ...patch }),
   );
 
@@ -136,17 +171,6 @@ export function ApprovalTaskBanner({
     return p ? displayName(p) : "Someone";
   };
   const assigneeName = task.assigneeId ? nameOf(task.assigneeId) : "the assignee";
-
-  if (!info) {
-    return (
-      <section aria-label="Approval" className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/70 px-3 py-2.5">
-        <p className="flex items-center gap-2 text-sm text-zinc-700">
-          <ThumbsUp className="size-4 shrink-0 text-zinc-500" aria-hidden />
-          Approvals need this release’s database update.
-        </p>
-      </section>
-    );
-  }
 
   const status = info.status;
   const paused = info.paused;
@@ -163,6 +187,12 @@ export function ApprovalTaskBanner({
     ? (latest?.requests.find((r) => r.approverId === memberId && r.status === "pending") ?? null)
     : null;
   const canDecide = Boolean(myRequest) && perms.canComment;
+  // Approve from a row that can't be decided here: still asked but below Commenter now (e.g. lowered to
+  // Viewer; decide_approval refuses), or no longer asked.
+  const decideRefusal = cantDecideMessage(Boolean(myRequest));
+  // Ready for approval from someone who can't send it: the assignee below Commenter (approval_can_act) is
+  // told it's their role, never "Only you or an Editor…".
+  const sendRefusal = cantSendMessage(task.assigneeId === memberId, assigneeName);
   const eligible = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter") || settings.approverIds.includes(p.id));
   const approvers = settings.approverIds.map((id) => ({ id, profile: profilesById.get(id) ?? null }));
   const approverNames = approvers.map((a) => nameOf(a.id));
@@ -170,6 +200,32 @@ export function ApprovalTaskBanner({
     canAct &&
     !completed &&
     (status === "not_sent" || ((status === "changes_requested" || status === "rejected") && !paused) || status === "approved");
+
+  function setDetails(open: boolean) {
+    setApprovalDetailsOpen(open);
+  }
+
+  // A row's (or the pane header's) "Ready for approval" / "Approve" lands here (approval-action.ts).
+  useApprovalActionListener(task.id, (action) => {
+    sectionRef.current?.scrollIntoView?.({ block: "nearest" });
+    if (action === "decide") {
+      if (canDecide) setDecision((current) => ({ choice: "approved", nonce: (current?.nonce ?? 0) + 1 }));
+      else notify(decideRefusal);
+      return;
+    }
+    if (canSend && settings.approverIds.length > 0) {
+      setSending(true);
+    } else if (paused) {
+      notify(`Mark the ${status === "rejected" ? "rejection" : "feedback"} received first, then send it again`);
+    } else if (settings.approverIds.length === 0) {
+      setDetails(true);
+      notify(canChangeApprovers ? "Choose who approves this first" : "Nobody approves this yet. Ask an Editor to choose the approvers.");
+    } else if (roundOpen) {
+      notify("It’s already waiting for approval");
+    } else if (!canAct) {
+      notify(sendRefusal);
+    }
+  });
 
   function save(patch: Partial<Settings>) {
     const next = { ...settings, ...patch };
@@ -190,7 +246,7 @@ export function ApprovalTaskBanner({
     save({ approverIds: next });
   }
 
-  // The headline in plain words.
+  // The headline in plain words (the status pill's tooltip, and the first line of Details).
   let headline: string;
   const decider = latest?.decidedBy ?? null;
   if (status === "not_sent") {
@@ -224,27 +280,168 @@ export function ApprovalTaskBanner({
       : null;
   const approvalNotes = latest?.status === "approved" ? latest.requests.filter((r) => r.status === "approved" && r.decisionNote) : [];
   const dueOverdue = Boolean(roundOpen && settings.dueOn && today && settings.dueOn < today);
+  const decide = (choice: Decision) => setDecision({ choice, nonce: Date.now() });
+  // Choosing approvers (Editors+; Owners / Admins while a round is pending): in Details, or right in the
+  // row while nobody approves it yet.
+  const approverPicker = canChangeApprovers ? (
+    <Popover
+      label={roundOpen ? "Reassign approvers" : "Choose approvers"}
+      panelClassName="w-72 p-0"
+      buttonClassName="inline-flex h-6 items-center gap-1 rounded-full border border-dashed border-zinc-300 px-2 text-xs text-zinc-600 hover:border-zinc-400 hover:text-zinc-900 aria-expanded:border-zinc-400"
+      button={
+        <>
+          <Users className="size-3.5" aria-hidden />
+          {roundOpen ? "Reassign" : approvers.length ? "Change" : "Add approver"}
+        </>
+      }
+    >
+      {() => (
+        <PeopleList
+          label="Approvers"
+          people={eligible}
+          selected={settings.approverIds}
+          emptyNote="Approvers need at least Commenter access to this task’s project."
+          footer={
+            <p className="px-2.5 py-1.5 text-2xs text-zinc-500">
+              Ticked people approve this task. Pick someone again to remove them.
+              {roundOpen ? " New approvers are asked right away." : ""}
+            </p>
+          }
+          onPick={toggleApprover}
+        />
+      )}
+    </Popover>
+  ) : null;
+  const small = "h-7 px-2 text-xs";
 
   return (
     <section
+      ref={sectionRef}
       aria-label="Approval"
-      className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/70 px-3 py-2.5"
+      className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/70 px-3 py-2"
       data-approval-status={status}
       data-approval-paused={paused ? "true" : undefined}
     >
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5" data-approval-row="">
         <ThumbsUp className="size-4 shrink-0 text-zinc-500" aria-hidden />
-        <h3 className="text-sm font-semibold text-zinc-900">Approval</h3>
-        <ApprovalStatusBadge status={status} paused={paused} />
-        {latest && status !== "not_sent" ? <span className="text-xs text-zinc-500">Round {latest.number}</span> : null}
+        <span className="text-xs font-medium text-zinc-500">{approvers.length === 1 ? "Approver" : "Approvers"}</span>
+        {approvers.length === 0 ? <span className="text-sm text-zinc-500">No approver yet</span> : null}
+        {approvers.length === 0 ? approverPicker : null}
+        {approvers.map(({ id, profile }) => {
+          const request = roundOpen ? latest?.requests.find((r) => r.approverId === id && r.status !== "cancelled") : undefined;
+          const name = profile ? displayName(profile) : "Someone";
+          return (
+            <span
+              key={id}
+              data-approver={id}
+              data-tooltip={`Approver (locked in): ${name}`}
+              className="inline-flex max-w-full items-center gap-1 rounded-full border border-zinc-200 bg-white py-0.5 pr-2 pl-0.5 text-xs text-zinc-800"
+            >
+              <Avatar name={name} src={profile?.avatar_url} profileId={id} />
+              <span className="truncate">{id === memberId ? `${name} (you)` : name}</span>
+              {request?.status === "approved" ? (
+                <Check className="size-3.5 text-green-600" aria-label="Approved" />
+              ) : request?.status === "pending" ? (
+                <Clock className="size-3.5 text-amber-600" aria-label="Waiting" />
+              ) : null}
+              <Lock className="size-3 text-zinc-400" aria-label="Locked in as an approver" data-approver-lock="" />
+            </span>
+          );
+        })}
+        <span data-tooltip={headline} className="inline-flex">
+          <ApprovalStatusBadge status={status} paused={paused} />
+          {/* The tooltip is pointer-only; screen readers get the same words while Details is closed. */}
+          {detailsOpen ? null : (
+            <span className="sr-only" data-approval-headline-sr="">
+              {headline}
+            </span>
+          )}
+        </span>
+        {latest && status !== "not_sent" ? <span className="text-2xs text-zinc-500">Round {latest.number}</span> : null}
+
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {canDecide && myRequest && !decision ? (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Your decision">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => decide("approved")}
+                className={`btn-primary bg-green-700 hover:bg-green-800 ${small}`}
+              >
+                Approve
+              </button>
+              <button type="button" disabled={pending} onClick={() => decide("changes_requested")} className={`btn-secondary ${small}`}>
+                Request changes
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => decide("rejected")}
+                className={`btn-secondary border-red-200 text-red-700 hover:bg-red-50 ${small}`}
+              >
+                Reject
+              </button>
+            </div>
+          ) : null}
+          {canSend ? (
+            <button
+              type="button"
+              disabled={pending || settings.approverIds.length === 0}
+              data-tooltip={settings.approverIds.length === 0 ? "Choose an approver first" : undefined}
+              onClick={() => setSending(true)}
+              className={`${status === "approved" ? "btn-secondary" : "btn-primary"} ${small}`}
+            >
+              <Send className="size-3.5" aria-hidden />
+              {status === "approved" ? "Send for approval again" : "Ready for approval"}
+            </button>
+          ) : null}
+          {paused && canAct ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => run(() => acknowledgeApproval(task.id))}
+              className={`btn-primary ${small}`}
+            >
+              <Check className="size-3.5" aria-hidden />
+              {status === "rejected" ? "Rejection received" : "Feedback received"}
+            </button>
+          ) : null}
+          {canWithdraw ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: "Withdraw the approval request?",
+                  message: "The approvers can’t decide on it anymore. You can send it again later.",
+                  confirmLabel: "Withdraw",
+                  cancelLabel: "Keep it",
+                  tone: "danger",
+                });
+                if (ok) run(() => withdrawApproval(task.id));
+              }}
+              className={`btn-ghost text-zinc-600 ${small}`}
+            >
+              Withdraw
+            </button>
+          ) : null}
+          <button
+            type="button"
+            aria-expanded={detailsOpen}
+            aria-controls={detailsId}
+            onClick={() => setDetails(!detailsOpen)}
+            data-approval-details-toggle=""
+            className={`btn-ghost gap-1 text-zinc-600 ${small}`}
+          >
+            Details
+            <ChevronDown className={`size-3.5 transition-transform ${detailsOpen ? "rotate-180" : ""}`} aria-hidden />
+          </button>
+        </div>
       </div>
-      <p className="mt-1.5 text-sm text-zinc-800" data-approval-headline="">
-        {headline}
-      </p>
 
       {decisionRequest ? (
         <div
-          className={`mt-2 rounded-md border px-2.5 py-2 text-sm ${
+          className={`mt-2 rounded-md border px-2.5 py-1.5 text-sm ${
             status === "rejected" ? "border-red-200 bg-red-50 text-red-900" : "border-amber-200 bg-amber-50 text-amber-900"
           } ${paused ? "shadow-sm" : ""}`}
           data-approval-decision-note=""
@@ -266,199 +463,124 @@ export function ApprovalTaskBanner({
         </div>
       ) : null}
 
-      {approvalNotes.length ? (
-        <ul className="mt-2 space-y-1.5">
-          {approvalNotes.map((r) => (
-            <li key={r.id} className="rounded-md border border-green-200 bg-green-50 px-2.5 py-2 text-sm text-green-900">
-              <span className="text-xs font-medium">{nameOf(r.approverId, true)}:</span>{" "}
-              <span className="whitespace-pre-wrap">{r.decisionNote}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {roundOpen && latest ? <RoundContent round={latest} task={task} nameOf={nameOf} label="What’s being approved" /> : null}
-
-      <dl className={`mt-2 ${PANE_FIELDS}`}>
-        <dt className={`${PANE_LABEL} self-start`}>Approvers</dt>
-        <dd className="min-w-0">
-          <div className="flex min-h-8 flex-wrap items-center gap-1.5 py-0.5">
-            {approvers.length === 0 ? <span className="text-zinc-500">No approver yet</span> : null}
-            {approvers.map(({ id, profile }) => {
-              const request = roundOpen ? latest?.requests.find((r) => r.approverId === id && r.status !== "cancelled") : undefined;
-              const name = profile ? displayName(profile) : "Someone";
-              return (
-                <span
-                  key={id}
-                  data-approver={id}
-                  className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-zinc-200 bg-white py-0.5 pr-2 pl-0.5 text-xs text-zinc-800"
-                >
-                  <Avatar name={name} src={profile?.avatar_url} profileId={id} />
-                  <span className="truncate">{id === memberId ? `${name} (you)` : name}</span>
-                  {request?.status === "approved" ? (
-                    <Check className="size-3.5 text-green-600" aria-label="Approved" />
-                  ) : request?.status === "pending" ? (
-                    <Clock className="size-3.5 text-amber-600" aria-label="Waiting" />
-                  ) : null}
-                </span>
-              );
-            })}
-            {canChangeApprovers ? (
-              <Popover
-                label={roundOpen ? "Reassign approvers" : "Choose approvers"}
-                panelClassName="w-72 p-0"
-                buttonClassName="inline-flex h-6 items-center gap-1 rounded-full border border-dashed border-zinc-300 px-2 text-xs text-zinc-600 hover:border-zinc-400 hover:text-zinc-900 aria-expanded:border-zinc-400"
-                button={
-                  <>
-                    <Users className="size-3.5" aria-hidden />
-                    {roundOpen ? "Reassign" : approvers.length ? "Change" : "Add approver"}
-                  </>
-                }
-              >
-                {() => (
-                  <PeopleList
-                    label="Approvers"
-                    people={eligible}
-                    selected={settings.approverIds}
-                    emptyNote="Approvers need at least Commenter access to this task’s project."
-                    footer={
-                      <p className="px-2.5 py-1.5 text-2xs text-zinc-500">
-                        Ticked people approve this task. Pick someone again to remove them.
-                        {roundOpen ? " New approvers are asked right away." : ""}
-                      </p>
-                    }
-                    onPick={toggleApprover}
-                  />
-                )}
-              </Popover>
-            ) : null}
-          </div>
-        </dd>
-
-        {settings.approverIds.length > 1 || canChangeMode ? (
-          <>
-            <dt className={PANE_LABEL}>Who decides</dt>
-            <dd className="min-w-0">
-              {canChangeMode ? (
-                <SmartPicker
-                  label="Who decides"
-                  value={settings.mode}
-                  onChange={(value) => save({ mode: value === "all" ? "all" : "any" })}
-                  searchable={false}
-                  className="h-7 w-auto"
-                  panelWidth={260}
-                  options={[
-                    { value: "any", label: APPROVAL_MODE_LABELS.any, description: "The first approval is enough" },
-                    { value: "all", label: APPROVAL_MODE_LABELS.all, description: "Every approver has to approve" },
-                  ]}
-                />
-              ) : (
-                <span className="flex min-h-8 items-center px-1 text-zinc-800">{APPROVAL_MODE_LABELS[settings.mode]}</span>
-              )}
-            </dd>
-          </>
-        ) : null}
-
-        <dt className={PANE_LABEL}>Approval due</dt>
-        <dd className="min-w-0">
-          {canChangeDue ? (
-            <Popover
-              label={`Approval due: ${settings.dueOn ? formatDueDate(settings.dueOn) : "no date"}. Change`}
-              panelClassName="w-[19rem] p-0"
-              buttonClassName="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
-              button={<DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />}
-            >
-              {(close) => (
-                <SingleDatePicker
-                  label="Approval due"
-                  value={settings.dueOn}
-                  onChange={(next) => {
-                    close();
-                    if (next !== settings.dueOn) save({ dueOn: next });
-                  }}
-                />
-              )}
-            </Popover>
-          ) : (
-            <span className="inline-flex h-8 items-center px-1">
-              <DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />
-            </span>
-          )}
-        </dd>
-      </dl>
-      {settings.dueOn && roundOpen ? (
-        <p className="mt-0.5 text-2xs text-zinc-500">Approvers get a reminder the day before, and again once it’s overdue.</p>
-      ) : null}
-
-      {canDecide && myRequest ? (
-        <div className="mt-3 border-t border-zinc-200 pt-2.5">
-          <p className="mb-1.5 text-xs font-medium text-zinc-700">Your decision</p>
+      {canDecide && myRequest && decision ? (
+        <div className="mt-2 space-y-2" data-approval-deciding="">
+          {latest ? <RoundContent round={latest} task={task} nameOf={nameOf} label="What you’re approving" /> : null}
           <ApprovalDecisionForm
+            key={decision.nonce}
             idPrefix={`approval-${task.id}`}
             pending={pending}
             recipientName={task.assigneeId ? assigneeName : null}
-            onDecide={(decision, note) => run(() => decideApproval(myRequest.id, decision, note || undefined))}
+            initialDecision={decision.choice}
+            onCancel={() => setDecision(null)}
+            onDecide={(choice, note) => {
+              setDecision(null);
+              run(() => decideApproval(myRequest.id, choice, note || undefined));
+            }}
           />
         </div>
       ) : null}
 
-      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        {canSend ? (
-          <button
-            type="button"
-            disabled={pending || settings.approverIds.length === 0}
-            data-tooltip={settings.approverIds.length === 0 ? "Choose an approver first" : undefined}
-            onClick={() => setSending(true)}
-            className={status === "approved" ? "btn-secondary" : "btn-primary"}
-          >
-            <Send className="size-3.5" aria-hidden />
-            {status === "approved" ? "Send for approval again" : "Ready for approval"}
-          </button>
-        ) : null}
-        {paused && canAct ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => run(() => acknowledgeApproval(task.id))}
-            className="btn-primary"
-          >
-            <Check className="size-3.5" aria-hidden />
-            {status === "rejected" ? "Rejection received" : "Feedback received"}
-          </button>
-        ) : null}
+      <div id={detailsId} hidden={!detailsOpen} className="mt-2 border-t border-zinc-200 pt-2" data-approval-details="">
+        <p className="text-sm text-zinc-800" data-approval-headline="">
+          {headline}
+        </p>
         {paused && !canAct ? (
-          <p className="text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-zinc-500">
             Waiting on {assigneeName} to mark the {status === "rejected" ? "rejection" : "feedback"} received.
           </p>
         ) : null}
-        {canDecide ? (
-          <HandOffButton
-            candidates={eligible.filter((p) => p.id !== memberId && !settings.approverIds.includes(p.id))}
-            onHandOff={(personId, note) => run(() => handOffApproval(task.id, personId, note))}
-          />
-        ) : null}
-        {canWithdraw ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={async () => {
-              const ok = await confirm({
-                title: "Withdraw the approval request?",
-                message: "The approvers can’t decide on it anymore. You can send it again later.",
-                confirmLabel: "Withdraw",
-                cancelLabel: "Keep it",
-                tone: "danger",
-              });
-              if (ok) run(() => withdrawApproval(task.id));
-            }}
-            className="btn-ghost text-zinc-600"
-          >
-            Withdraw
-          </button>
-        ) : null}
-      </div>
 
-      {info.rounds.length ? <ApprovalHistory rounds={info.rounds} task={task} nameOf={nameOf} /> : null}
+        {approvalNotes.length ? (
+          <ul className="mt-2 space-y-1.5">
+            {approvalNotes.map((r) => (
+              <li key={r.id} className="rounded-md border border-green-200 bg-green-50 px-2.5 py-2 text-sm text-green-900">
+                <span className="text-xs font-medium">{nameOf(r.approverId, true)}:</span>{" "}
+                <span className="whitespace-pre-wrap">{r.decisionNote}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {roundOpen && latest ? <RoundContent round={latest} task={task} nameOf={nameOf} label="What’s being approved" /> : null}
+
+        <dl className={`mt-2 ${PANE_FIELDS}`}>
+          <dt className={`${PANE_LABEL} self-start`}>Approvers</dt>
+          <dd className="min-w-0">
+            <div className="flex min-h-8 flex-wrap items-center gap-1.5 py-0.5">
+              <span className="text-zinc-800">
+                {approvers.length ? joinNames(approvers.map((a) => (a.profile ? displayName(a.profile) : "Someone"))) : "No approver yet"}
+              </span>
+              {approvers.length ? approverPicker : null}
+            </div>
+          </dd>
+
+          {settings.approverIds.length > 1 || canChangeMode ? (
+            <>
+              <dt className={PANE_LABEL}>Who decides</dt>
+              <dd className="min-w-0">
+                {canChangeMode ? (
+                  <SmartPicker
+                    label="Who decides"
+                    value={settings.mode}
+                    onChange={(value) => save({ mode: value === "all" ? "all" : "any" })}
+                    searchable={false}
+                    className="h-7 w-auto"
+                    panelWidth={260}
+                    options={[
+                      { value: "any", label: APPROVAL_MODE_LABELS.any, description: "The first approval is enough" },
+                      { value: "all", label: APPROVAL_MODE_LABELS.all, description: "Every approver has to approve" },
+                    ]}
+                  />
+                ) : (
+                  <span className="flex min-h-8 items-center px-1 text-zinc-800">{APPROVAL_MODE_LABELS[settings.mode]}</span>
+                )}
+              </dd>
+            </>
+          ) : null}
+
+          <dt className={PANE_LABEL}>Approval due</dt>
+          <dd className="min-w-0">
+            {canChangeDue ? (
+              <Popover
+                label={`Approval due: ${settings.dueOn ? formatDueDate(settings.dueOn) : "no date"}. Change`}
+                panelClassName="w-[19rem] p-0"
+                buttonClassName="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
+                button={<DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />}
+              >
+                {(close) => (
+                  <SingleDatePicker
+                    label="Approval due"
+                    value={settings.dueOn}
+                    onChange={(next) => {
+                      close();
+                      if (next !== settings.dueOn) save({ dueOn: next });
+                    }}
+                  />
+                )}
+              </Popover>
+            ) : (
+              <span className="inline-flex h-8 items-center px-1">
+                <DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />
+              </span>
+            )}
+          </dd>
+        </dl>
+        {settings.dueOn && roundOpen ? (
+          <p className="mt-0.5 text-2xs text-zinc-500">Approvers get a reminder the day before, and again once it’s overdue.</p>
+        ) : null}
+
+        {canDecide ? (
+          <div className="mt-2">
+            <HandOffButton
+              candidates={eligible.filter((p) => p.id !== memberId && !settings.approverIds.includes(p.id))}
+              onHandOff={(personId, note) => run(() => handOffApproval(task.id, personId, note))}
+            />
+          </div>
+        ) : null}
+
+        {info.rounds.length ? <ApprovalHistory rounds={info.rounds} task={task} nameOf={nameOf} /> : null}
+      </div>
 
       {sending ? <SendForApprovalDialog task={task} profiles={profiles} onClose={() => setSending(false)} /> : null}
     </section>
@@ -607,6 +729,7 @@ export function ApprovalDecisionForm({
   onDecide,
   compact = false,
   initialDecision = null,
+  onCancel,
 }: {
   idPrefix: string;
   pending: boolean;
@@ -616,6 +739,8 @@ export function ApprovalDecisionForm({
   compact?: boolean;
   // Opens straight on a decision's note step (a link that says what to do, and tests).
   initialDecision?: Decision | null;
+  // Cancel (or Escape) on the note step; without it the form goes back to its three buttons.
+  onCancel?: () => void;
 }) {
   const [chosen, setChosen] = useState<Decision | null>(initialDecision);
   const [note, setNote] = useState("");
@@ -624,6 +749,11 @@ export function ApprovalDecisionForm({
   const noteId = `${idPrefix}-${autoId}-note`;
   const hintId = `${idPrefix}-${autoId}-hint`;
   const size = compact ? "h-6 px-2 text-xs" : "";
+
+  function cancel() {
+    if (onCancel) onCancel();
+    else setChosen(null);
+  }
 
   function submit() {
     if (!chosen) return;
@@ -710,7 +840,7 @@ export function ApprovalDecisionForm({
           } else if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
-            setChosen(null);
+            cancel();
           }
         }}
         placeholder={required ? "Say what to change, so it can be fixed." : chosen === "approved" ? "Looks great — ship it." : "What’s wrong with it?"}
@@ -735,7 +865,7 @@ export function ApprovalDecisionForm({
         >
           {decisionSubmitLabel(chosen, note)}
         </button>
-        <button type="button" onClick={() => setChosen(null)} className={`btn-ghost ${size}`}>
+        <button type="button" onClick={cancel} className={`btn-ghost ${size}`}>
           Cancel
         </button>
       </div>

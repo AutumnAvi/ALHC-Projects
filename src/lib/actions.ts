@@ -10,13 +10,15 @@ import {
   hasBatch4Schema,
   listFieldLibrary,
   listMyProjectRoles,
+  listProjectFieldSharing,
   listMyTeamIds,
   listProjectTemplates,
   listSubtaskTrees,
   listTeams,
   loadTaskCommentPage,
-  visibleRequestLabels,
+  firstVisibleNumbers,
   visibleRequestLabelsIn,
+  visibleTaskPlacesOrNull,
   type SubtaskItem,
   type TaskComment,
 } from "@/lib/data";
@@ -25,7 +27,7 @@ import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/
 import { safeDownload } from "@/lib/safe-fetch";
 import { drainOutbox, isEmailConfigured } from "@/lib/email";
 import { forwardingAddress } from "@/lib/email-reply";
-import { templateProblem } from "@/lib/request-numbers";
+import { numberWithItsProject, templateProblem } from "@/lib/request-numbers";
 import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
 import { ImportParseError, buildImportPlan, importSteps, planExternalIds, type ImportPlan } from "@/lib/asana-import";
 import {
@@ -51,7 +53,21 @@ import {
   toProjectIntegrations,
   type ProjectIntegrations,
 } from "@/lib/integrations-shared";
-import { MAX_FIELD_DESCRIPTION, isFieldType, isOptionColor, type FieldOption, type LibraryField } from "@/lib/fields";
+import {
+  LOCKED_FIELD_NOTE,
+  MAX_FIELD_DESCRIPTION,
+  isFieldType,
+  isBaseOptionColor,
+  isOptionColor,
+  normalizeNumberPrefix,
+  numberPrefixProblem,
+  parseOptions,
+  selectOptionsProblem,
+  type FieldOption,
+  type FieldSharing,
+  type LibraryField,
+} from "@/lib/fields";
+import { MAX_TEXT_FIELD_LENGTH, textLength } from "@/lib/long-text";
 import {
   isChoice,
   isQuestionType,
@@ -84,7 +100,7 @@ import {
   type ShiftResult,
   type UndoResult,
 } from "@/lib/dependencies";
-import { MAX_TAG_NAME } from "@/lib/tags";
+import { MAX_TAG_NAME, tagColorColumns } from "@/lib/tags";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import {
   isDuplicateTaskOptionKey,
@@ -150,6 +166,7 @@ import {
 import type { Json, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import { TASK_KINDS, type TaskKind } from "@/lib/task-kinds";
+import { ARCHIVED_ONLY_MESSAGE, LAST_PROJECT_MESSAGE, lastProjectRefusal, type LastProjectCode } from "@/lib/task-projects";
 import {
   DEFAULT_WIDGET_TITLES,
   isPersonalWidgetKind,
@@ -487,21 +504,49 @@ export async function saveTaskAsTemplate(
 }
 
 // From quick-add: a normal task creation (stories, notifications, and task_created rules as usual).
+// `lockedLeftOut`: the template's values of locked fields the viewer may not set (Oct 29 notes, batch
+// 7) — the database leaves them out; the caller says so.
 export async function createTaskFromTemplate(
   templateId: string,
   sectionId: string | null,
   title: string | null,
-): Promise<ActionResult> {
-  return run(async () => {
+): Promise<ActionResult & { lockedLeftOut?: number }> {
+  let lockedLeftOut = 0;
+  const result = await run(async () => {
     const supabase = await createClient();
+    const templateKey = id(templateId, "template");
     check(
       await supabase.rpc("create_task_from_template", {
-        target_template: id(templateId, "template"),
+        target_template: templateKey,
         target_section: sectionId ? id(sectionId, "section") : null,
         task_title: optionalText(title, 1000),
       }),
     );
+    lockedLeftOut = await lockedTemplateValues(supabase, templateKey);
   });
+  return result.error ? result : { lockedLeftOut };
+}
+
+// How many of a task template's values are in locked fields the viewer can't set (a template's fields
+// are its project's, so it's that project's Owners and Admins).
+async function lockedTemplateValues(supabase: Awaited<ReturnType<typeof createClient>>, templateId: string): Promise<number> {
+  const { data: template } = await supabase
+    .from("task_templates")
+    .select("project_id, field_values")
+    .eq("id", templateId)
+    .maybeSingle();
+  const values = Array.isArray(template?.field_values) ? template.field_values : [];
+  const fieldIds = values.flatMap((v) =>
+    v && typeof v === "object" && !Array.isArray(v) && typeof v.field_id === "string" && isUuid(v.field_id) && v.value != null
+      ? [v.field_id]
+      : [],
+  );
+  if (!template || fieldIds.length === 0) return 0;
+  const locked = await supabase.from("custom_fields").select("id").in("id", fieldIds).eq("locked", true).is("deleted_at", null);
+  // A database without the field lock (42703) has nothing locked.
+  const lockedIds = locked.error ? [] : (locked.data ?? []);
+  if (lockedIds.length === 0 || hasRole(await getProjectRole(template.project_id), "admin")) return 0;
+  return lockedIds.length;
 }
 
 export async function createTaskTemplate(
@@ -1063,11 +1108,14 @@ function portfolioFieldOptions(value: unknown): FieldOption[] {
 
 export async function createPortfolioField(
   portfolioId: string,
-  input: { name: string; fieldType: string; options?: FieldOption[] },
+  input: { name: string; fieldType: string; options?: FieldOption[]; numberPrefix?: string | null },
 ): Promise<ActionResult> {
   return run(async () => {
     if (!isPortfolioFieldType(input.fieldType)) throw new InputError("Choose a field type");
     const options = input.fieldType === "single_select" ? portfolioFieldOptions(input.options ?? []) : [];
+    const optionsProblem = selectOptionsProblem({ fieldType: input.fieldType, optionCount: options.length });
+    if (optionsProblem) throw new InputError(optionsProblem);
+    const numberPrefix = numberPrefixInput(input.numberPrefix, input.fieldType);
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("portfolio_fields")
@@ -1076,32 +1124,50 @@ export async function createPortfolioField(
       .is("deleted_at", null)
       .order("sort_order", { ascending: false })
       .limit(1);
-    check(
-      await supabase.from("portfolio_fields").insert({
-        portfolio_id: portfolioId,
-        name: text(input.name, "Field name", { max: 100 }),
-        field_type: input.fieldType,
-        options,
-        sort_order: (last?.[0]?.sort_order ?? 0) + ORDER_STEP,
-      }),
-      "Only portfolio editors and above can add fields",
-    );
+    const inserted = await supabase.from("portfolio_fields").insert({
+      portfolio_id: portfolioId,
+      name: text(input.name, "Field name", { max: 100 }),
+      field_type: input.fieldType,
+      options,
+      ...(numberPrefix !== null ? { number_prefix: numberPrefix } : {}),
+      sort_order: (last?.[0]?.sort_order ?? 0) + ORDER_STEP,
+    });
+    if (inserted.error?.code === "PGRST204") throw new InputError(NUMBER_PREFIX_MISSING);
+    check(inserted, "Only portfolio editors and above can add fields");
   });
 }
 
 export async function updatePortfolioField(
   fieldId: string,
-  patch: { name?: string; options?: FieldOption[] },
+  patch: { name?: string; options?: FieldOption[]; numberPrefix?: string | null },
 ): Promise<ActionResult> {
   return run(async () => {
     const update: TablesUpdate<"portfolio_fields"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
+    if (patch.numberPrefix !== undefined) update.number_prefix = numberPrefixInput(patch.numberPrefix);
     if (patch.options !== undefined) update.options = portfolioFieldOptions(patch.options);
     const supabase = await createClient();
-    checkUpdated(
-      await supabase.from("portfolio_fields").update(update).eq("id", id(fieldId, "field")).select("id"),
-      "Only portfolio editors and above can change fields",
-    );
+    if (Array.isArray(update.options) && update.options.length === 0) {
+      // A single-select keeps at least one option (item 47); one that never had any stays as it is.
+      const { data: current } = await supabase
+        .from("portfolio_fields")
+        .select("field_type, options")
+        .eq("id", id(fieldId, "field"))
+        .maybeSingle();
+      const problem = current
+        ? selectOptionsProblem({
+            fieldType: current.field_type,
+            optionCount: 0,
+            previousCount: parseOptions(current.options).length,
+          })
+        : null;
+      if (problem) throw new InputError(problem);
+    }
+    const result = await supabase.from("portfolio_fields").update(update).eq("id", id(fieldId, "field")).select("id");
+    if (result.error?.code === "PGRST204") throw new InputError(NUMBER_PREFIX_MISSING);
+    // portfolio_fields_number_prefix_check: a symbol on a field that isn't a number field.
+    if (result.error?.code === "23514" && update.number_prefix) throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
+    checkUpdated(result, "Only portfolio editors and above can change fields");
   });
 }
 
@@ -2146,32 +2212,41 @@ export async function addTaskToProject(taskId: string, projectId: string): Promi
   });
 }
 
+// Removes the task from one project only (Oct 29 notes, 55b: there is no home project; the database
+// keeps its internal pointer on one of the task's other projects). The task's last project can't be
+// removed: then `code` is "last_project" and the pane offers to delete the task instead. Nor can its last
+// project that isn't archived ("archived_only": nobody could edit it in the archived ones).
 export async function removeTaskFromProject(
   taskId: string,
   projectId: string,
-): Promise<ActionResult> {
-  return run(async () => {
+): Promise<ActionResult & { code?: LastProjectCode }> {
+  const refused: { code: LastProjectCode | null } = { code: null };
+  const result = await run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase
+    const response = await supabase
+      .from("task_projects")
+      .update({ deleted_at: now() })
+      .eq("task_id", id(taskId))
+      .eq("project_id", id(projectId))
+      .is("deleted_at", null)
+      .select("task_id");
+    refused.code = lastProjectRefusal(response.error);
+    if (refused.code) throw new InputError(refused.code === "archived_only" ? ARCHIVED_ONLY_MESSAGE : LAST_PROJECT_MESSAGE);
+    check(response);
+    if (!response.data?.length) {
+      // Nothing changed: it was already out of that project (fine), or the person's role there (RLS:
+      // Editor of that project) doesn't allow it — say so instead of pretending.
+      const still = await supabase
         .from("task_projects")
-        .update({ deleted_at: now() })
-        .eq("task_id", id(taskId))
-        .eq("project_id", id(projectId)),
-    );
+        .select("task_id")
+        .eq("task_id", taskId)
+        .eq("project_id", projectId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (still.data) throw new DbError(NOT_ALLOWED);
+    }
   });
-}
-
-export async function setHomeProject(taskId: string, projectId: string): Promise<ActionResult> {
-  return run(async () => {
-    const supabase = await createClient();
-    check(
-      await supabase
-        .from("tasks")
-        .update({ home_project_id: id(projectId) })
-        .eq("id", id(taskId)),
-    );
-  });
+  return refused.code ? { ...result, code: refused.code } : result;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2217,7 +2292,8 @@ export async function convertToSubtask(taskId: string, parentId: string): Promis
   });
 }
 
-// Makes a subtask a top-level task of a project the viewer edits (default: its parent's home project).
+// Makes a subtask a top-level task of a project the viewer edits. The pane always names one (the first of
+// the tree's projects the viewer edits, by default; Oct 29 notes, 55b); without one the database picks.
 export async function convertToTask(
   taskId: string,
   projectId?: string | null,
@@ -2401,16 +2477,25 @@ function tagError(result: DbResult) {
   check(result, "Only the tag’s creator or a workspace admin can change it");
 }
 
+// Oct 29 notes, item 54: a tag keeps the picked color in palette_color and the nearest of the first nine
+// in color (tagColorColumns). A database without palette_color (PGRST204) still takes the first nine.
+const TAG_COLOR_MISSING = "This color needs this release’s database update. Pick another color for now.";
+
 export async function createTag(name: string, color: string = "zinc"): Promise<ActionResult & { tagId?: string }> {
   let tagId: string | undefined;
   const outcome = await run(async () => {
     if (!isOptionColor(color)) throw new InputError("Unknown color");
     const supabase = await createClient();
-    const result = await supabase
+    const tagName = text(name, "Tag name", { max: MAX_TAG_NAME });
+    let result = await supabase
       .from("tags")
-      .insert({ name: text(name, "Tag name", { max: MAX_TAG_NAME }), color })
+      .insert({ name: tagName, ...tagColorColumns(color) })
       .select("id")
       .single();
+    if (result.error?.code === "PGRST204") {
+      if (!isBaseOptionColor(color)) throw new InputError(TAG_COLOR_MISSING);
+      result = await supabase.from("tags").insert({ name: tagName, color }).select("id").single();
+    }
     tagError(result);
     tagId = result.data?.id;
   });
@@ -2424,13 +2509,20 @@ export async function updateTag(
   return run(async () => {
     const update: TablesUpdate<"tags"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Tag name", { max: MAX_TAG_NAME });
-    if (patch.color !== undefined) {
-      if (!isOptionColor(patch.color)) throw new InputError("Unknown color");
-      update.color = patch.color;
+    const color = patch.color;
+    if (color !== undefined) {
+      if (!isOptionColor(color)) throw new InputError("Unknown color");
+      Object.assign(update, tagColorColumns(color));
     }
     if (patch.archived !== undefined) update.archived_at = patch.archived ? now() : null;
     const supabase = await createClient();
-    const result = await supabase.from("tags").update(update).eq("id", id(tagId, "tag")).is("deleted_at", null).select("id");
+    const target = id(tagId, "tag");
+    let result = await supabase.from("tags").update(update).eq("id", target).is("deleted_at", null).select("id");
+    if (result.error?.code === "PGRST204" && color !== undefined) {
+      if (!isBaseOptionColor(color)) throw new InputError(TAG_COLOR_MISSING);
+      const older: TablesUpdate<"tags"> = { name: update.name, color, archived_at: update.archived_at };
+      result = await supabase.from("tags").update(older).eq("id", target).is("deleted_at", null).select("id");
+    }
     tagError(result);
     if (!result.data?.length) throw new InputError("Only the tag’s creator or a workspace admin can change it");
   });
@@ -2814,6 +2906,18 @@ function fieldOptions(value: unknown): FieldOption[] {
 }
 
 const FIELD_EXTRAS_MISSING = "Field descriptions, the field library, and notifications need this release’s database update, which isn’t applied yet";
+const NUMBER_PREFIX_MISSING = "Number symbols need this release’s database update, which isn’t applied yet";
+const NUMBER_PREFIX_NUMBERS_ONLY = "Only number fields have a symbol";
+
+// Item 49: a number field's symbol as it will be stored (trimmed; null = none). Refuses a symbol that
+// is too long or has line breaks / control characters, and one on another type of field (when known).
+function numberPrefixInput(raw: string | null | undefined, fieldType?: string): string | null {
+  const problem = numberPrefixProblem(raw);
+  if (problem) throw new InputError(problem);
+  const prefix = normalizeNumberPrefix(raw);
+  if (prefix !== null && fieldType !== undefined && fieldType !== "number") throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
+  return prefix;
+}
 
 // Description, library, and notify (Asana parity, batch 4): only the keys that were given.
 function fieldExtras(input: { description?: string | null; inLibrary?: boolean; notifyOnChange?: boolean }, bound: boolean) {
@@ -2846,6 +2950,8 @@ export async function createField(
     description?: string | null;
     inLibrary?: boolean;
     notifyOnChange?: boolean;
+    // Item 49: a number field's symbol ("$"); empty / null = none.
+    numberPrefix?: string | null;
   },
 ): Promise<ActionResult & { fieldId?: string }> {
   let fieldId: string | undefined;
@@ -2856,7 +2962,12 @@ export async function createField(
       throw new InputError("Only single-select fields can mirror sections");
     }
     const extras = fieldExtras(input, bound);
+    // Sent only when there is one, so a database without the column still takes every other field.
+    const numberPrefix = numberPrefixInput(input.numberPrefix, input.fieldType);
     const withOptions = (input.fieldType === "single_select" || input.fieldType === "multi_select") && !bound;
+    const options = withOptions ? fieldOptions(input.options ?? []) : [];
+    const optionsProblem = selectOptionsProblem({ fieldType: input.fieldType, boundToSections: bound, optionCount: options.length });
+    if (optionsProblem) throw new InputError(optionsProblem);
     const supabase = await createClient();
     const { data: last } = await supabase
       .from("custom_fields")
@@ -2874,8 +2985,9 @@ export async function createField(
         field_type: input.fieldType,
         bound_to_sections: bound,
         show_in_views: bound || Boolean(input.showInViews),
-        ...(withOptions && input.options?.length ? { options: fieldOptions(input.options) } : {}),
+        ...(withOptions ? { options } : {}),
         ...extras,
+        ...(numberPrefix !== null ? { number_prefix: numberPrefix } : {}),
         sort_order: (last?.sort_order ?? 0) + ORDER_STEP,
       })
       .select("id")
@@ -2883,7 +2995,9 @@ export async function createField(
     if (inserted.error?.code === "23505") {
       throw new InputError("This project already has a section-bound field");
     }
-    if (inserted.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
+    if (inserted.error?.code === "PGRST204") {
+      throw new InputError(numberPrefix !== null ? NUMBER_PREFIX_MISSING : FIELD_EXTRAS_MISSING);
+    }
     check(inserted);
     fieldId = inserted.data?.id;
   });
@@ -2899,30 +3013,100 @@ export async function updateField(
     description?: string | null;
     inLibrary?: boolean;
     notifyOnChange?: boolean;
+    // Item 49: a number field's symbol; null / empty removes it.
+    numberPrefix?: string | null;
+    // Oct 29 notes, batch 7 (51): Owners / Admins only (custom_fields_06_lock_guard says so otherwise).
+    locked?: boolean;
   },
 ): Promise<ActionResult> {
   return run(async () => {
     const update: TablesUpdate<"custom_fields"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Field name", { max: 100 });
+    if (patch.numberPrefix !== undefined) update.number_prefix = numberPrefixInput(patch.numberPrefix);
     if (patch.options !== undefined) update.options = fieldOptions(patch.options);
     if (patch.showInViews !== undefined) update.show_in_views = Boolean(patch.showInViews);
+    if (patch.locked !== undefined) update.locked = Boolean(patch.locked);
     // The database refuses library / notify on the section-bound Status (CHECKs); say so plainly.
     Object.assign(update, fieldExtras(patch, false));
     const supabase = await createClient();
+    if (Array.isArray(update.options) && update.options.length === 0) {
+      // Emptying a select field's options is refused (item 47); one that never had any stays as it is.
+      const { data: current } = await supabase
+        .from("custom_fields")
+        .select("field_type, bound_to_sections, options")
+        .eq("id", id(fieldId))
+        .maybeSingle();
+      const problem = current
+        ? selectOptionsProblem({
+            fieldType: current.field_type,
+            boundToSections: current.bound_to_sections,
+            optionCount: 0,
+            previousCount: parseOptions(current.options).length,
+          })
+        : null;
+      if (problem) throw new InputError(problem);
+    }
     const result = await supabase.from("custom_fields").update(update).eq("id", id(fieldId)).select("id");
-    if (result.error?.code === "PGRST204") throw new InputError(FIELD_EXTRAS_MISSING);
+    if (result.error?.code === "PGRST204" && update.locked !== undefined && result.error.message.includes("locked")) {
+      throw new InputError("Locking fields needs this release’s database update");
+    }
+    if (result.error?.code === "PGRST204") {
+      throw new InputError("number_prefix" in update ? NUMBER_PREFIX_MISSING : FIELD_EXTRAS_MISSING);
+    }
+    // custom_fields_number_prefix_check: a symbol on a field that isn't a number field.
+    if (result.error?.code === "23514" && update.number_prefix) throw new InputError(NUMBER_PREFIX_NUMBERS_ONLY);
     if (result.error?.code === "23514" && (update.in_library || update.notify_on_change)) {
       throw new InputError("The Status field follows the sections, so it can’t notify or join the field library");
+    }
+    if (result.error?.code === "23514" && update.locked) {
+      throw new InputError("The Status field follows the sections, so it can’t be locked");
     }
     // Editor+ (custom_fields_update_editor): RLS turns anything below into zero rows.
     checkUpdated(result, "Only Editors and above can change fields");
   });
 }
 
+// Lock / unlock a field (the List column menu; Edit field saves it with the rest). Owners and Admins of
+// the project whose Editors change its definition — for a shared library field, the project that
+// published it. Locking a shared field locks it in every project that uses it.
+export async function setFieldLocked(fieldId: string, locked: boolean): Promise<ActionResult> {
+  return updateField(fieldId, { locked });
+}
+
 // The workspace field library for the Add field dialog (name, type, description, options; never the
 // projects they come from). Null on a database without this release's migration.
 export async function loadFieldLibrary(): Promise<LibraryField[] | null> {
   return listFieldLibrary();
+}
+
+// Add field → Choose from library (Oct 29 notes, batch 7): this project's placement of a shared
+// library field — one definition and one value per task across every project that uses it (values
+// the project's tasks already have elsewhere come along). Returns the field's id: the existing one when
+// the project already uses that library field. Editor+ (the database decides).
+export async function addLibraryField(
+  projectId: string,
+  libraryFieldId: string,
+): Promise<ActionResult & { fieldId?: string }> {
+  let fieldId: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("add_library_field", {
+      target_project: id(projectId, "project"),
+      library_field: id(libraryFieldId, "field"),
+    });
+    if (error?.code === "PGRST202") throw new InputError("Shared library fields need this release’s database update");
+    if (error?.code === "P0002") throw new InputError("This field isn’t in the field library any more");
+    if (error?.code === "42501") throw new InputError("Only Editors and above can add fields to this project");
+    check({ error });
+    fieldId = typeof data === "string" ? data : undefined;
+  });
+  return result.error ? result : { fieldId };
+}
+
+// Which of a project's fields are shared through the field library, and whether the viewer may change
+// their definition (for client components that open the field editor). Null without the update.
+export async function loadFieldSharing(projectId: string): Promise<Record<string, FieldSharing> | null> {
+  return listProjectFieldSharing(id(projectId, "project"));
 }
 
 export async function deleteField(fieldId: string): Promise<ActionResult> {
@@ -2940,13 +3124,25 @@ export async function setFieldValue(
   value: Json,
 ): Promise<ActionResult> {
   return run(async () => {
+    // A text field's limit (item 48; the database checks it too): no other value is a string this long.
+    if (typeof value === "string" && textLength(value) > MAX_TEXT_FIELD_LENGTH) {
+      throw new InputError(`Text fields hold up to ${MAX_TEXT_FIELD_LENGTH.toLocaleString("en-US")} characters`);
+    }
     const supabase = await createClient();
-    check(
-      await supabase.from("task_field_values").upsert(
-        { task_id: id(taskId), field_id: id(fieldId, "field"), value },
-        { onConflict: "task_id,field_id" },
-      ),
+    const result = await supabase.from("task_field_values").upsert(
+      { task_id: id(taskId), field_id: id(fieldId, "field"), value },
+      { onConflict: "task_id,field_id" },
     );
+    // A locked field (Oct 29 notes, batch 7): only the project's Owners and Admins change its values (of
+    // every project of the task that uses it, for a shared library field). The database says which.
+    if (result.error?.code === "42501" && result.error.message.startsWith("Locked")) {
+      throw new InputError(result.error.message.startsWith("Locked —") ? result.error.message : LOCKED_FIELD_NOTE);
+    }
+    // A value row never moves to another task or field (the app never asks; an upsert keeps its keys).
+    if (result.error?.code === "42501" && result.error.message.startsWith("A field value can")) {
+      throw new InputError(result.error.message);
+    }
+    check(result);
   });
 }
 
@@ -4820,7 +5016,8 @@ export async function installRulePreset(
 
 // "Run manually" rules (Automations V2) a task can run from the pane's "…" menu: enabled rules with
 // the manual trigger in the task's projects where the viewer is an Editor (run_manual_rule's own check;
-// archived projects cap everyone at Viewer), the home project's first. Read with the person's own
+// archived projects cap everyone at Viewer), in the order the task was added to them (Oct 29 notes, 55b:
+// no home project). Read with the person's own
 // client, so RLS decides; a subtask or a private task has no projects and gets none, and a database
 // without the manual trigger simply has no such rules.
 export type ManualRule = { id: string; name: string; projectId: string; projectName: string };
@@ -4829,8 +5026,14 @@ export async function listManualRules(taskId: string): Promise<ActionResult & { 
   const outcome = await read(async (): Promise<ManualRule[]> => {
     const supabase = await createClient();
     const [task, memberships] = await Promise.all([
-      supabase.from("tasks").select("home_project_id, parent_task_id").eq("id", id(taskId, "task")).maybeSingle(),
-      supabase.from("task_projects").select("project_id").eq("task_id", taskId).is("deleted_at", null),
+      supabase.from("tasks").select("parent_task_id").eq("id", id(taskId, "task")).maybeSingle(),
+      supabase
+        .from("task_projects")
+        .select("project_id")
+        .eq("task_id", taskId)
+        .is("deleted_at", null)
+        .order("created_at")
+        .order("project_id"),
     ]);
     check(task);
     check(memberships);
@@ -4854,10 +5057,8 @@ export async function listManualRules(taskId: string): Promise<ActionResult & { 
     ]);
     check(projects);
     check(rules);
-    const home = task.data.home_project_id;
-    const ordered = [...(projects.data ?? [])].sort(
-      (a, b) => Number(b.id === home) - Number(a.id === home) || a.name.localeCompare(b.name),
-    );
+    const position = new Map(projectIds.map((p, i) => [p, i] as const));
+    const ordered = [...(projects.data ?? [])].sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
     return ordered.flatMap((project) =>
       (rules.data ?? [])
         .filter((rule) => rule.project_id === project.id)
@@ -6431,21 +6632,48 @@ export async function loadTaskBlockers(taskId: string): Promise<{ error?: string
     const value = (result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {}) as Record<string, Json>;
     const list = Array.isArray(value.blockers) ? value.blockers : [];
     const rowsOf = list.filter((b): b is Record<string, Json> => Boolean(b) && typeof b === "object" && !Array.isArray(b));
-    const projectIds = [...new Set(rowsOf.map((b) => (typeof b.home_project_id === "string" ? b.home_project_id : "")).filter(Boolean))];
-    const [labels, projects] = await Promise.all([
-      visibleRequestLabels(rowsOf.map((b) => String(b.id))),
-      projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-    ]);
-    const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+    const named = await numbersWithTheirProjects(
+      supabase,
+      rowsOf.map((b) => ({ id: String(b.id), projectId: typeof b.home_project_id === "string" ? b.home_project_id : null })),
+    );
     const blockers = rowsOf.map((b) => ({
       id: String(b.id),
       title: typeof b.title === "string" ? b.title : "",
-      label: labels.get(String(b.id)) ?? null,
-      projectName: typeof b.home_project_id === "string" ? (names.get(b.home_project_id) ?? null) : null,
+      label: named.get(String(b.id))?.label ?? null,
+      projectName: named.get(String(b.id))?.projectName ?? null,
       isSubtask: typeof b.parent_task_id === "string",
     }));
     return { total: typeof value.total === "number" ? value.total : blockers.length, blockers };
   });
+}
+
+// A task's number and the project named next to it, picked together (Oct 29 notes, 55b): the first
+// number the viewer can read with the project that issued it, else (no number) the first project they can
+// read. A database without task_project_labels: the release before this one — each task's home-project
+// label, next to the project the RPC named.
+async function numbersWithTheirProjects(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tasks: { id: string; projectId: string | null }[],
+): Promise<Map<string, { label: RequestLabel | null; projectName: string | null }>> {
+  const ids = tasks.map((t) => t.id);
+  const places = await visibleTaskPlacesOrNull(ids);
+  if (places) {
+    return new Map(
+      tasks.map((t) => {
+        const paired = numberWithItsProject(places.get(t.id));
+        return [t.id, { label: paired.label, projectName: paired.projectName }] as const;
+      }),
+    );
+  }
+  const projectIds = [...new Set(tasks.map((t) => t.projectId).filter((p): p is string => Boolean(p)))];
+  const [labels, projects] = await Promise.all([
+    firstVisibleNumbers(ids),
+    projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  ]);
+  const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+  return new Map(
+    tasks.map((t) => [t.id, { label: labels.get(t.id) ?? null, projectName: t.projectId ? (names.get(t.projectId) ?? null) : null }] as const),
+  );
 }
 
 // 42. "Make a subtask of…": tasks the viewer edits that this task can go under (searchable).
@@ -6461,17 +6689,15 @@ export async function searchSubtaskParents(taskId: string, query: string): Promi
     });
     check(result);
     const found = result.data ?? [];
-    const projectIds = [...new Set(found.map((c) => c.home_project_id).filter((p): p is string => Boolean(p)))];
-    const [labels, projects] = await Promise.all([
-      visibleRequestLabels(found.map((c) => c.id)),
-      projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-    ]);
-    const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+    const named = await numbersWithTheirProjects(
+      supabase,
+      found.map((c) => ({ id: c.id, projectId: c.home_project_id })),
+    );
     return found.map((c) => ({
       id: c.id,
       title: c.title,
-      label: labels.get(c.id) ?? null,
-      projectName: c.home_project_id ? (names.get(c.home_project_id) ?? null) : null,
+      label: named.get(c.id)?.label ?? null,
+      projectName: named.get(c.id)?.projectName ?? null,
       isSubtask: c.parent_task_id !== null,
       completed: c.completed_at !== null,
     }));

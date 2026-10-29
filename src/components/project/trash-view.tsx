@@ -13,11 +13,9 @@ import type { Profile, TrashedTask } from "@/lib/data";
 // Deleted tasks are only soft-deleted: restoring one brings it back to every project it was in, with its
 // section, fields, comments, and history. Nothing here deletes permanently.
 export function TrashView({
-  projectId,
   tasks,
   profiles,
 }: {
-  projectId: string;
   tasks: TrashedTask[];
   profiles: Profile[];
 }) {
@@ -61,9 +59,7 @@ export function TrashView({
                       Deleted <Timestamp iso={task.deletedAt} />
                       {by ? ` by ${displayName(by)}` : ""}
                       {task.parentTitle ? ` · subtask of ${task.parentTitle}` : ""}
-                      {task.homeProjectId !== projectId && task.homeProjectName
-                        ? ` · home project: ${task.homeProjectName}`
-                        : ""}
+                      {task.otherProjectNames.length ? ` · also in ${task.otherProjectNames.join(", ")}` : ""}
                     </p>
                   </div>
                   <button

@@ -14,6 +14,7 @@ import {
   hasReal4Schema,
   listOwnProjectRoles,
   listProjectFields,
+  listProjectFieldSharing,
   listProjectForms,
   listProjectMembers,
   listProjectRules,
@@ -58,6 +59,7 @@ export default async function ProjectLayout({
     viewSettings,
     batch4Schema,
     sectionsLocked,
+    fieldSharing,
   ] = await Promise.all([
       getProject(projectId),
       listProjectViews(projectId),
@@ -77,6 +79,10 @@ export default async function ProjectLayout({
       getProjectViewSettings(projectId),
       hasOct26Batch4Schema(),
       getProjectSectionsLocked(projectId),
+      // Oct 29 notes (batch 7): shared library fields (the Fields list's "Shared" marker, Edit field's
+      // read-only definition). Booleans and counts only. Never worth failing the project page over: the
+      // database still decides every change.
+      listProjectFieldSharing(projectId).catch(() => null),
     ]);
   if (!project || !role) {
     // A layout doesn't stop its pages from rendering, so the request page is a route of its own.
@@ -120,6 +126,7 @@ export default async function ProjectLayout({
           batch4={batch4}
           archived={project.archived_at !== null}
           statusTemplates={statusTemplates}
+          fieldSharing={fieldSharing}
         >
           <div className="flex min-h-0 flex-1 flex-col">
             <RecordRecent kind="project" id={project.id} />

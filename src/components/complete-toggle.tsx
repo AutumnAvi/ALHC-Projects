@@ -1,10 +1,11 @@
 "use client";
 
-import { Check, ThumbsUp } from "lucide-react";
+import { Check, Clock, Send, ThumbsUp } from "lucide-react";
+import { completeModeRowLabel, completeModeTooltip, type CompleteMode } from "@/lib/approval-complete";
 import type { TaskKind } from "@/lib/task-kinds";
 
-// The completion control for a task row. Milestones get a diamond, approval tasks a thumbs-up (their
-// assignee decides in the pane; the database refuses ticking an open approval task complete).
+// The completion control for a task row. Milestones get a diamond, approval tasks a thumbs-up (only their
+// approvers complete them; everyone else gets ApprovalToggle below — Oct 29 notes, batch 7).
 // readOnly (people who can't edit the task — Viewers, Commenters): the same shape as a plain status
 // mark, not a button, with no hover and nothing to click (Oct 26 notes).
 export function CompleteToggle({
@@ -88,6 +89,47 @@ export function CompleteToggle({
       ) : (
         <Check className="size-[70%]" strokeWidth={3} />
       )}
+    </button>
+  );
+}
+
+// An approval task's row control for a viewer who can't simply tick it (completeModeOf(), Oct 29 notes,
+// batch 7, item 52): "Ready for approval" (opens the task's send flow), "Waiting for approval" (a round is
+// pending: nothing to do, still focusable so the tooltip reads), or "Approve" (the viewer's own decision is
+// open: opens it in the pane). Same size and place as CompleteToggle.
+export function ApprovalToggle({
+  mode,
+  title,
+  size = "md",
+  onAction,
+}: {
+  mode: Exclude<CompleteMode, "complete">;
+  title: string;
+  size?: "sm" | "md";
+  onAction?: () => void;
+}) {
+  const dimensions = size === "sm" ? "size-4" : "size-[18px]";
+  const tone =
+    mode === "ready"
+      ? "border-dashed border-accent-400 text-accent-600 hover:border-solid hover:bg-accent-50"
+      : mode === "approve"
+        ? "border-green-600 text-green-700 hover:bg-green-50"
+        : "cursor-default border-zinc-300 bg-zinc-50 text-zinc-400";
+  const Icon = mode === "ready" ? Send : mode === "approve" ? ThumbsUp : Clock;
+  return (
+    <button
+      type="button"
+      aria-disabled={mode === "waiting" ? "true" : undefined}
+      aria-label={completeModeRowLabel(mode, title)}
+      data-tooltip={completeModeTooltip(mode)}
+      data-approval-toggle={mode}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (mode !== "waiting") onAction?.();
+      }}
+      className={`${dimensions} inline-flex shrink-0 items-center justify-center rounded-full border transition ${tone}`}
+    >
+      <Icon className="size-[60%]" strokeWidth={2.5} aria-hidden />
     </button>
   );
 }

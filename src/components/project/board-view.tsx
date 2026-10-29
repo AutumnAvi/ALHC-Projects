@@ -2,14 +2,13 @@
 
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useState, type DragEvent } from "react";
-import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
-import { approvalOpen, type TaskKind } from "@/lib/task-kinds";
+import type { TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useViewConfig } from "@/components/project/view-config";
 import { useOpenTaskId } from "@/components/shell/right-panel";
-import { BlockedToggle } from "@/components/task/blockers-popover";
+import { RowCompleteControl } from "@/components/task/row-complete-control";
 import { TaskLink } from "@/components/task/task-link";
 import { useServerAction } from "@/components/toast";
 import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, updateTask } from "@/lib/actions";
@@ -18,7 +17,8 @@ import type { Tag } from "@/lib/tags";
 import type { TaskSeed } from "@/lib/task-seed";
 import type { Profile, ProjectTask, ProjectTaskGroupPage, Section } from "@/lib/data";
 import { displayTaskTitle } from "@/lib/request-numbers";
-import type { FieldDef } from "@/lib/fields";
+import { fieldLockedFor, type FieldDef } from "@/lib/fields";
+import { LockedFieldValue } from "./field-lock";
 import { columnsOf, groupOf, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { blockedCount } from "./inline-cells";
@@ -76,7 +76,7 @@ export function BoardView({
   const viewConfig = useViewConfig();
   const config = viewConfig?.current ?? configProp;
   const [, run] = useServerAction();
-  const canEdit = useProjectPermissions().canEdit;
+  const { canEdit, canManage } = useProjectPermissions();
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   // The column a card was dragged from (grouped by tag, a task sits in several columns).
@@ -122,8 +122,11 @@ export function BoardView({
   };
   const firstSectionGroup = groups.find((g) => g.target.kind === "section");
 
-  // Viewers and commenters can't move cards: no drag, no "Move to" menu.
-  const moveOptions = canEdit ? groups.filter((g) => g.target.kind !== "none") : [];
+  // Viewers and commenters can't move cards: no drag, no "Move to" menu. Neither can anyone below Owner /
+  // Admin when the columns are a locked field's options (Oct 29 notes, batch 7).
+  const groupField = fieldsById.get(refFieldId(groupBy) ?? "");
+  const moveOptions =
+    canEdit && !(groupField && fieldLockedFor(groupField, { canManage })) ? groups.filter((g) => g.target.kind !== "none") : [];
 
   function move(task: ProjectTask, group: TaskGroup, beforeId: string | null, fromKey: string | null = null) {
     const target = group.target;
@@ -287,6 +290,7 @@ export function BoardView({
                     cardFields={cardFields}
                     fieldContext={fieldContext}
                     canEdit={canEdit}
+                    canManage={canManage}
                     onToggle={() => toggle(task)}
                     tagsById={tagsById}
                     onMove={(key) => {
@@ -366,6 +370,7 @@ function TaskCard({
   cardFields,
   fieldContext,
   canEdit,
+  canManage,
   tagsById,
   onToggle,
   onMove,
@@ -384,6 +389,8 @@ function TaskCard({
   cardFields: FieldDef[];
   fieldContext: FieldContext;
   canEdit: boolean;
+  // Owner / Admin: locked fields' chips carry no lock (Oct 29 notes, batch 7).
+  canManage: boolean;
   tagsById: Map<string, Tag>;
   onToggle: () => void;
   onMove: (groupKey: string) => void;
@@ -408,20 +415,17 @@ function TaskCard({
     >
       <div className="flex items-start gap-2">
         <span className="pt-0.5">
-          {blocked > 0 ? (
-            // Blocked: the completion control is locked; hovering or tapping it lists what it waits on.
-            <BlockedToggle taskId={task.id} title={task.title} count={blocked} size="sm" />
-          ) : (
-            <CompleteToggle
-              size="sm"
-              kind={task.kind}
-              completed={completed}
-              readOnly={!canEdit}
-              disabled={task.kind === "approval" && approvalOpen(task.approvalStatus)}
-              onToggle={onToggle}
-              label={kindToggleLabel(task.kind, task.title, completed)}
-            />
-          )}
+          {/* Blocked: a lock listing what it waits on. Approval tasks: only their approvers tick them
+              (Oct 29 notes, batch 7); everyone else gets Ready for approval / Waiting / Approve. */}
+          <RowCompleteControl
+            task={task}
+            completed={completed}
+            readOnly={!canEdit}
+            blocked={blocked}
+            size="sm"
+            seed={seed}
+            onToggle={onToggle}
+          />
         </span>
         <TaskLink
           taskId={task.id}
@@ -437,9 +441,16 @@ function TaskCard({
 
       {cardFields.some((f) => task.fieldValues[f.id] != null || f.boundToSections) ? (
         <div className="mt-2 flex flex-wrap gap-1">
-          {cardFields.map((field) => (
-            <FieldValueChips key={field.id} field={field} task={task} context={fieldContext} showName />
-          ))}
+          {cardFields.map((field) =>
+            // A locked field's value (Oct 29 notes, batch 7): the lock says who can change it.
+            fieldLockedFor(field, { canManage }) && task.fieldValues[field.id] != null ? (
+              <LockedFieldValue key={field.id}>
+                <FieldValueChips field={field} task={task} context={fieldContext} showName />
+              </LockedFieldValue>
+            ) : (
+              <FieldValueChips key={field.id} field={field} task={task} context={fieldContext} showName />
+            ),
+          )}
         </div>
       ) : null}
 

@@ -1,6 +1,6 @@
 // Team roles and the group-invite result, mirrored from 20261006050000_goals_teams.sql. A team never
 // grants project access; the group invite adds ordinary project members.
-import type { RequestLabel } from "@/lib/request-numbers";
+import type { RequestLabel, TaskNumber } from "@/lib/request-numbers";
 
 import { hasRole, type ProjectRole } from "@/lib/roles";
 
@@ -113,8 +113,13 @@ export type TeamCalendarTask = {
   projectName: string;
   canEdit: boolean;
   // Oct 26 notes (batch 4): the task's number (when its project numbers tasks), drawn as a tiny badge
-  // after the name; `title` is the bare name.
+  // after the name; `title` is the bare name. Since Oct 29 notes (55b) the first number the viewer can
+  // read (stable order), with every number in taskNumbers for the "+N". The bar's project's own number
+  // comes first; when it doesn't number the task, numberProjectName is the project whose number is shown
+  // (the badge names it instead of projectName).
   requestLabel: RequestLabel | null;
+  taskNumbers?: TaskNumber[];
+  numberProjectName?: string | null;
 };
 
 // The most tasks the team Calendar loads for one period.

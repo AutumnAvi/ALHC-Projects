@@ -9,10 +9,21 @@ import { Assignee, EmptyCellHint } from "@/components/project/task-meta";
 import { DateRangePicker, SingleDatePicker } from "@/components/task/date-picker";
 import { PeopleList, PersonPicker } from "@/components/task/person-picker";
 import { useNotify } from "@/components/toast";
-import { loadSubtaskRows, setTaskRowExpanded } from "@/lib/actions";
+import { loadSubtaskRows, setTaskRowExpanded, type ActionResult } from "@/lib/actions";
 import type { Profile, SubtaskItem } from "@/lib/data";
 import { dayLabel } from "@/lib/date-input";
-import { OPTION_COLOR_CLASSES, type FieldDef, type FieldOption } from "@/lib/fields";
+import { LongTextEditor } from "@/components/long-text-editor";
+import { NumberInput } from "@/components/number-input";
+import {
+  OPTION_COLOR_CLASSES,
+  formatNumberValue,
+  notANumberNote,
+  numberPrefixOf,
+  readNumberBox,
+  type FieldDef,
+  type FieldOption,
+} from "@/lib/fields";
+import { textValueLabel } from "@/lib/long-text";
 import { MAX_SUBTASK_DEPTH, subtasksByParent } from "@/lib/subtasks";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -516,9 +527,10 @@ export function InlineChoiceCell({
   );
 }
 
-// A custom field's value in a List cell, edited the way the pane edits it (task-fields.tsx): text and
-// numbers in a box (Enter saves, Escape cancels), dates in the calendar, a checkbox, single and multiple
-// choices as pills, people from a searchable list, and the section-bound Status as the section.
+// A custom field's value in a List cell, edited the way the pane edits it (task-fields.tsx): text in the
+// pop-out editor (item 48), numbers in a box (Enter saves, Escape cancels), dates in the calendar, a
+// checkbox, single and multiple choices as pills, people from a searchable list, and the section-bound
+// Status as the section.
 export function InlineFieldCell({
   field,
   value,
@@ -540,14 +552,31 @@ export function InlineFieldCell({
   taskTitle: string;
   canEdit: boolean;
   display: ReactNode;
-  // JSON null clears the value.
-  onChange: (next: Json) => void;
+  // JSON null clears the value. The text editor waits for the returned result (useServerAction's run):
+  // a refused save keeps it open with what was typed.
+  onChange: (next: Json) => void | Promise<ActionResult | void>;
   onSectionChange: (sectionId: string | null) => void;
   // A text box is open (the row stops being draggable so text can be selected).
   onEditingChange?: (editing: boolean) => void;
 }) {
-  if (!canEdit) return <>{display}</>;
   const label = `${field.name} of “${taskTitle}”`;
+  // Text (item 48): the pop-out editor, or the whole text to read for people who can't edit.
+  if (field.fieldType === "text" && !field.boundToSections) {
+    return (
+      <InlineLongTextCell
+        label={label}
+        fieldName={field.name}
+        taskTitle={taskTitle}
+        value={value ?? null}
+        canEdit={canEdit}
+        locked={Boolean(field.locked)}
+        display={display}
+        onChange={onChange}
+        onEditingChange={onEditingChange}
+      />
+    );
+  }
+  if (!canEdit) return <>{display}</>;
   if (field.boundToSections) {
     return (
       <InlineChoiceCell
@@ -561,12 +590,12 @@ export function InlineFieldCell({
     );
   }
   switch (field.fieldType) {
-    case "text":
     case "number":
       return (
-        <InlineTextCell
+        <InlineNumberCell
           label={label}
-          numeric={field.fieldType === "number"}
+          fieldName={field.name}
+          symbol={numberPrefixOf(field)}
           value={value ?? null}
           display={display}
           onChange={onChange}
@@ -696,23 +725,26 @@ export function InlineFieldCell({
   return <>{display}</>;
 }
 
-// Text and number values: the cell turns into a box. Enter or leaving it saves, Escape cancels; Enter and
-// Escape put the focus back on the cell.
-function InlineTextCell({
+// Number values: the cell turns into a box. Enter or leaving it saves, Escape cancels; Enter and Escape
+// put the focus back on the cell. The field's symbol (item 49) sits inside the box.
+function InlineNumberCell({
   label,
-  numeric,
+  fieldName,
+  symbol = null,
   value,
   display,
   onChange,
   onEditingChange,
 }: {
   label: string;
-  numeric: boolean;
+  fieldName: string;
+  symbol?: string | null;
   value: Json;
   display: ReactNode;
   onChange: (next: Json) => void;
   onEditingChange?: (editing: boolean) => void;
 }) {
+  const notify = useNotify();
   const [editing, setEditing] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const refocus = useRef(false);
@@ -726,31 +758,28 @@ function InlineTextCell({
     setEditing(false);
     onEditingChange?.(false);
   };
-  const commit = (raw: string) => {
+  const commit = (raw: string, badInput: boolean) => {
     stop();
-    if (numeric) {
-      const next = raw.trim() === "" ? null : Number(raw);
-      if (next !== null && !Number.isFinite(next)) return;
-      if (next !== (typeof value === "number" ? value : null)) onChange(next);
-    } else {
-      const next = raw.trim();
-      if (next !== (typeof value === "string" ? value : "")) onChange(next || null);
+    // Text that isn't a number (the box then reads "") keeps the saved value instead of clearing it.
+    const entry = readNumberBox(raw, badInput);
+    if (entry.kind === "keep") {
+      notify(notANumberNote(fieldName, symbol));
+      return;
     }
+    const next = entry.kind === "clear" ? null : entry.value;
+    if (next !== (typeof value === "number" ? value : null)) onChange(next);
   };
 
   if (editing) {
-    const initial = typeof value === "string" || typeof value === "number" ? String(value) : "";
+    const initial = typeof value === "number" ? String(value) : "";
     return (
-      <input
+      <NumberInput
         autoFocus
-        type={numeric ? "number" : "text"}
-        step={numeric ? "any" : undefined}
         defaultValue={initial}
-        maxLength={numeric ? undefined : 2000}
         aria-label={label}
         draggable={false}
         onFocus={(e) => e.currentTarget.select()}
-        onBlur={(e) => commit(e.currentTarget.value)}
+        onBlur={(e) => commit(e.currentTarget.value, e.currentTarget.validity.badInput)}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Enter") {
@@ -764,15 +793,18 @@ function InlineTextCell({
           }
         }}
         className="control h-7 min-w-0 flex-1"
+        symbol={symbol}
+        wrapperClassName="min-w-0 flex-1"
       />
     );
   }
+  const shown = typeof value === "number" ? formatNumberValue(value, symbol) : "empty";
   return (
     <button
       ref={buttonRef}
       type="button"
       draggable={false}
-      aria-label={`${label}: ${value === null || value === "" ? "empty" : String(value)}. Change`}
+      aria-label={`${label}: ${shown}. Change`}
       onClick={() => {
         setEditing(true);
         onEditingChange?.(true);
@@ -781,5 +813,67 @@ function InlineTextCell({
     >
       {display}
     </button>
+  );
+}
+
+// Text values (item 48): the cell shows one line (the whole text on hover when it's cut off, from
+// FieldValueChips); a click opens the pop-out editor — or, for people who can't edit, the whole text to
+// read. An empty value has nothing to read, so below Editor it stays plain.
+export function InlineLongTextCell({
+  label,
+  fieldName,
+  taskTitle,
+  value,
+  canEdit,
+  locked = false,
+  display,
+  onChange,
+  onEditingChange,
+}: {
+  label: string;
+  fieldName: string;
+  taskTitle: string;
+  value: Json;
+  canEdit: boolean;
+  // A locked field (item 51): the read-only view says why.
+  locked?: boolean;
+  display: ReactNode;
+  onChange: (next: Json) => void | Promise<ActionResult | void>;
+  onEditingChange?: (editing: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const text = typeof value === "string" ? value : "";
+  if (!canEdit && !text) return <>{display}</>;
+  return (
+    <>
+      <button
+        type="button"
+        draggable={false}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={textValueLabel(label, text, canEdit ? "Change" : "Show full text")}
+        onClick={() => {
+          setOpen(true);
+          onEditingChange?.(true);
+        }}
+        className={CELL_BUTTON}
+      >
+        {display}
+      </button>
+      {open ? (
+        <LongTextEditor
+          fieldName={fieldName}
+          taskTitle={taskTitle}
+          value={value}
+          readOnly={!canEdit}
+          locked={locked}
+          onSave={(next) => onChange(next)}
+          onClose={() => {
+            setOpen(false);
+            onEditingChange?.(false);
+          }}
+        />
+      ) : null}
+    </>
   );
 }

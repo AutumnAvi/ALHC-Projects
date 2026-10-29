@@ -73,32 +73,41 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// Runs a server action inside a transition and surfaces any returned error as a toast.
+// What a failed action that threw (a dropped connection, an expired session) reads as.
+export const ACTION_FAILED = "Couldn’t save. Check your connection and try again.";
+
+// Runs a server action inside a transition and surfaces any returned error as a toast. The returned
+// promise settles (never rejects) once the action has finished, with its result — so a caller that
+// must not lose what someone typed (the long text editor) can wait for it and keep the draft on an
+// error. Callers that don't need it ignore it.
 export function useServerAction() {
   const notify = useContext(ToastContext);
   const [pending, startTransition] = useTransition();
 
   const run = useCallback(
-    (action: () => Promise<ActionResult | void>, optimistic?: () => void) => {
-      const token = beginLocalMutation();
-      startTransition(async () => {
-        try {
-          optimistic?.();
-          const result = await action();
-          if (result?.error) {
-            notify(result.error);
+    (action: () => Promise<ActionResult | void>, optimistic?: () => void): Promise<ActionResult | void> =>
+      new Promise((resolve) => {
+        const token = beginLocalMutation();
+        startTransition(async () => {
+          try {
+            optimistic?.();
+            const result = await action();
+            if (result?.error) {
+              notify(result.error);
+              failMutation(token);
+            }
+            resolve(result);
+          } catch (error) {
             failMutation(token);
+            resolve({ error: ACTION_FAILED });
+            throw error;
+          } finally {
+            endLocalMutation(token);
+            // Cached task panes may be out of date now (the open one gets its fresh copy with the refresh).
+            invalidateTaskPanes();
           }
-        } catch (error) {
-          failMutation(token);
-          throw error;
-        } finally {
-          endLocalMutation(token);
-          // Cached task panes may be out of date now (the open one gets its fresh copy with the refresh).
-          invalidateTaskPanes();
-        }
-      });
-    },
+        });
+      }),
     [notify],
   );
 

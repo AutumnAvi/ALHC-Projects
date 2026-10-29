@@ -291,6 +291,16 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          // Oct 29 notes, batch 7 (item 49): a number field's symbol; absent on a database without it.
+          number_prefix?: string | null;
+          // Oct 29 notes, batch 7: a placement of a shared library field points at the published source
+          // field (null on the source and on project-only fields); absent on a database without it.
+          library_field_id?: string | null;
+          // Oct 29 notes, batch 7 (51): a locked field's values, definition, and removal are for the
+          // project's Owners and Admins; who locked it and when (kept by the database).
+          locked?: boolean;
+          locked_by?: string | null;
+          locked_at?: string | null;
         };
         Insert: {
           id?: string;
@@ -307,6 +317,11 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          number_prefix?: string | null;
+          library_field_id?: string | null;
+          locked?: boolean;
+          locked_by?: string | null;
+          locked_at?: string | null;
         };
         Update: {
           id?: string;
@@ -319,6 +334,11 @@ export type Database = {
           description?: string | null;
           notify_on_change?: boolean;
           in_library?: boolean;
+          number_prefix?: string | null;
+          library_field_id?: string | null;
+          locked?: boolean;
+          locked_by?: string | null;
+          locked_at?: string | null;
           sort_order?: number;
           created_at?: string;
           updated_at?: string;
@@ -332,7 +352,80 @@ export type Database = {
             referencedRelation: "projects";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "custom_fields_library_field_id_fkey";
+            columns: ["library_field_id"];
+            isOneToOne: false;
+            referencedRelation: "custom_fields";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "custom_fields_locked_by_fkey";
+            columns: ["locked_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
         ];
+      };
+      // Oct 29 notes, batch 7: existing copies linked to a library field, and the tasks whose values
+      // differed when they were (both kept). No client access.
+      library_field_links: {
+        Row: {
+          id: string;
+          field_id: string;
+          library_field_id: string;
+          matched_by: string;
+          previous_definition: Json;
+          linked_at: string;
+        };
+        Insert: {
+          id?: string;
+          field_id: string;
+          library_field_id: string;
+          matched_by: string;
+          previous_definition?: Json;
+          linked_at?: string;
+        };
+        Update: {
+          id?: string;
+          field_id?: string;
+          library_field_id?: string;
+          matched_by?: string;
+          previous_definition?: Json;
+          linked_at?: string;
+        };
+        Relationships: [];
+      };
+      library_field_link_conflicts: {
+        Row: {
+          id: string;
+          task_id: string;
+          field_id: string;
+          value: Json | null;
+          other_field_id: string;
+          other_value: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          field_id: string;
+          value?: Json | null;
+          other_field_id: string;
+          other_value?: Json | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          field_id?: string;
+          value?: Json | null;
+          other_field_id?: string;
+          other_value?: Json | null;
+          created_at?: string;
+        };
+        Relationships: [];
       };
       dashboard_widgets: {
         Row: {
@@ -3077,6 +3170,9 @@ export type Database = {
           draft_saves: number;
           draft_window_started_at: string | null;
           walkthrough_seen_at: string | null;
+          // Oct 29 notes (55b): the project its email and page name (chosen with the sender's access).
+          // Not client-readable: create_review_check / rotate_review_check_token return it.
+          project_id: string | null;
           created_by: string;
           created_at: string;
           updated_at: string;
@@ -4195,6 +4291,8 @@ export type Database = {
           field_type: string;
           options: Json;
           sort_order: number;
+          // Oct 29 notes, batch 7 (item 49): a number field's symbol; absent on a database without it.
+          number_prefix?: string | null;
           created_by: string | null;
           created_at: string;
           updated_at: string;
@@ -4207,6 +4305,7 @@ export type Database = {
           field_type: string;
           options?: Json;
           sort_order?: number;
+          number_prefix?: string | null;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -4219,6 +4318,7 @@ export type Database = {
           field_type?: string;
           options?: Json;
           sort_order?: number;
+          number_prefix?: string | null;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -4309,6 +4409,7 @@ export type Database = {
           workspace_id: string;
           name: string;
           color: string;
+          palette_color: string | null;
           archived_at: string | null;
           created_by: string | null;
           created_at: string;
@@ -4320,6 +4421,7 @@ export type Database = {
           workspace_id?: string;
           name: string;
           color?: string;
+          palette_color?: string | null;
           archived_at?: string | null;
           created_by?: string | null;
           created_at?: string;
@@ -4331,6 +4433,7 @@ export type Database = {
           workspace_id?: string;
           name?: string;
           color?: string;
+          palette_color?: string | null;
           archived_at?: string | null;
           created_by?: string | null;
           created_at?: string;
@@ -5319,6 +5422,12 @@ export type Database = {
         Args: { target_task: string };
         Returns: Json;
       };
+      // Oct 29 notes (batch 7, 55b): every project of each task the caller can read, in the stable order,
+      // with its number there: { "<task id>": [{ project_id, project_name, label, wrap }] }.
+      task_project_labels: {
+        Args: { task_ids: string[] };
+        Returns: Json;
+      };
       set_task_row_expanded: {
         Args: { target_task: string; expanded: boolean };
         Returns: string[];
@@ -5348,6 +5457,16 @@ export type Database = {
       task_approval_state: {
         Args: { target_task: string };
         Returns: Json;
+      };
+      task_approval_states: {
+        Args: { task_ids: string[] };
+        Returns: Json;
+      };
+      // Oct 29 notes, batch 7 (item 52): the task's latest approval round is approved (the approval has
+      // been given, so it completes normally again).
+      approval_round_approved: {
+        Args: { target_task: string };
+        Returns: boolean;
       };
       set_task_approvers: {
         Args: { target_task: string; approvers: string[]; approval_mode?: string; approval_due?: string | null };
@@ -5649,6 +5768,31 @@ export type Database = {
       list_field_library: {
         Args: Record<PropertyKey, never>;
         Returns: { field_id: string; name: string; field_type: string; description: string | null; options: Json }[];
+      };
+      // Oct 29 notes, batch 7: shared library fields.
+      add_library_field: {
+        Args: { target_project: string; library_field: string };
+        Returns: string;
+      };
+      locked_field_value_writable: {
+        Args: { target_task: string; target_field: string };
+        Returns: boolean;
+      };
+      project_field_sharing: {
+        Args: { target_project: string };
+        Returns: {
+          field_id: string;
+          library_field_id: string | null;
+          is_source: boolean;
+          is_shared: boolean;
+          placement_count: number;
+          definition_editable: boolean;
+          definition_manageable: boolean;
+        }[];
+      };
+      library_field_definition_columns: {
+        Args: Record<PropertyKey, never>;
+        Returns: string[];
       };
       list_member_last_activity: {
         Args: { target_profile?: string | null };

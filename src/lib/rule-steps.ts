@@ -115,8 +115,15 @@ const LABELS: Record<string, string> = {
   // Automations V3
   no_candidate: "Nobody can take it",
   no_person: "Nobody to assign",
+  // Oct 29 notes, batch 7: Set field on a locked field, the rule's owner not an Owner / Admin.
+  locked: "Field locked",
+  // Oct 29 notes, batch 7: Mark complete on an approval task that isn't approved yet (its result says why).
+  skipped: "Skipped",
   error: "Failed",
 };
+
+// Outcomes that leave the task as it was (a test's headline doesn't count them as steps that would run).
+const NO_CHANGE_OUTCOMES = new Set(["unchanged", "empty", "skipped", "locked"]);
 
 export function stepOutcomeLabel(outcome: string): string {
   return LABELS[outcome] ?? outcome.replace(/_/g, " ");
@@ -135,6 +142,6 @@ export function testHeadline(result: RuleTestResult): string {
   if (result.invalid) return "The rule can’t be saved like this yet";
   if (result.chosenBranch === null) return "Nothing would run: the conditions don’t match this task";
   if (result.error) return "This rule would fail on this task";
-  const changes = result.steps.filter((s) => s.outcome !== "unchanged" && s.outcome !== "empty").length;
+  const changes = result.steps.filter((s) => !NO_CHANGE_OUTCOMES.has(s.outcome)).length;
   return changes === 0 ? "It would run, but nothing on this task would change" : `${changes} step${changes === 1 ? "" : "s"} would run`;
 }

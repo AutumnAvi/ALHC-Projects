@@ -16,7 +16,16 @@ import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { MISSING_INPUT, RuleDateInput, SlotInput, optionDot, scheduleLabel, type RuleContext } from "@/components/rules/rule-shared";
+import {
+  MISSING_INPUT,
+  RuleDateInput,
+  SlotInput,
+  WithSymbol,
+  numberValueLabel,
+  optionDot,
+  scheduleLabel,
+  type RuleContext,
+} from "@/components/rules/rule-shared";
 import { TriggerFields } from "@/components/rules/rule-editor";
 import { RunSteps } from "@/components/rules/run-steps";
 import {
@@ -48,6 +57,7 @@ import {
   type PortfolioRuleRun,
   type PortfolioTriggerType,
 } from "@/lib/portfolio-rules";
+import { numberPrefixOf } from "@/lib/fields";
 import { runReason } from "@/lib/rules";
 import { missingParams, ruleProblems, saveBlockedReason, stepProblems, type StepScope } from "@/lib/rule-params";
 import { runSteps } from "@/lib/rule-steps";
@@ -438,14 +448,17 @@ function FieldValue({ ctx, fieldId, value, onChange }: { ctx: PortfolioRuleConte
   }
   if (field.fieldType === "date") return <RuleDateInput label={`${field.name} value`} value={value} onChange={(v) => onChange(v)} />;
   if (field.fieldType === "number") {
+    const symbol = numberPrefixOf(field);
     return (
-      <SlotInput
-        type="number"
-        label={`${field.name} value`}
-        value={typeof value === "number" ? String(value) : ""}
-        onChange={(v) => onChange(v === "" || !Number.isFinite(Number(v)) ? null : Number(v))}
-        className="w-28"
-      />
+      <WithSymbol symbol={symbol}>
+        <SlotInput
+          type="number"
+          label={numberValueLabel(`${field.name} value`, symbol)}
+          value={typeof value === "number" ? String(value) : ""}
+          onChange={(v) => onChange(v === "" || !Number.isFinite(Number(v)) ? null : Number(v))}
+          className="w-28"
+        />
+      </WithSymbol>
     );
   }
   return <TextInput label={`${field.name} value`} value={value} onChange={(v) => onChange(v || null)} />;

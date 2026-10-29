@@ -21,7 +21,6 @@ import {
 import { displayName } from "@/components/avatar";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
-import { CompleteToggle, kindToggleLabel } from "@/components/complete-toggle";
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { Segmented } from "@/components/project/view-chrome";
@@ -29,9 +28,12 @@ import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard"
 import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
-import { BlockedToggle } from "@/components/task/blockers-popover";
+import { ApprovalToggle } from "@/components/complete-toggle";
+import { RowCompleteControl } from "@/components/task/row-complete-control";
+import { useApprovalAction, useApprovalShortcut } from "@/components/task/approval-action";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
+import { MoreTaskNumbers } from "@/components/task/task-number";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import {
@@ -327,6 +329,7 @@ export function MyTasksView({
     ...(completed.length > 0 ? [{ key: "completed", title: "Recently completed", tasks: completed }] : []),
   ];
   const tasksById = new Map([...openTasks, ...completed].map((t) => [t.id, t]));
+  const approvalShortcut = useApprovalShortcut();
   const shownIds = (key: string, list: { id: string }[]) => list.slice(0, pages.limit(key)).map((task) => task.id);
   const selection = useTaskSelection(
     groups.flatMap((g) => shownIds(g.key, g.tasks)),
@@ -364,6 +367,9 @@ export function MyTasksView({
         return task ? isDone(task) : true;
       });
       if (next) {
+        // One approval task the viewer doesn't approve: its approval step instead (Oct 29 notes, batch 7).
+        const only = ids.length === 1 ? tasksById.get(ids[0]) : undefined;
+        if (only && approvalShortcut({ ...only, completedAt: isDone(only) ? (only.completedAt ?? "done") : null }, seed(only))) return;
         // Blocked tasks can't be completed: say so and leave them out (Oct 27 notes, batch 6).
         const listed = ids.flatMap((id) => {
           const task = tasksById.get(id);
@@ -996,6 +1002,7 @@ function RowTitle({
   open,
   seed,
   subtask = false,
+  after = null,
   onRename,
   onEditingChange,
 }: {
@@ -1009,6 +1016,8 @@ function RowTitle({
   open: boolean;
   seed: () => TaskSeed;
   subtask?: boolean;
+  // Right after the name: the "+N" of a task numbered in several projects (Oct 29 notes, 55b).
+  after?: ReactNode;
   onRename: (title: string) => void;
   // Renaming: a draggable row stops being draggable so the mouse can select text.
   onEditingChange?: (editing: boolean) => void;
@@ -1021,18 +1030,26 @@ function RowTitle({
   const tone = done ? "text-zinc-400 line-through" : subtask ? "text-zinc-700" : "text-zinc-900";
   const prefix = subtask ? <span className="sr-only">Subtask: </span> : null;
   if (!canEdit) {
-    return (
+    const link = (
       <TaskLink
         taskId={taskId}
         seed={seed}
         draggable={false}
         data-task-link=""
         aria-current={open ? "true" : undefined}
-        className={`min-w-0 flex-1 truncate text-sm hover:underline ${tone}`}
+        className={`min-w-0 truncate text-sm hover:underline ${tone} ${after ? "" : "flex-1"}`}
       >
         {prefix}
         {title}
       </TaskLink>
+    );
+    return after ? (
+      <span className="flex min-w-0 flex-1 items-center gap-1">
+        {link}
+        {after}
+      </span>
+    ) : (
+      link
     );
   }
   return (
@@ -1073,6 +1090,7 @@ function RowTitle({
           {title}
         </button>
       )}
+      {editing ? null : after}
       <TaskLink
         taskId={taskId}
         seed={seed}
@@ -1212,21 +1230,22 @@ function MyTaskRow({
         onToggle={() => onToggleExpanded?.()}
         className="-mr-1"
       />
-      {blocked > 0 ? (
-        <BlockedToggle taskId={task.id} title={task.title} count={blocked} />
-      ) : (
-        <CompleteToggle
-          kind={task.kind}
-          completed={done}
-          readOnly={!task.canEdit}
-          onToggle={() => onToggle(task)}
-          label={kindToggleLabel(task.kind, task.title, done)}
-        />
-      )}
+      {/* My tasks are assigned to the viewer: an approval task they don't approve is theirs to send —
+          with Commenter+ (approval_can_act); a Viewer assignee gets the read-only mark. */}
+      <RowCompleteControl
+        task={task}
+        completed={done}
+        readOnly={!task.canEdit}
+        assignedToMe={task.canComment ?? task.canEdit}
+        blocked={blocked}
+        seed={seedThis}
+        onToggle={() => onToggle(task)}
+      />
       <RowTitle
         taskId={task.id}
         title={task.title}
         bareTitle={bareTaskTitle(task.title, task.requestLabel)}
+        after={<MoreTaskNumbers numbers={task.taskNumbers} />}
         done={done}
         canEdit={task.canEdit}
         open={open}
@@ -1375,19 +1394,15 @@ function MySubtaskRow({
       style={{ paddingLeft: `${MY_SUBTASK_BASE_REM + depth * 1.5}rem` }}
     >
       <ExpandToggle expandable={row.hasChildren} expanded={row.expanded} title={subtask.title} onToggle={() => handlers.expand(subtask.id)} />
-      {blocked > 0 ? (
-        <BlockedToggle taskId={subtask.id} title={subtask.title} count={blocked} size="sm" />
-      ) : (
-        <CompleteToggle
-          size="sm"
-          kind={subtask.kind}
-          completed={done}
-          readOnly={!canEdit}
-          disabled={subtask.kind === "approval"}
-          onToggle={() => handlers.toggle(subtask)}
-          label={kindToggleLabel(subtask.kind, subtask.title, done)}
-        />
-      )}
+      <RowCompleteControl
+        task={subtask}
+        completed={done}
+        readOnly={!canEdit}
+        blocked={blocked}
+        size="sm"
+        seed={seed}
+        onToggle={() => handlers.toggle(subtask)}
+      />
       <RowTitle
         taskId={subtask.id}
         title={displayTaskTitle(subtask.title, subtask.requestLabel)}
@@ -1413,7 +1428,6 @@ function MySubtaskRow({
           assignee={assignee}
           people={profiles}
           canEdit={canEdit && profiles.length > 0}
-          approver={subtask.kind === "approval"}
           showName={false}
           onChange={(assigneeId) => handlers.assign(subtask, assigneeId)}
         />
@@ -1438,6 +1452,10 @@ function MySubtaskRow({
 // date, and round.
 function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId: string | null }) {
   const openTask = useOpenTask();
+  const approvalAction = useApprovalAction();
+  // An approval task's round waits on the viewer: its control is Approve (opens the decision in the pane,
+  // Oct 29 notes, batch 7). Other requests (approval subtasks) are decided in the pane's Approvals list.
+  const decides = item.isApprovalTask && item.roundNumber !== null;
   const title = displayTaskTitle(item.title, item.requestLabel);
   const seed = () =>
     seedFromTitle(item.taskId, bareTaskTitle(item.title, item.requestLabel), {
@@ -1445,6 +1463,8 @@ function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId:
       dueOn: item.dueOn,
       projectName: item.projectName ?? (item.projectId ? undefined : "Private"),
       kind: item.isApprovalTask ? "approval" : undefined,
+      // Waiting on the viewer's decision: the pane's button is Approve (Oct 29 notes, batch 7).
+      completeMode: decides ? "approve" : undefined,
     });
   const prefetch = useTaskPrefetch(item.taskId, seed);
   const open = openTaskId === item.taskId;
@@ -1461,21 +1481,30 @@ function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId:
         open ? "bg-accent-50/60" : "hover:bg-zinc-50"
       }`}
     >
-      <span
-        aria-hidden
-        className="ml-[1.375rem] inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-700"
-      >
-        <ThumbsUp className="size-[62%]" strokeWidth={2.5} />
+      {decides ? (
+        <span className="ml-[1.375rem] inline-flex shrink-0">
+          <ApprovalToggle mode="approve" title={title} onAction={() => approvalAction(item.taskId, "decide", seed())} />
+        </span>
+      ) : (
+        <span
+          aria-hidden
+          className="ml-[1.375rem] inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-700"
+        >
+          <ThumbsUp className="size-[62%]" strokeWidth={2.5} />
+        </span>
+      )}
+      <span className="flex min-w-0 flex-1 items-center gap-1">
+        <TaskLink
+          taskId={item.taskId}
+          seed={seed}
+          aria-current={open ? "true" : undefined}
+          className="min-w-0 truncate text-sm text-zinc-900 hover:underline"
+        >
+          <span className="sr-only">Approve: </span>
+          {title}
+        </TaskLink>
+        <MoreTaskNumbers numbers={item.taskNumbers} />
       </span>
-      <TaskLink
-        taskId={item.taskId}
-        seed={seed}
-        aria-current={open ? "true" : undefined}
-        className="min-w-0 flex-1 truncate text-sm text-zinc-900 hover:underline"
-      >
-        <span className="sr-only">Approve: </span>
-        {title}
-      </TaskLink>
       {item.roundNumber ? <span className="chip shrink-0">Round {item.roundNumber}</span> : null}
       {item.projectId ? (
         <Link

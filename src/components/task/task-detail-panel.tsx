@@ -3,7 +3,7 @@
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useOptimistic, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Check, ChevronRight, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, UserRound, X } from "lucide-react";
+import { Check, ChevronRight, Clock, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, Send, ThumbsUp, UserRound, X } from "lucide-react";
 import { usePaneExpanded, usePaneWide } from "./pane-size";
 import { CloseButton, ExpandButton, PANE_HEADER, PaneShell, useClosePane, WideViewToggle } from "./task-pane-frame";
 import { RecordRecent } from "@/components/shell/shell-context";
@@ -13,7 +13,9 @@ import { assignRequestNumber, setTaskCompleted, updateTask } from "@/lib/actions
 import type { Profile, TaskDetail } from "@/lib/data";
 import { taskPermissions } from "@/lib/permissions";
 import type { Tag } from "@/lib/tags";
-import { ApprovalTaskBanner } from "./task-approval-banner";
+import { completeModeLabel, completeModeOf } from "@/lib/approval-complete";
+import { requestApprovalAction } from "./approval-action";
+import { ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
 import { BlockersHover } from "./blockers-popover";
 import { TaskActivity, TaskPaneFooter } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
@@ -27,7 +29,8 @@ import { TaskProjects, type ProjectOption } from "./task-projects";
 import { TaskSubtasks, canAddSubtask } from "./task-subtasks";
 import { TaskTags } from "./task-tags";
 import { PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
-import { formatRequestLabel } from "@/lib/request-numbers";
+import { paneTaskNumbers } from "@/lib/request-numbers";
+import { TaskNumberChips } from "./task-number";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
 
@@ -66,14 +69,22 @@ export function TaskDetailPanel({
     ).length +
     task.hiddenBlockers;
   const blocked = !completed && openBlockers > 0;
-  // An approval task can't be ticked complete while its approval is pending (the approvers decide; the
-  // database refuses too). Oct 27 notes, batch 6: the status is the latest round's.
-  const awaitingApproval = !completed && task.kind === "approval" && task.approval?.status === "pending";
-  // Item 39: inside a project the pane shows that project's number for the task (each project numbers
-  // the tasks it holds); elsewhere the home project's.
+  // Oct 29 notes, batch 7 (item 52): only an approval task's approvers complete it. Everyone else's
+  // Mark complete is "Ready for approval" (the banner's send flow); while a round is pending it waits,
+  // except for an approver whose decision is open, whose button is Approve (the decision path). The
+  // database refuses the rest too (guard_task_kind).
+  const completeMode = completeModeOf({
+    kind: task.kind,
+    completed,
+    status: task.approval?.status ?? null,
+    isApprover: Boolean(task.approval?.approverIds.includes(memberId)),
+    waitingOnMe: task.approval?.waitingOnMe,
+  });
+  // The task's numbers (Oct 29 notes, 55b): one chip per project that numbers it and the viewer can read,
+  // in the stable order; inside one of those projects (item 39) its chip is the darker one.
   const pathname = usePathname();
   const pathProjectId = /^\/projects\/([^/?#]+)/.exec(pathname ?? "")?.[1] ?? null;
-  const numberLabel = (pathProjectId ? task.projectNumbers?.[pathProjectId] : undefined) ?? task.requestLabel;
+  const numbers = paneTaskNumbers(task);
 
   const memberProjectIds = new Set(task.memberships.map((m) => m.projectId));
   const permissions = taskPermissions(task);
@@ -103,9 +114,9 @@ export function TaskDetailPanel({
   }
 
   async function copyLink() {
-    // The task in its home project (else another of its projects the viewer can open); a private task in
-    // My tasks. People still need access to open it.
-    const project = task.memberships.find((m) => m.isHome) ?? task.memberships[0];
+    // The task in the first project it was added to that the viewer can open (Oct 29 notes, 55b: the
+    // stable rule; memberships come in that order); a private task in My tasks. People still need access.
+    const project = task.memberships[0];
     const path = project ? `/projects/${project.projectId}?task=${task.id}` : `/my-tasks?task=${task.id}`;
     try {
       await navigator.clipboard.writeText(`${window.location.origin}${path}`);
@@ -128,7 +139,44 @@ export function TaskDetailPanel({
       <RecordRecent kind="task" id={task.id} />
       {upload.input}
       <div className={PANE_HEADER}>
-        {canEdit && blocked ? (
+        {completeMode === "approve" && permissions.canComment ? (
+          // An approver who was later lowered to Viewer can't decide anymore (decide_approval needs Commenter+).
+          <button
+            type="button"
+            data-complete-mode="approve"
+            onClick={() => requestApprovalAction(task.id, "decide")}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-green-600 bg-white px-2.5 text-sm font-medium text-green-700 transition hover:bg-green-50"
+          >
+            <ThumbsUp className="size-4" strokeWidth={2.5} aria-hidden />
+            {completeModeLabel("approve")}
+          </button>
+        ) : completeMode === "waiting" && canEdit ? (
+          <button
+            type="button"
+            disabled
+            data-complete-mode="waiting"
+            data-tooltip="Waiting for approval: only its approvers decide"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 text-sm font-medium text-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Clock className="size-4" strokeWidth={2.5} aria-hidden />
+            {completeModeLabel("waiting")}
+          </button>
+        ) : completeMode === "ready" && canActOnApproval(task, memberId) ? (
+          <button
+            type="button"
+            data-complete-mode="ready"
+            data-tooltip="Only its approvers can complete an approval task. Send it to them."
+            onClick={() => requestApprovalAction(task.id, "send")}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-accent-500 bg-white px-2.5 text-sm font-medium text-accent-700 transition hover:bg-accent-50"
+          >
+            <Send className="size-4" strokeWidth={2.5} aria-hidden />
+            {completeModeLabel("ready")}
+          </button>
+        ) : completeMode !== "complete" ? (
+          <span className="flex min-w-0 items-center gap-2 text-xs text-zinc-500">
+            <span className="truncate">{permissions.readOnlyNote}</span>
+          </span>
+        ) : canEdit && blocked ? (
           // Item 43: a blocked task can't be completed. The button stays where it is, looks disabled,
           // wears a lock, and hovering, focusing, or tapping it lists the tasks it waits on (each opens).
           <BlockersHover taskId={task.id} count={openBlockers}>
@@ -149,8 +197,6 @@ export function TaskDetailPanel({
         ) : canEdit ? (
           <button
             type="button"
-            disabled={awaitingApproval}
-            data-tooltip={awaitingApproval ? "Waiting for approval. Withdraw the request first, or wait for the approvers" : undefined}
             aria-pressed={completed}
             onClick={() =>
               run(
@@ -158,14 +204,14 @@ export function TaskDetailPanel({
                 () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
               )
             }
-            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition ${
               completed
                 ? "border-green-600 bg-green-600 text-white enabled:hover:border-green-700 enabled:hover:bg-green-700"
                 : "border-zinc-300 bg-white text-zinc-700 enabled:hover:border-green-600 enabled:hover:bg-green-50 enabled:hover:text-green-700"
             }`}
           >
             <Check className="size-4" strokeWidth={2.5} aria-hidden />
-            {completed ? "Completed" : task.kind === "milestone" ? "Mark milestone complete" : "Mark complete"}
+            {completed ? "Completed" : completeModeLabel("complete", task.kind)}
           </button>
         ) : (
           <span className="flex min-w-0 items-center gap-2 text-xs text-zinc-500">
@@ -235,11 +281,7 @@ export function TaskDetailPanel({
         <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
           {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
-          {numberLabel ? (
-            <p className="mb-1 text-sm font-medium text-zinc-500" data-task-number="">
-              {formatRequestLabel(numberLabel)}
-            </p>
-          ) : null}
+          <TaskNumberChips numbers={numbers} currentProjectId={pathProjectId} className="mb-1.5" />
           {canEdit ? (
             <label htmlFor="task-title" className="sr-only">
               Task name
