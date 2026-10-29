@@ -46,6 +46,7 @@ import {
   numberPrefixProblem,
   selectOptionsProblem,
   lockFieldUnavailable,
+  lockedFieldNote,
   libraryChoices,
   removeFieldWording,
   searchLibrary,
@@ -158,7 +159,8 @@ export function FieldList({
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate font-medium text-zinc-900">{field.name}</span>
                   {sharedTip ? <SharedFieldMarker tooltip={sharedTip} /> : null}
-                  {field.locked ? <FieldLockIcon className="size-3.5" /> : null}
+                  {/* Keyboard / touch reach the lock's note where the row itself isn't a button. */}
+                  {field.locked ? <FieldLockIcon className="size-3.5" focusable={!canEdit} /> : null}
                   {field.inLibrary ? (
                     <Library className="size-3.5 shrink-0 text-zinc-400" aria-label="In the field library" />
                   ) : null}
@@ -551,7 +553,7 @@ function FieldForm({
           {lockedReadOnly ? (
             <p className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
               <Lock className="mt-px size-3.5 shrink-0 text-zinc-500" aria-hidden />
-              <span>{LOCKED_FIELD_NOTE}.</span>
+              <span>{lockedFieldNote(field ?? {})}.</span>
             </p>
           ) : null}
         </div>

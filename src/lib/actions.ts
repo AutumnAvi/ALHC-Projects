@@ -3133,8 +3133,15 @@ export async function setFieldValue(
       { task_id: id(taskId), field_id: id(fieldId, "field"), value },
       { onConflict: "task_id,field_id" },
     );
-    // A locked field (Oct 29 notes, batch 7): only the project's Owners and Admins change its values.
-    if (result.error?.code === "42501" && result.error.message.startsWith("Locked")) throw new InputError(LOCKED_FIELD_NOTE);
+    // A locked field (Oct 29 notes, batch 7): only the project's Owners and Admins change its values (of
+    // every project of the task that uses it, for a shared library field). The database says which.
+    if (result.error?.code === "42501" && result.error.message.startsWith("Locked")) {
+      throw new InputError(result.error.message.startsWith("Locked —") ? result.error.message : LOCKED_FIELD_NOTE);
+    }
+    // A value row never moves to another task or field (the app never asks; an upsert keeps its keys).
+    if (result.error?.code === "42501" && result.error.message.startsWith("A field value can")) {
+      throw new InputError(result.error.message);
+    }
     check(result);
   });
 }

@@ -1145,7 +1145,7 @@ function HeaderCell({
   return (
     <div className={`${listHeaderCellClass(pinned)} ${className}`}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {locked ? <FieldLockIcon /> : null}
+      {locked ? <FieldLockIcon focusable /> : null}
       {menu}
       <span
         role="separator"

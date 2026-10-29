@@ -16,10 +16,14 @@ import { ShellProvider } from "@/components/shell/shell-context";
 import { TaskFields } from "@/components/task/task-fields";
 import { ToastProvider } from "@/components/toast";
 import type { ProjectTask, Section, TaskDetail } from "@/lib/data";
+import { FieldLockIcon } from "@/components/project/field-lock";
 import {
   LOCKED_FIELD_NOTE,
+  LOCKED_SHARED_VALUE_NOTE,
   LOCK_FIELD_HINT,
   fieldLockManageable,
+  lockedFieldNote,
+  lockedValueEditableAcross,
   fieldLockedFor,
   fieldValueEditable,
   lockFieldUnavailable,
@@ -145,6 +149,11 @@ function tagWith(html: string, marker: string): string {
 }
 
 const lockIcon = new RegExp(`role="img" aria-label="${LOCKED_FIELD_NOTE}" data-tooltip="${LOCKED_FIELD_NOTE}"`, "g");
+// The focusable lock (a column header, the pane's label): a button that shows the tooltip on focus and the
+// note on Enter / a tap.
+const lockButtonFor = (label: string) =>
+  new RegExp(`<button type="button" aria-label="${label}" aria-haspopup="dialog" aria-expanded="false" data-tooltip="${label}"`, "g");
+const lockButton = lockButtonFor(LOCKED_FIELD_NOTE);
 
 // ---------------------------------------------------------------------------------------------
 // Who may do what
@@ -307,20 +316,23 @@ describe("where values are edited", () => {
     const html = render(<ListView {...viewProps([field()])} />, "editor");
     assert.doesNotMatch(html, changeButton);
     assert.match(html, /data-locked-field="true"/);
-    assert.ok((html.match(lockIcon)?.length ?? 0) >= 2, "header + cell");
+    assert.equal(html.match(lockButton)?.length, 1, "the header's lock is focusable");
+    assert.equal(html.match(lockIcon)?.length, 1, "the cell's isn't (no tab stop per row)");
   });
 
   it("List: an Admin edits it (the header still shows the lock)", () => {
     const html = render(<ListView {...viewProps([field()])} />, "admin");
     assert.match(html, changeButton);
     assert.doesNotMatch(html, /data-locked-field="true"/);
-    assert.equal(html.match(lockIcon)?.length, 1, "the column header");
+    assert.equal(html.match(lockButton)?.length, 1, "the column header");
+    assert.doesNotMatch(html, lockIcon);
   });
 
   it("List: an unlocked field is unchanged", () => {
     const html = render(<ListView {...viewProps([field({ locked: false })])} />, "editor");
     assert.match(html, changeButton);
     assert.doesNotMatch(html, lockIcon);
+    assert.doesNotMatch(html, lockButton);
   });
 
   it("Board: cards can't be dragged between a locked field's columns below Owner / Admin; chips show the lock", () => {
@@ -348,9 +360,86 @@ describe("where values are edited", () => {
     const editor = render(<TaskFields task={detail("editor")} profiles={[]} canEdit />, "editor");
     assert.doesNotMatch(editor, /aria-label="Stage: Final\. Change"/);
     assert.match(editor, />Final</);
-    assert.equal(editor.match(lockIcon)?.length, 1, "the label's lock");
+    assert.equal(editor.match(lockButton)?.length, 1, "the label's lock (focusable)");
     const admin = render(<TaskFields task={detail("admin")} profiles={[]} canEdit />, "admin");
     assert.match(admin, /aria-label="Stage: Final\. Change"/);
-    assert.equal(admin.match(lockIcon)?.length, 1, "the label still says it's locked");
+    assert.equal(admin.match(lockButton)?.length, 1, "the label still says it's locked");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Review fixes (55 × 51)
+// ---------------------------------------------------------------------------------------------
+
+describe("55 × 51 review fixes", () => {
+  it("a locked shared value: Owner / Admin of every project of the task that uses it", () => {
+    const fields = [
+      { id: "a", projectId: "pa", libraryFieldId: null },
+      { id: "b", projectId: "pb", libraryFieldId: "a" },
+      { id: "c", projectId: "pc", libraryFieldId: null },
+    ];
+    const admins = (...ids: string[]) => (projectId: string) => ids.includes(projectId);
+    const shared = { id: "b", projectId: "pb", libraryFieldId: "a", locked: true };
+    assert.equal(lockedValueEditableAcross(shared, fields, admins("pa", "pb")), true);
+    assert.equal(lockedValueEditableAcross(shared, fields, admins("pb")), false, "an Admin here only: the value would reach pa too");
+    assert.equal(lockedValueEditableAcross(shared, fields, admins("pa")), false);
+    assert.equal(
+      lockedValueEditableAcross({ id: "c", projectId: "pc", libraryFieldId: null, locked: true }, fields, admins("pc")),
+      true,
+      "a project-only field: this project's Admins",
+    );
+    assert.equal(lockedValueEditableAcross({ ...shared, locked: false }, fields, admins()), true, "unlocked: the lock has no say");
+  });
+
+  it("Edit field tells a placement's Admin who changes a locked shared field's definition", () => {
+    assert.equal(lockedFieldNote({ libraryFieldId: null }), LOCKED_FIELD_NOTE);
+    assert.match(lockedFieldNote({ libraryFieldId: "src" }), /project that published this shared field/);
+    const html = render(
+      <FieldEditorDialog
+        projectId="p1"
+        field={field({ libraryFieldId: "src" })}
+        sectionNames={[]}
+        batch4
+        sharing={sharing({ libraryFieldId: "src", isShared: true, placementCount: 2, definitionEditable: false, definitionManageable: false })}
+        onClose={() => {}}
+      />,
+      "admin",
+    );
+    assert.ok(html.includes(`${lockedFieldNote({ libraryFieldId: "src" })}.`), "the publishing project's Owners and Admins");
+    assert.ok(!html.includes(`${LOCKED_FIELD_NOTE}.`), "not 'only project Owners and Admins' (they are one here)");
+  });
+
+  it("the task pane: a locked shared field is read-only unless the viewer runs every project of the task that uses it", () => {
+    const placement = field({ id: "f-b", projectId: "p2", libraryFieldId: F1 });
+    const detail = (roles: Record<string, ProjectRole>) =>
+      ({
+        id: "t1",
+        memberships: [
+          { projectId: "p1", projectName: "Alpha", sectionId: "s1", sections: [section] },
+          { projectId: "p2", projectName: "Beta", sectionId: null, sections: [] },
+        ],
+        fields: [field(), placement],
+        fieldValues: { [F1]: "o2", "f-b": "o2" },
+        viewerProjectRoles: roles,
+      }) as unknown as TaskDetail;
+    const partly = render(<TaskFields task={detail({ p1: "admin", p2: "editor" })} profiles={[]} canEdit />, "admin");
+    assert.doesNotMatch(partly, /aria-label="Stage: Final\. Change"/, "an Admin of one of them can't change it");
+    assert.equal(partly.match(lockButtonFor(LOCKED_SHARED_VALUE_NOTE))?.length, 1, "and the lock says why");
+    const both = render(<TaskFields task={detail({ p1: "admin", p2: "owner" })} profiles={[]} canEdit />, "admin");
+    assert.match(both, /aria-label="Stage: Final\. Change"/, "an Owner / Admin of both changes it");
+  });
+
+  it("the lock is reachable by keyboard and touch where it says why once (and plain in rows)", () => {
+    const focusable = renderToStaticMarkup(<FieldLockIcon focusable />);
+    assert.match(focusable, lockButtonFor(LOCKED_FIELD_NOTE));
+    const plain = renderToStaticMarkup(<FieldLockIcon />);
+    assert.match(plain, lockIcon);
+    assert.doesNotMatch(plain, /<button|tabindex/i);
+    // A Fields list row that isn't a button itself (below Editor) has the focusable lock; an Editor's row
+    // is a button (no button inside a button).
+    const readOnly = render(<FieldList projectId="p1" fields={[field()]} sectionNames={[]} canEdit={false} batch4 />, "viewer");
+    assert.equal(readOnly.match(lockButton)?.length, 1);
+    const editable = render(<FieldList projectId="p1" fields={[field()]} sectionNames={[]} canEdit batch4 />, "editor");
+    assert.doesNotMatch(editable, lockButton);
   });
 });
