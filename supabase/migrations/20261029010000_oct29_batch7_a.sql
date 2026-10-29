@@ -1,5 +1,623 @@
--- ALHC Projects — Oct 29 notes, batch 7, track T3.
+-- ALHC Projects — Oct 29 notes, batch 7 (items 52, 53, 47, 54, 49, 48, 55, 51, 55b; item 50, formula
+-- fields, is parked and not built).
 --
+-- One migration, built from four parallel tracks in this order (each section below starts with its own
+-- notes):
+--   T1  52. Only an approval task's approvers complete it (the bug: any Editor could tick one before
+--           "Ready for approval"). guard_task_kind refuses everyone else, rules' Mark complete steps skip
+--           approval tasks, and rows learn whether the viewer approves (task_approval_states,
+--           project_task_cards.approval_is_approver). Once the task's latest round is approved, the
+--           approval has been given and the task completes normally again (anyone who can edit it;
+--           rules too) — approval_round_approved().
+--       53. List header alignment: app only, no SQL.
+--   T2  47. Select fields need at least one option (people's writes; system paths unchanged).
+--       54. A 20-color palette (option_colors()); tags keep the picked color in tags.palette_color.
+--       49. Number field symbol (custom_fields / portfolio_fields.number_prefix, format_number_value()).
+--       48. Long text editor: app only (the 10,000-character limit is pinned by the suite).
+--   T3  55. Library fields are shared across projects: placements (custom_fields.library_field_id) with
+--           one definition (library_field_definition_columns(), number_prefix included) and one value
+--           per task; add_library_field and project_field_sharing (client definers, pinned in suite 60);
+--           existing clear copies are linked once (library_field_links, library_field_link_conflicts).
+--       51. Field lock (custom_fields.locked / locked_by / locked_at): values, definition, and removal
+--           for the project's Owners and Admins; rules only while their owner is one.
+--   T4  55b. No home project in the UI: tasks.home_project_id stays an internal pointer the database
+--           keeps on one of the task's active projects; removing the task's last project is refused;
+--           links, labels, and emails follow the stable rule (the first project the task was added to);
+--           task_project_labels returns every number a viewer may read.
+--
+-- New client SECURITY DEFINER functions (suite 60): add_library_field, project_field_sharing. Nothing new
+-- for anon. After it's applied, the field library's linking step reports its counts in a NOTICE; read
+-- the details with `select * from public.library_field_links;` and
+-- `select * from public.library_field_link_conflicts;`.
+--
+-- No row-removal or object-removal keywords anywhere in this file (the hosted connector refuses them).
+-- Additive: no tail.
+
+
+create or replace function public.alhc_patch_function(target regprocedure, variadic edits text[])
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare
+  def text := pg_get_functiondef(target);
+  hits integer;
+begin
+  if coalesce(array_length(edits, 1), 0) = 0 or array_length(edits, 1) % 2 <> 0 then
+    raise exception 'alhc_patch_function(%): pass (old, new) text pairs', target;
+  end if;
+  for i in 1 .. array_length(edits, 1) / 2 loop
+    if coalesce(edits[2 * i - 1], '') = '' then
+      raise exception 'alhc_patch_function(%): edit % has no text to replace', target, i;
+    end if;
+    hits := (length(def) - length(replace(def, edits[2 * i - 1], ''))) / length(edits[2 * i - 1]);
+    if hits <> 1 then
+      raise exception 'alhc_patch_function(%): edit % matched % times (expected exactly once)', target, i, hits;
+    end if;
+    def := replace(def, edits[2 * i - 1], edits[2 * i]);
+  end loop;
+  execute def;
+end;
+$$;
+
+revoke all on function public.alhc_patch_function(regprocedure, text[]) from public, anon, authenticated;
+
+
+-- =================================================================================================
+-- Track T1: 52. Only approvers complete an approval task
+-- =================================================================================================
+
+-- 52. Only approvers approve or complete an approval task (BUG: before "Ready for approval" any Editor
+--     could tick an approval task complete; the guard only refused it while a round was pending).
+
+-- ---------------------------------------------------------------------------------------------------
+-- 52. Only approvers approve or complete an approval task.
+--
+--   * A person (client role) may complete a task of kind 'approval' (top-level or subtask) — its
+--     completed_at going from null to a value, or a new row inserted complete — only while they are one
+--     of its active approvers (task_approvers). While a round is pending nobody ticks it complete: an
+--     approver whose decision is still open is told to Approve (the decision path), everyone else that
+--     it's waiting for approval. With no approvers nobody completes it by hand. A statement that switches
+--     an approval task to another type and completes it at once is checked the same way.
+--   * Rules never complete approval tasks: the rule engine's "Mark complete" step (and "Convert to a
+--     project … and complete the task", and My Tasks rules' "Mark complete") skip them with a logged
+--     reason instead of failing the run; the guard refuses a completion in rule context as a backstop.
+--   * System paths keep working: an approved round (finish_approved_round, which names its task in the
+--     transaction-local alhc.approval_finish), the older approval_completes_task / complete_approval_task
+--     decisions, imports, copies (templates, Duplicate project), and recurrence (definer code, not a
+--     client role). Reopening is unchanged.
+--   * bulk_update_tasks needs no change: the guard's message is its skip reason ("Only its approvers can
+--     complete an approval task. Send it with Ready for approval.").
+--   * Rows learn whether the viewer approves the task: project_task_cards adds approval_is_approver,
+--     task_approval_state adds is_approver, and task_approval_states (invoker) returns the state of many
+--     approval tasks at once (My tasks rows, subtask rows).
+-- ---------------------------------------------------------------------------------------------------
+
+select public.alhc_patch_function(
+  'public.guard_task_kind()'::regprocedure,
+  $old$  if tg_op = 'UPDATE'
+     and public.is_client_role()
+     and new.kind = 'approval'
+     and old.completed_at is null and new.completed_at is not null
+     and exists (
+       select 1 from public.approval_rounds r where r.task_id = new.id and r.status = 'pending'
+     ) then
+    raise exception 'This task is waiting for approval. Withdraw the request first, or wait for the approver'
+      using errcode = 'check_violation';
+  end if;$old$,
+  $new$  -- Oct 29 notes, batch 7 (item 52): only an approval task's approvers complete it by hand, never
+  -- while a round is pending, and rules never do — also when the same statement switches it to another
+  -- type. Imports, copies, and an approved round (which names its task in alhc.approval_finish) aren't
+  -- checked; other system code isn't a client role.
+  if (new.kind = 'approval' or (tg_op = 'UPDATE' and old.kind = 'approval'))
+     and new.completed_at is not null
+     and (tg_op = 'INSERT' or old.completed_at is null)
+     and public.import_context_id() is null
+     and public.copy_context_id() is null
+     and coalesce(current_setting('alhc.approval_finish', true), '') is distinct from new.id::text then
+    if public.is_client_role() then
+      if tg_op = 'UPDATE' and exists (
+        select 1 from public.approval_rounds r where r.task_id = new.id and r.status = 'pending'
+      ) then
+        if exists (
+          select 1 from public.approval_requests q
+          join public.approval_rounds r on r.id = q.round_id
+          where r.task_id = new.id and r.status = 'pending' and q.status = 'pending'
+            and q.approver_id = (select auth.uid()) and q.deleted_at is null
+        ) then
+          raise exception 'This task is waiting for your approval. Approve it instead of marking it complete.'
+            using errcode = 'check_violation';
+        elsif exists (
+          select 1 from public.task_approvers a
+          where a.task_id = new.id and a.profile_id = (select auth.uid()) and a.deleted_at is null
+        ) then
+          raise exception 'This task is waiting for the other approvers.'
+            using errcode = 'check_violation';
+        end if;
+        raise exception 'This task is waiting for approval. Only its approvers can complete it.'
+          using errcode = 'check_violation';
+      end if;
+      if not exists (
+        select 1 from public.task_approvers a
+        where a.task_id = new.id and a.profile_id = (select auth.uid()) and a.deleted_at is null
+      ) then
+        raise exception 'Only its approvers can complete an approval task. Send it with Ready for approval.'
+          using errcode = 'check_violation';
+      end if;
+    elsif tg_op = 'UPDATE' and coalesce(current_setting('alhc.rule_id', true), '') <> '' then
+      raise exception 'Approval tasks are completed by their approvers'
+        using errcode = 'check_violation';
+    end if;
+  end if;$new$
+);
+
+-- An approved round completes its task (the system, not a person or a rule).
+select public.alhc_patch_function(
+  'public.finish_approved_round(uuid)'::regprocedure,
+  $old$  if r.after_approval = 'complete' then
+    update public.tasks set completed_at = now()
+    where id = r.task_id and completed_at is null and deleted_at is null;$old$,
+  $new$  if r.after_approval = 'complete' then
+    perform set_config('alhc.approval_finish', r.task_id::text, true);
+    update public.tasks set completed_at = now()
+    where id = r.task_id and completed_at is null and deleted_at is null;
+    perform set_config('alhc.approval_finish', '', true);$new$
+);
+
+-- The rule engine's "Mark complete" skips approval tasks (logged), and so does "Convert to a project …
+-- and complete the task".
+select public.alhc_patch_function(
+  'public.execute_rule_actions(public.rules,uuid,jsonb,jsonb)'::regprocedure,
+  $old$        when 'complete_task' then
+          update public.tasks set completed_at = now() where id = target_task and completed_at is null;
+          if not found then
+            outcome := 'unchanged';
+            result := 'Already complete';
+          else
+            result := 'Marked complete';
+          end if;$old$,
+  $new$        when 'complete_task' then
+          if t.kind = 'approval' and t.completed_at is null then
+            outcome := 'skipped';
+            result := 'Approval tasks are completed by their approvers';
+          else
+            update public.tasks set completed_at = now() where id = target_task and completed_at is null;
+            if not found then
+              outcome := 'unchanged';
+              result := 'Already complete';
+            else
+              result := 'Marked complete';
+            end if;
+          end if;$new$,
+  $old$          if coalesce((a ->> 'complete_task')::boolean, false) then
+            update public.tasks set completed_at = now() where id = target_task and completed_at is null;
+          end if;$old$,
+  $new$          if coalesce((a ->> 'complete_task')::boolean, false) and t.kind is distinct from 'approval' then
+            update public.tasks set completed_at = now() where id = target_task and completed_at is null;
+          end if;$new$,
+  $old$            || coalesce(' in “' || (input ->> 'portfolio') || '”', '');$old$,
+  $new$            || coalesce(' in “' || (input ->> 'portfolio') || '”', '')
+            || case when coalesce((a ->> 'complete_task')::boolean, false) and t.kind = 'approval' and t.completed_at is null
+                 then '. The task wasn’t marked complete: approval tasks are completed by their approvers' else '' end;$new$
+);
+
+-- My Tasks rules' "Mark complete" skips approval tasks too.
+select public.alhc_patch_function(
+  'public.run_my_task_rule(public.my_task_rules,uuid,jsonb,text)'::regprocedure,
+  $old$        when 'complete_task' then
+          if not public.has_task_role(target_task, 'editor') then$old$,
+  $new$        when 'complete_task' then
+          if t.kind = 'approval' then
+            outcome := 'skipped';
+            result := 'Approval tasks are completed by their approvers';
+          else
+          if not public.has_task_role(target_task, 'editor') then$new$,
+  $old$          update public.tasks set completed_at = now() where id = target_task and completed_at is null;
+          result := 'Marked complete';$old$,
+  $new$          update public.tasks set completed_at = now() where id = target_task and completed_at is null;
+          result := 'Marked complete';
+          end if;$new$
+);
+
+-- Whether the caller is one of the task's approvers (rows draw "Ready for approval" for everyone else).
+select public.alhc_patch_function(
+  'public.task_approval_state(uuid)'::regprocedure,
+  $old$    'round_number', r.round_number
+  )$old$,
+  $new$    'round_number', r.round_number,
+    'is_approver', exists (
+      select 1 from public.task_approvers a
+      where a.task_id = target_task and a.profile_id = (select auth.uid()) and a.deleted_at is null
+    )
+  )$new$
+);
+
+select public.alhc_patch_function(
+  'public.project_task_cards(uuid,uuid[])'::regprocedure,
+  $old$           ), false) as waiting_on_me
+    from member m$old$,
+  $new$           ), false) as waiting_on_me,
+           exists (
+             select 1 from public.task_approvers ta
+             where ta.task_id = m.task_id and ta.profile_id = (select auth.uid()) and ta.deleted_at is null
+           ) as is_approver
+    from member m$new$,
+  $old$      'approval_waiting_on_me', coalesce(ap.waiting_on_me, false)$old$,
+  $new$      'approval_waiting_on_me', coalesce(ap.waiting_on_me, false),
+      'approval_is_approver', coalesce(ap.is_approver, false)$new$
+);
+
+-- The approval state of many tasks at once ({ "<task id>": task_approval_state }), approval tasks the
+-- caller can read only (RLS), at most 500.
+create or replace function public.task_approval_states(task_ids uuid[])
+returns jsonb
+language sql
+stable
+set search_path = ''
+as $$
+  select coalesce(jsonb_object_agg(t.id, public.task_approval_state(t.id)), '{}'::jsonb)
+  from public.tasks t
+  where t.id = any ((task_ids)[1:500])
+    and t.kind = 'approval'
+    and t.deleted_at is null;
+$$;
+
+revoke all on function public.task_approval_states(uuid[]) from public, anon;
+grant execute on function public.task_approval_states(uuid[]) to authenticated;
+select public.alhc_revoke_anon_execute(array['task_approval_states(uuid[])']);
+
+
+-- =================================================================================================
+-- Track T2: 47 select options, 54 colors, 49 number symbol, 48 long text
+-- =================================================================================================
+
+-- 47. Select fields need at least one option: a person can't create a single- or multi-select field
+--     (project fields: not the section-bound Status; portfolio fields: single-select) with no options,
+--     or save one so that it has none. guard_select_field_options() (invoker; one function for both
+--     tables) checks client roles only, so system paths — imports, the copy engine (templates incl. the
+--     seeded Creative Requests example, whose select fields have no options, Duplicate project) — keep
+--     working, and a select field that already has no options can still be renamed or described.
+-- 54. More option colors: a 20-color palette (option_colors()) for field options, portfolio field
+--     options, and tags; tags keep the picked color in the new tags.palette_color and the nearest of
+--     the original nine in tags.color (whose CHECK can't be widened additively).
+-- 49. Number field symbol: custom_fields.number_prefix and portfolio_fields.number_prefix (number fields
+--     only; 1–4 characters, trimmed, no control characters or line breaks) shown before the value
+--     everywhere (format_number_value(); task_field_text and rule_field_value_label use it, so Inbox
+--     field changes, notification emails, and rule placeholders / emails / run logs show "$1,250").
+--     The stored value stays a plain number. Templates and Duplicate project keep the symbol.
+-- 48. Long text editor: app only (the pop-out editor counts against validate_task_field_value()'s
+--     10,000-character limit for text values; suite zz36 pins that limit). Nothing here.
+
+-- ---------------------------------------------------------------------------------------------------
+-- 47. Select fields need at least one option.
+--
+-- One BEFORE INSERT / UPDATE trigger function on custom_fields and portfolio_fields (bound_to_sections
+-- is read through to_jsonb, so the same body serves portfolio_fields, which has no such column).
+-- Refused for a client role (a person through the API):
+--   * inserting a select field with no options;
+--   * an update that leaves a select field with no options, unless it already was that same select
+--     field with no options (older fields and template copies stay renameable; they just can't be
+--     emptied once they have options).
+-- Removed fields (deleted_at set) aren't checked. Definer code (import_batch, the copy engine, library
+-- placements) runs as its owner, not a client role, so it is never refused here.
+-- ---------------------------------------------------------------------------------------------------
+
+create or replace function public.guard_select_field_options()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  new_bound boolean := coalesce((to_jsonb(new) ->> 'bound_to_sections')::boolean, false);
+begin
+  if not public.is_client_role() or new.deleted_at is not null then
+    return new;
+  end if;
+  if new.field_type not in ('single_select', 'multi_select') or new_bound then
+    return new;
+  end if;
+  -- A non-array is the options CHECK's to refuse.
+  if jsonb_typeof(new.options) is distinct from 'array' or jsonb_array_length(new.options) > 0 then
+    return new;
+  end if;
+  if tg_op = 'UPDATE'
+     and old.field_type = new.field_type
+     and not coalesce((to_jsonb(old) ->> 'bound_to_sections')::boolean, false)
+     and jsonb_typeof(old.options) = 'array'
+     and jsonb_array_length(old.options) = 0 then
+    return new;
+  end if;
+  raise exception 'Add at least one option to the “%” field', btrim(new.name)
+    using errcode = 'check_violation',
+          hint = 'A single- or multi-select field needs at least one option for people to pick.';
+end;
+$$;
+
+revoke all on function public.guard_select_field_options() from public, anon, authenticated;
+
+create trigger custom_fields_07_select_options
+  before insert or update on public.custom_fields
+  for each row execute function public.guard_select_field_options();
+
+create trigger portfolio_fields_07_select_options
+  before insert or update on public.portfolio_fields
+  for each row execute function public.guard_select_field_options();
+
+-- ---------------------------------------------------------------------------------------------------
+-- 54. More option colors: one palette everywhere colors are picked (project field options, portfolio
+-- field options, tags). The palette grows from 9 to 20 colors; the first nine keep their names and order
+-- (the app cycles new options through the list). Mirrored by OPTION_COLORS in src/lib/fields.ts.
+--
+--   * public.option_colors(): the palette, the one SQL list. guard_portfolio_field (portfolio option
+--     colors) and ensure_tag (tags made by the importer / the old Tags field migration) now read it.
+--     Project field option colors were never checked in SQL (the app keeps unknown ones as Gray).
+--   * Tags: tags_color_check only knows the first nine and can't be widened without removing it, so the
+--     picked color lives in a new column, tags.palette_color (CHECK = the full palette, nullable), and
+--     `color` keeps the nearest of the nine (public.option_color_base(): nearest in OKLab at the 500
+--     shades) for readers that don't know the new column. The invoker trigger tags_06_palette_color keeps
+--     the two in step for every writer:
+--       - a palette color sent in `color` (ensure_tag, the importer) moves to palette_color;
+--       - palette_color set → color := its nearest base color;
+--       - a writer that changes only `color` (the release before this one) clears palette_color.
+--     A tag's color is coalesce(palette_color, color): the app reads it so, and tag stories store it.
+-- Additive: the release still on main writes and reads `color` as before.
+-- ---------------------------------------------------------------------------------------------------
+
+create or replace function public.option_colors()
+returns text[]
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select array[
+    'zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink',
+    'lime', 'emerald', 'cyan', 'sky', 'indigo', 'purple', 'fuchsia', 'rose', 'yellow', 'slate', 'stone'
+  ]::text[];
+$$;
+
+comment on function public.option_colors() is
+  'Oct 29 notes, item 54: every color people can pick for a field option or a tag (mirrors OPTION_COLORS in src/lib/fields.ts; the first nine are the original colors).';
+
+revoke all on function public.option_colors() from public, anon;
+grant execute on function public.option_colors() to authenticated, service_role;
+
+-- The nearest of the first nine colors (what tags.color can hold); a base or unknown color is returned
+-- as it is. Mirrors OPTION_BASE_COLOR in src/lib/fields.ts.
+create or replace function public.option_color_base(color text)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select case color
+    when 'lime' then 'green'
+    when 'emerald' then 'teal'
+    when 'cyan' then 'teal'
+    when 'sky' then 'blue'
+    when 'indigo' then 'violet'
+    when 'purple' then 'violet'
+    when 'fuchsia' then 'pink'
+    when 'rose' then 'red'
+    when 'yellow' then 'amber'
+    when 'slate' then 'zinc'
+    when 'stone' then 'zinc'
+    else color
+  end;
+$$;
+
+revoke all on function public.option_color_base(text) from public, anon;
+grant execute on function public.option_color_base(text) to authenticated, service_role;
+
+-- Portfolio single-select options accept the whole palette.
+select public.alhc_patch_function(
+  'public.guard_portfolio_field()'::regprocedure,
+  $old$or coalesce(o ->> 'color', '') not in ('zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink')$old$,
+  $new$or not (coalesce(o ->> 'color', '') = any (public.option_colors()))$new$
+);
+
+-- Tags made by the importer (and the one-time Tags field migration) keep a palette color.
+select public.alhc_patch_function(
+  'public.ensure_tag(uuid, text, text, uuid)'::regprocedure,
+  $old$case when tag_color in ('zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink')$old$,
+  $new$case when tag_color = any (public.option_colors())$new$
+);
+
+alter table public.tags add column palette_color text;
+
+alter table public.tags add constraint tags_palette_color_check check (
+  palette_color is null
+  or palette_color = any (array[
+    'zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink',
+    'lime', 'emerald', 'cyan', 'sky', 'indigo', 'purple', 'fuchsia', 'rose', 'yellow', 'slate', 'stone'
+  ]::text[])
+);
+
+comment on column public.tags.palette_color is
+  'Oct 29 notes, item 54: the color picked from the full palette (public.option_colors()); color then holds its nearest of the first nine. A tag''s color is coalesce(palette_color, color).';
+
+-- Tag managers (the update policy) recolor through it; inserts already have the table-level grant.
+grant update (palette_color) on public.tags to authenticated;
+
+create or replace function public.guard_tag_palette_color()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  -- A writer that only knows `color` (the release before this one) picked another color: it replaces
+  -- the palette color.
+  if tg_op = 'UPDATE'
+     and new.color is distinct from old.color
+     and new.palette_color is not distinct from old.palette_color then
+    new.palette_color := null;
+  end if;
+  -- A palette color sent in `color` (ensure_tag, the importer) moves to palette_color.
+  if new.color = any (public.option_colors()) and new.color <> public.option_color_base(new.color) then
+    new.palette_color := new.color;
+  end if;
+  -- `color` keeps the nearest of the first nine for readers that don't know palette_color. Unknown
+  -- colors are left for the CHECKs to refuse.
+  if new.palette_color = any (public.option_colors()) then
+    new.color := public.option_color_base(new.palette_color);
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.guard_tag_palette_color() from public, anon, authenticated;
+
+create trigger tags_06_palette_color
+  before insert or update on public.tags
+  for each row execute function public.guard_tag_palette_color();
+
+-- Tag stories carry the color people see.
+select public.alhc_patch_function(
+  'public.on_task_tag_story()'::regprocedure,
+  $old$select * into tag from public.tags t where t.id = new.tag_id;$old$,
+  $new$select * into tag from public.tags t where t.id = new.tag_id;
+  tag.color := coalesce(tag.palette_color, tag.color);$new$
+);
+
+-- ---------------------------------------------------------------------------------------------------
+-- 49. Number field symbol (a prefix such as $, €, #, ₪ shown before a number field's value).
+--
+--   * custom_fields.number_prefix / portfolio_fields.number_prefix: null = none. CHECK: number fields
+--     only, 1–4 characters (code points), no surrounding spaces, no control characters or line breaks.
+--     The invoker trigger normalize_number_prefix() trims surrounding spaces first and turns an empty
+--     symbol into null (both tables).
+--   * public.format_number_value(value, prefix): the one SQL rendering of a number, mirroring
+--     formatNumberValue() in src/lib/fields.ts — grouped with commas, at most three decimals (rounded
+--     half away from zero), the minus sign before the symbol ("-$1,250.5"), and a space after a symbol
+--     that ends in a letter ("USD 1,250").
+--   * task_field_text() (Inbox field changes, notification emails, rule placeholders {{field.…}},
+--     Send email's "include a field") and rule_field_value_label() (rule run logs, the dry run) render
+--     numbers through it. Numbers there are now grouped like everywhere in the app ("1,250").
+--   * Templates and Duplicate project keep the symbol (project_snapshot carries it,
+--     instantiate_project_snapshot sets it; a symbol that no longer fits is left out, never failing the
+--     copy).
+-- The stored value stays a plain JSON number: sorting, filtering, rules, and exports are unchanged.
+-- Additive: the release still on main never reads or writes the new columns.
+-- ---------------------------------------------------------------------------------------------------
+
+alter table public.custom_fields add column number_prefix text;
+alter table public.portfolio_fields add column number_prefix text;
+
+alter table public.custom_fields add constraint custom_fields_number_prefix_check check (
+  number_prefix is null
+  or (
+    field_type = 'number'
+    and char_length(number_prefix) between 1 and 4
+    and number_prefix = btrim(number_prefix)
+    and number_prefix !~ '[\x01-\x1f\x7f-\x9f\u2028\u2029]'
+  )
+);
+
+alter table public.portfolio_fields add constraint portfolio_fields_number_prefix_check check (
+  number_prefix is null
+  or (
+    field_type = 'number'
+    and char_length(number_prefix) between 1 and 4
+    and number_prefix = btrim(number_prefix)
+    and number_prefix !~ '[\x01-\x1f\x7f-\x9f\u2028\u2029]'
+  )
+);
+
+comment on column public.custom_fields.number_prefix is
+  'Oct 29 notes, item 49: a number field''s symbol (e.g. $, €, #), shown before its values; null = none. The values stay plain numbers.';
+comment on column public.portfolio_fields.number_prefix is
+  'Oct 29 notes, item 49: a number field''s symbol (e.g. $, €, #), shown before its values; null = none. The values stay plain numbers.';
+
+create or replace function public.normalize_number_prefix()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  -- Surrounding spaces (incl. no-break and ideographic ones) go; an empty symbol is no symbol.
+  new.number_prefix := nullif(btrim(new.number_prefix, E' \t\n\r\u00a0\u2007\u202f\u3000'), '');
+  return new;
+end;
+$$;
+
+revoke all on function public.normalize_number_prefix() from public, anon, authenticated;
+
+create trigger custom_fields_08_number_prefix
+  before insert or update on public.custom_fields
+  for each row execute function public.normalize_number_prefix();
+
+create trigger portfolio_fields_08_number_prefix
+  before insert or update on public.portfolio_fields
+  for each row execute function public.normalize_number_prefix();
+
+-- "1,250", "$1,250.5", "-$40", "€0.125", "USD 7"; null for a null value. Mirrors formatNumberValue().
+create or replace function public.format_number_value(value numeric, prefix text default null)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select case when r.n < 0 then '-' else '' end
+    || coalesce(prefix, '')
+    -- A symbol ending in a letter (USD, Rs, CHF) gets a space before the digits.
+    || case when prefix ~ '[A-Za-z]$' then ' ' else '' end
+    || regexp_replace(trunc(abs(r.n))::text, '(\d)(?=(\d{3})+$)', '\1,', 'g')
+    || coalesce('.' || nullif(rtrim(split_part((abs(r.n) - trunc(abs(r.n)))::text, '.', 2), '0'), ''), '')
+  from (select round(value, 3) as n) r
+  where r.n is not null;
+$$;
+
+comment on function public.format_number_value(numeric, text) is
+  'Oct 29 notes, item 49: a number as people read it (commas, up to three decimals, the field''s symbol after the sign). Mirrors formatNumberValue() in src/lib/fields.ts.';
+
+revoke all on function public.format_number_value(numeric, text) from public, anon;
+grant execute on function public.format_number_value(numeric, text) to authenticated, service_role;
+
+-- Inbox field changes, notification emails, rule placeholders, and Send email's field line.
+select public.alhc_patch_function(
+  'public.task_field_text(uuid, uuid)'::regprocedure,
+  $old$    else v.value #>> '{}'$old$,
+  $new$    when 'number' then case when jsonb_typeof(v.value) = 'number'
+      then public.format_number_value((v.value #>> '{}')::numeric, f.number_prefix) end
+    else v.value #>> '{}'$new$
+);
+
+-- Rule run logs and the dry run ("Set Budget to $1,250").
+select public.alhc_patch_function(
+  'public.rule_field_value_label(public.custom_fields, jsonb)'::regprocedure,
+  $old$    else left(value #>> '{}', 200)$old$,
+  $new$    when field.field_type = 'number' and jsonb_typeof(value) = 'number'
+      then public.format_number_value((value #>> '{}')::numeric, field.number_prefix)
+    else left(value #>> '{}', 200)$new$
+);
+
+-- Templates and Duplicate project keep the symbol.
+select public.alhc_patch_function(
+  'public.project_snapshot(uuid, jsonb)'::regprocedure,
+  $old$'field_type', f.field_type, 'options', f.options,$old$,
+  $new$'field_type', f.field_type, 'options', f.options, 'number_prefix', f.number_prefix,$new$
+);
+
+select public.alhc_patch_function(
+  'public.instantiate_project_snapshot(jsonb, text, date, uuid, text, jsonb)'::regprocedure,
+  $old$    n_fields := n_fields + 1;$old$,
+  $new$    if item ->> 'field_type' = 'number' and nullif(btrim(coalesce(item ->> 'number_prefix', '')), '') is not null then
+      begin
+        update public.custom_fields set number_prefix = item ->> 'number_prefix' where id = found_id;
+      exception when check_violation then
+        null; -- a symbol that no longer fits is left out; the copy goes on
+      end;
+    end if;
+    n_fields := n_fields + 1;$new$
+);
+
+
+-- =================================================================================================
+-- Track T3: 55 shared library fields, 51 field lock
+-- =================================================================================================
+
 -- 55. Library fields are shared across projects ("linked placements"). Each project that uses a
 --     library field keeps its own custom_fields row (a placement, custom_fields.library_field_id = the
 --     published source field), so every project-scoped feature (views, filters, rules, forms, imports,
@@ -35,37 +653,6 @@
 --     Owner / Admin there (the Set field step is skipped and logged otherwise); bulk Field skips its
 --     tasks with the reason; Duplicate task and task templates leave its values out; every other system
 --     path (imports, copies, recurrence, forms, inbound webhooks, the library sync) writes as before.
---
--- No row-removal or object-removal keywords anywhere in this file (the hosted connector refuses them).
--- Additive: no tail.
-
-create or replace function public.alhc_patch_function(target regprocedure, variadic edits text[])
-returns void
-language plpgsql
-set search_path = ''
-as $$
-declare
-  def text := pg_get_functiondef(target);
-  hits integer;
-begin
-  if coalesce(array_length(edits, 1), 0) = 0 or array_length(edits, 1) % 2 <> 0 then
-    raise exception 'alhc_patch_function(%): pass (old, new) text pairs', target;
-  end if;
-  for i in 1 .. array_length(edits, 1) / 2 loop
-    if coalesce(edits[2 * i - 1], '') = '' then
-      raise exception 'alhc_patch_function(%): edit % has no text to replace', target, i;
-    end if;
-    hits := (length(def) - length(replace(def, edits[2 * i - 1], ''))) / length(edits[2 * i - 1]);
-    if hits <> 1 then
-      raise exception 'alhc_patch_function(%): edit % matched % times (expected exactly once)', target, i, hits;
-    end if;
-    def := replace(def, edits[2 * i - 1], edits[2 * i]);
-  end loop;
-  execute def;
-end;
-$$;
-
-revoke all on function public.alhc_patch_function(regprocedure, text[]) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------------------------------
 -- 55. Library fields shared across projects
@@ -1425,3 +2012,630 @@ begin
     result ->> 'linked', result ->> 'filled', result ->> 'conflicts', result ->> 'ambiguous';
 end;
 $do$;
+
+
+-- =================================================================================================
+-- Track T4: 55b no home project
+-- =================================================================================================
+
+-- ---------------------------------------------------------------------------------------------------
+-- Oct 29 notes, batch 7 — track T4: 55b. No home project in the UI.
+--
+-- tasks.home_project_id stays, as an internal pointer the database keeps on one of the task's active
+-- projects (numbering, private tasks, access checks that already read "the pointer or any active
+-- project"). People no longer see or set it:
+--
+--   * Removing a task from the project the pointer is on is allowed now: the definer trigger
+--     task_projects_20_move_pointer moves the pointer to the next active project by the stable rule
+--     (the first project the task was added to: task_projects.created_at, then project id; membership
+--     active, project not deleted). It reuses the old "Make home" path (shape_task_number moves that
+--     project's number onto tasks.req_*), and never renumbers (maybe_renumber_on_move stands down while
+--     the pointer moves).
+--   * Removing the task's LAST active project is refused (check_violation, detail last_project): "This is
+--     the task's only project. Add it to another project first, or move the task to the Trash." The guard
+--     (guard_home_membership) became SECURITY DEFINER so it counts memberships the caller can't see, and
+--     it locks the task's row first, so two removals at the same time run one after the other (the
+--     second sees the first). While the pointer moves, ensure_home_membership leaves the memberships
+--     alone (the pointer went to an active one), so a removal can't come back or deadlock.
+--   * search_tasks / filter_project_tasks match the task's own number columns (the pointer's number)
+--     only while the caller can read the project that issued them: no finding a task by the number of a
+--     project you can't open.
+--   * task_project_labels(task_ids) (invoker, authenticated): every project of each task the caller can
+--     read, in the stable order, with that project's number when it numbers the task (task_request_labels_in
+--     per project, so subtasks get their path there). Never a project — or a number — the caller can't read.
+--   * Links and defaults follow the stable rule instead of "home first": comment_email_project (the
+--     recipient's project), calendar_feed, duplicate_task, my_task_cards, portfolio_workload,
+--     report_overdue_tasks(_after), search_tasks, subtask_parent_candidates, task_open_blockers,
+--     review_check_view (the form's project, else the first), dependency_shift_mode (the first project),
+--     restore_task (refuses only when none of the task's projects is active), the rule
+--     actions Move to another project / Remove from this project (the database moves the pointer).
+--   * Emails: email_design_context returns task_numbers — the first number the recipient can read with
+--     the rest for "+N" (recipient_task_numbers, run as the recipient), or the request's own number (its
+--     form's project) for requester emails; submitter_response_subject uses the form's project too.
+--
+-- New internal helpers (revoked from clients): task_first_project, task_number_in, recipient_task_numbers,
+-- move_task_pointer_on_removal. No new client SECURITY DEFINER function (suite 60 unchanged); nothing for
+-- anon. No row-removal or object-removal keywords anywhere in this file. Additive: no tail.
+-- ---------------------------------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------------------------------
+-- 55b. The stable rule, for code that has no viewer: the first project the task (a subtask: its
+--      top-level task) was added to whose membership is active and whose project isn't deleted. Null for a
+--      private task. Internal (definer, revoked): emails, the review page.
+-- ---------------------------------------------------------------------------------------------------
+
+create or replace function public.task_first_project(target_task uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select tp.project_id
+  from public.tasks t
+  join public.task_projects tp on tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+  join public.projects p on p.id = tp.project_id and p.deleted_at is null
+  where t.id = target_task
+  order by tp.created_at, tp.project_id
+  limit 1;
+$$;
+
+revoke all on function public.task_first_project(uuid) from public, anon, authenticated;
+
+-- A top-level task's label in one project, while that project numbers tasks (else null). Internal.
+create or replace function public.task_number_in(target_task uuid, target_project uuid)
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select x.req_label
+  from public.task_project_numbers x
+  join public.request_sequences s on s.project_id = x.project_id and s.enabled and s.deleted_at is null
+  where x.task_id = target_task and x.project_id = target_project and x.req_label is not null;
+$$;
+
+revoke all on function public.task_number_in(uuid, uuid) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------------------------------
+-- 55b. Every project of each task the caller can read, in the stable order, with the number that
+--      project gives the task (null when it doesn't number tasks, or not this one). Invoker: RLS plus an
+--      explicit has_project_role per project, so a project the caller can't read — and its number — never
+--      comes back (also when a definer helper runs it as someone else, see recipient_task_numbers).
+--      { "<task id>": [ { project_id, project_name, label, wrap }, ... ] }; tasks with no readable project
+--      (private tasks, unreadable ones) are left out. At most 2,000 tasks.
+-- ---------------------------------------------------------------------------------------------------
+
+create or replace function public.task_project_labels(task_ids uuid[])
+returns jsonb
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  ids uuid[] := (select coalesce(array_agg(distinct x), '{}') from unnest(task_ids[1:2000]) x where x is not null);
+  p record;
+  by_project jsonb := '{}'::jsonb;
+  result jsonb;
+begin
+  if cardinality(ids) = 0 then
+    return '{}'::jsonb;
+  end if;
+  -- Each numbering project's own labels, subtasks included (their path in that project).
+  for p in
+    select tp.project_id, array_agg(distinct t.id) as tids
+    from public.tasks t
+    join public.task_projects tp on tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+    join public.projects pj on pj.id = tp.project_id and pj.deleted_at is null
+    join public.request_sequences s on s.project_id = tp.project_id and s.enabled and s.deleted_at is null
+    where t.id = any (ids)
+      and public.has_project_role(tp.project_id, 'viewer')
+    group by tp.project_id
+  loop
+    by_project := by_project || jsonb_build_object(p.project_id::text, public.task_request_labels_in(p.project_id, p.tids));
+  end loop;
+
+  select coalesce(jsonb_object_agg(x.task_id, x.projects), '{}'::jsonb) into result
+  from (
+    select t.id as task_id,
+      jsonb_agg(jsonb_build_object(
+        'project_id', tp.project_id,
+        'project_name', pj.name,
+        'label', by_project -> tp.project_id::text -> t.id::text ->> 'label',
+        'wrap', by_project -> tp.project_id::text -> t.id::text -> 'wrap'
+      ) order by tp.created_at, tp.project_id) as projects
+    from public.tasks t
+    join public.task_projects tp on tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+    join public.projects pj on pj.id = tp.project_id and pj.deleted_at is null
+    where t.id = any (ids)
+      and public.has_project_role(tp.project_id, 'viewer')
+    group by t.id
+  ) x;
+  return result;
+end;
+$$;
+
+revoke all on function public.task_project_labels(uuid[]) from public, anon;
+grant execute on function public.task_project_labels(uuid[]) to authenticated;
+
+-- The numbers a person can read for one task, in the stable order: [ { label, wrap, project_name } ].
+-- Runs task_project_labels as that person (request.jwt.claim.sub set locally, then put back), so emails
+-- show only numbers of projects the recipient can open. Internal (definer, revoked): email_design_context.
+create or replace function public.recipient_task_numbers(target_task uuid, target_profile uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  previous_sub text := current_setting('request.jwt.claim.sub', true);
+  list jsonb;
+begin
+  if target_task is null or target_profile is null then
+    return '[]'::jsonb;
+  end if;
+  perform set_config('request.jwt.claim.sub', target_profile::text, true);
+  list := public.task_project_labels(array[target_task]) -> target_task::text;
+  perform set_config('request.jwt.claim.sub', coalesce(previous_sub, ''), true);
+  return coalesce((
+    select jsonb_agg(jsonb_build_object('label', e ->> 'label', 'wrap', coalesce((e ->> 'wrap')::boolean, true),
+                                        'project_name', e ->> 'project_name') order by n)
+    from jsonb_array_elements(coalesce(list, '[]'::jsonb)) with ordinality as x(e, n)
+    where coalesce(e ->> 'label', '') <> ''
+  ), '[]'::jsonb);
+end;
+$$;
+
+revoke all on function public.recipient_task_numbers(uuid, uuid) from public, anon, authenticated;
+
+-- The stable rule reads task_projects.created_at = when the task was (last) added to the project. It's
+-- the database's: every new membership is stamped with the clock (not the transaction's start, so the
+-- projects a task joins in one transaction — its first project, then the others a copy, recurrence, or
+-- import adds — keep that order, and the internal pointer, set first, stays first); people can't change
+-- it; and adding a task back to a project it was removed from puts that project last, after the ones it
+-- stayed in (so the pointer, which moves to the first remaining project, stays the first one). Invoker.
+create or replace function public.stamp_task_project_created()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' or (old.deleted_at is not null and new.deleted_at is null) then
+    new.created_at := clock_timestamp();
+  elsif public.is_client_role() then
+    new.created_at := old.created_at;
+  end if;
+  return new;
+end;
+$$;
+
+select public.alhc_revoke_anon_execute(array['stamp_task_project_created()']);
+grant execute on function public.stamp_task_project_created() to authenticated;
+
+create trigger task_projects_04_stamp_created
+  before insert or update of created_at, deleted_at on public.task_projects
+  for each row
+  execute function public.stamp_task_project_created();
+
+-- ---------------------------------------------------------------------------------------------------
+-- 55b. Removing a task from a project. The project the pointer is on can be removed now (the pointer
+--      moves, below); the task's last active project can't. Definer, so the count sees memberships in
+--      projects the caller can't read (a task in your project and in someone else's private one isn't in
+--      its last project). Subtasks have no memberships; private tasks none either.
+-- ---------------------------------------------------------------------------------------------------
+
+alter function public.guard_home_membership() security definer;
+
+select public.alhc_patch_function(
+  'public.guard_home_membership()'::regprocedure,
+  $old$  if new.deleted_at is not null and old.deleted_at is null and exists (
+    select 1 from public.tasks t
+    where t.id = new.task_id and t.home_project_id = new.project_id and t.parent_task_id is null
+  ) then
+    raise exception 'Cannot remove a task from its home project; change the home project first'
+      using errcode = 'check_violation';
+  end if;$old$,
+  $new$  -- Oct 29 notes (55b): any project can be removed but the task's last active one. The task's row is
+  -- locked first, so two removals from the same task run one after the other: the second one sees the
+  -- first (each statement here reads afresh) and can't take the task's last project with it.
+  if new.deleted_at is not null and old.deleted_at is null then
+    perform 1 from public.tasks t
+    where t.id = new.task_id and t.parent_task_id is null and t.home_project_id is not null
+    for no key update;
+    if found and not exists (
+      select 1 from public.task_projects o
+      join public.projects p on p.id = o.project_id and p.deleted_at is null
+      where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
+    ) then
+      raise exception 'This is the task’s only project. Add it to another project first, or move the task to the Trash.'
+        using errcode = 'check_violation', detail = 'last_project';
+    end if;
+  end if;$new$
+);
+
+revoke all on function public.guard_home_membership() from public, anon, authenticated;
+
+-- The pointer follows: when the membership it points at is removed, it moves to the next active project
+-- by the stable rule — the old "Make home" path, so that project's number becomes the task's outside
+-- number (shape_task_number) and nothing is renumbered (maybe_renumber_on_move stands down meanwhile).
+create or replace function public.move_task_pointer_on_removal()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  next_project uuid;
+begin
+  if not exists (
+    select 1 from public.tasks t
+    where t.id = new.task_id and t.parent_task_id is null and t.home_project_id = new.project_id
+  ) then
+    return null;
+  end if;
+  select tp.project_id into next_project
+  from public.task_projects tp
+  join public.projects p on p.id = tp.project_id and p.deleted_at is null
+  where tp.task_id = new.task_id and tp.deleted_at is null
+  order by tp.created_at, tp.project_id
+  limit 1;
+  if next_project is null then
+    return null;
+  end if;
+  -- req_label is named too, so the label triggers run when shape_task_number changes it (column triggers
+  -- only fire for columns the statement sets): the subtasks' paths follow (renumber_task_children) and
+  -- the mirror stays in step. No "assigned request number" story: nothing was assigned.
+  perform set_config('alhc.home_pointer_move', 'on', true);
+  update public.tasks set home_project_id = next_project, req_label = req_label where id = new.task_id;
+  perform set_config('alhc.home_pointer_move', '', true);
+  return null;
+end;
+$$;
+
+revoke all on function public.move_task_pointer_on_removal() from public, anon, authenticated;
+
+create trigger task_projects_20_move_pointer
+  after update of deleted_at on public.task_projects
+  for each row
+  when (old.deleted_at is null and new.deleted_at is not null)
+  execute function public.move_task_pointer_on_removal();
+
+-- While the pointer moves, ensure_home_membership has nothing to make: the pointer went to one of the
+-- task's active memberships, and the guard's lock on the task (every removal takes it first) keeps that
+-- membership in place until this transaction ends. Not touching it also means a removal of that very
+-- membership running at the same time simply waits for this one, then sees the task's last project —
+-- instead of the two writing each other's rows (a removal coming back, or a deadlock).
+select public.alhc_patch_function(
+  'public.ensure_home_membership()'::regprocedure,
+  $old$  -- Private tasks have no project at all.
+  if new.home_project_id is null then
+    return new;
+  end if;$old$,
+  $new$  -- Private tasks have no project at all.
+  if new.home_project_id is null then
+    return new;
+  end if;
+  -- Oct 29 notes (55b): the database moving its internal pointer picked an active membership.
+  if coalesce(current_setting('alhc.home_pointer_move', true), '') = 'on' then
+    return new;
+  end if;$new$
+);
+
+select public.alhc_patch_function(
+  'public.story_request_number()'::regprocedure,
+  $old$  if public.import_context_id() is not null or public.copy_context_id() is not null then
+    return new;
+  end if;$old$,
+  $new$  if public.import_context_id() is not null or public.copy_context_id() is not null then
+    return new;
+  end if;
+  -- Oct 29 notes (55b): the database moving its pointer after a project was removed assigns nothing.
+  if coalesce(current_setting('alhc.home_pointer_move', true), '') = 'on' then
+    return new;
+  end if;$new$
+);
+
+select public.alhc_patch_function(
+  'public.maybe_renumber_on_move()'::regprocedure,
+  $old$  if new.parent_task_id is not null
+     or new.home_project_id is not distinct from old.home_project_id$old$,
+  $new$  -- Oct 29 notes (55b): the database moving its pointer after a project was removed never renumbers.
+  if coalesce(current_setting('alhc.home_pointer_move', true), '') = 'on'
+     or new.parent_task_id is not null
+     or new.home_project_id is not distinct from old.home_project_id$new$
+);
+
+-- Rule actions Move to another project / Remove from this project: leave the pointer to the database.
+select public.alhc_patch_function(
+  'public.execute_rule_actions(public.rules, uuid, jsonb, jsonb)'::regprocedure,
+  $old$          -- The task leaves this project (its home moves to the new project first).
+          if t.home_project_id = r.project_id then
+            update public.tasks set home_project_id = target_project where id = target_task;
+          end if;
+$old$,
+  $new$          -- The task leaves this project (the database moves its internal pointer; Oct 29 notes, 55b).
+$new$,
+  $old$          order by (tp.project_id = t.home_project_id) desc, tp.created_at
+          limit 1;$old$,
+  $new$          order by tp.created_at, tp.project_id
+          limit 1;$new$,
+  $old$            if t.home_project_id = r.project_id then
+              update public.tasks set home_project_id = new_home where id = target_task;
+            end if;
+$old$,
+  $new$$new$,
+  -- The run log is read by the rule's project's Viewers, who may not open the task's other projects:
+  -- don't name them.
+  $old$            result := 'Removed from “' || coalesce(input ->> 'project', 'this project') || '” (it stays in “'
+              || coalesce((select pj.name from public.projects pj where pj.id = new_home), '?') || '”)';$old$,
+  $new$            result := 'Removed from “' || coalesce(input ->> 'project', 'this project') || '” (it stays in its other projects)';$new$
+);
+
+select public.alhc_patch_function(
+  'public.assign_request_number(uuid)'::regprocedure,
+  $old$'Request numbers are not enabled for this task''s home project'$old$,
+  $new$'Request numbers are not enabled for this task''s project'$new$
+);
+
+-- ---------------------------------------------------------------------------------------------------
+-- 55b. Links and labels: the stable rule instead of "home first".
+-- ---------------------------------------------------------------------------------------------------
+
+-- The recipient's project for an email's link: the first one (stable rule) they're a member of.
+select public.alhc_patch_function(
+  'public.comment_email_project(uuid, uuid)'::regprocedure,
+  $old$  order by (p.id = t.home_project_id) desc, p.name, p.id$old$,
+  $new$  order by (
+    select tp.created_at from public.task_projects tp
+    where tp.task_id = coalesce(t.root_task_id, t.id) and tp.project_id = p.id
+  ) nulls last, p.id$new$
+);
+
+select public.alhc_patch_function(
+  'public.calendar_feed(text)'::regprocedure,
+  $old$(pr.id = t.home_project_id) desc, pr.name$old$,
+  $new$tp.created_at, pr.id$new$
+);
+
+-- The copy's first project: the first of the task's projects the caller edits (stable rule).
+select public.alhc_patch_function(
+  'public.duplicate_task(uuid, jsonb)'::regprocedure,
+  $old$    order by (tp.project_id = src.home_project_id) desc, tp.created_at, tp.project_id$old$,
+  $new$    order by tp.created_at, tp.project_id$new$
+);
+
+select public.alhc_patch_function(
+  'public.my_task_cards()'::regprocedure,
+  $old$        when a.home_project_id is not null and exists (
+          select 1 from named n where n.project_id = a.home_project_id
+        ) then a.home_project_id$old$,
+  $new$        -- The first project the task was added to that the viewer can read (Oct 29 notes, 55b).
+        when a.home_project_id is null then null$new$
+);
+
+select public.alhc_patch_function(
+  'public.portfolio_workload(uuid, date, date, text)'::regprocedure,
+  $old$(vp.project_id = t.home_project_id) desc, vp.sort_order, vp.project_id$old$,
+  $new$tp.created_at, vp.project_id$new$
+);
+
+select public.alhc_patch_function(
+  'public.report_overdue_tasks(jsonb, text, integer)'::regprocedure,
+  $old$    order by r.task_id, (r.project_id = coalesce(t.home_project_id, r.project_id)) desc, r.project_id$old$,
+  $new$    order by r.task_id, (
+      select tp.created_at from public.task_projects tp
+      where tp.task_id = coalesce(t.root_task_id, t.id) and tp.project_id = r.project_id
+    ) nulls last, r.project_id$new$
+);
+
+select public.alhc_patch_function(
+  'public.report_overdue_tasks_after(jsonb, text, date, text, uuid, integer)'::regprocedure,
+  $old$    order by r.task_id, (r.project_id = coalesce(t.home_project_id, r.project_id)) desc, r.project_id$old$,
+  $new$    order by r.task_id, (
+      select tp.created_at from public.task_projects tp
+      where tp.task_id = coalesce(t.root_task_id, t.id) and tp.project_id = r.project_id
+    ) nulls last, r.project_id$new$
+);
+
+-- Search labels and links a task with the first of its projects the caller can read (RLS on
+-- task_projects); the result columns keep their names.
+select public.alhc_patch_function(
+  'public.search_tasks(text, integer)'::regprocedure,
+  $old$    order by (tp.project_id = t.home_project_id) desc, tp.created_at
+    limit 1$old$,
+  $new$    order by tp.created_at, tp.project_id
+    limit 1$new$
+);
+
+-- Number privacy in search and a view's text filter: the task's own number columns (tasks.req_label /
+-- req_number / req_path, the internal pointer's number — a subtask's path too) match only while the
+-- caller can read the project that issued them, so searching another project's number ("C-1") never
+-- finds a task in a project you can't open. The per-project numbers (task_project_numbers) were already
+-- read through RLS.
+select public.alhc_patch_function(
+  'public.search_tasks(text, integer)'::regprocedure,
+  $old$      or coalesce(t.req_label, '') ilike pattern.value
+$old$,
+  $new$      or (
+        coalesce(t.req_label, '') ilike pattern.value
+        and public.has_project_role(coalesce(t.req_project_id, t.home_project_id), 'viewer')
+      )
+$new$,
+  $old$        public.request_number_query(trim(query)) is not null
+$old$,
+  $new$        public.request_number_query(trim(query)) is not null
+        and public.has_project_role(coalesce(t.req_project_id, t.home_project_id), 'viewer')
+$new$
+);
+
+select public.alhc_patch_function(
+  'public.filter_project_tasks(uuid, jsonb, text)'::regprocedure,
+  $old$      or coalesce(t.req_label, '') ilike pattern.value
+$old$,
+  $new$      or (
+        coalesce(t.req_label, '') ilike pattern.value
+        and public.has_project_role(coalesce(t.req_project_id, t.home_project_id), 'viewer')
+      )
+$new$,
+  $old$        public.request_number_query(p.needle) is not null
+$old$,
+  $new$        public.request_number_query(p.needle) is not null
+        and public.has_project_role(coalesce(t.req_project_id, t.home_project_id), 'viewer')
+$new$
+);
+
+select public.alhc_patch_function(
+  'public.subtask_parent_candidates(uuid, text, integer)'::regprocedure,
+  $old$  select t.id, t.title, t.parent_task_id, coalesce(r.home_project_id, t.home_project_id), t.completed_at$old$,
+  $new$  select t.id, t.title, t.parent_task_id, (
+    select tp.project_id
+    from public.task_projects tp
+    join public.projects pj on pj.id = tp.project_id and pj.deleted_at is null
+    where tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+      and public.has_project_role(tp.project_id, 'viewer')
+    order by tp.created_at, tp.project_id
+    limit 1
+  ), t.completed_at$new$
+);
+
+select public.alhc_patch_function(
+  'public.task_open_blockers(uuid)'::regprocedure,
+  $old$'home_project_id', coalesce(r.home_project_id, p.home_project_id)$old$,
+  $new$'home_project_id', (
+          select tp.project_id
+          from public.task_projects tp
+          join public.projects pj on pj.id = tp.project_id and pj.deleted_at is null
+          where tp.task_id = coalesce(r.id, p.id) and tp.deleted_at is null
+            and public.has_project_role(tp.project_id, 'viewer')
+          order by tp.created_at, tp.project_id
+          limit 1
+        )$new$
+);
+
+-- Dependency shifting: each task's first project (stable rule; one the caller can read — the one the
+-- shift dialog links to) decides for it; across tasks, Ask me wins and Off only when all are Off.
+select public.alhc_patch_function(
+  'public.dependency_shift_mode(uuid[])'::regprocedure,
+  $old$    left join public.tasks r on r.id = t.root_task_id
+    left join public.projects p on p.id = coalesce(r.home_project_id, t.home_project_id)$old$,
+  $new$    left join public.projects p on p.id = (
+      select tp.project_id
+      from public.task_projects tp
+      join public.projects pj on pj.id = tp.project_id and pj.deleted_at is null
+      where tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+      order by tp.created_at, tp.project_id
+      limit 1
+    )$new$
+);
+
+-- Restoring needs one of the task's projects to be active (not the pointer's in particular).
+select public.alhc_patch_function(
+  'public.restore_task(uuid)'::regprocedure,
+  $old$  if exists (select 1 from public.projects p where p.id = t.home_project_id and p.deleted_at is not null) then
+    raise exception 'This task''s home project is deleted' using errcode = 'check_violation',
+      hint = 'Restore the project or make another project the task''s home first';
+  end if;$old$,
+  $new$  if t.home_project_id is not null and not exists (
+    select 1 from public.task_projects tp
+    join public.projects p on p.id = tp.project_id and p.deleted_at is null
+    where tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+  ) then
+    raise exception 'This task''s projects are deleted' using errcode = 'check_violation',
+      hint = 'Restore one of its projects first';
+  end if;$new$
+);
+
+-- The review page names the request's project: its form's, else the first of the task's projects.
+select public.alhc_patch_function(
+  'public.review_check_view(text)'::regprocedure,
+  $old$  where p.id = coalesce((select root.home_project_id from public.tasks root where root.id = coalesce(t.root_task_id, t.id)), t.home_project_id);$old$,
+  $new$  where p.id = coalesce(
+    (select f.project_id from public.task_submitter(t.id) s join public.forms f on f.id = s.form_id),
+    public.task_first_project(t.id)
+  );$new$
+);
+
+-- A response's subject: the request's own project (its form's) and its number there.
+select public.alhc_patch_function(
+  'public.submitter_response_subject(uuid, uuid)'::regprocedure,
+  $old$  tmpl := public.resolve_email_design('requester', r.home_project_id, s.form_id) ->> 'subject_template';$old$,
+  $new$  tmpl := public.resolve_email_design('requester',
+    coalesce((select f.project_id from public.forms f where f.id = s.form_id), r.home_project_id), s.form_id) ->> 'subject_template';$new$,
+  $old$    'request_number', public.task_request_label(r.id),$old$,
+  $new$    'request_number', coalesce(
+      public.task_number_in(r.id, (select f.project_id from public.forms f where f.id = s.form_id)),
+      public.task_request_label(r.id)
+    ),$new$,
+  $old$    'project_name', (select p.name from public.projects p where p.id = r.home_project_id),$old$,
+  $new$    'project_name', (select p.name from public.projects p
+      where p.id = coalesce((select f.project_id from public.forms f where f.id = s.form_id), r.home_project_id)),$new$
+);
+
+-- ---------------------------------------------------------------------------------------------------
+-- 55b. Emails: the project (links, design) and the numbers shown.
+--   * requester emails: the request's form's project, and the request's number there;
+--   * emails to a person: the first of the task's projects they can read (comment_email_project) unless
+--     the email names one, and task_numbers = the numbers they can read, in the stable order (the app
+--     shows the first and "+N");
+--   * anything else: the first active project, and the label the email was queued with.
+-- ---------------------------------------------------------------------------------------------------
+
+select public.alhc_patch_function(
+  'public.email_design_context(uuid)'::regprocedure,
+  $old$  design_kind text := 'internal';$old$,
+  $new$  design_kind text := 'internal';
+  numbers jsonb;
+  request_numbers jsonb;
+  form_project uuid;$new$,
+  $old$  project := case
+    when coalesce(o.payload ->> 'project_id', '') ~ uuid_pattern then (o.payload ->> 'project_id')::uuid
+    else r.home_project_id
+  end;
+  if design_kind = 'requester' then
+    form := sub.form_id;
+  end if;$old$,
+  $new$  if design_kind = 'requester' then
+    form := sub.form_id;
+    form_project := (select f.project_id from public.forms f where f.id = form);
+  end if;
+  project := case
+    when form_project is not null then form_project
+    when coalesce(o.payload ->> 'project_id', '') ~ uuid_pattern then (o.payload ->> 'project_id')::uuid
+    when r.id is not null and o.to_profile_id is not null then public.comment_email_project(o.to_profile_id, r.id)
+    else public.task_first_project(r.id)
+  end;
+  if r.id is not null then
+    if form_project is not null then
+      -- Null when the form's project doesn't number it: the email keeps the label it was queued with.
+      numbers := (
+        select jsonb_build_array(jsonb_build_object('label', x.req_label, 'wrap', s.wrap_brackets))
+        from public.task_project_numbers x
+        join public.request_sequences s on s.project_id = x.project_id and s.enabled and s.deleted_at is null
+        where x.task_id = r.id and x.project_id = form_project and x.req_label is not null
+      );
+      request_numbers := numbers;
+    elsif o.to_profile_id is not null and t.id is not null then
+      numbers := public.recipient_task_numbers(t.id, o.to_profile_id);
+      request_numbers := case when t.id = r.id then numbers else public.recipient_task_numbers(r.id, o.to_profile_id) end;
+    end if;
+  end if;$new$,
+  $old$      'request_number', case when r.id is not null then public.task_request_label(r.id) end,
+      'request_wrap', coalesce((
+        select s.wrap_brackets from public.request_sequences s
+        where s.project_id = coalesce(t.req_project_id, t.home_project_id) and s.deleted_at is null
+      ), true),$old$,
+  $new$      'request_number', case
+        when r.id is null then null
+        when jsonb_array_length(coalesce(request_numbers, '[]'::jsonb)) > 0 then request_numbers -> 0 ->> 'label'
+        when form_project is not null then public.task_request_label(r.id)
+        when request_numbers is not null then null
+        else public.task_request_label(r.id)
+      end,
+      'request_wrap', coalesce(
+        (request_numbers -> 0 ->> 'wrap')::boolean,
+        (select s.wrap_brackets from public.request_sequences s
+         where s.project_id = coalesce(t.req_project_id, t.home_project_id) and s.deleted_at is null),
+        true
+      ),
+      'task_numbers', numbers,$new$
+);

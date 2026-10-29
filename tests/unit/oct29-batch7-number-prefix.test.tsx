@@ -3,7 +3,7 @@
 // mirrored by public.format_number_value() — while the stored value stays a plain number (CSV cells
 // stay raw, the header says "Budget ($)").
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -121,11 +121,7 @@ test("the symbol: trimmed, empty = none, 1–4 characters (code points), no line
 });
 
 test("the SQL side checks the same rules", () => {
-  const files = [
-    "supabase/migrations/20261029010200_b7_t2_fields.sql",
-    "supabase/migrations/20261029010000_oct29_batch7_a.sql",
-  ].filter((f) => existsSync(f));
-  const sql = files.map((f) => readFileSync(f, "utf8")).join("\n");
+  const sql = readFileSync("supabase/migrations/20261029010000_oct29_batch7_a.sql", "utf8");
   assert.ok(sql.includes("create or replace function public.format_number_value(value numeric, prefix text default null)"));
   for (const table of ["custom_fields", "portfolio_fields"]) {
     const check = sql.slice(sql.indexOf(`${table}_number_prefix_check`), sql.indexOf(`${table}_number_prefix_check`) + 400);

@@ -1,12 +1,1119 @@
--- Oct 29 notes, batch 7, track T3 — 55. Library fields shared across projects (linked placements).
+-- Oct 29 notes, batch 7 (20261029010000_oct29_batch7_a.sql): items 52, 47, 54, 49, 48, 55, 51, 55b (53 is
+-- app only; 50 is parked). Four sections, one per build track (T1, T2, T3, T4), each with its own people,
+-- projects, and temporary id table (b7t1_ids, b7f_ids, sf_ids, b7t4_ids), then the cross-track checks
+-- (b7x_ids). Every section starts as the database owner with no signed-in person.
+
+\set ON_ERROR_STOP 1
+
+
+-- =================================================================================================
+-- Track T1: 52. Only approvers complete an approval task
+-- =================================================================================================
+
+reset role;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+
+-- 52. Only approvers approve or complete an approval task. Regression test for the bug: before "Ready for
+--     approval" any Editor could tick an approval task complete.
+--   b7b70029…01 b7-owner@example.com      owner of B7 Approvals
+--   b7b70029…02 b7-editor@example.com     Editor (the assignee; not an approver)
+--   b7b70029…03 b7-approver@example.com   Editor and approver
+--   b7b70029…04 b7-commenter@example.com  Commenter and approver
+
+insert into public.allowed_emails (email, note) values
+  ('b7-owner@example.com', 'oct 29 batch 7'),
+  ('b7-editor@example.com', 'oct 29 batch 7'),
+  ('b7-approver@example.com', 'oct 29 batch 7'),
+  ('b7-commenter@example.com', 'oct 29 batch 7');
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('b7b70029-0000-4000-8000-000000000001', 'b7-owner@example.com', now(), '{"full_name":"Opal Owner"}'),
+  ('b7b70029-0000-4000-8000-000000000002', 'b7-editor@example.com', now(), '{"full_name":"Eddie Editor"}'),
+  ('b7b70029-0000-4000-8000-000000000003', 'b7-approver@example.com', now(), '{"full_name":"April Approver"}'),
+  ('b7b70029-0000-4000-8000-000000000004', 'b7-commenter@example.com', now(), '{"full_name":"Cole Commenter"}');
+
+-- The local harness turns the Commenter role on for older suites; keep it on here too.
+update public.workspaces set allow_commenter_role = true where id = '00000000-0000-4000-8000-000000000001';
+
+create temporary table b7t1_ids (name text primary key, id uuid);
+grant all on b7t1_ids to authenticated, anon;
+
+-- ---------------------------------------------------------------------------------------------
+-- Setup
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid;
+  sa uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'B7 Approvals') returning id into a;
+  insert into public.sections (project_id, name, sort_order) values (a, 'Intake', 1024) returning id into sa;
+  insert into b7t1_ids values ('a', a), ('sa', sa);
+  perform public.add_project_member(a, 'b7-editor@example.com', 'editor');
+  perform public.add_project_member(a, 'b7-approver@example.com', 'editor');
+  perform public.add_project_member(a, 'b7-commenter@example.com', 'commenter');
+end $$;
+
+-- The Editor (not an approver) makes an approval task assigned to themselves.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t1_ids where name = 'a');
+  sa uuid := (select id from b7t1_ids where name = 'sa');
+  t uuid;
+  msg text;
+begin
+  t := public.create_task(a, sa, 'Brand guide approval');
+  insert into b7t1_ids values ('t', t);
+  insert into b7t1_ids values ('plain', public.create_task(a, sa, 'Plain task'));
+  update public.tasks set kind = 'approval', assignee_id = 'b7b70029-0000-4000-8000-000000000002' where id = t;
+
+  -- THE BUG: before "Ready for approval" an Editor who isn't an approver completed it.
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'an Editor who isn''t an approver must not complete an approval task';
+  exception when check_violation then
+    get stacked diagnostics msg = message_text;
+    assert msg = 'Only its approvers can complete an approval task. Send it with Ready for approval.', 'the reason: ' || msg;
+  end;
+  assert (select completed_at from public.tasks where id = t) is null, 'still open';
+
+  -- A new approval task can't be inserted already complete by a person either.
+  begin
+    insert into public.tasks (home_project_id, title, kind, completed_at) values (a, 'Done on arrival', 'approval', now());
+    raise exception 'inserting a completed approval task is refused';
+  exception when check_violation then null;
+  end;
+
+  -- Other kinds are unaffected.
+  update public.tasks set completed_at = now() where id = (select id from b7t1_ids where name = 'plain');
+  update public.tasks set completed_at = null where id = (select id from b7t1_ids where name = 'plain');
+end $$;
+
+-- With no approvers nobody completes it by hand, not even the project's owner.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t1_ids where name = 't');
+begin
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'with no approvers nobody completes it, the owner included';
+  exception when check_violation then null;
+  end;
+end $$;
+
+-- Approvers: April (Editor) and Cole (Commenter). The Editor still can't complete it.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t1_ids where name = 't');
+  plain uuid := (select id from b7t1_ids where name = 'plain');
+  result jsonb;
+  cards jsonb;
+  msg text;
+begin
+  perform public.set_task_approvers(t,
+    array['b7b70029-0000-4000-8000-000000000003'::uuid, 'b7b70029-0000-4000-8000-000000000004'::uuid], 'any', null);
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'still not an approver';
+  exception when check_violation then null;
+  end;
+
+  -- Nor by switching it to another type and completing it in the same statement.
+  begin
+    update public.tasks set kind = 'task', completed_at = now() where id = t;
+    raise exception 'switching the type in the same statement doesn''t get around it';
+  exception when check_violation then
+    get stacked diagnostics msg = message_text;
+    assert msg = 'Only its approvers can complete an approval task. Send it with Ready for approval.', 'the reason: ' || msg;
+  end;
+  assert (select kind = 'approval' and completed_at is null from public.tasks where id = t), 'still an open approval task';
+
+  -- The rows know who approves.
+  assert not (public.task_approval_state(t) ->> 'is_approver')::boolean, 'the Editor isn''t an approver';
+  cards := public.project_task_cards((select id from b7t1_ids where name = 'a'), array[t]);
+  assert (cards -> 0 ->> 'approval_is_approver')::boolean = false, 'cards say so too';
+  assert public.task_approval_states(array[t, plain]) ? t::text, 'approval tasks are in the map';
+  assert not (public.task_approval_states(array[t, plain]) ? plain::text), 'other kinds aren''t';
+
+  -- Bulk Complete skips it with the reason (and completes the rest).
+  result := public.bulk_update_tasks(array[t, plain], '{"action": "complete"}'::jsonb);
+  assert result -> 'updated' ? plain::text, 'the plain task completed';
+  assert jsonb_array_length(result -> 'skipped') = 1
+     and result -> 'skipped' -> 0 ->> 'task_id' = t::text
+     and result -> 'skipped' -> 0 ->> 'reason' = 'Only its approvers can complete an approval task. Send it with Ready for approval.',
+    'bulk skips the approval task with the reason: ' || (result -> 'skipped')::text;
+  assert (select completed_at from public.tasks where id = t) is null, 'still open after bulk';
+end $$;
+
+-- An approver who edits the task completes it (no round pending); anyone who edits it reopens it.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t1_ids where name = 't');
+  result jsonb;
+  cards jsonb;
+begin
+  assert (public.task_approval_state(t) ->> 'is_approver')::boolean, 'April approves it';
+  cards := public.project_task_cards((select id from b7t1_ids where name = 'a'), array[t]);
+  assert (cards -> 0 ->> 'approval_is_approver')::boolean, 'her cards say so';
+
+  update public.tasks set completed_at = now() where id = t;
+  assert (select completed_at from public.tasks where id = t) is not null, 'an approver completes it';
+  update public.tasks set completed_at = null where id = t;
+
+  result := public.bulk_update_tasks(array[t], '{"action": "complete"}'::jsonb);
+  assert result -> 'updated' ? t::text, 'bulk complete works for an approver';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t1_ids where name = 't');
+begin
+  update public.tasks set completed_at = null where id = t;
+  assert (select completed_at from public.tasks where id = t) is null, 'reopening is unchanged (any Editor)';
+
+  -- Ready for approval: pending.
+  perform public.send_for_approval(t, 'Brand guide, final', '{}', false, 'complete', null);
+  assert public.task_approval_state(t) ->> 'status' = 'pending', 'pending';
+end $$;
+
+-- While it's pending nobody ticks it complete: an approver is told to Approve, others that it's waiting.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t1_ids where name = 't');
+  msg text;
+begin
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'an approver doesn''t tick a pending approval complete';
+  exception when check_violation then
+    get stacked diagnostics msg = message_text;
+    assert msg = 'This task is waiting for your approval. Approve it instead of marking it complete.', 'approver message: ' || msg;
+  end;
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t1_ids where name = 't');
+  msg text;
+begin
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'a non-approver doesn''t complete a pending approval';
+  exception when check_violation then
+    get stacked diagnostics msg = message_text;
+    assert msg = 'This task is waiting for approval. Only its approvers can complete it.', 'non-approver message: ' || msg;
+  end;
+end $$;
+
+-- Cole (Commenter approver) requests changes: the Editor still can't complete it, before or after
+-- marking the feedback received.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000004', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 't')
+  and approver_id = 'b7b70029-0000-4000-8000-000000000004' and status = 'pending'), 'changes_requested', 'Use the new logo');
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t1_ids where name = 't');
+begin
+  assert public.task_approval_state(t) ->> 'status' = 'changes_requested', 'changes requested';
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'not after changes were requested either';
+  exception when check_violation then null;
+  end;
+  perform public.acknowledge_approval(t);
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'nor once the feedback is marked received';
+  exception when check_violation then null;
+  end;
+  perform public.send_for_approval(t, 'Brand guide, with the new logo', '{}', false, 'complete', null);
+end $$;
+
+-- The system path: April approves, and approving completes it.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 't')
+  and approver_id = 'b7b70029-0000-4000-8000-000000000003' and status = 'pending'), 'approved', 'Ship it');
+do $$
+begin
+  assert public.task_approval_state((select id from b7t1_ids where name = 't')) ->> 'status' = 'approved', 'approved';
+  assert (select completed_at from public.tasks where id = (select id from b7t1_ids where name = 't')) is not null,
+    'Approve completes the task (the system path still works)';
+end $$;
+
+-- Subtasks of kind approval follow the same rule.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  parent uuid := (select id from b7t1_ids where name = 'plain');
+  sub uuid;
+begin
+  sub := public.create_subtask(parent, 'Legal sign-off', null);
+  insert into b7t1_ids values ('sub', sub);
+  update public.tasks set kind = 'approval' where id = sub;
+  begin
+    update public.tasks set completed_at = now() where id = sub;
+    raise exception 'an approval subtask follows the rule too';
+  exception when check_violation then null;
+  end;
+  perform public.set_task_approvers(sub, array['b7b70029-0000-4000-8000-000000000003'::uuid], 'any', null);
+end $$;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+begin
+  update public.tasks set completed_at = now() where id = (select id from b7t1_ids where name = 'sub');
+  assert (select completed_at from public.tasks where id = (select id from b7t1_ids where name = 'sub')) is not null,
+    'its approver completes the approval subtask';
+end $$;
+
+-- Rules never complete approval tasks: the "Mark complete" step is skipped (logged), the run succeeds.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t1_ids where name = 'a');
+  t2 uuid;
+  rid uuid;
+  result jsonb;
+  run public.rule_runs;
+begin
+  t2 := public.create_task(a, (select id from b7t1_ids where name = 'sa'), 'Press release approval');
+  update public.tasks set kind = 'approval' where id = t2;
+  insert into b7t1_ids values ('t2', t2);
+  insert into public.rules (project_id, name, enabled, trigger_type, actions) values (a, 'Wrap up', true, 'manual',
+    jsonb_build_array(jsonb_build_object('type', 'complete_task'), jsonb_build_object('type', 'add_comment', 'body', 'Wrapped up')))
+    returning id into rid;
+  result := public.run_manual_rule(rid, t2);
+  select * into run from public.rule_runs where rule_id = rid order by created_at desc limit 1;
+  assert run.status = 'succeeded', 'the run succeeds: ' || coalesce(run.status, 'none') || ' ' || coalesce(run.detail::text, '');
+  assert run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped'
+     and run.detail -> 'actions' -> 0 ->> 'result' = 'Approval tasks are completed by their approvers',
+    'the step is skipped with the reason: ' || (run.detail -> 'actions')::text;
+  assert run.detail -> 'actions' -> 1 ->> 'outcome' = 'done', 'the next step still runs';
+  assert (select completed_at from public.tasks where id = t2) is null, 'the rule didn''t complete it';
+
+  -- A plain task still completes through the same rule.
+  result := public.run_manual_rule(rid, (select id from b7t1_ids where name = 'plain'));
+  assert (select completed_at from public.tasks where id = (select id from b7t1_ids where name = 'plain')) is not null,
+    'rules complete other tasks as before';
+end $$;
+reset role;
+
+-- The guard backs that up for anything else a rule runs.
+do $$
+declare
+  t2 uuid := (select id from b7t1_ids where name = 't2');
+begin
+  perform set_config('alhc.rule_id', gen_random_uuid()::text, true);
+  begin
+    update public.tasks set completed_at = now() where id = t2;
+    raise exception 'nothing in rule context completes an approval task';
+  exception when check_violation then null;
+  end;
+  perform set_config('alhc.rule_id', '', true);
+end $$;
+
+-- My Tasks rules' "Mark complete" skips approval tasks too.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+insert into public.my_task_rules (name, trigger_type, actions)
+values ('Done when assigned', 'assigned', '[{"type": "complete_task"}]');
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+update public.tasks set assignee_id = 'b7b70029-0000-4000-8000-000000000002' where id = (select id from b7t1_ids where name = 't2');
+reset role;
+do $$
+declare
+  t2 uuid := (select id from b7t1_ids where name = 't2');
+  run public.my_task_rule_runs;
+begin
+  select * into run from public.my_task_rule_runs where task_id = t2 order by created_at desc limit 1;
+  assert found, 'the My Tasks rule ran';
+  assert run.status = 'succeeded', 'and succeeded: ' || run.status;
+  assert run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped', 'its Mark complete was skipped: ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = t2) is null, 'the approval task stays open';
+  update public.my_task_rules set enabled = false where name = 'Done when assigned';
+end $$;
+
+-- Recurrence: an approver completing a recurring approval task spawns the next one, open, with the same
+-- approver (the spawn isn't a person). Imports bring completed approval tasks in completed.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t1_ids where name = 'a');
+  t3 uuid;
+  run uuid;
+begin
+  t3 := public.create_task(a, (select id from b7t1_ids where name = 'sa'), 'Weekly numbers approval');
+  update public.tasks set kind = 'approval', due_on = '2026-11-02', recurrence = '{"freq": "weekly", "interval": 1}' where id = t3;
+  perform public.set_task_approvers(t3, array['b7b70029-0000-4000-8000-000000000003'::uuid], 'any', null);
+  insert into b7t1_ids values ('t3', t3);
+
+  run := public.start_import_run(a, 'asana', array['b7-approvals.json']);
+  perform public.import_batch(run, jsonb_build_object(
+    'project', jsonb_build_object('gid', 'b7-approvals-proj', 'name', 'B7 Approvals'),
+    'tasks', jsonb_build_array(
+      jsonb_build_object('gid', 'b7-k1', 'title', 'Signed off in Asana', 'kind', 'approval', 'completed_at', '2026-10-01T10:00:00Z')
+    )
+  ));
+  perform public.finish_import_run(run, 'completed');
+  assert (select kind = 'approval' and completed_at is not null from public.tasks
+          where home_project_id = a and title = 'Signed off in Asana' and deleted_at is null),
+    'imports keep a completed approval task completed';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  t3 uuid := (select id from b7t1_ids where name = 't3');
+  next_task uuid;
+begin
+  update public.tasks set completed_at = now() where id = t3;
+  select recurrence_next_id into next_task from public.tasks where id = t3;
+  assert next_task is not null, 'completing it spawned the next occurrence';
+  assert (select kind = 'approval' and completed_at is null from public.tasks where id = next_task), 'open, still an approval task';
+  assert exists (select 1 from public.task_approvers where task_id = next_task and deleted_at is null
+                 and profile_id = 'b7b70029-0000-4000-8000-000000000003'), 'with the same approver';
+end $$;
+reset role;
+
+-- Copies keep a completed approval task completed (the copy engine isn't a person).
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  copy jsonb;
+begin
+  copy := public.duplicate_project((select id from b7t1_ids where name = 'a'), 'B7 Approvals copy', '{}');
+  assert exists (
+    select 1 from public.tasks t join public.task_projects tp on tp.task_id = t.id and tp.deleted_at is null
+    where tp.project_id = (copy ->> 'project_id')::uuid and t.kind = 'approval'
+      and t.title = 'Brand guide approval' and t.completed_at is not null
+  ), 'Duplicate project keeps the completed approval task completed';
+end $$;
+reset role;
+
+-- Grants: the batch helper is the caller's (invoker), nothing for anon.
+do $$
+begin
+  assert has_function_privilege('authenticated', 'public.task_approval_states(uuid[])', 'execute'), 'members read states';
+  assert not has_function_privilege('anon', 'public.task_approval_states(uuid[])', 'execute'), 'anon doesn''t';
+  assert not (select prosecdef from pg_proc where oid = 'public.task_approval_states(uuid[])'::regprocedure), 'invoker';
+end $$;
+
+
+-- =================================================================================================
+-- Track T2: 47 select options, 54 colors, 49 number symbol, 48 long text
+-- =================================================================================================
+
+reset role;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+
+--   b7f20029…01 b7f-owner@example.com   owner of B7F A, owner of the B7F portfolio
+--   b7f20029…02 b7f-editor@example.com  Editor of B7F A, Editor of the B7F portfolio
+--   b7f20029…03 b7f-viewer@example.com  Viewer of B7F A
+
+insert into public.allowed_emails (email, note) values
+  ('b7f-owner@example.com', 'oct 29 batch 7 fields'),
+  ('b7f-editor@example.com', 'oct 29 batch 7 fields'),
+  ('b7f-viewer@example.com', 'oct 29 batch 7 fields');
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('b7f20029-0000-4000-8000-000000000001', 'b7f-owner@example.com', now(), '{"full_name":"Fern Owner"}'),
+  ('b7f20029-0000-4000-8000-000000000002', 'b7f-editor@example.com', now(), '{"full_name":"Finn Editor"}'),
+  ('b7f20029-0000-4000-8000-000000000003', 'b7f-viewer@example.com', now(), '{"full_name":"Faye Viewer"}');
+
+create temporary table b7f_ids (name text primary key, id uuid);
+grant all on b7f_ids to authenticated, anon;
+
+-- ---------------------------------------------------------------------------------------------
+-- Setup: project B7F A and portfolio B7F P
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid;
+  p uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'B7F A') returning id into a;
+  perform public.add_project_member(a, 'b7f-editor@example.com', 'editor');
+  perform public.add_project_member(a, 'b7f-viewer@example.com', 'viewer');
+  insert into public.portfolios (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'B7F P') returning id into p;
+  perform public.add_portfolio_member(p, 'b7f-editor@example.com', 'editor');
+  insert into b7f_ids values ('a', a), ('p', p);
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- 47. Select fields need at least one option (people; system paths are untouched).
+-- ---------------------------------------------------------------------------------------------
+
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+  f uuid;
+  status_field uuid;
+  t uuid;
+  opts jsonb := '[{"id": "o1", "name": "High", "color": "red"}, {"id": "o2", "name": "Low", "color": "zinc"}]';
+begin
+  -- No options: refused for single- and multi-select, whether options are left out or sent empty.
+  begin
+    insert into public.custom_fields (project_id, name, field_type) values (a, 'Priority', 'single_select');
+    raise exception 'a single-select with no options must be refused';
+  exception when check_violation then
+    assert sqlerrm like 'Add at least one option to the “Priority” field%', 'says what to do: ' || sqlerrm;
+  end;
+  begin
+    insert into public.custom_fields (project_id, name, field_type, options) values (a, 'Channels', 'multi_select', '[]');
+    raise exception 'a multi-select with no options must be refused';
+  exception when check_violation then null;
+  end;
+
+  -- With an option it's fine; other types and the section-bound Status need none.
+  insert into public.custom_fields (project_id, name, field_type, options) values (a, 'Priority', 'single_select', opts)
+  returning id into f;
+  insert into b7f_ids values ('f47', f);
+  insert into public.custom_fields (project_id, name, field_type, options)
+  values (a, 'Channels', 'multi_select', '[{"id": "c1", "name": "Email", "color": "blue"}]');
+  insert into public.custom_fields (project_id, name, field_type) values (a, 'Notes', 'text');
+  insert into public.custom_fields (project_id, name, field_type) values (a, 'Budget', 'number');
+  insert into public.custom_fields (project_id, name, field_type, bound_to_sections)
+  values (a, 'Status', 'single_select', true) returning id into status_field;
+  assert (select options from public.custom_fields where id = status_field) = '[]'::jsonb, 'the section-bound Status keeps no options';
+  update public.custom_fields set name = 'Stage' where id = status_field;
+  assert (select name from public.custom_fields where id = status_field) = 'Stage', 'and is renamed as before';
+
+  -- Emptying a select field is refused; renaming, reordering, recoloring, and replacing options work.
+  begin
+    update public.custom_fields set options = '[]' where id = f;
+    raise exception 'emptying a select field must be refused';
+  exception when check_violation then null;
+  end;
+  assert jsonb_array_length((select options from public.custom_fields where id = f)) = 2, 'its options are kept';
+  update public.custom_fields
+     set name = 'Urgency', options = '[{"id": "o2", "name": "Low", "color": "green"}]'
+   where id = f;
+  assert (select name from public.custom_fields where id = f) = 'Urgency', 'renamed';
+  assert (select options -> 0 ->> 'color' from public.custom_fields where id = f) = 'green', 'one option left, recolored';
+  update public.custom_fields set description = 'How soon' where id = f;
+
+  -- A field can't become an empty select either (another type turned into a select).
+  begin
+    update public.custom_fields set field_type = 'single_select', options = '[]'
+     where project_id = a and name = 'Notes';
+    raise exception 'turning a text field into an empty select must be refused';
+  exception when check_violation then null;
+  end;
+
+  -- Values still work on the field, and removing the field (soft delete) is allowed.
+  t := public.create_task(a, null, 'Option task');
+  insert into public.task_field_values (task_id, field_id, value) values (t, f, '"o2"');
+  update public.custom_fields set deleted_at = now() where project_id = a and name = 'Channels';
+  assert (select deleted_at is not null from public.custom_fields where project_id = a and name = 'Channels'),
+    'a select field can still be removed';
+end $$;
+
+-- Viewers still can't write fields at all (RLS, unchanged).
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+begin
+  begin
+    insert into public.custom_fields (project_id, name, field_type, options)
+    values (a, 'Sneaky', 'single_select', '[{"id": "s1", "name": "S", "color": "zinc"}]');
+    raise exception 'viewers can''t add fields';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+
+-- System paths keep making empty select fields: a direct write as the database owner, and the seeded
+-- Creative Requests template (its two select fields have no options) through create_project_from_template.
+reset role;
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+  legacy uuid;
+begin
+  insert into public.custom_fields (project_id, name, field_type) values (a, 'Legacy pick', 'single_select')
+  returning id into legacy;
+  insert into b7f_ids values ('legacy', legacy);
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  legacy uuid := (select id from b7f_ids where name = 'legacy');
+  created jsonb;
+  copy uuid;
+begin
+  -- An existing select field with no options can still be renamed and described (and saved empty again),
+  -- but once it has options it can't be emptied.
+  update public.custom_fields set name = 'Legacy choice', description = 'Older field' where id = legacy;
+  assert (select name from public.custom_fields where id = legacy) = 'Legacy choice', 'an empty select is renameable';
+  update public.custom_fields set options = '[]' where id = legacy;
+  update public.custom_fields set options = '[{"id": "l1", "name": "Yes", "color": "green"}]' where id = legacy;
+  begin
+    update public.custom_fields set options = '[]' where id = legacy;
+    raise exception 'once it has options it can''t be emptied';
+  exception when check_violation then null;
+  end;
+
+  -- The seeded template (definer code) still copies its option-less select fields.
+  created := public.create_project_from_template('00000000-0000-4000-8000-0000000000c1', 'B7F from template', current_date);
+  copy := (created ->> 'project_id')::uuid;
+  insert into b7f_ids values ('template_copy', copy);
+  assert (select count(*) from public.custom_fields
+           where project_id = copy and field_type = 'single_select' and not bound_to_sections
+             and options = '[]'::jsonb and deleted_at is null) = 2,
+    'a project from Creative Requests keeps its two option-less select fields';
+  -- Its creator (the owner) can rename them, and give them options.
+  update public.custom_fields set name = 'Kind of request'
+   where project_id = copy and name = 'Request type';
+  assert exists (select 1 from public.custom_fields where project_id = copy and name = 'Kind of request'),
+    'a template''s empty select is renameable';
+end $$;
+
+-- Duplicate project (definer copy engine) copies a project with an empty select field too.
+do $$
+declare
+  copy uuid := (select id from b7f_ids where name = 'template_copy');
+  dup jsonb;
+begin
+  dup := public.duplicate_project(copy, 'B7F duplicate', '{}'::jsonb);
+  assert (select count(*) from public.custom_fields
+           where project_id = (dup ->> 'project_id')::uuid and options = '[]'::jsonb
+             and field_type = 'single_select' and not bound_to_sections and deleted_at is null) = 2,
+    'Duplicate project copies option-less select fields';
+end $$;
+
+-- Portfolio fields: single-select needs an option too.
+do $$
+declare
+  p uuid := (select id from b7f_ids where name = 'p');
+  pf uuid;
+begin
+  begin
+    insert into public.portfolio_fields (portfolio_id, name, field_type) values (p, 'Phase', 'single_select');
+    raise exception 'an option-less portfolio single-select must be refused';
+  exception when check_violation then
+    assert sqlerrm like 'Add at least one option to the “Phase” field%', 'says what to do: ' || sqlerrm;
+  end;
+  insert into public.portfolio_fields (portfolio_id, name, field_type, options)
+  values (p, 'Phase', 'single_select', '[{"id": "ph1", "name": "Plan", "color": "blue"}]') returning id into pf;
+  insert into public.portfolio_fields (portfolio_id, name, field_type) values (p, 'Spend', 'number');
+  begin
+    update public.portfolio_fields set options = '[]' where id = pf;
+    raise exception 'emptying a portfolio single-select must be refused';
+  exception when check_violation then null;
+  end;
+  update public.portfolio_fields set name = 'Stage of work' where id = pf;
+  assert (select name from public.portfolio_fields where id = pf) = 'Stage of work', 'renamed';
+  update public.portfolio_fields set deleted_at = now() where id = pf;
+end $$;
+
+reset role;
+do $$
+declare
+  p uuid := (select id from b7f_ids where name = 'p');
+  pf uuid;
+begin
+  -- Older option-less portfolio single-selects stay renameable by people.
+  insert into public.portfolio_fields (portfolio_id, name, field_type) values (p, 'Old phase', 'single_select')
+  returning id into pf;
+  insert into b7f_ids values ('old_pf', pf);
+end $$;
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  pf uuid := (select id from b7f_ids where name = 'old_pf');
+begin
+  update public.portfolio_fields set name = 'Older phase' where id = pf;
+  assert (select name from public.portfolio_fields where id = pf) = 'Older phase', 'an empty portfolio select is renameable';
+end $$;
+
+-- The guard is a trigger helper: no client executes it.
+reset role;
+do $$
+begin
+  assert not has_function_privilege('anon', 'public.guard_select_field_options()', 'execute'), 'anon can''t execute the guard';
+  assert not has_function_privilege('authenticated', 'public.guard_select_field_options()', 'execute'),
+    'authenticated can''t execute the guard';
+  assert exists (select 1 from pg_trigger where tgname = 'custom_fields_07_select_options' and not tgisinternal), 'project trigger';
+  assert exists (select 1 from pg_trigger where tgname = 'portfolio_fields_07_select_options' and not tgisinternal), 'portfolio trigger';
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- 54. More option colors: one palette (option_colors()), tags keep a palette color in palette_color.
+-- ---------------------------------------------------------------------------------------------
+
+-- The palette and the nearest-base mapping.
+do $$
+declare
+  c text;
+  def text := (select pg_get_constraintdef(oid) from pg_constraint where conname = 'tags_palette_color_check');
+begin
+  assert cardinality(public.option_colors()) = 20, 'twenty colors';
+  assert (public.option_colors())[1:9] = array['zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'],
+    'the first nine are the original colors, in their order';
+  assert (select count(distinct x) from unnest(public.option_colors()) x) = 20, 'no repeats';
+  foreach c in array public.option_colors() loop
+    assert public.option_color_base(c) = any ((public.option_colors())[1:9]), c || ' maps to one of the first nine';
+    if c = any ((public.option_colors())[1:9]) then
+      assert public.option_color_base(c) = c, c || ' is its own base';
+    end if;
+    assert def like '%''' || c || '''%', 'the palette_color CHECK lists ' || c;
+  end loop;
+  assert (select count(*) from regexp_matches(def, '''[a-z]+''::text', 'g')) = 20, 'the CHECK lists only the palette';
+  assert public.option_color_base('rose') = 'red' and public.option_color_base('cyan') = 'teal'
+    and public.option_color_base('slate') = 'zinc' and public.option_color_base('yellow') = 'amber', 'nearest bases';
+  assert public.option_color_base('neon') = 'neon', 'an unknown color is left alone';
+end $$;
+
+-- Tags: any palette color, kept in palette_color with the nearest base in color.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  c text;
+  g uuid;
+  n integer := 0;
+begin
+  -- The app's write: the picked color in palette_color, its base in color.
+  insert into public.tags (name, color, palette_color) values ('B7F Rose', 'red', 'rose') returning id into g;
+  assert (select (color, palette_color) = ('red', 'rose') from public.tags where id = g), 'rose kept, red as the base';
+  insert into b7f_ids values ('tag_rose', g);
+  -- A palette color sent in color (an older writer, ensure_tag) moves to palette_color.
+  insert into public.tags (name, color) values ('B7F Cyan', 'cyan') returning id into g;
+  assert (select (color, palette_color) = ('teal', 'cyan') from public.tags where id = g), 'cyan sent as color is kept';
+  -- A base color sent alone stays as it was.
+  insert into public.tags (name, color) values ('B7F Plain', 'blue') returning id into g;
+  assert (select color = 'blue' and palette_color is null from public.tags where id = g), 'a base color as before';
+  insert into b7f_ids values ('tag_plain', g);
+  -- Inconsistent pair: the palette color wins and color follows it.
+  insert into public.tags (name, color, palette_color) values ('B7F Odd', 'pink', 'lime') returning id into g;
+  assert (select (color, palette_color) = ('green', 'lime') from public.tags where id = g), 'color follows palette_color';
+
+  -- Every palette color can be picked.
+  foreach c in array public.option_colors() loop
+    n := n + 1;
+    insert into public.tags (name, color, palette_color) values ('B7F Swatch ' || n, public.option_color_base(c), c) returning id into g;
+    assert (select coalesce(palette_color, color) from public.tags where id = g) = c, c || ' reads back';
+  end loop;
+
+  -- Unknown colors are refused either way.
+  begin
+    insert into public.tags (name, color) values ('B7F Neon', 'neon');
+    raise exception 'an unknown color must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.tags (name, color, palette_color) values ('B7F Neon', 'zinc', 'neon');
+    raise exception 'an unknown palette color must be refused';
+  exception when check_violation then null;
+  end;
+end $$;
+
+do $$
+declare
+  rose uuid := (select id from b7f_ids where name = 'tag_rose');
+  plain uuid := (select id from b7f_ids where name = 'tag_plain');
+begin
+  -- Renaming keeps the color.
+  update public.tags set name = 'B7F Rose tag' where id = rose;
+  assert (select (color, palette_color) = ('red', 'rose') from public.tags where id = rose), 'rename keeps rose';
+  -- The app picks the base color the palette color was stored next to (red): it reads red.
+  update public.tags set color = 'red', palette_color = 'red' where id = rose;
+  assert (select coalesce(palette_color, color) from public.tags where id = rose) = 'red', 'red after rose';
+  update public.tags set color = 'violet', palette_color = 'indigo' where id = rose;
+  assert (select (color, palette_color) = ('violet', 'indigo') from public.tags where id = rose), 'indigo';
+  -- The release before this one changes only color: the palette color goes.
+  update public.tags set color = 'orange' where id = rose;
+  assert (select color = 'orange' and palette_color is null from public.tags where id = rose), 'an older writer''s color wins';
+  -- An older writer sending a palette name in color still works.
+  update public.tags set color = 'fuchsia' where id = plain;
+  assert (select (color, palette_color) = ('pink', 'fuchsia') from public.tags where id = plain), 'fuchsia sent as color';
+end $$;
+
+-- Someone who doesn't manage a tag can't recolor it (RLS, unchanged).
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  plain uuid := (select id from b7f_ids where name = 'tag_plain');
+  hit integer;
+begin
+  update public.tags set color = 'teal', palette_color = 'emerald' where id = plain;
+  get diagnostics hit = row_count;
+  assert hit = 0, 'not the creator nor a workspace admin: nothing changes';
+  assert (select palette_color from public.tags where id = plain) = 'fuchsia', 'still fuchsia';
+end $$;
+
+-- Tag stories carry the color people see; portfolio options take the whole palette.
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid;
+begin
+  t := public.create_task((select id from b7f_ids where name = 'a'), null, 'B7F colored task');
+  insert into b7f_ids values ('t54', t);
+end $$;
+do $$
+declare
+  t uuid := (select id from b7f_ids where name = 't54');
+  plain uuid := (select id from b7f_ids where name = 'tag_plain');
+  p uuid := (select id from b7f_ids where name = 'p');
+begin
+  insert into public.task_tags (task_id, tag_id) values (t, plain);
+  assert (select data ->> 'tag_color' from public.task_stories where task_id = t and kind = 'tag_added'
+          order by created_at desc limit 1) = 'fuchsia', 'the tag_added story has the palette color';
+
+  insert into public.portfolio_fields (portfolio_id, name, field_type, options)
+  values (p, 'Mood', 'single_select', '[{"id": "m1", "name": "Calm", "color": "emerald"}, {"id": "m2", "name": "Bold", "color": "fuchsia"}]');
+  begin
+    insert into public.portfolio_fields (portfolio_id, name, field_type, options)
+    values (p, 'Bad mood', 'single_select', '[{"id": "x", "name": "X", "color": "neon"}]');
+    raise exception 'an unknown portfolio option color must be refused';
+  exception when check_violation then null;
+  end;
+  -- Project field options take palette colors too (never checked in SQL; the app reads them).
+  insert into public.custom_fields (project_id, name, field_type, options)
+  values ((select id from b7f_ids where name = 'a'), 'Mood', 'single_select', '[{"id": "m1", "name": "Calm", "color": "sky"}]');
+end $$;
+
+reset role;
+do $$
+declare
+  ws uuid := '00000000-0000-4000-8000-000000000001';
+  g uuid;
+begin
+  -- ensure_tag (the importer, the old Tags field migration) keeps a palette color; unknown → Gray.
+  g := public.ensure_tag(ws, 'B7F Imported', 'stone', 'b7f20029-0000-4000-8000-000000000001');
+  assert (select (color, palette_color) = ('zinc', 'stone') from public.tags where id = g), 'imported stone';
+  g := public.ensure_tag(ws, 'B7F Imported odd', 'neon', 'b7f20029-0000-4000-8000-000000000001');
+  assert (select color = 'zinc' and palette_color is null from public.tags where id = g), 'unknown becomes Gray';
+
+  -- Grants: the palette helpers are for signed-in people and the service role; the trigger for nobody.
+  assert not has_function_privilege('anon', 'public.option_colors()', 'execute'), 'anon: option_colors';
+  assert not has_function_privilege('anon', 'public.option_color_base(text)', 'execute'), 'anon: option_color_base';
+  assert has_function_privilege('authenticated', 'public.option_colors()', 'execute'), 'authenticated: option_colors';
+  assert has_function_privilege('authenticated', 'public.option_color_base(text)', 'execute'), 'authenticated: option_color_base';
+  assert not has_function_privilege('anon', 'public.guard_tag_palette_color()', 'execute'), 'anon: the tag trigger';
+  assert not has_function_privilege('authenticated', 'public.guard_tag_palette_color()', 'execute'), 'authenticated: the tag trigger';
+  assert has_column_privilege('authenticated', 'public.tags', 'palette_color', 'UPDATE'), 'tag managers recolor (RLS decides)';
+  assert not has_column_privilege('anon', 'public.tags', 'palette_color', 'SELECT'), 'anon reads nothing';
+  assert exists (select 1 from pg_trigger where tgname = 'tags_06_palette_color' and not tgisinternal), 'tag trigger';
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- 49. Number field symbol: number_prefix on project and portfolio number fields, shown through
+-- format_number_value() (task_field_text, rule_field_value_label); values stay plain numbers.
+-- ---------------------------------------------------------------------------------------------
+
+-- The one SQL rendering (the same vectors as tests/unit/oct29-batch7-number-prefix.test.ts).
+do $$
+begin
+  assert public.format_number_value(1250, null) = '1,250', 'grouped';
+  assert public.format_number_value(1250, '$') = '$1,250', 'the symbol first';
+  assert public.format_number_value(-1250.5, '$') = '-$1,250.5', 'the sign before the symbol';
+  assert public.format_number_value(0.12345, '€') = '€0.123', 'three decimals at most';
+  assert public.format_number_value(1234567.891, null) = '1,234,567.891', 'millions';
+  assert public.format_number_value(42.10, '#') = '#42.1', 'no trailing zeros';
+  assert public.format_number_value(-0.0001, '$') = '$0', 'a value that rounds to zero has no sign';
+  assert public.format_number_value(0, '₪') = '₪0', 'zero';
+  assert public.format_number_value(1000, 'USD') = 'USD 1,000', 'a space after a symbol ending in a letter';
+  assert public.format_number_value(-7, 'Rs') = '-Rs 7', 'and the sign still first';
+  assert public.format_number_value(999, '') = '999', 'an empty symbol is none';
+  assert public.format_number_value(null, '$') is null, 'no value, no text';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+  f uuid;
+  g uuid;
+begin
+  -- An Editor sets a symbol on a number field; surrounding spaces go, an empty one is none.
+  insert into public.custom_fields (project_id, name, field_type, number_prefix, notify_on_change)
+  values (a, 'Cost', 'number', '  $ ', true) returning id into f;
+  assert (select number_prefix from public.custom_fields where id = f) = '$', 'trimmed';
+  insert into b7f_ids values ('cost', f);
+  update public.custom_fields set number_prefix = '' where id = f;
+  assert (select number_prefix is null from public.custom_fields where id = f), 'empty = none';
+  update public.custom_fields set number_prefix = E' € ' where id = f;
+  assert (select number_prefix from public.custom_fields where id = f) = '€', 'no-break spaces trimmed too';
+  update public.custom_fields set number_prefix = '₪₪₪₪' where id = f;
+  assert (select char_length(number_prefix) from public.custom_fields where id = f) = 4, 'four characters (code points)';
+  update public.custom_fields set number_prefix = 'US $' where id = f;
+  update public.custom_fields set number_prefix = '$' where id = f;
+
+  -- Refused: too long, control characters / line breaks, and any field that isn't a number field.
+  begin
+    update public.custom_fields set number_prefix = 'Euros' where id = f;
+    raise exception 'five characters must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    update public.custom_fields set number_prefix = E'$\n€' where id = f;
+    raise exception 'a line break must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    update public.custom_fields set number_prefix = E'$ ' || '€' where id = f;
+    raise exception 'a Unicode line separator must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    update public.custom_fields set number_prefix = E'\u0007#' where id = f;
+    raise exception 'a control character must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.custom_fields (project_id, name, field_type, number_prefix) values (a, 'Label', 'text', '$');
+    raise exception 'a text field has no symbol';
+  exception when check_violation then null;
+  end;
+  insert into public.custom_fields (project_id, name, field_type, number_prefix) values (a, 'Label', 'text', '  ')
+  returning id into g;
+  assert (select number_prefix is null from public.custom_fields where id = g), 'blank on a text field is just none';
+  assert (select number_prefix from public.custom_fields where id = f) = '$', 'still $';
+end $$;
+
+-- A Viewer can't change a symbol (RLS, unchanged).
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  hit integer;
+begin
+  update public.custom_fields set number_prefix = '€' where id = (select id from b7f_ids where name = 'cost');
+  get diagnostics hit = row_count;
+  assert hit = 0, 'viewers change no field';
+end $$;
+
+-- A task with a value, followed by the owner (who hears about field changes).
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid;
+begin
+  t := public.create_task((select id from b7f_ids where name = 'a'), null, 'B7F costed task');
+  insert into b7f_ids values ('t49', t);
+end $$;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+insert into public.task_followers (task_id, profile_id)
+values ((select id from b7f_ids where name = 't49'), 'b7f20029-0000-4000-8000-000000000001');
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7f_ids where name = 't49');
+  f uuid := (select id from b7f_ids where name = 'cost');
+  a uuid := (select id from b7f_ids where name = 'a');
+begin
+  insert into public.task_field_values (task_id, field_id, value) values (t, f, '1250.5');
+  assert (select value from public.task_field_values where task_id = t and field_id = f) = '1250.5'::jsonb,
+    'the stored value is a plain number';
+  -- Filtering still compares numbers.
+  assert t in (select x.task_id from public.filter_project_tasks(a, jsonb_build_object('completion', 'all',
+    'fields', jsonb_build_array(jsonb_build_object('field_id', f, 'op', 'equals', 'value', 1250.5))), 'UTC') x),
+    'a number filter still matches';
+end $$;
+
+-- The owner's Inbox: "Cost changed to $1,250.5".
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7f_ids where name = 't49');
+begin
+  assert (select data ->> 'value_text' from public.inbox_items
+           where recipient_id = 'b7f20029-0000-4000-8000-000000000001' and task_id = t and data ->> 'field_change' = 'true'
+           order by created_at desc limit 1) = '$1,250.5', 'the Inbox shows the symbol';
+  assert (select data ->> 'message' from public.inbox_items
+           where recipient_id = 'b7f20029-0000-4000-8000-000000000001' and task_id = t and data ->> 'field_change' = 'true'
+           order by created_at desc limit 1) = 'Cost changed to $1,250.5', 'in the message too';
+end $$;
+
+-- Rule text (placeholders, Send email's field line) and rule run logs.
+reset role;
+do $$
+declare
+  t uuid := (select id from b7f_ids where name = 't49');
+  f uuid := (select id from b7f_ids where name = 'cost');
+  a uuid := (select id from b7f_ids where name = 'a');
+  task_row public.tasks;
+  field_row public.custom_fields;
+begin
+  select * into task_row from public.tasks where id = t;
+  select * into field_row from public.custom_fields where id = f;
+  assert public.task_field_text(t, f) = '$1,250.5', 'task_field_text';
+  assert public.rule_placeholder_value('field.Cost', task_row, a, '{}'::jsonb, 'text') = '$1,250.5', '{{field.Cost}}';
+  assert public.render_rule_text_as('Budget: {{field.cost}}', t, a, '{}'::jsonb, 'text') = 'Budget: $1,250.5',
+    'rendered in a rule message';
+  assert public.rule_field_value_label(field_row, '-40'::jsonb) = '-$40', 'the run log''s value';
+  assert public.rule_field_value_label(field_row, 'null'::jsonb) = 'empty', 'clearing still reads empty';
+  -- A number field without a symbol is grouped, nothing else.
+  select * into field_row from public.custom_fields where project_id = a and name = 'Budget';
+  assert public.rule_field_value_label(field_row, '1250'::jsonb) = '1,250', 'no symbol';
+end $$;
+
+-- Templates and Duplicate project keep the symbol; a stored symbol that no longer fits is left out.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+  dup jsonb;
+  tmpl uuid;
+  created jsonb;
+begin
+  dup := public.duplicate_project(a, 'B7F A copy', '{}'::jsonb);
+  assert (select number_prefix from public.custom_fields
+           where project_id = (dup ->> 'project_id')::uuid and name = 'Cost' and deleted_at is null) = '$',
+    'Duplicate project keeps the symbol';
+  assert (select number_prefix is null from public.custom_fields
+           where project_id = (dup ->> 'project_id')::uuid and name = 'Budget' and deleted_at is null),
+    'and no symbol stays none';
+  tmpl := public.save_project_as_template(a, 'B7F costs', null, null, null);
+  insert into b7f_ids values ('tmpl49', tmpl);
+  created := public.create_project_from_template(tmpl, 'B7F from costs', current_date);
+  assert (select number_prefix from public.custom_fields
+           where project_id = (created ->> 'project_id')::uuid and name = 'Cost' and deleted_at is null) = '$',
+    'a project template keeps the symbol';
+end $$;
+
+reset role;
+update public.project_templates
+   set content = jsonb_set(content, '{fields}', (
+     select jsonb_agg(case when x ->> 'name' = 'Cost' then x || '{"number_prefix": "Dollars"}' else x end)
+     from jsonb_array_elements(content -> 'fields') x))
+ where id = (select id from b7f_ids where name = 'tmpl49');
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  created jsonb;
+begin
+  created := public.create_project_from_template((select id from b7f_ids where name = 'tmpl49'), 'B7F odd costs', current_date);
+  assert (select number_prefix is null from public.custom_fields
+           where project_id = (created ->> 'project_id')::uuid and name = 'Cost' and deleted_at is null),
+    'a symbol that no longer fits is left out, and the copy goes on';
+end $$;
+
+-- Portfolio number fields take a symbol too.
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  p uuid := (select id from b7f_ids where name = 'p');
+  pf uuid;
+begin
+  insert into public.portfolio_fields (portfolio_id, name, field_type, number_prefix) values (p, 'Spend B7F', 'number', ' € ')
+  returning id into pf;
+  assert (select number_prefix from public.portfolio_fields where id = pf) = '€', 'trimmed';
+  update public.portfolio_fields set number_prefix = '#' where id = pf;
+  update public.portfolio_fields set number_prefix = null where id = pf;
+  begin
+    update public.portfolio_fields set number_prefix = 'Euros' where id = pf;
+    raise exception 'five characters must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.portfolio_fields (portfolio_id, name, field_type, number_prefix) values (p, 'Note B7F', 'text', '$');
+    raise exception 'a portfolio text field has no symbol';
+  exception when check_violation then null;
+  end;
+end $$;
+
+reset role;
+do $$
+begin
+  assert not has_function_privilege('anon', 'public.format_number_value(numeric, text)', 'execute'), 'anon: format_number_value';
+  assert has_function_privilege('authenticated', 'public.format_number_value(numeric, text)', 'execute'),
+    'authenticated: format_number_value';
+  assert not has_function_privilege('anon', 'public.normalize_number_prefix()', 'execute'), 'anon: the trigger';
+  assert not has_function_privilege('authenticated', 'public.normalize_number_prefix()', 'execute'), 'authenticated: the trigger';
+  assert has_column_privilege('authenticated', 'public.custom_fields', 'number_prefix', 'UPDATE'), 'editors set it (RLS decides)';
+  assert has_column_privilege('authenticated', 'public.portfolio_fields', 'number_prefix', 'UPDATE'), 'portfolio editors too';
+  assert not has_column_privilege('anon', 'public.custom_fields', 'number_prefix', 'SELECT'), 'anon reads nothing';
+  assert exists (select 1 from pg_trigger where tgname = 'custom_fields_08_number_prefix' and not tgisinternal), 'project trigger';
+  assert exists (select 1 from pg_trigger where tgname = 'portfolio_fields_08_number_prefix' and not tgisinternal), 'portfolio trigger';
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- 48. Long text editor (app only): the limit the editor counts against — a text value holds 10,000
+-- characters as Postgres counts them (code points, so an emoji is one), and keeps its line breaks.
+-- ---------------------------------------------------------------------------------------------
+
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+  f uuid;
+  t uuid;
+  multi text := E'Line one\nLine two\n\n  Indented line four';
+begin
+  insert into public.custom_fields (project_id, name, field_type) values (a, 'Brief B7F', 'text') returning id into f;
+  t := public.create_task(a, null, 'B7F long brief');
+
+  insert into public.task_field_values (task_id, field_id, value) values (t, f, to_jsonb(repeat('a', 10000)));
+  assert length((select value #>> '{}' from public.task_field_values where task_id = t and field_id = f)) = 10000,
+    'exactly 10,000 characters fit';
+  begin
+    update public.task_field_values set value = to_jsonb(repeat('a', 10001)) where task_id = t and field_id = f;
+    raise exception 'a text value of 10,001 characters must be refused';
+  exception when check_violation then null;
+  end;
+  assert length((select value #>> '{}' from public.task_field_values where task_id = t and field_id = f)) = 10000,
+    'the refused write changed nothing';
+
+  -- Line breaks (and inner spaces) are stored as written; the editor trims only the ends.
+  update public.task_field_values set value = to_jsonb(multi) where task_id = t and field_id = f;
+  assert (select value #>> '{}' from public.task_field_values where task_id = t and field_id = f) = multi,
+    'line breaks are kept';
+
+  -- Characters, not UTF-16 units or bytes: 10,000 emoji fit (where the database is UTF-8, as hosted).
+  if current_setting('server_encoding') = 'UTF8' then
+    update public.task_field_values set value = to_jsonb(repeat(chr(128512), 10000)) where task_id = t and field_id = f;
+    assert length((select value #>> '{}' from public.task_field_values where task_id = t and field_id = f)) = 10000,
+      '10,000 emoji are 10,000 characters';
+    begin
+      update public.task_field_values set value = to_jsonb(repeat(chr(128512), 10001)) where task_id = t and field_id = f;
+      raise exception '10,001 emoji must be refused';
+    exception when check_violation then null;
+    end;
+  end if;
+
+  -- Clearing (the editor saves JSON null for an emptied box).
+  update public.task_field_values set value = 'null'::jsonb where task_id = t and field_id = f;
+  assert (select value from public.task_field_values where task_id = t and field_id = f) is null, 'cleared';
+end $$;
+
+
+-- =================================================================================================
+-- Track T3: 55 shared library fields, 51 field lock
+-- =================================================================================================
+
+reset role;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+
+-- 55. Library fields shared across projects (linked placements).
 --   b7c30029…01 sf-owner@example.com     owner of SF A, SF B, SF C (and the linking projects)
 --   b7c30029…02 sf-editor@example.com    Editor of SF A and SF B
 --   b7c30029…03 sf-bedit@example.com     Editor of SF B and SF C (not in SF A)
 --   b7c30029…04 sf-viewer@example.com    Viewer of SF B
 --   b7c30029…05 sf-outsider@example.com  in the workspace, in no project
 --   b7c30029…06 sf-admin@example.com     workspace admin, in no project
-
-\set ON_ERROR_STOP 1
 
 insert into public.allowed_emails (email, note) values
   ('sf-owner@example.com', 'oct 29 batch 7 t3'),
@@ -1816,7 +2923,569 @@ begin
 end $$;
 reset role;
 
+
+-- =================================================================================================
+-- Track T4: 55b no home project
+-- =================================================================================================
+
+reset role;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+
+-- 55b. No home project.
+--   b7d40029…01 b7t4-owner@example.com   owner of T4 A, T4 B, T4 C, T4 D
+--   b7d40029…02 b7t4-editor@example.com  Editor of T4 A, T4 B, T4 D (not T4 C)
+--   b7d40029…03 b7t4-viewer@example.com  Viewer of T4 B only
+
+insert into public.allowed_emails (email, note) values
+  ('b7t4-owner@example.com', 'oct 29 batch 7 t4'),
+  ('b7t4-editor@example.com', 'oct 29 batch 7 t4'),
+  ('b7t4-viewer@example.com', 'oct 29 batch 7 t4');
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('b7d40029-0000-4000-8000-000000000001', 'b7t4-owner@example.com', now(), '{"full_name":"Oona Owner"}'),
+  ('b7d40029-0000-4000-8000-000000000002', 'b7t4-editor@example.com', now(), '{"full_name":"Eddie Editor"}'),
+  ('b7d40029-0000-4000-8000-000000000003', 'b7t4-viewer@example.com', now(), '{"full_name":"Vera Viewer"}');
+
+create temporary table b7t4_ids (name text primary key, id uuid);
+grant all on b7t4_ids to authenticated, anon;
+
+-- ---------------------------------------------------------------------------------------------
+-- Setup: A ("A-{n}"), B ("B-{n}"), C ("C-{n}", the editor can't open it), D (numbers only one
+-- section's tasks and renumbers on move).
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid;
+  b uuid;
+  c uuid;
+  d uuid;
+  sa uuid;
+  sd uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'T4 A') returning id into a;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'T4 B') returning id into b;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'T4 C') returning id into c;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'T4 D') returning id into d;
+  insert into public.sections (project_id, name, sort_order) values (a, 'Intake', 1024) returning id into sa;
+  insert into public.sections (project_id, name, sort_order) values (d, 'Numbered', 1024) returning id into sd;
+  insert into b7t4_ids values ('a', a), ('b', b), ('c', c), ('d', d), ('sa', sa), ('sd', sd);
+  perform public.add_project_member(a, 'b7t4-editor@example.com', 'editor');
+  perform public.add_project_member(b, 'b7t4-editor@example.com', 'editor');
+  perform public.add_project_member(d, 'b7t4-editor@example.com', 'editor');
+  perform public.add_project_member(b, 'b7t4-viewer@example.com', 'viewer');
+  perform public.apply_task_numbering(a, '{"enabled": true, "number_scope": "all_tasks", "template": "A-{n}"}'::jsonb, 'save');
+  perform public.apply_task_numbering(b, '{"enabled": true, "number_scope": "all_tasks", "template": "B-{n}"}'::jsonb, 'save');
+  perform public.apply_task_numbering(c, '{"enabled": true, "number_scope": "all_tasks", "template": "C-{n}"}'::jsonb, 'save');
+  perform public.apply_task_numbering(d, jsonb_build_object(
+    'enabled', true, 'number_scope', 'sections', 'section_ids', jsonb_build_array(sd),
+    'template', 'D-{n}', 'renumber_on_move', true), 'save');
+end $$;
+
+-- The editor makes T in A (A-1) and, a moment later, adds it to B (B-1); the owner then adds it to C
+-- (C-1), which the editor can't open. U (A-2) is in A and C only. A subtask under T. Each step is its own
+-- transaction, so the memberships' times (the stable order) differ.
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t4_ids where name = 'a');
+  t uuid;
+  u uuid;
+begin
+  t := public.create_task(a, (select id from b7t4_ids where name = 'sa'), 'Brochure');
+  u := public.create_task(a, (select id from b7t4_ids where name = 'sa'), 'Banner');
+  insert into b7t4_ids values ('t', t), ('u', u);
+end $$;
+
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  stamped timestamptz;
+begin
+  -- A client can't choose a membership's time (the stable order reads it): the database stamps it.
+  insert into public.task_projects (task_id, project_id, sort_order, created_at) values (t, b, 1024, '2001-01-01');
+  select created_at into stamped from public.task_projects where task_id = t and project_id = b;
+  assert stamped >= now(), 'stamped by the database';
+  update public.task_projects set created_at = '2001-01-01' where task_id = t and project_id = b;
+  assert (select created_at from public.task_projects where task_id = t and project_id = b) = stamped, 'and kept';
+  insert into b7t4_ids values ('s', public.create_subtask(t, 'Proof', null));
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  c uuid := (select id from b7t4_ids where name = 'c');
+begin
+  insert into public.task_projects (task_id, project_id, sort_order)
+  values ((select id from b7t4_ids where name = 't'), c, 1024);
+  insert into public.task_projects (task_id, project_id, sort_order)
+  values ((select id from b7t4_ids where name = 'u'), c, 2048);
+  assert (select req_label from public.task_project_numbers
+          where task_id = (select id from b7t4_ids where name = 't') and project_id = c) = 'C-1', 'C numbers T';
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- The numbers helper: every project the caller can read, in the order the task was added to them,
+-- with that project's number — never a project (or number) the caller can't read.
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+  list jsonb := public.task_project_labels(array[t]) -> t::text;
+begin
+  assert jsonb_array_length(list) = 3, format('the owner reads all three: %s', list);
+  assert (select jsonb_agg(e ->> 'label' order by n) from jsonb_array_elements(list) with ordinality x(e, n))
+         = '["A-1", "B-1", "C-1"]'::jsonb, format('stable order: %s', list);
+  assert list -> 0 ->> 'project_name' = 'T4 A' and (list -> 0 ->> 'wrap')::boolean, 'name and bracket setting';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+  s uuid := (select id from b7t4_ids where name = 's');
+  c uuid := (select id from b7t4_ids where name = 'c');
+  all_lists jsonb := public.task_project_labels(array[t, s, null]);
+  list jsonb := all_lists -> t::text;
+  sub jsonb := all_lists -> s::text;
+  mine uuid := public.create_private_task('Mine only');
+begin
+  assert (select jsonb_agg(e ->> 'label' order by n) from jsonb_array_elements(list) with ordinality x(e, n))
+         = '["A-1", "B-1"]'::jsonb, format('the editor never sees C or C-1: %s', list);
+  assert not (list::text like '%' || c::text || '%'), 'not even its id';
+  assert (select jsonb_agg(e ->> 'label' order by n) from jsonb_array_elements(sub) with ordinality x(e, n))
+         = '["A-1.1", "B-1.1"]'::jsonb, format('a subtask carries its path in each project: %s', sub);
+  assert not (public.task_project_labels(array[mine]) ? mine::text), 'a private task has no projects';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+  u uuid := (select id from b7t4_ids where name = 'u');
+  list jsonb := public.task_project_labels(array[t, u]);
+begin
+  assert (select jsonb_agg(e ->> 'label' order by n) from jsonb_array_elements(list -> t::text) with ordinality x(e, n))
+         = '["B-1"]'::jsonb, format('a Viewer of B reads only B-1: %s', list);
+  assert not (list ? u::text), 'a task in no project you can open has no entry';
+  -- Search labels with the first project the caller can read.
+  assert (select s.home_project_id from public.search_tasks('Brochure', 10) s where s.id = t)
+         = (select id from b7t4_ids where name = 'b'), 'search: the only readable project';
+  -- Number privacy in search: T's own number columns are A's (its internal pointer), and this Viewer
+  -- can't open A, so searching A's numbers finds neither T nor its subtask; B's number does.
+  assert not exists (select 1 from public.search_tasks('A-1', 10) x where x.id in (t, (select id from b7t4_ids where name = 's'))),
+    'search never matches a number of a project you can''t open';
+  assert not exists (select 1 from public.search_tasks('A-1.1', 10) x where x.id = (select id from b7t4_ids where name = 's')),
+    'nor a subtask''s path there';
+  assert exists (select 1 from public.search_tasks('B-1', 10) x where x.id = t), 'B''s number finds it';
+  assert not exists (
+    select 1 from public.filter_project_tasks((select id from b7t4_ids where name = 'b'), '{"text": "A-1"}'::jsonb, 'UTC') f
+    where f.task_id = t
+  ), 'a view''s text filter in B neither';
+  assert exists (
+    select 1 from public.filter_project_tasks((select id from b7t4_ids where name = 'b'), '{"text": "B-1"}'::jsonb, 'UTC') f
+    where f.task_id = t
+  ), 'B''s number does';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+begin
+  -- The owner opens A: its numbers still find the task.
+  assert exists (select 1 from public.search_tasks('A-1', 10) x where x.id = t), 'the owner finds A-1';
+  assert exists (select 1 from public.search_tasks('A-1.1', 10) x where x.id = (select id from b7t4_ids where name = 's')),
+    'and the subtask''s path';
+  assert exists (
+    select 1 from public.filter_project_tasks((select id from b7t4_ids where name = 'b'), '{"text": "A-1"}'::jsonb, 'UTC') f
+    where f.task_id = t
+  ), 'also from B''s view';
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- Email recipients: the first project (stable rule) they're in, and the numbers they can read.
+-- ---------------------------------------------------------------------------------------------
+
+reset role;
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  e_editor uuid;
+  e_viewer uuid;
+  e_address uuid;
+  ctx jsonb;
+begin
+  assert public.comment_email_project('b7d40029-0000-4000-8000-000000000002', t) = a, 'editor: A, the first';
+  assert public.comment_email_project('b7d40029-0000-4000-8000-000000000003', t) = b, 'viewer: B, the one they read';
+  assert public.task_first_project(t) = a, 'no recipient: the first project';
+  insert into public.email_outbox (task_id, to_email, to_profile_id, template, payload)
+  values (t, 'b7t4-editor@example.com', 'b7d40029-0000-4000-8000-000000000002', 'custom', '{"kind": "rule"}')
+  returning id into e_editor;
+  insert into public.email_outbox (task_id, to_email, to_profile_id, template, payload)
+  values (t, 'b7t4-viewer@example.com', 'b7d40029-0000-4000-8000-000000000003', 'custom', '{"kind": "rule"}')
+  returning id into e_viewer;
+  insert into public.email_outbox (task_id, to_email, template, payload)
+  values (t, 'someone@elsewhere.example', 'custom', '{"kind": "rule"}')
+  returning id into e_address;
+  perform set_config('request.jwt.claim.sub', 'ffffffff-0000-4000-8000-0000000000aa', true);
+  ctx := public.email_design_context(e_editor);
+  assert current_setting('request.jwt.claim.sub', true) = 'ffffffff-0000-4000-8000-0000000000aa', 'the caller is put back';
+  assert (select jsonb_agg(e ->> 'label' order by n) from jsonb_array_elements(ctx -> 'values' -> 'task_numbers') with ordinality x(e, n))
+         = '["A-1", "B-1"]'::jsonb, format('editor: the numbers they can read: %s', ctx -> 'values');
+  assert ctx -> 'values' ->> 'request_number' = 'A-1', 'their first number';
+  assert ctx ->> 'project_id' = a::text, 'linked to their first project';
+  ctx := public.email_design_context(e_viewer);
+  assert (select jsonb_agg(e ->> 'label' order by n) from jsonb_array_elements(ctx -> 'values' -> 'task_numbers') with ordinality x(e, n))
+         = '["B-1"]'::jsonb, format('viewer: B-1 only: %s', ctx -> 'values');
+  assert ctx -> 'values' ->> 'request_number' = 'B-1' and ctx ->> 'project_id' = b::text, 'viewer: B';
+  ctx := public.email_design_context(e_address);
+  assert ctx -> 'values' -> 'task_numbers' = 'null'::jsonb, 'an address: the label it was queued with';
+  assert ctx ->> 'project_id' = a::text, 'an address: the first project';
+  perform set_config('request.jwt.claim.sub', '', true);
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- Removing a task from a project removes it there only. The pointer's project can go: the pointer
+-- moves to the next project (stable rule) and every number stays. The last project can't go.
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  list jsonb;
+begin
+  -- Removing B (not the first) keeps A; nothing moves.
+  update public.task_projects set deleted_at = now() where task_id = t and project_id = b;
+  assert (select home_project_id from public.tasks where id = t) = a, 'pointer stays on A';
+  assert exists (select 1 from public.task_projects where task_id = t and project_id = a and deleted_at is null), 'still in A';
+  assert exists (select 1 from public.tasks where id = t and deleted_at is null), 'the task stays';
+  -- Back in B: the same number (kept, never reissued), and B is now the last project it was added to.
+  update public.task_projects set deleted_at = null where task_id = t and project_id = b;
+  assert (select req_label from public.task_project_numbers where task_id = t and project_id = b) = 'B-1', 'B-1 kept';
+  list := public.task_project_labels(array[t]) -> t::text;
+  assert (select jsonb_agg(e ->> 'label' order by n) from jsonb_array_elements(list) with ordinality x(e, n))
+         = '["A-1", "B-1"]'::jsonb, format('order: %s', list);
+end $$;
+
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+  u uuid := (select id from b7t4_ids where name = 'u');
+  s uuid := (select id from b7t4_ids where name = 's');
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  c uuid := (select id from b7t4_ids where name = 'c');
+  list jsonb;
+begin
+  -- Removing A (the pointer's project) is allowed. The pointer moves to the next project the task was
+  -- added to — C (B was added back later), which this editor can't even open — and every number stays.
+  update public.task_projects set deleted_at = now() where task_id = t and project_id = a;
+  assert (select home_project_id from public.tasks where id = t) = c, 'pointer moved to C';
+  assert (select req_label from public.tasks where id = t) = 'C-1', 'C''s number became the task''s own';
+  assert (select home_project_id from public.tasks where id = s) = c, 'its subtask follows';
+  assert (select req_label from public.tasks where id = s) = 'C-1.1', 'and reads C''s path';
+  list := public.task_project_labels(array[t]) -> t::text;
+  assert (select jsonb_agg(e ->> 'label' order by n) from jsonb_array_elements(list) with ordinality x(e, n))
+         = '["B-1"]'::jsonb, format('the editor still sees only B: %s', list);
+
+  -- U is in A and in C (which the editor can't open): A isn't its last project.
+  update public.task_projects set deleted_at = now() where task_id = u and project_id = a;
+  assert (select count(*) from public.task_projects where task_id = u and deleted_at is null) = 0,
+    'the editor no longer sees any of U''s projects';
+end $$;
+
+reset role;
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  c uuid := (select id from b7t4_ids where name = 'c');
+begin
+  assert (select req_label from public.task_project_numbers where task_id = t and project_id = a) = 'A-1', 'A-1 kept';
+  assert (select req_label from public.task_project_numbers where task_id = t and project_id = b) = 'B-1', 'B-1 kept';
+  assert (select req_label from public.task_project_numbers where task_id = t and project_id = c) = 'C-1', 'C-1 kept';
+  assert (select last_number from public.request_sequences where project_id = a) = 2, 'A issued two numbers';
+  assert (select last_number from public.request_sequences where project_id = b) = 1, 'B issued one';
+  assert (select last_number from public.request_sequences where project_id = c) = 2, 'C issued two, nothing renumbered';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  u uuid := (select id from b7t4_ids where name = 'u');
+  c uuid := (select id from b7t4_ids where name = 'c');
+  state text;
+  msg text;
+  detail text;
+begin
+  assert (select home_project_id from public.tasks where id = u) = c, 'U''s pointer moved to C';
+  assert (select req_label from public.tasks where id = u) = 'C-2', 'and C''s number came along';
+  -- C is U's last project.
+  begin
+    update public.task_projects set deleted_at = now() where task_id = u and project_id = c;
+    raise exception 'removing the last project should have failed';
+  exception when check_violation then
+    get stacked diagnostics state = returned_sqlstate, msg = message_text, detail = pg_exception_detail;
+  end;
+  assert msg = 'This is the task’s only project. Add it to another project first, or move the task to the Trash.', msg;
+  assert detail = 'last_project', detail;
+  assert exists (select 1 from public.task_projects where task_id = u and project_id = c and deleted_at is null), 'still in C';
+  -- Deleting the task instead works, and it comes back.
+  update public.tasks set deleted_at = now() where id = u;
+  perform public.restore_task(u);
+  assert exists (select 1 from public.tasks where id = u and deleted_at is null), 'restored';
+  assert exists (select 1 from public.task_projects where task_id = u and project_id = c and deleted_at is null), 'in C';
+end $$;
+
+-- The rule action Remove from this project on the pointer's project: the database moves the pointer.
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
 do $$
 begin
-  raise notice 'oct 29 batch 7 t3 shared fields smoke: all assertions passed';
+  insert into b7t4_ids values ('w', public.create_task((select id from b7t4_ids where name = 'a'),
+    (select id from b7t4_ids where name = 'sa'), 'Flyer'));
 end $$;
+do $$
+declare
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  w uuid := (select id from b7t4_ids where name = 'w');
+  r uuid;
+begin
+  insert into public.task_projects (task_id, project_id, sort_order) values (w, b, 1024);
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values (a, 'Leave A', true, 'manual', '[{"type": "remove_from_project"}]') returning id into r;
+  perform public.run_manual_rule(r, w);
+  assert not exists (select 1 from public.task_projects where task_id = w and project_id = a and deleted_at is null), 'out of A';
+  assert (select home_project_id from public.tasks where id = w) = b, 'pointer on B';
+  update public.rules set enabled = false where id = r;
+end $$;
+
+-- Projects a task joins in one transaction keep that order (the membership times are the clock's), so
+-- the project it was created in stays first — also for a duplicate made of it.
+do $$
+declare
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  v uuid;
+  copy uuid;
+  list jsonb;
+begin
+  v := public.create_task(a, (select id from b7t4_ids where name = 'sa'), 'Tie');
+  insert into public.task_projects (task_id, project_id, sort_order) values (v, b, 1024);
+  list := public.task_project_labels(array[v]) -> v::text;
+  assert list -> 0 ->> 'project_id' = a::text and list -> 1 ->> 'project_id' = b::text, format('A, then B: %s', list);
+  copy := (public.duplicate_task(v, '{}'::jsonb) ->> 'task_id')::uuid;
+  list := public.task_project_labels(array[copy]) -> copy::text;
+  assert list -> 0 ->> 'project_id' = a::text and list -> 1 ->> 'project_id' = b::text, format('the copy too: %s', list);
+  assert (select home_project_id from public.tasks where id = copy) = a, 'its pointer is its first project';
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- The pointer moving never renumbers, even into a project that renumbers on move.
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  insert into b7t4_ids values ('x', public.create_task((select id from b7t4_ids where name = 'a'),
+    (select id from b7t4_ids where name = 'sa'), 'Poster'));
+end $$;
+do $$
+declare
+  a uuid := (select id from b7t4_ids where name = 'a');
+  d uuid := (select id from b7t4_ids where name = 'd');
+  x uuid := (select id from b7t4_ids where name = 'x');
+  label text := (select req_label from public.tasks where id = x);
+  d_last bigint;
+begin
+  insert into public.task_projects (task_id, project_id, sort_order) values (x, d, 1024);
+  assert not exists (select 1 from public.task_project_numbers where task_id = x and project_id = d), 'D doesn''t number it';
+  select last_number into d_last from public.request_sequences where project_id = d;
+  update public.task_projects set deleted_at = now() where task_id = x and project_id = a;
+  assert (select home_project_id from public.tasks where id = x) = d, 'pointer on D';
+  assert (select last_number from public.request_sequences where project_id = d) = d_last, 'D issued no number';
+  assert (select req_label from public.tasks where id = x) = label, 'it keeps its number';
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- Defaults and links follow the stable rule: dependency shifting follows the first project, restoring needs
+-- one active project, subtask parent candidates and blockers name the first readable project.
+-- ---------------------------------------------------------------------------------------------
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  c uuid := (select id from b7t4_ids where name = 'c');
+  t uuid := (select id from b7t4_ids where name = 't');
+begin
+  -- T is in C, then B (it was added back to B later): C, its first project, decides.
+  update public.projects set dependency_shift = 'off' where id in (a, b, c);
+  assert public.dependency_shift_mode(array[t]) = 'off', 'C is off';
+  update public.projects set dependency_shift = 'ask' where id = b;
+  assert public.dependency_shift_mode(array[t]) = 'off', 'B doesn''t decide';
+  update public.projects set dependency_shift = 'auto' where id = c;
+  assert public.dependency_shift_mode(array[t]) = 'auto', 'C does';
+  update public.projects set dependency_shift = 'ask' where id in (a, b, c);
+  insert into b7t4_ids values ('y', public.create_task(c, null, 'Sticker'));
+end $$;
+do $$
+declare
+  y uuid := (select id from b7t4_ids where name = 'y');
+begin
+  insert into public.task_projects (task_id, project_id, sort_order) values (y, (select id from b7t4_ids where name = 'b'), 1024);
+  update public.tasks set deleted_at = now() where id = y;
+end $$;
+
+-- Restoring: the pointer's project deleted, another one active → fine; every project deleted → refused.
+reset role;
+update public.projects set deleted_at = now() where id = (select id from b7t4_ids where name = 'c');
+set role authenticated;
+do $$
+declare
+  y uuid := (select id from b7t4_ids where name = 'y');
+begin
+  perform public.restore_task(y);
+  assert exists (select 1 from public.tasks where id = y and deleted_at is null), 'restored through B';
+  update public.tasks set deleted_at = now() where id = y;
+end $$;
+reset role;
+update public.projects set deleted_at = now() where id = (select id from b7t4_ids where name = 'b');
+set role authenticated;
+do $$
+declare
+  y uuid := (select id from b7t4_ids where name = 'y');
+  msg text;
+begin
+  begin
+    perform public.restore_task(y);
+    raise exception 'restoring with no active project should have failed';
+  exception when check_violation then
+    get stacked diagnostics msg = message_text;
+  end;
+  assert msg = 'This task''s projects are deleted', msg;
+end $$;
+reset role;
+update public.projects set deleted_at = null where id in (select id from b7t4_ids where name in ('b', 'c'));
+set role authenticated;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  t uuid := (select id from b7t4_ids where name = 't');
+  z uuid;
+  blockers jsonb;
+begin
+  -- T is in C (its first project now, which the editor can't open) and B: the editor's link project is B.
+  z := public.create_task(a, (select id from b7t4_ids where name = 'sa'), 'Card');
+  perform public.set_task_dependency(t, z, 'finish_to_start', 0);
+  blockers := public.task_open_blockers(z);
+  assert blockers -> 'blockers' -> 0 ->> 'home_project_id' = b::text, format('blocker linked to B: %s', blockers);
+  assert (select c.home_project_id from public.subtask_parent_candidates(z, 'Brochure', 10) c where c.id = t) = b,
+    'parent candidate labelled with B';
+end $$;
+
+reset role;
+
+-- ---------------------------------------------------------------------------------------------
+-- Two removals at the same time (a second session through dblink, where the test database has it):
+-- a task's last two projects removed at once. The guard locks the task, so the second removal waits for
+-- the first, then sees it and is refused — the task never ends up in no project, and the first removal
+-- stays removed (the pointer's move doesn't write the other membership back). Both orders: the first
+-- removal on the pointer's project, and on the other one.
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  if exists (select 1 from pg_available_extensions where name = 'dblink') then
+    create extension if not exists dblink schema extensions;
+  end if;
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  insert into b7t4_ids values
+    ('race1', public.create_task((select id from b7t4_ids where name = 'a'), (select id from b7t4_ids where name = 'sa'), 'Race one')),
+    ('race2', public.create_task((select id from b7t4_ids where name = 'a'), (select id from b7t4_ids where name = 'sa'), 'Race two'));
+end $$;
+do $$
+begin
+  insert into public.task_projects (task_id, project_id, sort_order)
+  select id, (select id from b7t4_ids where name = 'b'), 8192 from b7t4_ids where name in ('race1', 'race2');
+end $$;
+reset role;
+
+create temporary table b7t4_race (task text, here text, there text);
+insert into b7t4_race values ('race1', 'a', 'b'), ('race2', 'b', 'a');
+
+do $$
+declare
+  r record;
+begin
+  if not exists (select 1 from pg_extension where extname = 'dblink') then
+    raise notice 'zz36_b7_t4: dblink isn''t available here, the concurrent removal check is skipped';
+    return;
+  end if;
+  for r in select * from b7t4_race loop
+    perform extensions.dblink_connect('b7t4_' || r.task, format('host=%s port=%s dbname=%s user=postgres',
+      split_part(current_setting('unix_socket_directories'), ',', 1), current_setting('port'), current_database()));
+    -- This transaction removes one project (and keeps the task's lock until it ends) …
+    update public.task_projects set deleted_at = now()
+    where task_id = (select id from b7t4_ids where name = r.task) and project_id = (select id from b7t4_ids where name = r.here);
+    -- … while a second session removes the other one.
+    perform extensions.dblink_send_query('b7t4_' || r.task, format(
+      'update public.task_projects set deleted_at = now() where task_id = %L and project_id = %L',
+      (select id from b7t4_ids where name = r.task), (select id from b7t4_ids where name = r.there)));
+  end loop;
+  perform pg_sleep(0.3);
+  for r in select * from b7t4_race loop
+    assert extensions.dblink_is_busy('b7t4_' || r.task) = 1, format('%s: the second removal waits for the first', r.task);
+  end loop;
+end $$;
+
+do $$
+declare
+  r record;
+  err text;
+begin
+  if not exists (select 1 from pg_extension where extname = 'dblink') then
+    return;
+  end if;
+  for r in select * from b7t4_race loop
+    perform * from extensions.dblink_get_result('b7t4_' || r.task, false) as x(status text);
+    err := extensions.dblink_error_message('b7t4_' || r.task);
+    perform extensions.dblink_disconnect('b7t4_' || r.task);
+    assert err like '%This is the task’s only project%', format('%s: the second removal is refused: %s', r.task, err);
+    assert (select count(*) from public.task_projects
+            where task_id = (select id from b7t4_ids where name = r.task) and deleted_at is null) = 1,
+      format('%s: still in exactly one project', r.task);
+    assert exists (select 1 from public.task_projects
+                   where task_id = (select id from b7t4_ids where name = r.task) and deleted_at is null
+                     and project_id = (select id from b7t4_ids where name = r.there)),
+      format('%s: the one the first removal left (it didn''t come back)', r.task);
+    assert (select home_project_id from public.tasks where id = (select id from b7t4_ids where name = r.task))
+           = (select id from b7t4_ids where name = r.there), format('%s: the pointer is there', r.task);
+  end loop;
+end $$;
+
+
+
+
+reset role;
+do $$ begin raise notice 'oct 29 batch 7 smoke: all assertions passed'; end $$;

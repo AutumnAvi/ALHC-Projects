@@ -23,17 +23,8 @@ import {
 } from "@/lib/fields";
 import { tagColorColumns, tagColorOf, toTag } from "@/lib/tags";
 
-// The track's fragment while batch 7 is built in parallel, the batch's one migration once merged.
-const migration = (() => {
-  for (const name of ["20261029010200_b7_t2_fields.sql", "20261029010000_oct29_batch7_a.sql"]) {
-    try {
-      return readFileSync(join(process.cwd(), "supabase/migrations", name), "utf8");
-    } catch {
-      // Try the next name.
-    }
-  }
-  throw new Error("batch 7 migration not found");
-})();
+// The batch's one migration.
+const migration = readFileSync(join(process.cwd(), "supabase/migrations", "20261029010000_oct29_batch7_a.sql"), "utf8");
 
 // The text of one SQL function's body (between `as $$` and `$$;`).
 function sqlBody(name: string) {
