@@ -200,8 +200,9 @@ export type FieldDef = {
   // share its definition and one value per task (see fieldGroupId).
   libraryFieldId?: string | null;
   // Oct 29 notes, batch 7 (51): locked — its values, definition, and removal are for the project's
-  // Owners and Admins (fieldValueEditable). Shared across a library group like the rest of the
-  // definition. Who locked it and when (absent on a database without the update).
+  // Owners and Admins (fieldValueEditable; a shared field's value: of every project of the task that uses
+  // it, lockedValueEditableAcross). Shared across a library group like the rest of the definition. Who
+  // locked it and when (absent on a database without the update).
   locked?: boolean;
   lockedBy?: string | null;
   lockedAt?: string | null;
@@ -223,6 +224,37 @@ export function fieldValueEditable(field: Pick<FieldDef, "locked">, perms: Field
 // A locked field the viewer can't change: drawn read-only with the lock and LOCKED_FIELD_NOTE.
 export function fieldLockedFor(field: Pick<FieldDef, "locked">, perms: Pick<FieldPerms, "canManage">): boolean {
   return Boolean(field.locked) && !perms.canManage;
+}
+
+// A locked shared library field holds one value in every project of the task that uses it, so only
+// someone who is an Owner or Admin of each of those projects changes it (the database decides:
+// locked_field_value_writable). Said by the database's refusal, bulk Field's skip reason, and the pane.
+export const LOCKED_SHARED_VALUE_NOTE =
+  "Locked — only Owners and Admins of every project this task is in can change this shared field";
+
+// The task pane's rule for a locked field's value on one task (it knows the task's projects and the
+// viewer's role in each): Owner / Admin of the field's project and — for a shared library field — of every
+// other project of the task that has the same field (taskFields: the fields of the task's projects).
+// Projects the viewer can't open aren't in taskFields; the database refuses those writes with
+// LOCKED_SHARED_VALUE_NOTE.
+export function lockedValueEditableAcross(
+  field: Pick<FieldDef, "id" | "projectId" | "libraryFieldId" | "locked">,
+  taskFields: Pick<FieldDef, "id" | "projectId" | "libraryFieldId">[],
+  canManageIn: (projectId: string) => boolean,
+): boolean {
+  if (!field.locked) return true;
+  if (!canManageIn(field.projectId)) return false;
+  const group = fieldGroupId(field);
+  return taskFields.every((other) => fieldGroupId(other) !== group || canManageIn(other.projectId));
+}
+
+// Edit field's note on a locked field whose definition the viewer can't change: a shared field's
+// definition and lock belong to the project that published it (this project's Owners and Admins still
+// change its values here), else to this project's Owners and Admins.
+export function lockedFieldNote(field: Pick<FieldDef, "libraryFieldId">): string {
+  return field.libraryFieldId
+    ? "Locked — only Owners and Admins of the project that published this shared field can change its name, description, and options"
+    : LOCKED_FIELD_NOTE;
 }
 
 // Whether the viewer may lock or unlock the field: Owners / Admins of the project whose Editors change
@@ -248,7 +280,7 @@ export function lockFieldUnavailable(field: Pick<FieldDef, "libraryFieldId">): s
 
 // Where a locked field is set without a person: a rule's Set field step, and a form's "Fills in".
 export const RULE_LOCKED_FIELD_NOTE =
-  "This field is locked. The step runs only while the rule’s owner is an Owner or Admin of this project; otherwise it’s skipped (and the run log says so).";
+  "This field is locked. The step runs only while the rule’s owner is an Owner or Admin of this project (for a shared library field, also of the task’s other projects that use it); otherwise it’s skipped (and the run log says so).";
 export const FORM_LOCKED_FIELD_NOTE =
   "This field is locked. Form answers still fill it in; only project Owners and Admins change it afterwards.";
 

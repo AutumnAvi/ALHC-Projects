@@ -13,7 +13,9 @@ import { NumberInput } from "@/components/number-input";
 import {
   OPTION_COLOR_CLASSES,
   fieldChips,
+  LOCKED_SHARED_VALUE_NOTE,
   fieldValueEditable,
+  lockedValueEditableAcross,
   notANumberNote,
   numberPrefixOf,
   readNumberBox,
@@ -42,13 +44,21 @@ export function TaskFields({ task, profiles, canEdit }: { task: TaskDetail; prof
   const [expanded, setExpanded] = useState(false);
   if (task.fields.length === 0) return null;
   // A field's value is written through its project: Editors+ there, and only Owners and Admins while the
-  // field is locked (Oct 29 notes, batch 7). Without per-project roles, the task's role decides (and a
+  // field is locked (Oct 29 notes, batch 7) — of every project of the task that uses it, for a shared
+  // library field (one value everywhere). Without per-project roles, the task's role decides (and a
   // locked field stays read-only).
-  const editable = (field: FieldDef) => {
-    const role = task.viewerProjectRoles?.[field.projectId];
-    const perms = role ? permissionsFor(role) : { canEdit, canManage: false };
-    return canEdit && fieldValueEditable(field, perms);
+  const permsIn = (projectId: string) => {
+    const role = task.viewerProjectRoles?.[projectId];
+    return role ? permissionsFor(role) : { canEdit, canManage: false };
   };
+  const editable = (field: FieldDef) =>
+    canEdit &&
+    fieldValueEditable(field, permsIn(field.projectId)) &&
+    lockedValueEditableAcross(field, task.fields, (projectId) => permsIn(projectId).canManage);
+  // The lock's words: a locked shared field this viewer could change here, but not in all of the task's
+  // projects that use it, says so.
+  const lockLabel = (field: FieldDef) =>
+    field.locked && permsIn(field.projectId).canManage && !editable(field) ? LOCKED_SHARED_VALUE_NOTE : undefined;
   const grouped = task.memberships.map((m) => ({
     membership: m,
     fields: task.fields.filter((f) => f.projectId === m.projectId),
@@ -91,6 +101,7 @@ export function TaskFields({ task, profiles, canEdit }: { task: TaskDetail; prof
                   task={task}
                   profiles={profiles}
                   canEdit={editable(field)}
+                  lockLabel={lockLabel(field)}
                   value={task.fieldValues[field.id] ?? null}
                   sectionId={membership.sectionId}
                   sections={membership.sections}
@@ -120,6 +131,7 @@ function FieldRow({
   task,
   profiles,
   canEdit,
+  lockLabel,
   value: savedValue,
   sectionId,
   sections,
@@ -128,6 +140,8 @@ function FieldRow({
   task: TaskDetail;
   profiles: Profile[];
   canEdit: boolean;
+  // Why a locked field is read-only here, when it isn't the usual LOCKED_FIELD_NOTE.
+  lockLabel?: string;
   value: Json;
   sectionId: string | null;
   sections: { id: string; name: string }[];
@@ -382,7 +396,7 @@ function FieldRow({
           // Oct 29 notes (batch 7): a locked field says so for everyone (read-only below Owner / Admin).
           <span className="inline-flex min-w-0 items-center gap-1">
             <span className="truncate">{name}</span>
-            <FieldLockIcon />
+            <FieldLockIcon focusable label={lockLabel} />
           </span>
         ) : (
           name
