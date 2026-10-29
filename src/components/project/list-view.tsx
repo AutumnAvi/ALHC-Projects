@@ -88,6 +88,18 @@ import {
 } from "./inline-cells";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf } from "./shared";
 import { AttachmentCount, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
+import {
+  LIST_CELL,
+  LIST_GRID,
+  LIST_HEADER_ROW,
+  LIST_PINNED_CELL,
+  LIST_RESIZE_HANDLE,
+  LIST_VIEW_WIDTH_VAR,
+  NAME_INDENT,
+  listGridStyle,
+  listHeaderCellClass,
+  subtaskIndentRem,
+} from "./list-grid";
 import { useProjectTaskSeeds } from "./task-seeds";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
@@ -131,21 +143,8 @@ type TopAdd = { groupKey: string | null; nonce: number; kind: TaskKind };
 
 const TASK_DRAG = "application/x-alhc-task";
 const SECTION_DRAG = "application/x-alhc-section";
-const GRID = "grid items-stretch";
-// The List header sticks under the toolbar while rows scroll (the page's <main> is the scroller); the
-// Name column sticks to the left while the other columns scroll sideways.
-const HEADER = "sticky top-0 z-20 border-b border-zinc-200 bg-white text-xs font-medium text-zinc-500";
-const CELL = "flex min-w-0 items-center px-2";
-const STICKY_CELL = "sticky left-0 z-[1] border-r border-zinc-100";
-// The Name cell's leading controls, so the header, rows, subtasks, and the "Add task…" row line up:
-// Editors: drag handle (1rem) · checkbox (0.875rem) · expand arrow (1rem) · completion (1.125rem), 0.5rem
-// apart, after 0.375rem. Viewers: expand arrow · completion, after 0.75rem.
-const ROW_LEFT = { editor: "pl-1.5", viewer: "pl-3" } as const;
-const NAME_HEADER_INDENT = { editor: "pl-[3.25rem]", viewer: "pl-3" } as const;
-const TITLE_INDENT = { editor: "pl-[6.375rem]", viewer: "pl-[3.875rem]" } as const;
-// A subtask row's expand arrow sits under its parent's completion control: 1.5rem further in per level.
-const SUBTASK_BASE_REM = { editor: 3.25, viewer: 0.75 } as const;
-const SUBTASK_STEP_REM = 1.5;
+// The grid, the pinned Name cell, and the Name cell's leading controls are defined once for the header
+// and every row (list-grid.ts; Oct 29 notes, batch 7, item 53).
 
 function sortSections(list: Section[], change: { id: string; sortOrder: number }) {
   return list
@@ -238,10 +237,22 @@ export function ListView({
   const [widths, setWidths] = useState<ColumnWidths>(columnWidths);
   const widthsRef = useRef(widths);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The List's visible width, for the Name track's limit (listNameTrack): set as a CSS variable, so a
+  // window resize or the task pane opening never re-renders the rows.
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     widthsRef.current = widths;
   }, [widths]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    const scroller = scrollParentOf(root);
+    if (!root || !scroller || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => root.style.setProperty(LIST_VIEW_WIDTH_VAR, `${scroller.clientWidth}px`));
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const onAdd = (event: Event) =>
@@ -533,14 +544,8 @@ export function ListView({
   const applySort = (key: SortKey, dir: "asc" | "desc") => viewConfig?.apply({ ...config, sort: [{ key, dir }] });
   const firstSort = sortOf(config)[0];
   // Fixed pixel tracks (dragged to size) plus a filler, so the rows fill the page and scroll sideways
-  // once the columns are wider than it.
-  const gridStyle = {
-    gridTemplateColumns: [
-      `${columnWidth(widths, "task")}px`,
-      ...columns.map((c) => `${columnWidth(widths, c)}px`),
-      "minmax(2.5rem,1fr)",
-    ].join(" "),
-  };
+  // once the columns are wider than it. The header and every row use exactly this.
+  const gridStyle = listGridStyle(widths, columns);
   const tagsInline = tagsOn && !columns.includes("tags");
   const fieldContext: FieldContext = {
     profilesById,
@@ -611,11 +616,12 @@ export function ListView({
   };
 
   return (
-    <div className="min-w-full px-gutter pb-24" style={{ width: "max-content" }}>
-      <div className={`${GRID} ${HEADER}`} style={gridStyle}>
+    <div ref={rootRef} className="min-w-full px-gutter pb-24" style={{ width: "max-content" }}>
+      <div className={LIST_HEADER_ROW} style={gridStyle}>
         <HeaderCell
           label="Name"
-          className={`${STICKY_CELL} z-[2] bg-white ${NAME_HEADER_INDENT[who]}`}
+          pinned
+          className={NAME_INDENT[who].header}
           width={columnWidth(widths, "task")}
           onResize={(w) => resizeColumn("task", w)}
           onReset={() => resizeColumn("task", null)}
@@ -765,7 +771,7 @@ export function ListView({
                   projectId={projectId}
                   sectionId={group.target.sectionId}
                   variant="row"
-                  indent={TITLE_INDENT[who]}
+                  indent={NAME_INDENT[who].title}
                   idSuffix="-top"
                   defaultOpen
                   defaultKind={topAdd.kind}
@@ -821,13 +827,13 @@ export function ListView({
                       ? showMorePage(group.key, visibleTasks(group).length)
                       : pages.showMore(group.key)
                   }
-                  className={TITLE_INDENT[who]}
+                  className={NAME_INDENT[who].title}
                 />
               </div>
             ) : null}
             {isTaskTarget && taskDrop?.beforeId === null && group.tasks.length > 0 ? <DropLine /> : null}
             {group.section && group.tasks.length === 0 && (draggingTask || filtered || !canEdit) ? (
-              <p className={`sticky left-0 flex min-h-row items-center border-b border-zinc-100 text-xs text-zinc-400 ${TITLE_INDENT[who]}`}>
+              <p className={`sticky left-0 flex min-h-row items-center border-b border-zinc-100 text-xs text-zinc-400 ${NAME_INDENT[who].title}`}>
                 {draggingTask ? "Drop here" : filtered ? "No matching tasks in this section." : "No tasks in this section yet."}
               </p>
             ) : null}
@@ -839,7 +845,7 @@ export function ListView({
                   projectId={projectId}
                   sectionId={group.target.sectionId}
                   variant="row"
-                  indent={TITLE_INDENT[who]}
+                  indent={NAME_INDENT[who].title}
                   defaultOpen={quickAdd?.groupKey === group.key}
                 />
               </div>
@@ -1065,11 +1071,29 @@ function ColumnMenu({
   );
 }
 
+// A column's width as drawn: the Name column can be drawn narrower than its saved width on a narrow page
+// (listNameTrack), and a resize starts from what the person sees.
+function drawnWidth(handle: HTMLElement, saved: number) {
+  const drawn = handle.parentElement?.getBoundingClientRect().width;
+  return drawn ? Math.min(saved, Math.round(drawn)) : saved;
+}
+
+// The List's scroller (the nearest ancestor that scrolls sideways).
+function scrollParentOf(element: HTMLElement | null) {
+  for (let node = element?.parentElement ?? null; node; node = node.parentElement) {
+    const { overflowX } = getComputedStyle(node);
+    if (overflowX === "auto" || overflowX === "scroll") return node;
+  }
+  return null;
+}
+
 // A resizable column header: drag the right edge (or focus it and use ←/→), double-click to reset. The
-// chevron menu shows on hover.
+// chevron menu shows on hover. The Name header is pinned exactly like the rows' Name cells
+// (listHeaderCellClass), and the handle stays inside the cell (list-grid.ts).
 function HeaderCell({
   label,
   width,
+  pinned = false,
   className = "",
   menu,
   onResize,
@@ -1078,6 +1102,7 @@ function HeaderCell({
 }: {
   label: string;
   width: number;
+  pinned?: boolean;
   className?: string;
   menu: ReactNode;
   onResize: (width: number) => void;
@@ -1085,7 +1110,7 @@ function HeaderCell({
   onCommit: () => void;
 }) {
   return (
-    <div className={`group/header relative ${CELL} h-8 gap-1 pr-2.5 hover:bg-zinc-50 ${className}`}>
+    <div className={`${listHeaderCellClass(pinned)} ${className}`}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {menu}
       <span
@@ -1100,8 +1125,9 @@ function HeaderCell({
           e.preventDefault();
           const handle = e.currentTarget;
           const startX = e.clientX;
+          const from = drawnWidth(handle, width);
           handle.setPointerCapture(e.pointerId);
-          const move = (event: PointerEvent) => onResize(width + event.clientX - startX);
+          const move = (event: PointerEvent) => onResize(from + event.clientX - startX);
           const up = () => {
             handle.removeEventListener("pointermove", move);
             handle.removeEventListener("pointerup", up);
@@ -1116,14 +1142,14 @@ function HeaderCell({
           if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
           e.preventDefault();
           e.stopPropagation();
-          onResize(width + (e.key === "ArrowRight" ? 16 : -16));
+          onResize(drawnWidth(e.currentTarget, width) + (e.key === "ArrowRight" ? 16 : -16));
           onCommit();
         }}
         onDoubleClick={() => {
           onReset();
           onCommit();
         }}
-        className="absolute -right-1 top-1 bottom-1 z-[3] w-2 cursor-col-resize touch-none rounded after:absolute after:inset-y-0 after:left-1/2 after:w-px after:bg-zinc-200 hover:after:w-0.5 hover:after:bg-accent-400 focus-visible:outline-2 focus-visible:outline-accent-500"
+        className={LIST_RESIZE_HANDLE}
       />
     </div>
   );
@@ -1328,13 +1354,13 @@ function TaskRow({
         selection.setActive(task.id);
         if (!open) openTask(task.id, seed());
       }}
-      className={`cv-row group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${
+      className={`cv-row group ${LIST_GRID} min-h-row cursor-pointer border-b border-zinc-100 ${
         selected || open ? "bg-accent-50" : "hover:bg-zinc-50"
       } ${dragging ? "opacity-40" : ""} ${draggable ? "active:cursor-grabbing" : ""}`}
       style={gridStyle}
     >
       <div
-        className={`${CELL} ${STICKY_CELL} gap-2 py-1 ${canEdit ? ROW_LEFT.editor : ROW_LEFT.viewer} ${tone} ${
+        className={`${LIST_PINNED_CELL} gap-2 py-1 ${NAME_INDENT[canEdit ? "editor" : "viewer"].row} ${tone} ${
           active ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""
         }`}
       >
@@ -1389,13 +1415,18 @@ function TaskRow({
           <AttachmentCount count={task.attachmentCount} />
           <CommentCount count={task.commentCount} />
         </span>
-        {tagsInline ? <TagChips ids={task.tagIds} byId={tagsById} /> : null}
+        {tagsInline && task.tagIds.length > 0 ? (
+          // Tags give way first (the cell never grows past its column), so the ">" stays in view.
+          <span className="flex min-w-0 overflow-hidden">
+            <TagChips ids={task.tagIds} byId={tagsById} />
+          </span>
+        ) : null}
         <OpenTaskLink taskId={task.id} title={task.title} seed={seed} open={open} />
       </div>
       {columns.map((column) => {
         if (column === "assignee") {
           return (
-            <div key={column} className={CELL}>
+            <div key={column} className={LIST_CELL}>
               <InlineAssigneeCell
                 taskTitle={task.title}
                 assignee={assignee}
@@ -1408,7 +1439,7 @@ function TaskRow({
         }
         if (column === "due") {
           return (
-            <div key={column} className={CELL}>
+            <div key={column} className={LIST_CELL}>
               <InlineDateCell
                 taskTitle={task.title}
                 column="due"
@@ -1424,7 +1455,7 @@ function TaskRow({
         }
         if (column === "start") {
           return (
-            <div key={column} className={CELL}>
+            <div key={column} className={LIST_CELL}>
               <InlineDateCell
                 taskTitle={task.title}
                 column="start"
@@ -1442,7 +1473,7 @@ function TaskRow({
           const name = task.sectionId ? fieldContext.sectionNames.get(task.sectionId) : "";
           const shown = <span className="truncate text-xs text-zinc-600">{name}</span>;
           return (
-            <div key={column} className={CELL}>
+            <div key={column} className={LIST_CELL}>
               {canEdit ? (
                 <InlineChoiceCell
                   label={`Section of “${task.title}”: ${name || "No section"}. Change`}
@@ -1460,14 +1491,14 @@ function TaskRow({
         }
         if (column === "tags") {
           return (
-            <div key={column} className={`${CELL} overflow-hidden`}>
+            <div key={column} className={`${LIST_CELL} overflow-hidden`}>
               <TagChips ids={task.tagIds} byId={tagsById} />
             </div>
           );
         }
         const field = fieldsById.get(refFieldId(column) ?? "");
         return (
-          <div key={column} className={CELL}>
+          <div key={column} className={LIST_CELL}>
             {field ? (
               <InlineFieldCell
                 field={field}
@@ -1516,13 +1547,13 @@ type SubtaskRowsProps = {
 // (complete, rename, assignee, dates) for Editors. Subtasks aren't selected, dragged, or filtered — they
 // follow their task — and open in the pane with a click.
 function SubtaskRows({ root, trees, canEdit, ...rest }: { root: ProjectTask } & SubtaskRowsProps) {
-  const base = SUBTASK_BASE_REM[canEdit ? "editor" : "viewer"];
+  const who = canEdit ? "editor" : "viewer";
   if (trees.isLoading(root.id)) {
     return (
       <p
         role="status"
         className="sticky left-0 flex min-h-row w-[min(100%,48rem)] items-center border-b border-zinc-100 text-xs text-zinc-400"
-        style={{ paddingLeft: `${base + SUBTASK_STEP_REM}rem` }}
+        style={{ paddingLeft: `${subtaskIndentRem(who, 1)}rem` }}
       >
         Loading subtasks…
       </p>
@@ -1534,7 +1565,7 @@ function SubtaskRows({ root, trees, canEdit, ...rest }: { root: ProjectTask } & 
     <ul aria-label={`Subtasks of “${root.title}”`}>
       {rows.map((row) => (
         <li key={row.item.id}>
-          <SubtaskRow row={row} indentRem={base + row.depth * SUBTASK_STEP_REM} canEdit={canEdit} trees={trees} {...rest} />
+          <SubtaskRow row={row} indentRem={subtaskIndentRem(who, row.depth)} canEdit={canEdit} trees={trees} {...rest} />
         </li>
       ))}
     </ul>
@@ -1568,11 +1599,11 @@ function SubtaskRow({
         if (rowClickOpens(e) !== "row") return;
         if (!open) openTask(subtask.id, seed());
       }}
-      className={`cv-row group ${GRID} min-h-row cursor-pointer border-b border-zinc-100 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
+      className={`cv-row group ${LIST_GRID} min-h-row cursor-pointer border-b border-zinc-100 ${open ? "bg-accent-50" : "hover:bg-zinc-50"}`}
       style={gridStyle}
     >
       <div
-        className={`${CELL} ${STICKY_CELL} gap-2 py-1 ${open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50"}`}
+        className={`${LIST_PINNED_CELL} gap-2 py-1 ${open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50"}`}
         style={{ paddingLeft: `${indentRem}rem` }}
       >
         <ExpandToggle
@@ -1611,7 +1642,7 @@ function SubtaskRow({
         <OpenTaskLink taskId={subtask.id} title={subtask.title} seed={seed} open={open} />
       </div>
       {columns.map((column) => (
-        <div key={column} className={CELL}>
+        <div key={column} className={LIST_CELL}>
           {column === "assignee" ? (
             <InlineAssigneeCell
               taskTitle={subtask.title}
