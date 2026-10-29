@@ -1526,7 +1526,9 @@ begin
   returning id into rule_id;
   result := public.run_manual_rule(rule_id, (select id from sf_ids where name = 'lt2'));
   assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done'
-    and (result -> 'detail' -> 'actions' -> 0 ->> 'result') like '%0 field values', format('the template step leaves Stage alone: %s', result);
+    and (result -> 'detail' -> 'actions' -> 0 ->> 'result')
+      like '%0 field values (1 locked field value left out: only project Owners and Admins change locked fields, and this rule''s owner isn''t one)',
+    format('the template step leaves Stage alone and says why: %s', result);
   assert (select value from public.task_field_values
           where task_id = (select id from sf_ids where name = 'lt2') and field_id = (select id from sf_ids where name = 'stage')) = '"st-draft"',
     'Stage is unchanged';
@@ -1677,6 +1679,142 @@ begin
           where task_id = (select id from sf_ids where name = 'lts') and field_id = (select id from sf_ids where name = 'rate')) = '99',
     'the rule''s value reached SF L1';
 end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- 51 review fixes. SF L1 gets Gate (single-select, locked) on a recurring task with a subtask.
+-- ---------------------------------------------------------------------------------------------
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  l1 uuid := (select id from sf_ids where name = 'l1');
+  gate uuid;
+  t uuid;
+  child uuid;
+  r uuid;
+begin
+  insert into public.custom_fields (project_id, name, field_type, options, sort_order)
+  values (l1, 'Gate', 'single_select',
+    '[{"id": "g-open", "name": "Open", "color": "green"}, {"id": "g-shut", "name": "Shut", "color": "red"}]', 4096)
+  returning id into gate;
+  t := public.create_task(l1, (select id from sf_ids where name = 'ls1'), 'Recurring gate');
+  child := public.create_subtask(t, 'Gate child', null);
+  insert into public.task_field_values (task_id, field_id, value) values (t, gate, '"g-open"'), (child, gate, '"g-shut"');
+  update public.tasks set recurrence = '{"freq": "daily", "interval": 1, "ends": {"type": "never"}}', due_on = current_date
+  where id = t;
+  update public.custom_fields set locked = true where id = gate;
+  insert into public.rules (project_id, name, enabled, trigger_type, owner_id, actions)
+  values (l1, 'Editor-owned complete', true, 'manual', 'b7c30029-0000-4000-8000-000000000002',
+    jsonb_build_array(jsonb_build_object('type', 'complete_task')))
+  returning id into r;
+  insert into sf_ids values ('gate', gate), ('gate_t', t), ('gate_child', child), ('gate_rule', r);
+end $$;
+
+-- A rule whose owner is an Editor completes the recurring task: recurrence is a system path, so the
+-- locked values still reach the next occurrence and its subtask (the completion used to fail with the
+-- lock's refusal, failing the whole run).
+do $$
+declare
+  gate uuid := (select id from sf_ids where name = 'gate');
+  t uuid := (select id from sf_ids where name = 'gate_t');
+  result jsonb;
+  next_t uuid;
+begin
+  result := public.run_manual_rule((select id from sf_ids where name = 'gate_rule'), t);
+  assert result ->> 'status' = 'succeeded' and result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done',
+    format('the Editor-owned rule completes the recurring task: %s', result);
+  next_t := (select recurrence_next_id from public.tasks where id = t);
+  assert next_t is not null, 'the next occurrence was made';
+  assert (select value from public.task_field_values where task_id = next_t and field_id = gate) = '"g-open"',
+    'the next occurrence keeps the locked value';
+  assert (select v.value from public.tasks c join public.task_field_values v on v.task_id = c.id and v.field_id = gate
+          where c.parent_task_id = next_t and c.deleted_at is null) = '"g-shut"',
+    'and so does its subtask';
+end $$;
+
+-- A rule that runs inside that copy is still held to the lock: the mark names the task, the field, and
+-- the rule that completed the task, nothing else. (A forged mark for another rule changes nothing.)
+reset role;
+do $$
+declare
+  gate uuid := (select id from sf_ids where name = 'gate');
+  t uuid := (select id from sf_ids where name = 'gate_t');
+begin
+  perform set_config('alhc.rule_id', (select id from sf_ids where name = 'r_editor')::text, true);
+  perform set_config('alhc.field_value_copy', t::text || ':' || gate::text || ':' || (select id from sf_ids where name = 'gate_rule')::text, true);
+  begin
+    update public.task_field_values set value = '"g-shut"' where task_id = t and field_id = gate;
+    raise exception 'another rule''s write went through on the copy''s mark';
+  exception when insufficient_privilege then
+    null;
+  end;
+  perform set_config('alhc.field_value_copy', '', true);
+  perform set_config('alhc.rule_id', '', true);
+end $$;
+
+-- Eddie (Editor) can't put the locked field in the field library (he could then share it into a project
+-- of his own and change its values there); an unchanged upsert isn't a change, a changed one is refused.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  gate uuid := (select id from sf_ids where name = 'gate');
+  t uuid := (select id from sf_ids where name = 'gate_t');
+begin
+  begin
+    update public.custom_fields set in_library = true where id = gate;
+    raise exception 'an Editor published a locked field';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Locked — only project Owners and Admins can change this field', sqlerrm;
+  end;
+  assert not (select in_library from public.custom_fields where id = gate), 'Gate isn''t in the library';
+  insert into public.task_field_values (task_id, field_id, value) values (t, gate, '"g-open"')
+  on conflict (task_id, field_id) do update set value = excluded.value;
+  begin
+    insert into public.task_field_values (task_id, field_id, value) values (t, gate, '"g-shut"')
+    on conflict (task_id, field_id) do update set value = excluded.value;
+    raise exception 'an Editor changed a locked value with an upsert';
+  exception when insufficient_privilege then
+    null;
+  end;
+  assert (select value from public.task_field_values where task_id = t and field_id = gate) = '"g-open"', 'Gate is unchanged';
+end $$;
+
+-- Olive (Owner) publishes it and takes it out again; she also makes Eddie an Admin of SF L2 for the next
+-- check.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  gate uuid := (select id from sf_ids where name = 'gate');
+begin
+  update public.custom_fields set in_library = true where id = gate;
+  assert (select in_library from public.custom_fields where id = gate), 'the Owner publishes a locked field';
+  update public.custom_fields set in_library = false where id = gate;
+  perform public.update_project_member_role((select id from sf_ids where name = 'l2'), 'b7c30029-0000-4000-8000-000000000002', 'admin');
+end $$;
+
+-- Duplicate task counts only what the copy ended up without: Eddie (Editor of SF L1, Admin of SF L2)
+-- can't set the locked Rate through SF L1, but through SF L2 he can, and the copy has it in both.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  result jsonb;
+  copy_id uuid;
+begin
+  result := public.duplicate_task((select id from sf_ids where name = 'lts'), '{}'::jsonb);
+  copy_id := (result ->> 'task_id')::uuid;
+  assert (select value from public.task_field_values where task_id = copy_id and field_id = (select id from sf_ids where name = 'rate')) = '99'
+    and (select value from public.task_field_values where task_id = copy_id and field_id = (select id from sf_ids where name = 'rate2')) = '99',
+    'the copy has the locked shared value in both projects';
+  assert (result -> 'skipped' ->> 'fields')::integer = 0, format('nothing is reported left out: %s', result);
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  perform public.update_project_member_role((select id from sf_ids where name = 'l2'), 'b7c30029-0000-4000-8000-000000000002', 'editor');
+end $$;
+reset role;
 
 do $$
 begin

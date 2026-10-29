@@ -229,6 +229,9 @@ describe("Fields list and Edit field", () => {
     assert.match(lockSwitch, /checked=""/, "and on");
     assert.match(html, /Only project Owners and Admins can lock or unlock a field\. Locked since Oct 29, 2026\./);
     assert.doesNotMatch(tagWith(html, `id="field-${F1}-views"`), /disabled=""/, "Show in List and Board isn't greyed out");
+    // Publishing a locked field would let an Editor share it into a project of their own and change its
+    // values there (custom_fields_06_lock_guard refuses it too).
+    assert.match(tagWith(html, `id="field-${F1}-library"`), /disabled=""/, "Add to field library: greyed out");
     assert.match(html, new RegExp(`<button type="button" disabled="" data-tooltip="${LOCKED_FIELD_NOTE}"`), "Delete is greyed out");
   });
 

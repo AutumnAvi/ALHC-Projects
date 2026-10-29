@@ -548,18 +548,27 @@ select public.alhc_patch_function(
 -- in all of its projects, so a shared field's value written through one placement has already reached
 -- the others by the time their own value comes: that one is left as it is (one value per task)
 -- instead of failing the completion or the duplicate with a duplicate key.
+-- (51, field lock: recurrence also marks each copy — alhc.field_value_copy = task:field:running rule —
+-- so a locked field's value still reaches the next occurrence when a rule completes the task; the lock
+-- guard lets exactly that write through. A failed write's subtransaction undoes the mark.)
 select public.alhc_patch_function(
   'public.spawn_next_occurrence()'::regprocedure,
   $old$insert into public.task_field_values (task_id, field_id, value) values (next_id, r.field_id, r.value);$old$,
-  $new$insert into public.task_field_values (task_id, field_id, value) values (next_id, r.field_id, r.value)
-        on conflict (task_id, field_id) do nothing;$new$
+  $new$perform set_config('alhc.field_value_copy',
+        next_id::text || ':' || r.field_id::text || ':' || coalesce(current_setting('alhc.rule_id', true), ''), true);
+      insert into public.task_field_values (task_id, field_id, value) values (next_id, r.field_id, r.value)
+        on conflict (task_id, field_id) do nothing;
+      perform set_config('alhc.field_value_copy', '', true);$new$
 );
 
 select public.alhc_patch_function(
   'public.copy_subtask_tree(uuid, uuid, integer)'::regprocedure,
   $old$insert into public.task_field_values (task_id, field_id, value) values (new_id, r.field_id, r.value);$old$,
-  $new$insert into public.task_field_values (task_id, field_id, value) values (new_id, r.field_id, r.value)
-          on conflict (task_id, field_id) do nothing;$new$
+  $new$perform set_config('alhc.field_value_copy',
+          new_id::text || ':' || r.field_id::text || ':' || coalesce(current_setting('alhc.rule_id', true), ''), true);
+        insert into public.task_field_values (task_id, field_id, value) values (new_id, r.field_id, r.value)
+          on conflict (task_id, field_id) do nothing;
+        perform set_config('alhc.field_value_copy', '', true);$new$
 );
 
 select public.alhc_patch_function(
@@ -1208,7 +1217,10 @@ begin
     select 1 from unnest(public.library_field_definition_columns()) c
     where c not in ('locked_by', 'locked_at') and to_jsonb(new) -> c is distinct from to_jsonb(old) -> c
   );
-  if definition_changed then
+  -- Publishing a locked field in the field library (or taking it out) is Owner / Admin too: an Editor
+  -- could otherwise share it into a project of their own and change its values there (one value per
+  -- task across the group).
+  if definition_changed or new.in_library is distinct from old.in_library then
     select * into share from public.project_field_sharing(old.project_id) s where s.field_id = old.id;
     if not coalesce(share.definition_manageable, false) then
       if lock_changed then
@@ -1279,16 +1291,31 @@ begin
     if rule is null then
       return new;
     end if;
+    -- A system copy inside a rule's run: recurrence (a rule completed a recurring task) copies the
+    -- completed occurrence's values into the next one — not the rule's change. spawn_next_occurrence and
+    -- copy_subtask_tree mark each such write with its task, field, and the running rule (a rule that runs
+    -- inside that write has another id, so it is checked as usual).
+    if coalesce(current_setting('alhc.field_value_copy', true), '')
+         = new.task_id::text || ':' || new.field_id::text || ':' || rule::text then
+      return new;
+    end if;
   end if;
   select cf.locked, cf.project_id into f from public.custom_fields cf where cf.id = new.field_id;
   if not coalesce(f.locked, false) then
     return new;
   end if;
-  -- Nothing changes (an unchanged upsert, or no value written where there was none).
+  -- Nothing changes (no value written where there was none, or the value the row already has: an
+  -- upsert's INSERT trigger runs before its conflict is found).
   if tg_op = 'UPDATE' and new.value is not distinct from old.value then
     return new;
   end if;
   if tg_op = 'INSERT' and (new.value is null or new.value = 'null'::jsonb) then
+    return new;
+  end if;
+  if tg_op = 'INSERT' and exists (
+    select 1 from public.task_field_values v
+    where v.task_id = new.task_id and v.field_id = new.field_id and v.value is not distinct from new.value
+  ) then
     return new;
   end if;
   if client then
@@ -1324,7 +1351,49 @@ select public.alhc_patch_function(
   $old$          if field.id is not null then
             result := case when outcome = 'unchanged'$old$,
   $new$          if field.id is not null and outcome <> 'locked' then
-            result := case when outcome = 'unchanged'$new$
+            result := case when outcome = 'unchanged'$new$,
+  -- Apply task template: the template's values of locked fields are left out the same way (the step
+  -- itself still runs), and the run log says how many and why.
+  $old$                if found then counts[3] := counts[3] + 1; end if;
+              exception when others then$old$,
+  $new$                if found then counts[3] := counts[3] + 1; end if;
+              exception when insufficient_privilege then
+                if sqlerrm like 'Locked%' then
+                  counts[4] := coalesce(counts[4], 0) + 1;
+                end if;
+              when others then$new$,
+  $old$|| counts[3] || ' field values';$old$,
+  $new$|| counts[3] || ' field values'
+              || case when coalesce(counts[4], 0) > 0
+                then ' (' || counts[4] || ' locked field value' || case when counts[4] = 1 then '' else 's' end
+                  || ' left out: only project Owners and Admins change locked fields, and this rule''s owner isn''t one)'
+                else '' end;$new$
+);
+
+-- 51.5b Duplicate task counts a value as left out only when the copy ended up without it: a shared
+-- library field's value refused through one project (locked, the caller isn't its Admin there) can still
+-- reach the copy through another project that holds it, where the caller may set it.
+select public.alhc_patch_function(
+  'public.duplicate_task(uuid, jsonb)'::regprocedure,
+  $old$        skipped_fields := skipped_fields + 1;
+      end;
+    end loop;
+  end if;$old$,
+  $new$        skipped_fields := skipped_fields + 1;
+      end;
+    end loop;
+    if skipped_fields > 0 then
+      skipped_fields := (
+        select count(*)::integer from public.task_field_values v
+        join public.custom_fields f on f.id = v.field_id and f.deleted_at is null and not f.bound_to_sections
+        where v.task_id = src.id and v.value is not null and jsonb_typeof(v.value) <> 'null'
+          and not exists (
+            select 1 from public.task_field_values c
+            where c.task_id = created and c.field_id = v.field_id and c.value is not distinct from v.value
+          )
+      );
+    end if;
+  end if;$new$
 );
 
 -- 51.6 Bulk Field: a locked field's tasks are skipped with the reason (below Owner / Admin).
