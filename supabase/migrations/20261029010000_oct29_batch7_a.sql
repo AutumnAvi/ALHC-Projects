@@ -656,8 +656,10 @@ select public.alhc_patch_function(
 --     - one definition: the definition columns (library_field_definition_columns(), the one list —
 --       name, description, type, options, notify, the number symbol of item 49, and the lock of item
 --       51) are copied to the whole group after any change (custom_fields_zz_library_sync, definer); only
---       Editors+ of the source's project change them while the source is active (else Editors+ of the
---       placement's own project) — custom_fields_05_library_guard (invoker) refuses everyone else;
+--       Editors+ of the source's project change them while the source is live (frozen while that project
+--       is archived; Editors+ of the placement's own project once the source field or its project is
+--       removed) — custom_fields_05_library_guard (invoker) refuses everyone else; no field changes
+--       project or type through people's writes;
 --     - one value per task: a value written through one placement is written to every other active
 --       placement whose project holds the task's top-level task (task_field_values_zzz_library_sync,
 --       definer), quietly (no second story or notification; the other projects' rules fire for their
@@ -680,8 +682,9 @@ select public.alhc_patch_function(
 -- 51. Field lock (custom_fields.locked / locked_by / locked_at, a definition column, so it's shared across a
 --     library group): a locked field's values, definition, and removal are for the Owners and Admins of
 --     the field's project (custom_fields_06_lock_guard, task_field_values_02_field_lock; a shared field's
---     definition and lock: of its publishing project); rules change one only while their owner is an
---     Owner / Admin there (the Set field step is skipped and logged otherwise); bulk Field skips its
+--     definition and lock: of its publishing project; a shared field's value: of every project of the
+--     task that uses it — locked_field_value_writable, pinned in suite 60); rules change one only while
+--     their owner is an Owner / Admin there (the Set field step is skipped and logged otherwise); bulk Field skips its
 --     tasks with the reason; Duplicate task and task templates leave its values out; every other system
 --     path (imports, copies, recurrence, forms, inbound webhooks, the library sync) writes as before.
 
@@ -739,7 +742,11 @@ $$;
 revoke all on function public.library_value_sync_write(uuid, uuid) from public, anon, authenticated;
 
 -- The project whose Editors change a field's definition: its own project, or — for a placement — the
--- source's project while the source is active (field live, project neither removed nor archived).
+-- source's project while the source is active (field live, project not removed). An archived
+-- publishing project keeps governing: archiving caps everyone there at Viewer, so the shared definition
+-- and lock are frozen until it's unarchived (the placements' own projects never take over — anyone can
+-- make a project and add a library field to it). The placement's own project decides only once the
+-- source field was removed or its project deleted.
 create or replace function public.library_field_governing_project(target_field uuid)
 returns uuid
 language sql
@@ -752,7 +759,7 @@ as $$
     else coalesce((
       select s.project_id
       from public.custom_fields s
-      join public.projects p on p.id = s.project_id and p.deleted_at is null and p.archived_at is null
+      join public.projects p on p.id = s.project_id and p.deleted_at is null
       where s.id = f.library_field_id and s.deleted_at is null
     ), f.project_id)
   end
@@ -838,7 +845,9 @@ grant execute on function public.project_field_sharing(uuid) to authenticated;
 -- 55.4 People's writes to fields (invoker; system code passes). The link is never set or changed by
 -- people (add_library_field does it); a placement's definition changes only for Editors+ of the
 -- governing project; a shared field stays in its project, isn't Status, and only its source is listed
--- in the library.
+-- in the library. No field changes project or type through people's writes (the app never does either:
+-- a moved field could carry a lock out of its project and back unlocked, and a new type would turn every
+-- project's stored values into ones that no longer fit).
 create or replace function public.guard_custom_field_library()
 returns trigger
 language plpgsql
@@ -861,6 +870,12 @@ begin
   if new.library_field_id is distinct from old.library_field_id then
     raise exception 'A field''s link to the field library can''t be changed' using errcode = 'insufficient_privilege';
   end if;
+  if new.project_id is distinct from old.project_id then
+    raise exception 'A field stays in its project' using errcode = 'check_violation';
+  end if;
+  if new.field_type is distinct from old.field_type then
+    raise exception 'A field''s type can''t be changed once it''s created' using errcode = 'check_violation';
+  end if;
 
   if old.library_field_id is not null then
     if new.in_library and not old.in_library then
@@ -869,9 +884,6 @@ begin
     end if;
     if new.bound_to_sections and not old.bound_to_sections then
       raise exception 'A shared library field can''t follow the sections' using errcode = 'check_violation';
-    end if;
-    if new.project_id is distinct from old.project_id then
-      raise exception 'A shared library field stays in its project' using errcode = 'check_violation';
     end if;
     -- A placement that comes back takes the group's current definition (sync_library_field_definition),
     -- so it can't bring a definition of its own with it.
@@ -894,12 +906,11 @@ begin
     return new;
   end if;
 
-  -- A published field (or one other projects use): it stays where it is and never follows the sections.
-  if new.project_id is distinct from old.project_id
-     or (new.bound_to_sections and not old.bound_to_sections) then
+  -- A published field (or one other projects use) never follows the sections.
+  if new.bound_to_sections and not old.bound_to_sections then
     select * into share from public.project_field_sharing(old.project_id) s where s.field_id = old.id;
     if coalesce(share.is_shared, false) or old.in_library then
-      raise exception 'A field other projects use from the field library stays in its project and can''t follow the sections'
+      raise exception 'A field other projects use from the field library can''t follow the sections'
         using errcode = 'check_violation';
     end if;
   end if;
@@ -917,7 +928,10 @@ create trigger custom_fields_05_library_guard
 -- One definition: after a live field of a group changes a definition column, the rest of the live
 -- group (its source and every placement) gets the same values. Removed fields are left as they were;
 -- one that comes back (restored) takes the live group's definition instead — a restore never pushes
--- an old definition (or one changed while it was removed) to the others.
+-- an old definition (or one changed while it was removed) to the others — and the group's newest
+-- values for its project's tasks (values written while it was removed never reached it). Bringing back
+-- a field of a locked group is for its project's Owners and Admins (51: the guard before this one only
+-- sees the removed row's own, possibly older, lock).
 create or replace function public.sync_library_field_definition()
 returns trigger
 language plpgsql
@@ -949,7 +963,12 @@ begin
       ) then
         raise exception 'Restore the shared field first, then change it' using errcode = 'check_violation';
       end if;
+      if (select g.locked from public.custom_fields g where g.id = donor)
+         and auth.uid() is not null and not public.has_project_role(new.project_id, 'admin') then
+        raise exception 'Locked — only project Owners and Admins can change this field' using errcode = 'insufficient_privilege';
+      end if;
       perform public.copy_library_definition(new.id, donor);
+      perform public.fill_library_values(new.id, null);
     end if;
     return null;
   end if;
@@ -1253,6 +1272,12 @@ begin
   loop
     continue when r.has_row and r.own_value is not distinct from r.value;
     continue when not r.has_row and r.value is null;
+    -- 51: a locked field's own, different value here (left from an earlier time the task was in this
+    -- project) is replaced only by someone who may change it here (library_fill_overwrite_allowed).
+    if f.locked and r.has_row and not public.library_fill_overwrite_allowed(f.project_id) then
+      raise exception 'Locked — a locked shared field already has a different value for this task in one of its projects, and only that project''s Owners and Admins can change it'
+        using errcode = 'insufficient_privilege';
+    end if;
     perform set_config('alhc.library_value_sync', r.task_id::text || ':' || target_field::text, true);
     begin
       insert into public.task_field_values (task_id, field_id, value)
@@ -1344,14 +1369,20 @@ begin
       join public.task_field_values v on v.task_id = target_task and v.field_id = g.id
       order by tg.field_id, v.updated_at desc, (v.field_id = tg.field_id) desc, v.field_id
     )
-    select l.field_id, l.value, x.task_id is not null as has_row, x.value as own_value
+    select l.field_id, l.value, x.task_id is not null as has_row, x.value as own_value, cf.locked, cf.project_id
     from latest l
+    join public.custom_fields cf on cf.id = l.field_id
     left join public.task_field_values x on x.task_id = target_task and x.field_id = l.field_id
     where l.from_field <> l.field_id
     order by l.field_id
   loop
     continue when r.has_row and r.own_value is not distinct from r.value;
     continue when not r.has_row and r.value is null;
+    -- 51: as in fill_library_values.
+    if r.locked and r.has_row and not public.library_fill_overwrite_allowed(r.project_id) then
+      raise exception 'Locked — a locked shared field already has a different value for this task in one of its projects, and only that project''s Owners and Admins can change it'
+        using errcode = 'insufficient_privilege';
+    end if;
     perform set_config('alhc.library_value_sync', target_task::text || ':' || r.field_id::text, true);
     begin
       insert into public.task_field_values (task_id, field_id, value)
@@ -1392,8 +1423,8 @@ create trigger tasks_zzz_library_values
   execute function public.fill_library_values_on_reparent();
 
 -- 55.6 Linking a field to a library field (the copy engine and the existing-copies migration; people
--- use add_library_field). Only when the source is a live library field of a live project in the same
--- workspace, the field is live, of the same type, not Status, not in the library, not linked, in
+-- use add_library_field). Only when the source is a live library field of a live (not archived) project
+-- in the same workspace, the field is live, of the same type, not Status, not in the library, not linked, in
 -- another project, and that project has no live placement of the source yet. Copies the source's
 -- definition. Returns whether it linked.
 create or replace function public.link_library_placement(placement uuid, source uuid)
@@ -1409,7 +1440,7 @@ declare
 begin
   select cf.* into s
   from public.custom_fields cf
-  join public.projects p on p.id = cf.project_id and p.deleted_at is null
+  join public.projects p on p.id = cf.project_id and p.deleted_at is null and p.archived_at is null
   where cf.id = source and cf.deleted_at is null and cf.in_library and not cf.bound_to_sections
     and cf.library_field_id is null;
   if not found then
@@ -1441,7 +1472,7 @@ $$;
 revoke all on function public.link_library_placement(uuid, uuid) from public, anon, authenticated;
 
 -- 55.7 Add field → Choose from library: this project's placement of a library field (Editor+ by own
--- role; the field live, published, of this workspace, not Status). Idempotent: the project's live
+-- role; the field live, published, of this workspace, not Status, its project not archived). Idempotent: the project's live
 -- placement, or the source itself in its own project. The placement is pinned to views and goes last;
 -- its values come from the group for the project's tasks and subtasks.
 create or replace function public.add_library_field(target_project uuid, library_field uuid)
@@ -1468,9 +1499,10 @@ begin
     raise exception 'Project not found' using errcode = 'no_data_found';
   end if;
   perform pg_advisory_xact_lock(hashtextextended('alhc.add_library_field:' || target_project::text, 0));
+  -- (A field of an archived project isn't offered: its definition is frozen until it's unarchived.)
   select f.* into src
   from public.custom_fields f
-  join public.projects p on p.id = f.project_id and p.deleted_at is null
+  join public.projects p on p.id = f.project_id and p.deleted_at is null and p.archived_at is null
   where f.id = library_field and f.deleted_at is null and f.in_library and not f.bound_to_sections
     and f.library_field_id is null and p.workspace_id = target_ws;
   if not found then
@@ -1541,13 +1573,15 @@ select public.alhc_patch_function(
 -- 55.9 Existing copies. Nothing recorded which fields were copied from the library ("Choose from
 -- library" made unrelated copies), so a field C is linked to a live library field S only when it is
 -- clearly the same field: same workspace, C live in another live (not archived) project, not Status,
--- not itself in the library, not linked, same type, same name (trimmed, any case), made after S, and —
+-- not itself in the library, not linked, same type, same name (trimmed, any case), made after S and
+-- after its own project (so never one the copy engine made with a templated or duplicated project), and —
 -- for select fields — exactly the same non-empty set of option ids (random ids: a strong fingerprint),
 -- else the same non-empty description. A C matching more than one S, or a project with more than one
 -- C for the same S, is left alone (counted as ambiguous). After linking, for each task in more than
 -- one of the group's projects: one value → copied to the placements without one (quietly); equal
--- values → nothing; different values → both kept and recorded in library_field_link_conflicts. An
--- empty value (none, "", [], or false — what views count as empty, view_value_is_empty) is no value.
+-- values → nothing; different values → both kept and recorded in library_field_link_conflicts. Only no
+-- row, JSON null, "", and [] count as no value (library_link_value_empty) — an unticked checkbox (false)
+-- is a value, so true on one side and false on the other is a conflict, both kept.
 
 do $do$
 begin
@@ -1661,6 +1695,10 @@ begin
         and s.field_type = f.field_type
         and lower(trim(s.name)) = lower(trim(f.name))
         and f.created_at > s.created_at
+        -- Added after its own project was made: "Choose from library" copies always are; the copy engine
+        -- (templates, Duplicate project) makes a project's fields with the project, and never from the
+        -- library (its option ids and descriptions are copied too, so they'd match).
+        and f.created_at > p.created_at
       where f.deleted_at is null and not f.bound_to_sections and not f.in_library and f.library_field_id is null
         and (
           (f.field_type in ('single_select', 'multi_select')
@@ -1705,17 +1743,17 @@ begin
       from public.task_field_values v
       join public.custom_fields f on f.id = v.field_id and f.deleted_at is null
         and (f.id = grp or f.library_field_id = grp)
-      where not public.view_value_is_empty(v.value)
+      where not public.library_link_value_empty(v.value)
       order by v.task_id
     loop
-      select count(*), count(distinct mm.value) filter (where not public.view_value_is_empty(mm.value))
+      select count(*), count(distinct mm.value) filter (where not public.library_link_value_empty(mm.value))
       into n_members, distinct_values
       from public.library_group_task_members(grp, t.task_id) mm;
       continue when n_members < 2;
       if distinct_values = 1 then
         select mm.value into the_value from public.library_group_task_members(grp, t.task_id) mm
-        where not public.view_value_is_empty(mm.value) limit 1;
-        for m in select * from public.library_group_task_members(grp, t.task_id) mm where public.view_value_is_empty(mm.value) loop
+        where not public.library_link_value_empty(mm.value) limit 1;
+        for m in select * from public.library_group_task_members(grp, t.task_id) mm where public.library_link_value_empty(mm.value) loop
           perform set_config('alhc.library_value_sync', t.task_id::text || ':' || m.field_id::text, true);
           begin
             insert into public.task_field_values (task_id, field_id, value)
@@ -1731,12 +1769,12 @@ begin
         -- Both kept. The reference is the source's value when it has one, else the oldest field's.
         select mm.field_id, mm.value into ref_field, ref_value
         from public.library_group_task_members(grp, t.task_id) mm
-        where not public.view_value_is_empty(mm.value)
+        where not public.library_link_value_empty(mm.value)
         order by mm.is_source desc, mm.created_at, mm.field_id
         limit 1;
         for m in
           select * from public.library_group_task_members(grp, t.task_id) mm
-          where not public.view_value_is_empty(mm.value) and mm.field_id <> ref_field and mm.value is distinct from ref_value
+          where not public.library_link_value_empty(mm.value) and mm.field_id <> ref_field and mm.value is distinct from ref_value
         loop
           insert into public.library_field_link_conflicts (task_id, field_id, value, other_field_id, other_value)
           values (t.task_id, m.field_id, m.value, ref_field, ref_value)
@@ -1762,7 +1800,8 @@ revoke all on function public.link_library_field_copies() from public, anon, aut
 -- 51. Field lock
 -- ---------------------------------------------------------------------------------------------------
 -- A locked field's values are changed only by the Owners and Admins of the project they're written
--- through (the field's project); its definition (name, description, options, notifications) and
+-- through (the field's project) — and, for a shared library field, of every other project the value
+-- reaches (51.4, 51.8); its definition (name, description, options, notifications) and
 -- removing it need Owner / Admin too. Locking and unlocking are Owner / Admin of the project whose
 -- Editors change the definition (library_field_governing_project: a shared field's publishing project
 -- while its source is live, else its own). `locked` is a definition column, so locking a shared library
@@ -1888,7 +1927,14 @@ $$;
 revoke all on function public.rule_owner_manages_project(uuid, uuid) from public, anon, authenticated;
 
 -- 51.4 Values of a locked field (invoker: people are checked with their own role; definer code — the
--- system paths — passes, except a rule, which is checked against its owner).
+-- system paths — passes, except a rule, which is checked against its owner). A shared library field's
+-- value is one value in every project that holds the task (55), so a locked one is changed only by
+-- someone who is an Owner or Admin of each of them — the project written through and every other
+-- project the library copies it into (archived ones aside: nobody is an Admin there) — and a rule only
+-- while its owner is (locked_field_value_writable, rule_owner_writes_locked_value). Otherwise anyone
+-- could make a project of their own, add the task and the library field to it, and change the locked
+-- value everywhere from there. A value row never moves to another task or field through people's
+-- writes (the app never moves one; a move would carry a value past the lock or out from under it).
 create or replace function public.guard_locked_field_value()
 returns trigger
 language plpgsql
@@ -1899,6 +1945,10 @@ declare
   rule uuid;
   f record;
 begin
+  if client and tg_op = 'UPDATE'
+     and (new.task_id is distinct from old.task_id or new.field_id is distinct from old.field_id) then
+    raise exception 'A field value can''t move to another task or field' using errcode = 'insufficient_privilege';
+  end if;
   if not client then
     -- The library's quiet copy of a shared value (the write it copies was checked), and every other
     -- system path but a rule.
@@ -1937,11 +1987,18 @@ begin
     return new;
   end if;
   if client then
-    if public.has_project_role(f.project_id, 'admin') then
+    if public.locked_field_value_writable(new.task_id, new.field_id) then
       return new;
     end if;
-  elsif public.rule_owner_manages_project(rule, f.project_id) then
+    if public.has_project_role(f.project_id, 'admin') then
+      raise exception 'Locked — only Owners and Admins of every project this task is in can change this shared field'
+        using errcode = 'insufficient_privilege';
+    end if;
+  elsif public.rule_owner_writes_locked_value(rule, new.task_id, new.field_id) then
     return new;
+  elsif public.rule_owner_manages_project(rule, f.project_id) then
+    raise exception 'Locked — only Owners and Admins of every project this task is in can change this shared field'
+      using errcode = 'insufficient_privilege';
   end if;
   raise exception 'Locked — only project Owners and Admins can change this field' using errcode = 'insufficient_privilege';
 end;
@@ -1955,7 +2012,8 @@ create trigger task_field_values_02_field_lock
   for each row execute function public.guard_locked_field_value();
 
 -- 51.5 Rules: Set field on a locked field is skipped (logged, the run goes on) unless the rule's owner
--- is an Owner or Admin of the field's project.
+-- is an Owner or Admin of the field's project (and, for a shared library field, of every other project
+-- the value would reach: rule_owner_writes_locked_value).
 select public.alhc_patch_function(
   'public.execute_rule_actions(public.rules, uuid, jsonb, jsonb)'::regprocedure,
   $old$          elsif field.bound_to_sections then
@@ -1964,6 +2022,10 @@ select public.alhc_patch_function(
             outcome := 'locked';
             result := 'Skipped: “' || field.name || '” is locked, and only project Owners and Admins change it. '
               || 'This rule''s owner isn''t one.';
+          elsif field.locked and not public.rule_owner_writes_locked_value(r.id, target_task, field.id) then
+            outcome := 'locked';
+            result := 'Skipped: “' || field.name || '” is locked and shared with other projects this task is in, '
+              || 'and only someone who is an Owner or Admin of all of them changes it. This rule''s owner isn''t.';
           elsif field.bound_to_sections then
             -- The section-bound Status field IS the section: setting it moves the task, nothing is stored.$new$,
   $old$          if field.id is not null then
@@ -2001,20 +2063,25 @@ select public.alhc_patch_function(
       end;
     end loop;
     if skipped_fields > 0 then
+      -- (One count per field: a shared field's copies in several projects are one value, and it's left
+      -- out only when no copy of it in the new task has that value.)
       skipped_fields := (
-        select count(*)::integer from public.task_field_values v
+        select count(distinct coalesce(f.library_field_id, f.id))::integer from public.task_field_values v
         join public.custom_fields f on f.id = v.field_id and f.deleted_at is null and not f.bound_to_sections
         where v.task_id = src.id and v.value is not null and jsonb_typeof(v.value) <> 'null'
           and not exists (
             select 1 from public.task_field_values c
-            where c.task_id = created and c.field_id = v.field_id and c.value is not distinct from v.value
+            join public.custom_fields cf on cf.id = c.field_id and cf.deleted_at is null
+            where c.task_id = created and coalesce(cf.library_field_id, cf.id) = coalesce(f.library_field_id, f.id)
+              and c.value is not distinct from v.value
           )
       );
     end if;
   end if;$new$
 );
 
--- 51.6 Bulk Field: a locked field's tasks are skipped with the reason (below Owner / Admin).
+-- 51.6 Bulk Field: a locked field's tasks are skipped with the reason (below Owner / Admin; for a shared
+-- field, of any project the value would reach).
 select public.alhc_patch_function(
   'public.bulk_update_tasks(uuid[], jsonb)'::regprocedure,
   $old$reason := 'It isn’t in the field’s project';$old$,
@@ -2022,7 +2089,11 @@ select public.alhc_patch_function(
             elsif exists (select 1 from public.custom_fields lf where lf.id = arg_field and lf.locked)
                   and not public.has_project_role(arg_project, 'admin') then
               outcome := 'skipped';
-              reason := 'Locked — only project Owners and Admins can change this field';$new$
+              reason := 'Locked — only project Owners and Admins can change this field';
+            elsif exists (select 1 from public.custom_fields lf where lf.id = arg_field and lf.locked)
+                  and not public.locked_field_value_writable(t, arg_field) then
+              outcome := 'skipped';
+              reason := 'Locked — only Owners and Admins of every project this task is in can change this shared field';$new$
 );
 
 -- 51.7 Templates and Duplicate project keep the lock (instantiate_project_snapshot sets it: see 55.8).
@@ -2031,6 +2102,146 @@ select public.alhc_patch_function(
   $old$'bound_to_sections', f.bound_to_sections, 'show_in_views', f.show_in_views$old$,
   $new$'bound_to_sections', f.bound_to_sections, 'show_in_views', f.show_in_views, 'locked', f.locked$new$
 );
+
+-- 51.8 Review fixes (Oct 29 notes, batch 7: 55 × 51).
+
+-- The existing-copies migration's "no value" (link_library_field_copies): no row, JSON null, "", or [].
+-- An unticked checkbox (false) is a value someone chose, unlike view_value_is_empty.
+create or replace function public.library_link_value_empty(value jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select value is null or value in ('null'::jsonb, '""'::jsonb, '[]'::jsonb);
+$$;
+
+revoke all on function public.library_link_value_empty(jsonb) from public, anon, authenticated;
+
+-- Whether whoever is acting may change a locked field's value in a project: a rule while its owner is an
+-- Owner / Admin there, a person who is one, and the other system paths (imports, copies, forms, cron).
+-- fill_library_values / fill_library_task_values ask it before they replace a locked field's own,
+-- different value when a task joins (or comes back to) a project, a subtask moves, a removed field or
+-- project comes back: otherwise an Editor could take a task out of a project, change the value where
+-- they're an Admin, and add the task back.
+create or replace function public.library_fill_overwrite_allowed(target_project uuid)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  rule uuid := public.rule_context_id();
+begin
+  if rule is not null then
+    return public.rule_owner_manages_project(rule, target_project);
+  end if;
+  if public.import_context_id() is not null or public.copy_context_id() is not null or auth.uid() is null then
+    return true;
+  end if;
+  return public.has_project_role(target_project, 'admin');
+end;
+$$;
+
+revoke all on function public.library_fill_overwrite_allowed(uuid) from public, anon, authenticated;
+
+-- Whether the caller may change a locked field's value for a task (task_field_values_02_field_lock and
+-- bulk Field ask it): Owner / Admin of the field's project and of every other project the library copies
+-- the value into (library_value_siblings; archived projects aside — nobody is an Admin there, and the
+-- copy reaches them as it always has). About the caller only, for a task they can read. Pinned in suite 60.
+create or replace function public.locked_field_value_writable(target_task uuid, target_field uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select public.has_task_role(target_task, 'viewer')
+      and public.has_project_role(f.project_id, 'admin')
+      and not exists (
+        select 1
+        from public.library_value_siblings(target_task, target_field) s
+        join public.projects p on p.id = s.project_id
+        where p.archived_at is null and not public.has_project_role(s.project_id, 'admin')
+      )
+    from public.custom_fields f
+    where f.id = target_field
+  ), false);
+$$;
+
+revoke all on function public.locked_field_value_writable(uuid, uuid) from public, anon;
+grant execute on function public.locked_field_value_writable(uuid, uuid) to authenticated;
+
+-- The same for a rule: its owner (else its creator) is an Owner / Admin of the field's project and of
+-- every other (not archived) project the value would reach.
+create or replace function public.rule_owner_writes_locked_value(target_rule uuid, target_task uuid, target_field uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select public.rule_owner_manages_project(target_rule, f.project_id)
+      and not exists (
+        select 1
+        from public.library_value_siblings(target_task, target_field) s
+        join public.projects p on p.id = s.project_id
+        where p.archived_at is null and not public.rule_owner_manages_project(target_rule, s.project_id)
+      )
+    from public.custom_fields f
+    where f.id = target_field
+  ), false);
+$$;
+
+revoke all on function public.rule_owner_writes_locked_value(uuid, uuid, uuid) from public, anon, authenticated;
+
+-- The field library lists no field of an archived project (it can't be added; its definition is frozen
+-- until the project is unarchived).
+select public.alhc_patch_function(
+  'public.list_field_library()'::regprocedure,
+  $old$  join public.projects p on p.id = f.project_id and p.deleted_at is null
+  where public.is_allowlisted()$old$,
+  $new$  join public.projects p on p.id = f.project_id and p.deleted_at is null and p.archived_at is null
+  where public.is_allowlisted()$new$
+);
+
+-- A removed project that comes back gets the newest value of each shared field for its tasks: values
+-- written in the other projects while it was removed never reached it (definitions did — the sync keeps
+-- every live field of a group alike). Only its Owners restore a project (projects_05_guard_columns).
+create or replace function public.fill_library_values_on_project_restore()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  fid uuid;
+begin
+  for fid in
+    select f.id from public.custom_fields f
+    where f.project_id = new.id and f.deleted_at is null and not f.bound_to_sections
+      and (
+        f.library_field_id is not null
+        or exists (select 1 from public.custom_fields c where c.library_field_id = f.id and c.deleted_at is null)
+      )
+    order by f.id
+  loop
+    perform public.fill_library_values(fid, null);
+  end loop;
+  return null;
+end;
+$$;
+
+revoke all on function public.fill_library_values_on_project_restore() from public, anon, authenticated;
+
+create trigger projects_zz_library_restore
+  after update of deleted_at on public.projects
+  for each row
+  when (old.deleted_at is not null and new.deleted_at is null)
+  execute function public.fill_library_values_on_project_restore();
 
 -- ---------------------------------------------------------------------------------------------------
 -- 55.9 (continued) Link the existing copies, now that every definition column exists.

@@ -1872,7 +1872,10 @@ declare
   s1 uuid := (select id from sf_ids where name = 's_stage');
   c_stage uuid := (select id from sf_ids where name = 'c_stage');
 begin
-  -- Creation order: sources first, the early copy before them, the rest after.
+  -- Creation order: the projects, then the sources, the early copy before them, the rest after (a copy
+  -- is linked only when it was added after its own project was made: see the template case below).
+  update public.projects set created_at = now() - interval '30 days'
+  where id in (select id from sf_ids where name in ('m1', 'm2', 'm3', 'm4', 'm5'));
   update public.custom_fields set created_at = now() - interval '10 days'
   where id in (select id from sf_ids where name in ('s_stage', 's_brief', 's_owner1', 's_owner2'));
   update public.custom_fields set created_at = now() - interval '20 days' where id = (select id from sf_ids where name = 'c_stage_early');
@@ -2134,8 +2137,9 @@ begin
   assert (select count(*) from public.task_stories where task_id = t and kind = 'field_changed') = stories, 'quietly';
 end $$;
 
--- When the publishing project is archived (read-only for everyone), the placements' own Editors look
--- after the definition.
+-- When the publishing project is archived (read-only for everyone), the shared definition is frozen until
+-- it's unarchived: the placements' own Editors (and Admins) don't take over. (Review fix: anyone could
+-- otherwise add the field to a project of their own and rewrite it everywhere.)
 do $$
 begin
   perform public.set_project_archived((select id from sf_ids where name = 'r1'), true);
@@ -2147,12 +2151,19 @@ declare
 begin
   select * into s from public.project_field_sharing((select id from sf_ids where name = 'r2'))
   where field_id = (select id from sf_ids where name = 'pr');
-  assert s.definition_editable, 'with the publishing project archived, SF R2''s Editors edit the definition';
+  assert not s.definition_editable and not s.definition_manageable,
+    'with the publishing project archived, SF R2''s Admin doesn''t change the shared definition';
+  begin
+    update public.custom_fields set name = 'Hijacked' where id = (select id from sf_ids where name = 'pr');
+    raise exception 'a placement''s Admin renamed a field whose publishing project is archived';
+  exception when insufficient_privilege then
+    assert sqlerrm like 'Shared from the field library.%', sqlerrm;
+  end;
 end $$;
 reset role;
 
--- Linking existing copies: an empty value (none, "", [], false) is no value, so the other side's value
--- fills it instead of being recorded as a conflict.
+-- Linking existing copies: an empty value (none, "", []) is no value, so the other side's value fills it
+-- instead of being recorded as a conflict.
 set role authenticated;
 select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
 do $$
@@ -2189,6 +2200,7 @@ do $$
 declare
   ve uuid := (select id from sf_ids where name = 've');
 begin
+  update public.projects set created_at = now() - interval '30 days' where id in (select id from sf_ids where name in ('e1', 'e2'));
   update public.custom_fields set created_at = now() - interval '10 days'
   where id in (select id from sf_ids where name in ('s_channels', 's_summary'));
   perform public.link_library_field_copies();
@@ -2699,8 +2711,11 @@ begin
 end $$;
 
 -- A shared library field: locking it at the source locks every placement. Bea (Admin of SF L2 only)
--- can't unlock it from there, but writes values through SF L2 (and they reach SF L1: the library's
--- copy isn't refused); Eddie (Editor) writes through neither project.
+-- can't unlock it from there. Its value is one value in every project that holds the task, so a locked
+-- one is changed only by someone who is an Owner or Admin of all of them: Bea writes it on a task only in
+-- SF L2, not on one also in SF L1 (review fix: before, any Admin of one project changed it everywhere —
+-- and anyone can make a project of their own); Olive (Owner of both) does, and it reaches SF L1 (sync
+-- writes still happen); Eddie (Editor) writes through neither project.
 select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
 do $$
 declare
@@ -2710,6 +2725,7 @@ begin
   update public.custom_fields set locked = true where id = rate;
   assert (select locked and locked_by = 'b7c30029-0000-4000-8000-000000000001' from public.custom_fields where id = rate2),
     'the placement is locked too (and says who locked it)';
+  insert into sf_ids values ('lt_l2', public.create_task((select id from sf_ids where name = 'l2'), (select id from sf_ids where name = 'ls2'), 'Only in L2'));
 end $$;
 
 select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000003', false) is not null as ok \gset
@@ -2728,8 +2744,24 @@ begin
   exception when insufficient_privilege then
     null;
   end;
-  insert into public.task_field_values (task_id, field_id, value) values (ts, rate2, '42');
-  assert found, 'an Admin of SF L2 writes the locked value there';
+  assert not public.locked_field_value_writable(ts, rate2), 'Bea can''t change it on a task that is also in SF L1';
+  begin
+    insert into public.task_field_values (task_id, field_id, value) values (ts, rate2, '42');
+    raise exception 'an Admin of SF L2 only changed a locked value SF L1 shares';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Locked — only Owners and Admins of every project this task is in can change this shared field', sqlerrm;
+  end;
+  assert public.locked_field_value_writable((select id from sf_ids where name = 'lt_l2'), rate2), 'on a task only in SF L2 she can';
+  insert into public.task_field_values (task_id, field_id, value) values ((select id from sf_ids where name = 'lt_l2'), rate2, '42');
+  assert found, 'an Admin of SF L2 writes the locked value on a task only SF L2 holds';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  insert into public.task_field_values (task_id, field_id, value)
+  values ((select id from sf_ids where name = 'lts'), (select id from sf_ids where name = 'rate2'), '42');
+  assert found, 'Olive (Owner of SF L1 and SF L2) writes it through SF L2';
 end $$;
 reset role;
 do $$
@@ -2765,19 +2797,52 @@ begin
   end;
 end $$;
 
--- A rule in SF L2 owned by Bea (its Admin) sets the locked shared value; it reaches SF L1.
+-- A rule in SF L2 owned by Bea (its Admin) is held to the same rule: on the task SF L1 shares its step is
+-- skipped (logged, the run goes on); on the task only in SF L2 it writes. Olive's rule writes on both.
 select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  rule_id uuid;
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values ((select id from sf_ids where name = 'l2'), 'Rate to 99', true, 'manual',
+    jsonb_build_array(jsonb_build_object('type', 'set_field', 'field_id', (select id from sf_ids where name = 'rate2'), 'value', 99),
+                      jsonb_build_object('type', 'add_comment', 'body', 'Rate rule went on')))
+  returning id into rule_id;
+  insert into sf_ids values ('bea_rate_rule', rule_id);
+end $$;
+
+do $$
+declare
+  result jsonb;
+begin
+  result := public.run_manual_rule((select id from sf_ids where name = 'bea_rate_rule'), (select id from sf_ids where name = 'lts'));
+  assert result ->> 'status' = 'succeeded' and result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'locked'
+    and (result -> 'detail' -> 'actions' -> 0 ->> 'result') like 'Skipped: “Rate” is locked and shared with other projects this task is in%'
+    and result -> 'detail' -> 'actions' -> 1 ->> 'outcome' = 'done',
+    format('Bea''s rule skips the shared locked value and goes on: %s', result);
+end $$;
+
+do $$
+declare
+  result jsonb;
+begin
+  result := public.run_manual_rule((select id from sf_ids where name = 'bea_rate_rule'), (select id from sf_ids where name = 'lt_l2'));
+  assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done', format('Bea''s rule writes on a task only in SF L2: %s', result);
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
 do $$
 declare
   rule_id uuid;
   result jsonb;
 begin
   insert into public.rules (project_id, name, enabled, trigger_type, actions)
-  values ((select id from sf_ids where name = 'l2'), 'Rate to 99', true, 'manual',
+  values ((select id from sf_ids where name = 'l2'), 'Rate to 99 (Olive)', true, 'manual',
     jsonb_build_array(jsonb_build_object('type', 'set_field', 'field_id', (select id from sf_ids where name = 'rate2'), 'value', 99)))
   returning id into rule_id;
   result := public.run_manual_rule(rule_id, (select id from sf_ids where name = 'lts'));
-  assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done', format('Bea''s rule writes: %s', result);
+  assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done', format('Olive''s rule writes: %s', result);
 end $$;
 reset role;
 do $$
@@ -2785,6 +2850,9 @@ begin
   assert (select value from public.task_field_values
           where task_id = (select id from sf_ids where name = 'lts') and field_id = (select id from sf_ids where name = 'rate')) = '99',
     'the rule''s value reached SF L1';
+  assert (select value from public.task_field_values
+          where task_id = (select id from sf_ids where name = 'lt_l2') and field_id = (select id from sf_ids where name = 'rate2')) = '99',
+    'Bea''s rule set the value only SF L2 holds';
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
@@ -2900,8 +2968,9 @@ begin
   perform public.update_project_member_role((select id from sf_ids where name = 'l2'), 'b7c30029-0000-4000-8000-000000000002', 'admin');
 end $$;
 
--- Duplicate task counts only what the copy ended up without: Eddie (Editor of SF L1, Admin of SF L2)
--- can't set the locked Rate through SF L1, but through SF L2 he can, and the copy has it in both.
+-- Duplicate task: Eddie (Editor of SF L1, Admin of SF L2) gets a copy in both projects, but the locked
+-- shared Rate would reach SF L1, where he isn't an Admin, so it's left out — counted once (one field),
+-- not once per project. Duplicating the task only SF L2 holds, he keeps it.
 select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
 do $$
 declare
@@ -2910,10 +2979,16 @@ declare
 begin
   result := public.duplicate_task((select id from sf_ids where name = 'lts'), '{}'::jsonb);
   copy_id := (result ->> 'task_id')::uuid;
-  assert (select value from public.task_field_values where task_id = copy_id and field_id = (select id from sf_ids where name = 'rate')) = '99'
-    and (select value from public.task_field_values where task_id = copy_id and field_id = (select id from sf_ids where name = 'rate2')) = '99',
-    'the copy has the locked shared value in both projects';
-  assert (result -> 'skipped' ->> 'fields')::integer = 0, format('nothing is reported left out: %s', result);
+  assert (select count(*) from public.task_projects where task_id = copy_id and deleted_at is null) = 2, 'the copy is in both projects';
+  assert not exists (select 1 from public.task_field_values where task_id = copy_id
+                     and field_id in ((select id from sf_ids where name = 'rate'), (select id from sf_ids where name = 'rate2'))
+                     and value is not null and value <> 'null'::jsonb),
+    'the copy has no locked shared value';
+  assert (result -> 'skipped' ->> 'fields')::integer = 1, format('left out and counted once: %s', result);
+  result := public.duplicate_task((select id from sf_ids where name = 'lt_l2'), '{}'::jsonb);
+  assert (select value from public.task_field_values
+          where task_id = (result ->> 'task_id')::uuid and field_id = (select id from sf_ids where name = 'rate2')) = '99'
+    and (result -> 'skipped' ->> 'fields')::integer = 0, format('a task only SF L2 holds keeps it: %s', result);
 end $$;
 
 select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
@@ -2923,6 +2998,451 @@ begin
 end $$;
 reset role;
 
+
+-- ---------------------------------------------------------------------------------------------
+-- 55 × 51 review fixes (G3).
+--   SF K1 (Olive) publishes Spend (number, locked); Eddie is an Editor of SF K1. SF V1 (Olive) publishes
+--   Tier, SF V2 (Olive; Bea an Editor) uses it.
+-- ---------------------------------------------------------------------------------------------
+create temporary table g3_ids (name text primary key, id uuid);
+grant all on g3_ids to authenticated, anon;
+
+do $$
+begin
+  assert (select prosecdef from pg_proc where oid = 'public.locked_field_value_writable(uuid, uuid)'::regprocedure)
+    and has_function_privilege('authenticated', 'public.locked_field_value_writable(uuid, uuid)', 'execute')
+    and not has_function_privilege('anon', 'public.locked_field_value_writable(uuid, uuid)', 'execute'),
+    'locked_field_value_writable: a client definer (pinned in suite 60), not for anon';
+  assert not has_function_privilege('authenticated', 'public.rule_owner_writes_locked_value(uuid, uuid, uuid)', 'execute')
+    and not has_function_privilege('authenticated', 'public.library_fill_overwrite_allowed(uuid)', 'execute')
+    and not has_function_privilege('authenticated', 'public.library_link_value_empty(jsonb)', 'execute')
+    and not has_function_privilege('authenticated', 'public.fill_library_values_on_project_restore()', 'execute'),
+    'the other review-fix helpers are internal';
+  assert exists (select 1 from pg_trigger where tgname = 'projects_zz_library_restore' and tgrelid = 'public.projects'::regclass),
+    'a restored project refills its shared values';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  k1 uuid;
+  sk1 uuid;
+  spend uuid;
+  shadow uuid;
+  kt uuid;
+  kt_other uuid;
+  v1 uuid;
+  v2 uuid;
+  tier uuid;
+  tier2 uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF K1') returning id into k1;
+  insert into public.sections (project_id, name, sort_order) values (k1, 'K1', 1024) returning id into sk1;
+  perform public.add_project_member(k1, 'sf-editor@example.com', 'editor');
+  insert into public.custom_fields (project_id, name, field_type, in_library, sort_order)
+  values (k1, 'Spend', 'number', true, 1024) returning id into spend;
+  insert into public.custom_fields (project_id, name, field_type, sort_order)
+  values (k1, 'Shadow', 'number', 2048) returning id into shadow;
+  update public.custom_fields set locked = true where id = spend;
+  kt := public.create_task(k1, sk1, 'Spend task');
+  kt_other := public.create_task(k1, sk1, 'Other spend task');
+  insert into public.task_field_values (task_id, field_id, value) values (kt, spend, '100'), (kt_other, spend, '1');
+
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF V1') returning id into v1;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF V2') returning id into v2;
+  perform public.add_project_member(v1, 'sf-editor@example.com', 'editor');
+  perform public.add_project_member(v2, 'sf-bedit@example.com', 'editor');
+  insert into public.custom_fields (project_id, name, field_type, options, in_library, sort_order)
+  values (v1, 'Tier', 'single_select', '[{"id": "ti-1", "name": "One", "color": "blue"}, {"id": "ti-2", "name": "Two", "color": "red"}]',
+    true, 1024)
+  returning id into tier;
+  tier2 := public.add_library_field(v2, tier);
+  insert into g3_ids values ('k1', k1), ('sk1', sk1), ('spend', spend), ('shadow', shadow), ('kt', kt), ('kt_other', kt_other),
+    ('v1', v1), ('v2', v2), ('tier', tier), ('tier2', tier2);
+end $$;
+
+-- F1: an archived publishing project keeps governing its shared field: frozen until it's unarchived.
+-- The library leaves it out, nobody adds it to another project, and the placements' own Editors can't
+-- take over (anyone could make a project of their own and rewrite it everywhere).
+do $$
+begin
+  perform public.set_project_archived((select id from g3_ids where name = 'v1'), true);
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000005', false) is not null as ok \gset
+do $$
+declare
+  z uuid;
+begin
+  assert not exists (select 1 from public.list_field_library() where field_id = (select id from g3_ids where name = 'tier')),
+    'the library leaves out a field of an archived project';
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF Z (Otto)') returning id into z;
+  insert into g3_ids values ('z', z);
+  begin
+    perform public.add_library_field(z, (select id from g3_ids where name = 'tier'));
+    raise exception 'an archived project''s library field was added to another project';
+  exception when no_data_found then
+    null;
+  end;
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  tier2 uuid := (select id from g3_ids where name = 'tier2');
+  s record;
+begin
+  select * into s from public.project_field_sharing((select id from g3_ids where name = 'v2')) where field_id = tier2;
+  assert s.is_shared and not s.definition_editable and not s.definition_manageable, format('frozen for Bea: %s', row_to_json(s));
+  begin
+    update public.custom_fields set name = 'Hijacked', options = '[{"id": "ti-9", "name": "Nine", "color": "red"}]' where id = tier2;
+    raise exception 'a placement''s Editor rewrote a field whose publishing project is archived';
+  exception when insufficient_privilege then
+    null;
+  end;
+end $$;
+
+-- A copy made meanwhile (Duplicate project) is a plain copy: nothing new links to a frozen field.
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  result jsonb;
+begin
+  result := public.duplicate_project((select id from g3_ids where name = 'v2'), 'SF V2 copy', '{}'::jsonb);
+  assert (select library_field_id is null from public.custom_fields
+          where project_id = (result ->> 'project_id')::uuid and name = 'Tier' and deleted_at is null),
+    'the duplicate''s Tier isn''t linked to the archived library field';
+  perform public.set_project_archived((select id from g3_ids where name = 'v1'), false);
+end $$;
+reset role;
+do $$
+begin
+  assert (select bool_and(name = 'Tier' and options -> 0 ->> 'id' = 'ti-1') from public.custom_fields
+          where id in ((select id from g3_ids where name = 'tier'), (select id from g3_ids where name = 'tier2'))),
+    'the definition didn''t change anywhere';
+end $$;
+
+-- Unarchived, the publishing project's Editors change it again (and every placement follows).
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  update public.custom_fields set name = 'Tier level' where id = (select id from g3_ids where name = 'tier');
+  assert found, 'Eddie (Editor of SF V1) renames it once SF V1 is unarchived';
+end $$;
+reset role;
+do $$
+begin
+  assert (select name from public.custom_fields where id = (select id from g3_ids where name = 'tier2')) = 'Tier level',
+    'the placement follows';
+end $$;
+
+-- F51-1: a value row never moves to another task or field (an Editor could otherwise carry a value past
+-- the lock, or out from under it). F51-2 / F7: a field never changes project or type through people's
+-- writes. Eddie is an Editor of SF K1; Spend is locked.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  spend uuid := (select id from g3_ids where name = 'spend');
+  shadow uuid := (select id from g3_ids where name = 'shadow');
+  kt uuid := (select id from g3_ids where name = 'kt');
+  kt_other uuid := (select id from g3_ids where name = 'kt_other');
+  own uuid;
+begin
+  begin
+    update public.task_field_values set task_id = kt_other where task_id = kt and field_id = spend;
+    raise exception 'an Editor moved a locked value to another task';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'A field value can''t move to another task or field', sqlerrm;
+  end;
+  insert into public.task_field_values (task_id, field_id, value) values (kt, shadow, '424242');
+  begin
+    update public.task_field_values set field_id = spend where task_id = kt and field_id = shadow;
+    raise exception 'an Editor repointed a value at a locked field';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    update public.task_field_values set field_id = shadow where task_id = kt and field_id = spend;
+    raise exception 'an Editor moved a locked value out from under the lock';
+  exception when insufficient_privilege then
+    null;
+  end;
+  -- The app's upsert (PostgREST sets the key columns to themselves) still works on an unlocked field.
+  insert into public.task_field_values (task_id, field_id, value) values (kt, shadow, '5')
+  on conflict (task_id, field_id) do update set task_id = excluded.task_id, field_id = excluded.field_id, value = excluded.value;
+  assert (select value from public.task_field_values where task_id = kt and field_id = shadow) = '5', 'the upsert works';
+  assert (select value from public.task_field_values where task_id = kt and field_id = spend) = '100', 'Spend is unchanged';
+
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF K own (Eddie)') returning id into own;
+  insert into g3_ids values ('kown', own);
+  with x as (insert into public.sections (project_id, name, sort_order) values (own, 'Mine', 1024) returning id) insert into g3_ids select 'skown', id from x;
+  begin
+    update public.custom_fields set project_id = own where id = spend;
+    raise exception 'an Editor moved a locked field to a project of his own';
+  exception when check_violation then
+    assert sqlerrm = 'A field stays in its project', sqlerrm;
+  end;
+  begin
+    update public.custom_fields set project_id = own where id = shadow;
+    raise exception 'a field moved to another project';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    update public.custom_fields set field_type = 'text' where id = shadow;
+    raise exception 'a field changed type';
+  exception when check_violation then
+    assert sqlerrm = 'A field''s type can''t be changed once it''s created', sqlerrm;
+  end;
+  assert (select project_id = (select id from g3_ids where name = 'k1') and locked from public.custom_fields where id = spend),
+    'Spend stays in SF K1, locked';
+end $$;
+
+-- F2 / F51-3: the own-project path. Eddie adds Spend to his own project and the task to it; he's its
+-- Owner, but the value would reach SF K1 too, where he's only an Editor: refused, directly and by his rule.
+do $$
+declare
+  spend uuid := (select id from g3_ids where name = 'spend');
+  own uuid := (select id from g3_ids where name = 'kown');
+  kt uuid := (select id from g3_ids where name = 'kt');
+  placement uuid;
+begin
+  placement := public.add_library_field(own, spend);
+  insert into g3_ids values ('spend_own', placement);
+  assert (select locked from public.custom_fields where id = placement), 'the placement arrives locked';
+  insert into public.task_projects (task_id, project_id, section_id) values (kt, own, (select id from g3_ids where name = 'skown'));
+  assert (select value from public.task_field_values where task_id = kt and field_id = placement) = '100',
+    'the task brings its value along';
+  assert not public.locked_field_value_writable(kt, placement), 'Eddie can''t change it';
+  begin
+    insert into public.task_field_values (task_id, field_id, value) values (kt, placement, '999')
+    on conflict (task_id, field_id) do update set value = excluded.value;
+    raise exception 'the own-project path changed a locked value';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Locked — only Owners and Admins of every project this task is in can change this shared field', sqlerrm;
+  end;
+end $$;
+
+do $$
+declare
+  rule_id uuid;
+  result jsonb;
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, actions)
+  values ((select id from g3_ids where name = 'kown'), 'Spend to 999', true, 'manual',
+    jsonb_build_array(jsonb_build_object('type', 'set_field', 'field_id', (select id from g3_ids where name = 'spend_own'), 'value', 999)))
+  returning id into rule_id;
+  result := public.run_manual_rule(rule_id, (select id from g3_ids where name = 'kt'));
+  assert result ->> 'status' = 'succeeded' and result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'locked',
+    format('his rule''s step is skipped: %s', result);
+end $$;
+
+-- The bulk bar skips it with the reason.
+do $$
+declare
+  result jsonb;
+begin
+  result := public.bulk_update_tasks(array[(select id from g3_ids where name = 'kt')],
+    jsonb_build_object('action', 'set_field', 'field_id', (select id from g3_ids where name = 'spend_own'), 'value', 7));
+  assert jsonb_array_length(result -> 'skipped') = 1
+    and result -> 'skipped' -> 0 ->> 'reason' = 'Locked — only Owners and Admins of every project this task is in can change this shared field',
+    format('bulk skips it: %s', result);
+end $$;
+
+-- The join path: Eddie takes the task out of SF K1 (it stays in his project), changes Spend where only
+-- his project holds it, and adds the task back to SF K1: refused, since SF K1's own value would change.
+do $$
+declare
+  k1 uuid := (select id from g3_ids where name = 'k1');
+  kt uuid := (select id from g3_ids where name = 'kt');
+  placement uuid := (select id from g3_ids where name = 'spend_own');
+begin
+  update public.task_projects set deleted_at = now() where task_id = kt and project_id = k1;
+  update public.task_field_values set value = '4242' where task_id = kt and field_id = placement;
+  assert found, 'with only his project holding the task, its Owner changes the value';
+  begin
+    update public.task_projects set deleted_at = null where task_id = kt and project_id = k1;
+    raise exception 'adding the task back carried a locked value past the lock';
+  exception when insufficient_privilege then
+    assert sqlerrm like 'Locked — a locked shared field already has a different value for this task%', sqlerrm;
+  end;
+  -- With the value as SF K1 has it, the task goes back.
+  update public.task_field_values set value = '100' where task_id = kt and field_id = placement;
+  update public.task_projects set deleted_at = null where task_id = kt and project_id = k1;
+  assert found, 'back in SF K1 once nothing changes there';
+  -- Olive joins his project as an Admin: an Owner / Admin of every project that holds the task writes it.
+  perform public.add_project_member((select id from g3_ids where name = 'kown'), 'sf-owner@example.com', 'admin');
+end $$;
+reset role;
+do $$
+begin
+  assert (select value from public.task_field_values
+          where task_id = (select id from g3_ids where name = 'kt') and field_id = (select id from g3_ids where name = 'spend')) = '100',
+    'SF K1''s locked value never changed';
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  assert public.locked_field_value_writable((select id from g3_ids where name = 'kt'), (select id from g3_ids where name = 'spend'));
+  insert into public.task_field_values (task_id, field_id, value)
+  values ((select id from g3_ids where name = 'kt'), (select id from g3_ids where name = 'spend'), '150')
+  on conflict (task_id, field_id) do update set value = excluded.value;
+  assert (select value from public.task_field_values
+          where task_id = (select id from g3_ids where name = 'kt') and field_id = (select id from g3_ids where name = 'spend_own')) = '150',
+    'Olive (Owner of SF K1, Admin of his project) changes it, and it reaches his project';
+end $$;
+
+-- F51-4 / F6: bringing back a removed field of a locked group is for its project's Owners and Admins,
+-- and it comes back with the group's newest values (also when its whole project comes back). SF K2
+-- (Olive; Eddie an Editor) uses Spend; KT2 is in SF K1 and SF K2.
+do $$
+declare
+  k2 uuid;
+  sk2 uuid;
+  kt2 uuid;
+  placement uuid;
+begin
+  update public.custom_fields set locked = false where id = (select id from g3_ids where name = 'spend');
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF K2') returning id into k2;
+  insert into public.sections (project_id, name, sort_order) values (k2, 'K2', 1024) returning id into sk2;
+  perform public.add_project_member(k2, 'sf-editor@example.com', 'editor');
+  placement := public.add_library_field(k2, (select id from g3_ids where name = 'spend'));
+  kt2 := public.create_task((select id from g3_ids where name = 'k1'), (select id from g3_ids where name = 'sk1'), 'Spend two');
+  insert into public.task_projects (task_id, project_id, section_id) values (kt2, k2, sk2);
+  insert into public.task_field_values (task_id, field_id, value) values (kt2, placement, '5');
+  insert into g3_ids values ('k2', k2), ('spend_k2', placement), ('kt2', kt2);
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  update public.custom_fields set deleted_at = now() where id = (select id from g3_ids where name = 'spend_k2');
+  assert found, 'Eddie removes the unlocked field from SF K2';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  update public.custom_fields set locked = true where id = (select id from g3_ids where name = 'spend');
+  update public.task_field_values set value = '6'
+  where task_id = (select id from g3_ids where name = 'kt2') and field_id = (select id from g3_ids where name = 'spend');
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  begin
+    update public.custom_fields set deleted_at = null where id = (select id from g3_ids where name = 'spend_k2');
+    raise exception 'an Editor brought back a field of a locked group';
+  exception when insufficient_privilege then
+    assert sqlerrm = 'Locked — only project Owners and Admins can change this field', sqlerrm;
+  end;
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  placement uuid := (select id from g3_ids where name = 'spend_k2');
+  kt2 uuid := (select id from g3_ids where name = 'kt2');
+begin
+  update public.custom_fields set deleted_at = null where id = placement;
+  assert (select locked and deleted_at is null from public.custom_fields where id = placement), 'Olive brings it back, locked';
+  assert (select value from public.task_field_values where task_id = kt2 and field_id = placement) = '6',
+    'with the value written while it was removed';
+end $$;
+
+-- The whole project: removed, a value written meanwhile, restored.
+do $$
+declare
+  kt2 uuid := (select id from g3_ids where name = 'kt2');
+begin
+  update public.projects set deleted_at = now() where id = (select id from g3_ids where name = 'k2');
+  update public.task_field_values set value = '7' where task_id = kt2 and field_id = (select id from g3_ids where name = 'spend');
+end $$;
+reset role;
+do $$
+begin
+  assert (select value from public.task_field_values
+          where task_id = (select id from g3_ids where name = 'kt2') and field_id = (select id from g3_ids where name = 'spend_k2')) = '6',
+    'a removed project gets no copies';
+end $$;
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7c30029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  update public.projects set deleted_at = null where id = (select id from g3_ids where name = 'k2');
+  assert (select value from public.task_field_values
+          where task_id = (select id from g3_ids where name = 'kt2') and field_id = (select id from g3_ids where name = 'spend_k2')) = '7',
+    'a restored project gets the group''s newest value';
+end $$;
+
+-- F4 / F5: linking existing copies. A select field the copy engine made with a project from a template
+-- isn't linked to its template sibling that was published later (its option ids match, but it was
+-- never chosen from the library). An unticked checkbox (false) is a value: true on one side and false
+-- on the other is a conflict, both kept.
+do $$
+declare
+  src uuid;
+  tmpl uuid;
+  t1 uuid;
+  t2 uuid;
+  b1 uuid;
+  b2 uuid;
+  t uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF TPL') returning id into src;
+  insert into public.custom_fields (project_id, name, field_type, options, sort_order)
+  values (src, 'Phase', 'single_select', '[{"id": "ph-1", "name": "One", "color": "blue"}, {"id": "ph-2", "name": "Two", "color": "red"}]', 1024);
+  tmpl := public.save_project_as_template(src, 'SF phases', null, null, null);
+  t1 := (public.create_project_from_template(tmpl, 'SF from tpl 1', current_date) ->> 'project_id')::uuid;
+  update public.custom_fields set in_library = true where project_id = t1 and name = 'Phase';
+  t2 := (public.create_project_from_template(tmpl, 'SF from tpl 2', current_date) ->> 'project_id')::uuid;
+  insert into g3_ids values ('tpl1', t1), ('tpl2', t2);
+
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF B1') returning id into b1;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'SF B2') returning id into b2;
+  with x as (insert into public.custom_fields (project_id, name, field_type, description, in_library)
+    values (b1, 'Approved', 'boolean', 'Client signed off', true) returning id) insert into g3_ids select 's_approved', id from x;
+  with x as (insert into public.custom_fields (project_id, name, field_type, description)
+    values (b2, 'Approved', 'boolean', 'Client signed off') returning id) insert into g3_ids select 'c_approved', id from x;
+  t := public.create_task(b1, null, 'Signed off?');
+  insert into public.task_projects (task_id, project_id) values (t, b2);
+  insert into public.task_field_values (task_id, field_id, value) values
+    (t, (select id from g3_ids where name = 's_approved'), 'true'), (t, (select id from g3_ids where name = 'c_approved'), 'false');
+  insert into g3_ids values ('b1', b1), ('b2', b2), ('vb', t);
+end $$;
+reset role;
+do $$
+declare
+  vb uuid := (select id from g3_ids where name = 'vb');
+  t1_phase uuid := (select id from public.custom_fields where project_id = (select id from g3_ids where name = 'tpl1') and name = 'Phase');
+  t2_phase uuid := (select id from public.custom_fields where project_id = (select id from g3_ids where name = 'tpl2') and name = 'Phase');
+begin
+  -- Each templated project and its fields were made together; the second one later than the first.
+  update public.projects set created_at = now() - interval '10 days' where id = (select id from g3_ids where name = 'tpl1');
+  update public.custom_fields set created_at = now() - interval '10 days' where id = t1_phase;
+  update public.projects set created_at = now() - interval '5 days' where id = (select id from g3_ids where name = 'tpl2');
+  update public.custom_fields set created_at = now() - interval '5 days' where id = t2_phase;
+  update public.projects set created_at = now() - interval '30 days' where id in (select id from g3_ids where name in ('b1', 'b2'));
+  update public.custom_fields set created_at = now() - interval '10 days' where id = (select id from g3_ids where name = 's_approved');
+  update public.custom_fields set created_at = now() - interval '5 days' where id = (select id from g3_ids where name = 'c_approved');
+  perform public.link_library_field_copies();
+  assert (select library_field_id is null from public.custom_fields where id = t2_phase),
+    'a templated project''s field isn''t linked to its published template sibling';
+  assert (select library_field_id from public.custom_fields where id = (select id from g3_ids where name = 'c_approved'))
+    = (select id from g3_ids where name = 's_approved'), 'the checkbox copy is linked';
+  assert (select value from public.task_field_values where task_id = vb and field_id = (select id from g3_ids where name = 'c_approved')) = 'false'
+    and (select value from public.task_field_values where task_id = vb and field_id = (select id from g3_ids where name = 's_approved')) = 'true',
+    'an unticked checkbox isn''t overwritten';
+  assert (select count(*) from public.library_field_link_conflicts where task_id = vb and value = 'false' and other_value = 'true') = 1,
+    'true against false is recorded as a conflict';
+end $$;
+reset role;
 
 -- =================================================================================================
 -- Track T4: 55b no home project

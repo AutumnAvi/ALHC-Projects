@@ -5771,6 +5771,10 @@ export type Database = {
         Args: { target_project: string; library_field: string };
         Returns: string;
       };
+      locked_field_value_writable: {
+        Args: { target_task: string; target_field: string };
+        Returns: boolean;
+      };
       project_field_sharing: {
         Args: { target_project: string };
         Returns: {
