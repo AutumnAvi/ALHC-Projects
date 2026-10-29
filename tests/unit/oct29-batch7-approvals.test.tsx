@@ -22,7 +22,11 @@ import { TaskDetailPanel } from "@/components/task/task-detail-panel";
 import { TaskPanePreview } from "@/components/task/task-pane-preview";
 import { ToastProvider } from "@/components/toast";
 import {
+  APPROVAL_ROLE_CANT_DECIDE,
+  APPROVAL_ROLE_CANT_SEND,
   READY_FOR_APPROVAL_REASON,
+  cantDecideMessage,
+  cantSendMessage,
   completeModeLabel,
   completeModeOf,
   completeModeRowLabel,
@@ -31,7 +35,10 @@ import {
   shortcutApprovalAction,
 } from "@/lib/approval-complete";
 import type { ApprovalRound, MyTask, Profile, ProjectTask, Section, SubtaskItem, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/data";
+import { MY_TASK_ACTIONS } from "@/lib/my-task-rules";
 import type { ProjectRole } from "@/lib/roles";
+import { stepOutcomeLabel, stepTone, testHeadline, type RuleTestResult } from "@/lib/rule-steps";
+import { ACTIONS } from "@/lib/rules";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 import { seedFromMyTask, seedFromProjectTask, seedFromSubtask } from "@/lib/task-seed";
 import { parseViewConfig } from "@/lib/views";
@@ -154,10 +161,17 @@ test("RowCompleteControl: approvers get the checkbox; read-only rows a mark, exc
 
   const viewer = render(<RowCompleteControl task={{ ...approvalRow, approvalStatus: "not_sent" }} completed={false} readOnly onToggle={() => {}} />);
   assert.match(viewer, /data-complete-readonly=""/, "a Viewer sees a mark");
+  // assignedToMe = assigned to the viewer AND they can comment (approval_can_act: the assignee sends it
+  // with Commenter+). A Viewer assignee's rows pass false and get the mark.
   const assignee = render(
     <RowCompleteControl task={{ ...approvalRow, approvalStatus: "not_sent" }} completed={false} readOnly assignedToMe onToggle={() => {}} />,
   );
   assert.match(assignee, /data-approval-toggle="ready"/, "a Commenter assignee sends it");
+  const viewerAssignee = render(
+    <RowCompleteControl task={{ ...approvalRow, approvalStatus: "not_sent" }} completed={false} readOnly assignedToMe={false} onToggle={() => {}} />,
+  );
+  assert.match(viewerAssignee, /data-complete-readonly=""/, "a Viewer assignee sees the mark");
+  assert.ok(!/data-approval-toggle=/.test(viewerAssignee), "no Ready for approval they can't use");
   const readOnlyWaiting = render(<RowCompleteControl task={{ ...approvalRow, approvalStatus: "pending" }} completed={false} readOnly onToggle={() => {}} />);
   assert.match(readOnlyWaiting, /data-complete-readonly=""/);
 
@@ -303,7 +317,14 @@ test("My tasks and Home: the assignee's approval task is theirs to send, even wi
   const html = render(
     <MyTasksView
       {...myProps}
-      open={[myTask(), myTask({ id: "m2", title: "Read-only approval", canEdit: false }), myTask({ id: "m3", title: "Mine to approve", approvalIsApprover: true })]}
+      open={[
+        myTask(),
+        myTask({ id: "m2", title: "Read-only approval", canEdit: false, canComment: true }),
+        myTask({ id: "m3", title: "Mine to approve", approvalIsApprover: true }),
+        myTask({ id: "m4", title: "Viewer approval", canEdit: false, canComment: false }),
+        // Older data without canComment: the same as canEdit (a read-only row gets the mark).
+        myTask({ id: "m5", title: "Unknown role approval", canEdit: false }),
+      ]}
     />,
     null,
     "/my-tasks",
@@ -311,9 +332,24 @@ test("My tasks and Home: the assignee's approval task is theirs to send, even wi
   assert.match(html, /aria-label="Ready for approval: “Approve the copy”"/);
   assert.match(html, /aria-label="Ready for approval: “Read-only approval”"/, "a Commenter assignee sends it");
   assert.match(html, /aria-label="Mark approval “Mine to approve” complete"/);
+  // THE REVIEW BUG: a Viewer assignee got Ready for approval, then "Only you or an Editor can send it".
+  assert.ok(!/aria-label="Ready for approval: “Viewer approval”"/.test(html), "a Viewer assignee can't send it");
+  assert.ok(!/aria-label="Ready for approval: “Unknown role approval”"/.test(html));
+  const rowOf = (markup: string, id: string) => {
+    const start = markup.indexOf(`data-task-row="${id}"`);
+    return markup.slice(start, markup.indexOf("</li>", start));
+  };
+  assert.match(rowOf(html, "m4"), /data-complete-readonly=""/, "the Viewer assignee's row has the read-only mark");
 
-  const home = render(<MyTasksWidget tasks={{ upcoming: [myTask()], overdue: [], completed: [] }} />, null, "/");
+  const home = render(
+    <MyTasksWidget
+      tasks={{ upcoming: [myTask(), myTask({ id: "h2", title: "Viewer home approval", canEdit: false, canComment: false })], overdue: [], completed: [] }}
+    />,
+    null,
+    "/",
+  );
   assert.match(home, /aria-label="Ready for approval: “Approve the copy”"/);
+  assert.ok(!/aria-label="Ready for approval: “Viewer home approval”"/.test(home), "Home: a Viewer assignee gets the mark too");
 
   // "Waiting on me to approve": an approval task's round is decided from its row (Approve opens the
   // decision in the pane); an older request (an approval subtask) keeps the plain mark.
@@ -547,4 +583,39 @@ test("seeds and the instant preview know the button too", () => {
   const preview = render(<TaskPanePreview seed={seed} />);
   assert.match(preview, /Ready for approval/);
   assert.match(preview, />Assignee</, "an approval task's assignee is the assignee");
+});
+
+test("toasts for a stale row control: the assignee is told it's their role, never “Only you or an Editor…”", () => {
+  // A Viewer assignee (approval_can_act needs Commenter+ for the assignee).
+  assert.equal(cantSendMessage(true, "you"), APPROVAL_ROLE_CANT_SEND);
+  assert.ok(!/Only you/.test(cantSendMessage(true, "you")));
+  assert.equal(cantSendMessage(false, "Dana"), "Only Dana or an Editor can send it for approval");
+  // An approver lowered to Viewer while still asked (decide_approval needs Commenter+), or no longer asked.
+  assert.equal(cantDecideMessage(true), APPROVAL_ROLE_CANT_DECIDE);
+  assert.equal(cantDecideMessage(false), "Your decision on this approval isn’t open anymore");
+});
+
+test("rules: Mark complete waits for the approval, and the run log says Skipped", () => {
+  const complete = ACTIONS.find((a) => a.value === "complete_task");
+  assert.ok(complete && /Approval tasks are skipped until they’re approved/.test(complete.description ?? ""), complete?.description);
+  const mine = MY_TASK_ACTIONS.find((a) => a.value === "complete_task");
+  assert.ok(mine && /Approval tasks are skipped until they’re approved/.test(mine.description ?? ""), mine?.description);
+
+  // The engine logs outcome "skipped" ("Approval tasks are completed by their approvers") until approved.
+  assert.equal(stepOutcomeLabel("skipped"), "Skipped", "a label, not the raw key");
+  assert.equal(stepTone("skipped"), "unchanged");
+  const result: RuleTestResult = {
+    taskId: "t1",
+    taskTitle: "Logo",
+    triggerType: "manual",
+    branches: [],
+    chosenBranch: 0,
+    steps: [
+      { step: 1, type: "complete_task", input: null, outcome: "skipped", result: "Approval tasks are completed by their approvers", error: null, afterWait: false },
+      { step: 2, type: "add_comment", input: null, outcome: "done", result: "Commented", error: null, afterWait: false },
+    ],
+    error: null,
+    invalid: false,
+  };
+  assert.equal(testHeadline(result), "1 step would run", "a skipped step isn't a step that would run");
 });

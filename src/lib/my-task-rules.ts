@@ -24,7 +24,7 @@ export type MyTaskCondition = (typeof MY_TASK_CONDITIONS)[number]["value"];
 export const MY_TASK_ACTIONS = [
   { value: "move_to_section", label: "Move to my section", description: "Moves it to one of your My tasks sections.", keywords: ["section", "today", "later"] },
   { value: "set_due_date", label: "Set due date", description: "Some days (or business days) from today.", keywords: ["deadline"] },
-  { value: "complete_task", label: "Mark complete", description: "Completes it (if you can edit it and nothing blocks it). Approval tasks are skipped: their approvers complete them.", keywords: ["done"] },
+  { value: "complete_task", label: "Mark complete", description: "Completes it (if you can edit it and nothing blocks it). Approval tasks are skipped until they’re approved.", keywords: ["done"] },
 ] as const;
 export type MyTaskAction = (typeof MY_TASK_ACTIONS)[number]["value"];
 

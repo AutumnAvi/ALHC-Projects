@@ -36,6 +36,21 @@ export function completeModeOf({ kind, completed, status, isApprover = false, wa
 export const READY_FOR_APPROVAL_REASON = "Only its approvers can complete an approval task. Send it with Ready for approval.";
 export const WAITING_FOR_APPROVAL_REASON = "This task is waiting for approval. Only its approvers can complete it.";
 
+// The approval banner's toasts when a row's control was stale or the viewer's role is too low: the assignee
+// sends with Commenter+ (approval_can_act), an approver decides with Commenter+ (decide_approval).
+export const APPROVAL_ROLE_CANT_SEND = "Your role in this project doesn’t let you send it for approval. Ask an Editor.";
+export const APPROVAL_ROLE_CANT_DECIDE = "Your role in this project doesn’t let you decide approvals. Ask an Owner or Admin.";
+
+// "Ready for approval" from someone who can't send it: never "Only you or an Editor…" to the assignee.
+export function cantSendMessage(viewerIsAssignee: boolean, assigneeName: string): string {
+  return viewerIsAssignee ? APPROVAL_ROLE_CANT_SEND : `Only ${assigneeName} or an Editor can send it for approval`;
+}
+
+// "Approve" from someone who can't decide: still asked (their role is too low now), or no longer asked.
+export function cantDecideMessage(stillAsked: boolean): string {
+  return stillAsked ? APPROVAL_ROLE_CANT_DECIDE : "Your decision on this approval isn’t open anymore";
+}
+
 // The pane's header button.
 export function completeModeLabel(mode: CompleteMode, kind: TaskKind = "task"): string {
   switch (mode) {

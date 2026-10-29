@@ -410,6 +410,237 @@ begin
   assert not (select prosecdef from pg_proc where oid = 'public.task_approval_states(uuid[])'::regprocedure), 'invoker';
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- 52 (review fixes): a rule triggered by the approval itself completes the task once the approval is
+-- given. approval_decided rules run before the round settles (the trigger order), so the round still
+-- reads pending when they run; approval_round_approved() counts a round whose requests already meet
+-- settle_approval_round's approve condition.
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t1_ids where name = 'a');
+  done_section uuid;
+  rid uuid;
+begin
+  insert into public.sections (project_id, name, sort_order) values (a, 'Signed off', 4096) returning id into done_section;
+  insert into b7t1_ids values ('done_section', done_section);
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values (a, 'Done when approved', true, 'approval_decided', '{"statuses": ["approved"]}', '[{"type": "complete_task"}]')
+  returning id into rid;
+  insert into b7t1_ids values ('approved_rule', rid);
+end $$;
+
+-- The assignee sends three approval tasks with More steps (so the round itself doesn't complete them):
+-- fa = "Any one can approve" (April), fb = "Everyone must approve" (April and Cole, then move to Signed
+-- off), fc = "Everyone must approve" (April and Cole, just notify).
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t1_ids where name = 'a');
+  sa uuid := (select id from b7t1_ids where name = 'sa');
+  both_approvers uuid[] := array['b7b70029-0000-4000-8000-000000000003'::uuid, 'b7b70029-0000-4000-8000-000000000004'::uuid];
+  fa uuid;
+  fb uuid;
+  fc uuid;
+begin
+  fa := public.create_task(a, sa, 'Logo approval (any one)');
+  fb := public.create_task(a, sa, 'Poster approval (everyone)');
+  fc := public.create_task(a, sa, 'Banner approval (everyone)');
+  insert into b7t1_ids values ('fa', fa), ('fb', fb), ('fc', fc);
+  update public.tasks set kind = 'approval', assignee_id = 'b7b70029-0000-4000-8000-000000000002' where id in (fa, fb, fc);
+  perform public.set_task_approvers(fa, array['b7b70029-0000-4000-8000-000000000003'::uuid], 'any', null);
+  perform public.set_task_approvers(fb, both_approvers, 'all', null);
+  perform public.set_task_approvers(fc, both_approvers, 'all', null);
+  perform public.send_for_approval(fa, 'Logo, final', '{}', true, 'notify', null);
+  perform public.send_for_approval(fb, 'Poster, final', '{}', true, 'move_section', (select id from b7t1_ids where name = 'done_section'));
+  perform public.send_for_approval(fc, 'Banner, final', '{}', true, 'notify', null);
+end $$;
+
+-- Any one: April's approval runs the rule, and its Mark complete completes the task.
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 'fa')
+  and approver_id = 'b7b70029-0000-4000-8000-000000000003' and status = 'pending'), 'approved', 'Good');
+-- Everyone: April approves first (Cole is still pending).
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 'fb')
+  and approver_id = 'b7b70029-0000-4000-8000-000000000003' and status = 'pending'), 'approved', 'Good');
+reset role;
+
+do $$
+declare
+  fa uuid := (select id from b7t1_ids where name = 'fa');
+  fb uuid := (select id from b7t1_ids where name = 'fb');
+  rid uuid := (select id from b7t1_ids where name = 'approved_rule');
+  run public.rule_runs;
+begin
+  assert public.task_approval_state(fa) ->> 'status' = 'approved', 'any one: the round is approved';
+  select * into run from public.rule_runs where rule_id = rid and task_id = fa order by created_at desc limit 1;
+  assert found and run.status = 'succeeded', 'the approval_decided rule ran for fa';
+  assert run.detail -> 'actions' -> 0 ->> 'result' = 'Marked complete',
+    'THE REVIEW BUG: the rule''s Mark complete was skipped as "completed by their approvers": ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = fa) is not null, 'the rule completed the approved task';
+
+  -- Everyone: one of two approved, so the approval isn't given yet; the rule's step is skipped.
+  assert public.task_approval_state(fb) ->> 'status' = 'pending', 'everyone: still pending after the first approval';
+  assert not public.approval_round_approved(fb), 'not approved yet';
+  select * into run from public.rule_runs where rule_id = rid and task_id = fb order by created_at desc limit 1;
+  assert found and run.status = 'succeeded'
+     and run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped'
+     and run.detail -> 'actions' -> 0 ->> 'result' = 'Approval tasks are completed by their approvers',
+    'the first approval''s run skips: ' || coalesce(run.detail::text, '');
+  assert (select completed_at from public.tasks where id = fb) is null, 'still open';
+end $$;
+
+-- Cole's approval gives it: the rule completes it, and the round's More steps still move it.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000004', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 'fb')
+  and approver_id = 'b7b70029-0000-4000-8000-000000000004' and status = 'pending'), 'approved', 'Good');
+reset role;
+
+do $$
+declare
+  fb uuid := (select id from b7t1_ids where name = 'fb');
+  run public.rule_runs;
+begin
+  assert public.task_approval_state(fb) ->> 'status' = 'approved', 'everyone: approved once both did';
+  select * into run from public.rule_runs
+  where rule_id = (select id from b7t1_ids where name = 'approved_rule') and task_id = fb order by created_at desc limit 1;
+  assert run.detail -> 'actions' -> 0 ->> 'result' = 'Marked complete', 'the last approval''s run completes it: ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = fb) is not null, 'completed';
+  assert (select section_id from public.task_projects where task_id = fb and deleted_at is null)
+         = (select id from b7t1_ids where name = 'done_section'), 'More steps moved it to Signed off too';
+end $$;
+
+-- A rule for every decision: a request for changes after someone approved closes the round as changes
+-- requested, never approved, so the rule doesn't complete it.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  rid uuid;
+begin
+  insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions)
+  values ((select id from b7t1_ids where name = 'a'), 'Done on any decision', true, 'approval_decided', '{}', '[{"type": "complete_task"}]')
+  returning id into rid;
+  insert into b7t1_ids values ('any_rule', rid);
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 'fc')
+  and approver_id = 'b7b70029-0000-4000-8000-000000000003' and status = 'pending'), 'approved', 'Fine by me');
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000004', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 'fc')
+  and approver_id = 'b7b70029-0000-4000-8000-000000000004' and status = 'pending'), 'changes_requested', 'Wrong size');
+reset role;
+
+do $$
+declare
+  fc uuid := (select id from b7t1_ids where name = 'fc');
+  run public.rule_runs;
+begin
+  assert public.task_approval_state(fc) ->> 'status' = 'changes_requested', 'the round closed as changes requested';
+  assert not public.approval_round_approved(fc), 'not approved';
+  select * into run from public.rule_runs
+  where rule_id = (select id from b7t1_ids where name = 'any_rule') and task_id = fc order by created_at desc limit 1;
+  assert found and run.detail -> 'event' ->> 'status' = 'changes_requested', 'the rule ran for the request for changes: ' || coalesce(run.detail::text, '');
+  assert run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped', 'and skipped its Mark complete: ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = fc) is null, 'the task stays open';
+end $$;
+
+-- Without More steps the round completes the task anyway; the rule running first changes nothing.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  fd uuid;
+begin
+  fd := public.create_task((select id from b7t1_ids where name = 'a'), (select id from b7t1_ids where name = 'sa'), 'Flyer approval');
+  insert into b7t1_ids values ('fd', fd);
+  update public.tasks set kind = 'approval', assignee_id = 'b7b70029-0000-4000-8000-000000000002' where id = fd;
+  perform public.set_task_approvers(fd, array['b7b70029-0000-4000-8000-000000000003'::uuid], 'any', null);
+  perform public.send_for_approval(fd, 'Flyer, final', '{}', false, 'complete', null);
+end $$;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000003', false) is not null as ok \gset
+select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 'fd')
+  and approver_id = 'b7b70029-0000-4000-8000-000000000003' and status = 'pending'), 'approved', null);
+reset role;
+do $$
+begin
+  assert (select completed_at from public.tasks where id = (select id from b7t1_ids where name = 'fd')) is not null, 'completed';
+  assert public.task_approval_state((select id from b7t1_ids where name = 'fd')) ->> 'status' = 'approved', 'approved';
+  update public.rules set enabled = false where id in ((select id from b7t1_ids where name = 'approved_rule'), (select id from b7t1_ids where name = 'any_rule'));
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- 52 (review fixes): an approver lowered to Viewer can't decide (decide_approval needs Commenter), so
+-- nothing says the approval waits on them: rows (task_approval_state, project_task_cards) and the
+-- "Waiting on me" view filter. Back to Commenter, it waits on them again.
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  fe uuid;
+begin
+  fe := public.create_task((select id from b7t1_ids where name = 'a'), (select id from b7t1_ids where name = 'sa'), 'Mailer approval');
+  insert into b7t1_ids values ('fe', fe);
+  update public.tasks set kind = 'approval', assignee_id = 'b7b70029-0000-4000-8000-000000000002' where id = fe;
+  perform public.set_task_approvers(fe, array['b7b70029-0000-4000-8000-000000000004'::uuid], 'any', null);
+  perform public.send_for_approval(fe, 'Mailer, final', '{}', false, 'complete', null);
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000004', false) is not null as ok \gset
+do $$
+declare
+  fe uuid := (select id from b7t1_ids where name = 'fe');
+begin
+  assert (public.task_approval_state(fe) ->> 'waiting_on_me')::boolean, 'Cole (Commenter) is waited on';
+  assert (public.project_task_cards((select id from b7t1_ids where name = 'a'), array[fe]) -> 0 ->> 'approval_waiting_on_me')::boolean,
+    'his cards say so';
+  assert public.approval_filter_matches(fe, 'approval', '["waiting_on_me"]'), 'the view filter finds it';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+select public.update_project_member_role((select id from b7t1_ids where name = 'a'), 'b7b70029-0000-4000-8000-000000000004', 'viewer');
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000004', false) is not null as ok \gset
+do $$
+declare
+  fe uuid := (select id from b7t1_ids where name = 'fe');
+  state jsonb := public.task_approval_state(fe);
+  card jsonb := public.project_task_cards((select id from b7t1_ids where name = 'a'), array[fe]) -> 0;
+begin
+  assert state ->> 'status' = 'pending' and (state ->> 'is_approver')::boolean, 'still a pending round he approves';
+  assert not (state ->> 'waiting_on_me')::boolean, 'a Viewer isn''t waited on: ' || state::text;
+  assert not (card ->> 'approval_waiting_on_me')::boolean, 'nor on his cards: ' || card::text;
+  assert (card ->> 'approval_is_approver')::boolean, 'he''s still listed as an approver';
+  assert not public.approval_filter_matches(fe, 'approval', '["waiting_on_me"]'), 'nor in the view filter';
+  begin
+    perform public.decide_approval((select id from public.approval_requests where task_id = fe
+      and approver_id = 'b7b70029-0000-4000-8000-000000000004' and status = 'pending'), 'approved', null);
+    raise exception 'a Viewer can''t decide';
+  exception when insufficient_privilege or check_violation then null;
+  end;
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000001', false) is not null as ok \gset
+select public.update_project_member_role((select id from b7t1_ids where name = 'a'), 'b7b70029-0000-4000-8000-000000000004', 'commenter');
+
+select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000004', false) is not null as ok \gset
+do $$
+declare
+  fe uuid := (select id from b7t1_ids where name = 'fe');
+begin
+  assert (public.task_approval_state(fe) ->> 'waiting_on_me')::boolean, 'a Commenter again: waited on again';
+  assert (public.project_task_cards((select id from b7t1_ids where name = 'a'), array[fe]) -> 0 ->> 'approval_waiting_on_me')::boolean;
+  assert public.approval_filter_matches(fe, 'approval', '["waiting_on_me"]');
+end $$;
+reset role;
+
 
 -- =================================================================================================
 -- Track T2: 47 select options, 54 colors, 49 number symbol, 48 long text

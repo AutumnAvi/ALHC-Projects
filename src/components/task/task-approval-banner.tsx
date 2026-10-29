@@ -18,6 +18,7 @@ import {
   setTaskApprovers,
   withdrawApproval,
 } from "@/lib/actions";
+import { cantDecideMessage, cantSendMessage } from "@/lib/approval-complete";
 import type { ApprovalRound, Profile, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/data";
 import { formatDueDate, useToday } from "@/lib/dates";
 import { taskPermissions } from "@/lib/permissions";
@@ -186,6 +187,12 @@ function ApprovalPanel({
     ? (latest?.requests.find((r) => r.approverId === memberId && r.status === "pending") ?? null)
     : null;
   const canDecide = Boolean(myRequest) && perms.canComment;
+  // Approve from a row that can't be decided here: still asked but below Commenter now (e.g. lowered to
+  // Viewer; decide_approval refuses), or no longer asked.
+  const decideRefusal = cantDecideMessage(Boolean(myRequest));
+  // Ready for approval from someone who can't send it: the assignee below Commenter (approval_can_act) is
+  // told it's their role, never "Only you or an Editor…".
+  const sendRefusal = cantSendMessage(task.assigneeId === memberId, assigneeName);
   const eligible = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter") || settings.approverIds.includes(p.id));
   const approvers = settings.approverIds.map((id) => ({ id, profile: profilesById.get(id) ?? null }));
   const approverNames = approvers.map((a) => nameOf(a.id));
@@ -202,8 +209,8 @@ function ApprovalPanel({
   useApprovalActionListener(task.id, (action) => {
     sectionRef.current?.scrollIntoView?.({ block: "nearest" });
     if (action === "decide") {
-      if (canDecide) setDecision({ choice: "approved", nonce: Date.now() });
-      else notify("Your decision on this approval isn’t open anymore");
+      if (canDecide) setDecision((current) => ({ choice: "approved", nonce: (current?.nonce ?? 0) + 1 }));
+      else notify(decideRefusal);
       return;
     }
     if (canSend && settings.approverIds.length > 0) {
@@ -216,7 +223,7 @@ function ApprovalPanel({
     } else if (roundOpen) {
       notify("It’s already waiting for approval");
     } else if (!canAct) {
-      notify(`Only ${assigneeName} or an Editor can send it for approval`);
+      notify(sendRefusal);
     }
   });
 

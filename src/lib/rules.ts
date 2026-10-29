@@ -102,7 +102,7 @@ export const ACTIONS = [
   { value: "call_webhook", label: "Call webhook", group: "Integrations", description: "POSTs a JSON summary of the task to an https:// address.", keywords: ["api", "zapier", "make", "http"] },
   { value: "delay", label: "Wait, then continue", group: "Flow", description: "Pauses for some hours, then runs the remaining actions.", keywords: ["delay", "later", "pause", "hours"] },
   // Automations V2.
-  { value: "complete_task", label: "Mark complete", group: "Task", description: "Completes the task. Approval tasks are skipped: only their approvers complete them.", keywords: ["done", "finish", "close"] },
+  { value: "complete_task", label: "Mark complete", group: "Task", description: "Completes the task. Approval tasks are skipped until they’re approved.", keywords: ["done", "finish", "close"] },
   { value: "reopen_task", label: "Mark incomplete", group: "Task", description: "Reopens a completed task.", keywords: ["reopen", "undo", "incomplete"] },
   { value: "set_title", label: "Rename task", group: "Task", description: "Changes the task's name (placeholders work here).", keywords: ["title", "name", "prefix"] },
   { value: "create_subtasks", label: "Create subtasks", group: "Task", description: "Adds a checklist of subtasks, optionally assigned.", keywords: ["checklist", "steps", "children", "todo"] },

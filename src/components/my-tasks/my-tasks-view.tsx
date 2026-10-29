@@ -1230,12 +1230,13 @@ function MyTaskRow({
         onToggle={() => onToggleExpanded?.()}
         className="-mr-1"
       />
-      {/* My tasks are assigned to the viewer: an approval task they don't approve is theirs to send. */}
+      {/* My tasks are assigned to the viewer: an approval task they don't approve is theirs to send —
+          with Commenter+ (approval_can_act); a Viewer assignee gets the read-only mark. */}
       <RowCompleteControl
         task={task}
         completed={done}
         readOnly={!task.canEdit}
-        assignedToMe
+        assignedToMe={task.canComment ?? task.canEdit}
         blocked={blocked}
         seed={seedThis}
         onToggle={() => onToggle(task)}

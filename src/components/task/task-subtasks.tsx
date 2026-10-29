@@ -261,7 +261,7 @@ export function TaskSubtasks({
                     task={subtask}
                     completed={completed}
                     readOnly={!canEdit}
-                    assignedToMe={Boolean(me) && subtask.assigneeId === me}
+                    assignedToMe={Boolean(me) && subtask.assigneeId === me && taskPermissions(task).canComment}
                     seed={() => subtaskSeed(subtask)}
                     onToggle={() =>
                       run(

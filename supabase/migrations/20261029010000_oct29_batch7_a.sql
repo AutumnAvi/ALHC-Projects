@@ -100,6 +100,14 @@ revoke all on function public.alhc_patch_function(regprocedure, text[]) from pub
 
 -- Whether the task's latest approval round is approved (the approval has been given). Invoker: the guard
 -- runs as the person (an Editor reads the task's rounds through RLS); definer callers read every round.
+--
+-- Also true for a pending round whose requests already meet settle_approval_round's approve condition:
+-- an approved request, none that requested changes or rejected (those close the round as such), and
+-- either "Any one can approve" or no request still pending. That state exists only inside the decision's
+-- own statement: approval_decided rules run from approval_requests_after_status, which fires before
+-- approval_requests_zz_round settles the round, so a rule "When an approval is decided → Mark complete"
+-- sees the round still pending. Every other path settles the round in the same statement that makes
+-- the condition true (settle_approval_round, set_task_approvers), so nobody else ever sees it.
 create or replace function public.approval_round_approved(target_task uuid)
 returns boolean
 language sql
@@ -108,6 +116,19 @@ set search_path = ''
 as $$
   select coalesce((
     select r.status = 'approved'
+        or (r.status = 'pending'
+            and exists (
+              select 1 from public.approval_requests q
+              where q.round_id = r.id and q.status = 'approved' and q.deleted_at is null
+            )
+            and not exists (
+              select 1 from public.approval_requests q
+              where q.round_id = r.id and q.status in ('changes_requested', 'rejected') and q.deleted_at is null
+            )
+            and (r.mode = 'any' or not exists (
+              select 1 from public.approval_requests q
+              where q.round_id = r.id and q.status = 'pending' and q.deleted_at is null
+            )))
     from public.approval_rounds r
     where r.task_id = target_task
     order by r.round_number desc
@@ -295,6 +316,34 @@ $$;
 revoke all on function public.task_approval_states(uuid[]) from public, anon;
 grant execute on function public.task_approval_states(uuid[]) to authenticated;
 select public.alhc_revoke_anon_execute(array['task_approval_states(uuid[])']);
+
+-- "Waiting on me" needs the right to decide: decide_approval refuses an approver below Commenter (e.g.
+-- lowered to Viewer while their request is pending), so their rows don't offer Approve and the task
+-- leaves "Waiting on me to approve" and the view filter. has_task_role reads the caller (auth.uid()),
+-- also inside the definer project_task_cards; an archived project counts as Viewer, as it does there.
+select public.alhc_patch_function(
+  'public.task_approval_state(uuid)'::regprocedure,
+  $old$ and q.deleted_at is null
+    ), false),$old$,
+  $new$ and q.deleted_at is null
+    ) and public.has_task_role(target_task, 'commenter'), false),$new$
+);
+
+select public.alhc_patch_function(
+  'public.project_task_cards(uuid,uuid[])'::regprocedure,
+  $old$ and q.deleted_at is null
+           ), false) as waiting_on_me,$old$,
+  $new$ and q.deleted_at is null
+           ) and public.has_task_role(m.task_id, 'commenter'), false) as waiting_on_me,$new$
+);
+
+select public.alhc_patch_function(
+  'public.approval_filter_matches(uuid,text,jsonb)'::regprocedure,
+  $old$        and (q.round_id is null or r.status = 'pending')
+    ))$old$,
+  $new$        and (q.round_id is null or r.status = 'pending')
+    ) and public.has_task_role(target_task, 'commenter'))$new$
+);
 
 
 -- =================================================================================================
