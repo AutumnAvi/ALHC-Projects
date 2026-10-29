@@ -14,6 +14,8 @@
 --     everywhere (format_number_value(); task_field_text and rule_field_value_label use it, so Inbox
 --     field changes, notification emails, and rule placeholders / emails / run logs show "$1,250").
 --     The stored value stays a plain number. Templates and Duplicate project keep the symbol.
+-- 48. Long text editor: app only (the pop-out editor counts against validate_task_field_value()'s
+--     10,000-character limit for text values; suite zz36 pins that limit). Nothing here.
 --
 -- No row-removal or object-removal keywords anywhere in this file (the hosted connector refuses them).
 -- Additive: no tail.

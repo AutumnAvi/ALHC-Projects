@@ -63,6 +63,7 @@ import {
   type FieldOption,
   type LibraryField,
 } from "@/lib/fields";
+import { MAX_TEXT_FIELD_LENGTH, textLength } from "@/lib/long-text";
 import {
   isChoice,
   isQuestionType,
@@ -3034,6 +3035,10 @@ export async function setFieldValue(
   value: Json,
 ): Promise<ActionResult> {
   return run(async () => {
+    // A text field's limit (item 48; the database checks it too): no other value is a string this long.
+    if (typeof value === "string" && textLength(value) > MAX_TEXT_FIELD_LENGTH) {
+      throw new InputError(`Text fields hold up to ${MAX_TEXT_FIELD_LENGTH.toLocaleString("en-US")} characters`);
+    }
     const supabase = await createClient();
     check(
       await supabase.from("task_field_values").upsert(

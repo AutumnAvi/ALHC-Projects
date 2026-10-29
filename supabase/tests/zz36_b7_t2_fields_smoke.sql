@@ -634,4 +634,53 @@ begin
   assert exists (select 1 from pg_trigger where tgname = 'portfolio_fields_08_number_prefix' and not tgisinternal), 'portfolio trigger';
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- 48. Long text editor (app only): the limit the editor counts against — a text value holds 10,000
+-- characters as Postgres counts them (code points, so an emoji is one), and keeps its line breaks.
+-- ---------------------------------------------------------------------------------------------
+
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7f_ids where name = 'a');
+  f uuid;
+  t uuid;
+  multi text := E'Line one\nLine two\n\n  Indented line four';
+begin
+  insert into public.custom_fields (project_id, name, field_type) values (a, 'Brief B7F', 'text') returning id into f;
+  t := public.create_task(a, null, 'B7F long brief');
+
+  insert into public.task_field_values (task_id, field_id, value) values (t, f, to_jsonb(repeat('a', 10000)));
+  assert length((select value #>> '{}' from public.task_field_values where task_id = t and field_id = f)) = 10000,
+    'exactly 10,000 characters fit';
+  begin
+    update public.task_field_values set value = to_jsonb(repeat('a', 10001)) where task_id = t and field_id = f;
+    raise exception 'a text value of 10,001 characters must be refused';
+  exception when check_violation then null;
+  end;
+  assert length((select value #>> '{}' from public.task_field_values where task_id = t and field_id = f)) = 10000,
+    'the refused write changed nothing';
+
+  -- Line breaks (and inner spaces) are stored as written; the editor trims only the ends.
+  update public.task_field_values set value = to_jsonb(multi) where task_id = t and field_id = f;
+  assert (select value #>> '{}' from public.task_field_values where task_id = t and field_id = f) = multi,
+    'line breaks are kept';
+
+  -- Characters, not UTF-16 units or bytes: 10,000 emoji fit (where the database is UTF-8, as hosted).
+  if current_setting('server_encoding') = 'UTF8' then
+    update public.task_field_values set value = to_jsonb(repeat(chr(128512), 10000)) where task_id = t and field_id = f;
+    assert length((select value #>> '{}' from public.task_field_values where task_id = t and field_id = f)) = 10000,
+      '10,000 emoji are 10,000 characters';
+    begin
+      update public.task_field_values set value = to_jsonb(repeat(chr(128512), 10001)) where task_id = t and field_id = f;
+      raise exception '10,001 emoji must be refused';
+    exception when check_violation then null;
+    end;
+  end if;
+
+  -- Clearing (the editor saves JSON null for an emptied box).
+  update public.task_field_values set value = 'null'::jsonb where task_id = t and field_id = f;
+  assert (select value from public.task_field_values where task_id = t and field_id = f) is null, 'cleared';
+end $$;
+
 do $$ begin raise notice 'Oct 29 batch 7 fields (T2) smoke: all assertions passed'; end $$;
