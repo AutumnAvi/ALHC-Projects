@@ -17,7 +17,9 @@ import {
   isReviewStatus,
   isReviewToken,
   parseReviewFiles,
+  parseRoundProject,
   type ReviewPin,
+  type RoundProject,
   type TaskReviewRound,
 } from "@/lib/review-checks";
 import { reviewUrls, renderReviewEmail } from "@/lib/review-email";
@@ -61,6 +63,10 @@ async function emailRound(
     recipientName: string | null;
     message: string | null;
     expiresAt: Date;
+    // The round's project as the database chose it (create_review_check / rotate_review_check_token: its
+    // form's project, else the first of the task's projects, each only when the sender can read it). The
+    // review page names the same one.
+    project: RoundProject | null;
   },
   assetIds: { assetId: string; attachmentId: string }[],
 ): Promise<{ emailed: boolean; link?: string }> {
@@ -77,38 +83,28 @@ async function emailRound(
         .in("id", assetIds.map((a) => a.attachmentId)),
     ]);
     const rootId = task.data?.root_task_id ?? taskId;
-    // The request's project (Oct 29 notes, 55b: no home project): its form's project when it came from a
-    // form, else the first project the task was added to that the sender can read (the stable rule).
-    const [form, firstProject] = await Promise.all([
-      supabase
-        .from("form_submissions")
-        .select("form_id")
-        .eq("task_id", rootId)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      supabase
-        .from("task_projects")
-        .select("project_id, project:projects!inner(deleted_at)")
-        .eq("task_id", rootId)
-        .is("deleted_at", null)
-        .is("project.deleted_at", null)
-        .order("created_at")
-        .order("project_id")
-        .limit(1)
-        .maybeSingle(),
-    ]);
+    // The request's project (Oct 29 notes, 55b: no home project) is the one the database chose for this
+    // round with the sender's access, so the email and the review page name the same project. Its form's
+    // design applies when that project is the form's.
+    const projectId = review.project?.id ?? null;
+    const form = projectId
+      ? await supabase
+          .from("form_submissions")
+          .select("form_id")
+          .eq("task_id", rootId)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : { data: null };
     const formProject = form.data?.form_id
       ? (await supabase.from("forms").select("project_id").eq("id", form.data.form_id).maybeSingle()).data?.project_id
       : null;
-    const projectId = formProject ?? firstProject.data?.project_id ?? null;
-    const project = projectId ? await supabase.from("projects").select("name").eq("id", projectId).maybeSingle() : { data: null };
     const design = projectId
       ? await supabase.rpc("resolve_email_design", {
           design_kind: "requester",
           target_project: projectId,
-          target_form: form.data?.form_id ?? undefined,
+          target_form: formProject === projectId ? (form.data?.form_id ?? undefined) : undefined,
         })
       : { data: null };
     const byId = new Map((attachments.data ?? []).map((a) => [a.id, a] as const));
@@ -135,7 +131,7 @@ async function emailRound(
       recipientName: review.recipientName,
       senderName: sender.data?.full_name?.trim() || sender.data?.email || "Someone",
       taskTitle: task.data?.title ?? "A request",
-      projectName: project.data?.name ?? null,
+      projectName: review.project?.name ?? null,
       message: review.message,
       assets: assetIds.flatMap(({ assetId, attachmentId }) => {
         const a = byId.get(attachmentId);
@@ -200,6 +196,7 @@ export async function sendReviewCheck(input: {
       recipientName: input.recipientName?.trim() || null,
       message,
       expiresAt: expiryOf(created.expires_at),
+      project: parseRoundProject(created),
     },
     await roundAssets(supabase, created.id),
   );
@@ -236,6 +233,7 @@ export async function resendReviewCheck(reviewId: string): Promise<SendReviewRes
       recipientName: review.recipient_name,
       message: review.message,
       expiresAt: expiryOf(rotated?.expires_at),
+      project: parseRoundProject(rotated),
     },
     await roundAssets(supabase, reviewId),
   );

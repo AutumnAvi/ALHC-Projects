@@ -3170,6 +3170,9 @@ export type Database = {
           draft_saves: number;
           draft_window_started_at: string | null;
           walkthrough_seen_at: string | null;
+          // Oct 29 notes (55b): the project its email and page name (chosen with the sender's access).
+          // Not client-readable: create_review_check / rotate_review_check_token return it.
+          project_id: string | null;
           created_by: string;
           created_at: string;
           updated_at: string;

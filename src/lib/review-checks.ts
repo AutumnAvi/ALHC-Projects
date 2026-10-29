@@ -157,6 +157,20 @@ const obj = (v: unknown): Record<string, unknown> | null =>
 const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
+/**
+ * A round's project (Oct 29 notes, 55b): the one create_review_check / rotate_review_check_token chose
+ * with the sender's access and returned ({ project_id, project_name }); its email and its page both name
+ * it. Null when there is none (a private task, or a database without this release).
+ */
+export type RoundProject = { id: string; name: string };
+
+export function parseRoundProject(value: unknown): RoundProject | null {
+  const o = obj(value);
+  const id = str(o?.project_id);
+  const name = str(o?.project_name);
+  return id && name ? { id, name } : null;
+}
+
 export function parseReviewFiles(value: unknown): ReviewFile[] {
   return (Array.isArray(value) ? value : []).flatMap((item) => {
     const o = obj(item);

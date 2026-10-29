@@ -67,10 +67,12 @@ export function TaskNumberBadge({
 
 // "inline": inside a link or a list option, where nothing else may take focus. "+N" shows the list on
 // hover; while the link has keyboard focus the other numbers are spelled out next to it; screen readers
-// hear them all as part of the link. "inline-quiet": the same without spelling them out (a list option or
-// a calendar bar, whose own tooltip carries the list). "button": a real button — hover, focus, or tap
-// shows the list.
-export type MoreMode = "inline" | "inline-quiet" | "button";
+// hear them all as part of the link. "inline-selected": the same inside a listbox option that never takes
+// focus itself (the search palette: focus stays in its input, aria-activedescendant) — the numbers are
+// spelled out while the option is the highlighted one (aria-selected), so arrowing to a result shows them.
+// "inline-quiet": the same without spelling them out (a calendar bar, whose own tooltip carries the list).
+// "button": a real button — hover, focus, or tap shows the list.
+export type MoreMode = "inline" | "inline-selected" | "inline-quiet" | "button";
 
 // The "+N" alone, for rows whose name already starts with the first number (My tasks, Home, the Inbox).
 export function MoreTaskNumbers({
@@ -103,13 +105,18 @@ function MoreNumbersPart({ more, numbers, mode, size }: { more: MoreNumbers; num
         data-more-numbers=""
         // Above a card's stretched-link overlay (the Inbox), so hovering it shows the list.
         className={`relative z-[1] rounded bg-zinc-100 px-1 font-medium text-zinc-500 ${size === "2xs" ? "py-px" : ""} ${
-          mode === "inline" ? "in-focus-visible:hidden" : ""
+          mode === "inline" ? "in-focus-visible:hidden" : mode === "inline-selected" ? "in-aria-selected:hidden" : ""
         }`}
       >
         {more.text}
       </span>
       {mode === "inline" ? (
         <span aria-hidden className="hidden in-focus-visible:inline">
+          · {more.others}
+        </span>
+      ) : mode === "inline-selected" ? (
+        // Hovering a result highlights it too, so the spelled-out numbers carry the list (with projects).
+        <span aria-hidden data-tooltip={more.list} className="hidden in-aria-selected:inline">
           · {more.others}
         </span>
       ) : null}

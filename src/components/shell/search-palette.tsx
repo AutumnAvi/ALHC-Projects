@@ -320,8 +320,9 @@ function taskItem(task: QuickTask, recent: boolean): Item {
           className={`size-4 shrink-0 ${task.completed ? "text-green-600" : "text-zinc-300"}`}
           aria-label={task.completed ? "Completed" : "Open"}
         />
-        {/* The first number and "+N" (the list on hover; screen readers hear every number). */}
-        <TaskNumberBadge label={task.label} numbers={task.numbers} more="inline-quiet" />
+        {/* The first number and "+N": the list on hover, every number spelled out while the result is the
+            highlighted one (arrow keys), and screen readers hear them all. */}
+        <TaskNumberBadge label={task.label} numbers={task.numbers} more="inline-selected" />
         <span className={`min-w-0 flex-1 truncate ${task.completed ? "text-zinc-400 line-through" : "text-zinc-900"}`}>
           {task.title}
         </span>

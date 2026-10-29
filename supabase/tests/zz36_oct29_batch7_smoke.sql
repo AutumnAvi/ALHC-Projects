@@ -4341,6 +4341,240 @@ begin
   end loop;
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- A membership's task and project never change (task_projects_01_fixed_keys). Moving a row would skip
+-- the last-project guard and the pointer's move, or pull someone else's task into your project. The app's
+-- "Add to projects" upsert, which sets both keys to the values they already have, still works.
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  insert into b7t4_ids values ('secret', public.create_task((select id from b7t4_ids where name = 'c'), null, 'Secret plan'));
+  update public.tasks set notes = 'only for C' where id = (select id from b7t4_ids where name = 'secret');
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+begin
+  insert into b7t4_ids values ('decoy', public.create_task((select id from b7t4_ids where name = 'a'),
+    (select id from b7t4_ids where name = 'sa'), 'Decoy'));
+end $$;
+do $$
+declare
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  d uuid := (select id from b7t4_ids where name = 'd');
+  secret uuid := (select id from b7t4_ids where name = 'secret');
+  decoy uuid := (select id from b7t4_ids where name = 'decoy');
+  msg text;
+begin
+  insert into public.task_projects (task_id, project_id, sort_order) values (decoy, b, 1024);
+  assert public.task_role(secret) is null and not exists (select 1 from public.tasks where id = secret),
+    'the editor can''t open the secret task';
+  -- Pointing A's row at the secret task (a uuid the editor knows) is refused …
+  begin
+    update public.task_projects set task_id = secret where task_id = decoy and project_id = a;
+    raise exception 'moving a membership to another task should have failed';
+  exception when insufficient_privilege then
+    get stacked diagnostics msg = message_text;
+  end;
+  assert msg = 'A task’s project membership can’t move to another task or project', msg;
+  assert public.task_role(secret) is null, 'no role on it';
+  assert not exists (select 1 from public.tasks where id = secret), 'still unreadable';
+  -- … and so is moving B's row to D (it would skip the last-project guard and the pointer's move).
+  begin
+    update public.task_projects set project_id = d where task_id = decoy and project_id = b;
+    raise exception 'moving a membership to another project should have failed';
+  exception when insufficient_privilege then
+    null;
+  end;
+  assert (select array_agg(project_id order by created_at) from public.task_projects
+          where task_id = decoy and deleted_at is null) = array[a, b], 'still in A and B';
+  assert not exists (select 1 from public.task_projects where task_id = decoy and project_id = d), 'never in D';
+  -- Add to projects (PostgREST's upsert sets every column it was sent, the keys included, to the same
+  -- values): adding the task back to B still works.
+  update public.task_projects set deleted_at = now() where task_id = decoy and project_id = b;
+  insert into public.task_projects (task_id, project_id, section_id, sort_order, deleted_at)
+  values (decoy, b, null, 4096, null)
+  on conflict (task_id, project_id) do update
+    set task_id = excluded.task_id, project_id = excluded.project_id, section_id = excluded.section_id,
+        sort_order = excluded.sort_order, deleted_at = excluded.deleted_at;
+  assert exists (select 1 from public.task_projects where task_id = decoy and project_id = b and deleted_at is null),
+    'back in B';
+end $$;
+
+reset role;
+do $$
+declare
+  secret uuid := (select id from b7t4_ids where name = 'secret');
+begin
+  assert (select array_agg(project_id) from public.task_projects where task_id = secret)
+         = array[(select id from b7t4_ids where name = 'c')], 'the secret task is only in C';
+  -- Nothing in the database moves a row either (the guard runs for everyone).
+  begin
+    update public.task_projects set project_id = (select id from b7t4_ids where name = 'a') where task_id = secret;
+    raise exception 'the system moving a membership should have failed too';
+  exception when insufficient_privilege then
+    null;
+  end;
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- A task whose other projects are all archived keeps its last active one: archived projects are
+-- read-only for everyone, so without it nobody could edit, complete, or trash the task.
+-- ---------------------------------------------------------------------------------------------
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  e uuid;
+  f uuid;
+  frozen uuid;
+  stuck uuid;
+begin
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'T4 E archived') returning id into e;
+  insert into public.projects (workspace_id, name) values ('00000000-0000-4000-8000-000000000001', 'T4 F archived') returning id into f;
+  frozen := public.create_task((select id from b7t4_ids where name = 'a'), (select id from b7t4_ids where name = 'sa'), 'Almost frozen');
+  insert into public.task_projects (task_id, project_id, sort_order) values (frozen, e, 1024);
+  stuck := public.create_task(e, null, 'Archived twice');
+  insert into public.task_projects (task_id, project_id, sort_order) values (stuck, f, 1024);
+  perform public.set_project_archived(e, true);
+  perform public.set_project_archived(f, true);
+  insert into b7t4_ids values ('e', e), ('f', f), ('frozen', frozen), ('stuck', stuck);
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  a uuid := (select id from b7t4_ids where name = 'a');
+  b uuid := (select id from b7t4_ids where name = 'b');
+  frozen uuid := (select id from b7t4_ids where name = 'frozen');
+  msg text;
+  detail text;
+begin
+  assert public.task_role(frozen) = 'editor', 'the editor edits it through A';
+  begin
+    update public.task_projects set deleted_at = now() where task_id = frozen and project_id = a;
+    raise exception 'removing the last project that isn''t archived should have failed';
+  exception when check_violation then
+    get stacked diagnostics msg = message_text, detail = pg_exception_detail;
+  end;
+  assert msg = 'This is the task’s only active project: its other projects are archived. Unarchive one or add the task to another project first, or move the task to the Trash.', msg;
+  assert detail = 'archived_only', detail;
+  assert exists (select 1 from public.task_projects where task_id = frozen and project_id = a and deleted_at is null), 'still in A';
+  assert public.task_role(frozen) = 'editor', 'and still editable';
+  -- With another active project it can go: the task stays editable there.
+  insert into public.task_projects (task_id, project_id, sort_order) values (frozen, b, 1024);
+  update public.task_projects set deleted_at = now() where task_id = frozen and project_id = a;
+  assert public.task_role(frozen) = 'editor', 'editable through B';
+end $$;
+
+reset role;
+do $$
+declare
+  e uuid := (select id from b7t4_ids where name = 'e');
+  f uuid := (select id from b7t4_ids where name = 'f');
+  stuck uuid := (select id from b7t4_ids where name = 'stuck');
+begin
+  -- An archived project's own membership (only the system removes one): nothing gets more frozen.
+  update public.task_projects set deleted_at = now() where task_id = stuck and project_id = e;
+  assert (select home_project_id from public.tasks where id = stuck) = f, 'the pointer moved to F';
+  -- Its last project is still its last project.
+  begin
+    update public.task_projects set deleted_at = now() where task_id = stuck and project_id = f;
+    raise exception 'removing the last project should have failed';
+  exception when check_violation then
+    null;
+  end;
+end $$;
+
+-- ---------------------------------------------------------------------------------------------
+-- A review link's page names the project its email named (review_checks.project_id, chosen with the
+-- sender's access when it was sent), never a project the sender can't read.
+-- ---------------------------------------------------------------------------------------------
+
+create temporary table b7t4_tokens (name text primary key, token text);
+grant all on b7t4_tokens to authenticated, anon;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  rv uuid := public.create_task((select id from b7t4_ids where name = 'c'), null, 'Review me');
+  att uuid;
+  result jsonb;
+begin
+  -- In C first (the editor can't open C), then A.
+  insert into public.task_projects (task_id, project_id, sort_order) values (rv, (select id from b7t4_ids where name = 'a'), 16384);
+  insert into public.task_attachments (task_id, storage_path, file_name, content_type, size_bytes)
+    values (rv, rv::text || '/one-a.png', 'a.png', 'image/png', 10) returning id into att;
+  insert into b7t4_ids values ('rv', rv), ('rv_att', att);
+  -- The owner sends one: the first project they can read is C.
+  result := public.create_review_check(rv, array[att], 'reviewer@example.org');
+  assert result ->> 'project_id' = (select id from b7t4_ids where name = 'c')::text, format('the owner''s: C %s', result);
+  assert result ->> 'project_name' = 'T4 C', 'named for the email';
+  insert into b7t4_ids values ('rv_owner', (result ->> 'id')::uuid);
+  insert into b7t4_tokens values ('owner', result ->> 'token');
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  rv uuid := (select id from b7t4_ids where name = 'rv');
+  result jsonb;
+begin
+  assert (select array_agg(project_id) from public.task_projects where task_id = rv and deleted_at is null)
+         = array[(select id from b7t4_ids where name = 'a')], 'the editor sees only A';
+  -- "Send again" by the editor, who can't open C: the round now names A (chosen as them).
+  result := public.rotate_review_check_token((select id from b7t4_ids where name = 'rv_owner'));
+  assert result ->> 'project_id' = (select id from b7t4_ids where name = 'a')::text, format('re-chosen: %s', result);
+  assert result ->> 'project_name' = 'T4 A', 'A';
+  insert into b7t4_tokens values ('rotated', result ->> 'token');
+  -- A new round sent by the editor names A, never C.
+  result := public.create_review_check(rv, array[(select id from b7t4_ids where name = 'rv_att')], 'reviewer@example.org');
+  assert result ->> 'project_name' = 'T4 A', format('the editor''s: A %s', result);
+  insert into b7t4_ids values ('rv_editor', (result ->> 'id')::uuid);
+  insert into b7t4_tokens values ('editor', result ->> 'token');
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  result jsonb := public.rotate_review_check_token((select id from b7t4_ids where name = 'rv_editor'));
+begin
+  -- The owner sends that one again: they can read A, so it keeps A.
+  assert result ->> 'project_name' = 'T4 A', format('kept: %s', result);
+  update b7t4_tokens set token = result ->> 'token' where name = 'editor';
+end $$;
+
+reset role;
+set role anon;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+do $$
+declare
+  view jsonb := public.review_check_view((select token from b7t4_tokens where name = 'editor'));
+begin
+  assert view ->> 'status' = 'ok', format('opens: %s', view);
+  assert view -> 'review' ->> 'project_name' = 'T4 A', format('the page names A, like its email: %s', view -> 'review');
+  -- The owner's round was replaced by the editor's (superseded): it shows nothing.
+  assert public.review_check_view((select token from b7t4_tokens where name = 'rotated')) ->> 'status' = 'superseded', 'superseded';
+end $$;
+
+-- A round sent before review_checks.project_id existed: chosen the same way, as its sender.
+reset role;
+update public.review_checks set project_id = null where id = (select id from b7t4_ids where name = 'rv_editor');
+set role anon;
+do $$
+begin
+  assert public.review_check_view((select token from b7t4_tokens where name = 'editor')) -> 'review' ->> 'project_name' = 'T4 A',
+    'an older round: the first project its sender (the editor) can read';
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
+
 -- =================================================================================================
 -- Cross-track checks (things no single track could test)
 -- =================================================================================================

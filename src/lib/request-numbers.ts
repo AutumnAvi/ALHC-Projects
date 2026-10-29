@@ -223,6 +223,42 @@ export function numbersOf(places: TaskPlace[]): TaskNumber[] {
 }
 
 /**
+ * A number and the project a badge names next to it ("A-4 · Website"), picked together so the name is
+ * always the project that issued the number (Oct 29 notes, 55b). `shown`: the project the row already
+ * stands for (a picker's group, a calendar bar's project), if any. Its own number when it numbers the
+ * task; else the first number the viewer can read, with that number's own project; else no number, and
+ * the shown project's name (without one: the first project's). Null projectId/name: nothing to name.
+ */
+export type PairedNumber = { label: RequestLabel | null; projectId: string | null; projectName: string | null };
+
+export function numberWithItsProject(
+  places: TaskPlace[] | null | undefined,
+  shown: { projectId: string; projectName: string } | null = null,
+): PairedNumber {
+  const list = places ?? [];
+  if (shown) {
+    const here = list.find((p) => p.projectId === shown.projectId && p.label);
+    if (here?.label) return { label: here.label, projectId: shown.projectId, projectName: shown.projectName };
+  }
+  const numbered = list.find((p) => p.label);
+  if (numbered?.label) return { label: numbered.label, projectId: numbered.projectId, projectName: numbered.projectName || null };
+  if (shown) return { label: null, projectId: shown.projectId, projectName: shown.projectName };
+  const first = list[0];
+  return first ? { label: null, projectId: first.projectId, projectName: first.projectName || null } : { label: null, projectId: null, projectName: null };
+}
+
+/**
+ * A task's numbers with one project's own number first (the rest keep the stable order), for a row that
+ * names that project: its badge shows that number and "+N" the others. Unchanged when that project doesn't
+ * number the task.
+ */
+export function numbersLedBy(numbers: TaskNumber[] | null | undefined, projectId: string | null): TaskNumber[] {
+  const list = numbers ?? [];
+  const own = projectId ? list.find((n) => n.projectId === projectId) : undefined;
+  return own ? [own, ...list.filter((n) => n !== own)] : list;
+}
+
+/**
  * What a tight spot shows (My tasks, Home, search, the Inbox, the team Calendar, emails): the first
  * number and how many more there are ("Req #1 +2"), plus every number for the hover / focus list
  * ("Req #1 (Launch)", "Design #14 (Website)").
