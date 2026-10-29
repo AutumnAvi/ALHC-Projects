@@ -239,4 +239,165 @@ begin
   assert exists (select 1 from pg_trigger where tgname = 'portfolio_fields_07_select_options' and not tgisinternal), 'portfolio trigger';
 end $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- 54. More option colors: one palette (option_colors()), tags keep a palette color in palette_color.
+-- ---------------------------------------------------------------------------------------------
+
+-- The palette and the nearest-base mapping.
+do $$
+declare
+  c text;
+  def text := (select pg_get_constraintdef(oid) from pg_constraint where conname = 'tags_palette_color_check');
+begin
+  assert cardinality(public.option_colors()) = 20, 'twenty colors';
+  assert (public.option_colors())[1:9] = array['zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'],
+    'the first nine are the original colors, in their order';
+  assert (select count(distinct x) from unnest(public.option_colors()) x) = 20, 'no repeats';
+  foreach c in array public.option_colors() loop
+    assert public.option_color_base(c) = any ((public.option_colors())[1:9]), c || ' maps to one of the first nine';
+    if c = any ((public.option_colors())[1:9]) then
+      assert public.option_color_base(c) = c, c || ' is its own base';
+    end if;
+    assert def like '%''' || c || '''%', 'the palette_color CHECK lists ' || c;
+  end loop;
+  assert (select count(*) from regexp_matches(def, '''[a-z]+''::text', 'g')) = 20, 'the CHECK lists only the palette';
+  assert public.option_color_base('rose') = 'red' and public.option_color_base('cyan') = 'teal'
+    and public.option_color_base('slate') = 'zinc' and public.option_color_base('yellow') = 'amber', 'nearest bases';
+  assert public.option_color_base('neon') = 'neon', 'an unknown color is left alone';
+end $$;
+
+-- Tags: any palette color, kept in palette_color with the nearest base in color.
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  c text;
+  g uuid;
+  n integer := 0;
+begin
+  -- The app's write: the picked color in palette_color, its base in color.
+  insert into public.tags (name, color, palette_color) values ('B7F Rose', 'red', 'rose') returning id into g;
+  assert (select (color, palette_color) = ('red', 'rose') from public.tags where id = g), 'rose kept, red as the base';
+  insert into b7f_ids values ('tag_rose', g);
+  -- A palette color sent in color (an older writer, ensure_tag) moves to palette_color.
+  insert into public.tags (name, color) values ('B7F Cyan', 'cyan') returning id into g;
+  assert (select (color, palette_color) = ('teal', 'cyan') from public.tags where id = g), 'cyan sent as color is kept';
+  -- A base color sent alone stays as it was.
+  insert into public.tags (name, color) values ('B7F Plain', 'blue') returning id into g;
+  assert (select color = 'blue' and palette_color is null from public.tags where id = g), 'a base color as before';
+  insert into b7f_ids values ('tag_plain', g);
+  -- Inconsistent pair: the palette color wins and color follows it.
+  insert into public.tags (name, color, palette_color) values ('B7F Odd', 'pink', 'lime') returning id into g;
+  assert (select (color, palette_color) = ('green', 'lime') from public.tags where id = g), 'color follows palette_color';
+
+  -- Every palette color can be picked.
+  foreach c in array public.option_colors() loop
+    n := n + 1;
+    insert into public.tags (name, color, palette_color) values ('B7F Swatch ' || n, public.option_color_base(c), c) returning id into g;
+    assert (select coalesce(palette_color, color) from public.tags where id = g) = c, c || ' reads back';
+  end loop;
+
+  -- Unknown colors are refused either way.
+  begin
+    insert into public.tags (name, color) values ('B7F Neon', 'neon');
+    raise exception 'an unknown color must be refused';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.tags (name, color, palette_color) values ('B7F Neon', 'zinc', 'neon');
+    raise exception 'an unknown palette color must be refused';
+  exception when check_violation then null;
+  end;
+end $$;
+
+do $$
+declare
+  rose uuid := (select id from b7f_ids where name = 'tag_rose');
+  plain uuid := (select id from b7f_ids where name = 'tag_plain');
+begin
+  -- Renaming keeps the color.
+  update public.tags set name = 'B7F Rose tag' where id = rose;
+  assert (select (color, palette_color) = ('red', 'rose') from public.tags where id = rose), 'rename keeps rose';
+  -- The app picks the base color the palette color was stored next to (red): it reads red.
+  update public.tags set color = 'red', palette_color = 'red' where id = rose;
+  assert (select coalesce(palette_color, color) from public.tags where id = rose) = 'red', 'red after rose';
+  update public.tags set color = 'violet', palette_color = 'indigo' where id = rose;
+  assert (select (color, palette_color) = ('violet', 'indigo') from public.tags where id = rose), 'indigo';
+  -- The release before this one changes only color: the palette color goes.
+  update public.tags set color = 'orange' where id = rose;
+  assert (select color = 'orange' and palette_color is null from public.tags where id = rose), 'an older writer''s color wins';
+  -- An older writer sending a palette name in color still works.
+  update public.tags set color = 'fuchsia' where id = plain;
+  assert (select (color, palette_color) = ('pink', 'fuchsia') from public.tags where id = plain), 'fuchsia sent as color';
+end $$;
+
+-- Someone who doesn't manage a tag can't recolor it (RLS, unchanged).
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  plain uuid := (select id from b7f_ids where name = 'tag_plain');
+  hit integer;
+begin
+  update public.tags set color = 'teal', palette_color = 'emerald' where id = plain;
+  get diagnostics hit = row_count;
+  assert hit = 0, 'not the creator nor a workspace admin: nothing changes';
+  assert (select palette_color from public.tags where id = plain) = 'fuchsia', 'still fuchsia';
+end $$;
+
+-- Tag stories carry the color people see; portfolio options take the whole palette.
+select set_config('request.jwt.claim.sub', 'b7f20029-0000-4000-8000-000000000002', false) is not null as ok \gset
+do $$
+declare
+  t uuid;
+begin
+  t := public.create_task((select id from b7f_ids where name = 'a'), null, 'B7F colored task');
+  insert into b7f_ids values ('t54', t);
+end $$;
+do $$
+declare
+  t uuid := (select id from b7f_ids where name = 't54');
+  plain uuid := (select id from b7f_ids where name = 'tag_plain');
+  p uuid := (select id from b7f_ids where name = 'p');
+begin
+  insert into public.task_tags (task_id, tag_id) values (t, plain);
+  assert (select data ->> 'tag_color' from public.task_stories where task_id = t and kind = 'tag_added'
+          order by created_at desc limit 1) = 'fuchsia', 'the tag_added story has the palette color';
+
+  insert into public.portfolio_fields (portfolio_id, name, field_type, options)
+  values (p, 'Mood', 'single_select', '[{"id": "m1", "name": "Calm", "color": "emerald"}, {"id": "m2", "name": "Bold", "color": "fuchsia"}]');
+  begin
+    insert into public.portfolio_fields (portfolio_id, name, field_type, options)
+    values (p, 'Bad mood', 'single_select', '[{"id": "x", "name": "X", "color": "neon"}]');
+    raise exception 'an unknown portfolio option color must be refused';
+  exception when check_violation then null;
+  end;
+  -- Project field options take palette colors too (never checked in SQL; the app reads them).
+  insert into public.custom_fields (project_id, name, field_type, options)
+  values ((select id from b7f_ids where name = 'a'), 'Mood', 'single_select', '[{"id": "m1", "name": "Calm", "color": "sky"}]');
+end $$;
+
+reset role;
+do $$
+declare
+  ws uuid := '00000000-0000-4000-8000-000000000001';
+  g uuid;
+begin
+  -- ensure_tag (the importer, the old Tags field migration) keeps a palette color; unknown → Gray.
+  g := public.ensure_tag(ws, 'B7F Imported', 'stone', 'b7f20029-0000-4000-8000-000000000001');
+  assert (select (color, palette_color) = ('zinc', 'stone') from public.tags where id = g), 'imported stone';
+  g := public.ensure_tag(ws, 'B7F Imported odd', 'neon', 'b7f20029-0000-4000-8000-000000000001');
+  assert (select color = 'zinc' and palette_color is null from public.tags where id = g), 'unknown becomes Gray';
+
+  -- Grants: the palette helpers are for signed-in people and the service role; the trigger for nobody.
+  assert not has_function_privilege('anon', 'public.option_colors()', 'execute'), 'anon: option_colors';
+  assert not has_function_privilege('anon', 'public.option_color_base(text)', 'execute'), 'anon: option_color_base';
+  assert has_function_privilege('authenticated', 'public.option_colors()', 'execute'), 'authenticated: option_colors';
+  assert has_function_privilege('authenticated', 'public.option_color_base(text)', 'execute'), 'authenticated: option_color_base';
+  assert not has_function_privilege('anon', 'public.guard_tag_palette_color()', 'execute'), 'anon: the tag trigger';
+  assert not has_function_privilege('authenticated', 'public.guard_tag_palette_color()', 'execute'), 'authenticated: the tag trigger';
+  assert has_column_privilege('authenticated', 'public.tags', 'palette_color', 'UPDATE'), 'tag managers recolor (RLS decides)';
+  assert not has_column_privilege('anon', 'public.tags', 'palette_color', 'SELECT'), 'anon reads nothing';
+  assert exists (select 1 from pg_trigger where tgname = 'tags_06_palette_color' and not tgisinternal), 'tag trigger';
+end $$;
+
 do $$ begin raise notice 'Oct 29 batch 7 fields (T2) smoke: all assertions passed'; end $$;

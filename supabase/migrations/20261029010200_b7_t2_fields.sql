@@ -6,6 +6,9 @@
 --     tables) checks client roles only, so system paths — imports, the copy engine (templates incl. the
 --     seeded Creative Requests example, whose select fields have no options, Duplicate project) — keep
 --     working, and a select field that already has no options can still be renamed or described.
+-- 54. More option colors: a 20-color palette (option_colors()) for field options, portfolio field
+--     options, and tags; tags keep the picked color in the new tags.palette_color and the nearest of
+--     the original nine in tags.color (whose CHECK can't be widened additively).
 --
 -- No row-removal or object-removal keywords anywhere in this file (the hosted connector refuses them).
 -- Additive: no tail.
@@ -92,3 +95,140 @@ create trigger custom_fields_07_select_options
 create trigger portfolio_fields_07_select_options
   before insert or update on public.portfolio_fields
   for each row execute function public.guard_select_field_options();
+
+-- ---------------------------------------------------------------------------------------------------
+-- 54. More option colors: one palette everywhere colors are picked (project field options, portfolio
+-- field options, tags). The palette grows from 9 to 20 colors; the first nine keep their names and order
+-- (the app cycles new options through the list). Mirrored by OPTION_COLORS in src/lib/fields.ts.
+--
+--   * public.option_colors(): the palette, the one SQL list. guard_portfolio_field (portfolio option
+--     colors) and ensure_tag (tags made by the importer / the old Tags field migration) now read it.
+--     Project field option colors were never checked in SQL (the app keeps unknown ones as Gray).
+--   * Tags: tags_color_check only knows the first nine and can't be widened without removing it, so the
+--     picked color lives in a new column, tags.palette_color (CHECK = the full palette, nullable), and
+--     `color` keeps the nearest of the nine (public.option_color_base(): nearest in OKLab at the 500
+--     shades) for readers that don't know the new column. The invoker trigger tags_06_palette_color keeps
+--     the two in step for every writer:
+--       - a palette color sent in `color` (ensure_tag, the importer) moves to palette_color;
+--       - palette_color set → color := its nearest base color;
+--       - a writer that changes only `color` (the release before this one) clears palette_color.
+--     A tag's color is coalesce(palette_color, color): the app reads it so, and tag stories store it.
+-- Additive: the release still on main writes and reads `color` as before.
+-- ---------------------------------------------------------------------------------------------------
+
+create or replace function public.option_colors()
+returns text[]
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select array[
+    'zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink',
+    'lime', 'emerald', 'cyan', 'sky', 'indigo', 'purple', 'fuchsia', 'rose', 'yellow', 'slate', 'stone'
+  ]::text[];
+$$;
+
+comment on function public.option_colors() is
+  'Oct 29 notes, item 54: every color people can pick for a field option or a tag (mirrors OPTION_COLORS in src/lib/fields.ts; the first nine are the original colors).';
+
+revoke all on function public.option_colors() from public, anon;
+grant execute on function public.option_colors() to authenticated, service_role;
+
+-- The nearest of the first nine colors (what tags.color can hold); a base or unknown color is returned
+-- as it is. Mirrors OPTION_BASE_COLOR in src/lib/fields.ts.
+create or replace function public.option_color_base(color text)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select case color
+    when 'lime' then 'green'
+    when 'emerald' then 'teal'
+    when 'cyan' then 'teal'
+    when 'sky' then 'blue'
+    when 'indigo' then 'violet'
+    when 'purple' then 'violet'
+    when 'fuchsia' then 'pink'
+    when 'rose' then 'red'
+    when 'yellow' then 'amber'
+    when 'slate' then 'zinc'
+    when 'stone' then 'zinc'
+    else color
+  end;
+$$;
+
+revoke all on function public.option_color_base(text) from public, anon;
+grant execute on function public.option_color_base(text) to authenticated, service_role;
+
+-- Portfolio single-select options accept the whole palette.
+select public.alhc_patch_function(
+  'public.guard_portfolio_field()'::regprocedure,
+  $old$or coalesce(o ->> 'color', '') not in ('zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink')$old$,
+  $new$or not (coalesce(o ->> 'color', '') = any (public.option_colors()))$new$
+);
+
+-- Tags made by the importer (and the one-time Tags field migration) keep a palette color.
+select public.alhc_patch_function(
+  'public.ensure_tag(uuid, text, text, uuid)'::regprocedure,
+  $old$case when tag_color in ('zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink')$old$,
+  $new$case when tag_color = any (public.option_colors())$new$
+);
+
+alter table public.tags add column palette_color text;
+
+alter table public.tags add constraint tags_palette_color_check check (
+  palette_color is null
+  or palette_color = any (array[
+    'zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink',
+    'lime', 'emerald', 'cyan', 'sky', 'indigo', 'purple', 'fuchsia', 'rose', 'yellow', 'slate', 'stone'
+  ]::text[])
+);
+
+comment on column public.tags.palette_color is
+  'Oct 29 notes, item 54: the color picked from the full palette (public.option_colors()); color then holds its nearest of the first nine. A tag''s color is coalesce(palette_color, color).';
+
+-- Tag managers (the update policy) recolor through it; inserts already have the table-level grant.
+grant update (palette_color) on public.tags to authenticated;
+
+create or replace function public.guard_tag_palette_color()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  -- A writer that only knows `color` (the release before this one) picked another color: it replaces
+  -- the palette color.
+  if tg_op = 'UPDATE'
+     and new.color is distinct from old.color
+     and new.palette_color is not distinct from old.palette_color then
+    new.palette_color := null;
+  end if;
+  -- A palette color sent in `color` (ensure_tag, the importer) moves to palette_color.
+  if new.color = any (public.option_colors()) and new.color <> public.option_color_base(new.color) then
+    new.palette_color := new.color;
+  end if;
+  -- `color` keeps the nearest of the first nine for readers that don't know palette_color. Unknown
+  -- colors are left for the CHECKs to refuse.
+  if new.palette_color = any (public.option_colors()) then
+    new.color := public.option_color_base(new.palette_color);
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.guard_tag_palette_color() from public, anon, authenticated;
+
+create trigger tags_06_palette_color
+  before insert or update on public.tags
+  for each row execute function public.guard_tag_palette_color();
+
+-- Tag stories carry the color people see.
+select public.alhc_patch_function(
+  'public.on_task_tag_story()'::regprocedure,
+  $old$select * into tag from public.tags t where t.id = new.tag_id;$old$,
+  $new$select * into tag from public.tags t where t.id = new.tag_id;
+  tag.color := coalesce(tag.palette_color, tag.color);$new$
+);

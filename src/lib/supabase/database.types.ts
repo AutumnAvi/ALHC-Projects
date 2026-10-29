@@ -4309,6 +4309,7 @@ export type Database = {
           workspace_id: string;
           name: string;
           color: string;
+          palette_color: string | null;
           archived_at: string | null;
           created_by: string | null;
           created_at: string;
@@ -4320,6 +4321,7 @@ export type Database = {
           workspace_id?: string;
           name: string;
           color?: string;
+          palette_color?: string | null;
           archived_at?: string | null;
           created_by?: string | null;
           created_at?: string;
@@ -4331,6 +4333,7 @@ export type Database = {
           workspace_id?: string;
           name?: string;
           color?: string;
+          palette_color?: string | null;
           archived_at?: string | null;
           created_by?: string | null;
           created_at?: string;

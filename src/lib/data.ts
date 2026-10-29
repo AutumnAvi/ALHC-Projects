@@ -1202,13 +1202,23 @@ async function loadReplyThread(supabase: Supabase, taskId: string): Promise<Task
 // ---------------------------------------------------------------------------------------------
 
 // Every tag of the workspace, archived ones included (they stay on tasks), by name.
+// A tag's color is coalesce(palette_color, color) (Oct 29 notes, item 54); a database without that
+// column still reads the nine colors it had.
 export const listTags = cache(async (): Promise<Tag[]> => {
   const supabase = await createClient();
   const result = await supabase
     .from("tags")
-    .select("id, name, color, archived_at, created_by")
+    .select("id, name, color, palette_color, archived_at, created_by")
     .is("deleted_at", null)
     .order("name");
+  if (isMissingColumn(result.error)) {
+    const older = await supabase
+      .from("tags")
+      .select("id, name, color, archived_at, created_by")
+      .is("deleted_at", null)
+      .order("name");
+    return rows(older, "tags").map(toTag);
+  }
   return rows(result, "tags").map(toTag);
 });
 

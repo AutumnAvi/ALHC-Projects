@@ -54,6 +54,7 @@ import {
 import {
   MAX_FIELD_DESCRIPTION,
   isFieldType,
+  isBaseOptionColor,
   isOptionColor,
   parseOptions,
   selectOptionsProblem,
@@ -92,7 +93,7 @@ import {
   type ShiftResult,
   type UndoResult,
 } from "@/lib/dependencies";
-import { MAX_TAG_NAME } from "@/lib/tags";
+import { MAX_TAG_NAME, tagColorColumns } from "@/lib/tags";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import {
   isDuplicateTaskOptionKey,
@@ -2427,16 +2428,25 @@ function tagError(result: DbResult) {
   check(result, "Only the tag’s creator or a workspace admin can change it");
 }
 
+// Oct 29 notes, item 54: a tag keeps the picked color in palette_color and the nearest of the first nine
+// in color (tagColorColumns). A database without palette_color (PGRST204) still takes the first nine.
+const TAG_COLOR_MISSING = "This color needs this release’s database update. Pick another color for now.";
+
 export async function createTag(name: string, color: string = "zinc"): Promise<ActionResult & { tagId?: string }> {
   let tagId: string | undefined;
   const outcome = await run(async () => {
     if (!isOptionColor(color)) throw new InputError("Unknown color");
     const supabase = await createClient();
-    const result = await supabase
+    const tagName = text(name, "Tag name", { max: MAX_TAG_NAME });
+    let result = await supabase
       .from("tags")
-      .insert({ name: text(name, "Tag name", { max: MAX_TAG_NAME }), color })
+      .insert({ name: tagName, ...tagColorColumns(color) })
       .select("id")
       .single();
+    if (result.error?.code === "PGRST204") {
+      if (!isBaseOptionColor(color)) throw new InputError(TAG_COLOR_MISSING);
+      result = await supabase.from("tags").insert({ name: tagName, color }).select("id").single();
+    }
     tagError(result);
     tagId = result.data?.id;
   });
@@ -2450,13 +2460,20 @@ export async function updateTag(
   return run(async () => {
     const update: TablesUpdate<"tags"> = {};
     if (patch.name !== undefined) update.name = text(patch.name, "Tag name", { max: MAX_TAG_NAME });
-    if (patch.color !== undefined) {
-      if (!isOptionColor(patch.color)) throw new InputError("Unknown color");
-      update.color = patch.color;
+    const color = patch.color;
+    if (color !== undefined) {
+      if (!isOptionColor(color)) throw new InputError("Unknown color");
+      Object.assign(update, tagColorColumns(color));
     }
     if (patch.archived !== undefined) update.archived_at = patch.archived ? now() : null;
     const supabase = await createClient();
-    const result = await supabase.from("tags").update(update).eq("id", id(tagId, "tag")).is("deleted_at", null).select("id");
+    const target = id(tagId, "tag");
+    let result = await supabase.from("tags").update(update).eq("id", target).is("deleted_at", null).select("id");
+    if (result.error?.code === "PGRST204" && color !== undefined) {
+      if (!isBaseOptionColor(color)) throw new InputError(TAG_COLOR_MISSING);
+      const older: TablesUpdate<"tags"> = { name: update.name, color, archived_at: update.archived_at };
+      result = await supabase.from("tags").update(older).eq("id", target).is("deleted_at", null).select("id");
+    }
     tagError(result);
     if (!result.data?.length) throw new InputError("Only the tag’s creator or a workspace admin can change it");
   });
