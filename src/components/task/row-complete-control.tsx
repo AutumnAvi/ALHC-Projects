@@ -21,10 +21,12 @@ export type RowCompleteTask = {
 // item 52). An approval task the viewer doesn't approve gets "Ready for approval" (opens the pane's send
 // flow), "Waiting for approval" while a round is pending, or "Approve" when their own decision is open;
 // otherwise a blocked task's lock (item 43) or the ordinary checkbox.
-//   readOnly    the viewer can't edit the task (Viewer / Commenter): a status mark — except Approve, which a
-//               Commenter approver can do, and Ready for approval when the task is assigned to them (the
-//               assignee sends it; approval_can_act)
-//   blocked     open blockers (0 = none)
+//   readOnly      the viewer can't edit the task (Viewer / Commenter): a status mark — except Approve (the
+//                 data only says a round waits on the viewer when they can decide it, Commenter+:
+//                 task_approval_state / project_task_cards), and Ready for approval when assignedToMe
+//   assignedToMe  the task is assigned to the viewer AND they can comment on it (Commenter+): the assignee
+//                 sends it (approval_can_act). Pass false for a Viewer assignee, who gets the mark
+//   blocked       open blockers (0 = none)
 export function RowCompleteControl({
   task,
   completed,

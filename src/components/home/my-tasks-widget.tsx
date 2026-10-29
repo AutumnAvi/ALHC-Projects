@@ -219,12 +219,13 @@ export function MyTasksWidget({
                     open ? "bg-accent-50/60" : "hover:bg-zinc-50"
                   }`}
                 >
-                  {/* Approval tasks: only their approvers tick them; the assignee sends them (Oct 29 notes, batch 7). */}
+                  {/* Approval tasks: only their approvers tick them; the assignee sends them with Commenter+
+                      (Oct 29 notes, batch 7) — a Viewer assignee gets the read-only mark. */}
                   <RowCompleteControl
                     task={task}
                     completed={done}
                     readOnly={!task.canEdit}
-                    assignedToMe
+                    assignedToMe={task.canComment ?? task.canEdit}
                     seed={seed}
                     onToggle={() => toggle(task)}
                   />

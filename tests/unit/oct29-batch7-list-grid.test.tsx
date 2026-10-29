@@ -11,10 +11,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 import {
+  FOCUS_REVEAL_GAP_PX,
   LIST_CELL,
   LIST_FILLER_TRACK,
   LIST_HEADER_ROW,
+  LIST_NAME_BADGES,
+  LIST_NAME_GROUP,
+  LIST_NAME_TAGS,
   LIST_PINNED_CELL,
+  LIST_ROW_SELECTOR,
   LIST_RESIZE_HANDLE,
   LIST_VIEW_WIDTH_VAR,
   NAME_COLUMN_ROOM,
@@ -27,6 +32,7 @@ import {
   listHeaderCellClass,
   listNameTrack,
   nameOffsetRem,
+  pinnedCoverPx,
   subtaskIndentRem,
   type ListWho,
 } from "@/components/project/list-grid";
@@ -266,7 +272,11 @@ test("the pinned Name cell: one position, one z-index, the same classes in the h
   assert.deepEqual(pinnedHeader.filter((t) => POSITIONS.includes(t)), ["sticky"], "exactly one position");
   assert.deepEqual(pinnedHeader.filter(isZ), ["z-[1]"], "exactly one z-index");
   assert.ok(tokens(LIST_PINNED_CELL).every((t) => pinnedHeader.includes(t)), "the header uses the rows' pinned cell as is");
-  for (const t of ["sticky", "left-0", "z-[1]", "overflow-hidden"]) assert.ok(tokens(LIST_PINNED_CELL).includes(t), t);
+  for (const t of ["sticky", "left-0", "z-[1]", "overflow-clip"]) assert.ok(tokens(LIST_PINNED_CELL).includes(t), t);
+  // REVIEW FIX: `overflow: hidden` (or auto / scroll) makes the cell a scroll container — focusing a
+  // clipped control scrolled the cell's own content sideways and that row's controls stayed out of line
+  // with the header. `overflow: clip` clips without scrolling.
+  assert.ok(!tokens(LIST_PINNED_CELL).some((t) => /^overflow-(?:hidden|auto|scroll|x-|y-)/.test(t)), "never a scroll container");
   assert.ok(!tokens(LIST_PINNED_CELL).some((t) => /^border-[rl]?$|^border-(?:r|l)-/.test(t)), "the divider isn't a border (it'd push the handle 1px in)");
   assert.ok(tokens(LIST_PINNED_CELL).includes("after:right-0") && tokens(LIST_PINNED_CELL).includes("after:w-px"), "a 1px divider on the last pixel");
 
@@ -377,8 +387,78 @@ test("a row's Name cell never spills into the next column: wide content is clipp
   const { taskRows } = renderList("editor", ["assignee", "due"], { task: 200 });
   const flyer = taskRows.find((row) => row.attrs["data-task-row"] === "t2")!;
   const name = flyer.children[0];
-  assert.ok(tokens(name).includes("overflow-hidden"), "the pinned cell clips at its track");
+  assert.ok(tokens(name).includes("overflow-clip"), "the pinned cell clips at its track");
   const tagWrap = all(name, (el) => (el.attrs["aria-label"] ?? "").startsWith("Tags:"))[0]?.parent;
   assert.ok(tagWrap, "inline tags (no Tags column)");
-  assert.ok(hasAll(tagWrap, "min-w-0 overflow-hidden"), "the tags shrink and clip before the open link does");
+  assert.equal(tagWrap.attrs.class, LIST_NAME_TAGS);
+  assert.ok(hasAll(tagWrap, "min-w-0 grow basis-0 overflow-clip"), "the tags only take what's left, and clip");
+});
+
+test("inside the Name cell the name keeps room: badges give way past ~4rem, the “>” never does", () => {
+  // Flex math the classes rely on: the group fills the cell between the leading controls and the ">";
+  // the badges keep their size (shrink-0) but never take more than the group less 5rem (max-width), so
+  // the name (min-w-0, truncates) keeps ~4rem; tags have no basis (they never push anything out).
+  assert.ok(hasAll({ tag: "span", attrs: { class: LIST_NAME_GROUP }, children: [], parent: null }, "flex min-w-0 flex-1"));
+  for (const t of ["shrink-0", "max-w-[calc(100%-5rem)]", "overflow-clip"]) assert.ok(tokens(LIST_NAME_BADGES).includes(t), t);
+  assert.ok(!tokens(LIST_NAME_BADGES).includes("overflow-hidden"), "clip, not a scroll container");
+
+  for (const { role, columns, widths } of cases) {
+    const { taskRows, subtaskRows } = renderList(role, columns, widths);
+    for (const row of [...taskRows, ...subtaskRows]) {
+      const name = row.children[0];
+      const group = name.children.find((el) => el.attrs.class === LIST_NAME_GROUP);
+      assert.ok(group, `${role}: the name group`);
+      const open = name.children[name.children.length - 1];
+      assert.ok((open.attrs["aria-label"] ?? "").startsWith("Open “"), "the “>” is the cell's last item, outside the group");
+      assert.ok(tokens(open).includes("shrink-0"), "and never gives way");
+      const title = group.children[0];
+      // Editors: the rename button; below Editor: the name's link to the task.
+      const isName = (title.tag === "button" && (title.attrs["aria-label"] ?? "").startsWith("Rename “")) || (title.tag === "a" && /[?&]task=/.test(title.attrs.href ?? ""));
+      assert.ok(isName, `the name comes first: ${title.tag} ${JSON.stringify(title.attrs)}`);
+      assert.ok(tokens(title).includes("min-w-0") && tokens(title).includes("truncate"), "the name truncates");
+      for (const badge of group.children.slice(1)) {
+        assert.ok([LIST_NAME_BADGES, LIST_NAME_TAGS].includes(badge.attrs.class ?? ""), `only badges and tags follow it: ${badge.attrs.class}`);
+      }
+    }
+    // Badges render only when there are some (an empty wrapper would still add a gap).
+    const plain = taskRows.find((row) => row.attrs["data-task-row"] === "t1")!;
+    assert.equal(all(plain, (el) => el.attrs.class === LIST_NAME_BADGES).length, 0, "t1 has no badges");
+    const busy = taskRows.find((row) => row.attrs["data-task-row"] === "t3")!;
+    const badges = all(busy, (el) => el.attrs.class === LIST_NAME_BADGES);
+    assert.equal(badges.length, 1, "t3's approval status and comments are in one badges wrapper");
+  }
+});
+
+test("keyboard focus under the pinned Name column scrolls the List back just enough (and never for pinned controls)", () => {
+  // A fake row: the pinned cell spans x 0..360; the control is wherever the List's scroll put it.
+  const pinnedBox = { left: 0, right: 360 };
+  const make = (left: number, inPinned = false, inRow = true) => {
+    const target = {
+      getBoundingClientRect: () => ({ left, right: left + 120 }),
+      closest: (selector: string) => {
+        assert.equal(selector, LIST_ROW_SELECTOR);
+        return inRow ? row : null;
+      },
+    };
+    const pinned = { contains: (node: unknown) => inPinned && node === target, getBoundingClientRect: () => pinnedBox };
+    const row = { firstElementChild: pinned };
+    return target;
+  };
+  assert.equal(pinnedCoverPx(make(88)), 360 - 88 + FOCUS_REVEAL_GAP_PX, "covered: scroll back by the overlap and a little");
+  assert.equal(pinnedCoverPx(make(359.5)), 1 + FOCUS_REVEAL_GAP_PX, "partly covered");
+  assert.equal(pinnedCoverPx(make(360)), 0, "already clear of it");
+  assert.equal(pinnedCoverPx(make(500)), 0);
+  assert.equal(pinnedCoverPx(make(40, true)), 0, "a control inside the Name cell is pinned: the List stays put");
+  assert.equal(pinnedCoverPx(make(40, false, false)), 0, "not in a List row (e.g. a section header)");
+
+  // The rows and the header match the selector, and each one's first cell is the pinned Name cell.
+  for (const { role, columns, widths } of cases) {
+    const { header, taskRows, subtaskRows } = renderList(role, columns, widths);
+    assert.ok("data-list-header" in header.attrs, "the header row is one of the List's rows");
+    for (const row of [header, ...taskRows, ...subtaskRows]) {
+      const attr = ["data-list-header", "data-task-row", "data-subtask-row"].find((a) => a in row.attrs);
+      assert.ok(attr && LIST_ROW_SELECTOR.includes(`[${attr}]`), "matched by LIST_ROW_SELECTOR");
+      assert.ok(hasAll(row.children[0], LIST_PINNED_CELL), "its first cell is the pinned one");
+    }
+  }
 });

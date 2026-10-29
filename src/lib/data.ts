@@ -2209,6 +2209,10 @@ export type MyTask = {
   // The viewer may edit it (task_role() ≥ Editor; editableTaskIds()). Being assigned only needs read
   // access, so a Viewer or Commenter sees the task without a checkbox or a clickable complete control.
   canEdit: boolean;
+  // The viewer may comment on it (task_role() ≥ Commenter; taskAccessSets()). An approval task's assignee
+  // sends it for approval with Commenter+ (approval_can_act), so a Viewer assignee gets a read-only mark
+  // (Oct 29 notes, batch 7). Missing: the same as canEdit.
+  canComment?: boolean;
   // Oct 27 notes (batch 6): open blockers (the completion check's count), direct subtasks (the row's
   // expand arrow), and an approval task's status.
   blockedBy?: number;
@@ -2253,7 +2257,7 @@ function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
 
 async function labelMyTasks(page: { open: MyTask[]; completed: MyTask[] }) {
   const ids = [...page.open, ...page.completed].map((task) => task.id);
-  const [numbers, editable, extras] = await Promise.all([visibleTaskNumbers(ids), editableTaskIds(ids), myTaskExtras(page.open)]);
+  const [numbers, access, extras] = await Promise.all([visibleTaskNumbers(ids), taskAccessSets(ids), myTaskExtras(page.open)]);
   const apply = (task: MyTask): MyTask => {
     const taskNumbers = numbers.get(task.id) ?? [];
     const label = taskNumbers[0]?.label ?? null;
@@ -2263,7 +2267,8 @@ async function labelMyTasks(page: { open: MyTask[]; completed: MyTask[] }) {
       requestLabel: label,
       taskNumbers,
       title: displayTaskTitle(task.title, label),
-      canEdit: editable.has(task.id),
+      canEdit: access.editable.has(task.id),
+      canComment: access.commentable.has(task.id),
     };
   };
   return { open: page.open.map(apply), completed: page.completed.map(apply) };
@@ -2357,11 +2362,19 @@ async function listMyTasksFromRows(profileId: string) {
 // listMyProjectRoles()); a private task is the
 // creator's and the assignee's to edit. Only hides controls: RLS decides every write.
 export async function editableTaskIds(taskIds: string[]): Promise<Set<string>> {
+  return (await taskAccessSets(taskIds)).editable;
+}
+
+// editableTaskIds() and, from the same roles, the tasks the viewer can comment on (Commenter+: decide an
+// approval they're asked for, send their own approval task; Oct 29 notes, batch 7).
+export async function taskAccessSets(taskIds: string[]): Promise<{ editable: Set<string>; commentable: Set<string> }> {
   const editable = new Set<string>();
+  const commentable = new Set<string>();
+  const access = { editable, commentable };
   const ids = [...new Set(taskIds)];
-  if (ids.length === 0) return editable;
+  if (ids.length === 0) return access;
   const { user } = await getViewer();
-  if (!user) return editable;
+  if (!user) return access;
   const supabase = await createClient();
   type Row = { id: string; root_task_id: string | null; home_project_id: string | null; created_by: string | null; assignee_id: string | null };
   const read = async (want: string[]) => {
@@ -2402,13 +2415,18 @@ export async function editableTaskIds(taskIds: string[]): Promise<Set<string>> {
     const root = byId.get(rootOf(task));
     if (!root) continue;
     if (root.home_project_id === null) {
-      if (root.created_by === user.id || root.assignee_id === user.id) editable.add(task.id);
+      if (root.created_by === user.id || root.assignee_id === user.id) {
+        editable.add(task.id);
+        commentable.add(task.id);
+      }
       continue;
     }
     const role = bestRole([root.home_project_id, ...(projectsOf.get(root.id) ?? [])].map((p) => roles.get(p)));
-    if (permissionsFor(role).canEdit) editable.add(task.id);
+    const permissions = permissionsFor(role);
+    if (permissions.canEdit) editable.add(task.id);
+    if (permissions.canComment) commentable.add(task.id);
   }
-  return editable;
+  return access;
 }
 
 // The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()
@@ -6957,12 +6975,14 @@ export const listAwaitingMyApproval = cache(async (): Promise<AwaitingApproval[]
   if (requests.error || !requests.data?.length) return [];
   const taskIds = [...new Set(requests.data.map((r) => r.task_id))];
   const roundIds = [...new Set(requests.data.map((r) => r.round_id).filter((r): r is string => Boolean(r)))];
-  const [tasks, rounds, places] = await Promise.all([
+  const [tasks, rounds, places, access] = await Promise.all([
     supabase.from("tasks").select("id, title, kind, due_on, completed_at").in("id", taskIds).is("deleted_at", null),
     roundIds.length
       ? supabase.from("approval_rounds").select("id, status, due_on, round_number").in("id", roundIds)
       : Promise.resolve({ data: [] as { id: string; status: string; due_on: string | null; round_number: number }[], error: null }),
     visibleTaskPlaces(taskIds),
+    // decide_approval needs Commenter+: an approver lowered to Viewer isn't waited on (Oct 29 notes, batch 7).
+    taskAccessSets(taskIds),
   ]);
   const taskById = new Map((tasks.data ?? []).map((t) => [t.id, t] as const));
   const roundById = new Map((rounds.data ?? []).map((r) => [r.id, r] as const));
@@ -6970,7 +6990,7 @@ export const listAwaitingMyApproval = cache(async (): Promise<AwaitingApproval[]
   const out: AwaitingApproval[] = [];
   for (const r of requests.data) {
     const task = taskById.get(r.task_id);
-    if (!task || seen.has(task.id)) continue;
+    if (!task || seen.has(task.id) || !access.commentable.has(task.id)) continue;
     const round = r.round_id ? roundById.get(r.round_id) : null;
     if (r.round_id && round?.status !== "pending") continue;
     seen.add(task.id);

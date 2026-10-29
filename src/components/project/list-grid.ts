@@ -13,7 +13,14 @@
 // - Tracks: `listGridTemplate()` — Name, the view's columns (fixed px, dragged to size), then a filler.
 //   The Name track never takes the whole view (listNameTrack), so no column is stuck behind it.
 // - The pinned Name cell (header and rows): LIST_PINNED_CELL — `sticky left-0`, the only z-index in a
-//   header or task row (`z-[1]`), a divider on its last pixel, and its content clipped to its track.
+//   header or task row (`z-[1]`), a divider on its last pixel, and its content clipped to its track with
+//   `overflow: clip` — never `hidden`, which makes the cell a scroll container: focusing a clipped control
+//   (or find-in-page) would scroll the cell's own content sideways, leaving that row's controls out of
+//   line with the header for good.
+// - Inside a row's Name cell the name keeps room (LIST_NAME_GROUP): badges and counts give way only past
+//   the name's ~4rem, inline tags first, and the ">" at the end never does.
+// - Keyboard focus on a control that has scrolled under the pinned Name column scrolls the List back just
+//   enough to show it (pinnedCoverPx; the List listens for focusin).
 // - Other header cells: `relative` (for the handle), no z-index. Row cells: LIST_CELL.
 // - Resize handles (LIST_RESIZE_HANDLE): inside their own cell at its right edge, no z-index, their
 //   line on the cell's last pixel (where the pinned cell's divider is). So nothing in another column can
@@ -59,7 +66,7 @@ export const LIST_CELL = "flex min-w-0 items-center px-2";
 // line on its last pixel (a pseudo-element, not a border: a border would push the resize handle's
 // `right-0` 1px in and draw a second line next to it in the header).
 export const LIST_PINNED_DIVIDER = "after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-zinc-200";
-export const LIST_PINNED_CELL = `${LIST_CELL} sticky left-0 z-[1] overflow-hidden ${LIST_PINNED_DIVIDER}`;
+export const LIST_PINNED_CELL = `${LIST_CELL} sticky left-0 z-[1] overflow-clip ${LIST_PINNED_DIVIDER}`;
 // What every header cell adds (height, room for the menu chevron before the resize handle, hover).
 const HEADER_CELL = "group/header h-8 gap-1 pr-2.5 hover:bg-zinc-50";
 
@@ -70,6 +77,44 @@ export function listHeaderCellClass(pinned: boolean): string {
 // A column's resize handle (8px wide, inside its cell) and its 1px line on the cell's last pixel.
 export const LIST_RESIZE_HANDLE =
   "absolute inset-y-1 right-0 w-2 cursor-col-resize touch-none rounded after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-zinc-200 hover:after:w-0.5 hover:after:bg-accent-400 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-500";
+
+// ---------------------------------------------------------------------------------------------
+// The name, its badges, and inline tags (between the leading controls and the ">")
+// ---------------------------------------------------------------------------------------------
+
+// Fills the Name cell between its leading controls and the ">" (which never gives way).
+export const LIST_NAME_GROUP = "flex min-w-0 flex-1 items-center gap-2";
+// Badges and counts keep their size, but never take the name's last ~4rem (5rem less the gaps): past
+// that they're clipped. So a busy row (an approval's "Changes requested · Paused", files, comments)
+// still shows its name and its ">".
+export const LIST_NAME_BADGES = "flex max-w-[calc(100%-5rem)] shrink-0 items-center gap-2 overflow-clip";
+// Inline tags (no Tags column) only take what the name and badges leave: they give way first.
+export const LIST_NAME_TAGS = "flex min-w-0 grow basis-0 overflow-clip";
+
+// ---------------------------------------------------------------------------------------------
+// Keyboard focus beside the pinned Name column
+// ---------------------------------------------------------------------------------------------
+
+// The header row and every row: their first cell is the pinned Name cell.
+export const LIST_ROW_SELECTOR = "[data-list-header],[data-task-row],[data-subtask-row]";
+// Room left between the pinned column's edge and a control it no longer covers.
+export const FOCUS_REVEAL_GAP_PX = 4;
+
+type Box = Pick<DOMRect, "left" | "right">;
+type FocusTarget = {
+  closest(selector: string): { firstElementChild: { contains(node: unknown): boolean; getBoundingClientRect(): Box } | null } | null;
+  getBoundingClientRect(): Box;
+};
+
+// How far (px) to scroll the List back so a focused control isn't under the pinned Name column: 0 for
+// controls inside the Name cell (they're pinned), outside a List row, or already clear of it. The browser
+// doesn't do this itself: a control behind a sticky cell is still "in view" to it.
+export function pinnedCoverPx(target: FocusTarget): number {
+  const pinned = target.closest(LIST_ROW_SELECTOR)?.firstElementChild;
+  if (!pinned || pinned.contains(target)) return 0;
+  const cover = pinned.getBoundingClientRect().right - target.getBoundingClientRect().left;
+  return cover > 0 ? Math.ceil(cover) + FOCUS_REVEAL_GAP_PX : 0;
+}
 
 // ---------------------------------------------------------------------------------------------
 // The Name cell's leading controls
