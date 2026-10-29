@@ -25,10 +25,17 @@
 --           links, labels, and emails follow the stable rule (the first project the task was added to);
 --           task_project_labels returns every number a viewer may read.
 --
--- New client SECURITY DEFINER functions (suite 60): add_library_field, project_field_sharing. Nothing new
--- for anon. After it's applied, the field library's linking step reports its counts in a NOTICE; read
--- the details with `select * from public.library_field_links;` and
--- `select * from public.library_field_link_conflicts;`.
+-- New client SECURITY DEFINER functions (suite 60): add_library_field, project_field_sharing,
+-- locked_field_value_writable. Nothing new for anon. After it's applied, the field library's linking
+-- step (the last statement) reports its counts in a NOTICE; read the details with
+-- `select * from public.library_field_links;` and `select * from public.library_field_link_conflicts;`.
+--
+-- Ordered for a chunked apply (the migration-applier commits this file a few statements at a time while
+-- the release on main keeps running): the new columns and tables come first, right below; each track
+-- then creates a function before anything that calls it, and changes a guard only after the paths it
+-- relies on are in place (rules skip approval tasks before the approval guard tightens; the pointer moves
+-- before the last-project guard lets its project go); the one-time linking of existing library copies
+-- is the very last statement. Nothing references a column, table, or function a later statement makes.
 --
 -- No row-removal or object-removal keywords anywhere in this file (the hosted connector refuses them).
 -- Additive: no tail.
@@ -61,6 +68,150 @@ end;
 $$;
 
 revoke all on function public.alhc_patch_function(regprocedure, text[]) from public, anon, authenticated;
+
+
+-- =================================================================================================
+-- New columns and tables (every track's; first, so nothing below runs before what it reads exists)
+-- =================================================================================================
+
+-- 54. A tag's color from the full palette (see track T2).
+alter table public.tags add column palette_color text;
+
+alter table public.tags add constraint tags_palette_color_check check (
+  palette_color is null
+  or palette_color = any (array[
+    'zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink',
+    'lime', 'emerald', 'cyan', 'sky', 'indigo', 'purple', 'fuchsia', 'rose', 'yellow', 'slate', 'stone'
+  ]::text[])
+);
+
+comment on column public.tags.palette_color is
+  'Oct 29 notes, item 54: the color picked from the full palette (public.option_colors()); color then holds its nearest of the first nine. A tag''s color is coalesce(palette_color, color).';
+
+-- Tag managers (the update policy) recolor through it; inserts already have the table-level grant.
+grant update (palette_color) on public.tags to authenticated;
+
+-- 49. Number field symbol (see track T2).
+alter table public.custom_fields add column number_prefix text;
+alter table public.portfolio_fields add column number_prefix text;
+
+alter table public.custom_fields add constraint custom_fields_number_prefix_check check (
+  number_prefix is null
+  or (
+    field_type = 'number'
+    and char_length(number_prefix) between 1 and 4
+    -- Trimmed (normalize_number_prefix), no line breaks / controls / invisible formatting, and no
+    -- digits or plus / minus signs (NUMBER_PREFIX_SPACE / _INVISIBLE / _NUMERIC in src/lib/fields.ts).
+    and number_prefix !~ '^[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]|[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]$'
+    and number_prefix !~ '[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]'
+    and number_prefix !~ '[\u002d\u002b\u0030-\u0039\u00b1\u0660-\u0669\u06f0-\u06f9\u2010-\u2015\u207a-\u207b\u208a-\u208b\u2212-\u2213\ufe62-\ufe63\uff0b\uff0d\uff10-\uff19]'
+  )
+);
+
+alter table public.portfolio_fields add constraint portfolio_fields_number_prefix_check check (
+  number_prefix is null
+  or (
+    field_type = 'number'
+    and char_length(number_prefix) between 1 and 4
+    -- Trimmed (normalize_number_prefix), no line breaks / controls / invisible formatting, and no
+    -- digits or plus / minus signs (NUMBER_PREFIX_SPACE / _INVISIBLE / _NUMERIC in src/lib/fields.ts).
+    and number_prefix !~ '^[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]|[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]$'
+    and number_prefix !~ '[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]'
+    and number_prefix !~ '[\u002d\u002b\u0030-\u0039\u00b1\u0660-\u0669\u06f0-\u06f9\u2010-\u2015\u207a-\u207b\u208a-\u208b\u2212-\u2213\ufe62-\ufe63\uff0b\uff0d\uff10-\uff19]'
+  )
+);
+
+comment on column public.custom_fields.number_prefix is
+  'Oct 29 notes, item 49: a number field''s symbol (e.g. $, €, #), shown before its values; null = none. The values stay plain numbers.';
+comment on column public.portfolio_fields.number_prefix is
+  'Oct 29 notes, item 49: a number field''s symbol (e.g. $, €, #), shown before its values; null = none. The values stay plain numbers.';
+
+-- 55.1 The link: a placement points at the published (source) field. The source keeps it null.
+alter table public.custom_fields
+  add column library_field_id uuid references public.custom_fields (id);
+
+alter table public.custom_fields
+  add constraint custom_fields_library_not_self check (library_field_id is null or library_field_id <> id),
+  add constraint custom_fields_library_placement_check
+    check (library_field_id is null or (not bound_to_sections and not in_library));
+
+create index custom_fields_library_field_idx on public.custom_fields (library_field_id);
+
+-- One live placement of a library field per project.
+create unique index custom_fields_library_placement_key on public.custom_fields (project_id, library_field_id)
+  where library_field_id is not null and deleted_at is null;
+
+comment on column public.custom_fields.library_field_id is
+  'Field library: set on a placement (this project''s copy of a shared library field) and points at the '
+  'published source field; null on the source and on project-only fields. Written only by add_library_field, '
+  'the copy engine, and link_library_field_copies; a group is coalesce(library_field_id, id).';
+
+-- 51.1 The lock (who and when are kept by the guard; people can't set them).
+alter table public.custom_fields
+  add column locked boolean not null default false,
+  add column locked_by uuid references public.profiles (id),
+  add column locked_at timestamptz;
+
+alter table public.custom_fields
+  add constraint custom_fields_lock_check check (not (bound_to_sections and locked));
+
+create index custom_fields_locked_by_idx on public.custom_fields (locked_by);
+
+comment on column public.custom_fields.locked is
+  'Field lock (Oct 29 notes, batch 7): values, definition, and removal only by the project''s Owners and '
+  'Admins (rules only while their owner is one). A definition column: shared across a library group.';
+
+-- 55.9 The existing-copies log (link_library_field_copies, at the end of this file, fills it).
+do $do$
+begin
+  execute $sql$
+    create table public.library_field_links (
+      id uuid primary key default gen_random_uuid(),
+      field_id uuid not null references public.custom_fields (id),
+      library_field_id uuid not null references public.custom_fields (id),
+      matched_by text not null constraint library_field_links_matched_by_check check (matched_by in ('options', 'description')),
+      previous_definition jsonb not null default '{}'::jsonb,
+      linked_at timestamptz not null default now()
+    )
+  $sql$;
+  execute 'alter table public.library_field_links enable row level security';
+  execute 'revoke all on public.library_field_links from anon, authenticated';
+  execute $sql$
+    create table public.library_field_link_conflicts (
+      id uuid primary key default gen_random_uuid(),
+      task_id uuid not null references public.tasks (id),
+      field_id uuid not null references public.custom_fields (id),
+      value jsonb,
+      other_field_id uuid not null references public.custom_fields (id),
+      other_value jsonb,
+      created_at timestamptz not null default now(),
+      constraint library_field_link_conflicts_key unique (task_id, field_id, other_field_id)
+    )
+  $sql$;
+  execute 'alter table public.library_field_link_conflicts enable row level security';
+  execute 'revoke all on public.library_field_link_conflicts from anon, authenticated';
+end;
+$do$;
+
+create index library_field_links_field_idx on public.library_field_links (field_id);
+create index library_field_links_library_field_idx on public.library_field_links (library_field_id);
+create index library_field_link_conflicts_field_idx on public.library_field_link_conflicts (field_id);
+create index library_field_link_conflicts_other_field_idx on public.library_field_link_conflicts (other_field_id);
+
+select public.alhc_revoke_anon_grants(array['library_field_links', 'library_field_link_conflicts']);
+select public.alhc_revoke_client_truncate(array['library_field_links', 'library_field_link_conflicts']);
+
+comment on table public.library_field_links is
+  'Field library: existing fields linked to a library field by link_library_field_copies (how they matched, '
+  'and the definition the field had before it took the library field''s). No client access.';
+comment on table public.library_field_link_conflicts is
+  'Field library: tasks whose linked fields held different values when they were linked (both kept, '
+  'untouched). No client access.';
+
+-- 55b. A review link's project (review_check_project, in track T4, chooses it).
+alter table public.review_checks add column if not exists project_id uuid references public.projects (id);
+create index if not exists review_checks_project_id_idx on public.review_checks (project_id);
+
 
 
 -- =================================================================================================
@@ -140,66 +291,6 @@ revoke all on function public.approval_round_approved(uuid) from public, anon;
 grant execute on function public.approval_round_approved(uuid) to authenticated, service_role;
 select public.alhc_revoke_anon_execute(array['approval_round_approved(uuid)']);
 
-select public.alhc_patch_function(
-  'public.guard_task_kind()'::regprocedure,
-  $old$  if tg_op = 'UPDATE'
-     and public.is_client_role()
-     and new.kind = 'approval'
-     and old.completed_at is null and new.completed_at is not null
-     and exists (
-       select 1 from public.approval_rounds r where r.task_id = new.id and r.status = 'pending'
-     ) then
-    raise exception 'This task is waiting for approval. Withdraw the request first, or wait for the approver'
-      using errcode = 'check_violation';
-  end if;$old$,
-  $new$  -- Oct 29 notes, batch 7 (item 52): only an approval task's approvers complete it by hand, never
-  -- while a round is pending, and rules never do — also when the same statement switches it to another
-  -- type — until its latest round is approved (the approval has been given: then anyone who can edit
-  -- it, rules too). Imports, copies, and an approved round (which names its task in
-  -- alhc.approval_finish) aren't checked; other system code isn't a client role.
-  if (new.kind = 'approval' or (tg_op = 'UPDATE' and old.kind = 'approval'))
-     and new.completed_at is not null
-     and (tg_op = 'INSERT' or old.completed_at is null)
-     and public.import_context_id() is null
-     and public.copy_context_id() is null
-     and coalesce(current_setting('alhc.approval_finish', true), '') is distinct from new.id::text then
-    if public.is_client_role() then
-      if tg_op = 'UPDATE' and exists (
-        select 1 from public.approval_rounds r where r.task_id = new.id and r.status = 'pending'
-      ) then
-        if exists (
-          select 1 from public.approval_requests q
-          join public.approval_rounds r on r.id = q.round_id
-          where r.task_id = new.id and r.status = 'pending' and q.status = 'pending'
-            and q.approver_id = (select auth.uid()) and q.deleted_at is null
-        ) then
-          raise exception 'This task is waiting for your approval. Approve it instead of marking it complete.'
-            using errcode = 'check_violation';
-        elsif exists (
-          select 1 from public.task_approvers a
-          where a.task_id = new.id and a.profile_id = (select auth.uid()) and a.deleted_at is null
-        ) then
-          raise exception 'This task is waiting for the other approvers.'
-            using errcode = 'check_violation';
-        end if;
-        raise exception 'This task is waiting for approval. Only its approvers can complete it.'
-          using errcode = 'check_violation';
-      end if;
-      if not exists (
-        select 1 from public.task_approvers a
-        where a.task_id = new.id and a.profile_id = (select auth.uid()) and a.deleted_at is null
-      ) and not public.approval_round_approved(new.id) then
-        raise exception 'Only its approvers can complete an approval task. Send it with Ready for approval.'
-          using errcode = 'check_violation';
-      end if;
-    elsif tg_op = 'UPDATE' and coalesce(current_setting('alhc.rule_id', true), '') <> ''
-          and not public.approval_round_approved(new.id) then
-      raise exception 'Approval tasks are completed by their approvers'
-        using errcode = 'check_violation';
-    end if;
-  end if;$new$
-);
-
 -- An approved round completes its task (the system, not a person or a rule).
 select public.alhc_patch_function(
   'public.finish_approved_round(uuid)'::regprocedure,
@@ -268,6 +359,67 @@ select public.alhc_patch_function(
   $new$          update public.tasks set completed_at = now() where id = target_task and completed_at is null;
           result := 'Marked complete';
           end if;$new$
+);
+
+-- The guard, once the rule steps above skip approval tasks (so a rule never fails in between).
+select public.alhc_patch_function(
+  'public.guard_task_kind()'::regprocedure,
+  $old$  if tg_op = 'UPDATE'
+     and public.is_client_role()
+     and new.kind = 'approval'
+     and old.completed_at is null and new.completed_at is not null
+     and exists (
+       select 1 from public.approval_rounds r where r.task_id = new.id and r.status = 'pending'
+     ) then
+    raise exception 'This task is waiting for approval. Withdraw the request first, or wait for the approver'
+      using errcode = 'check_violation';
+  end if;$old$,
+  $new$  -- Oct 29 notes, batch 7 (item 52): only an approval task's approvers complete it by hand, never
+  -- while a round is pending, and rules never do — also when the same statement switches it to another
+  -- type — until its latest round is approved (the approval has been given: then anyone who can edit
+  -- it, rules too). Imports, copies, and an approved round (which names its task in
+  -- alhc.approval_finish) aren't checked; other system code isn't a client role.
+  if (new.kind = 'approval' or (tg_op = 'UPDATE' and old.kind = 'approval'))
+     and new.completed_at is not null
+     and (tg_op = 'INSERT' or old.completed_at is null)
+     and public.import_context_id() is null
+     and public.copy_context_id() is null
+     and coalesce(current_setting('alhc.approval_finish', true), '') is distinct from new.id::text then
+    if public.is_client_role() then
+      if tg_op = 'UPDATE' and exists (
+        select 1 from public.approval_rounds r where r.task_id = new.id and r.status = 'pending'
+      ) then
+        if exists (
+          select 1 from public.approval_requests q
+          join public.approval_rounds r on r.id = q.round_id
+          where r.task_id = new.id and r.status = 'pending' and q.status = 'pending'
+            and q.approver_id = (select auth.uid()) and q.deleted_at is null
+        ) then
+          raise exception 'This task is waiting for your approval. Approve it instead of marking it complete.'
+            using errcode = 'check_violation';
+        elsif exists (
+          select 1 from public.task_approvers a
+          where a.task_id = new.id and a.profile_id = (select auth.uid()) and a.deleted_at is null
+        ) then
+          raise exception 'This task is waiting for the other approvers.'
+            using errcode = 'check_violation';
+        end if;
+        raise exception 'This task is waiting for approval. Only its approvers can complete it.'
+          using errcode = 'check_violation';
+      end if;
+      if not exists (
+        select 1 from public.task_approvers a
+        where a.task_id = new.id and a.profile_id = (select auth.uid()) and a.deleted_at is null
+      ) and not public.approval_round_approved(new.id) then
+        raise exception 'Only its approvers can complete an approval task. Send it with Ready for approval.'
+          using errcode = 'check_violation';
+      end if;
+    elsif tg_op = 'UPDATE' and coalesce(current_setting('alhc.rule_id', true), '') <> ''
+          and not public.approval_round_approved(new.id) then
+      raise exception 'Approval tasks are completed by their approvers'
+        using errcode = 'check_violation';
+    end if;
+  end if;$new$
 );
 
 -- Whether the caller is one of the task's approvers (rows draw "Ready for approval" for everyone else).
@@ -506,28 +658,7 @@ select public.alhc_patch_function(
   $new$or not (coalesce(o ->> 'color', '') = any (public.option_colors()))$new$
 );
 
--- Tags made by the importer (and the one-time Tags field migration) keep a palette color.
-select public.alhc_patch_function(
-  'public.ensure_tag(uuid, text, text, uuid)'::regprocedure,
-  $old$case when tag_color in ('zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink')$old$,
-  $new$case when tag_color = any (public.option_colors())$new$
-);
-
-alter table public.tags add column palette_color text;
-
-alter table public.tags add constraint tags_palette_color_check check (
-  palette_color is null
-  or palette_color = any (array[
-    'zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink',
-    'lime', 'emerald', 'cyan', 'sky', 'indigo', 'purple', 'fuchsia', 'rose', 'yellow', 'slate', 'stone'
-  ]::text[])
-);
-
-comment on column public.tags.palette_color is
-  'Oct 29 notes, item 54: the color picked from the full palette (public.option_colors()); color then holds its nearest of the first nine. A tag''s color is coalesce(palette_color, color).';
-
--- Tag managers (the update policy) recolor through it; inserts already have the table-level grant.
-grant update (palette_color) on public.tags to authenticated;
+-- (tags.palette_color is added at the top of this file.)
 
 create or replace function public.guard_tag_palette_color()
 returns trigger
@@ -560,6 +691,14 @@ revoke all on function public.guard_tag_palette_color() from public, anon, authe
 create trigger tags_06_palette_color
   before insert or update on public.tags
   for each row execute function public.guard_tag_palette_color();
+
+-- Tags made by the importer (and the one-time Tags field migration) keep a palette color (the trigger
+-- above moves it into palette_color, so tags.color never sees one of the new colors).
+select public.alhc_patch_function(
+  'public.ensure_tag(uuid, text, text, uuid)'::regprocedure,
+  $old$case when tag_color in ('zinc', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink')$old$,
+  $new$case when tag_color = any (public.option_colors())$new$
+);
 
 -- Tag stories carry the color people see.
 select public.alhc_patch_function(
@@ -594,39 +733,8 @@ select public.alhc_patch_function(
 -- Additive: the release still on main never reads or writes the new columns.
 -- ---------------------------------------------------------------------------------------------------
 
-alter table public.custom_fields add column number_prefix text;
-alter table public.portfolio_fields add column number_prefix text;
-
-alter table public.custom_fields add constraint custom_fields_number_prefix_check check (
-  number_prefix is null
-  or (
-    field_type = 'number'
-    and char_length(number_prefix) between 1 and 4
-    -- Trimmed (normalize_number_prefix), no line breaks / controls / invisible formatting, and no
-    -- digits or plus / minus signs (NUMBER_PREFIX_SPACE / _INVISIBLE / _NUMERIC in src/lib/fields.ts).
-    and number_prefix !~ '^[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]|[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]$'
-    and number_prefix !~ '[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]'
-    and number_prefix !~ '[\u002d\u002b\u0030-\u0039\u00b1\u0660-\u0669\u06f0-\u06f9\u2010-\u2015\u207a-\u207b\u208a-\u208b\u2212-\u2213\ufe62-\ufe63\uff0b\uff0d\uff10-\uff19]'
-  )
-);
-
-alter table public.portfolio_fields add constraint portfolio_fields_number_prefix_check check (
-  number_prefix is null
-  or (
-    field_type = 'number'
-    and char_length(number_prefix) between 1 and 4
-    -- Trimmed (normalize_number_prefix), no line breaks / controls / invisible formatting, and no
-    -- digits or plus / minus signs (NUMBER_PREFIX_SPACE / _INVISIBLE / _NUMERIC in src/lib/fields.ts).
-    and number_prefix !~ '^[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]|[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]$'
-    and number_prefix !~ '[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]'
-    and number_prefix !~ '[\u002d\u002b\u0030-\u0039\u00b1\u0660-\u0669\u06f0-\u06f9\u2010-\u2015\u207a-\u207b\u208a-\u208b\u2212-\u2213\ufe62-\ufe63\uff0b\uff0d\uff10-\uff19]'
-  )
-);
-
-comment on column public.custom_fields.number_prefix is
-  'Oct 29 notes, item 49: a number field''s symbol (e.g. $, €, #), shown before its values; null = none. The values stay plain numbers.';
-comment on column public.portfolio_fields.number_prefix is
-  'Oct 29 notes, item 49: a number field''s symbol (e.g. $, €, #), shown before its values; null = none. The values stay plain numbers.';
+-- (custom_fields.number_prefix / portfolio_fields.number_prefix and their CHECKs are added at the top of
+-- this file.)
 
 create or replace function public.normalize_number_prefix()
 returns trigger
@@ -762,25 +870,7 @@ select public.alhc_patch_function(
 -- 55. Library fields shared across projects
 -- ---------------------------------------------------------------------------------------------------
 
--- 55.1 The link: a placement points at the published (source) field. The source keeps it null.
-alter table public.custom_fields
-  add column library_field_id uuid references public.custom_fields (id);
-
-alter table public.custom_fields
-  add constraint custom_fields_library_not_self check (library_field_id is null or library_field_id <> id),
-  add constraint custom_fields_library_placement_check
-    check (library_field_id is null or (not bound_to_sections and not in_library));
-
-create index custom_fields_library_field_idx on public.custom_fields (library_field_id);
-
--- One live placement of a library field per project.
-create unique index custom_fields_library_placement_key on public.custom_fields (project_id, library_field_id)
-  where library_field_id is not null and deleted_at is null;
-
-comment on column public.custom_fields.library_field_id is
-  'Field library: set on a placement (this project''s copy of a shared library field) and points at the '
-  'published source field; null on the source and on project-only fields. Written only by add_library_field, '
-  'the copy engine, and link_library_field_copies; a group is coalesce(library_field_id, id).';
+-- 55.1 The link (custom_fields.library_field_id) is added at the top of this file.
 
 -- 55.2 The one list of definition columns (kept identical across a group). Per-placement columns
 -- (show_in_views, sort_order, deleted_at) and in_library (the source's) are not in it. A later column
@@ -911,6 +1001,221 @@ $$;
 
 revoke all on function public.project_field_sharing(uuid) from public, anon;
 grant execute on function public.project_field_sharing(uuid) to authenticated;
+
+-- Helpers the triggers and patches below call (55.5, 51.3, 51.8), created before any of them.
+
+-- The other live placements of a field's group whose project (not removed) holds the task's top-level task.
+create or replace function public.library_value_siblings(target_task uuid, target_field uuid)
+returns table (field_id uuid, project_id uuid)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with me as (
+    select coalesce(f.library_field_id, f.id) as grp from public.custom_fields f where f.id = target_field
+  ), root as (
+    select coalesce(t.root_task_id, t.id) as id from public.tasks t where t.id = target_task
+  )
+  select s.id, s.project_id
+  from me
+  join public.custom_fields s on (s.id = me.grp or s.library_field_id = me.grp)
+  join public.projects p on p.id = s.project_id and p.deleted_at is null
+  where s.id <> target_field
+    and s.deleted_at is null
+    and exists (
+      select 1 from public.task_projects tp, root
+      where tp.task_id = root.id and tp.project_id = s.project_id and tp.deleted_at is null
+    )
+  order by s.id;
+$$;
+
+revoke all on function public.library_value_siblings(uuid, uuid) from public, anon, authenticated;
+
+-- 51.3 A rule changes a locked field only while its owner (else its creator) is still an allowlisted
+-- Owner or Admin of the field's project.
+create or replace function public.rule_owner_manages_project(target_rule uuid, target_project uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select public.profile_is_allowlisted(coalesce(r.owner_id, r.created_by))
+      and coalesce(public.profile_project_role(coalesce(r.owner_id, r.created_by), target_project), '') in ('admin', 'owner')
+    from public.rules r
+    where r.id = target_rule
+  ), false);
+$$;
+
+revoke all on function public.rule_owner_manages_project(uuid, uuid) from public, anon, authenticated;
+
+-- The existing-copies migration's "no value" (link_library_field_copies): no row, JSON null, "", or [].
+-- An unticked checkbox (false) is a value someone chose, unlike view_value_is_empty.
+create or replace function public.library_link_value_empty(value jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select value is null or value in ('null'::jsonb, '""'::jsonb, '[]'::jsonb);
+$$;
+
+revoke all on function public.library_link_value_empty(jsonb) from public, anon, authenticated;
+
+-- Whether whoever is acting may change a locked field's value in a project: a rule while its owner is an
+-- Owner / Admin there, a person who is one, and the other system paths (imports, copies, forms, cron).
+-- fill_library_values / fill_library_task_values ask it before they replace a locked field's own,
+-- different value when a task joins (or comes back to) a project, a subtask moves, a removed field or
+-- project comes back: otherwise an Editor could take a task out of a project, change the value where
+-- they're an Admin, and add the task back.
+create or replace function public.library_fill_overwrite_allowed(target_project uuid)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  rule uuid := public.rule_context_id();
+begin
+  if rule is not null then
+    return public.rule_owner_manages_project(rule, target_project);
+  end if;
+  if public.import_context_id() is not null or public.copy_context_id() is not null or auth.uid() is null then
+    return true;
+  end if;
+  return public.has_project_role(target_project, 'admin');
+end;
+$$;
+
+revoke all on function public.library_fill_overwrite_allowed(uuid) from public, anon, authenticated;
+
+-- Whether the caller may change a locked field's value for a task (task_field_values_02_field_lock and
+-- bulk Field ask it): Owner / Admin of the field's project and of every other project the library copies
+-- the value into (library_value_siblings; archived projects aside — nobody is an Admin there, and the
+-- copy reaches them as it always has). About the caller only, for a task they can read. Pinned in suite 60.
+create or replace function public.locked_field_value_writable(target_task uuid, target_field uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select public.has_task_role(target_task, 'viewer')
+      and public.has_project_role(f.project_id, 'admin')
+      and not exists (
+        select 1
+        from public.library_value_siblings(target_task, target_field) s
+        join public.projects p on p.id = s.project_id
+        where p.archived_at is null and not public.has_project_role(s.project_id, 'admin')
+      )
+    from public.custom_fields f
+    where f.id = target_field
+  ), false);
+$$;
+
+revoke all on function public.locked_field_value_writable(uuid, uuid) from public, anon;
+grant execute on function public.locked_field_value_writable(uuid, uuid) to authenticated;
+
+-- The same for a rule: its owner (else its creator) is an Owner / Admin of the field's project and of
+-- every other (not archived) project the value would reach.
+create or replace function public.rule_owner_writes_locked_value(target_rule uuid, target_task uuid, target_field uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select public.rule_owner_manages_project(target_rule, f.project_id)
+      and not exists (
+        select 1
+        from public.library_value_siblings(target_task, target_field) s
+        join public.projects p on p.id = s.project_id
+        where p.archived_at is null and not public.rule_owner_manages_project(target_rule, s.project_id)
+      )
+    from public.custom_fields f
+    where f.id = target_field
+  ), false);
+$$;
+
+revoke all on function public.rule_owner_writes_locked_value(uuid, uuid, uuid) from public, anon, authenticated;
+
+-- The group's newest value for one field's tasks: the given top-level tasks (null = every task of the
+-- field's project) and their subtasks, written quietly where the field's own row differs. Returns how
+-- many values it wrote.
+create or replace function public.fill_library_values(target_field uuid, target_roots uuid[])
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  f public.custom_fields;
+  grp uuid;
+  r record;
+  prev text;
+  n integer := 0;
+begin
+  select * into f from public.custom_fields cf where cf.id = target_field and cf.deleted_at is null;
+  if not found or f.bound_to_sections then
+    return 0;
+  end if;
+  grp := coalesce(f.library_field_id, f.id);
+  if f.library_field_id is null
+     and not exists (select 1 from public.custom_fields c where c.library_field_id = f.id and c.deleted_at is null) then
+    return 0;
+  end if;
+  prev := coalesce(current_setting('alhc.library_value_sync', true), '');
+  for r in
+    with roots as (
+      select tp.task_id from public.task_projects tp
+      where tp.project_id = f.project_id and tp.deleted_at is null
+        and (target_roots is null or tp.task_id = any (target_roots))
+    ), held as (
+      select t.id from public.tasks t join roots on roots.task_id = t.id where t.deleted_at is null
+      union
+      select t.id from public.tasks t join roots on roots.task_id = t.root_task_id where t.deleted_at is null
+    ), latest as (
+      select distinct on (v.task_id) v.task_id, v.field_id, v.value
+      from public.task_field_values v
+      join held on held.id = v.task_id
+      join public.custom_fields g on g.id = v.field_id and g.deleted_at is null
+        and (g.id = grp or g.library_field_id = grp)
+      order by v.task_id, v.updated_at desc, (v.field_id = target_field) desc, v.field_id
+    )
+    select l.task_id, l.value, x.task_id is not null as has_row, x.value as own_value
+    from latest l
+    left join public.task_field_values x on x.task_id = l.task_id and x.field_id = target_field
+    where l.field_id <> target_field
+  loop
+    continue when r.has_row and r.own_value is not distinct from r.value;
+    continue when not r.has_row and r.value is null;
+    -- 51: a locked field's own, different value here (left from an earlier time the task was in this
+    -- project) is replaced only by someone who may change it here (library_fill_overwrite_allowed).
+    if f.locked and r.has_row and not public.library_fill_overwrite_allowed(f.project_id) then
+      raise exception 'Locked — a locked shared field already has a different value for this task in one of its projects, and only that project''s Owners and Admins can change it'
+        using errcode = 'insufficient_privilege';
+    end if;
+    perform set_config('alhc.library_value_sync', r.task_id::text || ':' || target_field::text, true);
+    begin
+      insert into public.task_field_values (task_id, field_id, value)
+      values (r.task_id, target_field, r.value)
+      on conflict (task_id, field_id) do update set value = excluded.value;
+      n := n + 1;
+    exception when others then
+      null;
+    end;
+    perform set_config('alhc.library_value_sync', prev, true);
+  end loop;
+  return n;
+end;
+$$;
+
+revoke all on function public.fill_library_values(uuid, uuid[]) from public, anon, authenticated;
 
 -- 55.4 People's writes to fields (invoker; system code passes). The link is never set or changed by
 -- people (add_library_field does it); a placement's definition changes only for Editors+ of the
@@ -1090,34 +1395,6 @@ select public.alhc_patch_function(
 
 -- 55.5 One value per task.
 
--- The other live placements of a field's group whose project (not removed) holds the task's top-level task.
-create or replace function public.library_value_siblings(target_task uuid, target_field uuid)
-returns table (field_id uuid, project_id uuid)
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  with me as (
-    select coalesce(f.library_field_id, f.id) as grp from public.custom_fields f where f.id = target_field
-  ), root as (
-    select coalesce(t.root_task_id, t.id) as id from public.tasks t where t.id = target_task
-  )
-  select s.id, s.project_id
-  from me
-  join public.custom_fields s on (s.id = me.grp or s.library_field_id = me.grp)
-  join public.projects p on p.id = s.project_id and p.deleted_at is null
-  where s.id <> target_field
-    and s.deleted_at is null
-    and exists (
-      select 1 from public.task_projects tp, root
-      where tp.task_id = root.id and tp.project_id = s.project_id and tp.deleted_at is null
-    )
-  order by s.id;
-$$;
-
-revoke all on function public.library_value_siblings(uuid, uuid) from public, anon, authenticated;
-
 -- Two people changing the same shared value from two projects wait for each other (the lock is taken
 -- before the row is written by an upsert, the app's path) instead of crossing each other's copies.
 create or replace function public.lock_library_field_value()
@@ -1291,79 +1568,6 @@ select public.alhc_patch_function(
   $new$insert into public.task_field_values (task_id, field_id, value) values (new_id, r.field_id, r.value)
             on conflict (task_id, field_id) do nothing;$new$
 );
-
--- The group's newest value for one field's tasks: the given top-level tasks (null = every task of the
--- field's project) and their subtasks, written quietly where the field's own row differs. Returns how
--- many values it wrote.
-create or replace function public.fill_library_values(target_field uuid, target_roots uuid[])
-returns integer
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  f public.custom_fields;
-  grp uuid;
-  r record;
-  prev text;
-  n integer := 0;
-begin
-  select * into f from public.custom_fields cf where cf.id = target_field and cf.deleted_at is null;
-  if not found or f.bound_to_sections then
-    return 0;
-  end if;
-  grp := coalesce(f.library_field_id, f.id);
-  if f.library_field_id is null
-     and not exists (select 1 from public.custom_fields c where c.library_field_id = f.id and c.deleted_at is null) then
-    return 0;
-  end if;
-  prev := coalesce(current_setting('alhc.library_value_sync', true), '');
-  for r in
-    with roots as (
-      select tp.task_id from public.task_projects tp
-      where tp.project_id = f.project_id and tp.deleted_at is null
-        and (target_roots is null or tp.task_id = any (target_roots))
-    ), held as (
-      select t.id from public.tasks t join roots on roots.task_id = t.id where t.deleted_at is null
-      union
-      select t.id from public.tasks t join roots on roots.task_id = t.root_task_id where t.deleted_at is null
-    ), latest as (
-      select distinct on (v.task_id) v.task_id, v.field_id, v.value
-      from public.task_field_values v
-      join held on held.id = v.task_id
-      join public.custom_fields g on g.id = v.field_id and g.deleted_at is null
-        and (g.id = grp or g.library_field_id = grp)
-      order by v.task_id, v.updated_at desc, (v.field_id = target_field) desc, v.field_id
-    )
-    select l.task_id, l.value, x.task_id is not null as has_row, x.value as own_value
-    from latest l
-    left join public.task_field_values x on x.task_id = l.task_id and x.field_id = target_field
-    where l.field_id <> target_field
-  loop
-    continue when r.has_row and r.own_value is not distinct from r.value;
-    continue when not r.has_row and r.value is null;
-    -- 51: a locked field's own, different value here (left from an earlier time the task was in this
-    -- project) is replaced only by someone who may change it here (library_fill_overwrite_allowed).
-    if f.locked and r.has_row and not public.library_fill_overwrite_allowed(f.project_id) then
-      raise exception 'Locked — a locked shared field already has a different value for this task in one of its projects, and only that project''s Owners and Admins can change it'
-        using errcode = 'insufficient_privilege';
-    end if;
-    perform set_config('alhc.library_value_sync', r.task_id::text || ':' || target_field::text, true);
-    begin
-      insert into public.task_field_values (task_id, field_id, value)
-      values (r.task_id, target_field, r.value)
-      on conflict (task_id, field_id) do update set value = excluded.value;
-      n := n + 1;
-    exception when others then
-      null;
-    end;
-    perform set_config('alhc.library_value_sync', prev, true);
-  end loop;
-  return n;
-end;
-$$;
-
-revoke all on function public.fill_library_values(uuid, uuid[]) from public, anon, authenticated;
 
 -- A task joining a project (added, or added back) gets the newest value of each shared field there.
 create or replace function public.fill_library_values_on_join()
@@ -1653,51 +1857,6 @@ select public.alhc_patch_function(
 -- row, JSON null, "", and [] count as no value (library_link_value_empty) — an unticked checkbox (false)
 -- is a value, so true on one side and false on the other is a conflict, both kept.
 
-do $do$
-begin
-  execute $sql$
-    create table public.library_field_links (
-      id uuid primary key default gen_random_uuid(),
-      field_id uuid not null references public.custom_fields (id),
-      library_field_id uuid not null references public.custom_fields (id),
-      matched_by text not null constraint library_field_links_matched_by_check check (matched_by in ('options', 'description')),
-      previous_definition jsonb not null default '{}'::jsonb,
-      linked_at timestamptz not null default now()
-    )
-  $sql$;
-  execute 'alter table public.library_field_links enable row level security';
-  execute 'revoke all on public.library_field_links from anon, authenticated';
-  execute $sql$
-    create table public.library_field_link_conflicts (
-      id uuid primary key default gen_random_uuid(),
-      task_id uuid not null references public.tasks (id),
-      field_id uuid not null references public.custom_fields (id),
-      value jsonb,
-      other_field_id uuid not null references public.custom_fields (id),
-      other_value jsonb,
-      created_at timestamptz not null default now(),
-      constraint library_field_link_conflicts_key unique (task_id, field_id, other_field_id)
-    )
-  $sql$;
-  execute 'alter table public.library_field_link_conflicts enable row level security';
-  execute 'revoke all on public.library_field_link_conflicts from anon, authenticated';
-end;
-$do$;
-
-create index library_field_links_field_idx on public.library_field_links (field_id);
-create index library_field_links_library_field_idx on public.library_field_links (library_field_id);
-create index library_field_link_conflicts_field_idx on public.library_field_link_conflicts (field_id);
-create index library_field_link_conflicts_other_field_idx on public.library_field_link_conflicts (other_field_id);
-
-select public.alhc_revoke_anon_grants(array['library_field_links', 'library_field_link_conflicts']);
-select public.alhc_revoke_client_truncate(array['library_field_links', 'library_field_link_conflicts']);
-
-comment on table public.library_field_links is
-  'Field library: existing fields linked to a library field by link_library_field_copies (how they matched, '
-  'and the definition the field had before it took the library field''s). No client access.';
-comment on table public.library_field_link_conflicts is
-  'Field library: tasks whose linked fields held different values when they were linked (both kept, '
-  'untouched). No client access.';
 
 -- The live fields of a group whose project (not removed) holds a task's top-level task, with the
 -- task's value in each (has_row false = no value row).
@@ -1883,20 +2042,7 @@ revoke all on function public.link_library_field_copies() from public, anon, aut
 -- tasks with the reason; Duplicate task and task templates leave locked values out (they already skip
 -- values the caller may not write, and Duplicate task counts them).
 
--- 51.1 The lock (who and when are kept by the guard; people can't set them).
-alter table public.custom_fields
-  add column locked boolean not null default false,
-  add column locked_by uuid references public.profiles (id),
-  add column locked_at timestamptz;
-
-alter table public.custom_fields
-  add constraint custom_fields_lock_check check (not (bound_to_sections and locked));
-
-create index custom_fields_locked_by_idx on public.custom_fields (locked_by);
-
-comment on column public.custom_fields.locked is
-  'Field lock (Oct 29 notes, batch 7): values, definition, and removal only by the project''s Owners and '
-  'Admins (rules only while their owner is one). A definition column: shared across a library group.';
+-- 51.1 The lock (custom_fields.locked / locked_by / locked_at) is added at the top of this file.
 
 -- 51.2 People's writes to a locked field's definition (invoker; system code passes, the guard's
 -- bookkeeping included). Runs after custom_fields_05_library_guard (which refuses a shared definition
@@ -1977,24 +2123,7 @@ create trigger custom_fields_06_lock_guard
   before insert or update on public.custom_fields
   for each row execute function public.guard_custom_field_lock();
 
--- 51.3 A rule changes a locked field only while its owner (else its creator) is still an allowlisted
--- Owner or Admin of the field's project.
-create or replace function public.rule_owner_manages_project(target_rule uuid, target_project uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select coalesce((
-    select public.profile_is_allowlisted(coalesce(r.owner_id, r.created_by))
-      and coalesce(public.profile_project_role(coalesce(r.owner_id, r.created_by), target_project), '') in ('admin', 'owner')
-    from public.rules r
-    where r.id = target_rule
-  ), false);
-$$;
-
-revoke all on function public.rule_owner_manages_project(uuid, uuid) from public, anon, authenticated;
+-- 51.3 rule_owner_manages_project is with the helpers after 55.3.
 
 -- 51.4 Values of a locked field (invoker: people are checked with their own role; definer code — the
 -- system paths — passes, except a rule, which is checked against its owner). A shared library field's
@@ -2175,98 +2304,8 @@ select public.alhc_patch_function(
 
 -- 51.8 Review fixes (Oct 29 notes, batch 7: 55 × 51).
 
--- The existing-copies migration's "no value" (link_library_field_copies): no row, JSON null, "", or [].
--- An unticked checkbox (false) is a value someone chose, unlike view_value_is_empty.
-create or replace function public.library_link_value_empty(value jsonb)
-returns boolean
-language sql
-immutable
-set search_path = ''
-as $$
-  select value is null or value in ('null'::jsonb, '""'::jsonb, '[]'::jsonb);
-$$;
-
-revoke all on function public.library_link_value_empty(jsonb) from public, anon, authenticated;
-
--- Whether whoever is acting may change a locked field's value in a project: a rule while its owner is an
--- Owner / Admin there, a person who is one, and the other system paths (imports, copies, forms, cron).
--- fill_library_values / fill_library_task_values ask it before they replace a locked field's own,
--- different value when a task joins (or comes back to) a project, a subtask moves, a removed field or
--- project comes back: otherwise an Editor could take a task out of a project, change the value where
--- they're an Admin, and add the task back.
-create or replace function public.library_fill_overwrite_allowed(target_project uuid)
-returns boolean
-language plpgsql
-stable
-security definer
-set search_path = ''
-as $$
-declare
-  rule uuid := public.rule_context_id();
-begin
-  if rule is not null then
-    return public.rule_owner_manages_project(rule, target_project);
-  end if;
-  if public.import_context_id() is not null or public.copy_context_id() is not null or auth.uid() is null then
-    return true;
-  end if;
-  return public.has_project_role(target_project, 'admin');
-end;
-$$;
-
-revoke all on function public.library_fill_overwrite_allowed(uuid) from public, anon, authenticated;
-
--- Whether the caller may change a locked field's value for a task (task_field_values_02_field_lock and
--- bulk Field ask it): Owner / Admin of the field's project and of every other project the library copies
--- the value into (library_value_siblings; archived projects aside — nobody is an Admin there, and the
--- copy reaches them as it always has). About the caller only, for a task they can read. Pinned in suite 60.
-create or replace function public.locked_field_value_writable(target_task uuid, target_field uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select coalesce((
-    select public.has_task_role(target_task, 'viewer')
-      and public.has_project_role(f.project_id, 'admin')
-      and not exists (
-        select 1
-        from public.library_value_siblings(target_task, target_field) s
-        join public.projects p on p.id = s.project_id
-        where p.archived_at is null and not public.has_project_role(s.project_id, 'admin')
-      )
-    from public.custom_fields f
-    where f.id = target_field
-  ), false);
-$$;
-
-revoke all on function public.locked_field_value_writable(uuid, uuid) from public, anon;
-grant execute on function public.locked_field_value_writable(uuid, uuid) to authenticated;
-
--- The same for a rule: its owner (else its creator) is an Owner / Admin of the field's project and of
--- every other (not archived) project the value would reach.
-create or replace function public.rule_owner_writes_locked_value(target_rule uuid, target_task uuid, target_field uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select coalesce((
-    select public.rule_owner_manages_project(target_rule, f.project_id)
-      and not exists (
-        select 1
-        from public.library_value_siblings(target_task, target_field) s
-        join public.projects p on p.id = s.project_id
-        where p.archived_at is null and not public.rule_owner_manages_project(target_rule, s.project_id)
-      )
-    from public.custom_fields f
-    where f.id = target_field
-  ), false);
-$$;
-
-revoke all on function public.rule_owner_writes_locked_value(uuid, uuid, uuid) from public, anon, authenticated;
+-- (Its helpers — library_link_value_empty, library_fill_overwrite_allowed, locked_field_value_writable,
+-- rule_owner_writes_locked_value — are with the helpers after 55.3.)
 
 -- The field library lists no field of an archived project (it can't be added; its definition is frozen
 -- until the project is unarchived).
@@ -2313,17 +2352,7 @@ create trigger projects_zz_library_restore
   when (old.deleted_at is not null and new.deleted_at is null)
   execute function public.fill_library_values_on_project_restore();
 
--- ---------------------------------------------------------------------------------------------------
--- 55.9 (continued) Link the existing copies, now that every definition column exists.
--- ---------------------------------------------------------------------------------------------------
-do $do$
-declare
-  result jsonb := public.link_library_field_copies();
-begin
-  raise notice 'Field library: linked % existing copies, filled % values, recorded % conflicts (library_field_link_conflicts), left % ambiguous fields alone',
-    result ->> 'linked', result ->> 'filled', result ->> 'conflicts', result ->> 'ambiguous';
-end;
-$do$;
+-- (55.9 continued: the existing copies are linked at the very end of this file.)
 
 
 -- =================================================================================================
@@ -2542,52 +2571,6 @@ create trigger task_projects_04_stamp_created
 --      its last project). Subtasks have no memberships; private tasks none either.
 -- ---------------------------------------------------------------------------------------------------
 
-alter function public.guard_home_membership() security definer;
-
-select public.alhc_patch_function(
-  'public.guard_home_membership()'::regprocedure,
-  $old$  if new.deleted_at is not null and old.deleted_at is null and exists (
-    select 1 from public.tasks t
-    where t.id = new.task_id and t.home_project_id = new.project_id and t.parent_task_id is null
-  ) then
-    raise exception 'Cannot remove a task from its home project; change the home project first'
-      using errcode = 'check_violation';
-  end if;$old$,
-  $new$  -- Oct 29 notes (55b): any project can be removed but the task's last active one. The task's row is
-  -- locked first, so two removals from the same task run one after the other: the second one sees the
-  -- first (each statement here reads afresh) and can't take the task's last project with it.
-  if new.deleted_at is not null and old.deleted_at is null then
-    perform 1 from public.tasks t
-    where t.id = new.task_id and t.parent_task_id is null and t.home_project_id is not null
-    for no key update;
-    if found then
-      if not exists (
-        select 1 from public.task_projects o
-        join public.projects p on p.id = o.project_id and p.deleted_at is null
-        where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
-      ) then
-        raise exception 'This is the task’s only project. Add it to another project first, or move the task to the Trash.'
-          using errcode = 'check_violation', detail = 'last_project';
-      end if;
-      -- Its other projects are all archived (read-only for everyone): without this one nobody could
-      -- edit, complete, or trash the task until one is unarchived. An archived project's own membership
-      -- (only the system removes one) changes nothing about that.
-      if not exists (
-        select 1 from public.task_projects o
-        join public.projects p on p.id = o.project_id and p.deleted_at is null and p.archived_at is null
-        where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
-      ) and not exists (
-        select 1 from public.projects p where p.id = new.project_id and p.archived_at is not null
-      ) then
-        raise exception 'This is the task’s only active project: its other projects are archived. Unarchive one or add the task to another project first, or move the task to the Trash.'
-          using errcode = 'check_violation', detail = 'archived_only';
-      end if;
-    end if;
-  end if;$new$
-);
-
-revoke all on function public.guard_home_membership() from public, anon, authenticated;
-
 -- The pointer follows: when the membership it points at is removed, it moves to the next active project
 -- by the stable rule — the old "Make home" path, so that project's number becomes the task's outside
 -- number (shape_task_number) and nothing is renumbered (maybe_renumber_on_move stands down meanwhile).
@@ -2677,6 +2660,53 @@ select public.alhc_patch_function(
      or new.parent_task_id is not null
      or new.home_project_id is not distinct from old.home_project_id$new$
 );
+
+-- The guard, once the pointer above moves on its own (so no removal leaves the pointer behind).
+alter function public.guard_home_membership() security definer;
+
+select public.alhc_patch_function(
+  'public.guard_home_membership()'::regprocedure,
+  $old$  if new.deleted_at is not null and old.deleted_at is null and exists (
+    select 1 from public.tasks t
+    where t.id = new.task_id and t.home_project_id = new.project_id and t.parent_task_id is null
+  ) then
+    raise exception 'Cannot remove a task from its home project; change the home project first'
+      using errcode = 'check_violation';
+  end if;$old$,
+  $new$  -- Oct 29 notes (55b): any project can be removed but the task's last active one. The task's row is
+  -- locked first, so two removals from the same task run one after the other: the second one sees the
+  -- first (each statement here reads afresh) and can't take the task's last project with it.
+  if new.deleted_at is not null and old.deleted_at is null then
+    perform 1 from public.tasks t
+    where t.id = new.task_id and t.parent_task_id is null and t.home_project_id is not null
+    for no key update;
+    if found then
+      if not exists (
+        select 1 from public.task_projects o
+        join public.projects p on p.id = o.project_id and p.deleted_at is null
+        where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
+      ) then
+        raise exception 'This is the task’s only project. Add it to another project first, or move the task to the Trash.'
+          using errcode = 'check_violation', detail = 'last_project';
+      end if;
+      -- Its other projects are all archived (read-only for everyone): without this one nobody could
+      -- edit, complete, or trash the task until one is unarchived. An archived project's own membership
+      -- (only the system removes one) changes nothing about that.
+      if not exists (
+        select 1 from public.task_projects o
+        join public.projects p on p.id = o.project_id and p.deleted_at is null and p.archived_at is null
+        where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
+      ) and not exists (
+        select 1 from public.projects p where p.id = new.project_id and p.archived_at is not null
+      ) then
+        raise exception 'This is the task’s only active project: its other projects are archived. Unarchive one or add the task to another project first, or move the task to the Trash.'
+          using errcode = 'check_violation', detail = 'archived_only';
+      end if;
+    end if;
+  end if;$new$
+);
+
+revoke all on function public.guard_home_membership() from public, anon, authenticated;
 
 -- Rule actions Move to another project / Remove from this project: leave the pointer to the database.
 select public.alhc_patch_function(
@@ -2878,8 +2908,84 @@ select public.alhc_patch_function(
   end if;$new$
 );
 
+-- ---------------------------------------------------------------------------------------------------
+-- 55b. A review link's project, chosen once with the sender's access and shared by its email and its
+--      page (review_check_view below): the request's form's project when the sender can read it, else
+--      the first of the task's projects (stable rule) the sender can read. Null when they can read none
+--      (a private task). "Send again" keeps it while the person sending can read it, else chooses again
+--      as them, so neither the email nor the page ever names a project its sender can't open.
+-- ---------------------------------------------------------------------------------------------------
+
+create or replace function public.review_check_project(target_task uuid, sender uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    (
+      select f.project_id
+      from public.task_submitter(target_task) s
+      join public.forms f on f.id = s.form_id
+      join public.projects p on p.id = f.project_id and p.deleted_at is null
+      where public.profile_project_role(sender, f.project_id) is not null
+    ),
+    (
+      select tp.project_id
+      from public.tasks t
+      join public.task_projects tp on tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
+      join public.projects p on p.id = tp.project_id and p.deleted_at is null
+      where t.id = target_task
+        and public.profile_project_role(sender, tp.project_id) is not null
+      order by tp.created_at, tp.project_id
+      limit 1
+    )
+  );
+$$;
+
+revoke all on function public.review_check_project(uuid, uuid) from public, anon, authenticated;
+
+select public.alhc_patch_function(
+  'public.create_review_check(uuid, uuid[], text, text, text)'::regprocedure,
+  $old$    task_id, round, recipient_email, recipient_name, message, token_hash, token_hint, expires_at, created_by
+  ) values ($old$,
+  $new$    task_id, round, recipient_email, recipient_name, message, token_hash, token_hint, expires_at, created_by,
+    project_id
+  ) values ($new$,
+  $old$    '…' || right(token, 4), now() + interval '30 days', me
+  )
+  returning * into r;$old$,
+  $new$    '…' || right(token, 4), now() + interval '30 days', me,
+    -- Oct 29 notes (55b): the project its email and its page name, chosen with the sender's access.
+    public.review_check_project(t.id, me)
+  )
+  returning * into r;$new$,
+  $old$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', r.expires_at,$old$,
+  $new$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', r.expires_at,
+    'project_id', r.project_id, 'project_name', (select p.name from public.projects p where p.id = r.project_id),$new$
+);
+
+select public.alhc_patch_function(
+  'public.rotate_review_check_token(uuid)'::regprocedure,
+  $old$      expires_at = now() + interval '30 days', hits = 0, hits_window_started_at = null, updated_at = now()
+  where x.id = r.id;$old$,
+  $new$      expires_at = now() + interval '30 days', hits = 0, hits_window_started_at = null, updated_at = now(),
+      -- Oct 29 notes (55b): the round's project while the person sending again can read it, else the one
+      -- they'd choose (the email and the page name the same project, never one its sender can't open).
+      project_id = case
+        when x.project_id is not null and public.profile_project_role(auth.uid(), x.project_id) is not null then x.project_id
+        else public.review_check_project(x.task_id, auth.uid())
+      end
+  where x.id = r.id
+  returning x.project_id into r.project_id;$new$,
+  $old$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', now() + interval '30 days',$old$,
+  $new$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', now() + interval '30 days',
+    'project_id', r.project_id, 'project_name', (select p.name from public.projects p where p.id = r.project_id),$new$
+);
+
 -- The review page names the project its email named: the one chosen with the sender's access when the
--- link was sent (review_checks.project_id, below: its form's project, else the first of the task's
+-- link was sent (review_checks.project_id, above: its form's project, else the first of the task's
 -- projects — each only when the sender can read it). Rounds sent before that column existed choose the
 -- same way now, as their sender. Never a project the sender can't read.
 select public.alhc_patch_function(
@@ -3004,81 +3110,16 @@ create trigger task_projects_01_fixed_keys
   for each row
   execute function public.guard_task_project_keys();
 
--- ---------------------------------------------------------------------------------------------------
--- 55b. A review link's project, chosen once with the sender's access and shared by its email and its
---      page (review_check_view above): the request's form's project when the sender can read it, else
---      the first of the task's projects (stable rule) the sender can read. Null when they can read none
---      (a private task). "Send again" keeps it while the person sending can read it, else chooses again
---      as them, so neither the email nor the page ever names a project its sender can't open.
--- ---------------------------------------------------------------------------------------------------
 
-alter table public.review_checks add column if not exists project_id uuid references public.projects (id);
-create index if not exists review_checks_project_id_idx on public.review_checks (project_id);
-
-create or replace function public.review_check_project(target_task uuid, sender uuid)
-returns uuid
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select coalesce(
-    (
-      select f.project_id
-      from public.task_submitter(target_task) s
-      join public.forms f on f.id = s.form_id
-      join public.projects p on p.id = f.project_id and p.deleted_at is null
-      where public.profile_project_role(sender, f.project_id) is not null
-    ),
-    (
-      select tp.project_id
-      from public.tasks t
-      join public.task_projects tp on tp.task_id = coalesce(t.root_task_id, t.id) and tp.deleted_at is null
-      join public.projects p on p.id = tp.project_id and p.deleted_at is null
-      where t.id = target_task
-        and public.profile_project_role(sender, tp.project_id) is not null
-      order by tp.created_at, tp.project_id
-      limit 1
-    )
-  );
-$$;
-
-revoke all on function public.review_check_project(uuid, uuid) from public, anon, authenticated;
-
-select public.alhc_patch_function(
-  'public.create_review_check(uuid, uuid[], text, text, text)'::regprocedure,
-  $old$    task_id, round, recipient_email, recipient_name, message, token_hash, token_hint, expires_at, created_by
-  ) values ($old$,
-  $new$    task_id, round, recipient_email, recipient_name, message, token_hash, token_hint, expires_at, created_by,
-    project_id
-  ) values ($new$,
-  $old$    '…' || right(token, 4), now() + interval '30 days', me
-  )
-  returning * into r;$old$,
-  $new$    '…' || right(token, 4), now() + interval '30 days', me,
-    -- Oct 29 notes (55b): the project its email and its page name, chosen with the sender's access.
-    public.review_check_project(t.id, me)
-  )
-  returning * into r;$new$,
-  $old$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', r.expires_at,$old$,
-  $new$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', r.expires_at,
-    'project_id', r.project_id, 'project_name', (select p.name from public.projects p where p.id = r.project_id),$new$
-);
-
-select public.alhc_patch_function(
-  'public.rotate_review_check_token(uuid)'::regprocedure,
-  $old$      expires_at = now() + interval '30 days', hits = 0, hits_window_started_at = null, updated_at = now()
-  where x.id = r.id;$old$,
-  $new$      expires_at = now() + interval '30 days', hits = 0, hits_window_started_at = null, updated_at = now(),
-      -- Oct 29 notes (55b): the round's project while the person sending again can read it, else the one
-      -- they'd choose (the email and the page name the same project, never one its sender can't open).
-      project_id = case
-        when x.project_id is not null and public.profile_project_role(auth.uid(), x.project_id) is not null then x.project_id
-        else public.review_check_project(x.task_id, auth.uid())
-      end
-  where x.id = r.id
-  returning x.project_id into r.project_id;$new$,
-  $old$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', now() + interval '30 days',$old$,
-  $new$    'id', r.id, 'round', r.round, 'token', token, 'expires_at', now() + interval '30 days',
-    'project_id', r.project_id, 'project_name', (select p.name from public.projects p where p.id = r.project_id),$new$
-);
+-- =================================================================================================
+-- 55.9 (continued) Link the existing library copies: the very last statement, once every definition
+-- column, helper, and trigger exists (a slow chunk here can't hold back anything else).
+-- =================================================================================================
+do $do$
+declare
+  result jsonb := public.link_library_field_copies();
+begin
+  raise notice 'Field library: linked % existing copies, filled % values, recorded % conflicts (library_field_link_conflicts), left % ambiguous fields alone',
+    result ->> 'linked', result ->> 'filled', result ->> 'conflicts', result ->> 'ambiguous';
+end;
+$do$;
