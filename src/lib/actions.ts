@@ -2161,12 +2161,26 @@ export async function removeTaskFromProject(
       .from("task_projects")
       .update({ deleted_at: now() })
       .eq("task_id", id(taskId))
-      .eq("project_id", id(projectId));
+      .eq("project_id", id(projectId))
+      .is("deleted_at", null)
+      .select("task_id");
     if (isLastProjectError(response.error)) {
       lastProject = true;
       throw new InputError(LAST_PROJECT_MESSAGE);
     }
     check(response);
+    if (!response.data?.length) {
+      // Nothing changed: it was already out of that project (fine), or the person's role there (RLS:
+      // Editor of that project) doesn't allow it — say so instead of pretending.
+      const still = await supabase
+        .from("task_projects")
+        .select("task_id")
+        .eq("task_id", taskId)
+        .eq("project_id", projectId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (still.data) throw new DbError(NOT_ALLOWED);
+    }
   });
   return lastProject ? { ...result, code: LAST_PROJECT_CODE } : result;
 }

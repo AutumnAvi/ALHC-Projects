@@ -64,6 +64,9 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
   const { close: closePane } = useClosePane();
   const [sectionId, setSectionId] = useOptimistic(membership.sectionId);
   const section = membership.sections.find((s) => s.id === sectionId);
+  // Its section and removal there need Editor in that project (task_projects' RLS), not just on the task:
+  // an Editor of one project may only view another one the task is in.
+  const canEditHere = canEdit && (task.editableProjectIds ?? []).includes(membership.projectId);
   const sectionName = section?.name ?? "No section";
 
   // One write through run (pending state, the error toast, fresh panes), handing its result back. `quiet`:
@@ -96,7 +99,7 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
   return (
     <li className="group/membership flex min-w-0 flex-wrap items-center gap-1">
       <ProjectChip taskId={task.id} membership={membership} number={task.projectNumbers?.[membership.projectId] ?? null} />
-      {canEdit ? (
+      {canEditHere ? (
         <Popover
           label={`Section in ${membership.projectName}: ${sectionName}. Change`}
           panelClassName="w-56 p-1.5"
@@ -133,7 +136,7 @@ function MembershipRow({ task, membership, canEdit }: { task: TaskDetail; member
       ) : (
         <span className="px-1 text-xs text-zinc-500">{sectionName}</span>
       )}
-      {canEdit ? (
+      {canEditHere ? (
         <Popover
           label={`More for ${membership.projectName}`}
           tooltip="Project options"

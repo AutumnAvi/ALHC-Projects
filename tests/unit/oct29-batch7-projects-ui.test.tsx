@@ -365,6 +365,7 @@ function paneTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
     isPrivate: false,
     ancestors: [],
     memberships: [{ projectId: P(1), projectName: "Launch", sectionId: null, sections: [] }],
+    editableProjectIds: [P(1), P(2)],
     projectNumbers: { [P(1)]: { text: "Req #1", wrap: true } },
     ...overrides,
   } as TaskDetail;
@@ -393,6 +394,25 @@ test("the pane's Projects row: no house icon or Make home; every project has Rem
   assert.doesNotMatch(two, /[Hh]ome/);
   const viewer = render(<TaskProjects task={paneTask()} addableProjects={[]} canEdit={false} />);
   assert.doesNotMatch(viewer, /More for/, "below Editor nothing to remove");
+  // An Editor of Launch who only views Website: Website's section and removal aren't theirs to change
+  // (task_projects' RLS needs Editor in that project; the remove would change nothing).
+  const mixed = render(
+    <TaskProjects
+      task={paneTask({
+        memberships: [
+          { projectId: P(1), projectName: "Launch", sectionId: null, sections: [] },
+          { projectId: P(2), projectName: "Website", sectionId: null, sections: [] },
+        ],
+        editableProjectIds: [P(1)],
+      })}
+      addableProjects={[]}
+      canEdit
+    />,
+  );
+  assert.match(mixed, /aria-label="More for Launch"/);
+  assert.match(mixed, /aria-label="Section in Launch: No section\. Change"/);
+  assert.doesNotMatch(mixed, /More for Website/, "no Remove where the viewer isn't an Editor");
+  assert.doesNotMatch(mixed, /Section in Website/, "and no section menu there");
 });
 
 test("the Trash names a task's other projects, never a home project", () => {

@@ -261,9 +261,9 @@ export type TaskDetail = {
   // Projects (with sections) where the viewer is an Editor among the task's projects (a subtask: its root's).
   editableProjectIds: string[];
   assigneeId: string | null;
-  // The database's internal pointer (Oct 29 notes, 55b: never shown — links and defaults use
-  // memberships[0]). Null for a private task (and its subtasks): no project; only its creator and
-  // assignee can read it.
+  // The first of the task's projects the viewer can read (Oct 29 notes, 55b: memberships[0], the stable
+  // rule; never the database's internal pointer, which may be a project the viewer can't open). Null for a
+  // private task (and its subtasks): no project; only its creator and assignee can read it.
   homeProjectId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -1766,7 +1766,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     hiddenBlockers: Math.max(0, (maybe(blockerCount, "blockers") ?? 0) - visibleBlockers),
     editableProjectIds,
     assigneeId: task.assignee_id,
-    homeProjectId: task.home_project_id,
+    homeProjectId: task.home_project_id === null ? null : (membershipRows[0]?.project_id ?? null),
     createdAt: task.created_at,
     updatedAt: task.updated_at,
     source: task.source,

@@ -143,6 +143,36 @@ begin
   -- Search labels with the first project the caller can read.
   assert (select s.home_project_id from public.search_tasks('Brochure', 10) s where s.id = t)
          = (select id from b7t4_ids where name = 'b'), 'search: the only readable project';
+  -- Number privacy in search: T's own number columns are A's (its internal pointer), and this Viewer
+  -- can't open A, so searching A's numbers finds neither T nor its subtask; B's number does.
+  assert not exists (select 1 from public.search_tasks('A-1', 10) x where x.id in (t, (select id from b7t4_ids where name = 's'))),
+    'search never matches a number of a project you can''t open';
+  assert not exists (select 1 from public.search_tasks('A-1.1', 10) x where x.id = (select id from b7t4_ids where name = 's')),
+    'nor a subtask''s path there';
+  assert exists (select 1 from public.search_tasks('B-1', 10) x where x.id = t), 'B''s number finds it';
+  assert not exists (
+    select 1 from public.filter_project_tasks((select id from b7t4_ids where name = 'b'), '{"text": "A-1"}'::jsonb, 'UTC') f
+    where f.task_id = t
+  ), 'a view''s text filter in B neither';
+  assert exists (
+    select 1 from public.filter_project_tasks((select id from b7t4_ids where name = 'b'), '{"text": "B-1"}'::jsonb, 'UTC') f
+    where f.task_id = t
+  ), 'B''s number does';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7t4_ids where name = 't');
+begin
+  -- The owner opens A: its numbers still find the task.
+  assert exists (select 1 from public.search_tasks('A-1', 10) x where x.id = t), 'the owner finds A-1';
+  assert exists (select 1 from public.search_tasks('A-1.1', 10) x where x.id = (select id from b7t4_ids where name = 's')),
+    'and the subtask''s path';
+  assert exists (
+    select 1 from public.filter_project_tasks((select id from b7t4_ids where name = 'b'), '{"text": "A-1"}'::jsonb, 'UTC') f
+    where f.task_id = t
+  ), 'also from B''s view';
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
@@ -358,7 +388,7 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
--- Defaults and links follow the stable rule: dependency shifting reads every project, restoring needs
+-- Defaults and links follow the stable rule: dependency shifting follows the first project, restoring needs
 -- one active project, subtask parent candidates and blockers name the first readable project.
 -- ---------------------------------------------------------------------------------------------
 
@@ -429,7 +459,7 @@ declare
   z uuid;
   blockers jsonb;
 begin
-  -- T is in B (pointer) and C (unreadable to the editor): its link project is B.
+  -- T is in C (its first project now, which the editor can't open) and B: the editor's link project is B.
   z := public.create_task(a, (select id from b7t4_ids where name = 'sa'), 'Card');
   perform public.set_task_dependency(t, z, 'finish_to_start', 0);
   blockers := public.task_open_blockers(z);
@@ -439,6 +469,89 @@ begin
 end $$;
 
 reset role;
+
+-- ---------------------------------------------------------------------------------------------
+-- Two removals at the same time (a second session through dblink, where the test database has it):
+-- a task's last two projects removed at once. The guard locks the task, so the second removal waits for
+-- the first, then sees it and is refused — the task never ends up in no project, and the first removal
+-- stays removed (the pointer's move doesn't write the other membership back). Both orders: the first
+-- removal on the pointer's project, and on the other one.
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+begin
+  if exists (select 1 from pg_available_extensions where name = 'dblink') then
+    create extension if not exists dblink schema extensions;
+  end if;
+end $$;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b7d40029-0000-4000-8000-000000000001', false) is not null as ok \gset
+do $$
+begin
+  insert into b7t4_ids values
+    ('race1', public.create_task((select id from b7t4_ids where name = 'a'), (select id from b7t4_ids where name = 'sa'), 'Race one')),
+    ('race2', public.create_task((select id from b7t4_ids where name = 'a'), (select id from b7t4_ids where name = 'sa'), 'Race two'));
+end $$;
+do $$
+begin
+  insert into public.task_projects (task_id, project_id, sort_order)
+  select id, (select id from b7t4_ids where name = 'b'), 8192 from b7t4_ids where name in ('race1', 'race2');
+end $$;
+reset role;
+
+create temporary table b7t4_race (task text, here text, there text);
+insert into b7t4_race values ('race1', 'a', 'b'), ('race2', 'b', 'a');
+
+do $$
+declare
+  r record;
+begin
+  if not exists (select 1 from pg_extension where extname = 'dblink') then
+    raise notice 'zz36_b7_t4: dblink isn''t available here, the concurrent removal check is skipped';
+    return;
+  end if;
+  for r in select * from b7t4_race loop
+    perform extensions.dblink_connect('b7t4_' || r.task, format('host=%s port=%s dbname=%s user=postgres',
+      split_part(current_setting('unix_socket_directories'), ',', 1), current_setting('port'), current_database()));
+    -- This transaction removes one project (and keeps the task's lock until it ends) …
+    update public.task_projects set deleted_at = now()
+    where task_id = (select id from b7t4_ids where name = r.task) and project_id = (select id from b7t4_ids where name = r.here);
+    -- … while a second session removes the other one.
+    perform extensions.dblink_send_query('b7t4_' || r.task, format(
+      'update public.task_projects set deleted_at = now() where task_id = %L and project_id = %L',
+      (select id from b7t4_ids where name = r.task), (select id from b7t4_ids where name = r.there)));
+  end loop;
+  perform pg_sleep(0.3);
+  for r in select * from b7t4_race loop
+    assert extensions.dblink_is_busy('b7t4_' || r.task) = 1, format('%s: the second removal waits for the first', r.task);
+  end loop;
+end $$;
+
+do $$
+declare
+  r record;
+  err text;
+begin
+  if not exists (select 1 from pg_extension where extname = 'dblink') then
+    return;
+  end if;
+  for r in select * from b7t4_race loop
+    perform * from extensions.dblink_get_result('b7t4_' || r.task, false) as x(status text);
+    err := extensions.dblink_error_message('b7t4_' || r.task);
+    perform extensions.dblink_disconnect('b7t4_' || r.task);
+    assert err like '%This is the task’s only project%', format('%s: the second removal is refused: %s', r.task, err);
+    assert (select count(*) from public.task_projects
+            where task_id = (select id from b7t4_ids where name = r.task) and deleted_at is null) = 1,
+      format('%s: still in exactly one project', r.task);
+    assert exists (select 1 from public.task_projects
+                   where task_id = (select id from b7t4_ids where name = r.task) and deleted_at is null
+                     and project_id = (select id from b7t4_ids where name = r.there)),
+      format('%s: the one the first removal left (it didn''t come back)', r.task);
+    assert (select home_project_id from public.tasks where id = (select id from b7t4_ids where name = r.task))
+           = (select id from b7t4_ids where name = r.there), format('%s: the pointer is there', r.task);
+  end loop;
+end $$;
 
 do $$
 begin

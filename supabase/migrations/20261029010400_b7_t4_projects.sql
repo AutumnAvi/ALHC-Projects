@@ -13,7 +13,13 @@
 --     the pointer moves).
 --   * Removing the task's LAST active project is refused (check_violation, detail last_project): "This is
 --     the task's only project. Add it to another project first, or move the task to the Trash." The guard
---     (guard_home_membership) became SECURITY DEFINER so it counts memberships the caller can't see.
+--     (guard_home_membership) became SECURITY DEFINER so it counts memberships the caller can't see, and
+--     it locks the task's row first, so two removals at the same time run one after the other (the
+--     second sees the first). While the pointer moves, ensure_home_membership leaves the memberships
+--     alone (the pointer went to an active one), so a removal can't come back or deadlock.
+--   * search_tasks / filter_project_tasks match the task's own number columns (the pointer's number)
+--     only while the caller can read the project that issued them: no finding a task by the number of a
+--     project you can't open.
 --   * task_project_labels(task_ids) (invoker, authenticated): every project of each task the caller can
 --     read, in the stable order, with that project's number when it numbers the task (task_request_labels_in
 --     per project, so subtasks get their path there). Never a project — or a number — the caller can't read.
@@ -237,17 +243,21 @@ select public.alhc_patch_function(
     raise exception 'Cannot remove a task from its home project; change the home project first'
       using errcode = 'check_violation';
   end if;$old$,
-  $new$  -- Oct 29 notes (55b): any project can be removed but the task's last active one.
-  if new.deleted_at is not null and old.deleted_at is null and exists (
-    select 1 from public.tasks t
+  $new$  -- Oct 29 notes (55b): any project can be removed but the task's last active one. The task's row is
+  -- locked first, so two removals from the same task run one after the other: the second one sees the
+  -- first (each statement here reads afresh) and can't take the task's last project with it.
+  if new.deleted_at is not null and old.deleted_at is null then
+    perform 1 from public.tasks t
     where t.id = new.task_id and t.parent_task_id is null and t.home_project_id is not null
-  ) and not exists (
-    select 1 from public.task_projects o
-    join public.projects p on p.id = o.project_id and p.deleted_at is null
-    where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
-  ) then
-    raise exception 'This is the task’s only project. Add it to another project first, or move the task to the Trash.'
-      using errcode = 'check_violation', detail = 'last_project';
+    for no key update;
+    if found and not exists (
+      select 1 from public.task_projects o
+      join public.projects p on p.id = o.project_id and p.deleted_at is null
+      where o.task_id = new.task_id and o.project_id <> new.project_id and o.deleted_at is null
+    ) then
+      raise exception 'This is the task’s only project. Add it to another project first, or move the task to the Trash.'
+        using errcode = 'check_violation', detail = 'last_project';
+    end if;
   end if;$new$
 );
 
@@ -298,6 +308,27 @@ create trigger task_projects_20_move_pointer
   when (old.deleted_at is null and new.deleted_at is not null)
   execute function public.move_task_pointer_on_removal();
 
+-- While the pointer moves, ensure_home_membership has nothing to make: the pointer went to one of the
+-- task's active memberships, and the guard's lock on the task (every removal takes it first) keeps that
+-- membership in place until this transaction ends. Not touching it also means a removal of that very
+-- membership running at the same time simply waits for this one, then sees the task's last project —
+-- instead of the two writing each other's rows (a removal coming back, or a deadlock).
+select public.alhc_patch_function(
+  'public.ensure_home_membership()'::regprocedure,
+  $old$  -- Private tasks have no project at all.
+  if new.home_project_id is null then
+    return new;
+  end if;$old$,
+  $new$  -- Private tasks have no project at all.
+  if new.home_project_id is null then
+    return new;
+  end if;
+  -- Oct 29 notes (55b): the database moving its internal pointer picked an active membership.
+  if coalesce(current_setting('alhc.home_pointer_move', true), '') = 'on' then
+    return new;
+  end if;$new$
+);
+
 select public.alhc_patch_function(
   'public.story_request_number()'::regprocedure,
   $old$  if public.import_context_id() is not null or public.copy_context_id() is not null then
@@ -340,7 +371,12 @@ $new$,
               update public.tasks set home_project_id = new_home where id = target_task;
             end if;
 $old$,
-  $new$$new$
+  $new$$new$,
+  -- The run log is read by the rule's project's Viewers, who may not open the task's other projects:
+  -- don't name them.
+  $old$            result := 'Removed from “' || coalesce(input ->> 'project', 'this project') || '” (it stays in “'
+              || coalesce((select pj.name from public.projects pj where pj.id = new_home), '?') || '”)';$old$,
+  $new$            result := 'Removed from “' || coalesce(input ->> 'project', 'this project') || '” (it stays in its other projects)';$new$
 );
 
 select public.alhc_patch_function(
@@ -417,6 +453,43 @@ select public.alhc_patch_function(
     limit 1$old$,
   $new$    order by tp.created_at, tp.project_id
     limit 1$new$
+);
+
+-- Number privacy in search and a view's text filter: the task's own number columns (tasks.req_label /
+-- req_number / req_path, the internal pointer's number — a subtask's path too) match only while the
+-- caller can read the project that issued them, so searching another project's number ("C-1") never
+-- finds a task in a project you can't open. The per-project numbers (task_project_numbers) were already
+-- read through RLS.
+select public.alhc_patch_function(
+  'public.search_tasks(text, integer)'::regprocedure,
+  $old$      or coalesce(t.req_label, '') ilike pattern.value
+$old$,
+  $new$      or (
+        coalesce(t.req_label, '') ilike pattern.value
+        and public.has_project_role(coalesce(t.req_project_id, t.home_project_id), 'viewer')
+      )
+$new$,
+  $old$        public.request_number_query(trim(query)) is not null
+$old$,
+  $new$        public.request_number_query(trim(query)) is not null
+        and public.has_project_role(coalesce(t.req_project_id, t.home_project_id), 'viewer')
+$new$
+);
+
+select public.alhc_patch_function(
+  'public.filter_project_tasks(uuid, jsonb, text)'::regprocedure,
+  $old$      or coalesce(t.req_label, '') ilike pattern.value
+$old$,
+  $new$      or (
+        coalesce(t.req_label, '') ilike pattern.value
+        and public.has_project_role(coalesce(t.req_project_id, t.home_project_id), 'viewer')
+      )
+$new$,
+  $old$        public.request_number_query(p.needle) is not null
+$old$,
+  $new$        public.request_number_query(p.needle) is not null
+        and public.has_project_role(coalesce(t.req_project_id, t.home_project_id), 'viewer')
+$new$
 );
 
 select public.alhc_patch_function(
