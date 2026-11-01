@@ -27,6 +27,7 @@ import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteTask, restoreTask, setReplyThreadClosed, setTaskKind } from "@/lib/actions";
+import { requestApprovalAction } from "./approval-action";
 import type { TaskDetail } from "@/lib/data";
 import { describeRecurrence } from "@/lib/recurrence";
 import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/task-kinds";
@@ -99,7 +100,13 @@ export function TaskMoreMenu({
     ) {
       return;
     }
-    run(() => setTaskKind(task.id, kind));
+    run(async () => {
+      const result = await setTaskKind(task.id, kind);
+      // Nov 1 notes, batch 9a: a new approval task opens the guided setup (approvers, then what happens
+      // after approval). The banner takes the request once it shows.
+      if (!result.error && kind === "approval") requestApprovalAction(task.id, "setup");
+      return result;
+    });
   }
 
   // Close or reopen the request's reply thread, with Undo on the toast.

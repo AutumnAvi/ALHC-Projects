@@ -20,6 +20,7 @@ import { SmartPicker } from "@/components/smart-picker";
 import { SECTIONS_LOCKED_NOTE, useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { useTaskTemplates } from "@/components/project/task-templates-context";
 import { useNotify, useServerAction } from "@/components/toast";
+import { useApprovalAction } from "@/components/task/approval-action";
 import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
 import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, type TaskKind } from "@/lib/task-kinds";
 import type { Section } from "@/lib/data";
@@ -334,6 +335,7 @@ export function AddTaskInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const canEdit = useProjectPermissions().canEdit;
   const templates = useTaskTemplates();
+  const approvalAction = useApprovalAction();
 
   if (!canEdit) return null;
   const close = () => {
@@ -369,7 +371,12 @@ export function AddTaskInput({
         const title = input?.value.trim();
         if (!input || !title) return;
         input.value = "";
-        run(() => createTask(projectId, sectionId, title, kind, atTop));
+        run(async () => {
+          const result = await createTask(projectId, sectionId, title, kind, atTop);
+          // Nov 1 notes, batch 9a: a new approval task opens in the pane with the guided setup.
+          if (!result.error && kind === "approval" && result.taskId) approvalAction(result.taskId, "setup");
+          return result;
+        });
       }}
       className={`flex items-center gap-1 ${variant === "row" ? `py-1.5 pr-3 ${indent}` : ""}`}
     >
@@ -437,6 +444,7 @@ export function AddTaskInput({
                     if (input) input.value = "";
                     run(async () => {
                       const result = await createTaskFromTemplate(template.id, sectionId, title);
+                      if (!result.error && result.kind === "approval" && result.taskId) approvalAction(result.taskId, "setup");
                       // Locked fields (Oct 29 notes, batch 7): only the project's Owners and Admins set them.
                       if (!result.error && result.lockedLeftOut) {
                         notify(

@@ -9,9 +9,11 @@ import { EmptyState } from "@/components/ui";
 import { useServerAction } from "@/components/toast";
 import { restoreTask } from "@/lib/actions";
 import type { Profile, TrashedTask } from "@/lib/data";
+import { TRASH_RETENTION_DAYS, trashDaysLeft, trashDeletesInLabel } from "@/lib/trash";
 
-// Deleted tasks are only soft-deleted: restoring one brings it back to every project it was in, with its
-// section, fields, comments, and history. Nothing here deletes permanently.
+// Deleted tasks stay in the Trash for TRASH_RETENTION_DAYS (Nov 1 notes, item 66): restoring one before
+// then brings it back to every project it was in, with its section, fields, comments, and history; after
+// that the daily purge removes it permanently. Each row says how long it has left.
 export function TrashView({
   tasks,
   profiles,
@@ -35,7 +37,8 @@ export function TrashView({
           </h2>
           <p className="mt-1 text-sm text-zinc-600">
             Deleted tasks from this project. Restoring a task puts it back in every project it belonged to, with its
-            section, fields, subtasks, comments, and activity. Deleted tasks are never removed permanently.
+            section, fields, subtasks, comments, and activity. Tasks are deleted permanently {TRASH_RETENTION_DAYS} days
+            after they were deleted, with their files.
           </p>
         </div>
 
@@ -47,6 +50,7 @@ export function TrashView({
           <ul className="divide-y divide-zinc-100">
             {visible.map((task) => {
               const by = task.deletedBy ? profilesById.get(task.deletedBy) : undefined;
+              const soon = trashDaysLeft(task.deletedAt) <= 7;
               return (
                 <li key={task.id} className="flex items-center gap-3 px-5 py-3">
                   <div className="min-w-0 flex-1">
@@ -62,6 +66,12 @@ export function TrashView({
                       {task.otherProjectNames.length ? ` · also in ${task.otherProjectNames.join(", ")}` : ""}
                     </p>
                   </div>
+                  <span
+                    data-trash-deletes-in=""
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium ${soon ? "bg-red-50 text-red-700" : "bg-zinc-100 text-zinc-600"}`}
+                  >
+                    {trashDeletesInLabel(task.deletedAt)}
+                  </span>
                   <button
                     type="button"
                     disabled={pending}

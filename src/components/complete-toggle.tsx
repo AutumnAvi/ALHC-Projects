@@ -95,8 +95,9 @@ export function CompleteToggle({
 
 // An approval task's row control for a viewer who can't simply tick it (completeModeOf(), Oct 29 notes,
 // batch 7, item 52): "Ready for approval" (opens the task's send flow), "Waiting for approval" (a round is
-// pending: nothing to do, still focusable so the tooltip reads), or "Approve" (the viewer's own decision is
-// open: opens it in the pane). Same size and place as CompleteToggle.
+// pending: nothing to do, still focusable so the tooltip reads), "Approve" (the viewer's own decision is
+// open: opens it in the pane), or "Approved" (Nov 1 notes, batch 9a: approved, and only its approvers
+// complete it; inert like Waiting). Same size and place as CompleteToggle.
 export function ApprovalToggle({
   mode,
   title,
@@ -114,18 +115,21 @@ export function ApprovalToggle({
       ? "border-dashed border-accent-400 text-accent-600 hover:border-solid hover:bg-accent-50"
       : mode === "approve"
         ? "border-green-600 text-green-700 hover:bg-green-50"
-        : "cursor-default border-zinc-300 bg-zinc-50 text-zinc-400";
-  const Icon = mode === "ready" ? Send : mode === "approve" ? ThumbsUp : Clock;
+        : mode === "approved"
+          ? "cursor-default border-green-300 bg-green-50 text-green-600"
+          : "cursor-default border-zinc-300 bg-zinc-50 text-zinc-400";
+  const Icon = mode === "ready" ? Send : mode === "approve" || mode === "approved" ? ThumbsUp : Clock;
+  const inert = mode === "waiting" || mode === "approved";
   return (
     <button
       type="button"
-      aria-disabled={mode === "waiting" ? "true" : undefined}
+      aria-disabled={inert ? "true" : undefined}
       aria-label={completeModeRowLabel(mode, title)}
       data-tooltip={completeModeTooltip(mode)}
       data-approval-toggle={mode}
       onClick={(e) => {
         e.stopPropagation();
-        if (mode !== "waiting") onAction?.();
+        if (!inert) onAction?.();
       }}
       className={`${dimensions} inline-flex shrink-0 items-center justify-center rounded-full border transition ${tone}`}
     >

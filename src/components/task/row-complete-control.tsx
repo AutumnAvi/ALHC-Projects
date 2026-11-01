@@ -49,7 +49,9 @@ export function RowCompleteControl({
   const approvalAction = useApprovalAction();
   const mode = rowCompleteMode(task, completed);
   const approvalControl =
-    mode === "approve" || (mode === "ready" && (!readOnly || assignedToMe)) || (mode === "waiting" && !readOnly);
+    mode === "approve" ||
+    (mode === "ready" && (!readOnly || assignedToMe)) ||
+    ((mode === "waiting" || mode === "approved") && !readOnly);
   if (mode !== "complete" && approvalControl) {
     return (
       <ApprovalToggle

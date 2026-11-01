@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { FileText, Mail, Paperclip, UsersRound } from "lucide-react";
+import { FileText, FolderKanban, Lock, Mail, Paperclip, SquareCheck, UsersRound } from "lucide-react";
+import Link from "next/link";
+import { TaskLink } from "./task-link";
+import { appLinkSegments, type AppLink } from "@/lib/app-links";
+import type { CommentRefs } from "@/lib/data";
+import { seedFromTitle } from "@/lib/task-seed";
 import { Avatar, displayName } from "@/components/avatar";
 import { Timestamp } from "@/components/timestamp";
 import { ImageLightbox } from "./task-attachments";
@@ -178,18 +183,86 @@ export function TeamMentionPill({ team, raw }: { team: MentionTeam; raw: string 
 
 // A comment or message body with its @mentions as pills. `people` = the people the database recorded as
 // mentioned (others' "@words" stay plain text).
+// Names the @ menu just inserted (a comment still on its way has no server lookup yet).
+const linkNames = new Map<string, string>();
+export function rememberLinkName(id: string, name: string) {
+  linkNames.set(id, name);
+}
+
+// Nov 1 notes, batch 9a (10.3): a link to a task (opens it in the pane) or a project (opens it), named
+// from the reader's own lookup; one they can't open reads "Private link".
+export function AppLinkChip({ link, refs, raw }: { link: AppLink; refs: CommentRefs; raw: string }) {
+  const chip =
+    "inline-flex max-w-full items-center gap-1 rounded bg-zinc-100 px-1.5 py-px align-baseline text-[0.95em] font-medium text-zinc-800 hover:bg-accent-50 hover:text-accent-800";
+  if (link.kind === "task") {
+    const known = refs.tasks[link.taskId];
+    const title = known?.title ?? linkNames.get(link.taskId);
+    if (!title) return <PrivateLink raw={raw} />;
+    return (
+      <TaskLink
+        taskId={link.taskId}
+        seed={() => seedFromTitle(link.taskId, title)}
+        className={chip}
+        data-app-link="task"
+        title={title}
+      >
+        <SquareCheck className="size-3.5 shrink-0 text-zinc-500" aria-hidden />
+        <span className="truncate">{title}</span>
+      </TaskLink>
+    );
+  }
+  const name = refs.projects[link.projectId]?.name ?? linkNames.get(link.projectId);
+  if (!name) return <PrivateLink raw={raw} />;
+  return (
+    <Link href={`/projects/${link.projectId}`} className={chip} data-app-link="project" title={name}>
+      <FolderKanban className="size-3.5 shrink-0 text-zinc-500" aria-hidden />
+      <span className="truncate">{name}</span>
+    </Link>
+  );
+}
+
+function PrivateLink({ raw }: { raw: string }) {
+  return (
+    <span
+      data-app-link="private"
+      data-tooltip="A task or project you can’t open"
+      title={raw}
+      className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-px align-baseline text-[0.95em] text-zinc-500"
+    >
+      <Lock className="size-3 shrink-0" aria-hidden />
+      Private link
+    </span>
+  );
+}
+
 export function MentionText({
   body,
   people,
   describe,
   teams = [],
+  refs,
 }: {
   body: string;
   people: MentionPerson[];
   describe?: DescribePerson;
   // Teams whose @name shows as a pill with its members (display only).
   teams?: MentionTeam[];
+  // Names of linked tasks and projects (comments, Nov 1 notes batch 9a): app links become chips.
+  refs?: CommentRefs;
 }) {
+  if (refs) {
+    return (
+      <>
+        {appLinkSegments(body).map((segment, index) =>
+          segment.type === "link" ? (
+            <AppLinkChip key={index} link={segment.link} refs={refs} raw={segment.raw} />
+          ) : (
+            <MentionText key={index} body={segment.text} people={people} describe={describe} teams={teams} />
+          ),
+        )}
+      </>
+    );
+  }
   const byId = new Map(people.map((p) => [p.id, p] as const));
   const teamsById = new Map(teams.map((t) => [t.id, t] as const));
   return (

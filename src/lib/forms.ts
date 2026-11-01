@@ -101,6 +101,8 @@ export type FormDef = {
   acceptingResponses: boolean;
   sendConfirmation: boolean;
   confirmationMessage: string | null;
+  // Nov 1 notes, item 69: only addresses on a verified domain may submit (submit_form refuses others).
+  verifiedDomainsOnly?: boolean;
 };
 
 export type PublicForm = {
@@ -110,7 +112,22 @@ export type PublicForm = {
   acceptingResponses: boolean;
   questions: FormQuestion[];
   viewerEmail: string | null;
+  // Nov 1 notes, item 69: only these domains may submit (empty when anyone may).
+  verifiedDomains?: string[];
 };
+
+// Item 69: whether an address is on one of the domains (exact domain after the @, any case), and the
+// domains in words ("autumnhc.net or autumnlakemarketing.com").
+export function emailOnDomains(email: string, domains: readonly string[]): boolean {
+  const at = email.trim().lastIndexOf("@");
+  if (at < 1) return false;
+  const domain = email.trim().slice(at + 1).toLowerCase();
+  return domains.some((d) => d.toLowerCase() === domain);
+}
+
+export function domainsInWords(domains: readonly string[]): string {
+  return domains.length ? domains.join(" or ") : "a verified domain";
+}
 
 export const CHECKBOX_OPTION_ID = "true";
 
@@ -501,4 +518,54 @@ export function submissionRequesterName(questionsJson: Json, answersJson: Json):
     if (typeof value === "string" && value.trim()) return value.trim().slice(0, 200);
   }
   return null;
+}
+
+// Nov 1 notes, item 68: branching from a question's Branch button. `showInBranch` turns one later
+// question's "shown if this answer" on or off (a question depends on one earlier question, so picking it
+// moves it from any other branch); `insertBranchQuestion` puts a new question right after the source's
+// branch (after the last question it already shows) with the branch set.
+export function showInBranch(
+  questions: FormQuestion[],
+  sourceId: string,
+  childId: string,
+  optionId: string,
+  on: boolean,
+): FormQuestion[] {
+  return questions.map((q) => {
+    if (q.id !== childId) return q;
+    const sameParent = q.show_if?.question_id === sourceId;
+    const ids = sameParent ? (q.show_if?.option_ids ?? []) : [];
+    const next = on ? [...new Set([...ids, optionId])] : ids.filter((id) => id !== optionId);
+    const copy = { ...q };
+    if (next.length) copy.show_if = { question_id: sourceId, option_ids: next };
+    else if (sameParent) delete copy.show_if;
+    return copy;
+  });
+}
+
+export function insertBranchQuestion(
+  questions: FormQuestion[],
+  sourceId: string,
+  optionId: string,
+  question: FormQuestion,
+): FormQuestion[] {
+  const at = questions.findIndex((q) => q.id === sourceId);
+  if (at < 0) return questions;
+  let end = at;
+  for (let i = at + 1; i < questions.length; i++) {
+    if (questions[i].show_if?.question_id === sourceId) end = i;
+  }
+  const added: FormQuestion = { ...question, show_if: { question_id: sourceId, option_ids: [optionId] } };
+  return [...questions.slice(0, end + 1), added, ...questions.slice(end + 1)];
+}
+
+// Nov 1 notes, item 71: every form already asks for the submitter's email, so a second Email question
+// isn't offered (one a form already has keeps working).
+export const EMAIL_QUESTION_NOTE = "The form already asks for the submitter’s email.";
+
+// Why a question can't branch (null = it can): only choice and checkbox questions open branches.
+export function branchUnavailableReason(question: FormQuestion): string | null {
+  if (isBranchSource(question)) return null;
+  if (question.type === "heading") return "Headings don’t have answers to branch on.";
+  return "Only Single choice, Multiple choice, and Checkbox questions can branch. Change its type to branch.";
 }

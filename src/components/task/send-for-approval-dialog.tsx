@@ -79,9 +79,16 @@ export function SendForApprovalDialog({
   const [picked, setPicked] = useState<Set<string>>(
     () => new Set((latest?.attachmentIds ?? []).filter((id) => task.attachments.some((a) => a.id === id))),
   );
-  const [moreSteps, setMoreSteps] = useState(latest?.moreSteps ?? false);
-  const [choice, setChoice] = useState<AfterApprovalChoice>(latest?.afterApproval === "move_section" ? "move_section" : "notify");
-  const [moveSectionId, setMoveSectionId] = useState<string | null>(latest?.moveSectionId ?? null);
+  // Nov 1 notes, batch 9a: the guided setup's follow-up decides what happens after approval; without one,
+  // the last round's choice.
+  const planned = task.approval?.followUp?.afterApproval ?? null;
+  const [moreSteps, setMoreSteps] = useState(planned ? planned !== "complete" : (latest?.moreSteps ?? false));
+  const [choice, setChoice] = useState<AfterApprovalChoice>(
+    (planned ?? latest?.afterApproval) === "move_section" ? "move_section" : "notify",
+  );
+  const [moveSectionId, setMoveSectionId] = useState<string | null>(
+    planned === "move_section" ? (task.approval?.followUp?.sectionId ?? null) : (latest?.moveSectionId ?? null),
+  );
   const [withReview, setWithReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tried, setTried] = useState(false);
@@ -309,7 +316,7 @@ export function SendForApprovalDialog({
             <span>
               More steps after approval — don’t complete
               <span className="block text-2xs text-zinc-500">
-                {moreSteps ? "Choose what happens when it’s approved." : "Otherwise approving it completes the task."}
+                {moreSteps ? "Choose what happens when it’s approved. Its approvers complete the task afterwards." : "Otherwise approving it completes the task."}
               </span>
             </span>
           </label>

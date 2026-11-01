@@ -590,10 +590,15 @@ begin
   -- Editor+ by own role) and project_field_sharing (which of a project's fields are shared and who may
   -- change them: booleans and counts only), and locked_field_value_writable (whether the caller may change
   -- a locked field's value for a task they can read: Owner / Admin of every project the value reaches).
+  -- Nov 1 notes (batch 9a) added set_comment_pinned (Pin / Unpin: Editors+ of the task),
+  -- set_approval_followup (the guided approval setup's follow-up: Editors+ of an approval task),
+  -- submitter_conversation_status (whether a request's email conversation is on: task Viewers+), and
+  -- set_email_conversation_override (workspace admins allow or stop it per request or submitter), and
+  -- complete_approval_as_approver (an approval task's approvers — often Commenters — complete it).
   assert exposed =
     'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
     'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
-    'convert_commenter_members,create_project_from_template,create_review_check,custom_field_has_role,decide_approval,decide_project_access_request,decide_team_join_request,'
+    'complete_approval_as_approver,convert_commenter_members,create_project_from_template,create_review_check,custom_field_has_role,decide_approval,decide_project_access_request,decide_team_join_request,'
     'delete_project_template,duplicate_project,finish_import_run,get_project_integrations,get_public_form,goal_hidden_project_count,hand_off_approval,has_portfolio_role,'
     'has_project_role,has_task_role,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,'
     'is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,'
@@ -602,8 +607,8 @@ begin
     'project_task_card_page,project_task_cards,receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,'
     'remove_workspace_admin,remove_workspace_member,request_approval,request_project_access,request_team_join,resend_workspace_invite,restore_task,resubmit_approval,'
     'retry_email_delivery,retry_integration_delivery,rotate_review_check_token,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,send_for_approval,'
-    'set_default_project_role,set_project_archived,set_project_integration,set_project_status,set_submitter_thread_closed,set_task_approvers,set_task_dependency,'
-    'start_import_run,submit_form,submitter_thread_status,sync_my_task_placements,task_comment_page,task_role,test_rule,transfer_portfolio_ownership,'
+    'set_approval_followup,set_comment_pinned,set_default_project_role,set_email_conversation_override,set_project_archived,set_project_integration,set_project_status,set_submitter_thread_closed,set_task_approvers,set_task_dependency,'
+    'start_import_run,submit_form,submitter_conversation_status,submitter_thread_status,sync_my_task_placements,task_comment_page,task_role,test_rule,transfer_portfolio_ownership,'
     'transfer_project_ownership,update_portfolio_member_role,update_project_member_role,update_project_template,withdraw_approval,workspace_email_summary,'
     'workspace_hidden_project_count',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);

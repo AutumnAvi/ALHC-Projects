@@ -8,6 +8,7 @@ import { useServerAction } from "@/components/toast";
 import { EmptyState, Skeleton } from "@/components/ui";
 import { restoreTask } from "@/lib/actions";
 import { loadTrashedTask } from "@/lib/shell-actions";
+import { TRASH_RETENTION_DAYS, trashDeletesInLabel } from "@/lib/trash";
 import { ensureTaskPane, invalidateTaskPanes } from "./task-pane-store";
 import { setPaneExpanded, setPaneWide, usePaneExpanded, usePaneWide } from "./pane-size";
 import { PANE_FIELDS } from "./pane-styles";
@@ -195,7 +196,8 @@ export function TaskNotFoundPanel({ taskId = null }: { taskId?: string | null })
             }
           >
             “{trashed.title}” was deleted. Restoring it puts it back in every project it was in, with its section,
-            fields, subtasks, and comments.
+            fields, subtasks, and comments. {trashDeletesInLabel(trashed.deletedAt)} (items in the Trash are
+            deleted permanently {TRASH_RETENTION_DAYS} days after they were deleted).
           </EmptyState>
         ) : (
           <EmptyState icon={SearchX} title="Task not found" size="inline">

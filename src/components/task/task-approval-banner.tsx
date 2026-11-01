@@ -27,6 +27,7 @@ import { SingleDatePicker } from "./date-picker";
 import { PeopleList } from "./person-picker";
 import { PANE_FIELDS, PANE_LABEL } from "./pane-styles";
 import { SendForApprovalDialog, joinNames } from "./send-for-approval-dialog";
+import { ApprovalSetupDialog } from "./approval-setup-dialog";
 
 // Oct 27 notes (batch 6, items 45 / 45b): the approval panel at the top of an approval task's pane.
 // The assignee does the work and sends it with "Ready for approval"; the task's approvers (separate
@@ -154,6 +155,8 @@ function ApprovalPanel({
   const detailsId = useId();
   const sectionRef = useRef<HTMLElement>(null);
   const [sending, setSending] = useState(false);
+  // Nov 1 notes, batch 9a: the guided setup (choose approvers, then what happens after approval).
+  const [settingUp, setSettingUp] = useState(false);
   // The decision the approver started (Approve / Request changes / Reject): its note step shows under the row.
   const [decision, setDecision] = useState<{ choice: Decision; nonce: number } | null>(null);
   const detailsOpen = useApprovalDetailsOpen();
@@ -208,6 +211,10 @@ function ApprovalPanel({
   // A row's (or the pane header's) "Ready for approval" / "Approve" lands here (approval-action.ts).
   useApprovalActionListener(task.id, (action) => {
     sectionRef.current?.scrollIntoView?.({ block: "nearest" });
+    if (action === "setup") {
+      if (canChangeApprovers && !roundOpen) setSettingUp(true);
+      return;
+    }
     if (action === "decide") {
       if (canDecide) setDecision((current) => ({ choice: "approved", nonce: (current?.nonce ?? 0) + 1 }));
       else notify(decideRefusal);
@@ -327,6 +334,16 @@ function ApprovalPanel({
         <span className="text-xs font-medium text-zinc-500">{approvers.length === 1 ? "Approver" : "Approvers"}</span>
         {approvers.length === 0 ? <span className="text-sm text-zinc-500">No approver yet</span> : null}
         {approvers.length === 0 ? approverPicker : null}
+        {approvers.length === 0 && canChangeApprovers && !completed ? (
+          <button
+            type="button"
+            data-approval-finish-setup=""
+            onClick={() => setSettingUp(true)}
+            className="inline-flex h-6 items-center gap-1 rounded-full bg-accent-600 px-2.5 text-xs font-medium text-white hover:bg-accent-700"
+          >
+            Finish setup
+          </button>
+        ) : null}
         {approvers.map(({ id, profile }) => {
           const request = roundOpen ? latest?.requests.find((r) => r.approverId === id && r.status !== "cancelled") : undefined;
           const name = profile ? displayName(profile) : "Someone";
@@ -583,6 +600,7 @@ function ApprovalPanel({
       </div>
 
       {sending ? <SendForApprovalDialog task={task} profiles={profiles} onClose={() => setSending(false)} /> : null}
+      {settingUp ? <ApprovalSetupDialog task={task} profiles={profiles} onClose={() => setSettingUp(false)} /> : null}
     </section>
   );
 }

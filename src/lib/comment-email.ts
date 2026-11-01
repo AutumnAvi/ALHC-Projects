@@ -73,9 +73,15 @@ export function canRespondToSubmitter(task: {
   submission: { email: string } | null;
   submitterResponses: boolean;
   viewerRole?: string | null;
+  // Nov 1 notes, item 69: off for a submitter outside the verified domains (unless an admin allowed it).
+  submitterConversation?: { allowed: boolean } | null;
 }): boolean {
   const editor = task.viewerRole === undefined || ["editor", "admin", "owner"].includes(task.viewerRole ?? "");
   return (
-    editor && task.submitterResponses && (task.source === "form" || task.isSubtask) && Boolean(task.submission?.email)
+    editor &&
+    task.submitterResponses &&
+    task.submitterConversation?.allowed !== false &&
+    (task.source === "form" || task.isSubtask) &&
+    Boolean(task.submission?.email)
   );
 }

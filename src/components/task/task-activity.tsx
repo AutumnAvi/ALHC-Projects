@@ -3,8 +3,9 @@
 import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
-import { Bell, BellOff, FileCheck, Pencil, SmilePlus, Trash2, UserPlus, X } from "lucide-react";
+import { Bell, BellOff, FileCheck, Pencil, Pin, PinOff, SmilePlus, Trash2, UserPlus, X } from "lucide-react";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
+import { RequestConversationNotice } from "@/components/task/request-conversation";
 import { Avatar, displayName } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
@@ -17,6 +18,7 @@ import {
   editComment,
   loadOlderComments,
   sendSubmitterResponse,
+  setCommentPinned,
   setFollowing,
   toggleReaction,
 } from "@/lib/actions";
@@ -36,7 +38,7 @@ import {
 } from "./pending-comments-store";
 import { REACTIONS, reactionOf, type ReactionKey } from "@/lib/reactions";
 import { formatDueDate } from "@/lib/dates";
-import type { Profile, TaskComment, TaskDetail, TaskStory } from "@/lib/data";
+import type { CommentRefs, Profile, TaskComment, TaskDetail, TaskStory } from "@/lib/data";
 import { fieldChips } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { useRealtimeRefresh } from "@/lib/realtime";
@@ -145,6 +147,9 @@ export function TaskActivity({
   const tagsOn = useTagsEnabled();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const canComment = taskPermissions(task).canComment;
+  // Nov 1 notes, batch 9a (10.4): Editors and above pin and unpin comments (set_comment_pinned).
+  const canPin = taskPermissions(task).canEdit && task.pinnedComments !== undefined;
+  const refs: CommentRefs = task.commentRefs ?? { tasks: {}, projects: {} };
   const candidates = mentionCandidates(task, profiles, memberId);
   const nameOf = (profileId: string | null) => {
     const profile = profileId ? profilesById.get(profileId) : undefined;
@@ -380,7 +385,9 @@ export function TaskActivity({
       case "dependency_changed": {
         // The other task's title is only there when the viewer can read it.
         const title = str(d, "task_title");
-        const other = title ? <>“{title}”</> : <>a task you can’t open</>;
+        // Nov 1 notes, item 66: the other task was purged from the Trash.
+        const purged = Boolean(d && typeof d === "object" && !Array.isArray(d) && (d as Record<string, Json | undefined>).purged === true);
+        const other = title ? <>“{title}”</> : purged ? <>a deleted task</> : <>a task you can’t open</>;
         const lag = typeof num(d, "lag_days") === "number" ? (num(d, "lag_days") as number) : 0;
         const how = str(d, "kind") ? <> ({dependencyLabel(parseDependencyKind(str(d, "kind")), lag).toLowerCase()})</> : null;
         if (story.kind === "dependency_changed") {
@@ -425,6 +432,10 @@ export function TaskActivity({
       }
       case "converted_to_task":
         return <>made this subtask a task in {str(d, "project_name")}</>;
+      case "comment_pinned":
+        return "pinned a comment";
+      case "comment_unpinned":
+        return "unpinned a comment";
       case "deleted":
         return "moved this task to the Trash";
       case "restored":
@@ -437,6 +448,10 @@ export function TaskActivity({
   }
 
   const comments = entries.filter((entry) => entry.type === "comment");
+  // Pinned comments at the top of the feed (newest pin first); the loaded page's copy carries the latest pin.
+  const pinned = (task.pinnedComments ?? [])
+    .map((p) => commentsOnTask.find((c) => c.id === p.id) ?? p)
+    .filter((c) => c.pinnedAt && !c.deleted);
   const shown = tab === "comments" ? comments : entries;
   const commentCount = task.commentTotal + merged.waiting.length;
 
@@ -476,6 +491,35 @@ export function TaskActivity({
             <p id="activity-panel" role="tabpanel" aria-labelledby={`activity-tab-${tab}`} className="py-4 text-sm text-zinc-500">
               {canComment ? "No comments yet. Ask a question or share an update below." : "No comments yet."}
             </p>
+          ) : null}
+          {pinned.length ? (
+            <section aria-label="Pinned comments" data-pinned-comments="" className="mt-3 rounded-lg border border-amber-200 bg-amber-50/40 p-2.5">
+              <p className="mb-2 flex items-center gap-1 text-xs font-semibold text-amber-800">
+                <Pin className="size-3.5" aria-hidden />
+                Pinned
+              </p>
+              <ol className="flex flex-col gap-3">
+                {pinned.map((comment) => (
+                  <CommentItem
+                    key={`pinned-${comment.id}`}
+                    comment={comment}
+                    pending={false}
+                    authorName={comment.ruleName ? `Rule “${comment.ruleName}”` : nameOf(comment.authorId)}
+                    mine={comment.authorId !== null && comment.authorId === memberId}
+                    canComment={canComment}
+                    memberId={memberId}
+                    nameOf={nameOf}
+                    candidates={candidates}
+                    mentioned={comment.mentionIds.flatMap((mentionId) => profileById(mentionId) ?? [])}
+                    describe={describe}
+                    teams={task.mentionTeams}
+                    refs={refs}
+                    canPin={canPin}
+                    inPinned
+                  />
+                ))}
+              </ol>
+            </section>
           ) : null}
           {olderCursor ? (
             <button
@@ -528,6 +572,8 @@ export function TaskActivity({
                   mentioned={entry.comment.mentionIds.flatMap((mentionId) => profileById(mentionId) ?? [])}
                   describe={describe}
                   teams={task.mentionTeams}
+                  refs={refs}
+                  canPin={canPin}
                 />
               ),
             )}
@@ -570,6 +616,9 @@ function CommentItem({
   mentioned,
   describe,
   teams,
+  refs,
+  canPin = false,
+  inPinned = false,
 }: {
   comment: TaskComment;
   // Still on its way to the server (optimistic): no edit, delete, or reactions yet.
@@ -583,6 +632,10 @@ function CommentItem({
   mentioned: Profile[];
   describe: DescribePerson;
   teams: TaskDetail["mentionTeams"];
+  refs: CommentRefs;
+  // Editors+ (10.4): Pin / Unpin; inPinned = drawn in the Pinned section at the top.
+  canPin?: boolean;
+  inPinned?: boolean;
 }) {
   const [pending, run] = useServerAction();
   const confirm = useConfirm();
@@ -618,9 +671,23 @@ function CommentItem({
     );
   }
 
+  const pinnable = canPin && !comment.deleted && !sending;
+  const pinButton = pinnable ? (
+    <button
+      type="button"
+      aria-label={comment.pinnedAt ? "Unpin comment" : "Pin comment to the top"}
+      data-tooltip={comment.pinnedAt ? "Unpin" : "Pin to top"}
+      data-pin-comment={comment.pinnedAt ? "unpin" : "pin"}
+      onClick={() => run(() => setCommentPinned(comment.id, !comment.pinnedAt))}
+      className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+    >
+      {comment.pinnedAt ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+    </button>
+  ) : null;
   const controls =
-    (editable || removable) && !editing ? (
+    (editable || removable || pinnable) && !editing ? (
       <span className="ml-auto flex items-center opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+        {pinButton}
         {editable ? (
           <button
             type="button"
@@ -632,6 +699,7 @@ function CommentItem({
             <Pencil className="size-3.5" />
           </button>
         ) : null}
+        {removable ? (
         <button
           type="button"
           aria-label="Delete comment"
@@ -652,6 +720,7 @@ function CommentItem({
         >
           <Trash2 className="size-3.5" />
         </button>
+        ) : null}
       </span>
     ) : null;
 
@@ -670,7 +739,7 @@ function CommentItem({
               received ? <EmailFiles files={comment.emailFiles ?? []} skipped={comment.emailSkipped ?? []} /> : null
             }
           >
-            {received ? comment.body : <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} />}
+            {received ? comment.body : <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} refs={refs} />}
           </EmailCard>
           {comment.reviewCheckId ? <ReviewLink /> : null}
           {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
@@ -696,6 +765,12 @@ function CommentItem({
             </span>
           ) : null}
           {sending ? <span className="text-xs text-zinc-400">Sending…</span> : null}
+          {comment.pinnedAt && !inPinned ? (
+            <span className="inline-flex items-center gap-0.5 rounded bg-amber-50 px-1 text-2xs font-medium text-amber-800" data-comment-pinned="">
+              <Pin className="size-3" aria-hidden />
+              Pinned
+            </span>
+          ) : null}
           {controls}
         </div>
         {editing ? (
@@ -710,6 +785,7 @@ function CommentItem({
               candidates={candidates}
               onSubmit={save}
               onCancel={() => setDraft(null)}
+              links
               autoFocus
               rows={2}
               className={COMMENT_INPUT}
@@ -726,7 +802,7 @@ function CommentItem({
           </div>
         ) : (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
-            <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} />
+            <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} refs={refs} />
           </p>
         )}
         {comment.reviewCheckId ? <ReviewLink /> : null}
@@ -944,6 +1020,7 @@ export function TaskPaneFooter({
           }}
         />
       ) : null}
+      {canComment ? <RequestConversationNotice task={task} /> : null}
       {canComment ? (
         <div className="flex items-start gap-2">
           <Avatar name={me ? displayName(me) : "You"} src={me?.avatar_url} profileId={me?.id} size="md" />
@@ -966,6 +1043,7 @@ export function TaskPaneFooter({
               onValueChange={setDraft}
               candidates={mentionCandidates(task, profiles, memberId)}
               onSubmit={submit}
+              links
               placeholder="Add a comment"
               className={`block w-full resize-none border-0 bg-transparent px-3 text-sm shadow-none outline-none placeholder:text-zinc-500 focus-visible:shadow-none field-sizing-content ${
                 open ? "min-h-16 py-2" : "h-8 min-h-8 py-1.5"
@@ -1015,7 +1093,7 @@ export function TaskPaneFooter({
                     ? task.replyThread?.closed
                       ? "Emailed to the submitter. Replies are closed, so their answers won’t be posted"
                       : "This comment is emailed to the submitter; their reply comes back here"
-                    : "Type @ to mention someone · ⌘/Ctrl+Enter to send"}
+                    : "Type @ for people, tasks, or projects · ⌘/Ctrl+Enter to send"}
                 </span>
                 <button type="button" onClick={submit} disabled={!draft.trim()} className="btn-primary h-7 px-3">
                   {toSubmitter && submitterEmail ? "Send" : "Comment"}

@@ -12,7 +12,8 @@ import { useOpenTask } from "./task-link";
 // mounted yet (the pane draws the row's preview while the task loads), so the request waits here for a
 // short while and the banner takes it when it mounts; an open banner hears it through the event.
 
-export type ApprovalAction = "send" | "decide";
+// "setup" (Nov 1 notes, batch 9a): open the guided approval setup (the task just became an approval task).
+export type ApprovalAction = "send" | "decide" | "setup";
 
 const APPROVAL_ACTION_EVENT = "alhc:approval-action";
 // A request the pane didn't pick up by then (another task was opened meanwhile) is forgotten.
@@ -69,6 +70,7 @@ export function useApprovalShortcut() {
     const action = shortcutApprovalAction(rowCompleteMode(task));
     if (!action) return false;
     if (action === "waiting") notify(`“${task.title}” is waiting for approval`);
+    else if (action === "approved") notify(`“${task.title}” was approved. Only its approvers can complete it.`);
     else approvalAction(task.id, action, seed);
     return true;
   };

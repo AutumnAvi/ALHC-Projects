@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { drainOutbox } from "@/lib/email";
 import { removeStaleFormUploads } from "@/lib/form-uploads";
+import { removePurgedFiles } from "@/lib/trash-files";
 import { drainIntegrationOutbox } from "@/lib/integrations";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -9,7 +10,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // delivers queued email, Slack messages, and outbound webhooks. pg_cron can run workflow_tick() inside
 // the database on its own, but only the app makes HTTP calls (Resend, Slack, webhooks), so this route
 // is what drains the outboxes when nobody is using the app. It also removes public form uploads that no
-// response kept, a day after they were uploaded, and queues due Inbox digests and scheduled reports.
+// response kept, a day after they were uploaded, queues due Inbox digests and scheduled reports, and
+// (Nov 1 notes, item 66) removes the files of things the daily Trash purge removed permanently.
 function authorized(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
@@ -34,5 +36,6 @@ export async function GET(request: Request) {
   const email = await drainOutbox({ max: 50 });
   const integrations = await drainIntegrationOutbox({ max: 50 });
   const formUploads = await removeStaleFormUploads(admin);
-  return Response.json({ tick: tick.data, scheduled: queued.data ?? null, email, integrations, formUploads });
+  const trashFiles = await removePurgedFiles(admin);
+  return Response.json({ tick: tick.data, scheduled: queued.data ?? null, email, integrations, formUploads, trashFiles });
 }

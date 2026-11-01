@@ -1,4 +1,5 @@
 import "server-only";
+import { appLinkIds } from "@/lib/app-links";
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { displayName } from "@/components/avatar";
@@ -291,6 +292,9 @@ export type TaskDetail = {
   // The database has Comments and reply by email (20261014030000): responses to a form's submitter can
   // be sent (see canRespondToSubmitter()).
   submitterResponses: boolean;
+  // Nov 1 notes, item 69: whether this request's reply-by-email conversation is on (a verified-domain
+  // submitter, or a workspace admin allowed it), and why. Null without a submitter or the update.
+  submitterConversation?: SubmitterConversation | null;
   // The request's reply thread (the top-level task's), once someone sent the submitter a response:
   // closed = the submitter's replies are refused. Null without one (or without the database update).
   // subject = the conversation's subject (every response and reply in it keeps it), null before Oct 19 notes.
@@ -329,6 +333,12 @@ export type TaskDetail = {
   // Set when an older page exists. The pane passes it to loadOlderComments.
   olderComments: { beforeAt: string; beforeId: string } | null;
   stories: TaskStory[];
+  // Nov 1 notes, batch 9a (10.4): the task's pinned comments, newest pin first (also in `comments` when
+  // they're on the loaded page). Empty without the update.
+  pinnedComments?: TaskComment[];
+  // Nov 1 notes, batch 9a (10.3): names of the tasks and projects that comments link to, read with the
+  // viewer's own access (an id that isn't here is one they can't open).
+  commentRefs?: CommentRefs;
   // Teams whose @name in a comment shows as a pill with the team's members (display only).
   mentionTeams: MentionTeam[];
   // The viewer's highest role across the task's projects (null: read access through nothing).
@@ -391,6 +401,9 @@ export type TaskAttachment = {
   sizeBytes: number;
   uploadedBy: string;
   createdAt: string;
+  // upload | form | email (Real features 1): "form" files are the request's own (Nov 1 notes, item 72:
+  // shown under the description as "Original request").
+  source?: string;
 };
 
 export type TaskApproval = {
@@ -435,6 +448,10 @@ export type ApprovalRound = {
 };
 
 export type TaskApprovalInfo = {
+  // The guided setup's follow-up (Nov 1 notes, batch 9a): what happens after approval (null = not chosen:
+  // complete the task), its section, and whether approvers get due-date reminders. Ready for approval
+  // starts from it. Null on a database without this release's update.
+  followUp?: { afterApproval: AfterApproval | null; sectionId: string | null; reminders: boolean } | null;
   approverIds: string[];
   mode: "any" | "all";
   dueOn: string | null;
@@ -464,6 +481,9 @@ export type TaskComment = {
   emailSkipped?: { name: string; reason: SkipReason }[];
   // Oct 26 notes (batch 3): the review check whose outcome this comment reports.
   reviewCheckId?: string | null;
+  // Nov 1 notes, batch 9a (Asana test 10.4): pinned to the top of the feed (set_comment_pinned).
+  pinnedAt?: string | null;
+  pinnedBy?: string | null;
 };
 
 export type TaskStory = {
@@ -1094,6 +1114,8 @@ function commentFromPageRow(
       (reaction) => reaction.profileIds.length > 0,
     ),
     email: emailBase ? { ...emailBase, status: sent?.status ?? null, error: sent?.error ?? null } : null,
+    pinnedAt: !deleted && typeof row.pinned_at === "string" ? row.pinned_at : null,
+    pinnedBy: !deleted && typeof row.pinned_by === "string" ? row.pinned_by : null,
   };
 }
 
@@ -1535,7 +1557,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .order("created_at"),
     supabase
       .from("task_attachments")
-      .select("id, file_name, content_type, size_bytes, uploaded_by, created_at")
+      .select("id, file_name, content_type, size_bytes, uploaded_by, created_at, source")
       .eq("task_id", taskId)
       .is("deleted_at", null)
       .order("created_at"),
@@ -1668,6 +1690,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     formTitle,
     [myRoles, tagIds, blockerCount, privateRoot, teams, taskNumberLists, projectNumbers, approvalInfo],
     subtaskItems,
+    submitterConversation,
+    pins,
   ] = await Promise.all([
     loadReplyThread(supabase, taskId),
     withDependencyTitles(storyList),
@@ -1681,6 +1705,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       : Promise.resolve({ data: null, error: null }),
     early,
     withSubtaskApprovals(supabase, toSubtaskItems(subtaskRows, grandchildren)).then((items) => withRequestLabels(items)),
+    submission ? loadSubmitterConversation(taskId) : Promise.resolve(null),
+    loadCommentPins(supabase, taskId, responseStatus),
   ]);
   const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
 
@@ -1748,6 +1774,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       sizeBytes: a.size_bytes,
       uploadedBy: a.uploaded_by,
       createdAt: a.created_at,
+      source: a.source,
     })),
     attachmentLinks: rows(attachmentLinks, "attachment links").map((a) => ({
       id: a.id,
@@ -1757,6 +1784,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       attachmentId: a.attachment_id,
     })),
     comments: taskComments,
+    pinnedComments: pins.pinned,
+    commentRefs: await loadCommentRefs(supabase, [...taskComments, ...pins.pinned].map((c) => c.body)),
     commentTotal,
     mentionTeams: teams.map((t) => ({
       id: t.id,
@@ -1764,14 +1793,17 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       members: t.members.map((m) => ({ id: m.profileId, name: m.name, email: m.email })),
     })),
     olderComments,
-    stories: storyRows.map((st) => ({
-      id: st.id,
-      actorId: st.actor_id,
-      kind: st.kind,
-      data: st.data,
-      createdAt: st.created_at,
-      ...(st.kind === "email_queued" ? { email: emailStatus.get(storyEmailId(st.data) ?? "") ?? null } : {}),
-    })),
+    stories: [
+      ...storyRows.map((st) => ({
+        id: st.id,
+        actorId: st.actor_id,
+        kind: st.kind,
+        data: st.data,
+        createdAt: st.created_at,
+        ...(st.kind === "email_queued" ? { email: emailStatus.get(storyEmailId(st.data) ?? "") ?? null } : {}),
+      })),
+      ...pins.events,
+    ].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     id: task.id,
     title: task.title,
     kind: parseTaskKind(task.kind),
@@ -1819,6 +1851,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
         }
       : null,
     submitterResponses,
+    submitterConversation,
     replyThread,
     approvals: approvalRows.map((a) => ({
       id: a.id,
@@ -3478,6 +3511,7 @@ function toFormDef(row: Tables<"forms">): FormDef {
     acceptingResponses: row.accepting_responses,
     sendConfirmation: row.send_confirmation,
     confirmationMessage: row.confirmation_message,
+    verifiedDomainsOnly: row.verified_domains_only ?? false,
   };
 }
 
@@ -3537,6 +3571,10 @@ export const getPublicForm = cache(async (formId: string): Promise<PublicForm | 
     acceptingResponses: data.accepting_responses === true,
     questions: parseQuestions(data.questions ?? []),
     viewerEmail: typeof data.viewer_email === "string" ? data.viewer_email : null,
+    verifiedDomains:
+      data.verified_domains_only === true && Array.isArray(data.verified_domains)
+        ? data.verified_domains.filter((d): d is string => typeof d === "string")
+        : [],
   };
 });
 
@@ -6821,14 +6859,16 @@ const ROUND_STATUSES = new Set(["pending", "approved", "changes_requested", "rej
 // An approval task's approvers, settings, state, and rounds (each with its requests). Null on a database
 // without approval rounds.
 async function loadApprovalInfo(supabase: ServerClient, taskId: string): Promise<TaskApprovalInfo | null> {
-  const [approvers, settings, rounds, requests, state] = await Promise.all([
+  const [approvers, settings, rounds, requests, state, followUp] = await Promise.all([
     supabase.from("task_approvers").select("profile_id, created_at").eq("task_id", taskId).is("deleted_at", null).order("created_at"),
     supabase.from("task_approval_settings").select("mode, due_on").eq("task_id", taskId).maybeSingle(),
     supabase.from("approval_rounds").select("*").eq("task_id", taskId).order("round_number", { ascending: false }),
     supabase.from("approval_requests").select("*").eq("task_id", taskId).not("round_id", "is", null).is("deleted_at", null).order("created_at"),
     supabase.rpc("task_approval_state", { target_task: taskId }),
+    supabase.from("task_approval_settings").select("after_approval, after_section_id, reminders").eq("task_id", taskId).maybeSingle(),
   ]);
   if (approvers.error || rounds.error || state.error) return null;
+  const followUpRow = followUp.error ? null : followUp.data;
   const roundRows = rounds.data ?? [];
   const sectionIds = [...new Set(roundRows.map((r) => r.move_section_id).filter((id): id is string => Boolean(id)))];
   const sections = sectionIds.length
@@ -6859,6 +6899,16 @@ async function loadApprovalInfo(supabase: ServerClient, taskId: string): Promise
   }
   const value = state.data && typeof state.data === "object" && !Array.isArray(state.data) ? (state.data as Record<string, Json>) : {};
   return {
+    followUp: followUp.error
+      ? null
+      : {
+          afterApproval:
+            followUpRow?.after_approval === "complete" || followUpRow?.after_approval === "move_section" || followUpRow?.after_approval === "notify"
+              ? followUpRow.after_approval
+              : null,
+          sectionId: followUpRow?.after_section_id ?? null,
+          reminders: followUpRow?.reminders ?? true,
+        },
     approverIds: (approvers.data ?? []).map((a) => a.profile_id),
     mode: settings.data?.mode === "all" ? "all" : "any",
     dueOn: settings.data?.due_on ?? null,
@@ -7064,3 +7114,123 @@ async function openBlockerCounts(supabase: ServerClient, ids: string[]): Promise
   return counts;
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Nov 1 notes, item 69: verified email domains and request email conversations
+// ---------------------------------------------------------------------------------------------
+
+export type VerifiedDomain = { id: string; domain: string; createdAt: string };
+
+// The workspace's verified domains and its "only verified domains get email conversations" switch.
+// Null without this release's database update.
+export const getVerifiedDomainSettings = cache(
+  async (): Promise<{ conversationsVerifiedOnly: boolean; domains: VerifiedDomain[] } | null> => {
+    const workspace = await getWorkspace();
+    if (!workspace) return null;
+    const supabase = await createClient();
+    const [setting, domains] = await Promise.all([
+      supabase.from("workspaces").select("verified_domain_conversations").eq("id", workspace.id).maybeSingle(),
+      supabase
+        .from("verified_email_domains")
+        .select("id, domain, created_at")
+        .eq("workspace_id", workspace.id)
+        .is("removed_at", null)
+        .order("domain"),
+    ]);
+    if (setting.error || domains.error) return null;
+    return {
+      conversationsVerifiedOnly: setting.data?.verified_domain_conversations ?? true,
+      domains: (domains.data ?? []).map((d) => ({ id: d.id, domain: d.domain, createdAt: d.created_at })),
+    };
+  },
+);
+
+// Whether a request's reply-by-email conversation is on (submitter_conversation_status). Null when the
+// task has no form submitter, or without this release's database update.
+export type SubmitterConversation = {
+  allowed: boolean;
+  reason: "override_request" | "override_submitter" | "setting_off" | "verified" | "unverified";
+  email: string;
+  domain: string;
+  verified: boolean;
+  canOverride: boolean;
+};
+
+export async function loadSubmitterConversation(taskId: string): Promise<SubmitterConversation | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("submitter_conversation_status", { target_task: taskId });
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) return null;
+  return parseSubmitterConversation(data as Record<string, Json | undefined>);
+}
+
+export function parseSubmitterConversation(value: Record<string, Json | undefined>): SubmitterConversation | null {
+  const reasons = ["override_request", "override_submitter", "setting_off", "verified", "unverified"] as const;
+  const reason = reasons.find((r) => r === value.reason);
+  if (!reason || typeof value.email !== "string") return null;
+  return {
+    allowed: value.allowed === true,
+    reason,
+    email: value.email,
+    domain: typeof value.domain === "string" ? value.domain : "",
+    verified: value.verified === true,
+    canOverride: value.can_override === true,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Nov 1 notes, batch 9a: pinned comments (10.4) and links in comments (10.3)
+// ---------------------------------------------------------------------------------------------
+
+// The task's pinned comments (task_pinned_comments, in the comment page's shape) and the Pin / Unpin
+// events for All activity (stories with kind comment_pinned / comment_unpinned). Empty without the update.
+async function loadCommentPins(
+  supabase: Supabase,
+  taskId: string,
+  outbox: Map<string, { status: CommentEmail["status"]; error: string | null }>,
+): Promise<{ pinned: TaskComment[]; events: TaskStory[] }> {
+  const [pinned, events] = await Promise.all([
+    supabase.rpc("task_pinned_comments", { target_task: taskId }),
+    supabase.from("comment_pin_events").select("id, comment_id, actor_id, pinned, created_at").eq("task_id", taskId).order("created_at"),
+  ]);
+  const rowsOf = !pinned.error && Array.isArray(pinned.data) ? pinned.data : [];
+  return {
+    pinned: rowsOf.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const comment = commentFromPageRow(item as Record<string, Json | undefined>, outbox);
+      return comment ? [comment] : [];
+    }),
+    events: events.error
+      ? []
+      : (events.data ?? []).map((e) => ({
+          id: `pin-${e.id}`,
+          actorId: e.actor_id,
+          kind: e.pinned ? "comment_pinned" : "comment_unpinned",
+          data: { comment_id: e.comment_id } as Json,
+          createdAt: e.created_at,
+        })),
+  };
+}
+
+export type CommentRefs = {
+  tasks: Record<string, { title: string; projectId: string | null }>;
+  projects: Record<string, { name: string }>;
+};
+
+// Names for the app links in comment bodies, read with the viewer's own client (RLS): a task or project
+// they can't open simply isn't in the result.
+export async function loadCommentRefs(supabase: Supabase, bodies: string[]): Promise<CommentRefs> {
+  const { taskIds, projectIds } = appLinkIds(bodies);
+  const refs: CommentRefs = { tasks: {}, projects: {} };
+  if (!taskIds.length && !projectIds.length) return refs;
+  const [tasks, projects] = await Promise.all([
+    taskIds.length
+      ? supabase.from("tasks").select("id, title, home_project_id").in("id", taskIds.slice(0, 200)).is("deleted_at", null)
+      : Promise.resolve({ data: [], error: null }),
+    projectIds.length
+      ? supabase.from("projects").select("id, name").in("id", projectIds.slice(0, 200)).is("deleted_at", null)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  for (const t of tasks.data ?? []) refs.tasks[t.id] = { title: t.title, projectId: t.home_project_id };
+  for (const p of projects.data ?? []) refs.projects[p.id] = { name: p.name };
+  return refs;
+}

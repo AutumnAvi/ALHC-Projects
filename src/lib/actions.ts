@@ -1,6 +1,7 @@
 "use server";
 
 import { refresh, revalidatePath } from "next/cache";
+import { normalizeDomainInput } from "@/lib/verified-domains";
 import { redirect } from "next/navigation";
 import { parseSubtaskPrefs, type SubtaskPrefs } from "@/lib/subtask-view";
 import { after } from "next/server";
@@ -16,9 +17,11 @@ import {
   listSubtaskTrees,
   listTeams,
   loadTaskCommentPage,
+  loadSubmitterConversation,
   firstVisibleNumbers,
   visibleRequestLabelsIn,
   visibleTaskPlacesOrNull,
+  type SubmitterConversation,
   type SubtaskItem,
   type TaskComment,
 } from "@/lib/data";
@@ -513,21 +516,25 @@ export async function createTaskFromTemplate(
   templateId: string,
   sectionId: string | null,
   title: string | null,
-): Promise<ActionResult & { lockedLeftOut?: number }> {
+): Promise<ActionResult & { lockedLeftOut?: number; taskId?: string; kind?: string }> {
   let lockedLeftOut = 0;
+  let taskId: string | undefined;
+  let kind: string | undefined;
   const result = await run(async () => {
     const supabase = await createClient();
     const templateKey = id(templateId, "template");
-    check(
-      await supabase.rpc("create_task_from_template", {
-        target_template: templateKey,
-        target_section: sectionId ? id(sectionId, "section") : null,
-        task_title: optionalText(title, 1000),
-      }),
-    );
+    const created = await supabase.rpc("create_task_from_template", {
+      target_template: templateKey,
+      target_section: sectionId ? id(sectionId, "section") : null,
+      task_title: optionalText(title, 1000),
+    });
+    check(created);
+    taskId = typeof created.data === "string" ? created.data : undefined;
+    // Nov 1 notes, batch 9a: an approval task from a template opens the guided approval setup.
+    if (taskId) kind = (await supabase.from("tasks").select("kind").eq("id", taskId).maybeSingle()).data?.kind ?? undefined;
     lockedLeftOut = await lockedTemplateValues(supabase, templateKey);
   });
-  return result.error ? result : { lockedLeftOut };
+  return result.error ? result : { lockedLeftOut, taskId, kind };
 }
 
 // How many of a task template's values are in locked fields the viewer can't set (a template's fields
@@ -1439,8 +1446,9 @@ export async function createTask(
   kind: TaskKind = "task",
   // Asana's toolbar "+ Add task": the new task goes to the top of its section.
   atTop = false,
-): Promise<ActionResult> {
-  return run(async () => {
+): Promise<ActionResult & { taskId?: string }> {
+  let taskId: string | undefined;
+  const result = await run(async () => {
     const taskKind = taskKindInput(kind);
     const supabase = await createClient();
     const created = await supabase.rpc("create_task", {
@@ -1449,6 +1457,7 @@ export async function createTask(
       task_title: text(title, "Task name"),
     });
     check(created);
+    taskId = created.data ?? undefined;
     if (taskKind !== "task" && created.data) {
       checkUpdated(await supabase.from("tasks").update({ kind: taskKind }).eq("id", created.data).select("id"));
     }
@@ -1476,6 +1485,7 @@ export async function createTask(
       }
     }
   });
+  return result.error ? result : { ...result, taskId };
 }
 
 // Quick-add in My Tasks: a private task (no project) assigned to the caller. Only they and whoever they
@@ -4654,6 +4664,7 @@ export async function updateForm(
     acceptingResponses?: boolean;
     sendConfirmation?: boolean;
     confirmationMessage?: string | null;
+    verifiedDomainsOnly?: boolean;
   },
 ): Promise<ActionResult> {
   return run(async () => {
@@ -4665,6 +4676,7 @@ export async function updateForm(
       accepting_responses?: boolean;
       send_confirmation?: boolean;
       confirmation_message?: string | null;
+      verified_domains_only?: boolean;
     } = {};
     if (patch.title !== undefined) update.title = text(patch.title, "Form name", { max: 200 });
     if (patch.description !== undefined) update.description = optionalText(patch.description, 5000);
@@ -4677,8 +4689,13 @@ export async function updateForm(
     if (patch.confirmationMessage !== undefined) {
       update.confirmation_message = optionalText(patch.confirmationMessage, 2000);
     }
+    if (patch.verifiedDomainsOnly !== undefined) update.verified_domains_only = Boolean(patch.verifiedDomainsOnly);
     const supabase = await createClient();
-    check(await supabase.from("forms").update(update).eq("id", id(formId)));
+    const saved = await supabase.from("forms").update(update).eq("id", id(formId));
+    if (saved.error?.code === "PGRST204" && update.verified_domains_only !== undefined) {
+      throw new InputError("“Only verified-domain emails” needs this release’s database update");
+    }
+    check(saved);
   });
 }
 
@@ -6797,5 +6814,122 @@ export async function handOffApproval(taskId: string, newApproverId: string, not
         handoff_note: optionalText(note, 2000),
       }),
     );
+  });
+}
+
+// Nov 1 notes, batch 9a: the guided approval setup's follow-up step (what happens after approval) and
+// whether approvers get due-date reminders. Editors+ of an approval task (set_approval_followup checks).
+export async function setApprovalFollowUp(
+  taskId: string,
+  input: { followUp: "complete" | "move_section" | "notify"; sectionId: string | null; reminders: boolean },
+): Promise<ActionResult> {
+  return run(async () => {
+    if (!["complete", "move_section", "notify"].includes(input?.followUp)) throw new InputError("Choose what happens after approval");
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_approval_followup", {
+      target_task: id(taskId, "task"),
+      followup: input.followUp,
+      followup_section: input.followUp === "move_section" && input.sectionId ? id(input.sectionId, "section") : null,
+      send_reminders: Boolean(input.reminders),
+    });
+    if (result.error?.code === "PGRST202") throw new InputError("The approval follow-up needs this release’s database update");
+    check(result);
+  });
+}
+
+// Nov 1 notes, item 69: Admin console → Security → Verified domains (workspace admins; RLS decides).
+export async function addVerifiedDomain(domain: string): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const clean = normalizeDomainInput(domain);
+    if (!clean) throw new InputError("Enter a domain like example.com");
+    const supabase = await createClient();
+    const result = await supabase.from("verified_email_domains").insert({ workspace_id: workspace.id, domain: clean });
+    if (result.error?.code === "23505") throw new InputError(`${clean} is already a verified domain`);
+    if (result.error?.code === "PGRST205" || result.error?.code === "42P01") {
+      throw new InputError("Verified domains need this release’s database update");
+    }
+    check(result, WORKSPACE_ADMINS_ONLY);
+    revalidatePath("/admin/security");
+  });
+}
+
+export async function removeVerifiedDomain(domainId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase
+        .from("verified_email_domains")
+        .update({ removed_at: new Date().toISOString() })
+        .eq("id", id(domainId, "domain"))
+        .is("removed_at", null)
+        .select("id"),
+      WORKSPACE_ADMINS_ONLY,
+    );
+    revalidatePath("/admin/security");
+  });
+}
+
+export async function setVerifiedDomainConversations(on: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    const result = await supabase
+      .from("workspaces")
+      .update({ verified_domain_conversations: on === true })
+      .eq("id", workspace.id)
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
+      throw new InputError("This setting needs this release’s database update");
+    }
+    checkUpdated(result, WORKSPACE_ADMINS_ONLY);
+  });
+}
+
+// Item 69: a workspace admin allows (true) or stops (false) a request's email conversation, for this
+// request or for every request from its submitter; null goes back to the workspace rule.
+export async function setEmailConversationOverride(
+  taskId: string,
+  scope: "request" | "submitter",
+  allow: boolean | null,
+): Promise<ActionResult> {
+  return run(async () => {
+    if (scope !== "request" && scope !== "submitter") throw new InputError("Choose this request or this submitter");
+    const supabase = await createClient();
+    check(
+      await supabase.rpc("set_email_conversation_override", {
+        target_task: id(taskId, "task"),
+        scope,
+        allow: allow === null ? null : Boolean(allow),
+      }),
+    );
+  });
+}
+
+// Item 69 (pane): whether this request's email conversation is on.
+export async function loadRequestConversation(taskId: string): Promise<SubmitterConversation | null> {
+  return loadSubmitterConversation(id(taskId, "task"));
+}
+
+// Comment pinning (Asana test 10.4): Editors and above of the task (set_comment_pinned checks).
+export async function setCommentPinned(commentId: string, pinned: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_comment_pinned", { target_comment: id(commentId, "comment"), pin: Boolean(pinned) });
+    if (result.error?.code === "PGRST202") throw new InputError("Pinning comments needs this release’s database update");
+    check(result);
+  });
+}
+
+// Nov 1 notes, batch 9a: an approval task's approver completes it (approvers often have only Commenter
+// access, which can't edit the task; complete_approval_as_approver checks they approve it).
+export async function completeApprovalAsApprover(taskId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("complete_approval_as_approver", { target_task: id(taskId, "task") });
+    if (result.error?.code === "PGRST202") throw new InputError("This needs this release’s database update");
+    check(result);
   });
 }
