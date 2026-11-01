@@ -3,7 +3,8 @@
 import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
-import { Bell, BellOff, FileCheck, Pencil, Pin, PinOff, SmilePlus, Trash2, UserPlus, X } from "lucide-react";
+import Link from "next/link";
+import { Bell, BellOff, FileCheck, Mail, Pencil, Pin, PinOff, SmilePlus, Trash2, UserPlus, X, Zap } from "lucide-react";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
 import { RequestConversationNotice } from "@/components/task/request-conversation";
 import { Avatar, displayName } from "@/components/avatar";
@@ -38,7 +39,10 @@ import {
 } from "./pending-comments-store";
 import { REACTIONS, reactionOf, type ReactionKey } from "@/lib/reactions";
 import { formatDueDate } from "@/lib/dates";
-import type { CommentRefs, Profile, TaskComment, TaskDetail, TaskStory } from "@/lib/data";
+import type { CommentRefs, Profile, TaskComment, TaskDetail, TaskEmailActivity, TaskRuleRun, TaskStory } from "@/lib/data";
+import { ACTIVITY_RANK, compareActivity, isEmailCreatedStory, runIsProblem, runVerb } from "@/lib/automation-activity";
+import { emailActivityText } from "@/lib/project-page";
+import { automationHref } from "@/lib/rule-feedback";
 import { fieldChips } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import { useRealtimeRefresh } from "@/lib/realtime";
@@ -95,7 +99,10 @@ function EmailStatusNote({ email }: { email: TaskStory["email"] }) {
 
 type Entry =
   | { type: "comment"; at: string; comment: TaskComment; key: string; pending: boolean }
-  | { type: "story"; at: string; story: TaskStory };
+  | { type: "story"; at: string; story: TaskStory }
+  // Nov 1 notes, batch 12: a thin marker per automation run (84), and what came in by email (83).
+  | { type: "run"; at: string; run: TaskRuleRun }
+  | { type: "email"; at: string; email: TaskEmailActivity };
 
 export { MentionText };
 
@@ -180,11 +187,15 @@ export function TaskActivity({
     return task.isPrivate && task.privateReaderIds.includes(profileId) ? "Can open this private task" : null;
   };
 
+  const emailIn = task.emailActivity ?? [];
+  const createdByEmail = emailIn.some((e) => e.kind === "task_created");
   const history = useMemo(() => {
+    const rank = (automation: boolean) => (automation ? ACTIVITY_RANK.automation : ACTIVITY_RANK.person);
     return [
       ...commentsOnTask.map((comment) => ({
         type: "comment" as const,
         at: comment.createdAt,
+        rank: rank(Boolean(comment.ruleName)),
         comment,
         key: merged.keys.get(comment.id) ?? comment.id,
         pending: false as const,
@@ -192,12 +203,17 @@ export function TaskActivity({
       // Oct 26 notes (batch 3): tag lines are hidden while the workspace's tags are switched off.
       ...task.stories
         .filter((story) => tagsOn || (story.kind !== "tag_added" && story.kind !== "tag_removed"))
-        .map((story) => ({ type: "story" as const, at: story.createdAt, story })),
-    ].sort((a, b) => a.at.localeCompare(b.at));
+        // Nov 1 notes, batch 12 (83): "Created by email from …" replaces the older forwarding line.
+        .filter((story) => !(createdByEmail && isEmailCreatedStory(story)))
+        .map((story) => ({ type: "story" as const, at: story.createdAt, rank: rank(Boolean(str(story.data, "rule_id"))), story })),
+      ...(task.ruleRuns ?? []).map((run) => ({ type: "run" as const, at: run.createdAt, rank: ACTIVITY_RANK.run, run })),
+      ...emailIn.map((email) => ({ type: "email" as const, at: email.createdAt, rank: ACTIVITY_RANK.person, email })),
+    ]
+      .sort(compareActivity) as Entry[];
     // arrivedKey changes when a pending comment becomes a server row (its React key moves with it).
     // Pending-only updates leave it alone, so the feed isn't re-sorted on send.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- merged.keys is current whenever arrivedKey changes
-  }, [commentsOnTask, task.stories, arrivedKey, tagsOn]);
+  }, [commentsOnTask, task.stories, task.ruleRuns, task.emailActivity, arrivedKey, tagsOn]);
   const entries: Entry[] = [
     ...history,
     ...merged.waiting.map((p) => ({
@@ -447,7 +463,10 @@ export function TaskActivity({
     }
   }
 
-  const comments = entries.filter((entry) => entry.type === "comment");
+  // The Comments tab: comments, plus the line saying the task came in by email (Nov 1 notes, batch 12).
+  const comments = entries.filter(
+    (entry) => entry.type === "comment" || (entry.type === "email" && entry.email.kind === "task_created"),
+  );
   // Pinned comments at the top of the feed (newest pin first); the loaded page's copy carries the latest pin.
   const pinned = (task.pinnedComments ?? [])
     .map((p) => commentsOnTask.find((c) => c.id === p.id) ?? p)
@@ -516,6 +535,7 @@ export function TaskActivity({
                     refs={refs}
                     canPin={canPin}
                     inPinned
+                    people={profiles}
                   />
                 ))}
               </ol>
@@ -550,7 +570,19 @@ export function TaskActivity({
             className={`flex flex-col gap-3 ${shown.length ? "mt-3" : ""}`}
           >
             {shown.map((entry) =>
-              entry.type === "story" ? (
+              entry.type === "run" ? (
+                <RunMarker key={`run-${entry.run.id}`} run={entry.run} />
+              ) : entry.type === "email" ? (
+                <EmailInLine
+                  key={`email-${entry.email.id}`}
+                  email={entry.email}
+                  sender={
+                    entry.email.senderProfileId && profilesById.get(entry.email.senderProfileId)
+                      ? displayName(profilesById.get(entry.email.senderProfileId)!)
+                      : entry.email.senderEmail
+                  }
+                />
+              ) : entry.type === "story" ? (
                 <li key={entry.story.id} className="flex items-baseline gap-2 pl-1 text-xs text-zinc-500">
                   <span aria-hidden className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-zinc-300" />
                   <p className="min-w-0">
@@ -574,6 +606,7 @@ export function TaskActivity({
                   teams={task.mentionTeams}
                   refs={refs}
                   canPin={canPin}
+                  people={profiles}
                 />
               ),
             )}
@@ -619,6 +652,7 @@ function CommentItem({
   refs,
   canPin = false,
   inPinned = false,
+  people = [],
 }: {
   comment: TaskComment;
   // Still on its way to the server (optimistic): no edit, delete, or reactions yet.
@@ -636,8 +670,12 @@ function CommentItem({
   // Editors+ (10.4): Pin / Unpin; inPinned = drawn in the Pinned section at the top.
   canPin?: boolean;
   inPinned?: boolean;
+  // Everyone in the workspace: in an automation's comment their raw email addresses show as chips.
+  people?: Profile[];
 }) {
   const [pending, run] = useServerAction();
+  // Nov 1 notes, batch 12 (84): posted by an automation — its own look (lightning, tint, "Automation · X").
+  const automation = Boolean(comment.ruleName);
   const confirm = useConfirm();
   const [draft, setDraft] = useState<string | null>(null);
   const editing = draft !== null;
@@ -659,10 +697,14 @@ function CommentItem({
   if (comment.deleted) {
     return (
       <li className="flex gap-2.5">
-        <Avatar name={authorName} profileId={comment.ruleName ? null : comment.authorId} size="md" />
+        {automation ? <AutomationAvatar /> : <Avatar name={authorName} profileId={comment.authorId} size="md" />}
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="text-sm font-medium text-zinc-500">{authorName}</span>
+            {automation ? (
+              <AutomationLabel comment={comment} />
+            ) : (
+              <span className="text-sm font-medium text-zinc-500">{authorName}</span>
+            )}
             <Timestamp iso={comment.createdAt} className="text-xs text-zinc-400" />
           </div>
           <p className="mt-0.5 text-sm italic text-zinc-400">Comment deleted</p>
@@ -729,7 +771,7 @@ function CommentItem({
     const received = comment.email.direction === "received";
     return (
       <li className="group flex gap-2.5" data-comment-id={sending ? undefined : comment.id} aria-busy={sending || undefined}>
-        {received ? <MailAvatar /> : <Avatar name={authorName} profileId={comment.ruleName ? null : comment.authorId} size="md" />}
+        {received ? <MailAvatar /> : automation ? <AutomationAvatar /> : <Avatar name={authorName} profileId={comment.authorId} size="md" />}
         <div className="min-w-0 flex-1">
           <EmailCommentHeader email={comment.email} authorName={authorName} createdAt={comment.createdAt} actions={controls} />
           <EmailCard
@@ -749,11 +791,24 @@ function CommentItem({
   }
 
   return (
-    <li className="group flex gap-2.5" data-comment-id={sending ? undefined : comment.id} aria-busy={sending || undefined}>
-      <Avatar name={authorName} profileId={comment.ruleName ? null : comment.authorId} size="md" />
+    <li
+      className={
+        automation
+          ? "group -mx-1.5 flex gap-2.5 rounded-md border-l-2 border-accent-300 bg-accent-50/50 py-1.5 pr-1.5 pl-1"
+          : "group flex gap-2.5"
+      }
+      data-comment-id={sending ? undefined : comment.id}
+      data-automation-comment={automation ? "" : undefined}
+      aria-busy={sending || undefined}
+    >
+      {automation ? <AutomationAvatar /> : <Avatar name={authorName} profileId={comment.authorId} size="md" />}
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="text-sm font-medium text-zinc-900">{authorName}</span>
+          {automation ? (
+            <AutomationLabel comment={comment} />
+          ) : (
+            <span className="text-sm font-medium text-zinc-900">{authorName}</span>
+          )}
           <Timestamp iso={comment.createdAt} className="text-xs text-zinc-400" />
           {comment.editedAt ? (
             <span className="text-xs text-zinc-400">
@@ -802,12 +857,89 @@ function CommentItem({
           </div>
         ) : (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
-            <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} refs={refs} />
+            <MentionText
+              body={comment.body}
+              people={mentioned}
+              describe={describe}
+              teams={teams}
+              refs={refs}
+              emailPeople={automation ? people : undefined}
+            />
           </p>
         )}
         {comment.reviewCheckId ? <ReviewLink /> : null}
         {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
       </div>
+    </li>
+  );
+}
+
+// Nov 1 notes, batch 12 (84): an automation's comment shows a lightning mark instead of a letter avatar.
+function AutomationAvatar() {
+  return (
+    <span
+      aria-hidden
+      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-accent-100 text-accent-700"
+      data-automation-avatar=""
+    >
+      <Zap className="size-3.5" />
+    </span>
+  );
+}
+
+// "Automation · <name>" in small muted text; the name opens the automation when the viewer can read it.
+function AutomationLabel({ comment }: { comment: TaskComment }) {
+  const name = comment.ruleName ?? "Automation";
+  return (
+    <span className="min-w-0 truncate text-xs text-zinc-500" data-automation-label="">
+      Automation ·{" "}
+      {comment.ruleId && comment.ruleProjectId ? (
+        <Link
+          href={automationHref(comment.ruleProjectId, comment.ruleId)}
+          className="font-medium text-zinc-700 hover:text-accent-700 hover:underline"
+        >
+          {name}
+        </Link>
+      ) : (
+        <span className="font-medium text-zinc-700">{name}</span>
+      )}
+    </span>
+  );
+}
+
+// Nov 1 notes, batch 12 (84): every automation run leaves a thin, muted line in All activity — even when
+// it changed nothing visible. A run loop protection, a limit, or an error stopped reads in amber.
+function RunMarker({ run }: { run: TaskRuleRun }) {
+  const problem = runIsProblem(run);
+  return (
+    <li
+      className={`flex items-center gap-2 text-2xs ${problem ? "text-amber-700" : "text-zinc-400"}`}
+      data-automation-run={run.status}
+    >
+      <span aria-hidden className={`h-px flex-1 ${problem ? "bg-amber-200" : "bg-zinc-200"}`} />
+      <span className="inline-flex min-w-0 max-w-[85%] items-center gap-1">
+        <Zap className="size-3 shrink-0" aria-hidden />
+        <span className="truncate">
+          <Link href={automationHref(run.projectId, run.ruleId)} className="hover:text-accent-700 hover:underline">
+            {run.ruleName}
+          </Link>{" "}
+          {runVerb(run)}
+          {run.status === "failed" && run.reason ? <>: {run.reason}</> : null} · <Timestamp iso={run.createdAt} />
+        </span>
+      </span>
+      <span aria-hidden className={`h-px flex-1 ${problem ? "bg-amber-200" : "bg-zinc-200"}`} />
+    </li>
+  );
+}
+
+// Nov 1 notes, batch 12 (83): the task came in by email, or a comment did.
+function EmailInLine({ email, sender }: { email: TaskEmailActivity; sender: string }) {
+  return (
+    <li className="flex items-baseline gap-2 pl-0.5 text-xs text-zinc-500" data-email-activity={email.kind}>
+      <Mail className="size-3 shrink-0 translate-y-[1px] text-zinc-400" aria-hidden />
+      <p className="min-w-0">
+        {emailActivityText(email.kind, sender, email.subject)} · <Timestamp iso={email.createdAt} />
+      </p>
     </li>
   );
 }

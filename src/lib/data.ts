@@ -327,6 +327,11 @@ export type TaskDetail = {
   // Set when an older page exists. The pane passes it to loadOlderComments.
   olderComments: { beforeAt: string; beforeId: string } | null;
   stories: TaskStory[];
+  // Nov 1 notes, batch 12 (84): this task's automation runs (newest TASK_RUN_LIMIT, oldest first), drawn as
+  // thin markers in All activity. Only automations of projects the viewer can read (rule_runs RLS).
+  ruleRuns?: TaskRuleRun[];
+  // Nov 1 notes, batch 12 (83): the task (or a comment on it) came in by email. Empty without the update.
+  emailActivity?: TaskEmailActivity[];
   // Nov 1 notes, batch 9a (10.4): the task's pinned comments, newest pin first (also in `comments` when
   // they're on the loaded page). Empty without the update.
   pinnedComments?: TaskComment[];
@@ -460,6 +465,10 @@ export type TaskComment = {
   id: string;
   authorId: string | null;
   ruleName: string | null;
+  // Nov 1 notes, batch 12 (84): the automation that posted it, and its project when the viewer can read
+  // the automation (then "Automation · <name>" links to it).
+  ruleId?: string | null;
+  ruleProjectId?: string | null;
   // Empty for a deleted comment (shown as a "Comment deleted" placeholder).
   body: string;
   createdAt: string;
@@ -478,6 +487,30 @@ export type TaskComment = {
   // Nov 1 notes, batch 9a (Asana test 10.4): pinned to the top of the feed (set_comment_pinned).
   pinnedAt?: string | null;
   pinnedBy?: string | null;
+};
+
+// Nov 1 notes, batch 12 (84): one automation run on the task (rule_runs), for the activity's run markers.
+export type TaskRuleRun = {
+  id: string;
+  ruleId: string;
+  ruleName: string;
+  projectId: string;
+  status: "succeeded" | "scheduled" | "skipped" | "failed";
+  // skipped: loop | depth_limit | throttled | rate_limited; failed: the error.
+  reason: string | null;
+  createdAt: string;
+};
+
+// Nov 1 notes, batch 12 (83): the task was created by email, or a comment came in by email
+// (task_email_activity).
+export type TaskEmailActivity = {
+  id: string;
+  kind: "task_created" | "comment_added";
+  senderEmail: string;
+  senderProfileId: string | null;
+  subject: string | null;
+  commentId: string | null;
+  createdAt: string;
 };
 
 export type TaskStory = {
@@ -1096,6 +1129,7 @@ function commentFromPageRow(
     id: row.id,
     authorId: typeof row.author_id === "string" ? row.author_id : null,
     ruleName: ruleId ? (typeof row.rule_name === "string" ? row.rule_name : "Automation") : null,
+    ruleId,
     body: deleted ? "" : typeof row.body === "string" ? row.body : "",
     createdAt: row.created_at,
     editedAt: deleted || typeof row.edited_at !== "string" ? null : row.edited_at,
@@ -1169,7 +1203,8 @@ export async function loadTaskCommentPage(
       },
     ]),
   );
-  return withReviewChecks(supabase, await withReplyFiles(supabase, parseCommentPage(result.data, outbox)));
+  const page = await withReviewChecks(supabase, await withReplyFiles(supabase, parseCommentPage(result.data, outbox)));
+  return { ...page, comments: await withRuleProjects(supabase, page.comments) };
 }
 
 // Oct 26 notes (batch 3): which comments report a review check's outcome. A database without this
@@ -1686,6 +1721,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     subtaskItems,
     submitterConversation,
     pins,
+    automationActivity,
   ] = await Promise.all([
     loadReplyThread(supabase, taskId),
     withDependencyTitles(storyList),
@@ -1701,6 +1737,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     withSubtaskApprovals(supabase, toSubtaskItems(subtaskRows, grandchildren)).then((items) => withRequestLabels(items)),
     submission ? loadSubmitterConversation(taskId) : Promise.resolve(null),
     loadCommentPins(supabase, taskId, responseStatus),
+    loadTaskAutomationAndEmail(supabase, taskId),
   ]);
   const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
 
@@ -1740,6 +1777,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
           id: c.id,
           authorId: c.author_id,
           ruleName: c.rule_id ? (ruleName.get(c.rule_id) ?? "Automation") : null,
+          ruleId: c.rule_id,
           body: deleted ? "" : c.body,
           createdAt: c.created_at,
           editedAt: deleted ? null : c.edited_at,
@@ -1777,8 +1815,10 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       url: a.url,
       attachmentId: a.attachment_id,
     })),
-    comments: taskComments,
-    pinnedComments: pins.pinned,
+    comments: await withRuleProjects(supabase, taskComments, automationActivity.ruleProjects),
+    pinnedComments: await withRuleProjects(supabase, pins.pinned, automationActivity.ruleProjects),
+    ruleRuns: automationActivity.runs,
+    emailActivity: automationActivity.email,
     commentRefs: await loadCommentRefs(supabase, [...taskComments, ...pins.pinned].map((c) => c.body)),
     commentTotal,
     mentionTeams: teams.map((t) => ({
@@ -4904,6 +4944,49 @@ export const listProjectStories = cache(async (projectId: string): Promise<Proje
   });
 });
 
+// Nov 1 notes, batch 12 (83): tasks of this project that were created by email, and comments that came
+// in by email, newest first (task_email_activity, read with each task: only tasks the viewer can open).
+export type ProjectEmailActivityItem = {
+  id: string;
+  kind: "task_created" | "comment_added";
+  taskId: string;
+  taskTitle: string;
+  // The sender's name when they're a workspace person, else null (then senderEmail is shown).
+  senderName: string | null;
+  senderEmail: string;
+  subject: string | null;
+  createdAt: string;
+};
+
+export const listProjectEmailActivity = cache(async (projectId: string): Promise<ProjectEmailActivityItem[]> => {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("task_email_activity")
+    .select("id, kind, task_id, sender_email, subject, created_at, task:tasks!inner(title, deleted_at), sender:profiles(email, full_name)")
+    .eq("project_id", projectId)
+    .is("task.deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  // A database without this release's update has no such table: nothing to list.
+  if (result.error) return [];
+  return (result.data ?? []).flatMap((row): ProjectEmailActivityItem[] => {
+    const task = Array.isArray(row.task) ? row.task[0] : row.task;
+    if (!task || (row.kind !== "task_created" && row.kind !== "comment_added")) return [];
+    return [
+      {
+        id: row.id,
+        kind: row.kind,
+        taskId: row.task_id,
+        taskTitle: task.title,
+        senderName: personName(Array.isArray(row.sender) ? row.sender[0] : row.sender),
+        senderEmail: row.sender_email,
+        subject: row.subject,
+        createdAt: row.created_at,
+      },
+    ];
+  });
+});
+
 export type ProjectGoalLink = { linkId: string; goal: Goal };
 
 // Goals this project is connected to (goal_links; RLS shows a link only to people who can read the
@@ -7216,6 +7299,100 @@ export function parseSubmitterConversation(value: Record<string, Json | undefine
 // ---------------------------------------------------------------------------------------------
 // Nov 1 notes, batch 9a: pinned comments (10.4) and links in comments (10.3)
 // ---------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------
+// Nov 1 notes, batch 12: automation runs and email-in activity on a task (83, 84)
+// ---------------------------------------------------------------------------------------------
+
+// How many of a task's latest automation runs the activity shows (a scheduled automation can run on a
+// task every day; older markers aren't worth the payload).
+export const TASK_RUN_LIMIT = 100;
+
+const RUN_STATUSES = ["succeeded", "scheduled", "skipped", "failed"] as const;
+
+// The task's automation runs (rule_runs: RLS shows runs of automations in projects the viewer can read)
+// and what came in by email (task_email_activity: read with the task). Both read with the viewer's own
+// client; a database without this release's update has no email activity (an empty list).
+async function loadTaskAutomationAndEmail(
+  supabase: Supabase,
+  taskId: string,
+): Promise<{ runs: TaskRuleRun[]; email: TaskEmailActivity[]; ruleProjects: Map<string, string> }> {
+  const [runs, email] = await Promise.all([
+    supabase
+      .from("rule_runs")
+      .select("id, rule_id, status, detail, created_at, rule:rules(name, project_id)")
+      .eq("task_id", taskId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(TASK_RUN_LIMIT),
+    supabase
+      .from("task_email_activity")
+      .select("id, kind, sender_email, sender_profile_id, subject, comment_id, created_at")
+      .eq("task_id", taskId)
+      .order("created_at")
+      .limit(200),
+  ]);
+  if (runs.error) console.error(`[rules] couldn't load a task's automation runs: ${runs.error.message}`);
+  const ruleProjects = new Map<string, string>();
+  const ruleRuns = (runs.error ? [] : (runs.data ?? []))
+    .flatMap((r): TaskRuleRun[] => {
+      const rule = Array.isArray(r.rule) ? r.rule[0] : r.rule;
+      if (!rule || !(RUN_STATUSES as readonly string[]).includes(r.status)) return [];
+      ruleProjects.set(r.rule_id, rule.project_id);
+      const detail = r.detail && typeof r.detail === "object" && !Array.isArray(r.detail) ? r.detail : {};
+      const reason = r.status === "failed" ? runReason(r.detail) : typeof detail.reason === "string" ? detail.reason : null;
+      return [
+        {
+          id: r.id,
+          ruleId: r.rule_id,
+          ruleName: rule.name,
+          projectId: rule.project_id,
+          status: r.status as TaskRuleRun["status"],
+          reason,
+          createdAt: r.created_at,
+        },
+      ];
+    })
+    .reverse();
+  const emailRows = email.error ? [] : (email.data ?? []);
+  return {
+    runs: ruleRuns,
+    ruleProjects,
+    email: emailRows.flatMap((e): TaskEmailActivity[] =>
+      e.kind === "task_created" || e.kind === "comment_added"
+        ? [
+            {
+              id: e.id,
+              kind: e.kind,
+              senderEmail: e.sender_email,
+              senderProfileId: e.sender_profile_id,
+              subject: e.subject,
+              commentId: e.comment_id,
+              createdAt: e.created_at,
+            },
+          ]
+        : [],
+    ),
+  };
+}
+
+// Automation comments learn their automation's project (for the "Automation · <name>" link) — from the
+// task's runs when they're there, else from the automations the viewer can read.
+export async function withRuleProjects(
+  supabase: Supabase,
+  comments: TaskComment[],
+  known: Map<string, string> = new Map(),
+): Promise<TaskComment[]> {
+  const missing = [
+    ...new Set(comments.flatMap((c) => (c.ruleId && !known.has(c.ruleId) ? [c.ruleId] : []))),
+  ];
+  const projects = new Map(known);
+  if (missing.length) {
+    const result = await supabase.from("rules").select("id, project_id").in("id", missing.slice(0, 200));
+    for (const rule of result.error ? [] : (result.data ?? [])) projects.set(rule.id, rule.project_id);
+  }
+  return comments.map((c) => (c.ruleId ? { ...c, ruleProjectId: projects.get(c.ruleId) ?? null } : c));
+}
 
 // The task's pinned comments (task_pinned_comments, in the comment page's shape) and the Pin / Unpin
 // events for All activity (stories with kind comment_pinned / comment_unpinned). Empty without the update.

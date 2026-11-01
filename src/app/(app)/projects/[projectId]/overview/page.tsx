@@ -8,6 +8,7 @@ import {
   listGoals,
   listProjectGoalLinks,
   listProjectMembers,
+  listProjectEmailActivity,
   listProjectStatusUpdates,
   listProjectStories,
 } from "@/lib/data";
@@ -26,7 +27,7 @@ export async function generateMetadata({ params }: PageProps<"/projects/[project
 // viewer's client (project Viewers+; goal links only for projects they can read).
 export default async function ProjectOverviewPage({ params }: PageProps<"/projects/[projectId]/overview">) {
   const { projectId } = await params;
-  const [project, info, members, updates, stories, links, goals, viewer] = await Promise.all([
+  const [project, info, members, updates, stories, links, goals, viewer, emailIn] = await Promise.all([
     getProject(projectId),
     getProjectOverviewInfo(projectId),
     listProjectMembers(projectId),
@@ -35,6 +36,7 @@ export default async function ProjectOverviewPage({ params }: PageProps<"/projec
     listProjectGoalLinks(projectId),
     listGoals(),
     getGoalViewer(),
+    listProjectEmailActivity(projectId),
   ]);
   if (!project || !info) notFound();
 
@@ -54,6 +56,20 @@ export default async function ProjectOverviewPage({ params }: PageProps<"/projec
     ...members.map((m): ProjectActivityItem => ({ kind: "joined", id: `joined-${m.profileId}`, at: m.addedAt, name: m.name })),
     ...stories.map(
       (s): ProjectActivityItem => ({ kind: "story", id: `story-${s.id}`, at: s.createdAt, story: s.kind, by: s.actorName, fromName: s.fromName }),
+    ),
+    // Nov 1 notes, batch 12 (83): tasks and comments that came in by email.
+    ...emailIn.map(
+      (e): ProjectActivityItem => ({
+        kind: "email",
+        id: `email-${e.id}`,
+        at: e.createdAt,
+        email: e.kind,
+        projectId,
+        taskId: e.taskId,
+        taskTitle: e.taskTitle,
+        sender: e.senderName ?? e.senderEmail,
+        subject: e.subject,
+      }),
     ),
     { kind: "created", id: "created", at: info.createdAt, by: info.createdByName },
   ]);

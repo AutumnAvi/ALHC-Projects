@@ -3296,6 +3296,64 @@ export type Database = {
           },
         ];
       };
+      task_email_activity: {
+        Row: {
+          id: string;
+          task_id: string;
+          project_id: string | null;
+          kind: string;
+          sender_email: string;
+          sender_profile_id: string | null;
+          subject: string | null;
+          comment_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          project_id?: string | null;
+          kind: string;
+          sender_email: string;
+          sender_profile_id?: string | null;
+          subject?: string | null;
+          comment_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          project_id?: string | null;
+          kind?: string;
+          sender_email?: string;
+          sender_profile_id?: string | null;
+          subject?: string | null;
+          comment_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "task_email_activity_task_id_fkey";
+            columns: ["task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_email_activity_sender_profile_id_fkey";
+            columns: ["sender_profile_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "task_email_activity_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       task_likes: {
         Row: {
           id: string;

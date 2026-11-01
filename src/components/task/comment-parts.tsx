@@ -13,7 +13,7 @@ import { Timestamp } from "@/components/timestamp";
 import { ImageLightbox } from "./task-attachments";
 import { previewKind } from "@/lib/attachment-preview";
 import { COMMENT_EMAIL_STATUS_LABELS, type CommentEmail } from "@/lib/comment-email";
-import { mentionSegments, type MentionPerson, type MentionTeam } from "@/lib/mentions";
+import { mentionName, mentionSegments, personEmailSegments, type MentionPerson, type MentionTeam } from "@/lib/mentions";
 
 // Pieces of the comment feed (Comments and reply by email): @mention pills with a profile card on hover,
 // and Asana's email cards for responses sent to a form's submitter and the submitter's emailed replies.
@@ -120,7 +120,8 @@ function HoverPill({
 // A highlighted @mention showing the person's real name. Hover or focus shows their card; a click does
 // nothing (no navigation).
 export function MentionPill({ person, detail, raw }: { person: MentionPerson; detail: string | null; raw: string }) {
-  const name = displayName(person);
+  // Never the whole email address (Nov 1 notes, batch 12): someone without a name is "@ann".
+  const name = mentionName(person);
   return (
     <HoverPill
       label={`@${name}`}
@@ -241,10 +242,14 @@ export function MentionText({
   describe,
   teams = [],
   refs,
+  emailPeople,
 }: {
   body: string;
   people: MentionPerson[];
   describe?: DescribePerson;
+  // Nov 1 notes, batch 12 (84): an automation's comment — these people's raw email addresses in the
+  // text are drawn as their chips too (older comments said "hi ann@example.com").
+  emailPeople?: MentionPerson[];
   // Teams whose @name shows as a pill with its members (display only).
   teams?: MentionTeam[];
   // Names of linked tasks and projects (comments, Nov 1 notes batch 9a): app links become chips.
@@ -257,17 +262,20 @@ export function MentionText({
           segment.type === "link" ? (
             <AppLinkChip key={index} link={segment.link} refs={refs} raw={segment.raw} />
           ) : (
-            <MentionText key={index} body={segment.text} people={people} describe={describe} teams={teams} />
+            <MentionText key={index} body={segment.text} people={people} describe={describe} teams={teams} emailPeople={emailPeople} />
           ),
         )}
       </>
     );
   }
-  const byId = new Map(people.map((p) => [p.id, p] as const));
+  const byId = new Map([...(emailPeople ?? []), ...people].map((p) => [p.id, p] as const));
   const teamsById = new Map(teams.map((t) => [t.id, t] as const));
+  const segments = mentionSegments(body, people, teams).flatMap((segment) =>
+    segment.type === "text" && emailPeople?.length ? personEmailSegments(segment.text, emailPeople) : [segment],
+  );
   return (
     <>
-      {mentionSegments(body, people, teams).map((segment, index) =>
+      {segments.map((segment, index) =>
         segment.type === "text" ? (
           segment.text
         ) : segment.type === "team" ? (

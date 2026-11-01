@@ -10,6 +10,7 @@ import {
   FolderPlus,
   Goal,
   LayoutTemplate,
+  Mail,
   Plus,
   Target,
   UserPlus,
@@ -30,7 +31,7 @@ import type { ProjectStatusUpdate } from "@/lib/data";
 import { formatDueDate, useToday } from "@/lib/dates";
 import type { GoalStatus } from "@/lib/goals";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
-import type { ProjectActivityItem } from "@/lib/project-page";
+import { emailActivityText, type ProjectActivityItem } from "@/lib/project-page";
 import { ROLE_LABELS, type ProjectRole } from "@/lib/roles";
 
 type OverviewMember = { profileId: string; name: string; role: ProjectRole };
@@ -449,6 +450,23 @@ function ActivityRow({ item }: { item: ProjectActivityItem }) {
       </li>
     );
   }
+  if (item.kind === "email") {
+    return (
+      <li className="relative flex items-start gap-3" data-email-activity={item.email}>
+        <span aria-hidden className="z-[1] flex size-6 shrink-0 items-center justify-center rounded-full bg-white text-zinc-500 ring-1 ring-zinc-200">
+          <Mail className="size-3.5" />
+        </span>
+        <p className="min-w-0 flex-1 pt-0.5 text-xs text-zinc-700">
+          {emailActivityText(item.email, item.sender, item.subject)}
+          {" "}on{" "}
+          <Link href={`/projects/${item.projectId}?task=${item.taskId}`} className="font-medium text-zinc-900 hover:underline">
+            {item.taskTitle}
+          </Link>{" "}
+          <Timestamp iso={item.at} className="text-zinc-400" />
+        </p>
+      </li>
+    );
+  }
   const Icon = item.kind === "joined" ? UserPlus : item.kind === "created" ? FolderPlus : STORY_ICONS[item.story];
   return (
     <li className="relative flex items-start gap-3">
@@ -470,7 +488,7 @@ const STORY_ICONS: Record<Extract<ProjectActivityItem, { kind: "story" }>["story
 };
 
 // The sentence for every activity line except status updates (which get a card).
-function describe(item: Exclude<ProjectActivityItem, { kind: "status" }>): string {
+function describe(item: Exclude<ProjectActivityItem, { kind: "status" } | { kind: "email" }>): string {
   const who = item.kind === "joined" ? item.name : (item.by ?? "Someone");
   if (item.kind === "joined") return `${who} joined`;
   if (item.kind === "created") return item.by ? `${who} created the project` : "Project created";

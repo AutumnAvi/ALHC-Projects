@@ -72,9 +72,29 @@ export type ProjectActivityItem =
       story: "created_from_template" | "duplicated" | "archived" | "unarchived";
       by: string | null;
       fromName: string | null;
+    }
+  // Nov 1 notes, batch 12 (83): a task created by email, or a comment added by email, on one of the
+  // project's tasks the viewer can open.
+  | {
+      kind: "email";
+      id: string;
+      at: string;
+      email: "task_created" | "comment_added";
+      projectId: string;
+      taskId: string;
+      taskTitle: string;
+      sender: string;
+      subject: string | null;
     };
 
-const ACTIVITY_ORDER: Record<ProjectActivityItem["kind"], number> = { status: 0, story: 1, joined: 2, created: 3 };
+const ACTIVITY_ORDER: Record<ProjectActivityItem["kind"], number> = { status: 0, story: 1, email: 2, joined: 3, created: 4 };
+
+// "Created by email from Ann Lee · Spring flyer" / "Comment added by email from ann@example.com"
+// (the task's activity and the project's Overview say it the same way).
+export function emailActivityText(kind: "task_created" | "comment_added", sender: string, subject: string | null): string {
+  const what = kind === "task_created" ? "Created by email" : "Comment added by email";
+  return `${what} from ${sender}${subject ? ` · ${subject}` : ""}`;
+}
 
 // Newest first; at the same moment (a new project and its owner joining) "created" comes last.
 export function sortActivity(items: ProjectActivityItem[]): ProjectActivityItem[] {
