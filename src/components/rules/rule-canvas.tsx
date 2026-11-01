@@ -29,6 +29,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { createRule, setRuleEnabled, updateRule, type RevealedSigningSecret } from "@/lib/actions";
 import { runSteps } from "@/lib/rule-steps";
+import { autoRuleName, withTarget } from "@/lib/rule-autoname";
 import {
   ACTIONS,
   CONDITIONS,
@@ -64,6 +65,8 @@ import {
   defaultsFor,
 } from "./rule-editor";
 import { vocabOptions } from "./rule-icons";
+import { VocabPicker } from "./vocab-picker";
+import { useAutoName } from "./use-auto-name";
 import { branchLabel, needsUpdate, ruleSentence, tagsHidden, type RuleContext } from "./rule-shared";
 import { RuleTestPanel, type RuleTestDraft, type RuleTestTask } from "./rule-test-panel";
 import { RunSteps } from "./run-steps";
@@ -131,7 +134,6 @@ export function RuleCanvas({
   const titleId = useId();
   const [pending, run] = useServerAction();
   const confirm = useConfirm();
-  const [name, setName] = useState(rule?.name ?? initial?.name ?? "");
   // A template's rule starts off, so it can be checked (and tested) before it runs.
   const [enabled, setEnabled] = useState(rule ? rule.enabled : !initial);
   const [triggerType, setTriggerType] = useState<TriggerType>(rule?.triggerType ?? initial?.triggerType ?? "section_changed");
@@ -149,6 +151,13 @@ export function RuleCanvas({
   const [tab, setTab] = useState<"build" | "activity">("build");
   const [dirty, setDirty] = useState(false);
   const [revealed, setRevealed] = useState<RevealedSigningSecret[] | null>(null);
+  // Batch 10 (76): unnamed rules are named from their steps (editable); Create never waits for a name.
+  const autoName = autoRuleName(
+    stepLabel(TRIGGERS, triggerType, triggerConfig.section_id, ctx),
+    branches[0]?.actions.map((a) => stepLabel(ACTIONS, a.type, a.section_id, ctx)) ?? [],
+  );
+  const nameBox = useAutoName(rule?.name ?? initial?.name, autoName);
+  const name = nameBox.name;
   const dirtyRef = useRef(dirty);
   const testOpenRef = useRef(testOpen);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -167,7 +176,7 @@ export function RuleCanvas({
   }
 
   async function leave() {
-    if (dirtyRef.current && !(await confirm({ title: "Discard your changes to this rule?", confirmLabel: "Discard", tone: "danger" }))) {
+    if (dirtyRef.current && !(await confirm({ title: "Discard your changes to this automation?", confirmLabel: "Discard", tone: "danger" }))) {
       return;
     }
     router.push(backHref);
@@ -284,7 +293,7 @@ export function RuleCanvas({
           setTestOpen(false);
           setRevealed(result.signingSecrets);
         } else {
-          notify(rule ? "Rule saved" : enabled ? "Rule created and on" : "Rule created (off)");
+          notify(rule ? "Automation saved" : enabled ? "Automation created and on" : "Automation created (off)");
           router.push(backHref);
         }
       }
@@ -307,7 +316,7 @@ export function RuleCanvas({
       if (!result.error) {
         setEnabled(true);
         setResumed(true);
-        notify("Rule resumed");
+        notify("Automation resumed");
       }
       return result;
     });
@@ -321,9 +330,9 @@ export function RuleCanvas({
     ...joinBranches(branches),
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
-  const testBlocked = !v2 ? "Needs this release’s database update" : !canEdit ? "Project admins and owners test rules" : null;
+  const testBlocked = !v2 ? "Needs this release’s database update" : !canEdit ? "Project admins and owners test automations" : null;
   const owner = ownerId ? ctx.people.find((p) => p.id === ownerId) : null;
-  const ownerName = ownerId ? (owner?.name ?? "someone removed") : rule ? "the rule’s creator" : "you";
+  const ownerName = ownerId ? (owner?.name ?? "someone removed") : rule ? "the automation’s creator" : "you";
   const editor = rule?.lastEditedBy ? ctx.people.find((p) => p.id === rule.lastEditedBy) : null;
 
   return (
@@ -336,27 +345,37 @@ export function RuleCanvas({
           <Zap className="size-4" />
         </span>
         <h2 id={titleId} className="sr-only">
-          {rule ? `Edit rule ${rule.name}` : "New rule"}
+          {rule ? `Edit automation ${rule.name}` : "New automation"}
         </h2>
         <label htmlFor="rule-name" className="sr-only">
-          Rule name
+          Automation name
         </label>
         <input
           id="rule-name"
           data-autofocus
-          value={name}
+          value={nameBox.value}
           maxLength={200}
           readOnly={!canEdit}
-          placeholder="Untitled rule"
+          placeholder="Name this automation"
+          aria-describedby={nameBox.isAuto ? "rule-name-auto" : undefined}
+          data-auto-name={nameBox.isAuto || undefined}
+          onFocus={(e) => {
+            if (nameBox.isAuto) e.currentTarget.select();
+          }}
           onChange={(e) => {
-            setName(e.currentTarget.value);
+            nameBox.onChange(e.currentTarget.value);
             setDirty(true);
           }}
-          className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-base font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent"
+          className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-base font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none read-only:hover:border-transparent data-[auto-name]:text-zinc-500"
         />
+        {nameBox.isAuto && canEdit ? (
+          <span id="rule-name-auto" className="hidden shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-2xs font-medium text-zinc-600 md:inline" data-tooltip="Named from its steps. Type to rename it.">
+            Auto-named
+          </span>
+        ) : null}
         {v2 ? (
           <span
-            data-tooltip="Gets a notice if the rule pauses itself; cross-project actions act with their access"
+            data-tooltip="Gets a notice if the automation pauses itself; cross-project actions act with their access"
             className="flex shrink-0 items-center gap-1"
           >
             <span aria-hidden className="hidden text-xs text-zinc-500 lg:inline">
@@ -423,7 +442,7 @@ export function RuleCanvas({
             aria-disabled={testBlocked ? true : undefined}
             aria-expanded={testBlocked ? undefined : testOpen}
             aria-controls={testOpen ? testPanelId : undefined}
-            data-tooltip={testBlocked ?? (testOpen ? "Close the test panel" : "Try the rule on a task without changing anything")}
+            data-tooltip={testBlocked ?? (testOpen ? "Close the test panel" : "Try the automation on a task without changing anything")}
             className="btn-secondary h-8 px-2.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
           >
             <FlaskConical className="size-4" aria-hidden />
@@ -442,17 +461,17 @@ export function RuleCanvas({
           <button
             type="button"
             onClick={save}
-            disabled={pending || !name.trim() || Boolean(blocked)}
+            disabled={pending || Boolean(blocked)}
             aria-describedby={blocked ? "rule-save-blocked" : undefined}
-            data-tooltip={blocked ?? (!name.trim() ? "Name the rule first" : undefined)}
+            data-tooltip={blocked ?? undefined}
             className="btn-primary h-8 px-3"
           >
-            {pending ? "Saving…" : rule ? "Save" : "Create rule"}
+            {pending ? "Saving…" : rule ? "Save" : "Create automation"}
           </button>
         ) : null}
       </header>
 
-      <div role="tablist" aria-label="Rule" className="tab-strip shrink-0 gap-1 px-4">
+      <div role="tablist" aria-label="Automation" className="tab-strip shrink-0 gap-1 px-4">
         {(
           [
             { key: "build", label: "Build" },
@@ -489,7 +508,7 @@ export function RuleCanvas({
               <fieldset disabled={!canEdit} className="m-0 mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 border-0 px-4 py-6">
                 {!canEdit ? (
                   <p className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
-                    View only: project admins and owners change rules.
+                    View only: project admins and owners change automations.
                   </p>
                 ) : null}
                 {rule && paused ? (
@@ -528,10 +547,11 @@ export function RuleCanvas({
                   </p>
                 ) : null}
                 <PickerHighlightContext.Provider value={Boolean(initial)}>
-                <section aria-label="Rule" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+                <section aria-label="Automation" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
                   <SentenceRow word="When">
                     <div className="flex flex-wrap items-center gap-1">
-                    <SmartPicker
+                    <VocabPicker
+                      kind="trigger"
                       id="rule-trigger"
                       label="Trigger"
                       value={triggerType}
@@ -628,7 +648,7 @@ export function RuleCanvas({
                           />
                           <span>
                             <span className="sr-only">Also </span>
-                            <span className="text-zinc-800">Run when another rule makes the change</span>
+                            <span className="text-zinc-800">Run when another automation makes the change</span>
                           </span>
                         </label>
                         {/* Outside the label: it describes the checkbox rather than being part of its name. */}
@@ -641,8 +661,8 @@ export function RuleCanvas({
                 </section>
                 </PickerHighlightContext.Provider>
                 <p className="text-center text-xs text-zinc-500">
-                  Rules never trigger themselves, chains stop after three rules, and the Status field always follows the
-                  section. Text can use placeholders like {"{{task.name}}"} (the {"{ }"} button lists them all).
+                  Click a highlighted block to change it. Automations never trigger themselves, loop protection stops two that undo
+                  each other, chains stop after ten, and the Status field always follows the section. Text can use placeholders like {"{{task.name}}"} (the {"{ }"} button lists them all).
                 </p>
                 {rule?.lastEditedAt ? (
                   <p className="text-center text-xs text-zinc-400">
@@ -693,7 +713,7 @@ function RuleSummary({
       </p>
       <p className="mt-1.5 flex items-center gap-1 text-xs text-zinc-500">
         <FolderClosed className="size-3.5" aria-hidden />
-        Tasks in <span className="font-medium text-zinc-700">{projectName}</span> (subtasks don’t trigger rules)
+        Tasks in <span className="font-medium text-zinc-700">{projectName}</span> (subtasks don’t trigger automations)
       </p>
     </div>
   );
@@ -712,7 +732,7 @@ function SentenceRow({
   muted?: boolean;
 }) {
   return (
-    <div className="flex items-start gap-3 border-t border-zinc-100 px-4 py-2.5 first:border-t-0">
+    <div className="flex items-start gap-3 border-t border-zinc-100 px-4 py-2.5 transition-colors first:border-t-0 hover:bg-zinc-50/70 focus-within:bg-zinc-50/70">
       <span
         className={`mt-1 w-20 shrink-0 text-xs font-semibold uppercase tracking-wide ${muted ? "text-zinc-400" : "text-zinc-500"}`}
       >
@@ -872,7 +892,8 @@ function BranchRows({
                   </div>
                 ))}
                 {canEdit && group.length > 0 && branch.conditions.length < MAX_BRANCH_CONDITIONS ? (
-                  <SmartPicker
+                  <VocabPicker
+                    kind="condition"
                     label={groups.length > 1 ? `Add a condition to group ${g + 1}` : "Add condition"}
                     value={null}
                     options={conditionOptions}
@@ -891,7 +912,8 @@ function BranchRows({
               </div>
             ))}
             {canEdit && branch.conditions.length < MAX_BRANCH_CONDITIONS && groups.length < MAX_CONDITION_GROUPS ? (
-              <SmartPicker
+              <VocabPicker
+                kind="condition"
                 label={groups.length ? "Add an Or group" : "Add condition"}
                 value={null}
                 options={conditionOptions}
@@ -924,7 +946,8 @@ function BranchRows({
               <StepParams missing={missingKeys(action, actionScope)}>
               <div className="flex flex-wrap items-center gap-1">
                 <span className="w-4 text-xs font-medium tabular-nums text-zinc-400">{i + 1}.</span>
-                <SmartPicker
+                <VocabPicker
+                  kind="action"
                   label={`Action ${i + 1}`}
                   value={action.type}
                   options={actionOptions}
@@ -978,7 +1001,8 @@ function BranchRows({
           })}
         </ol>
         {canEdit && branch.actions.length < MAX_BRANCH_ACTIONS ? (
-          <SmartPicker
+          <VocabPicker
+            kind="action"
             label="Add action"
             value={null}
             options={actionOptions}
@@ -1050,11 +1074,11 @@ function Activity({
       <div className="mx-auto max-w-2xl">
         {!rule ? (
           <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-8 text-center text-sm text-zinc-500">
-            Create the rule to see when it runs.
+            Create the automation to see when it runs.
           </p>
         ) : runs.length === 0 ? (
           <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-8 text-center text-sm text-zinc-500">
-            This rule hasn’t run yet. Runs show here once its trigger fires on a task.
+            This automation hasn’t run yet. Runs show here once its trigger fires on a task.
           </p>
         ) : (
           <>
@@ -1152,4 +1176,11 @@ function Activity({
       </div>
     </div>
   );
+}
+
+// A step's label for the automatic name, with the section it names when there is one (batch 10).
+function stepLabel(list: readonly { value: string; label: string }[], type: string, sectionId: Json | undefined, ctx: RuleContext) {
+  const label = list.find((item) => item.value === type)?.label ?? type;
+  const section = typeof sectionId === "string" ? ctx.sections.find((x) => x.id === sectionId)?.name : null;
+  return withTarget(label, section);
 }

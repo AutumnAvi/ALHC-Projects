@@ -17,7 +17,7 @@ export const PORTFOLIO_TRIGGERS = [
   { value: "due_approaching", label: "Due date is approaching", group: "Dates", description: "Fires once per project some days before its due date.", keywords: ["deadline", "soon", "reminder"] },
   { value: "item_overdue", label: "Project is overdue", group: "Dates", description: "Fires once per project (not complete) some days after its due date.", keywords: ["late", "past due", "missed"] },
   { value: "scheduled", label: "On a schedule", group: "Flow", description: "Runs every day, workday, week, or month for each project that matches.", keywords: ["daily", "weekly", "every", "time"] },
-  { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks a project on the Rules tab.", keywords: ["button", "by hand", "on demand"] },
+  { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks a project on the Automations tab.", keywords: ["button", "by hand", "on demand"] },
 ] as const;
 export type PortfolioTriggerType = (typeof PORTFOLIO_TRIGGERS)[number]["value"];
 
@@ -43,7 +43,7 @@ export const PORTFOLIO_ACTIONS = [
   { value: "set_status", label: "Set status", group: "Project", description: "Posts a status update on the project (with an optional note).", keywords: ["on track", "at risk", "complete", "update"] },
   { value: "status_reminder", label: "Send a status reminder", group: "Communication", description: "Asks the project's owner, in their Inbox, to post a status update.", keywords: ["nudge", "remind", "update"] },
   { value: "notify", label: "Send inbox notification", group: "Communication", description: "Puts a message about the project in people's Inbox.", keywords: ["alert", "tell", "ping"] },
-  { value: "set_owner", label: "Change owner", group: "Project", description: "Makes someone the project's owner (the rule's owner must own it).", keywords: ["transfer", "person"] },
+  { value: "set_owner", label: "Change owner", group: "Project", description: "Makes someone the project's owner (the automation's owner must own it).", keywords: ["transfer", "person"] },
   { value: "set_due_date", label: "Set due date", group: "Dates", description: "Sets the project's due date on a day, some days from today, or clears it.", keywords: ["deadline", "clear"] },
   { value: "set_name", label: "Rename project", group: "Project", description: "Changes the project's name (placeholders work).", keywords: ["title", "name", "prefix"] },
   { value: "set_field", label: "Set field", group: "Fields", description: "Writes a value into one of this portfolio's fields.", keywords: ["custom field", "value"] },

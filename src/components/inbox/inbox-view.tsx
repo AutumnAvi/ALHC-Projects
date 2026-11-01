@@ -337,7 +337,7 @@ function TabEmptyState({ tab, bookmarks }: { tab: InboxTab; bookmarks: boolean }
     default:
       return (
         <EmptyState icon={Inbox} title="You’re all caught up">
-          You’ll hear about tasks assigned to you, @mentions, approvals, messages, status updates, rule
+          You’ll hear about tasks assigned to you, @mentions, approvals, messages, status updates, automation
           notifications, and comments, completions, and field changes on tasks you follow (choose which in Manage
           notifications). Archived notifications are in Archive.
         </EmptyState>

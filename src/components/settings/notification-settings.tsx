@@ -72,7 +72,7 @@ export function NotificationSettings({
         </span>
       </label>
       <p className="mt-2 text-xs text-zinc-500">
-        Emails from rules and forms, such as due date reminders or updates to a request you submitted, are set up by
+        Emails from automations and forms, such as due date reminders or updates to a request you submitted, are set up by
         each project’s admins and aren’t affected by this switch.
       </p>
     </section>
@@ -87,7 +87,7 @@ const INBOX_KINDS = [
   "Comments on tasks you follow, and when they’re completed",
   "Approval requests for you, and decisions on approvals of tasks you follow",
   "Replies in message threads you started or replied to",
-  "Rules that notify you, and changes to fields set to “Notify followers when changed” on tasks you follow",
+  "Automations that notify you, and changes to fields set to “Notify followers when changed” on tasks you follow",
 ];
 
 export function InboxNotifications() {
@@ -216,7 +216,7 @@ export function NotificationMatrix({
       </table>
       <p className="mt-2 text-xs text-zinc-500">
         An email isn’t sent when you’ve already read the notification in your Inbox, and turning an email off also
-        stops ones already queued. Emails from rules and forms, such as due date reminders or updates to a request
+        stops ones already queued. Emails from automations and forms, such as due date reminders or updates to a request
         you submitted, are set up by each project’s admins and aren’t affected by these switches. To stop hearing
         about one task, leave it (Leave task, at the bottom of its pane).{" "}
         <Link href="/inbox" className="text-accent-700 hover:underline">

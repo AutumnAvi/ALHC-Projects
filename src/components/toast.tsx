@@ -5,15 +5,30 @@ import { X } from "lucide-react";
 import type { ActionResult } from "@/lib/actions";
 import { invalidateTaskPanes } from "@/components/task/task-pane-store";
 import { beginLocalMutation, endLocalMutation, failMutation } from "@/lib/optimistic-session";
+import { requestRuleFeedback } from "@/lib/rule-feedback-bus";
 
 // An optional button on the toast (e.g. Undo); clicking it runs the action and dismisses the toast.
 export type ToastAction = { label: string; onClick: () => void };
-type Toast = { id: number; message: string; action?: ToastAction };
+// Nov 1 notes, batch 10: "quiet" = a small, semi-transparent note (an automation ran); "warning" = an
+// amber card that stays longer (loop protection stopped an automation). `body` replaces the message's
+// text when given (links); `message` stays the accessible text.
+export type ToastVariant = "default" | "quiet" | "warning";
+export type RichToast = { message: string; body?: ReactNode; variant?: ToastVariant; action?: ToastAction; durationMs?: number };
+type Toast = RichToast & { id: number };
 type Notify = (message: string, action?: ToastAction) => void;
 
 const ToastContext = createContext<Notify>(() => {});
+const RichToastContext = createContext<(toast: RichToast) => void>(() => {});
 
 let nextId = 1;
+
+const TOAST_CLASS: Record<ToastVariant, string> = {
+  default: "pointer-events-auto flex items-start gap-3 rounded-lg bg-zinc-900 px-4 py-3 text-sm text-white shadow-lg",
+  quiet:
+    "pointer-events-auto flex w-fit max-w-full items-start gap-2 rounded-md bg-zinc-900/70 px-3 py-1.5 text-xs text-white shadow-md backdrop-blur-sm",
+  warning:
+    "pointer-events-auto flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 shadow-lg",
+};
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -22,18 +37,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((current) => current.filter((t) => t.id !== id));
   }, []);
 
-  const notify = useCallback<Notify>(
-    (message, action) => {
+  const show = useCallback(
+    (toast: RichToast) => {
       const id = nextId++;
-      setToasts((current) => [...current.slice(-2), { id, message, action }]);
+      setToasts((current) => [...current.slice(-3), { ...toast, id }]);
       // Toasts with an action stay a little longer, so there is time to use it.
-      window.setTimeout(() => dismiss(id), action ? 12000 : 6000);
+      window.setTimeout(() => dismiss(id), toast.durationMs ?? (toast.action ? 12000 : 6000));
     },
     [dismiss],
   );
+  const notify = useCallback<Notify>((message, action) => show({ message, action }), [show]);
 
   return (
     <ToastContext.Provider value={notify}>
+      <RichToastContext.Provider value={show}>
       {children}
       <div
         aria-live="polite"
@@ -42,10 +59,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            role="alert"
-            className="pointer-events-auto flex items-start gap-3 rounded-lg bg-zinc-900 px-4 py-3 text-sm text-white shadow-lg"
+            role={toast.variant === "quiet" ? "status" : "alert"}
+            data-toast-variant={toast.variant ?? "default"}
+            aria-label={toast.body ? toast.message : undefined}
+            className={TOAST_CLASS[toast.variant ?? "default"]}
           >
-            <p className="flex-1">{toast.message}</p>
+            <div className="min-w-0 flex-1">{toast.body ?? <p>{toast.message}</p>}</div>
             {toast.action ? (
               <button
                 type="button"
@@ -62,13 +81,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               type="button"
               onClick={() => dismiss(toast.id)}
               aria-label="Dismiss"
-              className="-mr-1 rounded p-0.5 text-zinc-400 hover:text-white"
+              className={
+                toast.variant === "warning"
+                  ? "-mr-1 rounded p-0.5 text-amber-700 hover:text-amber-950"
+                  : "-mr-1 rounded p-0.5 text-zinc-400 hover:text-white"
+              }
             >
-              <X className="size-4" />
+              <X className={toast.variant === "quiet" ? "size-3.5" : "size-4"} />
             </button>
           </div>
         ))}
       </div>
+      </RichToastContext.Provider>
     </ToastContext.Provider>
   );
 }
@@ -88,6 +112,7 @@ export function useServerAction() {
     (action: () => Promise<ActionResult | void>, optimistic?: () => void): Promise<ActionResult | void> =>
       new Promise((resolve) => {
         const token = beginLocalMutation();
+        const startedAt = Date.now();
         startTransition(async () => {
           try {
             optimistic?.();
@@ -103,6 +128,8 @@ export function useServerAction() {
             throw error;
           } finally {
             endLocalMutation(token);
+            // Batch 10: tell the person what automations their change ran (rule-feedback.tsx).
+            requestRuleFeedback(startedAt);
             // Cached task panes may be out of date now (the open one gets its fresh copy with the refresh).
             invalidateTaskPanes();
           }
@@ -112,6 +139,11 @@ export function useServerAction() {
   );
 
   return [pending, run] as const;
+}
+
+// Shows a toast with a variant and links (automation feedback).
+export function useRichToast() {
+  return useContext(RichToastContext);
 }
 
 // Shows a toast directly (for results that aren't errors, e.g. a bulk edit summary).

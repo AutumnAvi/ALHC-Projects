@@ -87,7 +87,7 @@ export function DeliveryLog({
             Deliveries
           </h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Emails about this project’s tasks, and Slack messages and webhook calls queued by its rules, newest first
+            Emails about this project’s tasks, and Slack messages and webhook calls queued by its automations, newest first
             (the latest 200 of each). Queued items normally go out within a minute. A failed send is retried
             automatically after 5, 10, 20, then 30 minutes; after {MAX_AUTO_ATTEMPTS} attempts it is marked failed with
             the reason. Retry gives it one more attempt with the same content (up to {MAX_TOTAL_ATTEMPTS} in all).
@@ -127,7 +127,7 @@ export function DeliveryLog({
         </div>
         {emails.length === 0 ? (
           <EmptyState icon={Mail} title="No emails yet" size="inline">
-            Form confirmations, requester updates, rule emails, and comment emails to followers of this project’s tasks
+            Form confirmations, requester updates, automation emails, and comment emails to followers of this project’s tasks
             show up here with their status.
           </EmptyState>
         ) : shownEmails.length === 0 ? (
@@ -152,7 +152,7 @@ export function DeliveryLog({
         </div>
         {deliveries.length === 0 ? (
           <EmptyState icon={Send} title="Nothing delivered yet" size="inline">
-            When a rule with a <span className="font-medium text-zinc-700">Send Slack message</span> or{" "}
+            When an automation with a <span className="font-medium text-zinc-700">Send Slack message</span> or{" "}
             <span className="font-medium text-zinc-700">Call webhook</span> action runs, each delivery shows up here
             with its status. Set up destinations in{" "}
             <Link href={`/projects/${projectId}/settings/integrations`} className="text-accent-700 hover:underline">
@@ -215,7 +215,7 @@ function EmailRow({ projectId, email: e }: { projectId: string; email: EmailDeli
           ) : (
             "A task you can’t open"
           )}
-          {e.ruleName ? ` · rule “${e.ruleName}”` : ""} · queued <Timestamp iso={e.createdAt} />
+          {e.ruleName ? ` · automation “${e.ruleName}”` : ""} · queued <Timestamp iso={e.createdAt} />
         </p>
         <p className="text-xs text-zinc-500">
           Attempt {e.attempts} of {e.maxAttempts}
@@ -291,7 +291,7 @@ function DeliveryRow({ projectId, delivery: d }: { projectId: string; delivery: 
           ) : (
             "No task"
           )}
-          {d.ruleName ? ` · rule “${d.ruleName}”` : ""} · queued <Timestamp iso={d.createdAt} />
+          {d.ruleName ? ` · automation “${d.ruleName}”` : ""} · queued <Timestamp iso={d.createdAt} />
         </p>
         <p className="text-xs text-zinc-500">
           Attempt {d.attempts} of {d.maxAttempts}

@@ -307,7 +307,7 @@ export function NumberSymbolInput({
             <span className="font-medium tabular-nums text-zinc-800" data-symbol-preview>
               {formatNumberValue(SYMBOL_PREVIEW_VALUE, symbol)}
             </span>
-            . Values stay numbers, so sorting, filters, and rules work the same.
+            . Values stay numbers, so sorting, filters, and automations work the same.
           </>
         )}
       </p>

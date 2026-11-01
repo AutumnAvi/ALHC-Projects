@@ -47,8 +47,8 @@ export const NOTIFICATION_KINDS = [
   },
   {
     key: "rule",
-    label: "Rule notifications",
-    description: "A project rule sends you a notification.",
+    label: "Automation notifications",
+    description: "A project automation sends you a notification.",
   },
 ] as const;
 

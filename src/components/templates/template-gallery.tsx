@@ -43,7 +43,7 @@ export function TemplateGallery({
         </div>
         <p className="mt-0.5 text-xs text-zinc-500">
           Shared with everyone in the workspace. Save one from a project’s … menu (project admins). The source
-          project’s admins and workspace admins can rename, replace, or delete a template. Rules in a template always
+          project’s admins and workspace admins can rename, replace, or delete a template. Automations in a template always
           arrive turned off.
         </p>
         {templates.length === 0 ? (

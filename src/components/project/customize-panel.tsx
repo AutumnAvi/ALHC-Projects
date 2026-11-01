@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   Blocks,
   ChevronRight,
+  Copy,
   Crown,
   Diamond,
   FileInput,
@@ -31,8 +32,8 @@ import { TaskNumberingForm } from "@/components/project/task-numbering";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useRightPanel } from "@/components/shell/right-panel";
-import { useServerAction } from "@/components/toast";
-import { createForm, setRuleEnabled, setSectionsLocked } from "@/lib/actions";
+import { useNotify, useServerAction } from "@/components/toast";
+import { createForm, duplicateRule, setRuleEnabled, setSectionsLocked } from "@/lib/actions";
 import type { FieldDef } from "@/lib/fields";
 import type { CustomizeDetails } from "@/lib/project-page";
 import type { StatusTemplate } from "@/lib/status-templates";
@@ -220,7 +221,7 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         icon={Workflow}
         label="Automations"
         count={summary.rules.length}
-        meta={summary.rules.length ? `${activeRules} on · rules that move, assign, and notify` : "Rules that move, assign, and notify"}
+        meta={summary.rules.length ? `${activeRules} on · automations that move, assign, and notify` : "Automations that move, assign, and notify"}
         onClick={() => onOpen("rules")}
         focus
       />
@@ -242,7 +243,7 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         icon={Mail}
         label="Emails"
         count={emailRules + summary.forms.filter((f) => f.sendsConfirmation).length}
-        meta="Rule emails, form confirmations, comment emails"
+        meta="Automation emails, form confirmations, comment emails"
         onClick={() => onOpen("emails")}
       />
       <CardRow
@@ -402,21 +403,22 @@ function ruleHref(base: string, back: string, ruleId: string | "new") {
 function RulesView({ base, back, rules }: { base: string; back: string; rules: CustomizeRule[] }) {
   const canEdit = useProjectPermissions().canManage;
   const [pending, run] = useServerAction();
+  const notify = useNotify();
   const [shown, setEnabled] = useOptimistic(rules, (current, patch: { id: string; enabled: boolean }) =>
     current.map((r) => (r.id === patch.id ? { ...r, enabled: patch.enabled } : r)),
   );
   return (
     <div>
-      <Intro>When something happens in this project, a rule checks its conditions and runs the actions of the first branch that matches.</Intro>
+      <Intro>When something happens in this project, an automation checks its conditions and runs the actions of the first branch that matches.</Intro>
       {canEdit ? (
         <Link href={ruleHref(base, back, "new")} data-panel-focus className="btn-primary mb-3 h-8 w-full">
           <Plus className="size-4" aria-hidden />
-          Add rule
+          Add automation
         </Link>
       ) : null}
       {shown.length === 0 ? (
         <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">
-          No rules yet. Start from a template or build one: move tasks, assign people, comment, email, or post to Slack.
+          No automations yet. Start from a template or build one: move tasks, assign people, comment, email, or post to Slack.
         </p>
       ) : (
         <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
@@ -447,11 +449,29 @@ function RulesView({ base, back, rules }: { base: string; back: string; rules: C
                   {rule.trigger}
                 </span>
               </Link>
+              {canEdit ? (
+                <button
+                  type="button"
+                  aria-label={`Duplicate ${rule.name}`}
+                  data-tooltip="Duplicate (the copy starts off)"
+                  disabled={pending}
+                  onClick={() =>
+                    run(async () => {
+                      const result = await duplicateRule(rule.id);
+                      if (!result.error) notify(`Created “Copy of ${rule.name}” (off until you turn it on)`);
+                      return result;
+                    })
+                  }
+                  className="btn-icon size-7 shrink-0"
+                >
+                  <Copy className="size-3.5" />
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
       )}
-      <PanelLink href={`${base}/rules`}>Rule templates and recent runs</PanelLink>
+      <PanelLink href={`${base}/rules`}>Automation templates and recent runs</PanelLink>
     </div>
   );
 }
@@ -570,13 +590,13 @@ function EmailsView({
   const confirming = summary.forms.filter((f) => f.sendsConfirmation);
   return (
     <div>
-      <Intro>Everything this project emails: rule emails, form confirmations, and comment emails to followers.</Intro>
+      <Intro>Everything this project emails: automation emails, form confirmations, and comment emails to followers.</Intro>
       <SubHeading>Design</SubHeading>
       <p className="text-xs text-zinc-500">
         The logo, colors, header, and sign-off of this project’s emails (and of each form’s emails to requesters).
       </p>
       <PanelLink href={`${base}/settings/emails`}>Open email designs</PanelLink>
-      <SubHeading>Rule emails</SubHeading>
+      <SubHeading>Automation emails</SubHeading>
       {emailRules.length ? (
         <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
           {emailRules.map((rule) => (
@@ -590,7 +610,7 @@ function EmailsView({
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-zinc-500">No rule sends email yet. Add a “Send email” action to a rule (Automations).</p>
+        <p className="text-xs text-zinc-500">No automation sends email yet. Add a “Send email” action to an automation (Automations).</p>
       )}
       <SubHeading>Form confirmations</SubHeading>
       {confirming.length ? (
@@ -655,7 +675,7 @@ function AppsView({ projectId, base }: { projectId: string; base: string }) {
   const inbound = details.inbound ?? [];
   return (
     <div>
-      <Intro>Connect this project to other tools. Rules post to Slack or call webhooks; inbound webhooks add tasks.</Intro>
+      <Intro>Connect this project to other tools. Automations post to Slack or call webhooks; inbound webhooks add tasks.</Intro>
       <ul className="flex flex-col gap-2">
         <AppRow
           href={`${base}/settings/integrations`}

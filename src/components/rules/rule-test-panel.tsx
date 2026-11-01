@@ -107,7 +107,7 @@ export function RuleTestPanel({
       <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3">
         <FlaskConical className="size-4 text-zinc-500" aria-hidden />
         <h3 id={headingId} className="flex-1 text-sm font-semibold text-zinc-900">
-          Test this rule
+          Test this automation
         </h3>
         <button type="button" onClick={onClose} aria-label="Close the test panel" data-tooltip="Close" className="btn-icon">
           <X className="size-4" />
@@ -115,7 +115,7 @@ export function RuleTestPanel({
       </div>
       <div className="flex flex-col gap-4 px-4 py-4">
         <p className="text-xs text-zinc-500">
-          Runs the rule as it is in the builder (saved or not) on a task and shows what would happen. Nothing is
+          Runs the automation as it is in the builder (saved or not) on a task and shows what would happen. Nothing is
           changed or sent.
         </p>
         {tasks.length === 0 ? (
@@ -183,7 +183,7 @@ function TestOutcome({ tested, stale, ctx }: { tested: Tested; stale: boolean; c
     <>
       {stale ? (
         <p className="rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900">
-          The rule changed since this test. Run it again to see the new result.
+          The automation changed since this test. Run it again to see the new result.
         </p>
       ) : null}
       <div className={`rounded-lg border px-3 py-2.5 ${tone}`}>

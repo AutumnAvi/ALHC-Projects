@@ -140,45 +140,45 @@ export function RulesView({
     <div className="mx-auto max-w-3xl px-gutter py-5">
       <div className="flex flex-wrap items-start gap-3">
         <p className="min-w-0 flex-1 text-sm text-zinc-600">
-          Rules react to changes in this project: when something happens, check the conditions (with Or groups and
-          Otherwise branches), then run the actions in order. Rules never trigger themselves, chains stop after three
-          rules, a rule that keeps failing pauses itself, and Status fields always follow the section.
+          Automations react to changes in this project: when something happens, check the conditions (with Or groups and
+          Otherwise branches), then run the actions in order. Automations never trigger themselves, loop protection stops two
+          that undo each other, chains stop after ten, an automation that keeps failing pauses itself, and Status fields always follow the section.
         </p>
         {canEdit ? (
           <Link href={`${base}/rules/new`} className="btn-primary h-8 px-3">
             <Plus className="size-4" aria-hidden />
-            Add rule
+            Add automation
           </Link>
         ) : null}
       </div>
 
-      <h2 className="mt-6 text-sm font-semibold text-zinc-900">Rules</h2>
+      <h2 className="mt-6 text-sm font-semibold text-zinc-900">Automations</h2>
       {optimisticRules.length === 0 ? (
         <div className="mt-3">
-          <EmptyState icon={Workflow} title="No rules yet" size="inline">
-            Start from a template below, or add a rule and build it as a sentence: when…, if…, then….
+          <EmptyState icon={Workflow} title="No automations yet" size="inline">
+            Start from a template below, or add an automation and build it as a sentence: when…, if…, then….
           </EmptyState>
         </div>
       ) : (
         <>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <label className="relative">
-              <span className="sr-only">Search rules</span>
+              <span className="sr-only">Search automations</span>
               <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.currentTarget.value)}
-                placeholder="Search rules"
+                placeholder="Search automations"
                 className="control w-56 pl-7"
               />
             </label>
             <span className="flex-1" />
-            <Segmented label="Show rules" options={RULE_FILTERS} value={filter} onChange={setFilter} />
+            <Segmented label="Show automations" options={RULE_FILTERS} value={filter} onChange={setFilter} />
           </div>
           {shown.length === 0 ? (
             <p className="mt-3 text-sm text-zinc-500">
-              No rule matches.{" "}
+              No automation matches.{" "}
               <button
                 type="button"
                 onClick={() => {
@@ -187,11 +187,11 @@ export function RulesView({
                 }}
                 className="font-medium text-accent-700 hover:underline"
               >
-                Show all rules
+                Show all automations
               </button>
             </p>
           ) : (
-            <ul className="mt-3 divide-y divide-zinc-100 rounded-lg border border-zinc-200" aria-label="Rules">
+            <ul className="mt-3 divide-y divide-zinc-100 rounded-lg border border-zinc-200" aria-label="Automations">
               {shown.map(({ rule, trigger, flow, stat }) => {
                 const owner = rule.ownerId ? (people.get(rule.ownerId) ?? "someone removed") : null;
                 // undefined = not known here (no stats and not among the recent runs); null = never ran.
@@ -305,7 +305,7 @@ export function RulesView({
                       <button
                         type="button"
                         aria-label={`Resume ${rule.name}`}
-                        data-tooltip="Turn the rule back on"
+                        data-tooltip="Turn the automation back on"
                         disabled={pending}
                         onClick={() => setEnabled(rule, true)}
                         className="btn-secondary h-7 px-2 text-xs"
@@ -332,7 +332,7 @@ export function RulesView({
                         onClick={() =>
                           run(async () => {
                             const result = await duplicateRule(rule.id);
-                            if (!result.error) notify(`Copied “${rule.name}” (off until you turn it on)`);
+                            if (!result.error) notify(`Created “Copy of ${rule.name}” (off until you turn it on)`);
                             return result;
                           })
                         }
@@ -344,7 +344,7 @@ export function RulesView({
                     <Link
                       href={`${base}/rules/${rule.id}`}
                       aria-label={`${canEdit ? "Edit" : "Open"} ${rule.name}`}
-                      data-tooltip={canEdit ? "Edit rule" : "Open rule"}
+                      data-tooltip={canEdit ? "Edit automation" : "Open automation"}
                       className="btn-icon"
                     >
                       <Pencil className="size-4" />
@@ -353,10 +353,10 @@ export function RulesView({
                       <button
                         type="button"
                         aria-label={`Delete ${rule.name}`}
-                        data-tooltip="Delete rule"
+                        data-tooltip="Delete automation"
                         disabled={pending}
                         onClick={async () => {
-                          if (await confirm({ title: `Delete the rule “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) {
+                          if (await confirm({ title: `Delete the automation “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) {
                             run(() => deleteRule(rule.id));
                           }
                         }}
@@ -381,7 +381,7 @@ export function RulesView({
             More templates (fill in the blanks)
           </summary>
           <p className="mt-1 text-xs text-zinc-500">
-            These install as ordinary rules in this project. Fill in the blanks; nothing is preset to a specific team.
+            These install as ordinary automations in this project. Fill in the blanks; nothing is preset to a specific team.
           </p>
           <ul className="mt-3 space-y-3">
             {presets.map((preset) => (
@@ -422,7 +422,7 @@ function RunRow({ run: r, ruleName, projectId }: { run: RuleRun; ruleName: strin
   const reason = runReason(r.detail);
   const { steps, error } = runSteps(r.detail);
   const expandable = steps.length > 0 || error !== null;
-  const name = ruleName ?? "Deleted rule";
+  const name = ruleName ?? "Deleted automation";
 
   return (
     <li className="px-3 py-2">
@@ -479,7 +479,7 @@ function PresetCard({ projectId, preset, ctx }: { projectId: string; preset: Rul
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-zinc-900">
             {preset.name}
-            {preset.ruleCount > 1 ? <span className="ml-2 text-xs font-normal text-zinc-500">{preset.ruleCount} rules</span> : null}
+            {preset.ruleCount > 1 ? <span className="ml-2 text-xs font-normal text-zinc-500">{preset.ruleCount} automations</span> : null}
           </p>
           <p className="mt-1 text-sm text-zinc-600">{preset.description}</p>
         </div>

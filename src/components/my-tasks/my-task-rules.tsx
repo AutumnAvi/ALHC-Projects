@@ -1,6 +1,6 @@
 "use client";
 
-// My Tasks rules (Automations V3, batch E): a "Rules" button on My tasks opens the person's own rules —
+// My Tasks rules (Automations V3, batch E): an Automations button (batch 10) on My tasks opens the person’s own rules —
 // when a task is assigned to me / is due soon / is overdue, (if …), move it to one of my sections, set
 // its due date, or complete it — built as a sentence with the searchable pickers.
 
@@ -10,6 +10,10 @@ import { Dialog } from "@/components/dialog";
 import { useConfirm } from "@/components/confirm";
 import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import { VocabPicker } from "@/components/rules/vocab-picker";
+import { useAutoName } from "@/components/rules/use-auto-name";
+import { autoRuleName, withTarget } from "@/lib/rule-autoname";
+import { RuleIcon } from "@/components/rules/rule-icons";
 import { MISSING_INPUT } from "@/components/rules/rule-shared";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteMyTaskRule, saveMyTaskRule, setMyTaskRuleEnabled } from "@/lib/actions";
@@ -40,7 +44,7 @@ function missingKeys(step: MyTaskRuleItem, scope: StepScope) {
 const INPUT = "control h-auto min-h-7 py-0.5";
 
 const vocab = (list: readonly { value: string; label: string; description?: string; keywords?: readonly string[] }[]): SmartOption[] =>
-  list.map((x) => ({ value: x.value, label: x.label, description: x.description, keywords: x.keywords }));
+  list.map((x) => ({ value: x.value, label: x.label, icon: <RuleIcon value={x.value} />, description: x.description, keywords: x.keywords }));
 
 const whole = (v: Json | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null);
 const strings = (v: Json | undefined) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
@@ -83,9 +87,9 @@ export function MyTaskRulesButton({ rules, ctx }: { rules: MyTaskRule[] | null; 
   const count = rules?.filter((r) => r.enabled).length ?? 0;
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn-secondary" data-tooltip="Your own rules for tasks assigned to you">
+      <button type="button" onClick={() => setOpen(true)} className="btn-secondary" data-tooltip="Your own automations for tasks assigned to you">
         <Zap className="size-4" aria-hidden />
-        Rules{count ? ` (${count})` : ""}
+        Automations{count ? ` (${count})` : ""}
       </button>
       {open ? <MyTaskRulesDialog rules={rules} ctx={ctx} onClose={() => setOpen(false)} /> : null}
     </>
@@ -98,16 +102,16 @@ export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[]
   const [editing, setEditing] = useState<MyTaskRule | "new" | null>(null);
 
   return (
-    <Dialog title="My tasks rules" description="Only you see these. They act on tasks assigned to you, with your access." onClose={onClose} width="max-w-2xl">
+    <Dialog title="My tasks automations" description="Only you see these. They act on tasks assigned to you, with your access." onClose={onClose} width="max-w-2xl">
       {rules === null ? (
-        <p className="text-sm text-zinc-600">My Tasks rules need this release’s database update.</p>
+        <p className="text-sm text-zinc-600">My Tasks automations need this release’s database update.</p>
       ) : editing ? (
         <MyTaskRuleEditor rule={editing === "new" ? null : editing} ctx={ctx} onDone={() => setEditing(null)} />
       ) : (
         <div className="flex flex-col gap-3">
           {rules.length === 0 ? (
             <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500">
-              No rules yet. For example: when a task is due tomorrow, move it to Do today.
+              No automations yet. For example: when a task is due tomorrow, move it to Do today.
             </p>
           ) : (
             <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
@@ -135,16 +139,16 @@ export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[]
                     <p className="text-sm font-medium text-zinc-900">{rule.name}</p>
                     <p className="text-sm text-zinc-600">{myTaskRuleSentence(rule, ctx)}</p>
                   </div>
-                  <button type="button" aria-label={`Edit ${rule.name}`} data-tooltip="Edit rule" onClick={() => setEditing(rule)} className="btn-icon">
+                  <button type="button" aria-label={`Edit ${rule.name}`} data-tooltip="Edit automation" onClick={() => setEditing(rule)} className="btn-icon">
                     <Pencil className="size-4" />
                   </button>
                   <button
                     type="button"
                     aria-label={`Delete ${rule.name}`}
-                    data-tooltip="Delete rule"
+                    data-tooltip="Delete automation"
                     disabled={pending}
                     onClick={async () => {
-                      if (await confirm({ title: `Delete the rule “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) run(() => deleteMyTaskRule(rule.id));
+                      if (await confirm({ title: `Delete the automation “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) run(() => deleteMyTaskRule(rule.id));
                     }}
                     className="btn-icon hover:bg-red-50 hover:text-red-700"
                   >
@@ -156,7 +160,7 @@ export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[]
           )}
           <button type="button" onClick={() => setEditing("new")} className="btn-secondary self-start">
             <Plus className="size-4" aria-hidden />
-            Add rule
+            Add automation
           </button>
         </div>
       )}
@@ -252,7 +256,6 @@ export function MyTaskActionFields({ a, ctx, onChange }: { a: MyTaskRuleItem; ct
 export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | null; ctx: MyTaskRuleContext; onDone: () => void }) {
   const notify = useNotify();
   const [pending, run] = useServerAction();
-  const [name, setName] = useState(rule?.name ?? "");
   const [triggerType, setTriggerType] = useState<MyTaskTrigger>(rule?.triggerType ?? "due_approaching");
   const [triggerConfig, setTriggerConfig] = useState<Record<string, Json>>(rule?.triggerConfig ?? { days: 1 });
   const [conditions, setConditions] = useState<MyTaskRuleItem[]>(rule?.conditions ?? []);
@@ -260,15 +263,26 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
     rule?.actions ?? [actionDefaults("move_to_section", ctx)],
   );
   const days = whole(triggerConfig.days);
+  // Batch 10 (76): unnamed automations are named from their steps (editable).
+  const nameBox = useAutoName(
+    rule?.name,
+    autoRuleName(
+      MY_TASK_TRIGGERS.find((t) => t.value === triggerType)?.label ?? triggerType,
+      actions.map((a) =>
+        withTarget(
+          MY_TASK_ACTIONS.find((x) => x.value === a.type)?.label ?? a.type,
+          a.type === "move_to_section" ? ctx.sections.find((x) => x.id === a.section_id)?.name : null,
+          /\bmy section\b/,
+        ),
+      ),
+    ),
+  );
+  const name = nameBox.name;
   // Every step's settings (rule-params.ts): Save waits until nothing required is missing.
   const problems = ruleProblems({ triggerType, triggerConfig, conditions, actions }, "my_tasks");
   const blocked = saveBlockedReason(problems);
 
   function save() {
-    if (!name.trim()) {
-      notify("Give the rule a name");
-      return;
-    }
     if (blocked) {
       notify(blocked);
       return;
@@ -284,7 +298,7 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       if (!result.error) {
-        notify(rule ? "Rule saved" : "Rule created");
+        notify(rule ? "Automation saved" : "Automation created");
         onDone();
       }
       return result;
@@ -295,7 +309,18 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
     <div className="flex flex-col gap-3">
       <label className="flex flex-col gap-1 text-xs font-medium text-zinc-600">
         Name
-        <input value={name} maxLength={200} onChange={(e) => setName(e.currentTarget.value)} placeholder="Due tomorrow → Do today" className="field" />
+        <input
+          value={nameBox.value}
+          maxLength={200}
+          onChange={(e) => nameBox.onChange(e.currentTarget.value)}
+          onFocus={(e) => {
+            if (nameBox.isAuto) e.currentTarget.select();
+          }}
+          placeholder="Name this automation"
+          data-auto-name={nameBox.isAuto || undefined}
+          className="field data-[auto-name]:text-zinc-500"
+        />
+        {nameBox.isAuto ? <span className="font-normal text-zinc-500">Named from its steps. Type to rename it.</span> : null}
       </label>
       <p className="rounded-lg bg-accent-50/60 px-3 py-2 text-sm text-zinc-800" aria-live="polite">
         {myTaskRuleSentence({ triggerType, triggerConfig, conditions, actions }, ctx)}
@@ -303,7 +328,8 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
       <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-3 text-sm text-zinc-700">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="w-12 text-xs font-semibold uppercase tracking-wide text-zinc-500">When</span>
-          <SmartPicker
+          <VocabPicker
+            kind="trigger"
             label="Trigger"
             value={triggerType}
             options={vocab(MY_TASK_TRIGGERS)}
@@ -335,7 +361,8 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
           {conditions.map((c, i) => (
             <div key={i} className="flex flex-wrap items-center gap-1.5">
               <span className="w-12 text-xs font-semibold uppercase tracking-wide text-zinc-500">{i === 0 ? "If" : "And"}</span>
-              <SmartPicker
+              <VocabPicker
+                kind="condition"
                 label={`Condition ${i + 1}`}
                 value={c.type}
                 options={vocab(MY_TASK_CONDITIONS)}
@@ -352,7 +379,8 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
             </div>
           ))}
           {conditions.length < 10 ? (
-            <SmartPicker
+            <VocabPicker
+              kind="condition"
               label="Add condition"
               value={null}
               options={vocab(MY_TASK_CONDITIONS)}
@@ -372,7 +400,8 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
           {actions.map((a, i) => (
             <div key={i} className="flex flex-wrap items-center gap-1.5">
               <span className="w-12 text-xs font-semibold uppercase tracking-wide text-zinc-500">{i === 0 ? "Then" : "And"}</span>
-              <SmartPicker
+              <VocabPicker
+                kind="action"
                 label={`Action ${i + 1}`}
                 value={a.type}
                 options={vocab(MY_TASK_ACTIONS)}
@@ -396,7 +425,8 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
             </div>
           ))}
           {actions.length < 5 ? (
-            <SmartPicker
+            <VocabPicker
+              kind="action"
               label="Add action"
               value={null}
               options={vocab(MY_TASK_ACTIONS)}
@@ -429,7 +459,7 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
           aria-describedby={blocked ? "my-task-rule-save-blocked" : undefined}
           className="btn-primary"
         >
-          {pending ? "Saving…" : rule ? "Save" : "Create rule"}
+          {pending ? "Saving…" : rule ? "Save" : "Create automation"}
         </button>
       </div>
     </div>

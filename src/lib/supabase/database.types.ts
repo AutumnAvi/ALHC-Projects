@@ -2364,6 +2364,7 @@ export type Database = {
           dedupe_key: string | null;
           created_at: string;
           deleted_at: string | null;
+          actor_id: string | null;
         };
         Insert: {
           id?: string;
@@ -2375,6 +2376,7 @@ export type Database = {
           dedupe_key?: string | null;
           created_at?: string;
           deleted_at?: string | null;
+          actor_id?: string | null;
         };
         Update: {
           id?: string;
@@ -2386,6 +2388,7 @@ export type Database = {
           dedupe_key?: string | null;
           created_at?: string;
           deleted_at?: string | null;
+          actor_id?: string | null;
         };
         Relationships: [];
       };

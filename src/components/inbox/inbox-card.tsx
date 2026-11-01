@@ -211,7 +211,7 @@ export function InboxCard({
   // A form submitter's emailed reply has no actor: name the address it came from.
   // Oct 26 notes (batch 3): a review check's outcome names the reviewer's address.
   const reviewer = dataText(item.data, "reviewer_email");
-  const actorName = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? reviewer ?? "Someone");
+  const actorName = actor ? displayName(actor) : ruleName ? `Automation “${ruleName}”` : (item.emailFrom ?? reviewer ?? "Someone");
   const ruleHref = pausedRuleHref(item);
   const accessRequest = accessRequestOf(item.data);
   const Icon = reminder
@@ -267,10 +267,10 @@ export function InboxCard({
     <Link
       href={ruleHref}
       onClick={(e) => e.stopPropagation()}
-      aria-label={ruleName ? `Open rule “${ruleName}”` : undefined}
+      aria-label={ruleName ? `Open automation “${ruleName}”` : undefined}
       className="relative z-10 shrink-0 text-xs font-medium text-accent-700 hover:underline focus-visible:outline-2 focus-visible:outline-accent-500"
     >
-      Open rule
+      Open automation
     </Link>
   ) : null;
 

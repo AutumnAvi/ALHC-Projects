@@ -6,7 +6,7 @@ import { hasRole } from "@/lib/roles";
 import { findRuleTemplate } from "@/lib/rule-templates";
 import { loadRuleContext, ruleBackHref } from "../context";
 
-export const metadata: Metadata = { title: "New rule" };
+export const metadata: Metadata = { title: "New automation" };
 
 export default async function NewRulePage({ params, searchParams }: PageProps<"/projects/[projectId]/rules/new">) {
   const [{ projectId }, { back, template }] = await Promise.all([params, searchParams]);

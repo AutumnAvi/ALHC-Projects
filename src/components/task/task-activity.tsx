@@ -211,7 +211,7 @@ export function TaskActivity({
 
   function storyActor(story: TaskStory): string {
     const ruleName = str(story.data, "rule_name");
-    if (ruleName) return `Rule “${ruleName}”`;
+    if (ruleName) return `Automation “${ruleName}”`;
     if (!story.actorId && story.kind === "form_submitted") return str(story.data, "submitter_email") ?? "Someone";
     // Files a form's (anonymous) submitter attached (Real features 1).
     if (!story.actorId && story.kind === "attachment_added" && str(story.data, "source") === "form") return "The form’s submitter";
@@ -504,7 +504,7 @@ export function TaskActivity({
                     key={`pinned-${comment.id}`}
                     comment={comment}
                     pending={false}
-                    authorName={comment.ruleName ? `Rule “${comment.ruleName}”` : nameOf(comment.authorId)}
+                    authorName={comment.ruleName ? `Automation “${comment.ruleName}”` : nameOf(comment.authorId)}
                     mine={comment.authorId !== null && comment.authorId === memberId}
                     canComment={canComment}
                     memberId={memberId}
@@ -563,7 +563,7 @@ export function TaskActivity({
                   key={entry.key}
                   comment={entry.comment}
                   pending={entry.pending}
-                  authorName={entry.comment.ruleName ? `Rule “${entry.comment.ruleName}”` : nameOf(entry.comment.authorId)}
+                  authorName={entry.comment.ruleName ? `Automation “${entry.comment.ruleName}”` : nameOf(entry.comment.authorId)}
                   mine={entry.comment.authorId !== null && entry.comment.authorId === memberId}
                   canComment={canComment}
                   memberId={memberId}

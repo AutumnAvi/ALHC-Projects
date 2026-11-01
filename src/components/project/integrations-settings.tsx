@@ -39,7 +39,7 @@ export function IntegrationsSettings({
           Slack
         </h2>
         <p className="mt-1 text-sm text-zinc-600">
-          The default channel for the <span className="font-medium text-zinc-900">Send Slack message</span> rule
+          The default channel for the <span className="font-medium text-zinc-900">Send Slack message</span> automation
           action. In Slack, create an app (or open an existing one), turn on <em>Incoming Webhooks</em>, choose{" "}
           <em>Add New Webhook to Workspace</em>, pick a channel, and paste the URL it gives you (it starts with
           https://hooks.slack.com/services/). Anyone with that URL can post to the channel, so treat it like a
@@ -63,10 +63,10 @@ export function IntegrationsSettings({
           Outbound webhook
         </h2>
         <p className="mt-1 text-sm text-zinc-600">
-          The default target for the <span className="font-medium text-zinc-900">Call webhook</span> rule action,
+          The default target for the <span className="font-medium text-zinc-900">Call webhook</span> automation action,
           which POSTs a JSON summary of the task. Only public https:// addresses are accepted. The optional shared
           secret is sent in a request header (never in the body) so the receiver can check the call came from here;
-          it is only sent to this URL, never to a URL set on an individual rule.
+          it is only sent to this URL, never to a URL set on an individual automation.
         </p>
         <dl className="mt-4 divide-y divide-zinc-100">
           <SecretSetting
@@ -93,7 +93,7 @@ export function IntegrationsSettings({
       </section>
 
       <p className="text-xs text-zinc-500">
-        Deliveries are queued when a rule runs and sent within moments of the next change in the app, or by the
+        Deliveries are queued when an automation runs and sent within moments of the next change in the app, or by the
         scheduled job. Each queued or failed delivery shows in the task’s activity with the destination’s host
         only, and every delivery is listed under{" "}
         <Link href={`/projects/${projectId}/settings/deliveries`} className="text-accent-700 hover:underline">
@@ -216,7 +216,7 @@ function SecretSetting({
                   if (
                     await confirm({
                       title: `Clear the ${label.toLowerCase()}?`,
-                      message: "Rules that rely on it will fail until it is set again.",
+                      message: "Automations that rely on it will fail until it is set again.",
                       confirmLabel: "Clear",
                       tone: "danger",
                     })

@@ -56,7 +56,7 @@ export const INBOX_CATEGORIES = [
   { key: "approval", label: "Approvals" },
   { key: "completed", label: "Completed tasks" },
   { key: "field_change", label: "Field changes" },
-  { key: "rule", label: "Rule notifications" },
+  { key: "rule", label: "Automation notifications" },
 ] as const satisfies readonly { key: NotificationKind; label: string }[];
 export type InboxCategory = (typeof INBOX_CATEGORIES)[number]["key"];
 

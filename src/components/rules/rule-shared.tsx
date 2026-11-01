@@ -722,7 +722,7 @@ export function personOptions(ctx: RuleContext, opts: { none?: string; many?: bo
       value: r.value as string,
       label: r.label,
       group: "Roles",
-      description: r.value === "assignee" ? "Whoever the task is assigned to when the rule runs" : "Whoever created the task",
+      description: r.value === "assignee" ? "Whoever the task is assigned to when the automation runs" : "Whoever created the task",
       icon: <User className="size-4" />,
     })),
     ...peopleFields(ctx).map((f) => ({

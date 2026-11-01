@@ -14,7 +14,7 @@ export const ROLE_LABELS: Record<ProjectRole, string> = {
 
 // One plain line per role, shown under each option of the role picker (Oct 26 notes).
 export const ROLE_DESCRIPTIONS: Record<ProjectRole, string> = {
-  owner: "Runs the project: people, settings, rules, and every task",
+  owner: "Runs the project: people, settings, automations, and every task",
   admin: "Older role: runs the project like an owner, but can’t change owners",
   editor: "Adds, changes, and completes tasks",
   commenter: "Reads and comments, but can’t change tasks",

@@ -34,6 +34,7 @@ import {
 import { parseQuestions, submissionRequesterName, type FormDef, type PublicForm } from "@/lib/forms";
 import {
   parsePresetInputs,
+  runReason,
   toRuleDef,
   type RuleDef,
   type RulePreset,
@@ -42,6 +43,7 @@ import {
 } from "@/lib/rules";
 import { DEFAULT_WORK_WEEK, normalizeWorkWeek } from "@/lib/workdays";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
+import type { FeedbackRun } from "@/lib/rule-feedback";
 import {
   bareTaskTitle,
   displayTaskTitle,
@@ -1101,7 +1103,7 @@ function commentFromPageRow(
   return {
     id: row.id,
     authorId: typeof row.author_id === "string" ? row.author_id : null,
-    ruleName: ruleId ? (typeof row.rule_name === "string" ? row.rule_name : "Rule") : null,
+    ruleName: ruleId ? (typeof row.rule_name === "string" ? row.rule_name : "Automation") : null,
     body: deleted ? "" : typeof row.body === "string" ? row.body : "",
     createdAt: row.created_at,
     editedAt: deleted || typeof row.edited_at !== "string" ? null : row.edited_at,
@@ -1745,7 +1747,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
         return {
           id: c.id,
           authorId: c.author_id,
-          ruleName: c.rule_id ? (ruleName.get(c.rule_id) ?? "Rule") : null,
+          ruleName: c.rule_id ? (ruleName.get(c.rule_id) ?? "Automation") : null,
           body: deleted ? "" : c.body,
           createdAt: c.created_at,
           editedAt: deleted ? null : c.edited_at,
@@ -1858,7 +1860,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       subtaskId: a.subtask_id,
       approverId: a.approver_id,
       requestedBy: a.requested_by,
-      ruleName: a.rule_id ? (ruleName.get(a.rule_id) ?? "Rule") : null,
+      ruleName: a.rule_id ? (ruleName.get(a.rule_id) ?? "Automation") : null,
       note: a.note,
       status: a.status as TaskApproval["status"],
       decidedAt: a.decided_at,
@@ -3730,7 +3732,7 @@ export const listRecentRuleRuns = cache(async (ruleIds: string[]): Promise<RuleR
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(50),
-    "rule runs",
+    "automation runs",
   );
   const taskIds = [...new Set(runs.map((r) => r.task_id).filter((t): t is string => Boolean(t)))];
   const tasks = taskIds.length
@@ -3751,6 +3753,58 @@ export const listRecentRuleRuns = cache(async (ruleIds: string[]): Promise<RuleR
   }));
 });
 
+// Nov 1 notes, batch 10 (77): the signed-in person's own runs since `from` (rule_runs.actor_id), with each
+// automation's name and project and the task's title when they can read it — for the live feedback
+// toasts. RLS on rule_runs (Viewers+ of the rule's project), rules, and tasks decides. A preview without
+// the column reads nothing.
+export async function listMyRecentRuleRuns(from: Date): Promise<FeedbackRun[]> {
+  const { user } = await getViewer();
+  if (!user) return [];
+  const supabase = await createClient();
+  const result = await supabase
+    .from("rule_runs")
+    .select("id, rule_id, task_id, status, detail, created_at")
+    .eq("actor_id", user.id)
+    .gte("created_at", from.toISOString())
+    .is("deleted_at", null)
+    .order("created_at", { ascending: true })
+    .limit(300);
+  if (result.error) {
+    if (result.error.code !== "42703") console.error(`[rules] couldn't load feedback runs: ${result.error.message}`);
+    return [];
+  }
+  const runs = result.data ?? [];
+  if (runs.length === 0) return [];
+  const ruleIds = [...new Set(runs.map((r) => r.rule_id))];
+  const taskIds = [...new Set(runs.map((r) => r.task_id).filter((t): t is string => Boolean(t)))];
+  const [rules, tasks] = await Promise.all([
+    supabase.from("rules").select("id, name, project_id").in("id", ruleIds),
+    taskIds.length ? supabase.from("tasks").select("id, title").in("id", taskIds).is("deleted_at", null) : null,
+  ]);
+  const ruleById = new Map((rules.data ?? []).map((r) => [r.id, r] as const));
+  const titles = new Map((tasks?.data ?? []).map((t) => [t.id, t.title] as const));
+  return runs.flatMap((r) => {
+    const rule = ruleById.get(r.rule_id);
+    if (!rule) return [];
+    const detail = r.detail && typeof r.detail === "object" && !Array.isArray(r.detail) ? r.detail : {};
+    const reason =
+      r.status === "failed" ? runReason(r.detail) : typeof detail.reason === "string" ? detail.reason : null;
+    return [
+      {
+        id: r.id,
+        ruleId: r.rule_id,
+        ruleName: rule.name,
+        projectId: rule.project_id,
+        taskId: r.task_id,
+        taskTitle: r.task_id ? (titles.get(r.task_id) ?? null) : null,
+        status: r.status as FeedbackRun["status"],
+        reason,
+        createdAt: r.created_at,
+      },
+    ];
+  });
+}
+
 export const listRulePresets = cache(async (): Promise<RulePreset[]> => {
   const supabase = await createClient();
   const result = await supabase
@@ -3758,7 +3812,7 @@ export const listRulePresets = cache(async (): Promise<RulePreset[]> => {
     .select("key, name, description, inputs, rules")
     .is("deleted_at", null)
     .order("sort_order");
-  return rows(result, "rule presets").map((p) => ({
+  return rows(result, "automation templates").map((p) => ({
     key: p.key,
     name: p.name,
     description: p.description,
@@ -6735,14 +6789,14 @@ export const listPortfolioRules = cache(async (portfolioId: string): Promise<Por
     .order("sort_order")
     .order("created_at");
   if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
-  return rows(result, "portfolio rules").map(toPortfolioRuleDef);
+  return rows(result, "portfolio automations").map(toPortfolioRuleDef);
 });
 
 export const getPortfolioRule = cache(async (ruleId: string): Promise<PortfolioRuleDef | null> => {
   const supabase = await createClient();
   const result = await supabase.from("portfolio_rules").select(PORTFOLIO_RULE_COLUMNS).eq("id", ruleId).is("deleted_at", null).maybeSingle();
   if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
-  const row = maybe(result, "portfolio rule");
+  const row = maybe(result, "portfolio automation");
   return row ? toPortfolioRuleDef(row) : null;
 });
 
@@ -6758,7 +6812,7 @@ export async function listPortfolioRuleRuns(portfolioId: string, ruleId?: string
   if (ruleId) query = query.eq("rule_id", ruleId);
   const result = await query;
   if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return [];
-  const list = rows(result, "portfolio rule runs");
+  const list = rows(result, "portfolio automation runs");
   const projectIds = [...new Set(list.map((r) => r.project_id).filter((x): x is string => Boolean(x)))];
   const names = new Map<string, string>();
   if (projectIds.length) {
@@ -6803,7 +6857,7 @@ export const listMyTaskRules = cache(async (): Promise<MyTaskRule[] | null> => {
     .is("deleted_at", null)
     .order("created_at");
   if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
-  return rows(result, "My Tasks rules").map(toMyTaskRule);
+  return rows(result, "My Tasks automations").map(toMyTaskRule);
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -24,18 +24,18 @@ function ranMessage(name: string, summary: string[]) {
 function outcomeMessage(status: ManualRuleStatus, name: string, error?: string, reason?: string) {
   switch (status) {
     case "conditions":
-      return "The rule’s conditions don’t match this task, so nothing changed.";
+      return "The automation’s conditions don’t match this task, so nothing changed.";
     case "skipped":
       return reason ? `Skipped: ${reason}.` : "Skipped: ran too often or would loop.";
     case "duplicate":
-      return "Skipped: this rule already ran for this task.";
+      return "Skipped: this automation already ran for this task.";
     default:
       // The error is a database message (its own trailing period dropped); the sentence adds one.
       return `Couldn’t run “${name}”: ${(error ?? "something went wrong").replace(/[.\s]+$/, "")}. Nothing it did was kept.`;
   }
 }
 
-// "Run a rule…" (the pane's "…" menu, Automations V2): pick one of the "Run manually" rules of the
+// "Run an automation…" (the pane's "…" menu, Automations V2): pick one of the "Run manually" rules of the
 // task's projects where you're an Editor and run it on this task now. A run goes through the same
 // engine as any trigger — conditions first, then each action, logged in the rule's Activity.
 export function RunRuleDialog({ taskId, onClose }: { taskId: string; onClose: () => void }) {
@@ -58,7 +58,7 @@ export function RunRuleDialog({ taskId, onClose }: { taskId: string; onClose: ()
         setLoaded({ rules: result.rules });
         if (result.rules.length === 1) setRuleId(result.rules[0].id);
       })
-      .catch(() => live && setLoaded({ error: "Couldn’t load the rules" }));
+      .catch(() => live && setLoaded({ error: "Couldn’t load the automations" }));
     return () => {
       live = false;
     };
@@ -105,8 +105,8 @@ export function RunRuleDialog({ taskId, onClose }: { taskId: string; onClose: ()
 
   return (
     <Dialog
-      title="Run a rule"
-      description="Runs one of your project’s “Run manually” rules on this task now. Its conditions are checked first."
+      title="Run an automation"
+      description="Runs one of your project’s “Run manually” automations on this task now. Its conditions are checked first."
       onClose={onClose}
     >
       <form
@@ -117,26 +117,26 @@ export function RunRuleDialog({ taskId, onClose }: { taskId: string; onClose: ()
       >
         {loaded === "loading" ? (
           <p role="status" className="py-3 text-sm text-zinc-500">
-            Loading rules…
+            Loading automations…
           </p>
         ) : "error" in loaded ? (
           <p role="alert" className="py-3 text-sm text-red-600">
             {loaded.error}
           </p>
         ) : !hasRules ? (
-          <EmptyState icon={Workflow} title="No rules to run on this task" size="inline">
-            Add a rule with the “Run manually” trigger in a project’s Customize → Automations. Rules of this task’s
+          <EmptyState icon={Workflow} title="No automations to run on this task" size="inline">
+            Add an automation with the “Run manually” trigger in a project’s Customize → Automations. Automations of this task’s
             projects where you’re an Editor show up here.
           </EmptyState>
         ) : (
           <div>
             <label htmlFor={pickerId} className={DIALOG_LABEL}>
-              Rule
+              Automation
             </label>
             <SmartPicker
               id={pickerId}
-              label="Rule"
-              placeholder="Choose a rule"
+              label="Automation"
+              placeholder="Choose an automation"
               options={options}
               value={ruleId}
               onChange={(value) => {
@@ -144,7 +144,7 @@ export function RunRuleDialog({ taskId, onClose }: { taskId: string; onClose: ()
                 setOutcome(null);
               }}
               disabled={pending}
-              emptyText="No rule matches"
+              emptyText="No automation matches"
               className="mt-1 w-full"
             />
             {outcome ? (
@@ -160,7 +160,7 @@ export function RunRuleDialog({ taskId, onClose }: { taskId: string; onClose: ()
           </button>
           {hasRules ? (
             <button type="submit" className="btn-primary" disabled={pending || !chosen}>
-              {pending ? "Running…" : "Run rule"}
+              {pending ? "Running…" : "Run automation"}
             </button>
           ) : null}
         </div>

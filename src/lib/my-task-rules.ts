@@ -4,7 +4,7 @@ import type { Json } from "@/lib/supabase/database.types";
 // 20261021010000_automations_v3_a.sql): each person's own rules on the tasks assigned to them.
 
 export const MY_TASK_TRIGGERS = [
-  { value: "assigned", label: "A task is assigned to me", description: "Right when someone (or a rule) assigns it to you.", keywords: ["new", "assign"] },
+  { value: "assigned", label: "A task is assigned to me", description: "Right when someone (or an automation) assigns it to you.", keywords: ["new", "assign"] },
   { value: "due_approaching", label: "A task is due soon", description: "Once per task, some days before its due date.", keywords: ["deadline", "soon"] },
   { value: "task_overdue", label: "A task is overdue", description: "Once per task, some days after its due date.", keywords: ["late", "past due"] },
 ] as const;

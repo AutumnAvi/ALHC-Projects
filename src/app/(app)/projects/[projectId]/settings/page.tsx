@@ -106,7 +106,7 @@ function OriginNote({ origin, timeZone }: { origin: ProjectOrigin; timeZone: str
           ) : (
             <span className="font-medium text-zinc-800">{from}</span>
           )}
-          {origin.actorName ? ` by ${origin.actorName}` : ""} on {when}. Copied rules started turned off.
+          {origin.actorName ? ` by ${origin.actorName}` : ""} on {when}. Copied automations started turned off.
         </span>
       </p>
     </div>

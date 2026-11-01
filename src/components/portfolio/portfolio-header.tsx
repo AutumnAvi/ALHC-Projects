@@ -19,7 +19,7 @@ export function PortfolioHeader({ portfolio }: { portfolio: Portfolio }) {
     { href: `${base}/report`, label: "Report", icon: ChartColumn, exact: false },
     { href: `${base}/timeline`, label: "Timeline", icon: GanttChart, exact: false },
     { href: `${base}/workload`, label: "Workload", icon: Gauge, exact: false },
-    { href: `${base}/rules`, label: "Rules", icon: Zap, exact: false },
+    { href: `${base}/rules`, label: "Automations", icon: Zap, exact: false },
     { href: `${base}/settings`, label: "Settings", icon: Settings, exact: false },
   ];
 

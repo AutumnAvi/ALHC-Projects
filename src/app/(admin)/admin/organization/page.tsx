@@ -29,7 +29,7 @@ export default async function AdminOrganizationPage() {
       <SettingsCard
         id="admin-work-week"
         title="Workweek"
-        description="The days your workspace works. Rules that count business days use them."
+        description="The days your workspace works. Automations that count business days use them."
         isAdmin
       >
         <WorkWeekSettings key={workWeek.join(",")} workWeek={workWeek} available={automationsV2} />

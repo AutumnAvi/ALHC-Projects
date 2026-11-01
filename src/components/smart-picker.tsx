@@ -78,7 +78,9 @@ type MultiProps = CommonProps & {
 const BUTTON_CLASS = {
   control:
     "control inline-flex h-auto min-h-7 max-w-full items-center gap-1.5 py-0.5 text-left aria-expanded:border-accent-500/60 aria-expanded:shadow-[0_0_0_3px_var(--focus-ring)]",
-  chip: "inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-left font-medium text-accent-700 hover:bg-accent-50 focus-visible:bg-accent-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 aria-expanded:bg-accent-50 disabled:cursor-default disabled:text-zinc-700 disabled:hover:bg-transparent",
+  // Nov 1 notes, batch 10 (80): a step's settings read as editable — a dashed outline that firms up on
+  // hover — inside the rule builders (the only place chips are used).
+  chip: "inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-dashed border-accent-300 bg-white px-1.5 py-0.5 text-left font-medium text-accent-700 transition-colors hover:border-solid hover:border-accent-500 hover:bg-accent-50 focus-visible:bg-accent-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 aria-expanded:border-solid aria-expanded:border-accent-500 aria-expanded:bg-accent-50 disabled:cursor-default disabled:border-transparent disabled:bg-transparent disabled:text-zinc-700 disabled:hover:bg-transparent",
   ghost: "btn-ghost",
 } as const;
 

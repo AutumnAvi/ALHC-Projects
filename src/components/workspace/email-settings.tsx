@@ -30,7 +30,7 @@ export function SenderNameSettings({
     <SettingsCard
       id="workspace-sender"
       title="Sender name"
-      description="The name people see in their inbox on invites, comment emails, and rule emails. Leave it empty to use the address as configured."
+      description="The name people see in their inbox on invites, comment emails, and automation emails. Leave it empty to use the address as configured."
       adminOnly
       isAdmin={isAdmin}
     >

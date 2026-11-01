@@ -213,7 +213,7 @@ export function TaskMoreMenu({
                 {editableProjects.length ? item(LayoutTemplate, "Save as task template…", () => setDialog("template"), close) : null}
                 {item(Copy, task.isSubtask ? "Duplicate subtask…" : "Duplicate task…", () => setDialog("duplicate"), close)}
                 {/* "Run manually" rules (Automations V2) run on top-level tasks of their project only. */}
-                {!task.isSubtask && task.memberships.length ? item(Workflow, "Run a rule…", () => setDialog("rule"), close) : null}
+                {!task.isSubtask && task.memberships.length ? item(Workflow, "Run an automation…", () => setDialog("rule"), close) : null}
                 {task.replyThread
                   ? task.replyThread.closed
                     ? item(MailCheck, "Reopen reply thread", () => setThreadClosed(false), close)

@@ -194,7 +194,7 @@ function Gallery({ onBlank, onPick }: { onBlank: () => void; onPick: (template: 
         <div className="min-w-0 flex-1">
           <p className="text-xl font-semibold tracking-tight text-zinc-900">Start a project</p>
           <p className="mt-0.5 text-sm text-zinc-500">
-            Use a template for sections, tasks, fields, and rules, or start blank. You’ll own the new project.
+            Use a template for sections, tasks, fields, and automations, or start blank. You’ll own the new project.
           </p>
         </div>
         <label className="relative block w-full sm:w-64">

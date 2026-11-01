@@ -19,6 +19,7 @@ import {
 } from "@/lib/integrations-shared";
 import { ParamSlot, useParamSlot } from "@/components/param-slot";
 import { SmartPicker } from "@/components/smart-picker";
+import { VocabPicker } from "@/components/rules/vocab-picker";
 import {
   APPROVAL_DECISIONS,
   APPROVAL_STATUSES,
@@ -290,7 +291,7 @@ export function RevealedSecrets({
   return (
     <div role="status" className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
       <p className="text-sm font-medium text-amber-900">
-        Rule saved. Copy the signing {secrets.length === 1 ? "secret" : "secrets"} now — {secrets.length === 1 ? "it" : "they"}{" "}
+        Automation saved. Copy the signing {secrets.length === 1 ? "secret" : "secrets"} now — {secrets.length === 1 ? "it" : "they"}{" "}
         won’t be shown again.
       </p>
       {secrets.map((s) => (
@@ -619,7 +620,7 @@ function OffsetFields({
           value: u.value,
           label: shown === 1 ? u.one : u.label,
           description:
-            u.value === "hours" ? "From the time (a date without a time counts from the end of the day)" : u.value === "days" ? "Whole days in the rule’s time zone" : "7 days each",
+            u.value === "hours" ? "From the time (a date without a time counts from the end of the day)" : u.value === "days" ? "Whole days in the automation’s time zone" : "7 days each",
           ...(u.value !== "days" && ctx.v3 === false ? { disabled: true, disabledReason: "Needs this release’s database update" } : {}),
         }))}
         onChange={(v) => {
@@ -775,7 +776,8 @@ export function ConditionFields({
   const fields = ruleFields(ctx);
   return (
     <Row>
-      <SmartPicker
+      <VocabPicker
+        kind="condition"
         label="Condition"
         value={condition.type}
         options={vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, [condition.type]) })}
@@ -1469,7 +1471,7 @@ export function ActionFields({
       return !block ? null : <IntegrationFields projectId={projectId} prefix={prefix} action={action} ctx={ctx} onChange={onChange} />;
     case "delay":
       return !inline ? null : (
-        <span className="flex items-center gap-1.5 text-sm text-zinc-700" title="The remaining actions are skipped if the conditions stop matching or the rule is turned off">
+        <span className="flex items-center gap-1.5 text-sm text-zinc-700" title="The remaining actions are skipped if the conditions stop matching or the automation is turned off">
           <ParamSlot param="hours">
             <NumberBox
               id={`${prefix}-hours`}
@@ -1571,7 +1573,7 @@ export function ActionFields({
                 label="Who joins"
                 value={str(action.members) || "none"}
                 options={[
-                  { value: "none", label: "invite nobody else", description: "Only the rule’s owner (who owns the project)" },
+                  { value: "none", label: "invite nobody else", description: "Only the automation’s owner (who owns the project)" },
                   { value: "task_people", label: "invite the task’s people", description: "Its assignee and followers, as Editors" },
                 ]}
                 onChange={(v) => onChange(v === "none" ? omit(action, "members") : { ...action, members: v })}
@@ -1601,7 +1603,7 @@ export function ActionFields({
               variant="chip"
             />
           </Row>
-          <p className="text-xs text-zinc-500">The rule’s owner owns the new project. A comment on the task links to it.</p>
+          <p className="text-xs text-zinc-500">The automation’s owner owns the new project. A comment on the task links to it.</p>
         </div>
       );
       if (part === "inline") return inlinePart;
@@ -2220,7 +2222,7 @@ function IntegrationFields({
         </div>
       ) : (
         <p className="text-xs text-zinc-500">
-          POSTs a JSON summary of the task (event, rule, project, task id/title/Req #/section/assignee/due date, and a
+          POSTs a JSON summary of the task (event, automation, project, task id/title/Req #/section/assignee/due date, and a
           link) to an https:// address.
         </p>
       )}

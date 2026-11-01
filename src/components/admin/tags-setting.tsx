@@ -27,8 +27,8 @@ export function TagsSetting({ enabled }: { enabled: boolean }) {
         <span className="block text-sm font-medium text-zinc-900">Use tags in this workspace</span>
         <span className="block text-sm text-zinc-600">
           {on
-            ? "Tags show on tasks, in List and Board, filters, grouping, rules, search, and reports."
-            : "Off: tags are hidden everywhere in the app. Nothing is removed — the tags below, the tasks they’re on, and rules or views that use them come back when you turn this on."}
+            ? "Tags show on tasks, in List and Board, filters, grouping, automations, search, and reports."
+            : "Off: tags are hidden everywhere in the app. Nothing is removed — the tags below, the tasks they’re on, and automations or views that use them come back when you turn this on."}
         </span>
       </span>
     </label>

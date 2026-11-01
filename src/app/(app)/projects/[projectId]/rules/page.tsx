@@ -9,7 +9,7 @@ export async function generateMetadata({
 }: PageProps<"/projects/[projectId]/rules">): Promise<Metadata> {
   const { projectId } = await params;
   const project = await getProject(projectId);
-  return { title: project ? `${project.name} · Rules` : "Rules" };
+  return { title: project ? `${project.name} · Automations` : "Automations" };
 }
 
 export default async function ProjectRulesPage({ params }: PageProps<"/projects/[projectId]/rules">) {

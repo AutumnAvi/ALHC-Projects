@@ -13,6 +13,10 @@ import { Avatar } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
 import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import { VocabPicker } from "@/components/rules/vocab-picker";
+import { useAutoName } from "@/components/rules/use-auto-name";
+import { autoRuleName } from "@/lib/rule-autoname";
+import { RuleIcon } from "@/components/rules/rule-icons";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -72,7 +76,7 @@ const RUN_STATUS: Record<PortfolioRuleRun["status"], { label: string; className:
 };
 
 function vocab(list: readonly { value: string; label: string; group?: string; description?: string; keywords?: readonly string[] }[]): SmartOption[] {
-  return list.map((x) => ({ value: x.value, label: x.label, group: x.group, description: x.description, keywords: x.keywords }));
+  return list.map((x) => ({ value: x.value, label: x.label, icon: <RuleIcon value={x.value} />, group: x.group, description: x.description, keywords: x.keywords }));
 }
 
 function str(value: Json | undefined) {
@@ -132,8 +136,8 @@ export function PortfolioRulesView({
   if (rules === null) {
     return (
       <div className="px-gutter py-6">
-        <EmptyState icon={Zap} title="Portfolio rules need this release’s database update">
-          Once it’s applied, rules can remind owners about status updates, set statuses, and more.
+        <EmptyState icon={Zap} title="Portfolio automations need this release’s database update">
+          Once it’s applied, automations can remind owners about status updates, set statuses, and more.
         </EmptyState>
       </div>
     );
@@ -143,16 +147,16 @@ export function PortfolioRulesView({
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-gutter py-5">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-zinc-900">Rules</h2>
+          <h2 className="text-base font-semibold text-zinc-900">Automations</h2>
           <p className="text-sm text-zinc-600">
             Automate the projects in this portfolio: remind owners to post a status, flag projects that run late, keep fields
-            and members in step. Rules act with their owner’s access.
+            and members in step. Automations act with their owner’s access.
           </p>
         </div>
         {canEdit ? (
           <Link href={`/portfolios/${portfolioId}/rules/new`} className="btn-primary h-8 px-3">
             <Plus className="size-4" aria-hidden />
-            Add rule
+            Add automation
           </Link>
         ) : null}
       </div>
@@ -160,16 +164,16 @@ export function PortfolioRulesView({
       {rules.length === 0 ? (
         <EmptyState
           icon={Zap}
-          title="No rules yet"
+          title="No automations yet"
           action={
             canEdit ? (
               <Link href={`/portfolios/${portfolioId}/rules/new`} className="btn-secondary h-8 px-3">
-                Add a rule
+                Add an automation
               </Link>
             ) : undefined
           }
         >
-          {canEdit ? "For example: when a project goes off track, notify its members." : "Portfolio admins and owners add rules here."}
+          {canEdit ? "For example: when a project goes off track, notify its members." : "Portfolio admins and owners add automations here."}
         </EmptyState>
       ) : (
         <ul className="flex flex-col gap-2">
@@ -211,7 +215,7 @@ export function PortfolioRulesView({
                               ? "Nothing ran: the conditions don’t match that project"
                               : result.summary.length
                                 ? result.summary.join(" · ")
-                                : `Rule ${result.status === "skipped" ? "skipped" : "ran"}`,
+                                : `Automation ${result.status === "skipped" ? "skipped" : "ran"}`,
                           );
                         }
                         return result;
@@ -246,7 +250,7 @@ export function PortfolioRulesView({
                     onClick={() =>
                       run(async () => {
                         const result = await duplicatePortfolioRule(rule.id);
-                        if (!result.error) notify(`Copied “${rule.name}” (off until you turn it on)`);
+                        if (!result.error) notify(`Created “Copy of ${rule.name}” (off until you turn it on)`);
                         return result;
                       })
                     }
@@ -259,10 +263,10 @@ export function PortfolioRulesView({
                   <button
                     type="button"
                     aria-label={`Delete ${rule.name}`}
-                    data-tooltip="Delete rule"
+                    data-tooltip="Delete automation"
                     disabled={pending}
                     onClick={async () => {
-                      if (await confirm({ title: `Delete the rule “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) {
+                      if (await confirm({ title: `Delete the automation “${rule.name}”?`, confirmLabel: "Delete", tone: "danger" })) {
                         run(() => deletePortfolioRule(rule.id));
                       }
                     }}
@@ -290,7 +294,7 @@ export function PortfolioRulesView({
 
       <section aria-label="Recent runs">
         <h3 className="mb-2 text-sm font-semibold text-zinc-900">Recent runs</h3>
-        <RunLog runs={runs} ruleName={(id) => names.get(id) ?? "A removed rule"} />
+        <RunLog runs={runs} ruleName={(id) => names.get(id) ?? "A removed automation"} />
       </section>
     </div>
   );
@@ -364,7 +368,7 @@ function Row({ children }: { children: ReactNode }) {
 
 function SentenceRow({ word, children }: { word: string; children: ReactNode }) {
   return (
-    <div className="flex items-start gap-3 border-t border-zinc-100 px-4 py-2.5 first:border-t-0">
+    <div className="flex items-start gap-3 border-t border-zinc-100 px-4 py-2.5 transition-colors first:border-t-0 hover:bg-zinc-50/70 focus-within:bg-zinc-50/70">
       <span className="mt-1 w-16 shrink-0 text-xs font-semibold uppercase tracking-wide text-zinc-500">{word}</span>
       <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-sm text-zinc-700">{children}</div>
     </div>
@@ -794,7 +798,6 @@ export function PortfolioRuleBuilder({
   const notify = useNotify();
   const [pending, run] = useServerAction();
   const back = `/portfolios/${portfolioId}/rules`;
-  const [name, setName] = useState(rule?.name ?? "");
   const [enabled, setEnabled] = useState(rule ? rule.enabled : true);
   const [ownerId, setOwnerId] = useState<string | null>(rule?.ownerId ?? null);
   const [triggerType, setTriggerType] = useState<PortfolioTriggerType>(rule?.triggerType ?? "status_changed");
@@ -803,16 +806,21 @@ export function PortfolioRuleBuilder({
   const [actions, setActions] = useState<PortfolioRuleItem[]>(rule?.actions ?? [{ type: "status_reminder" }]);
 
   const draft = { triggerType, triggerConfig, conditions, actions };
+  // Batch 10 (76): unnamed automations are named from their steps (editable).
+  const nameBox = useAutoName(
+    rule?.name,
+    autoRuleName(
+      PORTFOLIO_TRIGGERS.find((t) => t.value === triggerType)?.label ?? triggerType,
+      actions.map((a) => actionLabel(a.type)),
+    ),
+  );
+  const name = nameBox.name;
   const owner = ownerId ? ctx.members.find((m) => m.id === ownerId) : null;
   // Every step's settings (rule-params.ts): Save waits until nothing required is missing.
   const problems = ruleProblems(draft, "portfolio");
   const blocked = saveBlockedReason(problems);
 
   function save() {
-    if (!name.trim()) {
-      notify("Give the rule a name");
-      return;
-    }
     if (actions.length === 0) {
       notify("Add at least one action");
       return;
@@ -834,7 +842,7 @@ export function PortfolioRuleBuilder({
       };
       const result = rule ? await updatePortfolioRule(rule.id, input) : await createPortfolioRule(portfolioId, input);
       if (!result.error) {
-        notify(rule ? "Rule saved" : enabled ? "Rule created and on" : "Rule created (off)");
+        notify(rule ? "Automation saved" : enabled ? "Automation created and on" : "Automation created (off)");
         router.push(back);
       }
       return result;
@@ -844,23 +852,28 @@ export function PortfolioRuleBuilder({
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-gutter py-5">
       <div className="flex flex-wrap items-center gap-2">
-        <Link href={back} aria-label="Back to rules" data-tooltip="Back to rules" className="btn-icon">
+        <Link href={back} aria-label="Back to automations" data-tooltip="Back to automations" className="btn-icon">
           <ArrowLeft className="size-4" />
         </Link>
         <label htmlFor="portfolio-rule-name" className="sr-only">
-          Rule name
+          Automation name
         </label>
         <input
           id="portfolio-rule-name"
-          value={name}
+          value={nameBox.value}
           readOnly={!canEdit}
           maxLength={200}
-          placeholder="Untitled rule"
-          onChange={(e) => setName(e.currentTarget.value)}
-          className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-base font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none"
+          placeholder="Name this automation"
+          data-auto-name={nameBox.isAuto || undefined}
+          data-tooltip={nameBox.isAuto && canEdit ? "Named from its steps. Type to rename it." : undefined}
+          onFocus={(e) => {
+            if (nameBox.isAuto) e.currentTarget.select();
+          }}
+          onChange={(e) => nameBox.onChange(e.currentTarget.value)}
+          className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-base font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none data-[auto-name]:text-zinc-500"
         />
         <SmartPicker
-          label={`Owner: ${owner?.name ?? (ownerId ? "someone removed" : rule ? "the rule’s creator" : "you")}`}
+          label={`Owner: ${owner?.name ?? (ownerId ? "someone removed" : rule ? "the automation’s creator" : "you")}`}
           value={ownerId}
           options={ctx.members.map((m) => ({ value: m.id, label: m.name, icon: <Avatar name={m.name} profileId={m.id} /> }))}
           onChange={setOwnerId}
@@ -897,7 +910,7 @@ export function PortfolioRuleBuilder({
             data-tooltip={blocked ?? undefined}
             className="btn-primary h-8 px-3"
           >
-            {pending ? "Saving…" : rule ? "Save" : "Create rule"}
+            {pending ? "Saving…" : rule ? "Save" : "Create automation"}
           </button>
         ) : null}
       </div>
@@ -916,7 +929,8 @@ export function PortfolioRuleBuilder({
       <fieldset disabled={!canEdit} className="m-0 rounded-xl border border-zinc-200 bg-white p-0 shadow-sm">
         <SentenceRow word="When">
           <Row>
-            <SmartPicker
+            <VocabPicker
+              kind="trigger"
               label="Trigger"
               value={triggerType}
               options={vocab(PORTFOLIO_TRIGGERS)}
@@ -939,7 +953,8 @@ export function PortfolioRuleBuilder({
           {conditions.map((c, i) => (
             <Row key={i}>
               {i > 0 ? <span className="text-xs font-semibold text-zinc-400">and</span> : null}
-              <SmartPicker
+              <VocabPicker
+                kind="condition"
                 label={`Condition ${i + 1}`}
                 value={c.type}
                 options={vocab(PORTFOLIO_CONDITIONS)}
@@ -959,7 +974,8 @@ export function PortfolioRuleBuilder({
             </Row>
           ))}
           {canEdit && conditions.length < 20 ? (
-            <SmartPicker
+            <VocabPicker
+              kind="condition"
               label="Add condition"
               value={null}
               options={vocab(PORTFOLIO_CONDITIONS)}
@@ -982,7 +998,8 @@ export function PortfolioRuleBuilder({
               <li key={i} className="flex flex-col gap-1">
                 <Row>
                   <span className="w-4 text-xs font-medium tabular-nums text-zinc-400">{i + 1}.</span>
-                  <SmartPicker
+                  <VocabPicker
+                    kind="action"
                     label={`Action ${i + 1}`}
                     value={a.type}
                     options={vocab(PORTFOLIO_ACTIONS)}
@@ -1013,7 +1030,8 @@ export function PortfolioRuleBuilder({
             ))}
           </ol>
           {canEdit && actions.length < 10 ? (
-            <SmartPicker
+            <VocabPicker
+              kind="action"
               label="Add action"
               value={null}
               options={vocab(PORTFOLIO_ACTIONS)}

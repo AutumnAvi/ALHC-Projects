@@ -47,8 +47,8 @@ test("groups survive branches (Else if keeps its own OR groups)", () => {
 });
 
 test("loop-guard and limit reasons read in words", () => {
-  assert.match(runReason({ reason: "loop" }) ?? "", /can’t trigger itself/);
-  assert.match(runReason({ reason: "depth_limit" }) ?? "", /three/);
+  assert.match(runReason({ reason: "loop" }) ?? "", /changed it back/);
+  assert.match(runReason({ reason: "depth_limit" }) ?? "", /ten/);
   assert.match(runReason({ reason: "throttled" }) ?? "", /20 runs an hour/);
   assert.match(runReason({ reason: "rate_limited" }) ?? "", /1,000/);
   assert.equal(runReason({ actions: { error: "Add to project: no access" } }), "Add to project: no access");
@@ -93,8 +93,8 @@ test("dry-run results parse, and the headline says what would happen", () => {
   assert.equal(stepOutcomeLabel("some_new_outcome"), "some new outcome");
 
   assert.equal(testHeadline({ ...result, chosenBranch: null }), "Nothing would run: the conditions don’t match this task");
-  assert.equal(testHeadline({ ...result, error: "Add to project: no access" }), "This rule would fail on this task");
-  assert.equal(testHeadline({ ...result, invalid: true, error: "Unknown action" }), "The rule can’t be saved like this yet");
+  assert.equal(testHeadline({ ...result, error: "Add to project: no access" }), "This automation would fail on this task");
+  assert.equal(testHeadline({ ...result, invalid: true, error: "Unknown action" }), "The automation can’t be saved like this yet");
   assert.equal(parseRuleTestResult(null), null);
   assert.equal(parseRuleTestResult({ steps: [] }), null, "no task, no result");
 });
