@@ -123,15 +123,15 @@ const review: PublicReview = {
   draft: null,
   walkthroughSeen: false,
   previous: null,
+  fileResults: null,
 };
 
-test("the review page: open rounds offer the answer (Approve / Request changes), files, and uploads", () => {
+test("the review page: open rounds offer Approve this file, feedback, files, and uploads", () => {
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={review} logoUrl={null} initialAction={null} />);
   assert.match(html, /Spring poster/);
-  assert.match(html, /role="radiogroup"/);
-  assert.match(html, />Approve</);
-  assert.match(html, /Request changes/);
-  assert.match(html, /Submit review/, "no answer picked yet");
+  assert.match(html, /aria-pressed="false"[^>]*>(?:(?!<\/button>)[\s\S])*Approve this file/);
+  assert.match(html, /Request changes/, "the derived answer is explained");
+  assert.match(html, /Submit review/, "nothing reviewed yet");
   assert.match(html, /Upload files/);
   assert.match(html, /Click the file to pin a comment/);
   assert.match(html, /Round 1/);
@@ -140,10 +140,10 @@ test("the review page: open rounds offer the answer (Approve / Request changes),
   assert.match(html, /cursor-crosshair/, "clicking pins");
 });
 
-test("the email's Approve button picks Approve (it doesn't send anything by itself)", () => {
+test("the email's Approve button only opens the page: each file is still approved on its own", () => {
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={review} logoUrl={null} initialAction="approve" />);
-  assert.match(html, /role="radio" aria-checked="true"[^>]*>(?:(?!<\/button>)[\s\S])*Approve/);
-  assert.match(html, /Send approval/);
+  assert.match(html, /aria-pressed="false"/, "nothing approved for them");
+  assert.match(html, /<button[^>]*disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*Submit review/, "Submit waits");
   assert.doesNotMatch(html, /Yes, send it/, "no confirmation until they ask to send");
 });
 

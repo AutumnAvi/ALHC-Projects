@@ -45,16 +45,28 @@ async function call(
 }
 
 export type DraftPin = { assetId: string; page?: number | null; x?: number | null; y?: number | null; time?: number | null; body: string };
+export type DraftFile = { assetId: string; approved: boolean; note: string };
 
+// Nov 1 notes (batch 8): the page reviews file by file, so the answer goes with the reviewer's final
+// progress (each file's approval and note). It's saved first (review_check_save, per_file), then
+// review_check_decide checks that saved draft: every file approved or with feedback, and the answer the one
+// they add up to — refused otherwise, however the answer was sent. Without progress (the page of the
+// release before) the answer is checked the old way.
 export async function submitReviewDecision(
   token: string,
   decision: "approved" | "changes_requested",
   note: string,
   pins: DraftPin[],
+  progress: ReviewProgress | null = null,
 ): Promise<{ error?: string; status?: ReviewStatus }> {
   if (!isReviewToken(token)) return { error: refusal("unknown") };
   if (decision !== "approved" && decision !== "changes_requested") return { error: refusal("invalid") };
   if (!Array.isArray(pins) || pins.length > MAX_REVIEW_PINS) return { error: refusal("invalid") };
+  if (progress) {
+    if (progress.decision !== decision) return { error: refusal("mismatch") };
+    const saved = await saveReviewProgress(token, progress);
+    if (saved.error) return { error: saved.error };
+  }
   const clean = pins.map((p) => ({
     asset_id: isUuid(p.assetId) ? p.assetId : null,
     page: typeof p.page === "number" ? Math.round(p.page) : null,
@@ -123,6 +135,9 @@ export type ReviewProgress = {
   note: string;
   decision: ReviewDecision | null;
   activeAsset: string | null;
+  // Nov 1 notes (batch 8): each file's own review (see submitReviewDecision).
+  perFile?: boolean;
+  files?: DraftFile[];
 };
 
 export async function saveReviewProgress(
@@ -134,6 +149,8 @@ export async function saveReviewProgress(
   let clean: Record<string, unknown> | null = null;
   if (progress) {
     if (!Array.isArray(progress.pins) || progress.pins.length > MAX_REVIEW_PINS) return { error: refusal("invalid"), status: "invalid" };
+    const files = Array.isArray(progress.files) ? progress.files : [];
+    if (files.length > MAX_REVIEW_PINS) return { error: refusal("invalid"), status: "invalid" };
     clean = {
       pins: progress.pins.flatMap((p) =>
         isUuid(p?.assetId)
@@ -152,6 +169,16 @@ export async function saveReviewProgress(
       note: typeof progress.note === "string" ? progress.note.slice(0, MAX_REVIEW_NOTE) : "",
       decision: progress.decision === "approved" || progress.decision === "changes_requested" ? progress.decision : null,
       active_asset: isUuid(progress.activeAsset) ? progress.activeAsset : null,
+      ...(progress.perFile === true
+        ? {
+            per_file: true,
+            files: files.flatMap((f) =>
+              isUuid(f?.assetId)
+                ? [{ asset_id: f.assetId, approved: f.approved === true, note: typeof f.note === "string" ? f.note.slice(0, MAX_PIN_TEXT) : "" }]
+                : [],
+            ),
+          }
+        : {}),
     };
   }
   const result = await call("review_check_save", { review_token: token, progress: clean, walkthrough_seen: walkthroughSeen });
