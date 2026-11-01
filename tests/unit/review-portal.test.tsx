@@ -10,8 +10,20 @@ import { ReviewWalkthrough, WALKTHROUGH_SLIDE_COUNT } from "@/components/review/
 import { parseReviewDraft, type PublicReview, type ReviewFile } from "@/lib/review-checks";
 import {
   answerProblem,
+  approveFile,
+  confirmQuestion,
   confirmationTitle,
+  derivedDecision,
   draftToState,
+  feedbackOnFile,
+  fileOutcomes,
+  fileStatus,
+  nextUnreviewedIndex,
+  outcomeLabel,
+  reviewTally,
+  reviewedLabel,
+  setFileNote,
+  unapproveFile,
   fileProgressLabel,
   initialAssetIndex,
   numberedPins,
@@ -68,16 +80,121 @@ test("saved progress ↔ the page", () => {
   assert.deepEqual(state.pins.map((p) => p.key), ["saved-0", "saved-1"], "stable keys");
   assert.equal(state.pins[1].body, "", "a pin may have no text yet");
   assert.equal(state.note, "Close");
-  assert.equal(state.decision, "changes_requested");
+  assert.deepEqual(state.files, {}, "a draft from before per-file review has no file states");
   assert.equal(state.activeAsset, A2);
-  assert.equal(draftToState(draft, assets, "approve").decision, "approved", "the email's Approve picks Approve");
-  assert.equal(draftToState(null, assets, "feedback").decision, "changes_requested");
-  assert.deepEqual(draftToState(null, assets), { pins: [], note: "", decision: null, activeAsset: null });
+  assert.deepEqual(draftToState(null, assets), { pins: [], note: "", files: {}, activeAsset: null });
 
-  const progress = stateToProgress(state);
-  assert.deepEqual(Object.keys(progress).sort(), ["activeAsset", "decision", "note", "pins"]);
+  const progress = stateToProgress(state, assets);
+  assert.deepEqual(Object.keys(progress).sort(), ["activeAsset", "decision", "files", "note", "perFile", "pins"]);
+  assert.equal(progress.perFile, true);
+  assert.equal(progress.decision, "changes_requested", "both files have pins: feedback");
   assert.ok(progress.pins.every((p) => !("key" in p)), "keys stay on the page");
   assert.equal(progress.pins[0].assetId, A1);
+});
+
+test("per-file states save and come back", () => {
+  const draft = parseReviewDraft({
+    pins: [],
+    note: "",
+    per_file: true,
+    files: [
+      { asset_id: A2, approved: false, note: "Too dark" },
+      { asset_id: A1, approved: true, note: "" },
+      { asset_id: A3, approved: true, note: "" },
+      { asset_id: "x", approved: true },
+    ],
+  });
+  assert.ok(draft?.perFile);
+  const state = draftToState(draft, assets);
+  assert.deepEqual(state.files, { [A2]: { approved: false, note: "Too dark" }, [A1]: { approved: true, note: "" } }, "this round's files only");
+  const progress = stateToProgress(state, assets);
+  assert.deepEqual(progress.files, [
+    { assetId: A1, approved: true, note: "" },
+    { assetId: A2, approved: false, note: "Too dark" },
+  ], "in the round's order, so the same work saves the same way");
+  assert.equal(progress.decision, "changes_requested");
+  assert.deepEqual(draftToState(parseReviewDraft(JSON.parse(JSON.stringify({ ...progress, files: progress.files.map((f) => ({ asset_id: f.assetId, approved: f.approved, note: f.note })) }))), assets).files, state.files, "round trip");
+});
+
+const three: ReviewFile[] = [
+  { id: A1, name: "logo.png", contentType: "image/png", size: 1 },
+  { id: A2, name: "flyer.pdf", contentType: "application/pdf", size: 1 },
+  { id: A3, name: "poster.png", contentType: "image/png", size: 1 },
+];
+const pinOn = (assetId: string, body = "Fix") => ({ key: `k-${assetId}-${body}`, assetId, page: null, x: 0.1, y: 0.1, time: null, body });
+
+test("each file: approved, has feedback (a pin or its note; feedback wins), or not reviewed", () => {
+  const state = { pins: [pinOn(A2, "")], files: { [A1]: { approved: true, note: "" }, [A3]: { approved: true, note: "Hmm" } } };
+  assert.equal(fileStatus(A1, state), "approved");
+  assert.equal(fileStatus(A2, state), "feedback", "a pin, even without text yet");
+  assert.equal(fileStatus(A3, state), "feedback", "a note wins over a tick");
+  assert.equal(fileStatus(A3, { pins: [], files: { [A3]: { approved: false, note: "   " } } }), "unreviewed", "a blank note isn't feedback");
+  const tally = reviewTally(three, { pins: [pinOn(A2)], files: { [A1]: { approved: true, note: "" } } });
+  assert.deepEqual(tally, { total: 3, approved: 1, feedback: 1, reviewed: 2, left: 1 });
+  assert.equal(reviewedLabel(tally), "2 of 3 reviewed");
+});
+
+test("next file to review: the next unreviewed one, wrapping around, never the one you're on", () => {
+  const none = { pins: [], files: {} };
+  assert.equal(nextUnreviewedIndex(three, none, 0), 1);
+  assert.equal(nextUnreviewedIndex(three, none, 2), 0, "wraps");
+  const middleDone = { pins: [pinOn(A2)], files: {} };
+  assert.equal(nextUnreviewedIndex(three, middleDone, 0), 2, "skips reviewed files");
+  const onlyFirstLeft = { pins: [pinOn(A2)], files: { [A3]: { approved: true, note: "" } } };
+  assert.equal(nextUnreviewedIndex(three, onlyFirstLeft, 2), 0, "wraps to the start");
+  assert.equal(nextUnreviewedIndex(three, onlyFirstLeft, 0), null, "the one left is this one");
+  assert.equal(nextUnreviewedIndex([three[0]], none, 0), null, "one file");
+  assert.equal(nextUnreviewedIndex([], none, 0), null);
+});
+
+test("the answer is derived: all approved → Approve, any feedback → Request changes, else nothing yet", () => {
+  const all = { pins: [], files: Object.fromEntries(three.map((a) => [a.id, { approved: true, note: "" }])) };
+  assert.equal(derivedDecision(three, all), "approved");
+  assert.equal(derivedDecision(three, { ...all, pins: [pinOn(A3)] }), "changes_requested");
+  assert.equal(derivedDecision(three, { pins: [], files: { [A1]: { approved: true, note: "" } } }), null, "two left");
+  assert.equal(derivedDecision([], { pins: [], files: {} }), null, "no files, no answer");
+  assert.equal(submitLabel("approved"), "Submit approval");
+  assert.equal(submitLabel("changes_requested"), "Submit feedback");
+  assert.equal(submitLabel(null), "Submit review");
+  assert.equal(confirmQuestion(three, all), "Approve all 3 files?");
+  assert.equal(confirmQuestion([three[0]], { pins: [], files: { [A1]: { approved: true, note: "" } } }), "Approve this file?");
+  assert.equal(
+    confirmQuestion(three, { pins: [pinOn(A2)], files: { [A1]: { approved: true, note: "" }, [A3]: { approved: true, note: "" } } }),
+    "Request changes: 1 file has feedback, 2 files approved. Send it?",
+  );
+});
+
+test("approving and feedback never disagree", () => {
+  const state = { pins: [pinOn(A1), pinOn(A2)], files: { [A1]: { approved: false, note: "Lighter" } } };
+  assert.deepEqual(feedbackOnFile(A1, state), { pins: 1, note: true });
+  assert.equal(feedbackOnFile(A3, state), null);
+  const approved = approveFile(state, A1);
+  assert.deepEqual(approved.pins.map((p) => p.assetId), [A2], "its pins go, others stay");
+  assert.deepEqual(approved.files[A1], { approved: true, note: "" }, "its note goes");
+  assert.equal(fileStatus(A1, approved), "approved");
+  // A note typed on an approved file takes the approval back; clearing it doesn't approve again.
+  const noted = setFileNote(approved.files, A1, "Wait");
+  assert.deepEqual(noted[A1], { approved: false, note: "Wait" });
+  assert.deepEqual(setFileNote(approved.files, A1, "  ")[A1], { approved: true, note: "  " }, "whitespace isn't feedback");
+  assert.deepEqual(unapproveFile(approved.files, A1), {}, "the toggle takes it back");
+  assert.deepEqual(unapproveFile({ [A1]: { approved: true, note: "keep" } }, A1), { [A1]: { approved: false, note: "keep" } });
+  assert.equal(unapproveFile(noted, A3), noted, "nothing to take back");
+});
+
+test("each file's outcome, as the task's comment says it", () => {
+  const outcomes = fileOutcomes(three, {
+    pins: [pinOn(A2), pinOn(A2, "Again")],
+    files: { [A1]: { approved: true, note: "" }, [A2]: { approved: false, note: " Darker " }, [A3]: { approved: true, note: "" } },
+  });
+  assert.deepEqual(outcomes.map((o) => [o.name, o.approved, o.pins, o.note]), [
+    ["logo.png", true, 0, null],
+    ["flyer.pdf", false, 2, "Darker"],
+    ["poster.png", true, 0, null],
+  ]);
+  assert.equal(outcomeLabel(outcomes[0]), "Approved");
+  assert.equal(outcomeLabel(outcomes[1]), "Changes requested: 2 comments and a note");
+  assert.equal(outcomeLabel({ pins: 1, note: null }), "Changes requested: 1 comment");
+  assert.equal(outcomeLabel({ pins: 0, note: "x" }), "Changes requested: a note");
 });
 
 test("how it works: the first time an open round is opened, unless they closed it here or anywhere", () => {
@@ -99,23 +216,20 @@ test("the walkthrough: five slides, a close button, Next, dots", () => {
   assert.doesNotMatch(html, />Back</, "no Back on the first slide");
   assert.equal(html.match(/aria-label="Slide \d:/g)?.length, 5, "a dot per slide");
   assert.match(html, /aria-current="step"/);
-  for (const words of ["Pin comments", "moment of a video", "full quality", "Send files back", "Approve or request changes"]) {
+  for (const words of ["Pin comments", "moment of a video", "full quality", "Send files back", "Approve each file, or leave feedback"]) {
     assert.ok(html.includes(words), words);
   }
   assert.match(html, /motion-reduce:transition-none/, "no motion when asked");
 });
 
-test("what an answer needs", () => {
-  const pin = (body: string) => ({ key: "k", assetId: A1, page: null, x: 0.1, y: 0.1, time: null, body });
-  assert.match(answerProblem({ decision: null, note: "", pins: [] }) ?? "", /Pick Approve or Request changes/);
-  assert.equal(answerProblem({ decision: "approved", note: "", pins: [] }), null, "approve needs nothing else");
-  assert.match(answerProblem({ decision: "changes_requested", note: " ", pins: [] }) ?? "", /Add a note or pin/);
-  assert.equal(answerProblem({ decision: "changes_requested", note: "Fix it", pins: [] }), null);
-  assert.equal(answerProblem({ decision: "changes_requested", note: "", pins: [pin("Here")] }), null);
-  assert.match(answerProblem({ decision: "approved", note: "", pins: [pin("  ")] }) ?? "", /no comment yet/);
-  assert.equal(submitLabel("approved"), "Send approval");
-  assert.equal(submitLabel("changes_requested"), "Send feedback");
-  assert.equal(submitLabel(null), "Submit review");
+test("what an answer needs: every file reviewed, every pin with text", () => {
+  const approved = { approved: true, note: "" };
+  assert.equal(answerProblem(three, { pins: [], files: {} }), "Approve or add feedback to 3 more files to submit.");
+  assert.equal(answerProblem(three, { pins: [pinOn(A1)], files: { [A2]: approved } }), "Approve or add feedback to 1 more file to submit.");
+  assert.equal(answerProblem(three, { pins: [], files: { [A1]: approved, [A2]: approved, [A3]: approved } }), null, "all approved");
+  assert.equal(answerProblem(three, { pins: [pinOn(A1)], files: { [A2]: approved, [A3]: { approved: false, note: "x" } } }), null);
+  assert.match(answerProblem(three, { pins: [pinOn(A1, " ")], files: { [A2]: approved, [A3]: approved } }) ?? "", /One pin has no comment yet/);
+  assert.match(answerProblem([], { pins: [], files: {} }) ?? "", /aren’t available/);
 });
 
 test("the confirmation's words and summary", () => {
@@ -171,15 +285,22 @@ const base: PublicReview = {
   draft: null,
   walkthroughSeen: false,
   previous: null,
+  fileResults: null,
 };
 
-test("an open round: one file at a time, 1 of 2, the file list with pin counts, the answer", () => {
+test("an open round: one file at a time, 1 of 2, the file list with marks, approve per file, Submit waits", () => {
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={base} logoUrl={null} initialAction={null} />);
   assert.match(html, /File 1 of 2/);
   assert.match(html, /aria-label="Previous file"/);
   assert.match(html, /aria-label="Next file"/);
   assert.match(html, /role="tablist"/);
-  assert.match(html, /role="radiogroup"/);
+  assert.match(html, /aria-label="File 1: poster\.png, not reviewed yet"/);
+  assert.match(html, /Approve this file/);
+  assert.match(html, /Note on this file/);
+  assert.match(html, /Next file to review/);
+  assert.equal(html.match(/0 of 2 reviewed/g)?.length, 2, "in the header and the answer bar");
+  assert.match(html, /<button[^>]*disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*Submit review/, "disabled until every file is reviewed");
+  assert.match(html, /Approve or add feedback to 2 more files to submit\./, "says how many are left");
   assert.match(html, /Round 2/);
   assert.match(html, /How it works/);
   assert.ok(html.includes(`src="/review/${TOKEN}/file/${A1}"`), "the first file");
@@ -196,14 +317,20 @@ test("?file= opens that file first; saved work comes back", () => {
       note: "Almost there",
       decision: "changes_requested",
       activeAsset: A1,
+      perFile: true,
+      files: [{ assetId: A1, approved: true, note: "" }],
     },
   };
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={saved} logoUrl={null} initialAction={null} initialFile={A2} />);
   assert.match(html, /File 2 of 2/);
   assert.match(html, /Move the logo/, "the saved pin");
   assert.match(html, /Almost there/, "the saved note");
-  assert.match(html, /Send feedback/, "the saved answer");
-  assert.match(html, /aria-label="File 2: proof\.pdf, 1 comment"/, "pin counts in the file list");
+  assert.match(html, /2 of 2 reviewed/);
+  assert.match(html, /Submit feedback/, "the derived answer");
+  assert.match(html, /so your answer is Request changes/, "said plainly");
+  assert.match(html, /aria-label="File 1: poster\.png, approved"/, "the restored approval");
+  assert.match(html, /aria-label="File 2: proof\.pdf, has feedback, 1 comment"/, "marks and pin counts in the file list");
+  assert.match(html, /All files reviewed: go to Submit/, "pointed at Submit");
 });
 
 test("a new round shows the previous one collapsed, with its pins counted", () => {
@@ -220,6 +347,7 @@ test("a new round shows the previous one collapsed, with its pins counted", () =
         { number: 1, assetId: A3, page: null, x: 0.5, y: 0.5, time: null, body: "Logo" },
         { number: 2, assetId: A3, page: null, x: 0.2, y: 0.2, time: null, body: "Color" },
       ],
+      fileResults: null,
     },
   };
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={withPrevious} logoUrl={null} initialAction={null} />);
@@ -229,12 +357,30 @@ test("a new round shows the previous one collapsed, with its pins counted", () =
   assert.doesNotMatch(html, /poster-old\.png/, "its files show once it's opened");
 });
 
+test("an answered link shows each file's outcome", () => {
+  const answered: PublicReview = {
+    ...base,
+    status: "changes_requested",
+    decidedAt: "2026-10-27T09:00:00Z",
+    pins: [{ number: 1, assetId: A2, page: 1, x: 0.4, y: 0.4, time: null, body: "Move it" }],
+    fileResults: [
+      { assetId: A1, name: "poster.png", approved: true, note: null, pins: 0 },
+      { assetId: A2, name: "proof.pdf", approved: false, note: "Darker", pins: 1 },
+    ],
+  };
+  const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={answered} logoUrl={null} initialAction={null} />);
+  assert.match(html, /poster\.png<\/span><span class="text-green-700"> — Approved/);
+  assert.match(html, /proof\.pdf<\/span><span class="text-amber-700"> — Changes requested: 1 comment and a note/);
+  assert.match(html, /Darker/);
+  assert.doesNotMatch(html, /reviewed<\/span>/, "no progress once it's answered");
+});
+
 test("an answered link opens on the confirmation", () => {
   const approved: PublicReview = { ...base, status: "approved", decidedAt: "2026-10-27T09:00:00Z" };
   const html = renderToStaticMarkup(<ReviewPortal token={TOKEN} review={approved} logoUrl={null} initialAction={null} />);
   assert.match(html, /Thanks — your approval was sent/);
   assert.match(html, /Avi has it on their task in Creative requests/);
   assert.match(html, /Look at the files again/);
-  assert.doesNotMatch(html, /role="radiogroup"/);
+  assert.doesNotMatch(html, /Approve this file/);
   assert.doesNotMatch(html, /Upload files/);
 });

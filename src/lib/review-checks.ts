@@ -115,6 +115,9 @@ export type PublicReview = {
   draft: ReviewDraft | null;
   walkthroughSeen: boolean;
   previous: PreviousRound | null;
+  // Nov 1 notes (batch 8): each file's outcome once the round was answered file by file (null for rounds
+  // answered as a whole, and while it's open).
+  fileResults: ReviewFileResult[] | null;
 };
 
 // The reviewer's saved progress (review_check_save): pins (a pin may have no text yet), the overall
@@ -133,7 +136,16 @@ export type ReviewDraft = {
   note: string;
   decision: ReviewDecision | null;
   activeAsset: string | null;
+  // Nov 1 notes (batch 8): saved by a page that reviews file by file (per_file), each file's state: approved,
+  // and / or a note on that file (a note is feedback).
+  perFile: boolean;
+  files: ReviewDraftFile[];
 };
+export type ReviewDraftFile = { assetId: string; approved: boolean; note: string };
+
+// One file's outcome in an answered round (review_checks.file_results): approved, or its feedback (how many
+// pins, and the note on it). A file with feedback asked for changes, even if it was ticked approved too.
+export type ReviewFileResult = { assetId: string; name: string; approved: boolean; note: string | null; pins: number };
 
 // The round before, to the same reviewer, that they answered: shown collapsed with its pins.
 export type PreviousRound = {
@@ -144,6 +156,7 @@ export type PreviousRound = {
   decisionNote: string | null;
   assets: ReviewFile[];
   pins: ReviewPin[];
+  fileResults: ReviewFileResult[] | null;
 };
 
 export type PublicReviewResult =
@@ -206,7 +219,30 @@ export function parseReviewDraft(value: unknown): ReviewDraft | null {
     return [{ assetId, page: num(p.page), x: x !== null && y !== null ? x : null, y: x !== null && y !== null ? y : null, time, body: typeof p.body === "string" ? p.body : "" }];
   });
   const decision = o.decision === "approved" || o.decision === "changes_requested" ? o.decision : null;
-  return { pins, note: typeof o.note === "string" ? o.note : "", decision, activeAsset: str(o.active_asset) };
+  const files = (Array.isArray(o.files) ? o.files : []).flatMap((item): ReviewDraftFile[] => {
+    const f = obj(item);
+    const assetId = str(f?.asset_id);
+    if (!f || !assetId) return [];
+    return [{ assetId, approved: f.approved === true, note: typeof f.note === "string" ? f.note : "" }];
+  });
+  return {
+    pins,
+    note: typeof o.note === "string" ? o.note : "",
+    decision,
+    activeAsset: str(o.active_asset),
+    perFile: o.per_file === true,
+    files,
+  };
+}
+
+export function parseFileResults(value: unknown): ReviewFileResult[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.flatMap((item): ReviewFileResult[] => {
+    const o = obj(item);
+    const assetId = str(o?.asset_id);
+    if (!o || !assetId) return [];
+    return [{ assetId, name: str(o.name) ?? "A file", approved: o.approved === true, note: str(o.note), pins: Math.max(0, num(o.pins) ?? 0) }];
+  });
 }
 
 export function parsePreviousRound(value: unknown): PreviousRound | null {
@@ -221,6 +257,7 @@ export function parsePreviousRound(value: unknown): PreviousRound | null {
     decisionNote: str(o.decision_note),
     assets: parseReviewFiles(o.assets),
     pins: parseReviewPins(o.pins),
+    fileResults: parseFileResults(o.file_results),
   };
 }
 
@@ -255,6 +292,7 @@ export function parsePublicReview(value: unknown): PublicReviewResult {
       draft: r.status === "pending" ? parseReviewDraft(o?.draft) : null,
       walkthroughSeen: o?.walkthrough_seen === true,
       previous: parsePreviousRound(o?.previous),
+      fileResults: parseFileResults(o?.file_results),
     },
   };
 }
@@ -273,6 +311,8 @@ export const REVIEW_REFUSALS: Record<string, string> = {
   too_large: "Files can be at most 25 MB.",
   too_many: "This review has as many files as it can take (20 files, 500 MB).",
   missing: "The upload didn’t finish. Try again.",
+  unreviewed: "Every file needs your approval or feedback before you send. Look for the files without a mark.",
+  mismatch: "Your answer changed while it was sending. Check each file and send again.",
 };
 
 // One round as the task's Reviews tab shows it (read with the viewer's own client).

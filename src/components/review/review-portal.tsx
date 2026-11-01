@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useSyncExternalStore, useTransition, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, useTransition, type ReactNode, type RefObject } from "react";
 import {
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Circle,
   CircleHelp,
   Download,
   ExternalLink,
@@ -15,15 +16,18 @@ import {
   Image as ImageIcon,
   MessageSquare,
   Paperclip,
+  Send,
   Upload,
   Video,
   X,
 } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { PinList } from "@/components/review/pin-list";
 import { ReviewViewer, type PinPlace, type ViewerPin } from "@/components/review/review-viewer";
 import { ReviewWalkthrough } from "@/components/review/review-walkthrough";
 import { ATTACHMENTS_BUCKET } from "@/lib/attachments";
 import {
+  MAX_PIN_TEXT,
   MAX_REVIEW_NOTE,
   MAX_REVIEW_PINS,
   MAX_REVIEW_UPLOADS,
@@ -35,29 +39,43 @@ import {
   roundLabel,
   type PreviousRound,
   type PublicReview,
-  type ReviewDecision,
   type ReviewFile,
+  type ReviewFileResult,
   type ReviewPin,
   type ReviewStatus,
 } from "@/lib/review-checks";
 import {
   SAVE_DELAY_MS,
   answerProblem,
+  approveFile,
+  confirmQuestion,
   confirmationTitle,
+  derivedDecision,
   draftToState,
+  feedbackOnFile,
+  fileOutcomes,
   fileProgressLabel,
+  fileStatus,
   initialAssetIndex,
+  nextUnreviewedIndex,
   numberedPins,
+  outcomeLabel,
   pinCountByAsset,
   pinsByFile,
   retryDelay,
+  reviewTally,
+  reviewedLabel,
   saveStateText,
   savingStops,
+  setFileNote,
   shortDate,
   shouldShowWalkthrough,
   stateToProgress,
   submitLabel,
+  unapproveFile,
   walkthroughKey,
+  type FileReviews,
+  type FileStatus,
   type KeyedPin,
   type SaveState,
 } from "@/lib/review-portal";
@@ -73,12 +91,20 @@ import { createAnonBrowserClient } from "@/lib/supabase/anon-browser";
 // Oct 26 notes (batch 3), reworked in Oct 27 notes (batch 5): the public review page (no sign-in; the
 // link's token is the only key). One file at a time ("File 2 of 5", Previous / Next, a file list), click to
 // pin numbered comments (images, PDF pages, video moments with a marked timeline), send files back, then
-// pick an answer (Approve / Request changes) and send it. Everything the reviewer does is saved as they go
+// send the answer. Since Nov 1 notes (batch 8) every file is approved or gets feedback (pins, a note on that
+// file) on its own, "Next file to review" walks through the rest, Submit waits until every file is reviewed,
+// and the answer is what the files add up to (src/lib/review-portal.ts). Everything is saved as they go
 // (review_check_save), so leaving loses nothing. A first-visit "How it works" walkthrough, the previous
 // round they answered (collapsed, with its pins), and a confirmation page once they've answered. Everything
 // goes through the token-checked Server Actions and routes.
 
-type SentAnswer = { decision: ReviewStatus; note: string | null; pins: ReviewPin[] };
+type SentAnswer = { decision: ReviewStatus; note: string | null; pins: ReviewPin[]; fileResults: ReviewFileResult[] | null };
+
+const STATUS_WORDS: Record<FileStatus, string> = {
+  approved: "Approved",
+  feedback: "Has feedback",
+  unreviewed: "Not reviewed yet",
+};
 
 function fileIcon(file: ReviewFile) {
   const kind = reviewMediaKind(file.name, file.contentType);
@@ -133,21 +159,23 @@ export function ReviewPortal({
   const [status, setStatus] = useState<ReviewStatus>(review.status);
   const open = status === "pending";
 
-  // The reviewer's work, restored from what they saved (the email's button picks the answer).
+  // The reviewer's work, restored from what they saved: pins, notes, and each file's approval.
   const [initial] = useState(() => {
-    const state = draftToState(review.draft, review.assets, review.status === "pending" ? initialAction : null);
+    const state = draftToState(review.draft, review.assets);
     const index = initialAssetIndex(review.assets, initialFile, state.activeAsset);
-    // What the database already has: nothing is saved again until something differs from it.
-    const saved = draftToState(review.draft, review.assets, null);
-    const baseline = JSON.stringify(
-      stateToProgress({ ...saved, activeAsset: saved.activeAsset ?? review.assets[index]?.id ?? null }),
-    );
+    // What the database already has: nothing is saved again until something differs from it. (A draft
+    // saved before files were reviewed one by one differs, so it's saved once in the new shape.)
+    const baseline = review.draft?.perFile
+      ? JSON.stringify(stateToProgress({ ...state, activeAsset: state.activeAsset ?? review.assets[index]?.id ?? null }, review.assets))
+      : "";
     return { state, index, baseline };
   });
   const [active, setActive] = useState(initial.index);
   const [pins, setPins] = useState<KeyedPin[]>(initial.state.pins);
   const [note, setNote] = useState(initial.state.note);
-  const [decision, setDecision] = useState<ReviewDecision | null>(initial.state.decision);
+  const [fileReviews, setFileReviews] = useState<FileReviews>(initial.state.files);
+  // "Approval taken back" after feedback lands on an approved file (shown on that file).
+  const [notice, setNotice] = useState<{ assetId: string; text: string } | null>(null);
   const [activePin, setActivePin] = useState<string | null>(null);
   const [files, setFiles] = useState<ReviewFile[]>(review.files);
   const [uploading, setUploading] = useState<{ name: string; error?: string }[]>([]);
@@ -156,15 +184,24 @@ export function ReviewPortal({
   const [sent, setSent] = useState<SentAnswer | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const [pending, start] = useTransition();
-  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const fileNoteRef = useRef<HTMLTextAreaElement>(null);
+  const submitRef = useRef<HTMLButtonElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const nextKey = useRef(0);
   const noteId = useId();
+  const problemId = useId();
+  const confirm = useConfirm();
 
   const asset = review.assets[active] ?? null;
+  const work = { pins, files: fileReviews };
+  const tally = reviewTally(review.assets, work);
+  const decision = derivedDecision(review.assets, work);
+  const problem = answerProblem(review.assets, work);
 
   // ---- Saved as they go -----------------------------------------------------------------------------
-  const serialized = JSON.stringify(stateToProgress({ pins, note, decision, activeAsset: asset?.id ?? null }));
+  const serialized = JSON.stringify(
+    stateToProgress({ pins, note, files: fileReviews, activeAsset: asset?.id ?? null }, review.assets),
+  );
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [stopReason, setStopReason] = useState<string | null>(null);
   const savedRef = useRef(initial.baseline);
@@ -234,7 +271,7 @@ export function ReviewPortal({
   }, []);
 
   useEffect(() => {
-    if (initialAction === "feedback" && open) noteRef.current?.focus();
+    if (initialAction === "feedback" && open) fileNoteRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival from the email's button
   }, []);
 
@@ -280,6 +317,11 @@ export function ReviewPortal({
     ]);
     setActivePin(key);
     setConfirming(false);
+    // Feedback on an approved file takes the approval back (a file is one or the other).
+    if (fileReviews[asset.id]?.approved) {
+      setFileReviews((current) => unapproveFile(current, asset.id));
+      setNotice({ assetId: asset.id, text: "Approval taken back: this file has feedback now." });
+    }
     // The new pin's text box takes the focus (after it renders).
     requestAnimationFrame(() => document.getElementById(`pin-text-${key}`)?.focus());
   }
@@ -332,20 +374,57 @@ export function ReviewPortal({
     if (fileInput.current) fileInput.current.value = "";
   }
 
-  // ---- The answer -------------------------------------------------------------------------------
-  function pick(next: ReviewDecision) {
-    setDecision(next);
+  // ---- Each file: approve, or feedback -----------------------------------------------------------
+  async function toggleApproval(assetId: string) {
     setConfirming(false);
     setError(null);
+    if (fileReviews[assetId]?.approved && fileStatus(assetId, work) === "approved") {
+      setFileReviews((current) => unapproveFile(current, assetId));
+      setNotice(null);
+      return;
+    }
+    // Approving a file with feedback removes that feedback (asked first): a file is one or the other.
+    const feedback = feedbackOnFile(assetId, work);
+    if (feedback) {
+      const parts = [feedback.pins ? plural(feedback.pins, "comment") : null, feedback.note ? "your note" : null].filter(Boolean);
+      const ok = await confirm({
+        title: "Approve this file?",
+        message: `Approving it removes the feedback you left on it (${parts.join(" and ")}). Keep the feedback instead if it needs changes.`,
+        confirmLabel: "Approve and remove feedback",
+        cancelLabel: "Keep feedback",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    const next = approveFile({ pins, files: fileReviews }, assetId);
+    setPins(next.pins);
+    setFileReviews(next.files);
+    setNotice(null);
+    if (activePin && !next.pins.some((p) => p.key === activePin)) setActivePin(null);
   }
 
+  function changeFileNote(assetId: string, value: string) {
+    setConfirming(false);
+    setError(null);
+    if (fileReviews[assetId]?.approved && value.trim()) {
+      setNotice({ assetId, text: "Approval taken back: this file has feedback now." });
+    }
+    setFileReviews((current) => setFileNote(current, assetId, value));
+  }
+
+  const nextIndex = nextUnreviewedIndex(review.assets, work, active);
+
+  function goToSubmit() {
+    submitRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    submitRef.current?.focus({ preventScroll: true });
+  }
+
+  // ---- The answer -------------------------------------------------------------------------------
   function askToSend() {
-    const problem = answerProblem({ decision, note, pins });
     if (problem) {
       setError(problem);
-      if (decision === "changes_requested" && !note.trim() && !pins.length) noteRef.current?.focus();
       const blank = pins.find((p) => !p.body.trim());
-      if (blank) choosePin(blank.key, blank.assetId);
+      if (blank && !tally.left) choosePin(blank.key, blank.assetId);
       return;
     }
     setError(null);
@@ -353,17 +432,25 @@ export function ReviewPortal({
   }
 
   function send() {
-    if (!decision) return;
+    if (!decision || problem) return;
     const chosen = decision;
+    const progress = JSON.parse(serialized) as ReviewProgress;
+    const outcomes = fileOutcomes(review.assets, work);
     start(async () => {
-      const result = await submitReviewDecision(token, chosen, note, pins.map(({ assetId, page, x, y, time, body }) => ({ assetId, page, x, y, time, body })));
+      const result = await submitReviewDecision(
+        token,
+        chosen,
+        note,
+        pins.map(({ assetId, page, x, y, time, body }) => ({ assetId, page, x, y, time, body })),
+        progress,
+      );
       if (result.error) {
         setError(result.error);
         setConfirming(false);
         return;
       }
       if (retryTimer.current) clearTimeout(retryTimer.current);
-      setSent({ decision: result.status ?? chosen, note: note.trim() || null, pins: numberedPins(pins) });
+      setSent({ decision: result.status ?? chosen, note: note.trim() || null, pins: numberedPins(pins), fileResults: outcomes });
       setStatus(result.status ?? chosen);
       setConfirming(false);
       setBrowsing(false);
@@ -376,6 +463,7 @@ export function ReviewPortal({
       review={review}
       logoUrl={logoUrl}
       status={status}
+      progress={open && review.assets.length ? reviewedLabel(tally) : null}
       onHowItWorks={() => setReopened(true)}
     />
   );
@@ -383,7 +471,8 @@ export function ReviewPortal({
 
   // ---- Answered: the confirmation (and the files, read-only, on request) --------------------------
   if (!open) {
-    const answer: SentAnswer = sent ?? { decision: status, note: review.decisionNote, pins: review.pins };
+    const answer: SentAnswer = sent ?? { decision: status, note: review.decisionNote, pins: review.pins, fileResults: review.fileResults };
+    const resultOf = new Map((answer.fileResults ?? []).map((r) => [r.assetId, r]));
     return (
       <div className="min-h-screen bg-zinc-100">
         {header}
@@ -404,6 +493,14 @@ export function ReviewPortal({
                 activePin={activePin}
                 onSelectPin={selectOnFile}
                 fileUrl={fileUrl}
+                statusOf={
+                  answer.fileResults
+                    ? (id) => {
+                        const r = resultOf.get(id);
+                        return !r ? "unreviewed" : r.pins || r.note ? "feedback" : "approved";
+                      }
+                    : undefined
+                }
               />
             </section>
             <aside aria-label="What you sent" className="space-y-3">
@@ -439,7 +536,9 @@ export function ReviewPortal({
 
   // ---- Open: review the files and answer ----------------------------------------------------------
   const greetingName = review.recipientName?.split(/\s+/)[0];
-  const textless = pins.filter((p) => !p.body.trim()).length;
+  const blankPin = pins.find((p) => !p.body.trim()) ?? null;
+  const statusOf = (id: string) => fileStatus(id, work);
+  const current = asset ? statusOf(asset.id) : null;
 
   return (
     <div className="min-h-screen bg-zinc-100">
@@ -468,6 +567,32 @@ export function ReviewPortal({
             onSelectPin={selectOnFile}
             onPick={addPin}
             fileUrl={fileUrl}
+            statusOf={statusOf}
+            footer={
+              asset && current ? (
+                <FileReviewPanel
+                  key={asset.id}
+                  asset={asset}
+                  status={current}
+                  pinCount={pins.filter((p) => p.assetId === asset.id).length}
+                  note={fileReviews[asset.id]?.note ?? ""}
+                  onNote={(value) => changeFileNote(asset.id, value)}
+                  onToggleApproval={() => void toggleApproval(asset.id)}
+                  notice={notice?.assetId === asset.id ? notice.text : null}
+                  noteRef={fileNoteRef}
+                  nextLabel={
+                    nextIndex !== null
+                      ? `Next file to review: ${review.assets[nextIndex].name}`
+                      : tally.left === 0
+                        ? "Every file is reviewed"
+                        : null
+                  }
+                  onNext={nextIndex !== null ? () => setActive(nextIndex) : tally.left === 0 ? goToSubmit : null}
+                  allReviewed={tally.left === 0}
+                  many={review.assets.length > 1}
+                />
+              ) : null
+            }
           />
         </section>
 
@@ -477,7 +602,8 @@ export function ReviewPortal({
               {greetingName ? `${greetingName}, what do you think?` : "What do you think?"}
             </h2>
             <p className="mt-1 text-xs text-zinc-500">
-              Click anywhere on a file to pin a numbered comment. On a video, pause and use “Comment at”.
+              Approve each file, or leave feedback on it: click anywhere on a file to pin a numbered comment (on a
+              video, pause and use “Comment at”), or write a note under it.
             </p>
             <PinList
               pins={numberedDrafts.map((p) => ({ key: p.key, number: p.number, assetId: p.assetId, page: p.page, time: p.time, body: p.body }))}
@@ -493,11 +619,10 @@ export function ReviewPortal({
             />
             <div className="mt-3">
               <label htmlFor={noteId} className="text-xs font-medium text-zinc-700">
-                Overall note <span className="font-normal text-zinc-400">(optional with Approve)</span>
+                Overall note <span className="font-normal text-zinc-400">(optional)</span>
               </label>
               <textarea
                 id={noteId}
-                ref={noteRef}
                 value={note}
                 maxLength={MAX_REVIEW_NOTE}
                 rows={3}
@@ -535,42 +660,16 @@ export function ReviewPortal({
             className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white px-3 pb-3 pt-2.5 shadow-[0_-6px_16px_rgba(24,24,27,0.08)] lg:static lg:z-auto lg:rounded-lg lg:border lg:p-4 lg:shadow-none"
           >
             <h2 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 max-lg:sr-only">Your answer</h2>
-            <div role="radiogroup" aria-label="Your answer" className="grid grid-cols-2 gap-2">
-              <AnswerChoice
-                checked={decision === "approved"}
-                onPick={() => pick("approved")}
-                label="Approve"
-                hint="Good to go"
-                tone="green"
-                icon={<Check className="size-4" aria-hidden />}
-              />
-              <AnswerChoice
-                checked={decision === "changes_requested"}
-                onPick={() => pick("changes_requested")}
-                label="Request changes"
-                hint="With your notes"
-                tone="amber"
-                icon={<MessageSquare className="size-4" aria-hidden />}
-              />
-            </div>
+            <AnswerSummary tally={tally} decision={decision} />
             {error ? (
               <p role="alert" className="mt-2 text-sm text-red-700">
                 {error}
               </p>
-            ) : textless > 0 ? (
-              <p className="mt-2 text-xs text-zinc-500">
-                {textless === 1 ? "One pin has" : `${textless} pins have`} no comment yet.
-              </p>
             ) : null}
-            {confirming && decision ? (
+            {confirming && decision && !problem ? (
               <div className="mt-2 space-y-2 rounded-md bg-zinc-50 p-2.5">
                 <p className="text-sm text-zinc-800">
-                  {decision === "approved"
-                    ? `Send your approval of ${review.assets.length === 1 ? "this file" : `these ${review.assets.length} files`}${
-                        pins.length ? ` with ${plural(pins.length, "comment")}` : ""
-                      }?`
-                    : `Send your feedback${pins.length ? ` (${plural(pins.length, "comment")})` : ""}?`}{" "}
-                  You can’t change it afterwards.
+                  {confirmQuestion(review.assets, work)} You can’t change it afterwards.
                 </p>
                 <div className="flex gap-2">
                   <button type="button" disabled={pending} onClick={send} className="btn-primary h-10 flex-1 px-3">
@@ -583,9 +682,36 @@ export function ReviewPortal({
                 </div>
               </div>
             ) : (
-              <button type="button" disabled={pending} onClick={askToSend} className="btn-primary mt-2 h-10 w-full px-3">
-                {submitLabel(decision)}
-              </button>
+              <>
+                {/* A disabled button gets no hover: the tooltip sits on its wrapper, the reason under it. */}
+                <span className="mt-2 block" data-tooltip={problem ?? undefined}>
+                  <button
+                    ref={submitRef}
+                    type="button"
+                    disabled={pending || Boolean(problem)}
+                    aria-describedby={problem ? problemId : undefined}
+                    onClick={askToSend}
+                    className="btn-primary h-10 w-full px-3"
+                  >
+                    <Send className="size-4" aria-hidden />
+                    {submitLabel(decision)}
+                  </button>
+                </span>
+                {problem ? (
+                  <p id={problemId} className="mt-1.5 text-xs text-zinc-600">
+                    {problem}{" "}
+                    {tally.left > 0 && nextIndex !== null ? (
+                      <button type="button" onClick={() => setActive(nextIndex)} className="font-medium text-accent-700 hover:underline">
+                        Go to the next one
+                      </button>
+                    ) : !tally.left && blankPin ? (
+                      <button type="button" onClick={() => choosePin(blankPin.key, blankPin.assetId)} className="font-medium text-accent-700 hover:underline">
+                        Show it
+                      </button>
+                    ) : null}
+                  </p>
+                ) : null}
+              </>
             )}
             <p className="mt-2 flex flex-wrap items-center justify-between gap-x-2 text-2xs text-zinc-500" aria-live="polite">
               <span className={saveState === "error" || saveState === "stopped" ? "text-amber-700" : ""}>
@@ -605,11 +731,14 @@ function ReviewHeader({
   review,
   logoUrl,
   status,
+  progress,
   onHowItWorks,
 }: {
   review: PublicReview;
   logoUrl: string | null;
   status: ReviewStatus;
+  // "2 of 3 reviewed" while the round is open.
+  progress: string | null;
   onHowItWorks: () => void;
 }) {
   return (
@@ -628,6 +757,11 @@ function ReviewHeader({
             {review.projectName ? ` · ${review.projectName}` : ""} · {roundLabel(review.round)}
           </p>
         </div>
+        {progress ? (
+          <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium tabular-nums text-zinc-700" aria-live="polite">
+            {progress}
+          </span>
+        ) : null}
         <button type="button" onClick={onHowItWorks} className="btn-ghost h-10 px-2 text-xs lg:h-8">
           <CircleHelp className="size-4" aria-hidden />
           How it works
@@ -650,49 +784,150 @@ function ReviewHeader({
   );
 }
 
-function AnswerChoice({
-  checked,
-  onPick,
-  label,
-  hint,
-  tone,
-  icon,
-}: {
-  checked: boolean;
-  onPick: () => void;
-  label: string;
-  hint: string;
-  tone: "green" | "amber";
-  icon: ReactNode;
-}) {
-  const on = tone === "green" ? "border-green-500 bg-green-50 text-green-900" : "border-amber-500 bg-amber-50 text-amber-900";
+// The answer the files add up to, plainly: how many are reviewed, and what will be sent.
+function AnswerSummary({ tally, decision }: { tally: ReturnType<typeof reviewTally>; decision: ReturnType<typeof derivedDecision> }) {
+  const percent = tally.total ? Math.round((100 * tally.reviewed) / tally.total) : 0;
   return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={checked}
-      onClick={onPick}
-      className={`flex min-h-11 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-sm font-medium transition-colors ${
-        checked ? on : "border-zinc-200 bg-white text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50"
-      }`}
-    >
-      <span
-        aria-hidden
-        className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${
-          checked ? (tone === "green" ? "border-green-600 bg-green-600 text-white" : "border-amber-600 bg-amber-600 text-white") : "border-zinc-300 text-zinc-400"
-        }`}
+    <div>
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <span className="font-medium tabular-nums text-zinc-900">{reviewedLabel(tally)}</span>
+        {decision === "approved" ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-800">
+            <Check className="size-3.5" aria-hidden />
+            Approve
+          </span>
+        ) : decision === "changes_requested" ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+            <MessageSquare className="size-3.5" aria-hidden />
+            Request changes
+          </span>
+        ) : (
+          <span className="text-xs text-zinc-500">{tally.left === 1 ? "1 file left" : `${tally.left} files left`}</span>
+        )}
+      </div>
+      <div
+        role="progressbar"
+        aria-label="Files reviewed"
+        aria-valuemin={0}
+        aria-valuemax={tally.total}
+        aria-valuenow={tally.reviewed}
+        className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-100"
       >
-        {checked ? <Check className="size-3" /> : null}
-      </span>
-      <span className="min-w-0">
-        <span className="flex items-center gap-1">
-          <span className="max-sm:hidden">{icon}</span>
-          {label}
-        </span>
-        <span className="block text-2xs font-normal opacity-75 max-sm:hidden">{hint}</span>
-      </span>
-    </button>
+        <span className={`block h-full rounded-full ${tally.feedback ? "bg-amber-500" : "bg-green-500"}`} style={{ width: `${percent}%` }} />
+      </div>
+      <p className="mt-1.5 text-xs text-zinc-500 max-lg:sr-only">
+        {decision === "approved"
+          ? "Every file is approved, so your answer is Approve."
+          : decision === "changes_requested"
+            ? `${tally.feedback === 1 ? "1 file has" : `${tally.feedback} files have`} feedback, so your answer is Request changes.`
+            : "Approve each file or leave feedback on it. All approved sends Approve; any feedback sends Request changes."}
+      </p>
+    </div>
   );
+}
+
+// Under the file on screen: its state, Approve this file (a toggle), a note on this file, and the way to the
+// next file nobody reviewed yet (or to Submit once every file is).
+function FileReviewPanel({
+  asset,
+  status,
+  pinCount,
+  note,
+  onNote,
+  onToggleApproval,
+  notice,
+  noteRef,
+  nextLabel,
+  onNext,
+  allReviewed,
+  many,
+}: {
+  asset: ReviewFile;
+  status: FileStatus;
+  pinCount: number;
+  note: string;
+  onNote: (value: string) => void;
+  onToggleApproval: () => void;
+  notice: string | null;
+  noteRef: RefObject<HTMLTextAreaElement | null>;
+  nextLabel: string | null;
+  onNext: (() => void) | null;
+  allReviewed: boolean;
+  many: boolean;
+}) {
+  const noteId = useId();
+  const approved = status === "approved";
+  const detail =
+    status === "feedback"
+      ? [pinCount ? plural(pinCount, "comment") : null, note.trim() ? "a note" : null].filter(Boolean).join(" and ")
+      : null;
+  return (
+    <div className="space-y-2 border-t border-zinc-100 px-2 py-3 sm:px-3" aria-label={`Your review of ${asset.name}`} role="group">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          aria-pressed={approved}
+          onClick={onToggleApproval}
+          className={`inline-flex h-10 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors lg:h-9 ${
+            approved
+              ? "border-green-600 bg-green-600 text-white hover:bg-green-700"
+              : "border-zinc-300 bg-white text-zinc-800 hover:border-green-500 hover:bg-green-50 hover:text-green-900"
+          }`}
+        >
+          <Check className="size-4" aria-hidden />
+          {approved ? "Approved" : "Approve this file"}
+        </button>
+        <span
+          className={`inline-flex items-center gap-1 text-xs ${
+            status === "approved" ? "text-green-700" : status === "feedback" ? "text-amber-700" : "text-zinc-500"
+          }`}
+        >
+          <FileStatusMark status={status} />
+          {STATUS_WORDS[status]}
+          {detail ? ` · ${detail}` : ""}
+        </span>
+        {onNext && nextLabel ? (
+          <button
+            type="button"
+            onClick={onNext}
+            className={`ml-auto inline-flex h-10 max-w-full items-center gap-1 rounded-md px-3 text-sm font-medium lg:h-9 ${
+              status === "unreviewed" ? "btn-secondary" : "btn-primary"
+            }`}
+          >
+            <span className="truncate">{allReviewed ? (many ? "All files reviewed: go to Submit" : "Reviewed: go to Submit") : "Next file to review"}</span>
+            <ChevronRight className="size-4 shrink-0" aria-hidden />
+            <span className="sr-only">{nextLabel}</span>
+          </button>
+        ) : null}
+      </div>
+      {notice ? (
+        <p role="status" className="rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900">
+          {notice}
+        </p>
+      ) : null}
+      <div>
+        <label htmlFor={noteId} className="text-xs font-medium text-zinc-700">
+          Note on this file <span className="font-normal text-zinc-400">(counts as feedback)</span>
+        </label>
+        <textarea
+          id={noteId}
+          ref={noteRef}
+          value={note}
+          maxLength={MAX_PIN_TEXT}
+          rows={2}
+          onChange={(e) => onNote(e.currentTarget.value)}
+          placeholder="What should change in this file?"
+          className="field mt-1 h-auto w-full py-1.5"
+        />
+      </div>
+    </div>
+  );
+}
+
+function FileStatusMark({ status, className = "size-3.5" }: { status: FileStatus; className?: string }) {
+  if (status === "approved") return <CheckCircle2 className={`${className} shrink-0 text-green-600`} aria-hidden />;
+  if (status === "feedback") return <MessageSquare className={`${className} shrink-0 text-amber-600`} aria-hidden />;
+  return <Circle className={`${className} shrink-0 text-zinc-300`} aria-hidden />;
 }
 
 // One file at a time: "File 2 of 5" with Previous / Next, a list of the files (each with its pin count),
@@ -707,6 +942,8 @@ function FileBrowser({
   onSelectPin,
   onPick,
   fileUrl,
+  statusOf,
+  footer,
 }: {
   label: string;
   assets: ReviewFile[];
@@ -717,6 +954,9 @@ function FileBrowser({
   onSelectPin: (key: string) => void;
   onPick?: (place: PinPlace) => void;
   fileUrl: (id: string) => string;
+  // Nov 1 notes (batch 8): each file's state (a mark in the file list), and the controls under the file.
+  statusOf?: (assetId: string) => FileStatus;
+  footer?: ReactNode;
 }) {
   const asset = assets[active] ?? null;
   const counts = pinCountByAsset(pins);
@@ -748,6 +988,9 @@ function FileBrowser({
         ) : null}
         <p className="min-w-0 flex-1 text-sm text-zinc-800" aria-live="polite">
           <span className="font-medium">File {fileProgressLabel(active, assets.length)}</span>
+          {statusOf && !many ? (
+            <span className="sr-only">, {STATUS_WORDS[statusOf(asset.id)]}</span>
+          ) : null}
           <span className="text-zinc-500"> · </span>
           <span className="break-all">{asset.name}</span>
           {asset.size ? <span className="text-zinc-400"> · {size(asset.size)}</span> : null}
@@ -790,17 +1033,18 @@ function FileBrowser({
           {assets.map((a, i) => {
             const Icon = fileIcon(a);
             const count = counts.get(a.id) ?? 0;
+            const fileState = statusOf?.(a.id) ?? null;
             return (
               <button
                 key={a.id}
                 type="button"
                 role="tab"
                 aria-selected={i === active}
-                aria-label={`File ${i + 1}: ${a.name}${count ? `, ${plural(count, "comment")}` : ""}`}
+                aria-label={`File ${i + 1}: ${a.name}${fileState ? `, ${STATUS_WORDS[fileState].toLowerCase()}` : ""}${count ? `, ${plural(count, "comment")}` : ""}`}
                 onClick={() => onActive(i)}
                 className="inline-flex h-10 max-w-56 shrink-0 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-sm text-zinc-700 hover:bg-zinc-50 aria-selected:border-accent-400 aria-selected:bg-accent-50 aria-selected:text-accent-900 lg:h-8"
               >
-                <span className="text-2xs tabular-nums text-zinc-400">{i + 1}</span>
+                {fileState ? <FileStatusMark status={fileState} className="size-4" /> : <span className="text-2xs tabular-nums text-zinc-400">{i + 1}</span>}
                 <Icon className="size-4 shrink-0" aria-hidden />
                 <span className="truncate">{a.name}</span>
                 {count ? (
@@ -822,6 +1066,7 @@ function FileBrowser({
           onSelectPin={onSelectPin}
         />
       </div>
+      {footer}
     </div>
   );
 }
@@ -863,6 +1108,7 @@ function PreviousRoundPanel({ previous, fileUrl }: { previous: PreviousRound; fi
               {previous.decisionNote}
             </p>
           ) : null}
+          {previous.fileResults?.length ? <FileOutcomeList results={previous.fileResults} /> : null}
           <FileBrowser
             label={`Files in ${roundLabel(previous.round)}`}
             assets={previous.assets}
@@ -989,6 +1235,7 @@ function ReviewConfirmation({
           {review.decidedAt ? <span className="text-zinc-500"> · {shortDate(review.decidedAt)}</span> : null}
         </p>
         {answer.note ? <p className="whitespace-pre-line rounded-md bg-zinc-50 px-3 py-2 text-sm text-zinc-800">{answer.note}</p> : null}
+        {answer.fileResults?.length ? <FileOutcomeList results={answer.fileResults} /> : null}
         {groups.length ? (
           <ul className="space-y-3">
             {groups.map(({ file, pins }) => (
@@ -1032,6 +1279,30 @@ function ReviewConfirmation({
         ) : null}
       </section>
     </main>
+  );
+}
+
+// Each file's outcome in an answered round ("poster.png — Approved", "flyer.pdf — Changes requested: 2
+// comments and a note"), with the note on that file.
+function FileOutcomeList({ results }: { results: ReviewFileResult[] }) {
+  return (
+    <ul className="space-y-1.5" aria-label="Each file">
+      {results.map((r) => {
+        const status: FileStatus = r.pins || r.note ? "feedback" : "approved";
+        return (
+          <li key={r.assetId} className="text-sm text-zinc-800">
+            <span className="flex items-start gap-1.5">
+              <FileStatusMark status={status} className="mt-0.5 size-4" />
+              <span className="min-w-0">
+                <span className="break-all font-medium">{r.name}</span>
+                <span className={status === "approved" ? "text-green-700" : "text-amber-700"}> — {outcomeLabel(r)}</span>
+                {r.note ? <span className="mt-0.5 block whitespace-pre-line text-zinc-600">{r.note}</span> : null}
+              </span>
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

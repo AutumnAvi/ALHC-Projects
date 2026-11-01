@@ -5,7 +5,8 @@ import { ArrowLeft, ArrowRight, Check, Download, MessageSquarePlus, Upload, X } 
 
 // Oct 27 notes (batch 5): "How it works" on the public review page. A small modal of five slides that slide
 // sideways (no motion when the browser asks for reduced motion): pins on images and PDFs, comments on a
-// moment of a video, full-quality files, sending files back, and the answer. X (or Escape) closes it from
+// moment of a video, full-quality files, sending files back, and the answer (since Nov 1 notes, batch 8:
+// approve each file or leave feedback on it). X (or Escape) closes it from
 // any slide, Finish on the last one; Back / Next and the dots move between slides. Tab stays inside.
 
 type Slide = { title: string; body: string; art: ReactNode };
@@ -77,16 +78,17 @@ const SLIDES: Slide[] = [
     ),
   },
   {
-    title: "Approve or request changes",
-    body: "Pick an answer, add a note if you like, and send it. Everything saves as you go, so you can leave and come back to this link.",
+    title: "Approve each file, or leave feedback",
+    body: "Every file needs your answer: press “Approve this file”, or pin a comment or write a note on it. “Next file to review” takes you to the ones left, and Submit opens once every file is reviewed. All approved sends Approve; any feedback sends Request changes. Everything saves as you go.",
     art: (
       <div className="flex flex-col gap-1.5">
         <span className="flex h-8 w-40 items-center gap-2 rounded-md border border-green-500 bg-green-50 px-2 text-xs font-medium text-green-800">
-          <Check className="size-4" aria-hidden /> Approve
+          <Check className="size-4" aria-hidden /> Approve this file
         </span>
         <span className="flex h-8 w-40 items-center gap-2 rounded-md border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-700">
-          <MessageSquarePlus className="size-4" aria-hidden /> Request changes
+          <MessageSquarePlus className="size-4" aria-hidden /> Or leave feedback
         </span>
+        <span className="text-center text-2xs text-zinc-500">2 of 3 reviewed</span>
       </div>
     ),
   },

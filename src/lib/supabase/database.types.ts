@@ -3173,6 +3173,9 @@ export type Database = {
           // Oct 29 notes (55b): the project its email and page name (chosen with the sender's access).
           // Not client-readable: create_review_check / rotate_review_check_token return it.
           project_id: string | null;
+          // Nov 1 notes (batch 8, item 63): each file's outcome of a round answered file by file
+          // ([{ asset_id, name, approved, note, pins }]); written only by review_check_decide.
+          file_results: Json | null;
           created_by: string;
           created_at: string;
           updated_at: string;
