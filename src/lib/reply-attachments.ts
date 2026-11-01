@@ -92,22 +92,63 @@ export function normalizeReceivedFiles(raw: unknown): ReceivedFile[] {
   });
 }
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Nov 1 notes (batch 8, item 59): names are compared loosely. Mail apps don't always write a file's name
+// in the text exactly as the attachment carries it — macOS screenshot names have a narrow no-break space
+// (U+202F) before AM/PM, which the text keeps ("[Screenshot … 12.18.36\u202fPM.png]") while the
+// attachment's name dropped it ("… 12.18.36PM.png"), so the bracket text stayed in the comment. A name
+// matches when the two are equal after Unicode NFKC, ignoring case and every kind of whitespace (spaces,
+// no-break / narrow / thin spaces, tabs, zero-width characters).
+const LOOSE_IGNORED = /[\s\u00a0\u1680\u180e\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]/g;
+export function looseName(value: string): string {
+  return value.normalize("NFKC").replace(LOOSE_IGNORED, "").toLowerCase();
+}
 
 // The placeholders mail apps leave in the text part where a file was: Gmail "[image: NAME]", Apple Mail
-// and others "[NAME]" or "<NAME>", Outlook "[cid:CONTENT-ID]".
-function placeholders(file: Pick<ReceivedFile, "filename" | "contentId">): string[] {
-  const name = escapeRegExp(file.filename);
-  const out = [`\\[image:\\s*${name}\\]`, `\\[${name}\\]`, `<${name}>`];
-  if (file.contentId) {
-    const cid = escapeRegExp(file.contentId);
-    out.push(`\\[cid:${cid}\\]`, `<cid:${cid}>`);
+// and others "[NAME]" or "<NAME>", Outlook "[cid:CONTENT-ID]". Each match's inner text is compared with
+// the files' names / content ids loosely (looseName).
+const PLACEHOLDER = /[ \t\u00a0\u202f]*(?:\[\s*image:([^[\]\n]{1,300})\]|\[\s*cid:([^[\]\n]{1,300})\]|<\s*cid:([^<>\n]{1,300})>|\[([^[\]\n]{1,300})\]|<([^<>\n]{1,300})>)/gi;
+
+type Placeholder = { start: number; end: number; kind: "image" | "cid" | "name"; inner: string };
+
+function findPlaceholders(text: string): Placeholder[] {
+  const out: Placeholder[] = [];
+  for (const m of text.matchAll(PLACEHOLDER)) {
+    const start = m.index ?? 0;
+    const end = start + m[0].length;
+    if (m[1] !== undefined) out.push({ start, end, kind: "image", inner: m[1] });
+    else if (m[2] !== undefined) out.push({ start, end, kind: "cid", inner: m[2] });
+    else if (m[3] !== undefined) out.push({ start, end, kind: "cid", inner: m[3] });
+    else out.push({ start, end, kind: "name", inner: m[4] ?? m[5] ?? "" });
   }
   return out;
 }
 
+type FileKeys = { names: Set<string>; cids: Set<string> };
+
+function fileKeys(files: Pick<ReceivedFile, "filename" | "contentId">[]): FileKeys {
+  const names = new Set<string>();
+  const cids = new Set<string>();
+  for (const file of files) {
+    const name = looseName(file.filename);
+    if (name) names.add(name);
+    if (file.contentId) cids.add(looseName(file.contentId));
+  }
+  return { names, cids };
+}
+
+// Whether this placeholder stands for one of the files: "[image: NAME]" / "[NAME]" / "<NAME>" by name,
+// "[cid:ID]" / "<cid:ID>" by content id; with `anyImage`, every "[image: …]" and "[cid:…]" form.
+function placeholderMatches(p: Placeholder, keys: FileKeys, anyImage = false): boolean {
+  const inner = looseName(p.inner);
+  if (!inner) return false;
+  if (p.kind === "cid") return anyImage || keys.cids.has(inner);
+  if (p.kind === "image") return anyImage || keys.names.has(inner);
+  return keys.names.has(inner);
+}
+
 function mentions(text: string, file: Pick<ReceivedFile, "filename" | "contentId">): boolean {
-  return new RegExp(placeholders(file).join("|"), "i").test(text);
+  const keys = fileKeys([file]);
+  return findPlaceholders(text).some((p) => placeholderMatches(p, keys));
 }
 
 // The cid: references of an HTML body (Resend's ?html_format=cid keeps them), lowercased.
@@ -147,21 +188,26 @@ export function planReceivedFiles(
   return plan;
 }
 
-// The text without the placeholders of these files (only their exact names and content ids, so
-// "[other.jpg]" stays), with the spaces and blank lines they leave behind tidied. Since Oct 26 notes
-// (batch 3), when an email had inline images, Gmail's "[image: …]" and Outlook's "[cid:…]" forms come out
-// whatever name they carry (mail apps don't always use the attachment's own file name there).
+// The text without the placeholders of these files (their names and content ids, compared loosely —
+// looseName — so "[other.jpg]" stays), with the spaces and blank lines they leave behind tidied. Since
+// Oct 26 notes (batch 3), when an email had inline images, Gmail's "[image: …]" and Outlook's "[cid:…]"
+// forms come out whatever name they carry (mail apps don't always use the attachment's own file name there).
 export function stripAttachmentPlaceholders(
   body: string,
   files: Pick<ReceivedFile, "filename" | "contentId">[],
   options: { inlineImages?: boolean } = {},
 ): string {
   if (!files.length && !options.inlineImages) return body;
-  const forms = files.flatMap(placeholders);
-  if (options.inlineImages) forms.push("\\[image:[^\\]\\n]{0,255}\\]", "\\[cid:[^\\]\\s]{1,255}\\]");
-  const pattern = new RegExp(`[ \\t]*(?:${forms.join("|")})`, "gi");
-  return body
-    .replace(pattern, "")
+  const keys = fileKeys(files);
+  let out = "";
+  let last = 0;
+  for (const p of findPlaceholders(body)) {
+    if (!placeholderMatches(p, keys, options.inlineImages === true)) continue;
+    out += body.slice(last, p.start);
+    last = p.end;
+  }
+  out += body.slice(last);
+  return out
     .split("\n")
     .map((line) => line.trimEnd())
     .join("\n")
