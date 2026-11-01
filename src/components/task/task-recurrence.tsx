@@ -80,7 +80,7 @@ function RecurrenceEditor({ task }: { task: TaskDetail }) {
           if (freq === (rule?.freq ?? "")) return;
           save(
             isFrequency(freq)
-              ? { freq, interval: rule?.interval ?? 1, weekdays: [], ends: rule?.ends ?? { type: "never" } }
+              ? { freq, interval: rule?.interval ?? 1, weekdays: [], ends: rule?.ends ?? { type: "never" }, fromCompletion: rule?.fromCompletion }
               : null,
           );
         }}
@@ -138,6 +138,20 @@ function RecurrenceEditor({ task }: { task: TaskDetail }) {
               })}
             </fieldset>
           ) : null}
+
+          {/* Nov 1 notes (batch 9b): Todoist's "every!" — the next one counts from the day it's done. */}
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-3.5 accent-accent-600"
+              checked={Boolean(rule.fromCompletion)}
+              onChange={(e) => save({ ...rule, fromCompletion: e.currentTarget.checked })}
+            />
+            <span>
+              Repeat after completion
+              <span className="block text-xs text-zinc-500">The next one is due {rule.interval} {UNITS[rule.freq]} after the day you complete this one.</span>
+            </span>
+          </label>
 
           <div className="flex flex-wrap items-center gap-2">
             <label htmlFor="task-repeat-ends">Ends</label>
@@ -208,7 +222,12 @@ function RecurrenceEditor({ task }: { task: TaskDetail }) {
 
           <p className="text-xs text-zinc-500">
             Completing this task creates the next one with its dates moved forward
-            {task.dueOn || task.startOn ? "" : " (due on the next occurrence after the day it’s completed)"}.
+            {rule.fromCompletion
+              ? ", counted from the day it’s completed"
+              : task.dueOn || task.startOn
+                ? ""
+                : " (due on the next occurrence after the day it’s completed)"}
+            .
             {task.recurrenceSeq > 1 ? ` This is occurrence ${task.recurrenceSeq}.` : ""}
           </p>
         </>

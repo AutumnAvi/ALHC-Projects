@@ -42,7 +42,7 @@ export function RowCompleteControl({
   readOnly?: boolean;
   assignedToMe?: boolean;
   blocked?: number;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   seed?: () => TaskSeed | null | undefined;
   onToggle: () => void;
 }) {

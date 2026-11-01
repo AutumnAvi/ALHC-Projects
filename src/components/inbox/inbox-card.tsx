@@ -36,7 +36,7 @@ import { formatDueDate } from "@/lib/dates";
 // where it happened, the comment or message (Detailed density), an approver's decision buttons, the
 // time, and hover actions (always shown on touch screens).
 
-const KIND = {
+export const INBOX_KIND = {
   assigned: { icon: UserPlus, verb: "assigned you" },
   comment: { icon: MessageSquare, verb: "commented on" },
   mention: { icon: AtSign, verb: "mentioned you on" },
@@ -93,14 +93,15 @@ function dataText(data: InboxItem["data"], key: string): string | null {
   return typeof value === "string" && value ? value : null;
 }
 
-function describe(item: InboxItem) {
+// What a card says (also Home's Needs you, Nov 1 notes batch 9b).
+export function describeInboxItem(item: InboxItem) {
   const ruleName = dataText(item.data, "rule_name");
   const reminder = approvalReminderOf(item);
   if (reminder) {
     const dueOn = dataText(item.data, "due_on");
     return { ruleName: null, verb: approvalReminderText(reminder), detail: dueOn && /^\d{4}-\d{2}-\d{2}$/.test(dueOn) ? `Approval due ${formatDueDate(dueOn)}` : null };
   }
-  let verb: string = KIND[item.kind].verb;
+  let verb: string = INBOX_KIND[item.kind].verb;
   if (item.kind === "approval_decided") verb = DECISION_VERB[dataText(item.data, "status") ?? ""] ?? verb;
   if (item.kind === "approval_requested" && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.resubmitted) {
     verb = "resubmitted for your approval";
@@ -206,7 +207,7 @@ export function InboxCard({
   const linkClass = `block text-sm text-zinc-700 outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-accent-400 ${
     compact ? "truncate" : ""
   }`;
-  const { ruleName, verb, detail } = describe(item);
+  const { ruleName, verb, detail } = describeInboxItem(item);
   const reminder = approvalReminderOf(item);
   // A form submitter's emailed reply has no actor: name the address it came from.
   // Oct 26 notes (batch 3): a review check's outcome names the reviewer's address.
@@ -220,7 +221,7 @@ export function InboxCard({
       ? CirclePause
       : accessRequest || isAccessGranted(item.data)
         ? UserPlus
-        : KIND[item.kind].icon;
+        : INBOX_KIND[item.kind].icon;
   const strong = read ? "font-medium text-zinc-800" : "font-semibold text-zinc-900";
   // A task numbered in several projects (Oct 29 notes, 55b): its name starts with the first number, "+N"
   // lists them all (on hover, spelled out while the card has keyboard focus, read to screen readers).

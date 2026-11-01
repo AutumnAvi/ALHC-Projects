@@ -17,9 +17,10 @@ import { useShell } from "@/components/shell/shell-context";
 import { setPaneExpanded, usePaneExpanded } from "@/components/task/pane-size";
 import { useNotify, useServerAction } from "@/components/toast";
 import { Skeleton } from "@/components/ui";
-import { removeMyAvatar, setOpenPersonalView, updateMyProfile, uploadMyAvatar } from "@/lib/actions";
+import { removeMyAvatar, setMyTasksChecked, setOpenPersonalView, updateMyProfile, uploadMyAvatar } from "@/lib/actions";
 import type { MySettings } from "@/lib/data";
-import { MY_TASKS_LAYOUT_COOKIE, type MyTasksLayout } from "@/lib/my-tasks";
+import { saveMyTasksLayout, type MyTasksLayout } from "@/lib/my-tasks";
+import { CHECKED_MODE_OPTIONS, type CheckedMode } from "@/lib/checklist";
 import { AVATAR_ACCEPT, MAX_PROFILE_NAME, avatarFileProblem, profileNameProblem } from "@/lib/profile";
 import { projectColorClass } from "@/lib/project-colors";
 import { SETTINGS_TABS, type EmailSetup, type SettingsTab } from "@/lib/shell";
@@ -515,6 +516,7 @@ const PANE_OPTIONS = [
   { value: "expanded", label: "Full screen" },
 ] as const;
 const MY_TASKS_OPTIONS = [
+  { value: "checklist", label: "Checklist" },
   { value: "sections", label: "Sections" },
   { value: "due", label: "Due dates" },
 ] as const;
@@ -562,11 +564,12 @@ function DisplayTab({ data }: { data: MySettings }) {
               value={myTasks}
               onChange={(value) => {
                 setMyTasks(value);
-                document.cookie = `${MY_TASKS_LAYOUT_COOKIE}=${value}; path=/; max-age=31536000; samesite=lax`;
+                saveMyTasksLayout(value);
               }}
             />
           </dd>
         </div>
+        <CheckedItemsRow saved={data.myTasksChecked} />
         <OpenPersonalViewRow saved={data.openPersonalView} />
         <div className={ROW}>
           <dt className={TERM}>Time zone</dt>
@@ -579,8 +582,40 @@ function DisplayTab({ data }: { data: MySettings }) {
         </div>
       </dl>
       <p className="mt-3 text-xs text-zinc-500">
-        Display settings are saved in this browser, except “Open my saved view by default”, which follows you everywhere.
+        Display settings are saved in this browser, except “Checked tasks” and “Open my saved view by default”, which follow you everywhere.
       </p>
+    </div>
+  );
+}
+
+// Nov 1 notes (batch 9b): what checking off a task on My tasks (and Home's Today) does. Saved on your
+// account; the checklist's own options menu changes the same setting.
+function CheckedItemsRow({ saved }: { saved: CheckedMode }) {
+  const [pending, run] = useServerAction();
+  const [mode, setMode] = useState<CheckedMode>(saved);
+  return (
+    <div className={`${ROW} items-center`}>
+      <dt className={TERM}>Checked tasks</dt>
+      <dd>
+        <Segmented
+          label="Checked tasks"
+          options={CHECKED_MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+          value={mode}
+          onChange={(value) => {
+            if (pending || value === mode) return;
+            const previous = mode;
+            setMode(value);
+            run(async () => {
+              const result = await setMyTasksChecked(value);
+              if (result.error) setMode(previous);
+              return result;
+            });
+          }}
+        />
+        <p className="mt-1 text-xs text-zinc-500">
+          {CHECKED_MODE_OPTIONS.find((o) => o.value === mode)?.description} Clears overnight. Saved on your account.
+        </p>
+      </dd>
     </div>
   );
 }

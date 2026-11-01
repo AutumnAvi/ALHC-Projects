@@ -116,6 +116,7 @@ import {
 } from "@/lib/duplicate-task";
 import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
+import { isCheckedMode, type CheckedMode } from "@/lib/checklist";
 import { PERSON_DEFAULT_ROLE, hasRole, isDefaultProjectRole, isPortfolioRole, isProjectRole } from "@/lib/roles";
 import {
   EMAIL_PATTERN,
@@ -1515,6 +1516,114 @@ export async function createPrivateTask(
   return { ...result, taskId: result.error ? undefined : taskId };
 }
 
+// Nov 1 notes (batch 9b, item 64): My tasks' quick add. One line becomes a task: in a project (Editor+
+// there; create_task) or as the person's private task, assigned to them unless an @person was typed,
+// with the typed due date and repeat. The name, project, person, and date were parsed in the browser
+// (parseQuickAdd); every write goes through RLS as usual. When the chosen person can't be given the task
+// (they can't open the project), the task is kept, assigned to the person who added it, and `note` says so.
+export async function quickAddTask(input: {
+  title: string;
+  projectId?: string | null;
+  assigneeId?: string | null;
+  dueOn?: string | null;
+  repeat?: { freq: Recurrence["freq"]; interval: number; weekdays: number[]; fromCompletion: boolean } | null;
+  timeZone?: string;
+}): Promise<ActionResult & { taskId?: string; note?: string }> {
+  let taskId: string | undefined;
+  let note: string | undefined;
+  const result = await run(async () => {
+    const title = text(input?.title, "Task name", { max: 1000 });
+    const dueOn = input.dueOn ? (isIsoDate(input.dueOn) ? input.dueOn : null) : null;
+    if (input.dueOn && !dueOn) throw new InputError("Choose a valid due date");
+    const rule = input.repeat
+      ? recurrence({
+          freq: input.repeat.freq,
+          interval: input.repeat.interval,
+          weekdays: input.repeat.weekdays,
+          ends: { type: "never" },
+          timezone: input.timeZone,
+          fromCompletion: input.repeat.fromCompletion,
+        })
+      : null;
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new InputError("Sign in to add tasks");
+    const created = input.projectId
+      ? await supabase.rpc("create_task", { target_project: id(input.projectId, "project"), target_section: null, task_title: title })
+      : await supabase.rpc("create_private_task", { task_title: title });
+    check(created);
+    taskId = created.data ?? undefined;
+    if (!taskId) throw new DbError("Couldn’t add the task");
+    const wanted = input.assigneeId ? id(input.assigneeId, "person") : user.id;
+    const update: { assignee_id?: string; due_on?: string; recurrence?: Json } = {};
+    // create_private_task assigns the task to its creator already.
+    if (input.projectId || wanted !== user.id) update.assignee_id = wanted;
+    if (dueOn) update.due_on = dueOn;
+    if (rule) update.recurrence = rule;
+    if (Object.keys(update).length === 0) return;
+    const saved = await supabase.from("tasks").update(update).eq("id", taskId).select("id");
+    if (saved.error && update.assignee_id && update.assignee_id !== user.id) {
+      // The person couldn't be given it (no access to that project): keep the task, assigned to me.
+      checkUpdated(await supabase.from("tasks").update({ ...update, assignee_id: user.id }).eq("id", taskId).select("id"));
+      note = "Added, assigned to you: that person can’t open this project";
+      return;
+    }
+    checkUpdated(saved);
+  });
+  return { ...result, taskId: result.error ? undefined : taskId, note };
+}
+
+// Nov 1 notes (batch 9b): "Checked items" on My tasks (stay | sink | hide), saved on the account.
+export async function setMyTasksChecked(mode: CheckedMode): Promise<ActionResult> {
+  try {
+    if (!isCheckedMode(mode)) throw new InputError("Choose what checked items do");
+    const supabase = await createClient();
+    const result = await supabase.rpc("set_my_tasks_checked", { mode });
+    // A database without this release: the choice lasts for the visit.
+    if (result.error?.code === "PGRST202") return {};
+    check(result);
+    return {};
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+}
+
+// Nov 1 notes (batch 9b): "Not now" on a task's "Set a date" prompt.
+export async function dismissDatePrompt(taskId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const result = await supabase.rpc("dismiss_task_date_prompt", { target_task: id(taskId) });
+    if (result.error?.code === "PGRST202") return;
+    check(result);
+  });
+}
+
+// Undo a tick (the checklist's Undo): reopens the task, and when completing it just made the next
+// occurrence of a repeating task (in the last ten minutes, still open), moves that occurrence to the
+// Trash so the list doesn't hold both. Both are ordinary edits through RLS.
+export async function undoTaskCompleted(taskId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const task = id(taskId);
+    const before = await supabase.from("tasks").select("recurrence_next_id").eq("id", task).maybeSingle();
+    check(before);
+    checkUpdated(await supabase.from("tasks").update({ completed_at: null }).eq("id", task).select("id"));
+    const nextId = before.data?.recurrence_next_id;
+    if (!nextId) return;
+    await supabase
+      .from("tasks")
+      .update({ deleted_at: now() })
+      .eq("id", nextId)
+      .is("completed_at", null)
+      .is("deleted_at", null)
+      .gt("created_at", new Date(Date.now() - 10 * 60_000).toISOString())
+      .select("id");
+  });
+}
+
 // Star or unstar a project for the signed-in person (the sidebar's Starred section). Starring needs
 // Viewer+ of the project; unstarring always works.
 export async function setProjectStarred(projectId: string, starred: boolean): Promise<ActionResult> {
@@ -1840,6 +1949,7 @@ function recurrence(value: Recurrence | null): Json | null {
     weekdays,
     ends,
     timezone: value.timezone ? timeZone(value.timezone) : undefined,
+    fromCompletion: value.fromCompletion === true,
   });
 }
 

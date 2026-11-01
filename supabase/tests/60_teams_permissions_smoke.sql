@@ -595,12 +595,14 @@ begin
   -- submitter_conversation_status (whether a request's email conversation is on: task Viewers+), and
   -- set_email_conversation_override (workspace admins allow or stop it per request or submitter), and
   -- complete_approval_as_approver (an approval task's approvers — often Commenters — complete it).
+  -- Nov 1 notes (batch 9b) added home_dashboard (Home in one read: the caller's own projects, and the lead
+  -- cards over projects they lead; only projects they're a member of).
   assert exposed =
     'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
     'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
     'complete_approval_as_approver,convert_commenter_members,create_project_from_template,create_review_check,custom_field_has_role,decide_approval,decide_project_access_request,decide_team_join_request,'
     'delete_project_template,duplicate_project,finish_import_run,get_project_integrations,get_public_form,goal_hidden_project_count,hand_off_approval,has_portfolio_role,'
-    'has_project_role,has_task_role,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,'
+    'has_project_role,has_task_role,home_dashboard,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,'
     'is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,'
     'list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,locked_field_value_writable,move_portfolio_project,my_task_cards,my_tasks_layout,open_blocker_count,'
     'portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_access_status,project_field_sharing,project_role,project_schedule_cards,project_section_task_counts,'

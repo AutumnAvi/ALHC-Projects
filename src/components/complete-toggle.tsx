@@ -4,6 +4,12 @@ import { Check, Clock, Send, ThumbsUp } from "lucide-react";
 import { completeModeRowLabel, completeModeTooltip, type CompleteMode } from "@/lib/approval-complete";
 import type { TaskKind } from "@/lib/task-kinds";
 
+// Nov 1 notes (batch 9b): "lg" is the checklist's (My tasks, Home): a 22px circle whose tap area reaches
+// 44px around it (a transparent ::before), for thumbs.
+export function toggleDimensions(size: "sm" | "md" | "lg" = "md") {
+  return size === "sm" ? "size-4" : size === "lg" ? "relative size-[22px] before:absolute before:-inset-[11px] before:content-['']" : "size-[18px]";
+}
+
 // The completion control for a task row. Milestones get a diamond, approval tasks a thumbs-up (only their
 // approvers complete them; everyone else gets ApprovalToggle below — Oct 29 notes, batch 7).
 // readOnly (people who can't edit the task — Viewers, Commenters): the same shape as a plain status
@@ -20,12 +26,12 @@ export function CompleteToggle({
   completed: boolean;
   onToggle?: () => void;
   label: string;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   disabled?: boolean;
   readOnly?: boolean;
   kind?: TaskKind;
 }) {
-  const dimensions = size === "sm" ? "size-4" : "size-[18px]";
+  const dimensions = toggleDimensions(size);
   const idle = kind === "approval" ? "border-zinc-300 text-zinc-400" : "border-zinc-300 text-transparent";
   // Asana's completion green: a green check on hover, a filled green circle once done.
   const hover = disabled || readOnly ? "" : kind === "milestone" ? "group-hover/toggle:border-green-600 group-hover/toggle:text-green-600" : "hover:border-green-600 hover:text-green-600";
@@ -106,10 +112,10 @@ export function ApprovalToggle({
 }: {
   mode: Exclude<CompleteMode, "complete">;
   title: string;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   onAction?: () => void;
 }) {
-  const dimensions = size === "sm" ? "size-4" : "size-[18px]";
+  const dimensions = toggleDimensions(size);
   const tone =
     mode === "ready"
       ? "border-dashed border-accent-400 text-accent-600 hover:border-solid hover:bg-accent-50"
