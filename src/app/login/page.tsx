@@ -6,6 +6,7 @@ import { SetupRequired } from "@/components/setup-required";
 import Link from "next/link";
 import { getViewer, safeNextPath } from "@/lib/auth";
 import { isGoogleAuthEnabled, isSupabaseConfigured } from "@/lib/env";
+import { PASSWORD_UPDATED } from "@/lib/password-reset";
 import { GoogleSignInButton } from "./google-sign-in-button";
 import { PasswordSignInForm } from "./password-sign-in-form";
 
@@ -18,6 +19,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const params = await searchParams;
   const next = safeNextPath(typeof params.next === "string" ? params.next : null);
   const error = typeof params.error === "string" ? params.error : null;
+  const passwordUpdated = params.reset === "done";
 
   const { user, allowlisted } = await getViewer();
   if (user) redirect(allowlisted ? next : "/auth/denied");
@@ -28,6 +30,11 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
       <p className="text-sm text-zinc-600">
         Sign in with your email and password. Access is limited to approved team members.
       </p>
+      {passwordUpdated ? (
+        <p role="status" className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {PASSWORD_UPDATED}
+        </p>
+      ) : null}
       {error ? (
         <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}

@@ -38,6 +38,7 @@ import type { CustomizeDetails } from "@/lib/project-page";
 import type { StatusTemplate } from "@/lib/status-templates";
 import type { TaskNumbering } from "@/lib/request-numbers";
 import { loadCustomizeDetails } from "@/lib/project-page-actions";
+import { SCROLL_AREA } from "@/components/shell/shell-frame";
 
 export type CustomizeRule = {
   id: string;
@@ -170,7 +171,7 @@ export function CustomizePanel({ projectId, summary }: { projectId: string; summ
               <X className="size-4" />
             </button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          <div className={`min-h-0 flex-1 px-3 py-3 ${SCROLL_AREA}`}>
             {view === "home" ? (
               <Home summary={summary} onOpen={setView} />
             ) : view === "rules" ? (

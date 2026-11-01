@@ -11,6 +11,7 @@ import type { TaskSeed } from "@/lib/task-seed";
 import { PANE_FIELDS, PANE_LABEL } from "./pane-styles";
 import { CloseButton, ExpandButton, PANE_HEADER, PaneShell } from "./task-pane-frame";
 import { TaskNumberChips } from "./task-number";
+import { SCROLL_AREA } from "@/components/shell/shell-frame";
 
 // The pane the moment a task is clicked (Oct 19 notes: opening a task must feel instant): the same
 // frame and field grid as the full pane, filled from what the clicked row already showed — name, request
@@ -44,7 +45,7 @@ export function TaskPanePreview({ seed }: { seed: TaskSeed }) {
           <CloseButton />
         </div>
       </div>
-      <div role="status" className="min-h-0 flex-1 overflow-y-auto px-gutter py-4">
+      <div role="status" className={`min-h-0 flex-1 px-gutter py-4 ${SCROLL_AREA}`}>
         <span className="sr-only">Loading the rest of the task…</span>
         {seed.parentTitle ? <p className="mb-1 truncate text-xs text-zinc-500">{seed.parentTitle}</p> : null}
         {/* The number the row showed, as the full pane's chip (it adds the task's other projects' numbers). */}

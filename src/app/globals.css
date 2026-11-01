@@ -58,6 +58,18 @@
     @apply bg-white text-sm text-zinc-900 antialiased;
   }
 
+  /* Nov 1 notes, batch 8 (item 58): while the app or admin frame is on the page the document never
+     scrolls or bounces — every page scrolls inside its own area (src/components/shell/shell-frame.ts
+     says why). Screen only: public pages (sign in, forms, review links) have no frame and scroll as
+     usual, and print lets the page flow (below). */
+  @media screen {
+    html:has(body .app-shell),
+    html:has(body .admin-shell) {
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+  }
+
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-accent-500;
   }
@@ -193,20 +205,26 @@
 
   html,
   body,
-  .app-shell {
+  .app-shell,
+  .admin-shell {
     height: auto !important;
+    overflow: visible !important;
   }
 
-  .app-shell {
+  .app-shell,
+  .admin-shell {
     display: block !important;
   }
 
   .app-main,
-  .app-main * {
+  .app-main *,
+  .admin-shell main,
+  .admin-shell main * {
     overflow: visible !important;
   }
 
-  .app-main .min-h-0 {
+  .app-main .min-h-0,
+  .admin-shell .min-h-0 {
     min-height: auto !important;
   }
 

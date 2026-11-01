@@ -22,6 +22,7 @@ import { UnreadBadge, useUnreadCount } from "@/components/shell/unread-count";
 import { Group, NAV_ICON, NAV_LINK } from "@/components/shell/sidebar-group";
 import { SidebarProjects, type SidebarProject } from "@/components/shell/sidebar-projects";
 import type { SidebarFolderState } from "@/lib/sidebar-folders";
+import { SCROLL_AREA } from "@/components/shell/shell-frame";
 
 export type { SidebarProject };
 
@@ -68,7 +69,7 @@ export function SidebarContent({
 
   return (
     <>
-      <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-2 py-3">
+      <nav aria-label="Primary" className={`flex min-h-0 flex-1 flex-col gap-4 px-2 py-3 ${SCROLL_AREA}`}>
         <ul className="flex flex-col gap-px">
           {TOP_LINKS.map((link) => (
             <li key={link.href}>

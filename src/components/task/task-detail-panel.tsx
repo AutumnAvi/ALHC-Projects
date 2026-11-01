@@ -33,6 +33,7 @@ import { paneTaskNumbers } from "@/lib/request-numbers";
 import { TaskNumberChips } from "./task-number";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
+import { SCROLL_AREA } from "@/components/shell/shell-frame";
 
 export function TaskDetailPanel({
   task,
@@ -277,7 +278,7 @@ export function TaskDetailPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className={`min-h-0 flex-1 ${SCROLL_AREA}`}>
         <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
           {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
