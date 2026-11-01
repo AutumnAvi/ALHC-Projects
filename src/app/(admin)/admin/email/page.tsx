@@ -5,7 +5,7 @@ import { AdminPage } from "@/components/admin/admin-chrome";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { SenderNameSettings } from "@/components/workspace/email-settings";
-import { EmailDeliveryCard, fromAddress } from "@/components/workspace/email-status";
+import { EmailDeliveryCard, fromAddress, noReplyFromAddress } from "@/components/workspace/email-status";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { RecentEmails, SuppressionList } from "@/components/admin/email-deliveries";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
@@ -56,7 +56,7 @@ export default async function AdminEmailPage() {
 
   return (
     <AdminPage title="Email" description="How the workspace’s emails look and whether they went out.">
-      <SenderNameSettings senderName={workspace?.emailSenderName ?? null} fromAddress={fromAddress()} isAdmin />
+      <SenderNameSettings senderName={workspace?.emailSenderName ?? null} fromAddress={fromAddress()} noReplyAddress={noReplyFromAddress()} isAdmin />
       <EmailDeliveryCard isAdmin invitesHref="/admin/users?tab=invited" />
 
       {summary && recent && suppressions ? (

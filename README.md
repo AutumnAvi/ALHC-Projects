@@ -319,7 +319,7 @@ npm run db:test   # applies migrations to a throwaway local Postgres and runs th
 ## Setup: email (Resend) and the workflows cron
 
 1. In [Resend](https://resend.com), verify a sending domain and create an API key.
-2. Set `RESEND_API_KEY` and `EMAIL_FROM` (e.g. `ALHC Projects <requests@yourdomain.com>`). Emails are no-reply except responses to form submitters (see “Setup: reply by email”); `EMAIL_REPLY_TO` is no longer read.
+2. Set `RESEND_API_KEY` and `EMAIL_FROM` (e.g. `ALHC Projects <requests@yourdomain.com>`). Emails are no-reply except responses to form submitters (see “Setup: reply by email”); `EMAIL_REPLY_TO` is no longer read. Optionally set `EMAIL_FROM_NOREPLY` (e.g. `no-reply@yourdomain.com`, same verified domain): every email that can't be answered by email — comment and notification emails, invites, rule / due / form confirmation emails, digests, report emails, review check emails, design tests — comes from it and ends with “Do not reply to this email.”, while responses to a form's submitter come from `EMAIL_FROM` and say “You can reply to this email to respond.” at the top. Unset = `EMAIL_FROM` for everything. The workspace's sender name (Admin console → Email) goes in front of either address.
 3. Set `SUPABASE_SERVICE_ROLE_KEY` (server-only). The app uses it only to claim and deliver queued emails and for the cron route.
 4. Set `CRON_SECRET` to a long random string. `vercel.json` calls `/api/cron/workflows` daily, and Vercel sends the secret automatically. On a Pro plan you can make it more frequent (e.g. `*/15 * * * *`), or call it from any scheduler with `Authorization: Bearer <CRON_SECRET>`.
 
@@ -456,7 +456,8 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | `NEXT_PUBLIC_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon (or publishable) key |
    | `SUPABASE_SERVICE_ROLE_KEY` | Server-only. Needed to deliver email, Slack messages, and webhooks, and to run the cron route |
-   | `RESEND_API_KEY`, `EMAIL_FROM` | Optional. Email via Resend; mocked when unset |
+   | `RESEND_API_KEY`, `EMAIL_FROM` | Optional. Email via Resend; mocked when unset. `EMAIL_FROM` sends the replyable emails (responses to form submitters) |
+   | `EMAIL_FROM_NOREPLY` | Optional. No-reply sender (e.g. `no-reply@yourdomain.com`) for every email that can't be replied to; defaults to `EMAIL_FROM` |
    | `INTEGRATIONS_MOCK` | Optional. `true` logs Slack/webhook deliveries instead of sending them |
    | `CRON_SECRET` | Secret for `/api/cron/workflows` (also stored in Supabase Vault as `alhc_cron_secret` for the every-minute delivery kick) |
    | `RESEND_WEBHOOK_SECRET` | Optional. Resend webhook signing secret (`whsec_…`) for reply by email, email forwarding, and bounce / complaint tracking; without it all three are off |

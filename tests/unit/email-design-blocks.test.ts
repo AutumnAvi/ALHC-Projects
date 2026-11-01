@@ -144,7 +144,7 @@ test("designed headings: {email_heading} is the email's own; empty = the email's
 test("every block hides from the HTML and the text part", () => {
   process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
   const all = renderEmail(comment, { design: internal({ logoPath: "", headerText: "Studio", introMessage: "Hello there" }) });
-  for (const piece of ["Studio", "Hello there", "Looks good to me", "Task: ", "Open task", "Replies to this email aren’t read", "Sent by ALHC Projects"]) {
+  for (const piece of ["Studio", "Hello there", "Looks good to me", "Task: ", "Open task", "You follow this task", "Sent by ALHC Projects", "Do not reply to this email. Open the task to answer."]) {
     assert.ok(all.text.includes(piece), `shown by default: ${piece}`);
   }
   assert.ok(all.html.includes("<h1"));
@@ -156,7 +156,7 @@ test("every block hides from the HTML and the text part", () => {
     [{ showBody: false }, "Looks good to me", "Looks good to me"],
     [{ showDetails: false }, "Task: ", ">Task</td>"],
     [{ showButton: false }, "Open task", ">Open task</a>"],
-    [{ showNotice: false }, "Replies to this email aren’t read", "Replies to this email aren’t read"],
+    [{ showNotice: false }, "You follow this task", "You follow this task"],
     [{ showFooter: false }, "Sent by ALHC Projects", "Sent by ALHC Projects"],
   ];
   for (const [flag, text, html] of cases) {
@@ -164,6 +164,8 @@ test("every block hides from the HTML and the text part", () => {
     const email = renderEmail(comment, { design: internal({ headerText: "Studio", introMessage: "Hello there", ...flag }) });
     assert.ok(!email.text.includes(text), `hidden from the text: ${text}`);
     assert.ok(!email.html.includes(html), `hidden from the HTML: ${html}`);
+    // Nov 1 notes (batch 8): no switch hides the no-reply footnote.
+    assert.ok(email.text.includes("Do not reply to this email.") && email.html.includes("Do not reply to this email."), "the footnote stays");
   }
 
   const noHeading = renderEmail(comment, { design: internal({ showHeading: false }) });
@@ -178,10 +180,13 @@ test("every block hides from the HTML and the text part", () => {
 
 test("small print: custom text replaces the email's own; the reply line always stays", () => {
   const custom = renderEmail(comment, { design: internal({ noticeText: "Questions? Ask {commenter_name}." }, { commenter_name: "Avery" }) });
-  assert.ok(custom.text.includes("Questions? Ask Avery.") && !custom.text.includes("Replies to this email aren’t read"));
+  assert.ok(custom.text.includes("Questions? Ask Avery.") && !custom.text.includes("You follow this task"));
+  assert.ok(custom.text.endsWith("Do not reply to this email. Open the task to answer."), "the footnote isn't small print: it stays");
   const hidden = renderEmail(response, { canReply: true, design: requester({ showNotice: false, showBody: false }) });
   assert.ok(hidden.text.startsWith(SUBMITTER_REPLY_MARKER), "the reply marker stays (replies are cut at it)");
-  assert.ok(!hidden.text.includes("Reply to this email to answer"), "the small print is gone");
+  assert.ok(!hidden.text.includes("Your reply is added to your request"), "the small print is gone");
+  assert.ok(hidden.text.includes("You can reply to this email to respond."), "the reply line stays");
+  assert.ok(!hidden.text.includes("Do not reply"), "a replyable email has no no-reply footnote");
   assert.ok(hidden.text.includes("Here is the draft."), "a response always carries its message");
 });
 
@@ -198,7 +203,7 @@ test("responses: the heading no longer repeats the subject, and the stored subje
 test("the preview renders what the drain sends: real names, the reply rule, each sample", () => {
   const off = renderDesignSample("requester", DESIGN_DEFAULTS.requester, { sample: "response", values: { form_name: "Logo form" }, canReply: false });
   assert.equal(off.subject, 'Re: "Logo form" submission received');
-  assert.ok(!off.text.includes(SUBMITTER_REPLY_MARKER) && off.text.includes("Replies to this email aren’t read."), "no reply line without inbound email");
+  assert.ok(!off.text.includes(SUBMITTER_REPLY_MARKER) && off.text.includes("Do not reply to this email."), "no reply line without inbound email");
   const on = renderDesignSample("requester", DESIGN_DEFAULTS.requester, { sample: "response", canReply: true });
   assert.ok(on.text.startsWith(SUBMITTER_REPLY_MARKER));
   const templated = renderDesignSample(

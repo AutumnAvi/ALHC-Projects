@@ -108,8 +108,10 @@ function renderCommentEmail(
     {
       subject: row.subject ?? `${author} ${verb} “${taskTitle}”`,
       action: link ? { label: "Open task", href: link } : null,
+      // Nov 1 notes (batch 8): the no-reply footnote says where to answer instead ("Do not reply to this
+      // email. Open the task to answer."); replies to comment emails never reach the task.
+      noReplyHint: "Open the task to answer.",
       footer: [
-        "Open the task to reply. Replies to this email aren’t read.",
         p.mentioned === true
           ? `You were @mentioned. Choose which emails you get in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`
           : `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
@@ -151,11 +153,10 @@ export function renderSubmitterResponseEmail(
       subjectFixed: true,
       alwaysBody: true,
       preface: canReply ? SUBMITTER_REPLY_MARKER : null,
-      footer: [
-        canReply
-          ? "Reply to this email to answer. Your reply is added to your request; only the text above the quoted message is kept."
-          : "Replies to this email aren’t read.",
-      ],
+      // Nov 1 notes (batch 8): "You can reply to this email to respond." at the top when replies come
+      // back; otherwise the "Do not reply to this email." footnote like every other email.
+      replyable: canReply,
+      footer: canReply ? ["Your reply is added to your request; only the text above the quoted message is kept."] : [],
       design,
     },
   );
@@ -403,6 +404,29 @@ export function renderEmail(
 
 export function isEmailConfigured() {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+}
+
+// Nov 1 notes (batch 8): the configured sender of an email. Replyable emails (a response to a form's
+// submitter while replies by email are on: it carries the thread's Reply-To) come from EMAIL_FROM; every
+// other email from EMAIL_FROM_NOREPLY (e.g. "no-reply@<sending domain>"), else EMAIL_FROM when that isn't
+// set. Null without EMAIL_FROM (nothing is sent then).
+export function configuredSender(replyable: boolean): string | null {
+  const main = process.env.EMAIL_FROM?.trim() || null;
+  if (!main) return null;
+  if (replyable) return main;
+  return process.env.EMAIL_FROM_NOREPLY?.trim() || main;
+}
+
+// The address part of a configured sender ("Name <a@b>" or "a@b"); shown in settings and previews.
+export function senderAddress(configured: string | null): string | null {
+  if (!configured?.trim()) return null;
+  return configured.match(/<([^<>]+)>\s*$/)?.[1]?.trim() ?? configured.trim();
+}
+
+// The From header an email gets: its sender (configuredSender) with the workspace's sender name in front.
+export function fromFor(replyable: boolean, senderName: string | null): string | null {
+  const configured = configuredSender(replyable);
+  return configured ? fromHeader(configured, senderName) : null;
 }
 
 // The From header: EMAIL_FROM, with the workspace's sender name (Settings → Workspace → Email) in front
@@ -711,6 +735,9 @@ export async function sendEmailNow(
   }
   const admin = createAdminClient();
   const senderName = admin ? await workspaceSenderName(admin) : null;
+  // No Reply-To here: a review check's email and every test are no-reply; a test of a replyable email
+  // (a response to a submitter) comes from the same sender as the real one would.
+  const from = fromFor(email.replyable === true, senderName)!;
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -719,7 +746,7 @@ export async function sendEmailNow(
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
     },
     body: JSON.stringify({
-      from: fromHeader(process.env.EMAIL_FROM!, senderName),
+      from,
       to: [to],
       subject: email.subject.slice(0, 300),
       text: email.text,
@@ -773,7 +800,8 @@ async function deliver(
       "Idempotency-Key": `outbox-${row.id}`,
     },
     body: JSON.stringify({
-      from: fromHeader(process.env.EMAIL_FROM!, senderName),
+      // Only an email with a Reply-To the app reads comes from EMAIL_FROM; the rest from the no-reply sender.
+      from: fromFor(Boolean(reply), senderName)!,
       to: [row.to_email],
       subject: email.subject,
       text: email.text,
