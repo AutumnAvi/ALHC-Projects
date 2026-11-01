@@ -34,10 +34,10 @@ test("Commenter is greyed out (not hidden) while the workspace has it off", () =
   assert.ok(!current.find((o) => o.value === "commenter")?.disabled);
 });
 
-test("roles the viewer can't give are greyed out with the reason", () => {
+test("roles the viewer can't give aren't listed (Nov 1 notes, batch 11); owners while adding are greyed out", () => {
   const admin = projectRoleOptions({ grantable: assignableRoles("admin", true), allowCommenter: true });
-  assert.equal(admin.find((o) => o.value === "owner")?.disabled, true);
-  assert.match(admin.find((o) => o.value === "owner")?.disabledReason ?? "", /owners/);
+  assert.equal(admin.find((o) => o.value === "owner"), undefined, "an admin can't give Owner, so it isn't offered");
+  assert.ok(admin.some((o) => o.value === "editor" && !o.disabled));
   const inviting = projectRoleOptions({ grantable: assignableRoles("owner", true), allowCommenter: true, inviting: true });
   assert.equal(inviting.find((o) => o.value === "owner")?.disabled, true, "owners are made from the list");
 });
@@ -58,7 +58,6 @@ test("a default role resolves like the database", () => {
 
 test("portfolio and team roles use the same picker", () => {
   assert.deepEqual(portfolioRoleOptions({ grantable: ["admin", "editor", "viewer"] }).map((o) => [o.value, Boolean(o.disabled)]), [
-    ["owner", true],
     ["admin", false],
     ["editor", false],
     ["viewer", false],

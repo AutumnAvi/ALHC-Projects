@@ -233,15 +233,13 @@ describe("Fields list and Edit field", () => {
     assert.ok(html.includes(`${LOCKED_FIELD_NOTE}.`), "the note");
     assert.match(tagWith(html, `id="field-${F1}-name"`), /readOnly=""/);
     assert.ok(!html.includes('aria-label="Add an option"'), "options are shown, not edited");
-    const lockSwitch = tagWith(html, `id="field-${F1}-locked"`);
-    assert.match(lockSwitch, /disabled=""/, "Lock field: greyed out");
-    assert.match(lockSwitch, /checked=""/, "and on");
-    assert.match(html, /Only project Owners and Admins can lock or unlock a field\. Locked since Oct 29, 2026\./);
+    // Nov 1 notes (batch 11): what an Editor can't change isn't shown greyed out — it isn't shown at all.
+    assert.ok(!html.includes(`id="field-${F1}-locked"`), "no Lock field switch");
     assert.doesNotMatch(tagWith(html, `id="field-${F1}-views"`), /disabled=""/, "Show in List and Board isn't greyed out");
     // Publishing a locked field would let an Editor share it into a project of their own and change its
     // values there (custom_fields_06_lock_guard refuses it too).
-    assert.match(tagWith(html, `id="field-${F1}-library"`), /disabled=""/, "Add to field library: greyed out");
-    assert.match(html, new RegExp(`<button type="button" disabled="" data-tooltip="${LOCKED_FIELD_NOTE}"`), "Delete is greyed out");
+    assert.ok(!html.includes(`id="field-${F1}-library"`), "no Add to field library");
+    assert.ok(!html.includes(`data-tooltip="${LOCKED_FIELD_NOTE}"`), "no greyed-out Delete");
   });
 
   it("an Admin changes it and can unlock it", () => {
@@ -290,8 +288,8 @@ describe("Fields list and Edit field", () => {
       />,
       "admin",
     );
-    assert.match(tagWith(here, `id="field-${F1}-locked"`), /disabled=""/, "an Admin of this project only");
-    assert.match(here, /Only Owners and Admins of the project that published this shared field can lock or unlock it\./);
+    // Nov 1 notes (batch 11): an Admin of this project only doesn't see the switch at all.
+    assert.ok(!here.includes(`id="field-${F1}-locked"`), "an Admin of this project only: no Lock switch");
   });
 
   it("never offers the lock on the section-bound Status, or when adding a field", () => {

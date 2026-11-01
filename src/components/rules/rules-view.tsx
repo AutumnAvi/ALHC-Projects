@@ -225,21 +225,26 @@ export function RulesView({
                 }
                 return (
                   <li key={rule.id} className="flex items-start gap-3 px-4 py-3">
-                    <label className="mt-0.5 flex items-center" data-tooltip={rule.enabled ? "Turn off" : "Turn on"}>
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        aria-label={`${rule.name} on`}
-                        checked={rule.enabled}
-                        disabled={pending || !canEdit}
-                        onChange={(e) => setEnabled(rule, e.currentTarget.checked)}
-                        className="peer sr-only"
-                      />
-                      <span
-                        aria-hidden
-                        className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
-                      />
-                    </label>
+                    {/* Nov 1 notes (batch 11): below Admin the switch is hidden; the state reads as text. */}
+                    {canEdit ? (
+                      <label className="mt-0.5 flex items-center" data-tooltip={rule.enabled ? "Turn off" : "Turn on"}>
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          aria-label={`${rule.name} on`}
+                          checked={rule.enabled}
+                          disabled={pending}
+                          onChange={(e) => setEnabled(rule, e.currentTarget.checked)}
+                          className="peer sr-only"
+                        />
+                        <span
+                          aria-hidden
+                          className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+                        />
+                      </label>
+                    ) : (
+                      <span className={`chip mt-0.5 shrink-0 ${rule.enabled ? "text-green-700" : ""}`}>{rule.enabled ? "On" : "Off"}</span>
+                    )}
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-zinc-900">
                         <Link href={`${base}/rules/${rule.id}`} className="hover:underline">
@@ -373,9 +378,10 @@ export function RulesView({
         </>
       )}
 
-      <RuleTemplatesGallery projectId={projectId} ctx={context} canEdit={canEdit} />
+      {/* Nov 1 notes (batch 11): templates only add automations, so they're shown only to those who can. */}
+      {canEdit ? <RuleTemplatesGallery projectId={projectId} ctx={context} canEdit={canEdit} /> : null}
 
-      {presets.length ? (
+      {presets.length && canEdit ? (
         <details className="group mt-6">
           <summary className="cursor-pointer text-sm font-semibold text-zinc-900 marker:text-zinc-400">
             More templates (fill in the blanks)

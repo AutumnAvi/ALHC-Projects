@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { FormEditor } from "@/components/forms/form-editor";
 import { FormsList } from "@/components/forms/forms-list";
-import { RoleGate } from "@/components/project/project-access";
 import {
   getForm,
   getProjectRole,
@@ -43,9 +42,7 @@ export default async function FormEditorPage({ params }: PageProps<"/projects/[p
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
-      <RoleGate need="admin" what="forms">
-        <FormsList projectId={projectId} forms={forms} origin={origin} />
-      </RoleGate>
+      <FormsList projectId={projectId} forms={forms} origin={origin} />
       <FormEditor
         key={form.id}
         form={form}

@@ -88,8 +88,10 @@ test("49 × 55: a shared number field's Symbol is read-only for people who can't
   const readOnly = render(
     <FieldEditorDialog projectId="p1" field={field({ libraryFieldId: "src" })} sharing={sharing()} sectionNames={[]} batch4 onClose={noop} />,
   );
-  assert.ok(disabled(symbolInput(readOnly)), "the Symbol box is disabled");
-  assert.ok(/aria-label="Use €"[^>]*disabled=""|disabled=""[^>]*aria-label="Use €"/.test(readOnly), "so are the quick picks");
+  // Nov 1 notes (batch 11): no disabled box or quick picks — the symbol reads as text.
+  assert.ok(!symbolInput(readOnly), "no Symbol box");
+  assert.ok(!readOnly.includes('aria-label="Use €"'), "no quick picks");
+  assert.match(textOf(readOnly), /Symbol: \$/);
   assert.match(textOf(readOnly), /Only editors of the project that published it can change/);
   assert.ok(!disabled(buttonTag(readOnly, "Save")), "Save still works for the per-project settings");
 
@@ -109,7 +111,7 @@ test("49 × 55: a shared number field's Symbol is read-only for people who can't
 test("49 × 51: a locked number field's Symbol is read-only below Owner / Admin", () => {
   const locked = field({ locked: true, lockedBy: "olive", lockedAt: "2026-10-29T12:00:00Z" });
   const editor = render(<FieldEditorDialog projectId="p1" field={locked} sectionNames={[]} batch4 onClose={noop} />, "editor");
-  assert.ok(disabled(symbolInput(editor)), "an Editor can't change a locked field's symbol");
+  assert.ok(!symbolInput(editor), "an Editor can't change a locked field's symbol: no box (batch 11)");
   assert.ok(textOf(editor).includes(`${LOCKED_FIELD_NOTE}.`), "and is told why");
   const owner = render(<FieldEditorDialog projectId="p1" field={locked} sectionNames={[]} batch4 onClose={noop} />, "owner");
   assert.ok(symbolInput(owner) && !disabled(symbolInput(owner)), "an Owner can");

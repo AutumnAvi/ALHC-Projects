@@ -112,6 +112,21 @@ export function SettingsPanel({
         ) : tab === "notifications" ? (
           data.me.notifications ? (
             <div className="flex flex-col gap-8">
+              {/* Nov 1 notes (batch 11): the email digest first, where people look for it. */}
+              {data.me.emailPreferences ? (
+                <div className="rounded-lg border border-zinc-200 p-4">
+                  <EmailDigestSettings
+                    email={data.me.email}
+                    preferences={data.me.emailPreferences}
+                    sending={data.email.sending}
+                    workWeek={data.me.workWeek}
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-500">
+                  The email digest and scheduled report emails need this release’s database update.
+                </p>
+              )}
               <NotificationMatrix
                 email={data.me.email}
                 settings={{
@@ -122,17 +137,6 @@ export function SettingsPanel({
                 sending={data.email.sending}
                 replyByEmail={data.email.replyByEmail}
               />
-              {data.me.emailPreferences ? (
-                <EmailDigestSettings
-                  email={data.me.email}
-                  preferences={data.me.emailPreferences}
-                  sending={data.email.sending}
-                />
-              ) : (
-                <p className="text-xs text-zinc-500">
-                  An Inbox email digest and scheduled report emails need this release’s database update.
-                </p>
-              )}
             </div>
           ) : (
             <div className="flex flex-col gap-6">

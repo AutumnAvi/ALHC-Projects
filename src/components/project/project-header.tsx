@@ -448,14 +448,17 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
                 <FileInput className="size-4 text-zinc-500" /> Import from Asana
               </MenuItem>
             ) : null}
-            <MenuItem
-              onClick={() => {
-                close();
-                router.push(`${base}/settings/trash`);
-              }}
-            >
-              <Trash className="size-4 text-zinc-500" /> Trash
-            </MenuItem>
+            {/* Nov 1 notes (batch 11): the Trash is Editors+ only, so it isn't offered below that. */}
+            {canEditViews ? (
+              <MenuItem
+                onClick={() => {
+                  close();
+                  router.push(`${base}/settings/trash`);
+                }}
+              >
+                <Trash className="size-4 text-zinc-500" /> Trash
+              </MenuItem>
+            ) : null}
             <MenuItem
               onClick={async () => {
                 close();
@@ -782,26 +785,28 @@ function ViewTab({
                   >
                     <ChevronRight className="size-4 text-zinc-500" /> Move right
                   </MenuItem>
-                  <MenuItem
-                    danger
-                    // The default view is the Owners' choice; only they can take it away.
-                    disabled={!canDelete || (isDefault && !isOwner)}
-                    onClick={async () => {
-                      close();
-                      if (
-                        await confirm({
-                          title: `Delete the view “${view.name}”?`,
-                          message: "Tasks are not affected.",
-                          confirmLabel: "Delete",
-                          tone: "danger",
-                        })
-                      ) {
-                        run(() => deleteView(view.id));
-                      }
-                    }}
-                  >
-                    <Trash2 className="size-4" /> Delete view
-                  </MenuItem>
+                  {/* The default view is the Owners' choice; only they see Delete on it (batch 11: hidden, not disabled). */}
+                  {isDefault && !isOwner ? null : (
+                    <MenuItem
+                      danger
+                      disabled={!canDelete}
+                      onClick={async () => {
+                        close();
+                        if (
+                          await confirm({
+                            title: `Delete the view “${view.name}”?`,
+                            message: "Tasks are not affected.",
+                            confirmLabel: "Delete",
+                            tone: "danger",
+                          })
+                        ) {
+                          run(() => deleteView(view.id));
+                        }
+                      }}
+                    >
+                      <Trash2 className="size-4" /> Delete view
+                    </MenuItem>
+                  )}
                 </>
               ) : null}
               {!mine && personalViews ? (

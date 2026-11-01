@@ -68,92 +68,107 @@ export function GeneralSettings({
         adminOnly
         isAdmin={isAdmin}
       >
-        <div className="flex flex-col gap-5">
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const value = new FormData(e.currentTarget).get("name");
-              if (typeof value === "string" && value.trim() && value.trim() !== workspace.name) {
-                run(() => updateWorkspaceSettings({ name: value }));
-              }
-            }}
-          >
-            <div className="flex min-w-56 flex-1 flex-col gap-1">
-              <label htmlFor="workspace-name" className={LABEL}>
-                Workspace name
-              </label>
-              <input
-                id="workspace-name"
-                name="name"
-                key={workspace.name}
-                defaultValue={workspace.name}
-                required
-                maxLength={100}
-                className="field"
-              />
-            </div>
-            <button type="submit" disabled={pending} className="btn-secondary h-9">
-              Save name
-            </button>
-          </form>
-
-          <div className="flex flex-wrap items-center gap-4">
+        {/* Nov 1 notes (batch 11): members see the name and logo, not a disabled form. */}
+        {!isAdmin ? (
+          <div className="flex items-center gap-4">
             {workspace.logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element -- a public Storage URL, any size
               <img src={workspace.logoUrl} alt={`${workspace.name} logo`} className="size-14 rounded-lg border border-zinc-200 object-contain" />
             ) : (
-              <span
-                aria-hidden
-                className="flex size-14 items-center justify-center rounded-lg bg-zinc-900 text-xl font-semibold text-white"
-              >
+              <span aria-hidden className="flex size-14 items-center justify-center rounded-lg bg-zinc-900 text-xl font-semibold text-white">
                 {initial}
               </span>
             )}
-            <div className="flex flex-col gap-1.5">
-              <span className={LABEL}>Logo</span>
-              <div className="flex flex-wrap gap-2">
+            <p className="text-sm font-medium text-zinc-900">{workspace.name}</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-5">
+            <form
+              className="flex flex-wrap items-end gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const value = new FormData(e.currentTarget).get("name");
+                if (typeof value === "string" && value.trim() && value.trim() !== workspace.name) {
+                  run(() => updateWorkspaceSettings({ name: value }));
+                }
+              }}
+            >
+              <div className="flex min-w-56 flex-1 flex-col gap-1">
+                <label htmlFor="workspace-name" className={LABEL}>
+                  Workspace name
+                </label>
                 <input
-                  ref={fileRef}
-                  id="workspace-logo"
-                  type="file"
-                  accept={LOGO_TYPES.join(",")}
-                  className="sr-only"
-                  onChange={(e) => {
-                    const file = e.currentTarget.files?.[0];
-                    if (file) void uploadLogo(file);
-                  }}
+                  id="workspace-name"
+                  name="name"
+                  key={workspace.name}
+                  defaultValue={workspace.name}
+                  required
+                  maxLength={100}
+                  className="field"
                 />
-                <button
-                  type="button"
-                  disabled={pending || uploading}
-                  onClick={() => fileRef.current?.click()}
-                  className="btn-secondary"
+              </div>
+              <button type="submit" disabled={pending} className="btn-secondary h-9">
+                Save name
+              </button>
+            </form>
+
+            <div className="flex flex-wrap items-center gap-4">
+              {workspace.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- a public Storage URL, any size
+                <img src={workspace.logoUrl} alt={`${workspace.name} logo`} className="size-14 rounded-lg border border-zinc-200 object-contain" />
+              ) : (
+                <span
+                  aria-hidden
+                  className="flex size-14 items-center justify-center rounded-lg bg-zinc-900 text-xl font-semibold text-white"
                 >
-                  <ImageUp className="size-3.5" aria-hidden />
-                  {uploading ? "Uploading…" : workspace.logoUrl ? "Replace logo" : "Upload logo"}
-                </button>
-                {workspace.logoUrl ? (
+                  {initial}
+                </span>
+              )}
+              <div className="flex flex-col gap-1.5">
+                <span className={LABEL}>Logo</span>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    ref={fileRef}
+                    id="workspace-logo"
+                    type="file"
+                    accept={LOGO_TYPES.join(",")}
+                    className="sr-only"
+                    onChange={(e) => {
+                      const file = e.currentTarget.files?.[0];
+                      if (file) void uploadLogo(file);
+                    }}
+                  />
                   <button
                     type="button"
                     disabled={pending || uploading}
-                    onClick={() => run(() => setWorkspaceLogo(null))}
-                    className="btn-ghost text-zinc-600 hover:text-red-700"
+                    onClick={() => fileRef.current?.click()}
+                    className="btn-secondary"
                   >
-                    <Trash2 className="size-3.5" aria-hidden />
-                    Remove
+                    <ImageUp className="size-3.5" aria-hidden />
+                    {uploading ? "Uploading…" : workspace.logoUrl ? "Replace logo" : "Upload logo"}
                   </button>
+                  {workspace.logoUrl ? (
+                    <button
+                      type="button"
+                      disabled={pending || uploading}
+                      onClick={() => run(() => setWorkspaceLogo(null))}
+                      className="btn-ghost text-zinc-600 hover:text-red-700"
+                    >
+                      <Trash2 className="size-3.5" aria-hidden />
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+                <p className="text-xs text-zinc-500">PNG, JPEG, WebP, or GIF up to 2 MB. Square images look best.</p>
+                {logoError ? (
+                  <p role="alert" className="text-xs text-red-600">
+                    {logoError}
+                  </p>
                 ) : null}
               </div>
-              <p className="text-xs text-zinc-500">PNG, JPEG, WebP, or GIF up to 2 MB. Square images look best.</p>
-              {logoError ? (
-                <p role="alert" className="text-xs text-red-600">
-                  {logoError}
-                </p>
-              ) : null}
             </div>
           </div>
-        </div>
+        )}
       </SettingsCard>
 
       <SettingsCard
@@ -168,12 +183,18 @@ export function GeneralSettings({
             <label htmlFor="workspace-default-team-select" className={LABEL}>
               Team
             </label>
-            <DefaultTeamPicker
-              key={workspace.defaultTeamId ?? ""}
-              saved={workspace.defaultTeamId ?? ""}
-              teams={teams}
-              run={run}
-            />
+            {isAdmin ? (
+              <DefaultTeamPicker
+                key={workspace.defaultTeamId ?? ""}
+                saved={workspace.defaultTeamId ?? ""}
+                teams={teams}
+                run={run}
+              />
+            ) : (
+              <p id="workspace-default-team-select" className="text-sm font-medium text-zinc-900">
+                {teams.find((t) => t.id === workspace.defaultTeamId)?.name ?? "None"}
+              </p>
+            )}
           </div>
           <Link href={isAdmin ? "/admin/teams" : "/settings/workspace/teams"} className="btn-ghost h-9">
             Manage teams

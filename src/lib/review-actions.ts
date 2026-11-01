@@ -3,7 +3,7 @@
 // Oct 26 notes (batch 3): review checks from the task pane, with the signed-in person's own client (RLS and
 // the definer RPCs' Editor checks decide; never the service role). Sending creates the round in the
 // database (which generates the link's token and keeps only its hash), then emails the link straight away
-// with the requester design: the token can't wait in the outbox, where task readers can see rows.
+// with the built-in requester look: the token can't wait in the outbox, where task readers can see rows.
 
 import { refresh } from "next/cache";
 import { getViewer } from "@/lib/auth";
@@ -82,31 +82,8 @@ async function emailRound(
         .select("id, file_name, content_type, storage_path, size_bytes")
         .in("id", assetIds.map((a) => a.attachmentId)),
     ]);
-    const rootId = task.data?.root_task_id ?? taskId;
     // The request's project (Oct 29 notes, 55b: no home project) is the one the database chose for this
-    // round with the sender's access, so the email and the review page name the same project. Its form's
-    // design applies when that project is the form's.
-    const projectId = review.project?.id ?? null;
-    const form = projectId
-      ? await supabase
-          .from("form_submissions")
-          .select("form_id")
-          .eq("task_id", rootId)
-          .is("deleted_at", null)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle()
-      : { data: null };
-    const formProject = form.data?.form_id
-      ? (await supabase.from("forms").select("project_id").eq("id", form.data.form_id).maybeSingle()).data?.project_id
-      : null;
-    const design = projectId
-      ? await supabase.rpc("resolve_email_design", {
-          design_kind: "requester",
-          target_project: projectId,
-          target_form: formProject === projectId ? (form.data?.form_id ?? undefined) : undefined,
-        })
-      : { data: null };
+    // round with the sender's access, so the email and the review page name the same project.
     const byId = new Map((attachments.data ?? []).map((a) => [a.id, a] as const));
     // Oct 27 notes (batch 5): thumbnails of the images and PDFs (first page), drawn on the server and
     // stored with the Editor's own client, signed until the link expires. Only when an email can go out;
@@ -140,7 +117,6 @@ async function emailRound(
           ? [{ assetId, name: a.file_name, contentType: a.content_type, thumbnailUrl: thumb?.url ?? null, thumbnailWidth: thumb?.width ?? null }]
           : [];
       }),
-      design: design.data ?? null,
     });
     const outcome = await sendEmailNow(review.recipientEmail, email, "review check");
     return outcome === "sent" ? { emailed: true } : { emailed: false, link: urls.page };

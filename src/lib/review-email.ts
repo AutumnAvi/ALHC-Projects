@@ -1,11 +1,11 @@
 import "server-only";
-import { applyDesign, defaultAppliedDesign, designFromJson, type AppliedDesign } from "@/lib/email-design";
-import { emailLogoUrl } from "@/lib/email";
+import { applyDesign, DESIGN_DEFAULTS, type AppliedDesign } from "@/lib/email-design";
 import { escapeHtml, layout, type Rendered } from "@/lib/email-layout";
 import { REVIEW_LINK_DAYS, reviewMediaKind, roundLabel } from "@/lib/review-checks";
 
-// Oct 26 notes (batch 3) / Oct 27 notes (batch 5): the review check email. The project's (or the request
-// form's) requester design — logo, accent, header, sign-off — then the sender's message, the files (a
+// Oct 26 notes (batch 3) / Oct 27 notes (batch 5): the review check email. The built-in requester look
+// (Nov 1 notes, batch 11: emails are hard-coded; no stored design applies) — the project's name as the
+// header, the accent, the sign-off — then the sender's message, the files (a
 // thumbnail of each image and each PDF's first page, drawn on the server and linked through a signed link
 // that lasts as long as the review link; a file tile for anything else), each opening that file on the
 // review page, and two buttons: Approve and Leave feedback (both open the review page; nothing is decided
@@ -34,8 +34,6 @@ export type ReviewEmailInput = {
   projectName: string | null;
   message: string | null;
   assets: ReviewEmailAsset[];
-  // resolve_email_design("requester", project, form) as the database returned it (null: the default look).
-  design: unknown;
 };
 
 // The email lists this many files; the rest are counted ("and 3 more files").
@@ -90,14 +88,11 @@ function fileRow(asset: ReviewEmailAsset, href: string) {
 
 export function renderReviewEmail(input: ReviewEmailInput): Rendered {
   const urls = reviewUrls(input.origin, input.token);
-  const design: AppliedDesign = input.design
-    ? applyDesign(
-        "requester",
-        designFromJson("requester", input.design),
-        { requester_name: input.recipientName, task_name: input.taskTitle, project_name: input.projectName },
-        { logoUrl: emailLogoUrl, buttonHref: null },
-      )
-    : defaultAppliedDesign("requester");
+  const design: AppliedDesign = applyDesign("requester", DESIGN_DEFAULTS.requester, {
+    requester_name: input.recipientName,
+    task_name: input.taskTitle,
+    project_name: input.projectName,
+  });
   const heading = `Please review: ${input.taskTitle}`;
   const greeting = input.recipientName ? `Hi ${input.recipientName.split(/\s+/)[0]},` : "Hi,";
   const count = input.assets.length === 1 ? "a file" : `${input.assets.length} files`;

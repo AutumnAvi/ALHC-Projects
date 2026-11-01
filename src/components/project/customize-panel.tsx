@@ -215,6 +215,7 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
   const openForms = summary.forms.filter((f) => f.open).length;
   const emailRules = summary.rules.filter((r) => r.actionTypes.includes("send_email")).length;
   const appRules = summary.rules.filter((r) => r.actionTypes.some((t) => t === "send_slack" || t === "call_webhook")).length;
+  const canManage = useProjectPermissions().canManage;
   return (
     <ul className="flex flex-col gap-2">
       <CardRow
@@ -246,13 +247,16 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         meta="Automation emails, form confirmations, comment emails"
         onClick={() => onOpen("emails")}
       />
-      <CardRow
-        icon={Blocks}
-        label="Apps"
-        count={appRules || undefined}
-        meta="Slack, webhooks, inbound webhooks"
-        onClick={() => onOpen("apps")}
-      />
+      {/* Nov 1 notes (batch 11): apps are Admin+ only, so below Admin the card isn't shown at all. */}
+      {canManage ? (
+        <CardRow
+          icon={Blocks}
+          label="Apps"
+          count={appRules || undefined}
+          meta="Slack, webhooks, inbound webhooks"
+          onClick={() => onOpen("apps")}
+        />
+      ) : null}
       <CardRow
         icon={ListChecks}
         label="Task types and templates"
@@ -424,24 +428,31 @@ function RulesView({ base, back, rules }: { base: string; back: string; rules: C
         <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
           {shown.map((rule) => (
             <li key={rule.id} className="flex items-center gap-2.5 px-3 py-2">
-              <label className="flex shrink-0 items-center" data-tooltip={rule.enabled ? "Turn off" : "Turn on"}>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label={`${rule.name} on`}
-                  checked={rule.enabled}
-                  disabled={!canEdit || pending}
-                  onChange={(e) => {
-                    const enabled = e.currentTarget.checked;
-                    run(() => setRuleEnabled(rule.id, enabled), () => setEnabled({ id: rule.id, enabled }));
-                  }}
-                  className="peer sr-only"
-                />
-                <span
-                  aria-hidden
-                  className="relative inline-block h-4 w-7 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-3 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
-                />
-              </label>
+              {/* Nov 1 notes (batch 11): below Admin the switch is hidden; the state reads as text. */}
+              {canEdit ? (
+                <label className="flex shrink-0 items-center" data-tooltip={rule.enabled ? "Turn off" : "Turn on"}>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label={`${rule.name} on`}
+                    checked={rule.enabled}
+                    disabled={pending}
+                    onChange={(e) => {
+                      const enabled = e.currentTarget.checked;
+                      run(() => setRuleEnabled(rule.id, enabled), () => setEnabled({ id: rule.id, enabled }));
+                    }}
+                    className="peer sr-only"
+                  />
+                  <span
+                    aria-hidden
+                    className="relative inline-block h-4 w-7 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-3 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+                  />
+                </label>
+              ) : (
+                <span className={`w-7 shrink-0 text-2xs ${rule.enabled ? "font-medium text-green-700" : "text-zinc-500"}`}>
+                  {rule.enabled ? "On" : "Off"}
+                </span>
+              )}
               <Link href={ruleHref(base, back, rule.id)} className="min-w-0 flex-1 rounded hover:bg-zinc-50">
                 <span className="block truncate text-sm text-zinc-900">{rule.name}</span>
                 <span className="flex items-center gap-1 truncate text-xs text-zinc-500">
@@ -591,11 +602,6 @@ function EmailsView({
   return (
     <div>
       <Intro>Everything this project emails: automation emails, form confirmations, and comment emails to followers.</Intro>
-      <SubHeading>Design</SubHeading>
-      <p className="text-xs text-zinc-500">
-        The logo, colors, header, and sign-off of this project’s emails (and of each form’s emails to requesters).
-      </p>
-      <PanelLink href={`${base}/settings/emails`}>Open email designs</PanelLink>
       <SubHeading>Automation emails</SubHeading>
       {emailRules.length ? (
         <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
@@ -647,9 +653,7 @@ function EmailsView({
           </p>
           <PanelLink href={`${base}/settings/deliveries`}>Open deliveries</PanelLink>
         </>
-      ) : (
-        <p className="text-xs text-zinc-500">Project admins see delivery status and retry failed emails.</p>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -667,7 +671,6 @@ function AppsView({ projectId, base }: { projectId: string; base: string }) {
     return (
       <div>
         <Intro>Slack, webhooks, and inbound webhooks connect this project to other tools.</Intro>
-        <p className="text-xs text-zinc-500">Only project admins and owners can see and change apps.</p>
       </div>
     );
   }

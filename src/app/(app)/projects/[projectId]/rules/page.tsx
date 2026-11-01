@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { RoleGate } from "@/components/project/project-access";
 import { RulesView } from "@/components/rules/rules-view";
 import { getProject, listProjectRules, listRecentRuleRuns, listRulePresets, listRuleRunStats } from "@/lib/data";
 import { loadRuleContext } from "./context";
@@ -26,9 +25,7 @@ export default async function ProjectRulesPage({ params }: PageProps<"/projects/
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
-      <RoleGate need="admin" what="rules">
-        <RulesView projectId={projectId} rules={rules} runs={runs} stats={Object.fromEntries(stats)} presets={presets} context={context} />
-      </RoleGate>
+      <RulesView projectId={projectId} rules={rules} runs={runs} stats={Object.fromEntries(stats)} presets={presets} context={context} />
     </main>
   );
 }

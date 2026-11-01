@@ -8,6 +8,7 @@ import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { FilterChips, FilterEditor, type FilterContext } from "@/components/project/filter-editor";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { ExportLink, PrintButton } from "@/components/reports/report-chrome";
@@ -42,6 +43,8 @@ export function DashboardView({
   context: FilterContext;
 }) {
   const [pending, run] = useServerAction();
+  // Nov 1 notes (batch 11): below Editor there is nothing to add, edit, move, or remove — no controls.
+  const canEdit = useProjectPermissions().canEdit;
 
   return (
     <div className="px-gutter py-5">
@@ -58,34 +61,36 @@ export function DashboardView({
             <PrintButton />
           </>
         ) : null}
-        <div className="print:hidden">
-          <Popover
-            label="Add widget"
-            align="end"
-            panelClassName="w-56"
-            buttonClassName="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-accent-600"
-            button={
-              <>
-                <Plus className="size-4" aria-hidden /> Add widget
-              </>
-            }
-          >
-            {(close) =>
-              WIDGET_KINDS.map((kind) => (
-                <MenuItem
-                  key={kind.value}
-                  onClick={() => {
-                    close();
-                    run(() => createWidget(projectId, { kind: kind.value, ...NEW_WIDGET[kind.value] }));
-                  }}
-                >
-                  {kind.value === "count" ? <Hash className="size-4 text-zinc-500" /> : <ChartColumn className="size-4 text-zinc-500" />}
-                  {kind.label}
-                </MenuItem>
-              ))
-            }
-          </Popover>
-        </div>
+        {canEdit ? (
+          <div className="print:hidden">
+            <Popover
+              label="Add widget"
+              align="end"
+              panelClassName="w-56"
+              buttonClassName="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-accent-600"
+              button={
+                <>
+                  <Plus className="size-4" aria-hidden /> Add widget
+                </>
+              }
+            >
+              {(close) =>
+                WIDGET_KINDS.map((kind) => (
+                  <MenuItem
+                    key={kind.value}
+                    onClick={() => {
+                      close();
+                      run(() => createWidget(projectId, { kind: kind.value, ...NEW_WIDGET[kind.value] }));
+                    }}
+                  >
+                    {kind.value === "count" ? <Hash className="size-4 text-zinc-500" /> : <ChartColumn className="size-4 text-zinc-500" />}
+                    {kind.label}
+                  </MenuItem>
+                ))
+              }
+            </Popover>
+          </div>
+        ) : null}
       </div>
 
       {widgets.length === 0 ? (
@@ -93,18 +98,21 @@ export function DashboardView({
           icon={ChartColumn}
           title="No widgets yet"
           action={
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => run(() => installStarterWidgets(projectId))}
-              className="btn-secondary"
-            >
-              Add starter widgets
-            </button>
+            canEdit ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => run(() => installStarterWidgets(projectId))}
+                className="btn-secondary"
+              >
+                Add starter widgets
+              </button>
+            ) : null
           }
         >
-          Start with a few common widgets — incomplete, overdue, completed in the last 7 days, and charts by section and
-          assignee — then edit or remove them.
+          {canEdit
+            ? "Start with a few common widgets — incomplete, overdue, completed in the last 7 days, and charts by section and assignee — then edit or remove them."
+            : "Nobody has added widgets to this project’s dashboard yet."}
         </EmptyState>
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -116,6 +124,7 @@ export function DashboardView({
               context={context}
               first={index === 0}
               last={index === widgets.length - 1}
+              canEdit={canEdit}
             />
           ))}
         </ul>
@@ -152,12 +161,14 @@ function WidgetCard({
   context,
   first,
   last,
+  canEdit,
 }: {
   projectId: string;
   data: WidgetData;
   context: FilterContext;
   first: boolean;
   last: boolean;
+  canEdit: boolean;
 }) {
   const { widget } = data;
   const [, run] = useServerAction();
@@ -180,60 +191,62 @@ function WidgetCard({
         <h3 id={`widget-${widget.id}`} className="min-w-0 flex-1 text-sm font-medium text-zinc-700">
           {widget.title}
         </h3>
-        <div className="print:hidden">
-          <Popover
-            label={`Options for ${widget.title}`}
-            align="end"
-            panelClassName="w-44"
-            buttonClassName="-mt-1 -mr-1 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
-            button={<MoreHorizontal className="size-4" aria-hidden />}
-          >
-            {(close) => (
-              <>
-                <MenuItem
-                  onClick={() => {
-                    close();
-                    setEditing(true);
-                  }}
-                >
-                  <Pencil className="size-4 text-zinc-500" /> Edit
-                </MenuItem>
-                <MenuItem
-                  disabled={first}
-                  onClick={() => {
-                    close();
-                    run(() => moveWidget(widget.id, -1));
-                  }}
-                >
-                  <ChevronUp className="size-4 text-zinc-500" /> Move earlier
-                </MenuItem>
-                <MenuItem
-                  disabled={last}
-                  onClick={() => {
-                    close();
-                    run(() => moveWidget(widget.id, 1));
-                  }}
-                >
-                  <ChevronDown className="size-4 text-zinc-500" /> Move later
-                </MenuItem>
-                <MenuItem
-                  danger
-                  onClick={async () => {
-                    close();
-                    if (await confirm({ title: `Remove the widget “${widget.title}”?`, confirmLabel: "Remove", tone: "danger" })) {
-                      run(() => deleteWidget(widget.id));
-                    }
-                  }}
-                >
-                  <Trash2 className="size-4" /> Remove
-                </MenuItem>
-              </>
-            )}
-          </Popover>
-        </div>
+        {canEdit ? (
+          <div className="print:hidden">
+            <Popover
+              label={`Options for ${widget.title}`}
+              align="end"
+              panelClassName="w-44"
+              buttonClassName="-mt-1 -mr-1 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+              button={<MoreHorizontal className="size-4" aria-hidden />}
+            >
+              {(close) => (
+                <>
+                  <MenuItem
+                    onClick={() => {
+                      close();
+                      setEditing(true);
+                    }}
+                  >
+                    <Pencil className="size-4 text-zinc-500" /> Edit
+                  </MenuItem>
+                  <MenuItem
+                    disabled={first}
+                    onClick={() => {
+                      close();
+                      run(() => moveWidget(widget.id, -1));
+                    }}
+                  >
+                    <ChevronUp className="size-4 text-zinc-500" /> Move earlier
+                  </MenuItem>
+                  <MenuItem
+                    disabled={last}
+                    onClick={() => {
+                      close();
+                      run(() => moveWidget(widget.id, 1));
+                    }}
+                  >
+                    <ChevronDown className="size-4 text-zinc-500" /> Move later
+                  </MenuItem>
+                  <MenuItem
+                    danger
+                    onClick={async () => {
+                      close();
+                      if (await confirm({ title: `Remove the widget “${widget.title}”?`, confirmLabel: "Remove", tone: "danger" })) {
+                        run(() => deleteWidget(widget.id));
+                      }
+                    }}
+                  >
+                    <Trash2 className="size-4" /> Remove
+                  </MenuItem>
+                </>
+              )}
+            </Popover>
+          </div>
+        ) : null}
       </div>
 
-      {editing ? (
+      {editing && canEdit ? (
         <WidgetEditor
           widget={widget}
           context={context}

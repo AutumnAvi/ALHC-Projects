@@ -13,6 +13,9 @@
 
 \set ON_ERROR_STOP 1
 
+-- Nov 1 notes, batch 11: digests only go out on workdays; this suite runs on any day.
+set alhc.digest_every_day = 'on';
+
 create temporary table r3_ids (name text primary key, id uuid) on commit preserve rows;
 grant all on r3_ids to authenticated, anon, service_role;
 create temporary table r3_vals (name text primary key, val text) on commit preserve rows;

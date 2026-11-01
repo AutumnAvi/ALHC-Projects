@@ -428,9 +428,10 @@ declare
   expected text;
   c public.comments;
 begin
-  expected := 'Re: ' || coalesce(public.task_request_label(t) || ' ', '') || (select title from public.tasks where id = t) || ' for Rhea Rowntree';
+  -- Nov 1 notes, batch 11: emails are hard-coded; a stored design's subject template no longer applies.
+  expected := 'Re: "Mail Form" submission received';
   select * into c from public.comments where id = (select id from o19_ids where name = 'ra1');
-  assert c.email_subject = expected, format('the form''s template, filled in: %s (expected %s)', c.email_subject, expected);
+  assert c.email_subject = expected, format('the default subject (designs are no longer applied): %s (expected %s)', c.email_subject, expected);
   assert (select subject from public.email_outbox where payload ->> 'comment_id' = c.id::text) = expected, 'the email''s subject';
   assert (select subject from public.submitter_reply_threads where task_id = t and revoked_at is null) = expected, 'the thread''s subject';
   perform set_config('o19.subject', expected, false);
@@ -462,8 +463,8 @@ begin
   assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'rsub')) = expected, 'a subtask''s response too';
   assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'ra3')) = 'Re: "Mail Form" submission received',
     'a template that renders empty = the default';
-  assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'rb2')) = 'Proj: Mail Other',
-    'the project''s template on another form';
+  assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'rb2')) = 'Re: "Mail Other" submission received',
+    'the project''s template is no longer applied either (batch 11)';
   assert (select email_subject from public.comments where id = (select id from o19_ids where name = 'rb3')) = 'Re: "Mail Other" submission received',
     'an older conversation keeps the subject it started with';
 end $$;

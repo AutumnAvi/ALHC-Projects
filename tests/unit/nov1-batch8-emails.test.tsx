@@ -63,7 +63,6 @@ function review(assets: Parameters<typeof renderReviewEmail>[0]["assets"]) {
     projectName: "Creative requests",
     message: null,
     assets,
-    design: null,
   });
 }
 

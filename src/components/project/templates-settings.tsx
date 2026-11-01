@@ -5,7 +5,7 @@ import { useState } from "react";
 import { LayoutTemplate, ListPlus, Pencil, Plus, Trash2 } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
-import { ReadOnlyNotice, useProjectPermissions } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
@@ -57,6 +57,8 @@ function SaveProjectTemplate({
   const [replaceId, setReplaceId] = useState("");
   const [savedId, setSavedId] = useState<string | null>(null);
 
+  // Nov 1 notes (batch 11): only Admins+ save a project as a template, so nobody else sees this section.
+  if (!canSave) return null;
   return (
     <section aria-labelledby="save-template-heading" className={SECTION}>
       <h2 id="save-template-heading" className={`flex items-center gap-2 ${HEADING}`}>
@@ -164,11 +166,7 @@ function SaveProjectTemplate({
             ) : null}
           </div>
         </form>
-      ) : (
-        <div className="mt-3">
-          <ReadOnlyNotice need="admin" what="save this project as a template" />
-        </div>
-      )}
+      ) : null}
     </section>
   );
 }

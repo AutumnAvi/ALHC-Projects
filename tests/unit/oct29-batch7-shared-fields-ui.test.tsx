@@ -122,7 +122,7 @@ describe("Edit field on a shared field", () => {
     assert.ok(!html.includes('aria-label="Add an option"'), "options are shown, not edited");
     assert.match(html, />Low</);
     assert.match(html, />High</);
-    assert.match(tagWith(html, 'id="field-plc-notify"'), /disabled=""/, "notifications follow the definition");
+    assert.ok(!html.includes('id="field-plc-notify"'), "notifications follow the definition: not shown (batch 11)");
     assert.doesNotMatch(tagWith(html, 'id="field-plc-views"'), /disabled=""/, "Show in List and Board stays per project");
     assert.ok(!html.includes('id="field-plc-library"'), "a placement is never listed in the library itself");
     assert.match(html, /Remove from this project/);

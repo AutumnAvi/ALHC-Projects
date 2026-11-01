@@ -867,16 +867,30 @@ export function ReactionBar({
         const { emoji: glyph, label } = reactionOf(emoji);
         const mine = profileIds.includes(memberId);
         const who = profileIds.map((profileId) => (profileId === memberId ? "You" : nameOf(profileId))).join(", ");
+        // Nov 1 notes (batch 11): people who can't react see the counts as plain chips, not disabled buttons.
+        if (!canReact) {
+          return (
+            <span
+              key={emoji}
+              role="img"
+              aria-label={`${label}: ${who}`}
+              title={who}
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 text-xs tabular-nums text-zinc-700"
+            >
+              <span aria-hidden>{glyph}</span>
+              {profileIds.length}
+            </span>
+          );
+        }
         return (
           <button
             key={emoji}
             type="button"
-            disabled={!canReact}
             aria-pressed={mine}
-            aria-label={`${label}: ${who}${canReact ? (mine ? ". Remove your reaction" : ". Add your reaction") : ""}`}
+            aria-label={`${label}: ${who}${mine ? ". Remove your reaction" : ". Add your reaction"}`}
             title={who}
             onClick={() => react(emoji)}
-            className="inline-flex h-6 items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 text-xs tabular-nums text-zinc-700 hover:border-zinc-300 disabled:hover:border-zinc-200 aria-pressed:border-accent-300 aria-pressed:bg-accent-50 aria-pressed:text-accent-800"
+            className="inline-flex h-6 items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 text-xs tabular-nums text-zinc-700 hover:border-zinc-300 aria-pressed:border-accent-300 aria-pressed:bg-accent-50 aria-pressed:text-accent-800"
           >
             <span aria-hidden>{glyph}</span>
             {profileIds.length}
