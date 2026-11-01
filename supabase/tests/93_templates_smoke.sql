@@ -235,7 +235,8 @@ begin
   -- Forms land closed, pointing at the copies; the custom view replaced the default tabs.
   assert (select not accepting_responses and destination_section_id = new_b from public.forms where id = new_form),
     'the copied form is closed and targets the copied section';
-  assert (select questions -> 1 -> 'maps_to' ->> 'field_id' from public.forms where id = new_form) = new_pri::text,
+  -- (questions -> 0 is the requester's name question every form has since Nov 1 notes, batch 8.)
+  assert (select questions -> 2 -> 'maps_to' ->> 'field_id' from public.forms where id = new_form) = new_pri::text,
     'form field mappings point at the copies';
   assert (select count(*) from public.project_views where project_id = np and deleted_at is null) = 5,
     'saved views copied (By priority + the four defaults the source had)';

@@ -495,31 +495,31 @@ declare
   result jsonb;
 begin
   begin
-    perform public.submit_form(form, 'guest@example.org', '{"q1": "Logo refresh"}');
+    perform public.submit_form(form, 'guest@example.org', '{"requester_name": "Test Requester", "q1": "Logo refresh"}');
     raise exception 'a required file question was skipped';
   exception when check_violation then
     assert sqlerrm like 'Please answer%', sqlerrm;
   end;
   begin
-    perform public.submit_form(form, 'guest@example.org', jsonb_build_object('q1', 'x', 'files',
+    perform public.submit_form(form, 'guest@example.org', jsonb_build_object('requester_name', 'Test Requester', 'q1', 'x', 'files',
       jsonb_build_array(jsonb_build_object('path', k || '/' || form::text || '/66666666-6666-4666-8666-666666666666-missing.pdf', 'name', 'missing.pdf'))));
     raise exception 'a file that never uploaded was accepted';
   exception when check_violation then
     assert sqlerrm like 'A file didn’t finish uploading%', sqlerrm;
   end;
   begin
-    perform public.submit_form(form, 'guest@example.org', jsonb_build_object('q1', 'x', 'files',
+    perform public.submit_form(form, 'guest@example.org', jsonb_build_object('requester_name', 'Test Requester', 'q1', 'x', 'files',
       jsonb_build_array(jsonb_build_object('path', k || '/' || (select id::text from r1_ids where name = 'form_plain') || '/22222222-2222-4222-8222-222222222222-Brand_Guide.pdf', 'name', 'x.pdf'))));
     raise exception 'another form''s path was accepted';
   exception when check_violation then null;
   end;
   begin
-    perform public.submit_form(form, 'guest@example.org', jsonb_build_object('q1', 'x', 'files', jsonb_build_array('just-a-string')));
+    perform public.submit_form(form, 'guest@example.org', jsonb_build_object('requester_name', 'Test Requester', 'q1', 'x', 'files', jsonb_build_array('just-a-string')));
     raise exception 'a malformed file answer was accepted';
   exception when check_violation then null;
   end;
 
-  result := public.submit_form(form, 'guest@example.org', jsonb_build_object('q1', 'Logo refresh', 'files',
+  result := public.submit_form(form, 'guest@example.org', jsonb_build_object('requester_name', 'Test Requester', 'q1', 'Logo refresh', 'files',
     jsonb_build_array(
       jsonb_build_object('path', pdf, 'name', '  Brand Guide v2.pdf '),
       jsonb_build_object('path', png, 'name', 'logo.png')
@@ -527,7 +527,7 @@ begin
   assert result ->> 'task_id' = k, 'the response''s task takes the key as its id';
 
   begin
-    perform public.submit_form(form, 'guest@example.org', jsonb_build_object('q1', 'Again', 'files',
+    perform public.submit_form(form, 'guest@example.org', jsonb_build_object('requester_name', 'Test Requester', 'q1', 'Again', 'files',
       jsonb_build_array(jsonb_build_object('path', pdf, 'name', 'again.pdf'))));
     raise exception 'the same files were sent twice';
   exception when check_violation then
@@ -546,7 +546,7 @@ declare
   form text := (select id::text from r1_ids where name = 'form');
   k text := '99999999-9999-4999-8999-999999999999';
 begin
-  perform public.submit_form(form::uuid, 'guest@example.org', jsonb_build_object('q1', 'Names', 'files', jsonb_build_array(
+  perform public.submit_form(form::uuid, 'guest@example.org', jsonb_build_object('requester_name', 'Test Requester', 'q1', 'Names', 'files', jsonb_build_array(
     jsonb_build_object('path', k || '/' || form || '/aaaaaaaa-1111-4111-8111-111111111111-report.pdf', 'name', 'Invoice.exe'),
     jsonb_build_object('path', k || '/' || form || '/aaaaaaaa-2222-4222-8222-222222222222-brief.pdf', 'name', E'Brief\u0007 final.pdf')
   )));

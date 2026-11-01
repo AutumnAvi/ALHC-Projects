@@ -519,7 +519,7 @@ begin
   assert (select count(*) from public.comments where task_id = rt and rule_id = rule) = 1, 'archived rules don''t fire';
   assert not (public.get_public_form(form) ->> 'accepting_responses')::boolean, 'the form shows as closed';
   begin
-    perform public.submit_form(form, 'someone@example.org', '{}');
+    perform public.submit_form(form, 'someone@example.org', '{"requester_name": "Test Requester"}');
     raise exception 'archived forms take no responses';
   exception when check_violation then null;
   end;

@@ -61,7 +61,7 @@ reset role;
 set role anon;
 select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
 insert into ed_ids
-select 'formtask', (public.submit_form((select id from ed_ids where name = 'form'), 'Rhea.Requester@Example.org', '{"q1":"Rhea Rowntree"}') ->> 'task_id')::uuid;
+select 'formtask', (public.submit_form((select id from ed_ids where name = 'form'), 'Rhea.Requester@Example.org', '{"requester_name": "Rhea Rowntree", "q1":"Rhea Rowntree"}') ->> 'task_id')::uuid;
 reset role;
 
 -- Grants -------------------------------------------------------------------------------------------

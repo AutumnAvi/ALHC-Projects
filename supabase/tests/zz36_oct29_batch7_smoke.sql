@@ -3004,7 +3004,7 @@ reset role;
 set role anon;
 select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
 insert into sf_ids select 'lformtask',
-  (public.submit_form((select id from sf_ids where name = 'lform'), 'stage-requester@example.org', '{"q-stage": "st-final"}') ->> 'task_id')::uuid;
+  (public.submit_form((select id from sf_ids where name = 'lform'), 'stage-requester@example.org', '{"requester_name": "Test Requester", "q-stage": "st-final"}') ->> 'task_id')::uuid;
 reset role;
 
 do $$

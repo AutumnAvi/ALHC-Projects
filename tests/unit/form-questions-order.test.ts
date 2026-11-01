@@ -114,9 +114,12 @@ describe("brokenBranches", () => {
     for (const moved of cases) {
       const broken = new Set(ids(brokenBranches(moved)));
       const normalized = normalizeQuestions(moved, []);
-      for (const [i, question] of normalized.entries()) {
+      // (normalizeQuestions also adds the requester's name question first since Nov 1 notes, batch 8.)
+      for (const question of normalized) {
+        const before = moved.find((q) => q.id === question.id);
+        if (!before) continue;
         if (broken.has(question.id)) assert.equal(question.show_if, undefined, `${question.id} loses its branch`);
-        else assert.deepEqual(question.show_if, moved[i].show_if, `${question.id} keeps its branch`);
+        else assert.deepEqual(question.show_if, before.show_if, `${question.id} keeps its branch`);
       }
     }
   });

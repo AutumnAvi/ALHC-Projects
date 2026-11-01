@@ -578,12 +578,12 @@ declare
   t uuid;
 begin
   begin
-    perform public.submit_form(fo, 'requester@example.org', '{"who": "not an email"}');
+    perform public.submit_form(fo, 'requester@example.org', '{"requester_name": "Test Requester", "who": "not an email"}');
     raise exception 'an invalid email answer must be refused';
   exception when check_violation then null;
   end;
   result := public.submit_form(fo, 'requester@example.org',
-    '{"h1": "ignored", "who": "  Boss@Example.ORG ", "what": "Please help"}');
+    '{"requester_name": "Test Requester", "h1": "ignored", "who": "  Boss@Example.ORG ", "what": "Please help"}');
   t := (result ->> 'task_id')::uuid;
   insert into ap4_ids values ('form_task', t);
 end $$;
@@ -594,7 +594,7 @@ declare
   t uuid := (select id from ap4_ids where name = 'form_task');
 begin
   assert (select title from public.tasks where id = t) = 'boss@example.org', 'the email answer (lowercased) names the task';
-  assert (select answers from public.form_submissions where task_id = t) = '{"who": "boss@example.org", "what": "Please help"}'::jsonb,
+  assert (select answers from public.form_submissions where task_id = t) = '{"requester_name": "Test Requester", "who": "boss@example.org", "what": "Please help"}'::jsonb,
     'a heading never has an answer';
   assert (select notes from public.tasks where id = t) like 'Please help%Manager email: boss@example.org%',
     'the summary lists the email answer';

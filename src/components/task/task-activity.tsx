@@ -3,7 +3,8 @@
 import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
-import { Bell, BellOff, Pencil, SmilePlus, Trash2, UserPlus, X } from "lucide-react";
+import { Bell, BellOff, FileCheck, Pencil, SmilePlus, Trash2, UserPlus, X } from "lucide-react";
+import { SendReviewDialog } from "@/components/task/send-review-dialog";
 import { Avatar, displayName } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
@@ -871,8 +872,14 @@ export function TaskPaneFooter({
   const followers = followerIds
     .map((followerId) => profiles.find((p) => p.id === followerId))
     .filter((p): p is Profile => Boolean(p));
-  const canComment = taskPermissions(task).canComment;
+  const permissions = taskPermissions(task);
+  const canComment = permissions.canComment;
   const submitterEmail = canRespondToSubmitter(task) ? (task.submission?.email ?? null) : null;
+  // Nov 1 notes (batch 8, item 60): "Send for review" next to "Send response to submitter" opens the review
+  // check dialog (pick or upload files, then send) with what was typed as the message. Editors and above
+  // (create_review_check needs Editor+); the dialog clears the box once the review is sent.
+  const canSendReview = permissions.canEdit;
+  const [reviewing, setReviewing] = useState<string | null>(null);
   const open = focused || draft.trim() !== "" || toSubmitter;
 
   // ⌘/Ctrl+Enter and the Comment button: the comment shows in the feed at once (a pending row), the
@@ -926,6 +933,17 @@ export function TaskPaneFooter({
 
   return (
     <div className="shrink-0 border-t border-zinc-200 bg-white px-gutter pb-2 pt-2.5 print:hidden">
+      {reviewing !== null ? (
+        <SendReviewDialog
+          task={task}
+          initialMessage={reviewing}
+          onClose={() => setReviewing(null)}
+          onSent={() => {
+            // The typed text went out as the review's message; don't leave it in the box to post twice.
+            if (reviewing && draft.trim() === reviewing) setDraft("");
+          }}
+        />
+      ) : null}
       {canComment ? (
         <div className="flex items-start gap-2">
           <Avatar name={me ? displayName(me) : "You"} src={me?.avatar_url} profileId={me?.id} size="md" />
@@ -953,24 +971,41 @@ export function TaskPaneFooter({
                 open ? "min-h-16 py-2" : "h-8 min-h-8 py-1.5"
               }`}
             />
-            {open && submitterEmail ? (
-              <div className="flex items-center gap-2 px-3 pb-1.5 pt-0.5 text-sm text-zinc-600">
-                <input
-                  id="send-to-submitter"
-                  type="checkbox"
-                  checked={toSubmitter}
-                  onChange={(e) => setToSubmitter(e.target.checked)}
-                  className="size-4 shrink-0 rounded border-zinc-300 accent-accent-600"
-                />
-                <label htmlFor="send-to-submitter" className="min-w-0">
-                  Send response to submitter{" "}
-                  <a
-                    href={`mailto:${submitterEmail}`}
-                    className="break-all text-accent-700 hover:underline"
+            {open && (submitterEmail || canSendReview) ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-1.5 pt-0.5 text-sm text-zinc-600">
+                {submitterEmail ? (
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                    <input
+                      id="send-to-submitter"
+                      type="checkbox"
+                      checked={toSubmitter}
+                      onChange={(e) => setToSubmitter(e.target.checked)}
+                      className="size-4 shrink-0 rounded border-zinc-300 accent-accent-600"
+                    />
+                    <label htmlFor="send-to-submitter" className="min-w-0">
+                      Send response to submitter{" "}
+                      <a
+                        href={`mailto:${submitterEmail}`}
+                        className="break-all text-accent-700 hover:underline"
+                      >
+                        {submitterEmail}
+                      </a>
+                    </label>
+                  </span>
+                ) : (
+                  <span className="flex-1" />
+                )}
+                {canSendReview ? (
+                  <button
+                    type="button"
+                    onClick={() => setReviewing(draft.trim())}
+                    data-tooltip="Pick or upload files and send them for approval or feedback"
+                    className="btn-secondary h-7 shrink-0 px-2.5 text-xs"
                   >
-                    {submitterEmail}
-                  </a>
-                </label>
+                    <FileCheck className="size-3.5" aria-hidden />
+                    Send for review…
+                  </button>
+                ) : null}
               </div>
             ) : null}
             {open ? (

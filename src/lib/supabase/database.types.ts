@@ -827,6 +827,7 @@ export type Database = {
           task_id: string;
           submitter_email: string;
           submitter_id: string | null;
+          submitter_name: string | null;
           answers: Json;
           created_at: string;
           deleted_at: string | null;
@@ -837,6 +838,7 @@ export type Database = {
           task_id: string;
           submitter_email: string;
           submitter_id?: string | null;
+          submitter_name?: string | null;
           answers?: Json;
           created_at?: string;
           deleted_at?: string | null;
@@ -847,6 +849,7 @@ export type Database = {
           task_id?: string;
           submitter_email?: string;
           submitter_id?: string | null;
+          submitter_name?: string | null;
           answers?: Json;
           created_at?: string;
           deleted_at?: string | null;

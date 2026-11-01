@@ -161,35 +161,35 @@ begin
     'closed forms expose no questions to anon';
 
   begin
-    perform public.submit_form(form_id, 'requester@example.org', '{"title": "Flyer", "kind": "print"}');
+    perform public.submit_form(form_id, 'requester@example.org', '{"requester_name": "Test Requester", "title": "Flyer", "kind": "print"}');
     raise exception 'missing visible required answer must fail';
   exception when check_violation then null;
   end;
   begin
-    perform public.submit_form(form_id, 'not-an-email', '{"title": "Flyer", "kind": "digital"}');
+    perform public.submit_form(form_id, 'not-an-email', '{"requester_name": "Test Requester", "title": "Flyer", "kind": "digital"}');
     raise exception 'invalid email must fail';
   exception when check_violation then null;
   end;
   begin
-    perform public.submit_form(form_id, 'requester@example.org', '{"title": "Flyer", "kind": "video"}');
+    perform public.submit_form(form_id, 'requester@example.org', '{"requester_name": "Test Requester", "title": "Flyer", "kind": "video"}');
     raise exception 'unknown option must fail';
   exception when check_violation then null;
   end;
   begin
-    perform public.submit_form((select id from ids where name = 'closed_form'), 'requester@example.org', '{}');
+    perform public.submit_form((select id from ids where name = 'closed_form'), 'requester@example.org', '{"requester_name": "Test Requester"}');
     raise exception 'closed form must reject submissions';
   exception when check_violation then null;
   end;
 
   -- Digital: the print-only "size" answer is hidden and discarded even though it was sent.
-  result := public.submit_form(form_id, ' Requester@Example.org ', jsonb_build_object(
+  result := public.submit_form(form_id, ' Requester@Example.org ', jsonb_build_object('requester_name', 'Test Requester',
     'title', 'Spring social posts', 'kind', 'digital', 'size', '24x36', 'rush', true, 'rush_reason', 'Launch moved up',
     'due', (current_date + 10)::text, 'details', 'Three posts for the spring launch.'
   ));
   insert into ids values ('form_task', (result ->> 'task_id')::uuid);
   assert result ->> 'request_label' = 'Req #045', 'form submission gets the next Req #';
 
-  result := public.submit_form(form_id, 'printer@example.org', '{"title": "Poster run", "kind": "print", "size": "A2"}');
+  result := public.submit_form(form_id, 'printer@example.org', '{"requester_name": "Test Requester", "title": "Poster run", "kind": "print", "size": "A2"}');
   insert into ids values ('print_task', (result ->> 'task_id')::uuid);
 
   begin
@@ -613,7 +613,7 @@ begin
   perform public.install_rule_preset((select id from ids where name = 'p'), 'intake_triage',
     '{"owner": "44444444-4444-4444-8444-444444444444"}', true);
   insert into ids values ('triaged', (public.submit_form((select id from ids where name = 'form'), 'third@example.org',
-    '{"title": "Menu board", "kind": "digital"}') ->> 'task_id')::uuid);
+    '{"requester_name": "Test Requester", "title": "Menu board", "kind": "digital"}') ->> 'task_id')::uuid);
   assert (select assignee_id from public.tasks where id = (select id from ids where name = 'triaged'))
     = '44444444-4444-4444-8444-444444444444', 'form_submitted rule assigns the triage owner';
 end $$;

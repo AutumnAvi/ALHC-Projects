@@ -377,7 +377,8 @@ select set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555
 
 do $$
 begin
-  assert jsonb_array_length(public.get_public_form((select id from tp_ids where name = 'closed_form')) -> 'questions') = 1,
+  -- Its question plus the requester's name question every form has (Nov 1 notes, batch 8).
+  assert jsonb_array_length(public.get_public_form((select id from tp_ids where name = 'closed_form')) -> 'questions') = 2,
     'project members preview closed forms';
 end $$;
 
@@ -405,7 +406,7 @@ begin
   assert not has_table_privilege('anon', 'public.project_members', 'select'), 'anon cannot read memberships';
   assert public.get_public_form((select id from tp_ids where name = 'form')) ->> 'title' = 'Team intake',
     'public forms still load for anon';
-  result := public.submit_form((select id from tp_ids where name = 'form'), 'guest@example.org', '{"title": "Need a flyer"}');
+  result := public.submit_form((select id from tp_ids where name = 'form'), 'guest@example.org', '{"requester_name": "Test Requester", "title": "Need a flyer"}');
   assert result ->> 'task_id' is not null, 'public forms still accept anonymous submissions';
   insert into tp_ids values ('form_task', (result ->> 'task_id')::uuid);
   begin
