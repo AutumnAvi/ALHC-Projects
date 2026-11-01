@@ -3048,6 +3048,8 @@ export type Database = {
           subtask_assigned_to_me: boolean;
           subtask_sort: string;
           expanded_task_ids: string[];
+          my_tasks_checked: string;
+          date_prompt_dismissed: string[];
           created_at: string;
           updated_at: string;
         };
@@ -3058,6 +3060,8 @@ export type Database = {
           subtask_assigned_to_me?: boolean;
           subtask_sort?: string;
           expanded_task_ids?: string[];
+          my_tasks_checked?: string;
+          date_prompt_dismissed?: string[];
           created_at?: string;
           updated_at?: string;
         };
@@ -3068,6 +3072,8 @@ export type Database = {
           subtask_assigned_to_me?: boolean;
           subtask_sort?: string;
           expanded_task_ids?: string[];
+          my_tasks_checked?: string;
+          date_prompt_dismissed?: string[];
           created_at?: string;
           updated_at?: string;
         };
@@ -6672,6 +6678,18 @@ export type Database = {
       };
       set_subtask_preferences: {
         Args: { hide_completed: boolean; assigned_to_me: boolean; sort_key: string };
+        Returns: Json;
+      };
+      set_my_tasks_checked: {
+        Args: { mode: string };
+        Returns: string;
+      };
+      dismiss_task_date_prompt: {
+        Args: { target_task: string };
+        Returns: undefined;
+      };
+      home_dashboard: {
+        Args: { tz?: string | null };
         Returns: Json;
       };
       review_check_save: {

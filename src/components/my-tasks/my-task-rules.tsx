@@ -82,12 +82,20 @@ function DaysInput({ label, value, min, max, onChange }: { label: string; value:
   );
 }
 
-export function MyTaskRulesButton({ rules, ctx }: { rules: MyTaskRule[] | null; ctx: MyTaskRuleContext }) {
+export function MyTaskRulesButton({
+  rules,
+  ctx,
+  className = "btn-secondary",
+}: {
+  rules: MyTaskRule[] | null;
+  ctx: MyTaskRuleContext;
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
   const count = rules?.filter((r) => r.enabled).length ?? 0;
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn-secondary" data-tooltip="Your own automations for tasks assigned to you">
+      <button type="button" onClick={() => setOpen(true)} className={className} data-tooltip="Your own automations for tasks assigned to you">
         <Zap className="size-4" aria-hidden />
         Automations{count ? ` (${count})` : ""}
       </button>

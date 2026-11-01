@@ -88,7 +88,7 @@ import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "
 import {
   MY_TASKS_LAYOUT_COOKIE,
   isMyTaskSectionKind,
-  isMyTasksLayout,
+  myTasksLayoutOf,
   type MyTaskPlacement,
   type MyTaskSection,
   type MyTasksLayout,
@@ -136,6 +136,8 @@ import {
   type WorkspaceMember,
 } from "@/lib/workspace";
 import { toTag, type Tag } from "@/lib/tags";
+import { DEFAULT_CHECKED_MODE, isCheckedMode, type CheckedMode } from "@/lib/checklist";
+import { EMPTY_HOME_DASHBOARD, parseHomeDashboard, type HomeDashboard } from "@/lib/home";
 import { isCalendarFeedScope, type CalendarFeed } from "@/lib/calendar-feeds";
 import {
   CALENDAR_EVENT_LIMIT,
@@ -2287,6 +2289,13 @@ export type MyTask = {
   approvalIsApprover?: boolean;
   // A subtask's top-level task (its expanded tree loads by that); null for a top-level task.
   rootTaskId?: string | null;
+  // Nov 1 notes (batch 9b): the checklist's extras — the start date (kept when the due date changes), a
+  // repeat rule is set, when the task was assigned to the viewer, and whether to ask them for a date
+  // (someone else gave it to them lately with no date, and they haven't said "Not now").
+  startOn?: string | null;
+  recurring?: boolean;
+  assignedAt?: string | null;
+  datePrompt?: boolean;
 };
 
 function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
@@ -2310,6 +2319,10 @@ function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
         kind: parseTaskKind(row.kind),
         parentTitle: typeof row.parent_title === "string" ? row.parent_title : null,
         canEdit: true,
+        startOn: typeof row.start_on === "string" ? row.start_on : null,
+        recurring: row.recurring === true,
+        assignedAt: typeof row.assigned_at === "string" ? row.assigned_at : null,
+        datePrompt: row.date_prompt === true,
       });
     }
     return tasks;
@@ -2355,7 +2368,7 @@ export const listMyTasks = cache(async (profileId: string) => {
 async function listMyTasksFromRows(profileId: string) {
   const supabase = await createClient();
   const select =
-    "id, title, completed_at, due_on, home_project_id, kind, root_task_id, parent_task_id";
+    "id, title, completed_at, due_on, start_on, recurrence, assigned_at, home_project_id, kind, root_task_id, parent_task_id";
   const [open, done, projects] = await Promise.all([
     supabase
       .from("tasks")
@@ -2409,6 +2422,10 @@ async function listMyTasksFromRows(profileId: string) {
       kind: parseTaskKind(t.kind),
       parentTitle: t.parent_task_id ? (parentTitle.get(t.parent_task_id) ?? null) : null,
       canEdit: true,
+      startOn: t.start_on,
+      recurring: t.recurrence !== null,
+      assignedAt: t.assigned_at,
+      datePrompt: false,
     };
   };
   const present = (t: MyTask | null): t is MyTask => t !== null;
@@ -4082,6 +4099,8 @@ export type MySettings = {
   myTasksLayout: MyTasksLayout;
   // Oct 26 notes (batch 4): open my own saved view of a project first (null = a database without it).
   openPersonalView: boolean | null;
+  // Nov 1 notes (batch 9b): what a task ticked on the My tasks checklist does (saved on the account).
+  myTasksChecked: CheckedMode;
 };
 
 // The person's forwarding address row (made on first use) and their latest forwarded emails (Real
@@ -4137,6 +4156,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     getMyEmailPreferences(),
     getProfilePreferences(),
   ]);
+  const myTasksChecked = await getMyTasksChecked();
   const layout = cookieStore.get(MY_TASKS_LAYOUT_COOKIE)?.value;
   const row = maybe(profile, "profile");
   const meta = user.user_metadata ?? {};
@@ -4162,8 +4182,9 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     emailPreferences,
     joinedAt: row?.joined_at ?? null,
     signInMethod: providers.includes("google") ? "google" : "password",
-    myTasksLayout: isMyTasksLayout(layout) ? layout : "sections",
+    myTasksLayout: myTasksLayoutOf(layout),
     openPersonalView: preferences.available ? preferences.openPersonalView : null,
+    myTasksChecked,
   };
 });
 
@@ -4345,6 +4366,29 @@ export const getProfilePreferences = cache(async (): Promise<{ openPersonalView:
     "preferences",
   );
   return { openPersonalView: row?.open_personal_view ?? false, available: true };
+});
+
+// Nov 1 notes (batch 9b): what a task ticked today does on the person's checklist ("sink" without a row,
+// or on a database without this release).
+export const getMyTasksChecked = cache(async (): Promise<CheckedMode> => {
+  const { user } = await getViewer();
+  if (!user) return DEFAULT_CHECKED_MODE;
+  const supabase = await createClient();
+  const result = await supabase.from("profile_preferences").select("my_tasks_checked").eq("profile_id", user.id).maybeSingle();
+  if (result.error || !result.data) return DEFAULT_CHECKED_MODE;
+  const mode = (result.data as { my_tasks_checked?: unknown }).my_tasks_checked;
+  return isCheckedMode(mode) ? mode : DEFAULT_CHECKED_MODE;
+});
+
+// Nov 1 notes (batch 9b): Home in one read (home_dashboard). Empty on a database without this release.
+export const getHomeDashboard = cache(async (timeZone: string): Promise<HomeDashboard> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("home_dashboard", { tz: timeZone });
+  if (result.error) {
+    if (!rpcMissing(result.error)) throw new Error(`Failed to load Home: ${result.error.message}`);
+    return EMPTY_HOME_DASHBOARD;
+  }
+  return parseHomeDashboard(result.data);
 });
 
 // Oct 27 notes (batch 5): the person's Subtasks filter and sort (the defaults without a row, or on a

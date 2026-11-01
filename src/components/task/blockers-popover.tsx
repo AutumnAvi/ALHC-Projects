@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Lock } from "lucide-react";
+import { toggleDimensions } from "@/components/complete-toggle";
 import { loadTaskBlockers, type TaskBlocker } from "@/lib/actions";
 import { bareTaskTitle } from "@/lib/request-numbers";
 import { TaskLink } from "./task-link";
@@ -235,9 +236,9 @@ export function BlockedToggle({
   taskId: string;
   title: string;
   count: number;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
 }) {
-  const dimensions = size === "sm" ? "size-4" : "size-[18px]";
+  const dimensions = toggleDimensions(size);
   return (
     <BlockersHover taskId={taskId} count={count}>
       <button

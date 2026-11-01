@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Fragment, useOptimistic, useState, type DragEvent, type ReactNode } from "react";
 import {
   ArrowDown,
@@ -70,7 +71,7 @@ import type { AwaitingApproval, MyTask, Profile, SubtaskItem } from "@/lib/data"
 import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
 import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@/lib/task-seed";
 import {
-  MY_TASKS_LAYOUT_COOKIE,
+  saveMyTasksLayout,
   type MyTaskPlacement,
   type MyTaskSection,
   type MyTasksLayout,
@@ -80,7 +81,9 @@ type Group = { key: string; title: string; tasks: MyTask[]; section?: MyTaskSect
 
 const TASK_DRAG = "application/x-alhc-my-task";
 const SECTION_DRAG = "application/x-alhc-my-section";
+// The classic views; "Checklist" goes back to the default checklist (Nov 1 notes, batch 9b).
 const LAYOUTS = [
+  { value: "checklist", label: "Checklist" },
   { value: "sections", label: "Sections" },
   { value: "due", label: "Due dates" },
 ] as const;
@@ -179,6 +182,7 @@ export function MyTasksView({
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
   const openTask = useOpenTask();
+  const router = useRouter();
   const { member } = useShell();
   const seed = (task: MyTask): TaskSeed => seedFromMyTask(task, { id: member.id, name: member.name });
   const today = useToday();
@@ -315,8 +319,10 @@ export function MyTasksView({
   };
 
   function chooseLayout(next: MyTasksLayout) {
-    setLayout(next);
-    document.cookie = `${MY_TASKS_LAYOUT_COOKIE}=${next}; path=/; max-age=31536000; samesite=lax`;
+    saveMyTasksLayout(next);
+    // The checklist is its own screen: the page renders it.
+    if (next === "checklist") router.refresh();
+    else setLayout(next);
   }
 
   const openGroups: Group[] = bySections
@@ -1450,7 +1456,7 @@ function MySubtaskRow({
 
 // One approval waiting on the viewer (Oct 27 notes, batch 6): opens the task, with its project, due
 // date, and round.
-function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId: string | null }) {
+export function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId: string | null }) {
   const openTask = useOpenTask();
   const approvalAction = useApprovalAction();
   // An approval task's round waits on the viewer: its control is Approve (opens the decision in the pane,

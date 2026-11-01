@@ -1,87 +1,125 @@
 import type { Metadata } from "next";
-import { CircleCheck, House, UsersRound } from "lucide-react";
-import { MyTasksWidget } from "@/components/home/my-tasks-widget";
-import { PeopleWidget } from "@/components/home/people-widget";
-import { ProjectsWidget } from "@/components/home/projects-widget";
+import { House } from "lucide-react";
+import { LeadCards } from "@/components/home/lead-cards";
+import { MyProjectsCard } from "@/components/home/my-projects-card";
+import { NEEDS_YOU_INBOX, NeedsYouCard } from "@/components/home/needs-you-card";
+import { TodayCard } from "@/components/home/today-card";
 import { TaskPaneSlot } from "@/components/task/task-pane";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { listArchivedProjects, listFrequentCollaborators, listMyTasks, listProjects, listStarredProjectIds } from "@/lib/data";
+import { checklistGroupOf, summaryLine } from "@/lib/checklist";
 import {
-  RECENT_COMPLETED_LIMIT,
-  completedThisWeek,
-  firstName,
-  greetingFor,
-  hourIn,
-  longDateIn,
-  plural,
-  splitHomeTasks,
-} from "@/lib/home";
+  countUnreadInbox,
+  getHomeDashboard,
+  getMyTasksChecked,
+  getWorkWeek,
+  listArchivedProjects,
+  listAwaitingMyApproval,
+  listInbox,
+  listMyProjectRoles,
+  listMyTasks,
+  listProfiles,
+  listProjects,
+} from "@/lib/data";
+import { firstName, greetingFor, hourIn, longDateIn } from "@/lib/home";
+import { permissionsFor } from "@/lib/permissions";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@/lib/workload";
 
 export const metadata: Metadata = { title: "Home" };
 
-// Every collaborator counts toward "My week"; the People widget shows them all (it scrolls).
-const COLLABORATOR_LIMIT = 500;
-
-// Home (Asana parity, batch 5): the date and a greeting in the viewer's time zone, a "My week" summary,
-// then the My tasks, Projects, and People widgets. `?task=` opens the task pane next to it.
+// Home (Nov 1 notes, batch 9b, item 65): a personal view for everyone — the greeting with what's due,
+// a checkable Today list (the My tasks checklist's Overdue and Today), Needs you (approvals, mentions,
+// new tasks without a date, the first few Inbox items), and My projects with progress. People who lead
+// projects (Owner / Admin of one, or workspace admins) also get four fixed cards about their team:
+// Team load, Late & at risk, Project health, Done this week. No widget builder. `?task=` opens the pane.
 export default async function HomePage({ searchParams }: PageProps<"/">) {
   const { task } = await searchParams;
   const openTaskId = typeof task === "string" ? task : null;
   const member = await requireMember();
   const timeZone = await getViewerTimeZone();
   const today = todayIn(timeZone);
-  const [{ open, completed }, projects, archived, starredIds, collaborators] = await Promise.all([
-    listMyTasks(member.id),
-    listProjects(),
-    listArchivedProjects(),
-    listStarredProjectIds(),
-    listFrequentCollaborators(COLLABORATOR_LIMIT),
-  ]);
+  const [{ open, completed }, checked, workWeek, dashboard, projects, roles, archived, profiles, awaiting, inbox, unread] =
+    await Promise.all([
+      listMyTasks(member.id),
+      getMyTasksChecked(),
+      getWorkWeek(),
+      getHomeDashboard(timeZone),
+      listProjects(),
+      listMyProjectRoles(),
+      listArchivedProjects(),
+      listProfiles(),
+      listAwaitingMyApproval(),
+      listInbox("activity"),
+      countUnreadInbox(),
+    ]);
 
-  const tasks = splitHomeTasks(open, completed, today);
-  const doneThisWeek = completedThisWeek(completed, today, timeZone);
-  // Only the latest completed tasks are read: when all of them are from this week there may be more.
-  const doneLabel =
-    completed.length >= RECENT_COMPLETED_LIMIT && doneThisWeek === completed.length
-      ? `${doneThisWeek}+ tasks completed`
-      : plural(doneThisWeek, "task completed", "tasks completed");
+  const groupOf = (dueOn: string | null) => checklistGroupOf(dueOn, today);
+  const counts = {
+    overdue: open.filter((t) => groupOf(t.dueOn) === "overdue").length,
+    today: open.filter((t) => groupOf(t.dueOn) === "today").length,
+    week: open.filter((t) => groupOf(t.dueOn) === "week").length,
+  };
+  const summary = summaryLine(counts);
+  const laterCount = open.length - counts.overdue - counts.today;
+  const undated = open.filter((t) => t.datePrompt && t.canEdit).length;
+
+  const unreadItems = inbox.filter((item) => !item.readAt);
+  const mentions = unreadItems.filter((item) => item.kind === "mention").slice(0, NEEDS_YOU_INBOX);
+  // Approval requests are listed from the approvals themselves (they stay until decided).
+  const others = unreadItems.filter((item) => item.kind !== "mention" && item.kind !== "approval_requested").slice(0, NEEDS_YOU_INBOX);
+
+  const addable = projects.filter((p) => permissionsFor(roles.get(p.id) ?? null).canEdit).map((p) => ({ id: p.id, name: p.name }));
+  const people = profiles.map((p) => ({ id: p.id, name: p.full_name?.trim() || p.email, email: p.email }));
 
   return (
     <main className="flex min-h-0 flex-1 flex-col">
       <PageHeader icon={House} title="Home" />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex flex-col items-center px-gutter pb-6 pt-8 text-center">
-          <p className="text-sm text-zinc-500">{longDateIn(timeZone)}</p>
-          <h2 className="mt-1 text-3xl font-medium tracking-tight text-zinc-900">
-            {greetingFor(hourIn(timeZone))}, {firstName(member.name, member.email)}
-          </h2>
-          <p className="mt-4 inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-full bg-zinc-100 px-4 py-1.5 text-sm text-zinc-600">
-            <span className="font-medium text-zinc-800">My week</span>
-            <span aria-hidden className="h-4 w-px bg-zinc-300" />
-            <span className="inline-flex items-center gap-1.5">
-              <CircleCheck className="size-4 text-zinc-500" aria-hidden />
-              {doneLabel}
-            </span>
-            <span className="inline-flex items-center gap-1.5" data-tooltip="People who share a project with you">
-              <UsersRound className="size-4 text-zinc-500" aria-hidden />
-              {plural(collaborators.length, "collaborator")}
-              <span className="sr-only"> (people who share a project with you)</span>
-            </span>
-          </p>
-        </div>
         {/* A size container: two columns only when there's room, also with the task pane open. */}
-        <div className="@container px-gutter pb-10">
-          <div className="grid gap-4 @4xl:grid-cols-2">
-            <MyTasksWidget tasks={tasks} />
-            <ProjectsWidget
-              projects={projects.map(({ id, name }) => ({ id, name }))}
-              starredIds={starredIds}
-              archivedCount={archived.length}
-            />
-            <PeopleWidget collaborators={collaborators} />
+        <div className="@container px-gutter pb-10 pt-6">
+          <div className="mx-auto flex max-w-6xl flex-col gap-6">
+            <div>
+              <p className="text-sm text-zinc-500">{longDateIn(timeZone)}</p>
+              <h2 className="mt-1 text-3xl font-medium tracking-tight text-zinc-900">
+                {greetingFor(hourIn(timeZone))}, {firstName(member.name, member.email)}
+              </h2>
+              <p className="mt-2 text-sm text-zinc-600">
+                {summary ? (
+                  <>
+                    <span className={counts.overdue ? "font-medium text-zinc-900" : ""}>{summary}</span>
+                    {awaiting.length ? ` · ${awaiting.length} waiting on your approval` : ""}
+                  </>
+                ) : awaiting.length ? (
+                  `${awaiting.length} waiting on your approval`
+                ) : (
+                  "Nothing due today. A good day to get ahead."
+                )}
+              </p>
+            </div>
+            <div className="grid gap-4 @4xl:grid-cols-2">
+              <TodayCard
+                open={open}
+                completed={completed}
+                checked={checked}
+                workWeek={workWeek}
+                projects={addable}
+                people={people}
+                laterCount={laterCount}
+                today={today}
+                timeZone={timeZone}
+              />
+              <NeedsYouCard
+                approvals={awaiting}
+                mentions={mentions}
+                inbox={others}
+                unreadTotal={unread}
+                undatedCount={undated}
+                actors={profiles}
+              />
+            </div>
+            <MyProjectsCard projects={dashboard.projects} archivedCount={archived.length} />
+            {dashboard.lead ? <LeadCards lead={dashboard.lead} today={today} /> : null}
           </div>
         </div>
       </div>
