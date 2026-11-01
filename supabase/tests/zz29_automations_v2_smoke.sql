@@ -827,7 +827,9 @@ begin
   assert coalesce(current_setting('alhc.rule_dry_run', true), '') = '', 'the dry-run flag doesn''t leak';
 end $$;
 
--- Loop limits: a rule never re-enters itself, rule-caused changes can be ignored, chains stop at 3.
+-- Loop limits: a rule never re-enters itself, rule-caused changes can be ignored. (Nov 1 notes, batch
+-- 10: a rule's own change firing it again is ignored without a "loop" row, and chains of different rules
+-- run up to ten deep, so all four Chain rules run.)
 set role authenticated;
 do $$
 declare
@@ -841,7 +843,7 @@ begin
     tags := tags || tg;
   end loop;
   insert into av2_ids values ('chain1', tags[1]);
-  -- chain: tag 1 → add tag 2 → add tag 3 → add tag 4 → comment (the 4th rule is past the limit)
+  -- chain: tag 1 → add tag 2 → add tag 3 → add tag 4 → comment (four different rules, no cycle)
   for i in 1 .. 4 loop
     insert into public.rules (project_id, name, enabled, trigger_type, trigger_config, actions) values (p, 'Chain ' || i, true, 'tag_added',
       jsonb_build_object('tag_id', tags[i]),
@@ -872,11 +874,14 @@ begin
   assert (select count(*) from public.task_tags tt join public.tags tg on tg.id = tt.tag_id where tt.task_id = t and tg.name like 'av2-chain-%') = 4,
     'three rules ran in a chain';
   assert exists (select 1 from public.rule_runs rr join public.rules r on r.id = rr.rule_id
-    where rr.task_id = t and r.name = 'Chain 4' and rr.status = 'skipped' and rr.detail ->> 'reason' = 'depth_limit'), 'the fourth is past the limit';
-  assert not exists (select 1 from public.comments where task_id = t and body = 'end of chain'), 'so it did nothing';
+    where rr.task_id = t and r.name = 'Chain 4' and rr.status = 'succeeded'), 'the fourth runs too (batch 10: ten deep)';
+  assert (select count(*) from public.comments where task_id = t and body = 'end of chain') = 1, 'so the chain finished';
+  assert not exists (select 1 from public.rule_runs rr where rr.task_id = t and rr.status = 'skipped'),
+    'nothing in a chain of different rules is stopped';
   assert (select count(*) from public.comments where task_id = e and body = 'echo!') = 1, 'Echo answered the person once';
-  assert exists (select 1 from public.rule_runs rr join public.rules r on r.id = rr.rule_id
-    where rr.task_id = e and r.name = 'Echo' and rr.status = 'skipped' and rr.detail ->> 'reason' = 'loop'), 'and didn''t answer itself';
+  assert not exists (select 1 from public.rule_runs rr join public.rules r on r.id = rr.rule_id
+    where rr.task_id = e and r.name = 'Echo' and rr.status = 'skipped'),
+    'and didn''t answer itself, without a "loop" row (its own change isn''t a loop)';
   assert (select count(*) from public.rule_runs rr join public.rules r on r.id = rr.rule_id where rr.task_id = e and r.name = 'People only') = 1,
     'a rule that ignores rule-caused changes ran for the person''s comment only';
 
@@ -930,7 +935,7 @@ do $$
 begin
   assert exists (select 1 from public.inbox_items i where i.recipient_id = 'a2920029-0000-4000-8000-000000000001'
     and i.kind = 'rule' and i.data ->> 'rule_paused' = 'true' and i.data ->> 'rule_id' = (select id from av2_ids where name = 'r_kickoff')::text
-    and i.data ->> 'message' like 'Rule “Kickoff” was paused after 5 failed runs in a row%'), 'the owner was told';
+    and i.data ->> 'message' like 'Automation “Kickoff” was paused after 5 failed runs in a row%'), 'the owner was told';
 end $$;
 
 -- Resume: turning it back on clears the pause.

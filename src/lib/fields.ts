@@ -271,7 +271,7 @@ export function fieldLockManageable(
 
 // Edit field → "Lock field": the switch's one line, and why it's greyed out for everyone else.
 export const LOCK_FIELD_HINT =
-  "Only project Owners and Admins can change its values, name, and options, or remove it. Rules change it only when their owner is an Owner or Admin.";
+  "Only project Owners and Admins can change its values, name, and options, or remove it. Automations change it only when their owner is an Owner or Admin.";
 export function lockFieldUnavailable(field: Pick<FieldDef, "libraryFieldId">): string {
   return field.libraryFieldId
     ? "Only Owners and Admins of the project that published this shared field can lock or unlock it."
@@ -280,7 +280,7 @@ export function lockFieldUnavailable(field: Pick<FieldDef, "libraryFieldId">): s
 
 // Where a locked field is set without a person: a rule's Set field step, and a form's "Fills in".
 export const RULE_LOCKED_FIELD_NOTE =
-  "This field is locked. The step runs only while the rule’s owner is an Owner or Admin of this project (for a shared library field, also of the task’s other projects that use it); otherwise it’s skipped (and the run log says so).";
+  "This field is locked. The step runs only while the automation’s owner is an Owner or Admin of this project (for a shared library field, also of the task’s other projects that use it); otherwise it’s skipped (and the run log says so).";
 export const FORM_LOCKED_FIELD_NOTE =
   "This field is locked. Form answers still fill it in; only project Owners and Admins change it afterwards.";
 

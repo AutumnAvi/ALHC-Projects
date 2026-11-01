@@ -14,7 +14,7 @@ export const TRIGGERS = [
   { value: "form_submitted", label: "A form is submitted", group: "Approvals and forms", description: "Fires when someone submits one of this project's forms.", keywords: ["intake", "request", "submission"] },
   { value: "inbound_received", label: "Created by inbound webhook", group: "Integrations", description: "Fires when a task comes in through one of this project's inbound webhooks.", keywords: ["api", "zapier", "make", "webhook"] },
   // Automations V2 (20261020010000_automations_v2.sql).
-  { value: "task_completed", label: "Task is completed", group: "Task", description: "Fires when someone (or a rule) marks a task complete.", keywords: ["done", "finished", "complete"] },
+  { value: "task_completed", label: "Task is completed", group: "Task", description: "Fires when someone (or an automation) marks a task complete.", keywords: ["done", "finished", "complete"] },
   { value: "task_reopened", label: "Task is reopened", group: "Task", description: "Fires when a completed task is marked incomplete again.", keywords: ["undo", "incomplete", "reopen"] },
   { value: "subtasks_completed", label: "All subtasks are done", group: "Task", description: "Fires on a task when its last open subtask is completed.", keywords: ["checklist", "children", "parent"] },
   { value: "task_added_from_project", label: "Task is added from another project", group: "Task", description: "Fires when a task that lives in another project is also added here.", keywords: ["multi-home", "multihome", "cross-project", "calendar"] },
@@ -24,7 +24,7 @@ export const TRIGGERS = [
   { value: "due_date_changed", label: "Due date changes", group: "Dates", description: "Fires when a task's due date is set, moved, or cleared.", keywords: ["deadline", "reschedule", "moved"] },
   { value: "task_overdue", label: "Task becomes overdue", group: "Dates", description: "Fires once per open task the day after its due date (or later).", keywords: ["late", "missed", "past due"] },
   { value: "scheduled", label: "On a schedule", group: "Flow", description: "Runs every day, workday, week, or month for the open tasks that match.", keywords: ["cron", "daily", "weekly", "every", "recurring", "time"] },
-  { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks it from a task's … menu (Run a rule).", keywords: ["button", "on demand", "by hand", "click"] },
+  { value: "manual", label: "Run manually", group: "Flow", description: "Runs when someone picks it from a task's … menu (Run an automation).", keywords: ["button", "on demand", "by hand", "click"] },
   // Automations V3 (20261021010000_automations_v3_a.sql).
   { value: "follower_added", label: "A follower is added", group: "People", description: "Fires when someone starts following a task (anyone, or people you pick).", keywords: ["follower", "collaborator", "watch", "follow"] },
   // Batch B: start dates.
@@ -83,7 +83,7 @@ export const CONDITIONS = [
   { value: "approval_status_is", label: "Approval status is", group: "Approvals and forms", description: "The task's latest approval is pending, approved, changes requested, rejected, or there isn't one.", keywords: ["approve", "review", "pending", "rejected"] },
   { value: "has_attachment", label: "Has an attachment", group: "Task", description: "At least one file is attached.", keywords: ["file", "upload", "asset"] },
   { value: "no_attachment", label: "Has no attachment", group: "Task", description: "No file is attached yet.", keywords: ["file", "upload", "missing"] },
-  { value: "has_comment", label: "Has a comment", group: "Communication", description: "Someone (or a rule) commented.", keywords: ["reply", "message", "feedback"] },
+  { value: "has_comment", label: "Has a comment", group: "Communication", description: "Someone (or an automation) commented.", keywords: ["reply", "message", "feedback"] },
   { value: "no_comment", label: "Has no comment", group: "Communication", description: "Nobody has commented yet.", keywords: ["reply", "message", "silent"] },
 ] as const;
 
@@ -94,7 +94,7 @@ export const ACTIONS = [
   { value: "set_field", label: "Set field", group: "Fields", description: "Writes a value into a custom field (Status moves the section).", keywords: ["custom field", "priority", "value"] },
   { value: "set_assignee", label: "Set assignee", group: "People", description: "Assigns a person, the creator, or nobody.", keywords: ["assign", "owner", "unassign", "remove assignee"] },
   { value: "add_followers", label: "Add followers", group: "People", description: "Adds followers who'll hear about updates.", keywords: ["collaborator", "follow", "watch"] },
-  { value: "add_comment", label: "Add comment", group: "Communication", description: "Posts a comment on the task as this rule.", keywords: ["message", "note", "mention"] },
+  { value: "add_comment", label: "Add comment", group: "Communication", description: "Posts a comment on the task as this automation.", keywords: ["message", "note", "mention"] },
   { value: "notify", label: "Send inbox notification", group: "Communication", description: "Puts a message in people's Inbox.", keywords: ["alert", "inbox", "ping", "tell"] },
   { value: "send_email", label: "Send email", group: "Communication", description: "Emails the submitter, the assignee, an address in a field, or a fixed address.", keywords: ["mail", "requester", "submitter"] },
   { value: "request_approval", label: "Request approval (approval subtask)", group: "Approvals", description: "Asks someone to approve, with an approval subtask.", keywords: ["approve", "review", "sign off"] },
@@ -349,7 +349,7 @@ export function compareOpsFor(fieldType: string, boundToSections = false) {
 
 // "Set due / start date": counted from (mirrors rule_set_task_date). Hours always count from now.
 export const DUE_FROM = [
-  { value: "today", label: "today", description: "The day the rule runs" },
+  { value: "today", label: "today", description: "The day the automation runs" },
   { value: "due_date", label: "the current due date", description: "Today if there isn't one" },
   { value: "start_date", label: "the start date", description: "Today if there isn't one" },
 ] as const;
@@ -496,8 +496,8 @@ export function runReason(detail: Json): string | null {
   if (typeof d.reason === "string") {
     return (
       {
-        loop: "loop prevented (a rule can’t trigger itself)",
-        depth_limit: "chain too deep (rules started by rules stop after three)",
+        loop: "loop prevented (another automation changed it back, which would repeat forever)",
+        depth_limit: "chain too deep (automations started by automations stop after ten)",
         throttled: "throttled (20 runs an hour on one task)",
         rate_limited: "rate limited (1,000 runs an hour)",
       }[d.reason] ?? d.reason
@@ -561,7 +561,7 @@ export function joinBranches(branches: RuleBranch[]): Pick<RuleDef, "conditions"
 
 // The same checks as validate_rule_branches(), for a clear message before saving.
 export function branchProblem(branches: RuleBranch[]): string | null {
-  if (branches.length > MAX_RULE_BRANCHES) return `A rule can have up to ${MAX_RULE_BRANCHES} branches`;
+  if (branches.length > MAX_RULE_BRANCHES) return `An automation can have up to ${MAX_RULE_BRANCHES} branches`;
   for (const [i, b] of branches.entries()) {
     const name = i === 0 ? "Check if" : i === branches.length - 1 && b.conditions.length === 0 ? "Otherwise" : `Else if ${i}`;
     if (b.actions.length === 0) return `${name}: add at least one action`;

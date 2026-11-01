@@ -5,7 +5,7 @@ import { isUuid } from "@/lib/ids";
 import { hasPortfolioRole } from "@/lib/roles";
 import { loadPortfolioRuleContext } from "../context";
 
-export const metadata = { title: "Portfolio rule" };
+export const metadata = { title: "Portfolio automation" };
 
 export default async function PortfolioRulePage({ params }: PageProps<"/portfolios/[portfolioId]/rules/[ruleId]">) {
   const { portfolioId, ruleId } = await params;

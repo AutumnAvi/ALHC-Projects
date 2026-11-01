@@ -4,7 +4,7 @@ import { getPortfolio, getPortfolioRole, listPortfolioRules } from "@/lib/data";
 import { hasPortfolioRole } from "@/lib/roles";
 import { loadPortfolioRuleContext } from "../context";
 
-export const metadata = { title: "New portfolio rule" };
+export const metadata = { title: "New portfolio automation" };
 
 export default async function NewPortfolioRulePage({ params }: PageProps<"/portfolios/[portfolioId]/rules/new">) {
   const { portfolioId } = await params;

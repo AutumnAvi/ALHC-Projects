@@ -20,7 +20,7 @@ export const EMAIL_DESIGN_KIND_DESCRIPTIONS: Record<EmailDesignKind, string> = {
   internal:
     "Comments, assignments, @mentions, due dates, digests, and other notifications to people in the workspace. These are no-reply.",
   requester:
-    "Form confirmations, responses sent to a form’s submitter, and rule emails to the submitter. Replies come back as comments.",
+    "Form confirmations, responses sent to a form’s submitter, and automation emails to the submitter. Replies come back as comments.",
 };
 
 // Text settings: null = inherit, "" = explicitly empty (for the subject, heading, and small print: "this
@@ -399,7 +399,7 @@ export const DESIGN_SAMPLES: Record<EmailDesignKind, { key: DesignSample; label:
   requester: [
     { key: "response", label: "Response to submitter" },
     { key: "confirmation", label: "Form confirmation" },
-    { key: "update", label: "Rule email" },
+    { key: "update", label: "Automation email" },
   ],
   internal: [
     { key: "comment", label: "Comment" },

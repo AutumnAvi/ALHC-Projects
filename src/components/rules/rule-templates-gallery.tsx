@@ -67,7 +67,7 @@ export function RuleTemplatesGallery({ projectId, ctx, canEdit }: { projectId: s
         </label>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
-        Common marketing and creative rules. Sections, fields, and tags are matched by name; anything this project
+        Common marketing and creative automations. Sections, fields, and tags are matched by name; anything this project
         doesn’t have yet is left for you to pick. Templates are added turned off, so you can check them first.
       </p>
       <div role="tablist" aria-label="Template categories" className="tab-strip mt-3 gap-1">

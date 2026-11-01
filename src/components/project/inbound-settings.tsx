@@ -80,7 +80,7 @@ export function InboundSettings({
           <p className="mt-1 text-sm text-zinc-600">
             Let another tool (Zapier, a website form, a script) create tasks in this project by POSTing JSON to a
             private URL. Tasks are created as the person who made the endpoint, land in its section with its default
-            assignee and tags, and fire this project’s rules (use the{" "}
+            assignee and tags, and fire this project’s automations (use the{" "}
             <span className="font-medium text-zinc-900">Created by inbound webhook</span> trigger). The URL contains
             a secret token that is shown once; anyone with it can create tasks here, so treat it like a password.
           </p>

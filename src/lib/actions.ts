@@ -3052,7 +3052,7 @@ function fieldExtras(input: { description?: string | null; inLibrary?: boolean; 
   }
   if (input.notifyOnChange !== undefined) {
     if (bound && input.notifyOnChange) {
-      throw new InputError("The Status field follows the sections; use a rule to tell people when a task moves");
+      throw new InputError("The Status field follows the sections; use an automation to tell people when a task moves");
     }
     extras.notify_on_change = Boolean(input.notifyOnChange);
   }
@@ -5009,7 +5009,7 @@ function ruleRow(input: RuleInput, revealed: RevealedSigningSecret[] = []) {
     triggerConfig.timezone = input.timeZone;
   }
   return {
-    name: text(input.name, "Rule name", { max: 200 }),
+    name: text(input.name, "Automation name", { max: 200 }),
     trigger_type: input.triggerType,
     trigger_config: triggerConfig as Json,
     conditions: (input.conditions ?? []) as Json,
@@ -5101,7 +5101,7 @@ export async function testRule(
       target_task: id(taskId, "task"),
       draft: draftJson,
     });
-    if (tested.error?.code === "PGRST202") throw new InputError("Testing rules needs this release’s database update");
+    if (tested.error?.code === "PGRST202") throw new InputError("Testing automations needs this release’s database update");
     check(tested);
     const result = parseRuleTestResult(tested.data ?? null);
     if (!result) throw new InputError("The test didn’t come back with a result");
@@ -5220,7 +5220,7 @@ export async function runManualRule(
   const result = await run(async () => {
     const supabase = await createClient();
     const ran = await supabase.rpc("run_manual_rule", { target_rule: id(ruleId, "rule"), target_task: id(taskId, "task") });
-    if (ran.error?.code === "PGRST202") throw new InputError("Running rules from a task needs this release’s database update");
+    if (ran.error?.code === "PGRST202") throw new InputError("Running automations from a task needs this release’s database update");
     check(ran);
     const data = (ran.data ?? {}) as { status?: unknown; detail?: Json | null };
     status = MANUAL_RULE_STATUSES.find((s) => s === data.status) ?? "failed";
@@ -5236,7 +5236,7 @@ export async function runManualRule(
       );
     } else if (status === "failed") {
       const error = actions && typeof actions === "object" ? (actions as { error?: unknown }).error : null;
-      failure = typeof error === "string" && error ? error : "The rule couldn’t finish";
+      failure = typeof error === "string" && error ? error : "The automation couldn’t finish";
     }
   });
   if (result.error) return { error: result.error, summary: [] };
@@ -6396,7 +6396,7 @@ export type PortfolioRuleInput = {
   timeZone?: string;
 };
 
-const PORTFOLIO_RULES_MISSING = "Portfolio rules need this release’s database update";
+const PORTFOLIO_RULES_MISSING = "Portfolio automations need this release’s database update";
 
 function portfolioRuleRow(input: PortfolioRuleInput) {
   if (!isPortfolioTrigger(input.triggerType)) throw new InputError("Choose a trigger");
@@ -6406,7 +6406,7 @@ function portfolioRuleRow(input: PortfolioRuleInput) {
   // Dates and schedules count in the browser's time zone (like project rules).
   if (input.timeZone && input.timeZone.length <= 64) triggerConfig.timezone = input.timeZone;
   return {
-    name: text(input.name, "Rule name", { max: 200 }),
+    name: text(input.name, "Automation name", { max: 200 }),
     enabled: Boolean(input.enabled),
     trigger_type: input.triggerType,
     trigger_config: triggerConfig,
@@ -6418,7 +6418,7 @@ function portfolioRuleRow(input: PortfolioRuleInput) {
 
 function portfolioRuleError(result: DbResult) {
   if (result.error && (result.error.code === "PGRST205" || result.error.code === "42P01")) throw new InputError(PORTFOLIO_RULES_MISSING);
-  check(result, "Only portfolio admins and owners change its rules");
+  check(result, "Only portfolio admins and owners change its automations");
 }
 
 export async function createPortfolioRule(portfolioId: string, input: PortfolioRuleInput): Promise<ActionResult & { ruleId?: string }> {
@@ -6441,7 +6441,7 @@ export async function updatePortfolioRule(ruleId: string, input: PortfolioRuleIn
     const supabase = await createClient();
     const updated = await supabase.from("portfolio_rules").update(portfolioRuleRow(input)).eq("id", id(ruleId, "rule")).select("id");
     portfolioRuleError(updated);
-    checkUpdated(updated, "Only portfolio admins and owners change its rules");
+    checkUpdated(updated, "Only portfolio admins and owners change its automations");
   });
 }
 
@@ -6450,7 +6450,7 @@ export async function setPortfolioRuleEnabled(ruleId: string, enabled: boolean):
     const supabase = await createClient();
     const updated = await supabase.from("portfolio_rules").update({ enabled: Boolean(enabled) }).eq("id", id(ruleId, "rule")).select("id");
     portfolioRuleError(updated);
-    checkUpdated(updated, "Only portfolio admins and owners change its rules");
+    checkUpdated(updated, "Only portfolio admins and owners change its automations");
   });
 }
 
@@ -6463,7 +6463,7 @@ export async function deletePortfolioRule(ruleId: string): Promise<ActionResult>
       .eq("id", id(ruleId, "rule"))
       .select("id");
     portfolioRuleError(updated);
-    checkUpdated(updated, "Only portfolio admins and owners change its rules");
+    checkUpdated(updated, "Only portfolio admins and owners change its automations");
   });
 }
 
@@ -6511,7 +6511,7 @@ export async function duplicateRule(ruleId: string): Promise<ActionResult & { ru
       .is("deleted_at", null)
       .maybeSingle();
     check(source);
-    if (!source.data) throw new InputError("Rule not found");
+    if (!source.data) throw new InputError("Automation not found");
     const inserted = await supabase
       .from("rules")
       .insert({
@@ -6526,7 +6526,7 @@ export async function duplicateRule(ruleId: string): Promise<ActionResult & { ru
       })
       .select("id")
       .single();
-    check(inserted, "Only project admins and owners change its rules");
+    check(inserted, "Only project admins and owners change its automations");
     copyId = inserted.data?.id;
   });
   return result.error ? result : { ruleId: copyId };
@@ -6546,7 +6546,7 @@ export async function setRulePausedUntil(ruleId: string, until: string | null): 
     const supabase = await createClient();
     const updated = await supabase.from("rules").update({ paused_until: pauseValue(until) }).eq("id", id(ruleId, "rule")).select("id");
     if (updated.error?.code === "PGRST204" || updated.error?.code === "42703") throw new InputError(RULES_V3_MISSING);
-    checkUpdated(updated, "Only project admins and owners change its rules");
+    checkUpdated(updated, "Only project admins and owners change its automations");
   });
 }
 
@@ -6560,7 +6560,7 @@ export async function duplicatePortfolioRule(ruleId: string): Promise<ActionResu
       .is("deleted_at", null)
       .maybeSingle();
     portfolioRuleError(source);
-    if (!source.data) throw new InputError("Rule not found");
+    if (!source.data) throw new InputError("Automation not found");
     const inserted = await supabase.from("portfolio_rules").insert({
       portfolio_id: source.data.portfolio_id,
       name: `Copy of ${source.data.name}`.slice(0, 200),
@@ -6580,7 +6580,7 @@ export async function setPortfolioRulePausedUntil(ruleId: string, until: string 
     const supabase = await createClient();
     const updated = await supabase.from("portfolio_rules").update({ paused_until: pauseValue(until) }).eq("id", id(ruleId, "rule")).select("id");
     portfolioRuleError(updated);
-    checkUpdated(updated, "Only portfolio admins and owners change its rules");
+    checkUpdated(updated, "Only portfolio admins and owners change its automations");
   });
 }
 
@@ -6601,7 +6601,7 @@ function myTaskRuleRow(input: MyTaskRuleInput) {
   const triggerConfig: Record<string, Json> = { ...(input.triggerConfig ?? {}) };
   if (input.timeZone && input.timeZone.length <= 64) triggerConfig.timezone = input.timeZone;
   return {
-    name: text(input.name, "Rule name", { max: 200 }),
+    name: text(input.name, "Automation name", { max: 200 }),
     enabled: Boolean(input.enabled),
     trigger_type: input.triggerType,
     trigger_config: triggerConfig,
@@ -6611,8 +6611,8 @@ function myTaskRuleRow(input: MyTaskRuleInput) {
 }
 
 function myTaskRuleError(result: DbResult) {
-  if (result.error && (result.error.code === "PGRST205" || result.error.code === "42P01")) throw new InputError("My Tasks rules need this release’s database update");
-  check(result, "That isn’t one of your rules");
+  if (result.error && (result.error.code === "PGRST205" || result.error.code === "42P01")) throw new InputError("My Tasks automations need this release’s database update");
+  check(result, "That isn’t one of your automations");
 }
 
 export async function saveMyTaskRule(ruleId: string | null, input: MyTaskRuleInput): Promise<ActionResult> {
@@ -6621,7 +6621,7 @@ export async function saveMyTaskRule(ruleId: string | null, input: MyTaskRuleInp
     if (ruleId) {
       const updated = await supabase.from("my_task_rules").update(myTaskRuleRow(input)).eq("id", id(ruleId, "rule")).select("id");
       myTaskRuleError(updated);
-      checkUpdated(updated, "That isn’t one of your rules");
+      checkUpdated(updated, "That isn’t one of your automations");
     } else {
       myTaskRuleError(await supabase.from("my_task_rules").insert(myTaskRuleRow(input)));
     }
@@ -6633,7 +6633,7 @@ export async function setMyTaskRuleEnabled(ruleId: string, enabled: boolean): Pr
     const supabase = await createClient();
     const updated = await supabase.from("my_task_rules").update({ enabled: Boolean(enabled) }).eq("id", id(ruleId, "rule")).select("id");
     myTaskRuleError(updated);
-    checkUpdated(updated, "That isn’t one of your rules");
+    checkUpdated(updated, "That isn’t one of your automations");
   });
 }
 
@@ -6642,7 +6642,7 @@ export async function deleteMyTaskRule(ruleId: string): Promise<ActionResult> {
     const supabase = await createClient();
     const updated = await supabase.from("my_task_rules").update({ deleted_at: now(), enabled: false }).eq("id", id(ruleId, "rule")).select("id");
     myTaskRuleError(updated);
-    checkUpdated(updated, "That isn’t one of your rules");
+    checkUpdated(updated, "That isn’t one of your automations");
   });
 }
 

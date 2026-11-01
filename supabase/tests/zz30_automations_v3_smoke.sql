@@ -651,8 +651,11 @@ select public.create_task(pg_temp.av3('p'), pg_temp.av3('intake'), 'Seed') is no
 do $$
 begin
   assert (select count(*) from public.tasks where title like 'Echo of %') = 1, 'one echo: the made task doesn''t re-trigger the rule';
-  assert exists (select 1 from public.rule_runs rr join public.rules ru on ru.id = rr.rule_id
-                 where ru.name = 'Echo' and rr.status = 'skipped' and rr.detail ->> 'reason' = 'loop'), 'the loop was refused';
+  -- Nov 1 notes, batch 10: the made task firing the rule that made it is the rule triggering itself — it
+  -- is skipped without a "loop" row (rules never trigger themselves).
+  assert not exists (select 1 from public.rule_runs rr join public.rules ru on ru.id = rr.rule_id
+                 where ru.name = 'Echo' and ru.project_id = pg_temp.av3('p') and rr.status = 'skipped'),
+    'the self-trigger was ignored without a loop row';
   update public.rules set enabled = false where name = 'Echo';
 end $$;
 

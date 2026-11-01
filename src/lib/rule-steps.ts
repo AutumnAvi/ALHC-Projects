@@ -139,9 +139,9 @@ export function stepTone(outcome: string): StepTone {
 
 // One line about a test: what would happen overall.
 export function testHeadline(result: RuleTestResult): string {
-  if (result.invalid) return "The rule can’t be saved like this yet";
+  if (result.invalid) return "The automation can’t be saved like this yet";
   if (result.chosenBranch === null) return "Nothing would run: the conditions don’t match this task";
-  if (result.error) return "This rule would fail on this task";
+  if (result.error) return "This automation would fail on this task";
   const changes = result.steps.filter((s) => !NO_CHANGE_OUTCOMES.has(s.outcome)).length;
   return changes === 0 ? "It would run, but nothing on this task would change" : `${changes} step${changes === 1 ? "" : "s"} would run`;
 }

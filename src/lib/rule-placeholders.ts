@@ -28,11 +28,11 @@ export const PLACEHOLDERS: readonly PlaceholderDef[] = [
   { key: "submitter.email", label: "Submitter email", group: "People", description: "The form submitter’s address", sample: "sam@example.com", keywords: ["requester", "form"] },
   { key: "task.due_date", label: "Due date", group: "Dates", description: "Like Oct 24, 2026 (empty without one)", sample: "Oct 24, 2026", keywords: ["deadline"] },
   { key: "task.start_date", label: "Start date", group: "Dates", description: "Like Oct 20, 2026", sample: "Oct 20, 2026", keywords: ["begin"] },
-  { key: "today", label: "Today", group: "Dates", description: "The day the rule runs", sample: "Oct 19, 2026", keywords: ["date", "now"] },
+  { key: "today", label: "Today", group: "Dates", description: "The day the automation runs", sample: "Oct 19, 2026", keywords: ["date", "now"] },
   { key: "project.name", label: "Project name", group: "Project", description: "This project", sample: "Creative Requests" },
   { key: "form.name", label: "Form name", group: "Forms", description: "The form that created the task", sample: "Design request", keywords: ["intake"] },
   { key: "approval.note", label: "Approval note", group: "Other", description: "The approver’s note (approval triggers)", sample: "Please use the new logo", keywords: ["feedback"] },
-  { key: "rule.name", label: "Rule name", group: "Other", description: "This rule’s name", sample: "Route by request type" },
+  { key: "rule.name", label: "Automation name", group: "Other", description: "This automation’s name", sample: "Route by request type" },
 ];
 
 // Short forms the database also accepts (the spec's {{assignee}}, {{due_date}}, {{field:Request type}}).

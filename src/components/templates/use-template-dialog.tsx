@@ -79,7 +79,7 @@ export function UseTemplateForm({
       <ProjectPlacementFields value={placement} onChange={setPlacement} idPrefix={`template-project-${template.id}`} />
       {summary.rules > 0 ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          {summary.rules} rule{summary.rules === 1 ? "" : "s"} will be copied <strong>turned off</strong>. Check them in
+          {summary.rules} automation{summary.rules === 1 ? "" : "s"} will be copied <strong>turned off</strong>. Check them in
           Customize → Automations and turn them on when ready (Slack and webhook URLs need to be entered again).
         </p>
       ) : null}

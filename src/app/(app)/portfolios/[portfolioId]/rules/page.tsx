@@ -8,7 +8,7 @@ import { loadPortfolioRuleContext } from "./context";
 export async function generateMetadata({ params }: PageProps<"/portfolios/[portfolioId]/rules">): Promise<Metadata> {
   const { portfolioId } = await params;
   const portfolio = await getPortfolio(portfolioId);
-  return { title: portfolio ? `${portfolio.name} · Rules` : "Rules" };
+  return { title: portfolio ? `${portfolio.name} · Automations` : "Automations" };
 }
 
 export default async function PortfolioRulesPage({ params }: PageProps<"/portfolios/[portfolioId]/rules">) {

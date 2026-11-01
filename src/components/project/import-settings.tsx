@@ -125,8 +125,8 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
         </p>
         <p className="mt-2 text-sm text-zinc-600">
           Re-importing the same export never duplicates anything: tasks already imported are skipped and never
-          overwritten, and only new tasks, subtasks, comments, and links are added. Imported rules always start turned
-          off. Importing doesn’t notify anyone or run this project’s rules.
+          overwritten, and only new tasks, subtasks, comments, and links are added. Imported automations always start turned
+          off. Importing doesn’t notify anyone or run this project’s automations.
         </p>
 
         {phase.kind === "pick" || phase.kind === "uploading" ? (
@@ -279,7 +279,7 @@ function PreviewCard({
     ["Tags (workspace tags, matched by name)", c.tags, null],
     ["Dependencies", c.dependencies, null],
   ];
-  if (c.rules > 0) rows.push(["Rules (added turned off)", c.rules, null]);
+  if (c.rules > 0) rows.push(["Automations (added turned off)", c.rules, null]);
   const fileWork = progress?.files?.total ?? 0;
   const percent = progress
     ? Math.round((100 * (progress.step + (progress.files?.index ?? 0))) / Math.max(progress.steps + fileWork, 1))

@@ -1,5 +1,6 @@
 "use client";
 
+import { RuleFeedbackLayer } from "@/components/rules/rule-feedback";
 import { Suspense, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { TooltipLayer } from "@/components/tooltip-layer";
@@ -64,6 +65,8 @@ export function AppShell({
           <SettingsFromUrl />
         </Suspense>
         <TooltipLayer />
+        {/* Batch 10: "Automation X ran on N tasks" and loop-protection warnings after the person's changes. */}
+        <RuleFeedbackLayer />
       </div>
     </RightPanelProvider>
   );

@@ -470,7 +470,7 @@ export function EmailDesignEditor({
           {block("showBody", "Message", {
             note:
               kind === "requester"
-                ? "The comment you send, the form’s confirmation message, or the rule’s text. A response to a submitter always includes it."
+                ? "The comment you send, the form’s confirmation message, or the automation’s text. A response to a submitter always includes it."
                 : "The comment, the notification’s detail, or the invite’s text.",
           })}
 

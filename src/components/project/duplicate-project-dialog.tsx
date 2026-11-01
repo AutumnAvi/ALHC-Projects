@@ -12,7 +12,7 @@ const TOGGLES: { key: Toggle; label: string; hint: string; needsTasks?: boolean 
   { key: "tasks", label: "Tasks", hint: "With subtasks, field values, dependencies, and completion state" },
   { key: "assignees", label: "Assignees", hint: "Kept only for people who are members of the copy", needsTasks: true },
   { key: "dates", label: "Due and start dates", hint: "Times and repeat rules are not copied", needsTasks: true },
-  { key: "rules", label: "Rules", hint: "Copied turned off; Slack and webhook URLs are not copied" },
+  { key: "rules", label: "Automations", hint: "Copied turned off; Slack and webhook URLs are not copied" },
   { key: "forms", label: "Forms", hint: "Copied closed to new responses" },
   { key: "members", label: "Members", hint: "Same roles; owners join as admins and you stay the owner" },
 ];

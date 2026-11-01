@@ -9,7 +9,7 @@ import { loadRuleContext, ruleBackHref } from "../context";
 export async function generateMetadata({ params }: PageProps<"/projects/[projectId]/rules/[ruleId]">): Promise<Metadata> {
   const { projectId, ruleId } = await params;
   const rule = isUuid(ruleId) ? (await listProjectRules(projectId)).find((r) => r.id === ruleId) : null;
-  return { title: rule ? `${rule.name} · Rule` : "Rule" };
+  return { title: rule ? `${rule.name} · Automation` : "Automation" };
 }
 
 // A rule on the full-page canvas (Asana parity, batch 4). Rules are read by project Viewers+ (RLS);

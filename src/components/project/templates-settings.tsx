@@ -63,7 +63,7 @@ function SaveProjectTemplate({
         <LayoutTemplate className="size-4 text-zinc-500" aria-hidden /> Save as project template
       </h2>
       <p className="mt-1 text-xs text-zinc-500">
-        Copies sections, tasks (with subtasks and field values), custom fields, rules, forms, saved views, and request
+        Copies sections, tasks (with subtasks and field values), custom fields, automations, forms, saved views, and request
         numbering into a workspace template. Assignees, members, comments, attachments, and completion are left out.{" "}
         <strong className="font-medium text-zinc-700">Everyone in the workspace can see and use templates.</strong>
       </p>
@@ -200,7 +200,7 @@ function TaskTemplates({
       </div>
       <p className="mt-1 text-xs text-zinc-500">
         Title, notes, subtasks, field values, and an optional assignee. Use them from “Add task” in List and Board, or
-        save one from a task’s header. Tasks made from a template are normal tasks: rules and notifications run as usual.
+        save one from a task’s header. Tasks made from a template are normal tasks: automations and notifications run as usual.
       </p>
       {creating ? (
         <form

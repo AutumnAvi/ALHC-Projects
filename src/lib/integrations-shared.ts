@@ -192,7 +192,7 @@ export const EMAIL_KIND_LABELS: Record<string, string> = {
   form_confirmation: "Form confirmation",
   requester_update: "Requester update",
   due_tomorrow: "Due tomorrow reminder",
-  custom: "Rule email",
+  custom: "Automation email",
 };
 
 export function emailKindLabel(kind: string): string {

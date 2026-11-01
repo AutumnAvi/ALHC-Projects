@@ -22,7 +22,7 @@ export function WorkWeekSettings({ workWeek, available }: { workWeek: number[]; 
     <div className="space-y-4">
       {available ? null : (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          The workweek needs this release’s database update, which isn’t applied yet. Until then rules count
+          The workweek needs this release’s database update, which isn’t applied yet. Until then automations count
           Sunday–Thursday.
         </p>
       )}
@@ -51,7 +51,7 @@ export function WorkWeekSettings({ workWeek, available }: { workWeek: number[]; 
       <p className="text-sm text-zinc-700" aria-live="polite">
         {days.length ? (
           <>
-            Rules count business days on: <span className="font-medium text-zinc-900">{describeWorkWeek(days)}</span>
+            Automations count business days on: <span className="font-medium text-zinc-900">{describeWorkWeek(days)}</span>
           </>
         ) : (
           <span className="text-red-600">Pick at least one workday.</span>
@@ -79,7 +79,7 @@ export function WorkWeekSettings({ workWeek, available }: { workWeek: number[]; 
         ) : null}
       </div>
       <p className="text-xs text-zinc-500">
-        “Set due date” actions that count business days skip the other days, and rules scheduled for “Every
+        “Set due date” actions that count business days skip the other days, and automations scheduled for “Every
         workday” run only on these days. Actions that count calendar days aren’t affected.
       </p>
     </div>

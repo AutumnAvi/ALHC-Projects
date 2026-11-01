@@ -169,7 +169,7 @@ export function TaskApprovals({
               key={approval.id}
               approval={approval}
               approverName={nameOf(approval.approverId)}
-              requesterName={approval.ruleName ? `Rule “${approval.ruleName}”` : nameOf(approval.requestedBy)}
+              requesterName={approval.ruleName ? `Automation “${approval.ruleName}”` : nameOf(approval.requestedBy)}
               isApprover={approval.approverId === memberId && taskPermissions(task).canComment}
               canEdit={canEdit}
               run={run}
