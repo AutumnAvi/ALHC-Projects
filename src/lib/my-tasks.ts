@@ -11,7 +11,17 @@ export type MyTaskSection = { id: string; kind: MyTaskSectionKind; name: string;
 // Where an open task sits in the viewer's My Tasks.
 export type MyTaskPlacement = { sectionId: string; sortOrder: number };
 
-// "sections" (default, Asana style) or "due" (the fixed due-date buckets). Remembered in a cookie.
-export type MyTasksLayout = "sections" | "due";
-export const MY_TASKS_LAYOUT_COOKIE = "my_tasks_layout";
-export const isMyTasksLayout = (value: unknown): value is MyTasksLayout => value === "sections" || value === "due";
+// "checklist" (the default since Nov 1 notes, batch 9b: one list in automatic date groups), or the
+// classic views: "sections" (your own My Tasks sections) and "due" (the fixed due-date buckets).
+// Remembered in a cookie — a new one (the old my_tasks_layout cookie is ignored), so everyone opens the
+// new checklist once and can go back to a classic view from its options menu.
+export type MyTasksLayout = "checklist" | "sections" | "due";
+export const DEFAULT_MY_TASKS_LAYOUT: MyTasksLayout = "checklist";
+export const MY_TASKS_LAYOUT_COOKIE = "my_tasks_view";
+export const isMyTasksLayout = (value: unknown): value is MyTasksLayout =>
+  value === "checklist" || value === "sections" || value === "due";
+// The cookie as the page reads it: anything unknown (or no cookie) opens the checklist.
+export const myTasksLayoutOf = (value: unknown): MyTasksLayout => (isMyTasksLayout(value) ? value : DEFAULT_MY_TASKS_LAYOUT);
+export function saveMyTasksLayout(layout: MyTasksLayout) {
+  document.cookie = `${MY_TASKS_LAYOUT_COOKIE}=${layout}; path=/; max-age=31536000; samesite=lax`;
+}

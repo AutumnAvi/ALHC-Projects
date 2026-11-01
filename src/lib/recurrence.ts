@@ -18,6 +18,9 @@ export type Recurrence = {
   weekdays: number[];
   ends: RecurrenceEnds;
   timezone?: string;
+  // Nov 1 notes (batch 9b): count the next date from the day the task is completed (Todoist's
+  // "every!"), not from its due date. Missing = off.
+  fromCompletion?: boolean;
 };
 
 export const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -52,6 +55,7 @@ export function parseRecurrence(value: Json | null | undefined): Recurrence | nu
     weekdays: value.freq === "weekly" ? [...new Set(weekdays)].sort((a, b) => a - b) : [],
     ends,
     timezone: typeof value.timezone === "string" ? value.timezone : undefined,
+    ...(value.from_completion === true ? { fromCompletion: true } : {}),
   };
 }
 
@@ -63,6 +67,7 @@ export function recurrenceJson(rule: Recurrence): Json {
     ...(rule.freq === "weekly" && rule.weekdays.length ? { weekdays: rule.weekdays } : {}),
     ends: rule.ends,
     ...(rule.timezone ? { timezone: rule.timezone } : {}),
+    ...(rule.fromCompletion ? { from_completion: true } : {}),
   };
 }
 
@@ -71,7 +76,8 @@ function formatDate(value: string) {
   return `${MONTHS[month - 1]} ${day}, ${year}`;
 }
 
-// "Every 2 weeks on Mon, Wed · 5 times", "Daily", "Monthly · until Dec 31, 2026".
+// "Every 2 weeks on Mon, Wed · 5 times", "Daily", "Monthly · until Dec 31, 2026", "Every 3 days after
+// completion".
 export function describeRecurrence(rule: Recurrence): string {
   const many = UNIT[rule.freq];
   let text =
@@ -81,6 +87,7 @@ export function describeRecurrence(rule: Recurrence): string {
   if (rule.freq === "weekly" && rule.weekdays.length) {
     text += ` on ${rule.weekdays.map((d) => WEEKDAY_SHORT[d]).join(", ")}`;
   }
+  if (rule.fromCompletion) text += " after completion";
   if (rule.ends.type === "after") text += ` · ${rule.ends.count} time${rule.ends.count === 1 ? "" : "s"}`;
   if (rule.ends.type === "until") text += ` · until ${formatDate(rule.ends.until)}`;
   return text;

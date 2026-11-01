@@ -94,3 +94,149 @@ export const HOME_PROJECT_VIEWS = [
 export type HomeProjectView = (typeof HOME_PROJECT_VIEWS)[number]["key"];
 export const isHomeProjectView = (value: unknown): value is HomeProjectView =>
   HOME_PROJECT_VIEWS.some((v) => v.key === value);
+
+// ---------------------------------------------------------------------------------------------
+// Nov 1 notes (batch 9b, item 65): home_dashboard(tz) — my projects for everyone, and four fixed lead
+// cards for people who lead projects. The parser drops anything malformed (a missing card is empty).
+// ---------------------------------------------------------------------------------------------
+
+export type HomeProject = {
+  id: string;
+  name: string;
+  status: string;
+  statusSet: boolean;
+  starred: boolean;
+  myOpen: number;
+  total: number;
+  completed: number;
+  overdue: number;
+};
+
+export type LeadPerson = { profileId: string; name: string; open: number; dueWeek: number; overdue: number };
+export type LeadLateTask = {
+  id: string;
+  title: string;
+  dueOn: string;
+  overdue: boolean;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  projectId: string | null;
+  projectName: string | null;
+};
+export type LeadHealth = {
+  id: string;
+  name: string;
+  status: string;
+  statusSet: boolean;
+  total: number;
+  completed: number;
+  overdue: number;
+  doneWeek: number;
+};
+export type LeadCards = {
+  projectCount: number;
+  workspaceAdmin: boolean;
+  weekStart: string;
+  load: { people: LeadPerson[]; peopleCount: number; unassigned: number };
+  late: { overdue: number; atRisk: number; tasks: LeadLateTask[] };
+  health: LeadHealth[];
+  done: { total: number; people: { profileId: string | null; name: string | null; count: number }[] };
+};
+export type HomeDashboard = { projects: HomeProject[]; lead: LeadCards | null };
+
+export const EMPTY_HOME_DASHBOARD: HomeDashboard = { projects: [], lead: null };
+
+// A soft cap for Team load's bars: more than this many due in the next seven days reads as a lot.
+export const LOAD_SOFT_CAP = 10;
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+const str = (v: unknown) => (typeof v === "string" ? v : null);
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const list = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter(isObj) : []);
+
+export function parseHomeDashboard(data: unknown): HomeDashboard {
+  if (!isObj(data)) return EMPTY_HOME_DASHBOARD;
+  const projects = list(data.projects).flatMap((p): HomeProject[] => {
+    const id = str(p.id);
+    const name = str(p.name);
+    if (!id || name === null) return [];
+    return [{
+      id,
+      name,
+      status: str(p.status) ?? "on_track",
+      statusSet: p.status_set === true,
+      starred: p.starred === true,
+      myOpen: num(p.my_open),
+      total: num(p.total),
+      completed: num(p.completed),
+      overdue: num(p.overdue),
+    }];
+  });
+  const raw = data.lead;
+  if (!isObj(raw)) return { projects, lead: null };
+  const load = isObj(raw.load) ? raw.load : {};
+  const late = isObj(raw.late) ? raw.late : {};
+  const done = isObj(raw.done) ? raw.done : {};
+  const lead: LeadCards = {
+    projectCount: num(raw.project_count),
+    workspaceAdmin: raw.workspace_admin === true,
+    weekStart: str(raw.week_start) ?? "",
+    load: {
+      people: list(load.people).flatMap((x) => {
+        const profileId = str(x.profile_id);
+        return profileId
+          ? [{ profileId, name: str(x.name) ?? "Someone", open: num(x.open), dueWeek: num(x.due_week), overdue: num(x.overdue) }]
+          : [];
+      }),
+      peopleCount: num(load.people_count),
+      unassigned: num(load.unassigned),
+    },
+    late: {
+      overdue: num(late.overdue),
+      atRisk: num(late.at_risk),
+      tasks: list(late.tasks).flatMap((x) => {
+        const id = str(x.id);
+        const dueOn = str(x.due_on);
+        return id && dueOn
+          ? [{
+              id,
+              title: str(x.title) ?? "",
+              dueOn,
+              overdue: x.overdue === true,
+              assigneeId: str(x.assignee_id),
+              assigneeName: str(x.assignee_name),
+              projectId: str(x.project_id),
+              projectName: str(x.project_name),
+            }]
+          : [];
+      }),
+    },
+    health: list(raw.health).flatMap((x) => {
+      const id = str(x.id);
+      return id
+        ? [{
+            id,
+            name: str(x.name) ?? "",
+            status: str(x.status) ?? "on_track",
+            statusSet: x.status_set === true,
+            total: num(x.total),
+            completed: num(x.completed),
+            overdue: num(x.overdue),
+            doneWeek: num(x.done_week),
+          }]
+        : [];
+    }),
+    done: {
+      total: num(done.total),
+      people: list(done.people).map((x) => ({ profileId: str(x.profile_id), name: str(x.name), count: num(x.count) })),
+    },
+  };
+  return { projects, lead };
+}
+
+// Progress the way the rest of the app rounds it: down, so 100% only means everything is done; null
+// when there's nothing to count.
+export function progressOf(completed: number, total: number): number | null {
+  return total > 0 ? Math.floor((100 * completed) / total) : null;
+}
