@@ -17,6 +17,8 @@ import {
   type FormFile,
   type FormQuestion,
   type PublicForm as PublicFormDef,
+  domainsInWords,
+  emailOnDomains,
 } from "@/lib/forms";
 import { createAnonBrowserClient } from "@/lib/supabase/anon-browser";
 
@@ -126,6 +128,11 @@ export function PublicForm({ form }: { form: PublicFormDef }) {
           return;
         }
         const check = validateSubmission(form.questions, email, answers);
+        // Nov 1 notes, item 69: a verified-only form says so before sending (submit_form checks again).
+        const domains = form.verifiedDomains ?? [];
+        if (domains.length && email.trim() && !check.errors.email && !emailOnDomains(email, domains)) {
+          check.errors.email = `This form only accepts email addresses at ${domainsInWords(domains)}`;
+        }
         setErrors(check.errors);
         if (Object.keys(check.errors).length) {
           setFormError("Check the highlighted answers");
@@ -161,6 +168,9 @@ export function PublicForm({ form }: { form: PublicFormDef }) {
           className={inputClass}
         />
         <p className="text-xs text-zinc-500">We&apos;ll send a confirmation and updates here.</p>
+        {form.verifiedDomains?.length ? (
+          <p className="text-xs text-zinc-500">Use your work email at {domainsInWords(form.verifiedDomains)}.</p>
+        ) : null}
         {errors.email ? (
           <p id="form-email-error" className="text-xs text-red-700">
             {errors.email}

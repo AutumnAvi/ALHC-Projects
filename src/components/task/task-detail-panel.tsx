@@ -9,7 +9,7 @@ import { CloseButton, ExpandButton, PANE_HEADER, PaneShell, useClosePane, WideVi
 import { RecordRecent } from "@/components/shell/shell-context";
 import { Avatar, displayName } from "@/components/avatar";
 import { useNotify, useServerAction } from "@/components/toast";
-import { assignRequestNumber, setTaskCompleted, updateTask } from "@/lib/actions";
+import { assignRequestNumber, completeApprovalAsApprover, setTaskCompleted, updateTask } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { taskPermissions } from "@/lib/permissions";
 import type { Tag } from "@/lib/tags";
@@ -19,7 +19,7 @@ import { ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
 import { BlockersHover } from "./blockers-popover";
 import { TaskActivity, TaskPaneFooter } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
-import { TaskAttachments, useAttachmentUpload } from "./task-attachments";
+import { OriginalRequestFiles, TaskAttachments, useAttachmentUpload } from "./task-attachments";
 import { TaskDueDate } from "./task-dates";
 import { TaskDependencies, hasDependencyRow } from "./task-dependencies";
 import { TaskFields } from "./task-fields";
@@ -162,6 +162,18 @@ export function TaskDetailPanel({
             <Clock className="size-4" strokeWidth={2.5} aria-hidden />
             {completeModeLabel("waiting")}
           </button>
+        ) : completeMode === "approved" && canEdit ? (
+          // Nov 1 notes, batch 9a: approved, and only its approvers complete it (no "anyone can complete").
+          <button
+            type="button"
+            disabled
+            data-complete-mode="approved"
+            data-tooltip="Approved. Only its approvers can complete it."
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-green-300 bg-green-50 px-2.5 text-sm font-medium text-green-800 disabled:cursor-not-allowed"
+          >
+            <ThumbsUp className="size-4" strokeWidth={2.5} aria-hidden />
+            Approved · the approver completes it
+          </button>
         ) : completeMode === "ready" && canActOnApproval(task, memberId) ? (
           <button
             type="button"
@@ -195,6 +207,23 @@ export function TaskDetailPanel({
               </span>
             </button>
           </BlockersHover>
+        ) : task.kind === "approval" && !completed && !canEdit && permissions.canComment && task.approval?.approverIds.includes(memberId) ? (
+          // Nov 1 notes, batch 9a: only approvers complete an approval task, and approvers are often
+          // Commenters (no Editor access): their Mark complete goes through complete_approval_as_approver.
+          <button
+            type="button"
+            data-complete-mode="approver"
+            onClick={() =>
+              run(
+                () => completeApprovalAsApprover(task.id),
+                () => setOptimisticCompleted(new Date().toISOString()),
+              )
+            }
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 text-sm font-medium text-zinc-700 transition hover:border-green-600 hover:bg-green-50 hover:text-green-700"
+          >
+            <Check className="size-4" strokeWidth={2.5} aria-hidden />
+            {completeModeLabel("complete", task.kind)}
+          </button>
         ) : canEdit ? (
           <button
             type="button"
@@ -418,6 +447,7 @@ export function TaskDetailPanel({
             ) : (
               <p className="mt-1 text-sm text-zinc-500">No description.</p>
             )}
+            <OriginalRequestFiles attachments={task.attachments} />
           </section>
 
           <TaskSubtasks task={task} profiles={profiles} adding={addingSubtask} onAddingChange={setAddingSubtask} memberId={memberId} />

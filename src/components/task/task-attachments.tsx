@@ -427,3 +427,82 @@ export function ImageLightbox({
     document.body,
   );
 }
+
+// Nov 1 notes, item 72: the files a requester attached on the form (task_attachments.source = 'form')
+// shown right under the description as the "Original request", as thumbnails: a click previews an image
+// in the lightbox, opens a PDF in the browser's viewer, and downloads anything else. They stay in
+// Attachments too.
+export function OriginalRequestFiles({ attachments }: { attachments: TaskAttachment[] }) {
+  const files = attachments.filter((a) => a.source === "form");
+  const [brokenIds, setBrokenIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const thumbRefs = useRef(new Map<string, HTMLButtonElement>());
+  if (files.length === 0) return null;
+  const kinds = new Map(files.map((a) => [a.id, previewKind(a.fileName, a.contentType)]));
+  const images = files.filter((a) => kinds.get(a.id) === "image" && !brokenIds.has(a.id));
+  const openImage = lightboxIndex === null ? null : (images[lightboxIndex] ?? null);
+
+  return (
+    <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50/60 p-2.5" data-original-request="">
+      <p className="text-xs font-medium text-zinc-600">
+        Original request · {files.length} {files.length === 1 ? "file" : "files"} from the form
+      </p>
+      <ul className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(6.5rem,1fr))] gap-2" aria-label="Files attached with the request">
+        {files.map((file) => {
+          const kind = kinds.get(file.id);
+          const thumbnail = kind === "image" && !brokenIds.has(file.id);
+          const href = kind === "pdf" ? `/attachments/${file.id}?preview=1` : `/attachments/${file.id}`;
+          return (
+            <li key={file.id} className="min-w-0">
+              {thumbnail ? (
+                <button
+                  type="button"
+                  ref={(el) => {
+                    if (el) thumbRefs.current.set(file.id, el);
+                    else thumbRefs.current.delete(file.id);
+                  }}
+                  onClick={() => setLightboxIndex(images.findIndex((a) => a.id === file.id))}
+                  aria-label={`Preview ${file.fileName}`}
+                  className="block aspect-[4/3] w-full overflow-hidden rounded-md border border-zinc-200 bg-white focus-visible:outline-2 focus-visible:outline-accent-500"
+                >
+                  <Thumbnail
+                    src={`/attachments/${file.id}?preview=1`}
+                    onBroken={() => setBrokenIds((prev) => new Set(prev).add(file.id))}
+                  />
+                </button>
+              ) : (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={kind === "pdf" ? `Preview ${file.fileName}` : `Download ${file.fileName}`}
+                  className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-1 rounded-md border border-zinc-200 bg-white text-zinc-400 hover:border-zinc-300"
+                >
+                  <FileText className="size-5" aria-hidden />
+                  <span className="text-2xs font-semibold tracking-wide text-zinc-500">{extensionOf(file.fileName)}</span>
+                </a>
+              )}
+              <p title={file.fileName} className="mt-1 truncate text-2xs text-zinc-700">
+                {file.fileName}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+      {openImage && lightboxIndex !== null ? (
+        <ImageLightbox
+          image={openImage}
+          position={lightboxIndex + 1}
+          total={images.length}
+          onPrevious={() => setLightboxIndex((i) => (i === null ? i : (i - 1 + images.length) % images.length))}
+          onNext={() => setLightboxIndex((i) => (i === null ? i : (i + 1) % images.length))}
+          onClose={() => {
+            const returnTo = thumbRefs.current.get(openImage.id);
+            setLightboxIndex(null);
+            returnTo?.focus();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}

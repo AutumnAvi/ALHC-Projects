@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AdminPage } from "@/components/admin/admin-chrome";
 import { CommenterRoleSettings } from "@/components/admin/commenter-role-settings";
+import { VerifiedDomainsSettings } from "@/components/admin/verified-domains-settings";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
-import { commenterRoleAllowed, listCommenterMembers, listWorkspaceMembers } from "@/lib/data";
+import { commenterRoleAllowed, getVerifiedDomainSettings, listCommenterMembers, listWorkspaceMembers } from "@/lib/data";
 import { isGoogleAuthEnabled } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Security · Admin console" };
@@ -14,10 +15,11 @@ export const metadata: Metadata = { title: "Security · Admin console" };
 // admin does and doesn't open.
 export default async function AdminSecurityPage() {
   await requireWorkspaceAdmin();
-  const [members, allowCommenter, commenters] = await Promise.all([
+  const [members, allowCommenter, commenters, verified] = await Promise.all([
     listWorkspaceMembers(),
     commenterRoleAllowed(),
     listCommenterMembers(),
+    getVerifiedDomainSettings(),
   ]);
   const google = isGoogleAuthEnabled();
   const methods = [
@@ -83,6 +85,19 @@ export default async function AdminSecurityPage() {
             Manage in Users
           </Link>
         </div>
+      </SettingsCard>
+
+      <SettingsCard
+        id="admin-verified-domains"
+        title="Verified domains"
+        description="Email addresses at these domains count as verified for request email conversations and verified-only forms."
+        isAdmin
+      >
+        {verified ? (
+          <VerifiedDomainsSettings domains={verified.domains} conversationsVerifiedOnly={verified.conversationsVerifiedOnly} />
+        ) : (
+          <p className="text-sm text-zinc-500">Verified domains need this release’s database update.</p>
+        )}
       </SettingsCard>
 
       <SettingsCard

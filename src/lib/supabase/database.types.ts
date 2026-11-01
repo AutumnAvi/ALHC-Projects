@@ -224,6 +224,9 @@ export type Database = {
           email_address: string | null;
           email_subject: string | null;
           email_skipped_files: Json | null;
+          // Nov 1 notes, batch 9a: Pin / Unpin (set_comment_pinned); absent on a database without it.
+          pinned_at?: string | null;
+          pinned_by?: string | null;
         };
         Insert: {
           id?: string;
@@ -867,6 +870,8 @@ export type Database = {
           accepting_responses: boolean;
           send_confirmation: boolean;
           confirmation_message: string | null;
+          // Nov 1 notes, batch 9a (item 69); absent on a database without it.
+          verified_domains_only?: boolean;
           created_by: string | null;
           created_at: string;
           updated_at: string;
@@ -882,6 +887,7 @@ export type Database = {
           accepting_responses?: boolean;
           send_confirmation?: boolean;
           confirmation_message?: string | null;
+          verified_domains_only?: boolean;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -897,6 +903,7 @@ export type Database = {
           accepting_responses?: boolean;
           send_confirmation?: boolean;
           confirmation_message?: string | null;
+          verified_domains_only?: boolean;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -4695,6 +4702,8 @@ export type Database = {
           allow_commenter_role: boolean;
           tags_enabled: boolean;
           work_week: number[];
+          // Nov 1 notes, batch 9a (item 69); absent on a database without it.
+          verified_domain_conversations?: boolean;
         };
         Insert: {
           id?: string;
@@ -4721,6 +4730,7 @@ export type Database = {
           allow_commenter_role?: boolean;
           tags_enabled?: boolean;
           work_week?: number[];
+          verified_domain_conversations?: boolean;
         };
         Relationships: [
           {
@@ -5318,6 +5328,10 @@ export type Database = {
           updated_by: string | null;
           created_at: string;
           updated_at: string;
+          // Nov 1 notes, batch 9a: the guided setup's follow-up; absent on a database without it.
+          after_approval?: string | null;
+          after_section_id?: string | null;
+          reminders?: boolean;
         };
         Insert: {
           task_id: string;
@@ -5415,11 +5429,71 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Nov 1 notes, batch 9a (item 69): verified email domains (workspace admins manage).
+      verified_email_domains: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          domain: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          removed_at: string | null;
+          removed_by: string | null;
+        };
+        Insert: { workspace_id: string; domain: string };
+        Update: { removed_at?: string | null };
+        Relationships: [];
+      };
+      // Nov 1 notes, batch 9a (10.4): who pinned or unpinned which comment.
+      comment_pin_events: {
+        Row: { id: string; task_id: string; comment_id: string; actor_id: string | null; pinned: boolean; created_at: string };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      // Nov 1 notes, batch 9a.
+      complete_approval_as_approver: {
+        Args: { target_task: string };
+        Returns: string;
+      };
+      set_comment_pinned: {
+        Args: { target_comment: string; pin: boolean };
+        Returns: Json;
+      };
+      task_pinned_comments: {
+        Args: { target_task: string };
+        Returns: Json;
+      };
+      set_approval_followup: {
+        Args: { target_task: string; followup: string; followup_section?: string | null; send_reminders?: boolean };
+        Returns: Json;
+      };
+      submitter_conversation_status: {
+        Args: { target_task: string };
+        Returns: Json;
+      };
+      set_email_conversation_override: {
+        Args: { target_task: string; scope: string; allow: boolean | null };
+        Returns: Json;
+      };
+      claim_trash_storage_purges: {
+        Args: { max_items?: number };
+        Returns: { id: string; bucket: string; path: string; is_prefix: boolean }[];
+      };
+      finish_trash_storage_purge: {
+        Args: { target: string; removed_count: number; error_message?: string | null };
+        Returns: undefined;
+      };
+      trash_retention_days: {
+        Args: Record<string, never>;
+        Returns: number;
+      };
       task_request_labels_in: {
         Args: { target_project: string; task_ids: string[] };
         Returns: Json;
@@ -5469,7 +5543,7 @@ export type Database = {
         Returns: Json;
       };
       // Oct 29 notes, batch 7 (item 52): the task's latest approval round is approved (the approval has
-      // been given, so it completes normally again).
+      // been given; since Nov 1 notes, batch 9a, still only its approvers complete it).
       approval_round_approved: {
         Args: { target_task: string };
         Returns: boolean;

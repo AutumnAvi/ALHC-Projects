@@ -478,9 +478,12 @@ begin
   assert public.task_approval_state(fa) ->> 'status' = 'approved', 'any one: the round is approved';
   select * into run from public.rule_runs where rule_id = rid and task_id = fa order by created_at desc limit 1;
   assert found and run.status = 'succeeded', 'the approval_decided rule ran for fa';
-  assert run.detail -> 'actions' -> 0 ->> 'result' = 'Marked complete',
-    'THE REVIEW BUG: the rule''s Mark complete was skipped as "completed by their approvers": ' || run.detail::text;
-  assert (select completed_at from public.tasks where id = fa) is not null, 'the rule completed the approved task';
+  -- Nov 1 notes, batch 9a (Avi's decision): rules never complete approval tasks, also once approved —
+  -- only the approvers do (this reverses batch 7's review fix).
+  assert run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped'
+     and run.detail -> 'actions' -> 0 ->> 'result' = 'Approval tasks are completed by their approvers',
+    'batch 9a: the rule''s Mark complete skips an approved approval task: ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = fa) is null, 'batch 9a: the approved task stays open for its approver';
 
   -- Everyone: one of two approved, so the approval isn't given yet; the rule's step is skipped.
   assert public.task_approval_state(fb) ->> 'status' = 'pending', 'everyone: still pending after the first approval';
@@ -493,7 +496,7 @@ begin
   assert (select completed_at from public.tasks where id = fb) is null, 'still open';
 end $$;
 
--- Cole's approval gives it: the rule completes it, and the round's More steps still move it.
+-- Cole's approval gives it: the rule still skips (batch 9a), and the round's More steps move it.
 set role authenticated;
 select set_config('request.jwt.claim.sub', 'b7b70029-0000-4000-8000-000000000004', false) is not null as ok \gset
 select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7t1_ids where name = 'fb')
@@ -508,8 +511,8 @@ begin
   assert public.task_approval_state(fb) ->> 'status' = 'approved', 'everyone: approved once both did';
   select * into run from public.rule_runs
   where rule_id = (select id from b7t1_ids where name = 'approved_rule') and task_id = fb order by created_at desc limit 1;
-  assert run.detail -> 'actions' -> 0 ->> 'result' = 'Marked complete', 'the last approval''s run completes it: ' || run.detail::text;
-  assert (select completed_at from public.tasks where id = fb) is not null, 'completed';
+  assert run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped', 'batch 9a: the last approval''s run skips too: ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = fb) is null, 'batch 9a: still open (its approvers complete it)';
   assert (select section_id from public.task_projects where task_id = fb and deleted_at is null)
          = (select id from b7t1_ids where name = 'done_section'), 'More steps moved it to Signed off too';
 end $$;
@@ -4621,7 +4624,8 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
--- 52 (refined): once the latest round is approved, the task completes normally again.
+-- 52 (refined; reversed by Nov 1 notes, batch 9a): once the latest round is approved, still only its
+-- approvers complete it.
 -- ---------------------------------------------------------------------------------------------
 
 select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
@@ -4647,7 +4651,8 @@ select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000004
 select public.decide_approval((select id from public.approval_requests where task_id = (select id from b7x_ids where name = 't')
   and approver_id = 'b7a80029-0000-4000-8000-000000000004' and status = 'pending'), 'approved', 'Looks good');
 
--- The approval has been given: the Editor who isn't an approver completes it, by hand and in bulk.
+-- The approval has been given, but (batch 9a) the Editor who isn't an approver still can't complete it,
+-- by hand or in bulk; the approver can.
 select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
 do $$
 declare
@@ -4659,16 +4664,29 @@ begin
   assert (select completed_at from public.tasks where id = t) is null, 'More steps: approving didn''t complete it';
   assert not (public.task_approval_state(t) ->> 'is_approver')::boolean, 'the Editor still isn''t an approver';
 
-  update public.tasks set completed_at = now() where id = t;
-  assert (select completed_at from public.tasks where id = t) is not null, 'a non-approver Editor completes it now';
-  update public.tasks set completed_at = null where id = t;
-
+  begin
+    update public.tasks set completed_at = now() where id = t;
+    raise exception 'batch 9a: a non-approver Editor must not complete an approved approval task';
+  exception when check_violation then
+    assert sqlerrm = 'This task was approved. Only its approvers can complete it.', 'says why: ' || sqlerrm;
+  end;
   result := public.bulk_update_tasks(array[t], '{"action": "complete"}'::jsonb);
-  assert result -> 'updated' ? t::text, 'bulk Complete too: ' || result::text;
+  assert result -> 'skipped' -> 0 ->> 'reason' = 'This task was approved. Only its approvers can complete it.',
+    'bulk Complete skips it: ' || result::text;
+  assert (select completed_at from public.tasks where id = t) is null, 'still open';
+end $$;
+
+select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000004', false) is not null as ok \gset
+do $$
+declare
+  t uuid := (select id from b7x_ids where name = 't');
+begin
+  update public.tasks set completed_at = now() where id = t;
+  assert (select completed_at from public.tasks where id = t) is not null, 'the approver completes it';
   update public.tasks set completed_at = null where id = t;
 end $$;
 
--- A rule's Mark complete completes it too (no skip once approved).
+-- A rule's Mark complete still skips it once approved (batch 9a).
 select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
 do $$
 declare
@@ -4682,13 +4700,13 @@ begin
   insert into b7x_ids values ('finish_rule', rid);
   perform public.run_manual_rule(rid, t);
   select * into run from public.rule_runs where rule_id = rid order by created_at desc limit 1;
-  assert run.status = 'succeeded' and run.detail -> 'actions' -> 0 ->> 'result' = 'Marked complete',
-    'the rule''s Mark complete ran: ' || coalesce(run.detail::text, '');
-  assert (select completed_at from public.tasks where id = t) is not null, 'the rule completed it';
-  update public.tasks set completed_at = null where id = t;
+  assert run.status = 'succeeded' and run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped'
+     and run.detail -> 'actions' -> 0 ->> 'result' = 'Approval tasks are completed by their approvers',
+    'the rule''s Mark complete skipped: ' || coalesce(run.detail::text, '');
+  assert (select completed_at from public.tasks where id = t) is null, 'the rule didn''t complete it';
 end $$;
 
--- My Tasks rules' Mark complete too.
+-- My Tasks rules' Mark complete skips it too.
 select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000002', false) is not null as ok \gset
 insert into public.my_task_rules (name, trigger_type, actions) values ('B7X done when assigned', 'assigned', '[{"type": "complete_task"}]');
 select set_config('request.jwt.claim.sub', 'b7a80029-0000-4000-8000-000000000001', false) is not null as ok \gset
@@ -4702,8 +4720,8 @@ declare
 begin
   select * into run from public.my_task_rule_runs where task_id = t order by created_at desc limit 1;
   assert found and run.status = 'succeeded', 'the My Tasks rule ran';
-  assert run.detail -> 'actions' -> 0 ->> 'outcome' is distinct from 'skipped', 'not skipped: ' || run.detail::text;
-  assert (select completed_at from public.tasks where id = t) is not null, 'the My Tasks rule completed it';
+  assert run.detail -> 'actions' -> 0 ->> 'outcome' = 'skipped', 'skipped: ' || run.detail::text;
+  assert (select completed_at from public.tasks where id = t) is null, 'the My Tasks rule didn''t complete it';
   update public.my_task_rules set enabled = false where name = 'B7X done when assigned';
 end $$;
 

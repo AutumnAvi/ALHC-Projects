@@ -182,25 +182,30 @@ test("RowCompleteControl: approvers get the checkbox; read-only rows a mark, exc
   assert.match(blockedPlain, /data-blocked-toggle=""/);
 });
 
-test("completeModeOf: once the latest round is approved, the task completes normally (anyone who edits it)", () => {
-  // Approved with More steps (the round didn't complete the task): the approval has been given.
-  assert.equal(completeModeOf({ kind: "approval", completed: false, status: "approved" }), "complete", "a non-approver");
-  assert.equal(completeModeOf({ kind: "approval", completed: false, status: "approved", isApprover: false }), "complete");
+test("completeModeOf (reversed by Nov 1 notes, batch 9a): once approved, still only its approvers complete it", () => {
+  // Approved with More steps (the round didn't complete the task): approvers complete it; everyone else
+  // gets "Approved", which explains that the approver completes it.
+  assert.equal(completeModeOf({ kind: "approval", completed: false, status: "approved" }), "approved", "a non-approver");
+  assert.equal(completeModeOf({ kind: "approval", completed: false, status: "approved", isApprover: false }), "approved");
   assert.equal(completeModeOf({ kind: "approval", completed: false, status: "approved", isApprover: true }), "complete", "an approver");
-  assert.equal(shortcutApprovalAction(completeModeOf({ kind: "approval", completed: false, status: "approved" })), null, "⌘/Ctrl+Enter completes");
-  assert.equal(rowCompleteMode({ kind: "approval", completedAt: null, approvalStatus: "approved" }), "complete");
-  assert.equal(completeModeLabel(completeModeOf({ kind: "approval", completed: false, status: "approved" }), "approval"), "Mark complete");
+  assert.equal(shortcutApprovalAction(completeModeOf({ kind: "approval", completed: false, status: "approved" })), "approved", "⌘/Ctrl+Enter explains");
+  assert.equal(rowCompleteMode({ kind: "approval", completedAt: null, approvalStatus: "approved" }), "approved");
+  assert.equal(completeModeLabel(completeModeOf({ kind: "approval", completed: false, status: "approved" }), "approval"), "Approved");
 
-  // Until then the approver-only rule holds: no round, pending, changes requested, rejected, withdrawn
-  // (reads as not sent), and paused (changes requested / rejected not yet acknowledged).
+  // Before an approval: no round, changes requested, rejected (withdrawn reads as not sent).
   for (const status of ["not_sent", "changes_requested", "rejected"] as const) {
     assert.equal(completeModeOf({ kind: "approval", completed: false, status }), "ready", status);
   }
   assert.equal(completeModeOf({ kind: "approval", completed: false, status: "pending" }), "waiting");
 
   const row = render(<RowCompleteControl task={{ ...approvalRow, approvalStatus: "approved" }} completed={false} onToggle={() => {}} />);
-  assert.match(row, /role="checkbox" aria-checked="false"[^>]*aria-label="Mark approval “Approve the copy” complete"/, "a plain checkbox");
-  assert.ok(!/data-approval-toggle=/.test(row), "no Ready for approval");
+  assert.match(row, /data-approval-toggle="approved"/, "an inert Approved control");
+  assert.match(row, /aria-disabled="true"/);
+  assert.match(row, /its approver completes it/);
+  const approverRow = render(
+    <RowCompleteControl task={{ ...approvalRow, approvalStatus: "approved", approvalIsApprover: true }} completed={false} onToggle={() => {}} />,
+  );
+  assert.match(approverRow, /role="checkbox" aria-checked="false"/, "the approver gets the checkbox");
 });
 
 const section: Section = { id: "s1", project_id: "p1", name: "To do", sort_order: 1024 };
@@ -517,7 +522,7 @@ test("the pane's Mark complete: Ready for approval for non-approvers, Mark compl
   assert.match(plain, />Mark complete<\/button>/, "other kinds are unchanged");
 });
 
-test("the pane: after an approval with More steps, anyone who edits the task gets plain Mark complete", () => {
+test("the pane (batch 9a): after an approval with More steps, an Editor who isn't an approver is told the approver completes it", () => {
   const approved = round({
     status: "approved",
     moreSteps: true,
@@ -527,9 +532,13 @@ test("the pane: after an approval with More steps, anyone who edits the task get
     requests: [request({ status: "approved" })],
   });
   const editor = pane(approvalTask("editor", info({ status: "approved", rounds: [approved] })));
-  assert.match(editor, /aria-pressed="false"/, "the approval has been given: the ordinary toggle");
-  assert.match(editor, />Mark complete<\/button>/);
-  assert.ok(!/data-complete-mode=/.test(editor), "not Ready for approval, not Waiting");
+  assert.match(editor, /data-complete-mode="approved"/, "Approved, disabled");
+  assert.match(editor, /the approver completes it/);
+  assert.ok(!/>Mark complete<\/button>/.test(editor), "no plain Mark complete");
+  const approver = pane(approvalTask("editor", info({ status: "approved", approverIds: ["me"], rounds: [approved] })));
+  assert.match(approver, />Mark complete<\/button>/, "an approver who edits gets Mark complete");
+  const commenterApprover = pane(approvalTask("commenter", info({ status: "approved", approverIds: ["me"], rounds: [approved] })));
+  assert.match(commenterApprover, /data-complete-mode="approver"/, "a Commenter approver completes it through the approver path");
   const viewer = pane(approvalTask("viewer", info({ status: "approved", rounds: [approved] })));
   assert.ok(!/>Mark complete<\/button>/.test(viewer), "a Viewer still can't");
 });

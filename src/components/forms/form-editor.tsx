@@ -65,6 +65,10 @@ import {
   type FormQuestion,
   type QuestionOption,
   type QuestionType,
+  EMAIL_QUESTION_NOTE,
+  branchUnavailableReason,
+  insertBranchQuestion,
+  showInBranch,
 } from "@/lib/forms";
 import { projectColorClass } from "@/lib/project-colors";
 
@@ -137,6 +141,7 @@ export function FormEditor({
   const [destination, setDestination] = useState(form.destinationSectionId ?? "");
   const [accepting, setAccepting] = useState(form.acceptingResponses);
   const [sendConfirmation, setSendConfirmation] = useState(form.sendConfirmation);
+  const [verifiedOnly, setVerifiedOnly] = useState(Boolean(form.verifiedDomainsOnly));
   const [confirmationMessage, setConfirmationMessage] = useState(form.confirmationMessage ?? "");
   const [questions, setQuestions] = useState<FormQuestion[]>(() => ensureNameQuestion(form.questions));
   const [dirty, setDirty] = useState(false);
@@ -294,6 +299,15 @@ export function FormEditor({
     return dropBefore === null && index === questions.length - 1 ? "after" : null;
   }
 
+  // Item 68: "Create new question" from a branch: a short answer right after the source's branch, shown
+  // only for that answer, opened for editing.
+  function createBranchQuestion(sourceId: string, optionId: string) {
+    const question: FormQuestion = { id: newId(), type: "short_text", label: "" };
+    changeQuestions((current) => insertBranchQuestion(current, sourceId, optionId, question));
+    setSelectedId(question.id);
+    setTab("questions");
+  }
+
   function removeQuestion(id: string) {
     changeQuestions((current) => current.filter((q) => q.id !== id));
     if (selectedId === id) setSelectedId(null);
@@ -325,6 +339,7 @@ export function FormEditor({
         acceptingResponses: accepting,
         sendConfirmation,
         confirmationMessage: confirmationMessage || null,
+        ...(verifiedOnly !== Boolean(form.verifiedDomainsOnly) ? { verifiedDomainsOnly: verifiedOnly } : {}),
       });
       if (!result.error) {
         setDirty(false);
@@ -544,6 +559,7 @@ export function FormEditor({
                           onToggle={() => setSelectedId(selectedId === question.id ? null : question.id)}
                           onChange={(next) => updateQuestion(question.id, next)}
                           onChangeAll={changeQuestions}
+                          onCreateBranch={(optionId) => createBranchQuestion(question.id, optionId)}
                           onMove={(delta) => moveQuestion(question.id, delta)}
                           onDuplicate={() => duplicateQuestion(question)}
                           onRemove={() => removeQuestion(question.id)}
@@ -567,6 +583,8 @@ export function FormEditor({
                   livePending={livePending}
                   sendConfirmation={sendConfirmation}
                   setSendConfirmation={touch(setSendConfirmation)}
+                  verifiedOnly={verifiedOnly}
+                  setVerifiedOnly={touch(setVerifiedOnly)}
                   confirmationMessage={confirmationMessage}
                   setConfirmationMessage={touch(setConfirmationMessage)}
                   sections={sections}
@@ -766,6 +784,23 @@ function NewQuestionMenu({
           <p className="px-2 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wide text-zinc-400">Question types</p>
           {types.map((t) => {
             const Icon = TYPE_ICONS[t.value];
+            // Item 71: the form already collects the submitter's email.
+            if (t.value === "email") {
+              return (
+                <span
+                  key={t.value}
+                  aria-disabled="true"
+                  data-question-type-email=""
+                  className="flex w-full cursor-default items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-400"
+                >
+                  <Icon className="mt-0.5 size-4" aria-hidden />
+                  <span>
+                    {t.label}
+                    <span className="block text-2xs">{EMAIL_QUESTION_NOTE}</span>
+                  </span>
+                </span>
+              );
+            }
             return (
               <button
                 key={t.value}
@@ -816,6 +851,7 @@ function QuestionCard({
   onToggle,
   onChange,
   onChangeAll,
+  onCreateBranch,
   onMove,
   onDuplicate,
   onRemove,
@@ -843,6 +879,8 @@ function QuestionCard({
   onToggle: () => void;
   onChange: (next: FormQuestion) => void;
   onChangeAll: (next: (current: FormQuestion[]) => FormQuestion[]) => void;
+  // Item 68: a new question shown when this one's answer is `optionId` (opens it).
+  onCreateBranch: (optionId: string) => void;
   onMove: (delta: -1 | 1) => void;
   onDuplicate: () => void;
   onRemove: () => void;
@@ -946,9 +984,63 @@ function QuestionCard({
             </span>
           ) : null}
         </button>
+        {isNameQuestion(question) ? null : (
+          <BranchButton question={question} questions={questions} onChangeAll={onChangeAll} onCreateBranch={onCreateBranch} />
+        )}
       </div>
       {open ? (
         <div id={`${prefix}-body`} className="flex flex-col gap-3 border-t border-zinc-100 px-3 pb-3 pt-3">
+          {isNameQuestion(question) ? (
+            <p className="rounded-md bg-zinc-50 px-2.5 py-2 text-xs text-zinc-600">
+              Every form asks for the requester’s name: a required short answer, always shown. You can rename the
+              question, but not remove it or make it optional. The name is used in emails to the requester and in
+              review checks.
+            </p>
+          ) : (
+          // Item 67: the type and Required come first on the card.
+          <div className="grid grid-cols-2 gap-2" data-question-top="">
+            <div>
+              <label htmlFor={`${prefix}-type`} className={LABEL}>
+                Type
+              </label>
+              <SmartPicker
+                id={`${prefix}-type`}
+                label="Type"
+                value={question.type}
+                onChange={(value) => {
+                  const type = value as QuestionType;
+                  const next: FormQuestion = { ...question, type };
+                  if (isChoice(type) && !next.options?.length) next.options = [{ id: newId(), label: "Option 1" }];
+                  onChange(next);
+                }}
+                className={PICKER}
+                options={QUESTION_TYPES.filter((t) => typeAvailable(t.value, batch4, real1) || t.value === question.type).map(
+                  (t) =>
+                    t.value === "email" && question.type !== "email"
+                      ? { value: t.value, label: t.label, disabled: true, disabledReason: EMAIL_QUESTION_NOTE }
+                      : { value: t.value, label: t.label },
+                )}
+              />
+            </div>
+            {isAnswerable(question) ? (
+              <label className="mt-5 flex items-center gap-2 text-sm text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(question.required)}
+                  onChange={(e) => {
+                    const next = { ...question };
+                    if (e.currentTarget.checked) next.required = true;
+                    else delete next.required;
+                    onChange(next);
+                  }}
+                  className="size-4 accent-accent-600"
+                />
+                Required
+              </label>
+            ) : null}
+          </div>
+          )}
+
           <div>
             <label htmlFor={`${prefix}-label`} className={LABEL}>
               {question.type === "heading" ? "Heading" : "Question"}
@@ -976,53 +1068,6 @@ function QuestionCard({
               className="field mt-1 h-auto w-full py-1.5"
             />
           </div>
-          {isNameQuestion(question) ? (
-            <p className="rounded-md bg-zinc-50 px-2.5 py-2 text-xs text-zinc-600">
-              Every form asks for the requester’s name: a required short answer, always shown. You can rename the
-              question, but not remove it or make it optional. The name is used in emails to the requester and in
-              review checks.
-            </p>
-          ) : (
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label htmlFor={`${prefix}-type`} className={LABEL}>
-                Type
-              </label>
-              <SmartPicker
-                id={`${prefix}-type`}
-                label="Type"
-                value={question.type}
-                onChange={(value) => {
-                  const type = value as QuestionType;
-                  const next: FormQuestion = { ...question, type };
-                  if (isChoice(type) && !next.options?.length) next.options = [{ id: newId(), label: "Option 1" }];
-                  onChange(next);
-                }}
-                className={PICKER}
-                options={QUESTION_TYPES.filter((t) => typeAvailable(t.value, batch4, real1) || t.value === question.type).map(
-                  (t) => ({ value: t.value, label: t.label }),
-                )}
-              />
-            </div>
-            {isAnswerable(question) ? (
-              <label className="mt-5 flex items-center gap-2 text-sm text-zinc-700">
-                <input
-                  type="checkbox"
-                  checked={Boolean(question.required)}
-                  onChange={(e) => {
-                    const next = { ...question };
-                    if (e.currentTarget.checked) next.required = true;
-                    else delete next.required;
-                    onChange(next);
-                  }}
-                  className="size-4 accent-accent-600"
-                />
-                Required
-              </label>
-            ) : null}
-          </div>
-          )}
-
           {isChoice(question.type) ? <OptionsEditor question={question} sections={sections} fields={fields} onChange={onChange} /> : null}
 
           {question.type === "attachment" ? (
@@ -1035,7 +1080,9 @@ function QuestionCard({
             <MappingSelect question={question} fields={fields} onChange={onChange} prefix={prefix} />
           ) : null}
 
-          {isBranchSource(question) ? <BranchEditor question={question} questions={questions} onChangeAll={onChangeAll} /> : null}
+          {isBranchSource(question) ? (
+            <BranchEditor question={question} questions={questions} onChangeAll={onChangeAll} onCreateBranch={onCreateBranch} />
+          ) : null}
 
           {question.show_if ? (
             <ShownIf question={question} questions={questions} onChange={onChange} />
@@ -1228,28 +1275,19 @@ function BranchEditor({
   question,
   questions,
   onChangeAll,
+  onCreateBranch,
 }: {
   question: FormQuestion;
   questions: FormQuestion[];
   onChangeAll: (next: (current: FormQuestion[]) => FormQuestion[]) => void;
+  onCreateBranch: (optionId: string) => void;
 }) {
   const index = questions.findIndex((q) => q.id === question.id);
   const later = questions.slice(index + 1);
   const options = branchOptions(question);
 
   function show(childId: string, optionId: string, on: boolean) {
-    onChangeAll((current) =>
-      current.map((q) => {
-        if (q.id !== childId) return q;
-        const sameParent = q.show_if?.question_id === question.id;
-        const ids = sameParent ? (q.show_if?.option_ids ?? []) : [];
-        const next = on ? [...new Set([...ids, optionId])] : ids.filter((id) => id !== optionId);
-        const copy = { ...q };
-        if (next.length) copy.show_if = { question_id: question.id, option_ids: next };
-        else if (sameParent) delete copy.show_if;
-        return copy;
-      }),
-    );
+    onChangeAll((current) => showInBranch(current, question.id, childId, optionId, on));
   }
 
   return (
@@ -1258,8 +1296,8 @@ function BranchEditor({
         <GitBranch className="size-3.5 text-zinc-500" aria-hidden />
         Branching
       </p>
-      {later.length === 0 ? (
-        <p className="mt-1 text-xs text-zinc-500">Add questions after this one to show them only for certain answers.</p>
+      {later.length === 0 && options.length === 0 ? (
+        <p className="mt-1 text-xs text-zinc-500">Add answer options first, then show questions only for certain answers.</p>
       ) : (
         <ul className="mt-1.5 flex flex-col gap-1.5">
           {options.map((option) => {
@@ -1283,8 +1321,7 @@ function BranchEditor({
                     </button>
                   </span>
                 ))}
-                {addable.length ? (
-                  <Popover
+                <Popover
                     label={`Show a question when the answer is ${option.label}`}
                     panelClassName="w-64 p-1.5"
                     buttonClassName="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-accent-700 hover:bg-accent-50"
@@ -1296,34 +1333,170 @@ function BranchEditor({
                     }
                   >
                     {(close) => (
-                      <ul className="flex flex-col">
-                        {addable.map((q) => (
-                          <li key={q.id}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                close();
-                                show(q.id, option.id, true);
-                              }}
-                              className="flex w-full flex-col items-start rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
-                            >
-                              <span className="truncate">{q.label || "Untitled question"}</span>
-                              {q.show_if && q.show_if.question_id !== question.id ? (
-                                <span className="text-2xs text-amber-700">Moves it from its current branch</span>
-                              ) : null}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
+                      <BranchTargetList
+                        source={question}
+                        addable={addable}
+                        onPick={(childId) => {
+                          close();
+                          show(childId, option.id, true);
+                        }}
+                        onCreate={() => {
+                          close();
+                          onCreateBranch(option.id);
+                        }}
+                      />
                     )}
                   </Popover>
-                ) : null}
               </li>
             );
           })}
         </ul>
       )}
     </div>
+  );
+}
+
+// Item 68: what a branch can show — a later question (picking one on another branch moves it), or a new
+// question created right here, right after this question's branch.
+function BranchTargetList({
+  source,
+  addable,
+  onPick,
+  onCreate,
+}: {
+  source: FormQuestion;
+  addable: FormQuestion[];
+  onPick: (questionId: string) => void;
+  onCreate: () => void;
+}) {
+  return (
+    <ul className="flex flex-col">
+      {addable.length ? (
+        <li className="px-2 pb-1 pt-1 text-2xs font-semibold uppercase tracking-wide text-zinc-400">Show a question below</li>
+      ) : null}
+      {addable.map((q) => (
+        <li key={q.id}>
+          <button
+            type="button"
+            onClick={() => onPick(q.id)}
+            className="flex w-full flex-col items-start rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+          >
+            <span className="truncate">{q.label || "Untitled question"}</span>
+            {q.show_if && q.show_if.question_id !== source.id ? (
+              <span className="text-2xs text-amber-700">Moves it from its current branch</span>
+            ) : null}
+          </button>
+        </li>
+      ))}
+      <li className={addable.length ? "mt-1 border-t border-zinc-100 pt-1" : ""}>
+        <button
+          type="button"
+          data-branch-create=""
+          onClick={onCreate}
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-accent-700 hover:bg-accent-50"
+        >
+          <Plus className="size-4" aria-hidden />
+          Create new question
+        </button>
+      </li>
+    </ul>
+  );
+}
+
+// Item 68: a Branch button on every question card's header. Choice and checkbox questions pick an answer,
+// then a later question or "Create new question"; other types say why they can't branch.
+function BranchButton({
+  question,
+  questions,
+  onChangeAll,
+  onCreateBranch,
+}: {
+  question: FormQuestion;
+  questions: FormQuestion[];
+  onChangeAll: (next: (current: FormQuestion[]) => FormQuestion[]) => void;
+  onCreateBranch: (optionId: string) => void;
+}) {
+  const [optionId, setOptionId] = useState<string | null>(null);
+  const reason = branchUnavailableReason(question);
+  const label = question.label.trim() || "this question";
+  if (reason) {
+    return (
+      <span
+        role="img"
+        aria-label={`Branch: ${reason}`}
+        data-tooltip={reason}
+        tabIndex={0}
+        className="mr-2 inline-flex h-6 shrink-0 cursor-default items-center gap-1 rounded px-1.5 text-2xs text-zinc-300"
+      >
+        <GitBranch className="size-3.5" aria-hidden />
+        Branch
+      </span>
+    );
+  }
+  const options = branchOptions(question);
+  const index = questions.findIndex((q) => q.id === question.id);
+  const later = questions.slice(index + 1).filter((q) => !isNameQuestion(q));
+  const chosen = options.find((o) => o.id === optionId) ?? (options.length === 1 ? options[0] : null);
+  return (
+    <Popover
+      label={`Branch from ${label}`}
+      align="end"
+      panelClassName="w-72 p-1.5"
+      buttonClassName="mr-2 inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-2xs font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 aria-expanded:bg-zinc-100"
+      tooltip="Show another question only for one answer"
+      button={
+        <>
+          <GitBranch className="size-3.5" aria-hidden />
+          Branch
+        </>
+      }
+    >
+      {(close) =>
+        options.length === 0 ? (
+          <p className="px-2 py-1.5 text-xs text-zinc-500">Add answer options first.</p>
+        ) : !chosen ? (
+          <ul className="flex flex-col">
+            <li className="px-2 pb-1 pt-1 text-2xs font-semibold uppercase tracking-wide text-zinc-400">If the answer is</li>
+            {options.map((o) => (
+              <li key={o.id}>
+                <button
+                  type="button"
+                  onClick={() => setOptionId(o.id)}
+                  className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+                >
+                  {o.label || "…"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div>
+            <p className="flex items-center gap-1 px-2 pb-1 pt-1 text-xs text-zinc-600">
+              If the answer is <span className="font-medium text-zinc-900">{chosen.label || "…"}</span>
+              {options.length > 1 ? (
+                <button type="button" onClick={() => setOptionId(null)} className="ml-auto text-2xs text-accent-700 hover:underline">
+                  Change
+                </button>
+              ) : null}
+            </p>
+            <BranchTargetList
+              source={question}
+              addable={later.filter((q) => !(q.show_if?.question_id === question.id && q.show_if.option_ids.includes(chosen.id)))}
+              onPick={(childId) => {
+                close();
+                setOptionId(null);
+                onChangeAll((current) => showInBranch(current, question.id, childId, chosen.id, true));
+              }}
+              onCreate={() => {
+                close();
+                setOptionId(null);
+                onCreateBranch(chosen.id);
+              }}
+            />
+          </div>
+        )
+      }
+    </Popover>
   );
 }
 
@@ -1374,6 +1547,8 @@ function SettingsTab({
   livePending,
   sendConfirmation,
   setSendConfirmation,
+  verifiedOnly,
+  setVerifiedOnly,
   confirmationMessage,
   setConfirmationMessage,
   sections,
@@ -1395,6 +1570,8 @@ function SettingsTab({
   livePending: boolean;
   sendConfirmation: boolean;
   setSendConfirmation: (v: boolean) => void;
+  verifiedOnly: boolean;
+  setVerifiedOnly: (v: boolean) => void;
   confirmationMessage: string;
   setConfirmationMessage: (v: string) => void;
   sections: SectionRef[];
@@ -1474,9 +1651,20 @@ function SettingsTab({
       <SettingsGroup title="Who can submit">
         <p className="flex items-start gap-2 text-xs text-zinc-600">
           <Globe className="mt-0.5 size-3.5 shrink-0 text-zinc-500" aria-hidden />
-          Anyone with the link, no sign-in needed (signed-in people see their email filled in). Up to 5 submissions a
-          minute per email address.
+          {verifiedOnly
+            ? "Anyone with the link whose email is on a verified domain (Admin console → Security), no sign-in needed."
+            : "Anyone with the link, no sign-in needed (signed-in people see their email filled in)."}{" "}
+          Up to 5 submissions a minute per email address.
         </p>
+        <div className="mt-2">
+          <Setting
+            id="form-verified-only"
+            checked={verifiedOnly}
+            onChange={setVerifiedOnly}
+            label="Only allow verified-domain emails to submit"
+            hint="Other addresses are told to use their work email. The verified domains are set in Admin console → Security."
+          />
+        </div>
       </SettingsGroup>
       <SettingsGroup title="Share">
         <div className="flex flex-col gap-2">
