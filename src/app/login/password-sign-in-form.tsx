@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
+import Link from "next/link";
+import { MIN_PASSWORD_LENGTH } from "@/lib/password-reset";
 import { passwordAuth, type PasswordAuthState } from "./actions";
 
 const inputClass =
@@ -45,17 +47,24 @@ export function PasswordSignInForm({
           type="password"
           name="password"
           required
-          minLength={6}
+          minLength={MIN_PASSWORD_LENGTH}
           autoComplete={signUp ? "new-password" : "current-password"}
           aria-describedby={signUp ? "password-hint" : undefined}
           className={inputClass}
         />
         {signUp ? (
           <span id="password-hint" className="mt-1 block text-xs font-normal text-zinc-500">
-            At least 6 characters.
+            At least {MIN_PASSWORD_LENGTH} characters.
           </span>
         ) : null}
       </label>
+      {signUp ? null : (
+        <p className="-mt-2 text-right text-sm">
+          <Link href="/forgot-password" className="font-medium text-accent-700 hover:underline">
+            Forgot password?
+          </Link>
+        </p>
+      )}
       {state.error ? (
         <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {state.error}

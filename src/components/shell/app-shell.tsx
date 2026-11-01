@@ -9,6 +9,7 @@ import { RightPanelProvider } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
 import { SidebarContent, type SidebarProject } from "@/components/shell/sidebar";
 import { sharedClientModules } from "@/components/shell/shared-chunks";
+import { APP_SHELL_FRAME } from "@/components/shell/shell-frame";
 import { TopBar } from "@/components/shell/top-bar";
 import { EMPTY_FOLDER_STATE, type SidebarFolderState } from "@/lib/sidebar-folders";
 
@@ -16,7 +17,8 @@ void sharedClientModules;
 
 // The app frame (Asana parity, batch 1): a dark top bar across the full width, the dark sidebar under it
 // (hidden with the top bar's ☰ on wide screens, a drawer on narrow ones), and the white content area.
-// app-shell / app-main: the print stylesheet (globals.css) lets these flow onto paper.
+// app-shell / app-main: the print stylesheet (globals.css) lets these flow onto paper. The frame never lets
+// the document scroll (shell-frame.ts, Nov 1 notes item 58).
 export function AppShell({
   projects,
   starredIds,
@@ -36,7 +38,7 @@ export function AppShell({
   return (
     // One right-side panel at a time across the app: the task pane, Customize, the status sheet.
     <RightPanelProvider>
-      <div className="app-shell flex h-full flex-col">
+      <div className={APP_SHELL_FRAME}>
         <TopBar />
         {/* --sidebar-w: the sidebar column's width, so the task pane can size itself to the content area
             (globals.css). app-main is the pane's containing block. */}
