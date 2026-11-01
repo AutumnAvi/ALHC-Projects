@@ -427,3 +427,9 @@ export function settingsFromRow(row: Record<string, unknown> | null | undefined)
 export function isEmailDesignKind(value: unknown): value is EmailDesignKind {
   return value === "internal" || value === "requester";
 }
+
+// Nov 1 notes (batch 8): the editor's "From:" line over the preview — the sender the drain would use for
+// that kind of email (previewEmailDesign), or why there's none here.
+export function previewFromLabel(from: string | null): string {
+  return from?.trim() || "No sending address is set up here, so emails are logged, not sent";
+}

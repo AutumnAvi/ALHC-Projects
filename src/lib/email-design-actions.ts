@@ -2,7 +2,7 @@
 
 import { refresh } from "next/cache";
 import { getViewer } from "@/lib/auth";
-import { renderDesignSample, sendTestEmail } from "@/lib/email";
+import { fromFor, renderDesignSample, sendTestEmail } from "@/lib/email";
 import {
   DESIGN_COLUMNS,
   DESIGN_FIELDS,
@@ -212,7 +212,7 @@ async function sampleOptions(scope: EmailDesignScope, sample: DesignSample | nul
 // The live preview: a sample email of the kind rendered with the draft, exactly as the drain would.
 export async function previewEmailDesign(
   input: EmailDesignScope & { settings: Partial<EmailDesignSettings>; sample?: DesignSample | null },
-): Promise<{ error?: string; subject?: string; html?: string; text?: string }> {
+): Promise<{ error?: string; subject?: string; html?: string; text?: string; from?: string | null; replyable?: boolean }> {
   try {
     const scope = checkScope(input);
     const viewer = await getViewer();
@@ -220,7 +220,19 @@ export async function previewEmailDesign(
     const design = await draftDesign(scope, input.settings);
     const sample = isDesignSample(input.sample) ? input.sample : null;
     const email = renderDesignSample(scope.kind, design, await sampleOptions(scope, sample));
-    return { subject: email.subject, html: email.html, text: email.text };
+    // Nov 1 notes (batch 8): the From the drain would use for this kind of email (the no-reply sender
+    // unless it carries a Reply-To), with the workspace's sender name; null when nothing is set up here.
+    const replyable = email.replyable === true;
+    const supabase = await createClient();
+    const { data: workspace } = await supabase
+      .from("workspaces")
+      .select("email_sender_name")
+      .is("deleted_at", null)
+      .order("created_at")
+      .limit(1)
+      .maybeSingle();
+    const from = fromFor(replyable, workspace?.email_sender_name ?? null);
+    return { subject: email.subject, html: email.html, text: email.text, from, replyable };
   } catch (error) {
     return { error: message(error) };
   }

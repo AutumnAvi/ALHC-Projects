@@ -65,8 +65,8 @@ test("the email's files: a signed thumbnail, else a file tile; each opens that f
     assert.match(rendered.text, new RegExp(`\\?file=${id}`));
   }
   assert.equal(urls.file("a b"), `${urls.page}?file=a%20b`);
-  // Three per row: the grid's first row holds three cells.
-  assert.equal(rendered.html.match(/<tr><td width="33%"/g)?.length, 1, "one row for three files");
+  // Nov 1 notes (batch 8): one file per row, near the email's full width.
+  assert.equal(rendered.html.match(/<tr><td valign="top" style="padding:0 0 16px 0">/g)?.length, 3, "a row per file");
 });
 
 test("many files: the grid shows nine and counts the rest", () => {
@@ -89,7 +89,7 @@ test("thumbnails: images and PDFs only, at most six, stored next to the file", (
   const picked = thumbnailCandidates(files).map((f) => f.name);
   assert.deepEqual(picked, ["a.png", "b.pdf", "g0.jpg", "g1.jpg", "g2.jpg", "g3.jpg"]);
   assert.equal(thumbnailPath("task-1", "att-1"), "task-1/thumb-att-1.jpg", "two path segments: the task's readers read it");
-  assert.deepEqual(thumbnailSize(1600, 1200), { width: THUMB_WIDTH, height: 360, scale: THUMB_WIDTH / 1600 });
+  assert.deepEqual(thumbnailSize(1600, 1200), { width: THUMB_WIDTH, height: 900, scale: THUMB_WIDTH / 1600 });
   assert.equal(thumbnailSize(1000, 5000).height, THUMB_MAX_HEIGHT, "tall files are cropped");
   assert.equal(thumbnailSize(200, 100).width, 200, "never upscaled");
 });

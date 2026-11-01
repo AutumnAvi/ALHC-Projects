@@ -1,14 +1,19 @@
 import "server-only";
 import Link from "next/link";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
-import { isEmailConfigured } from "@/lib/email";
+import { configuredSender, isEmailConfigured, senderAddress } from "@/lib/email";
 import { isInboundEmailConfigured } from "@/lib/email-reply";
 
-// The address part of EMAIL_FROM ("Name <a@b>" or "a@b"); shown in the sender preview, never a secret.
+// The address part of EMAIL_FROM ("Name <a@b>" or "a@b"): the sender of replyable emails (responses to a
+// form's submitter). Shown in the sender preview, never a secret.
 export function fromAddress(): string | null {
-  const configured = process.env.EMAIL_FROM?.trim();
-  if (!configured) return null;
-  return configured.match(/<([^<>]+)>\s*$/)?.[1]?.trim() ?? configured;
+  return senderAddress(configuredSender(true));
+}
+
+// Nov 1 notes (batch 8): the address every email that can't be replied to comes from — EMAIL_FROM_NOREPLY,
+// else EMAIL_FROM.
+export function noReplyFromAddress(): string | null {
+  return senderAddress(configuredSender(false));
 }
 
 // Whether the app sends email at all, whether replies come back as comments, and where invite statuses
@@ -25,8 +30,16 @@ export function EmailDeliveryCard({ isAdmin, invitesHref }: { isAdmin: boolean; 
             ? "On — emails go out through Resend within about a minute"
             : "Off — no email provider is configured, so emails are logged, not sent"}
         </dd>
+        <dt className="text-zinc-500">Senders</dt>
+        <dd className="text-zinc-900">
+          <SenderLines replyable={fromAddress()} noReply={noReplyFromAddress()} separate={Boolean(process.env.EMAIL_FROM_NOREPLY?.trim())} />
+        </dd>
         <dt className="text-zinc-500">Reply by email</dt>
-        <dd className="text-zinc-900">{isInboundEmailConfigured() ? "On — replies to comment emails become comments" : "Off"}</dd>
+        <dd className="text-zinc-900">
+          {isInboundEmailConfigured()
+            ? "On — replies to responses sent to a form’s submitter become comments on the request. Every other email says “Do not reply to this email.”"
+            : "Off — every email says “Do not reply to this email.”"}
+        </dd>
         <dt className="text-zinc-500">Bounces and complaints</dt>
         <dd className="text-zinc-900">
           {isInboundEmailConfigured()
@@ -55,5 +68,23 @@ export function EmailDeliveryCard({ isAdmin, invitesHref }: { isAdmin: boolean; 
         </dd>
       </dl>
     </SettingsCard>
+  );
+}
+
+// The two senders (Nov 1 notes, batch 8): replyable emails from EMAIL_FROM, everything else from
+// EMAIL_FROM_NOREPLY (or EMAIL_FROM when it isn't set).
+export function SenderLines({ replyable, noReply, separate }: { replyable: string | null; noReply: string | null; separate: boolean }) {
+  if (!replyable) return <>No sending address is configured yet</>;
+  return (
+    <ul className="space-y-0.5">
+      <li>
+        <span className="font-mono text-xs">{noReply ?? replyable}</span>
+        <span className="text-zinc-500"> — every email that can’t be replied to{separate ? "" : " (set EMAIL_FROM_NOREPLY for a separate no-reply address)"}</span>
+      </li>
+      <li>
+        <span className="font-mono text-xs">{replyable}</span>
+        <span className="text-zinc-500"> — responses to a form’s submitter, which they can answer by email</span>
+      </li>
+    </ul>
   );
 }

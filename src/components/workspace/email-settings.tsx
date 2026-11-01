@@ -4,23 +4,27 @@ import { useState } from "react";
 import { useServerAction } from "@/components/toast";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { updateWorkspaceSettings } from "@/lib/actions";
-import { SENDER_NAME_MAX, senderNameProblem } from "@/lib/workspace";
+import { SENDER_NAME_MAX, senderNameProblem, senderPreview } from "@/lib/workspace";
 
 // Admin console → Email → Sender name (read-only on Settings → Workspace → Email for members). Shown in
 // front of the configured from-address on every email the app sends.
 export function SenderNameSettings({
   senderName,
   fromAddress,
+  noReplyAddress = null,
   isAdmin,
 }: {
   senderName: string | null;
+  // EMAIL_FROM: the sender of replyable emails (responses to a form's submitter).
   fromAddress: string | null;
+  // Nov 1 notes (batch 8): EMAIL_FROM_NOREPLY (else EMAIL_FROM), the sender of every other email.
+  noReplyAddress?: string | null;
   isAdmin: boolean;
 }) {
   const [pending, run] = useServerAction();
   const [value, setValue] = useState(senderName ?? "");
   const problem = value.trim() ? senderNameProblem(value.trim()) : null;
-  const preview = fromAddress ? `${value.trim() ? `${value.trim()} <${fromAddress}>` : fromAddress}` : null;
+  const preview = fromAddress ? senderPreview(value, fromAddress, noReplyAddress) : null;
 
   return (
     <SettingsCard

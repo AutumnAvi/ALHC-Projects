@@ -6,10 +6,19 @@ import type { Json, Tables } from "@/lib/supabase/database.types";
 // and report emails share it): a heading, paragraphs, label / value rows, optional extra blocks (the
 // digest's groups, a report's tables), one button, and footer lines. Every value is escaped. Since Oct 19
 // notes it also makes the subject: the email's own, or the design's subject template filled in; and the
-// design can hide any block (the reply marker and the "Turn off" links always stay).
+// design can hide any block (the reply marker, the reply / no-reply lines, and the "Turn off" links
+// always stay).
 
 export type OutboxRow = Tables<"email_outbox">;
-export type Rendered = { subject: string; text: string; html: string };
+// `replyable`: the email carries a Reply-To the app reads (a response to a form's submitter while replies
+// by email are on). The senders pick the From address by it: EMAIL_FROM for replyable emails, the no-reply
+// sender (EMAIL_FROM_NOREPLY) for every other one (Nov 1 notes, batch 8).
+export type Rendered = { subject: string; text: string; html: string; replyable?: boolean };
+
+// Nov 1 notes (batch 8): every email that isn't replyable ends with this footnote, and a replyable one says
+// so at the top. Neither can be hidden by the design's block switches (like the reply marker).
+export const NO_REPLY_NOTE = "Do not reply to this email.";
+export const CAN_REPLY_NOTE = "You can reply to this email to respond.";
 export type Action = { label: string; href: string };
 // Extra content between the rows and the button: HTML (already escaped by its builder) and its text twin.
 export type Block = { html: string; text: string };
@@ -46,6 +55,11 @@ export function layout(
     alwaysBody?: boolean;
     action?: Action | null;
     preface?: string | null;
+    // The email carries a Reply-To the app reads: "You can reply to this email to respond." at the top
+    // instead of the "Do not reply to this email." footnote.
+    replyable?: boolean;
+    // Said right after the no-reply footnote ("Do not reply to this email. Open the task to answer.").
+    noReplyHint?: string | null;
     footer?: string[];
     blocks?: Block[];
     // A small link under the footer lines (the digest's and report's "Turn off" links).
@@ -56,6 +70,9 @@ export function layout(
   } = {},
 ): Rendered {
   const { preface, blocks = [], footerLink } = options;
+  const replyable = options.replyable === true;
+  const replyLine = replyable ? CAN_REPLY_NOTE : "";
+  const noReply = replyable ? "" : [NO_REPLY_NOTE, options.noReplyHint?.trim() ?? ""].filter(Boolean).join(" ");
   const design = options.design ?? defaultAppliedDesign("internal");
   const { show } = design;
   const ownSubject = (options.subject ?? heading).slice(0, 300);
@@ -78,6 +95,7 @@ export function layout(
   if (!show.button) action = null;
   const sections: string[][] = [
     preface ? [preface] : [],
+    replyLine ? [replyLine] : [],
     headerText ? [headerText] : [],
     shownHeading ? [shownHeading] : [],
     intro ? [intro] : [],
@@ -88,6 +106,7 @@ export function layout(
     footer,
     footerLink ? [`${footerLink.label}: ${footerLink.href}`] : [],
     signOff ? ["—", signOff] : [],
+    noReply ? [noReply] : [],
   ];
   const text = sections
     .filter((section) => section.length)
@@ -134,6 +153,11 @@ ${preface ? `<tr><td style="padding:0 4px 12px 4px;font-size:12px;color:#a1a1aa;
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr><td height="4" bgcolor="${accent}" style="height:4px;line-height:4px;font-size:0;background:${accent};border-radius:12px 12px 0 0">&nbsp;</td></tr>
 ${headerRow}
+${
+  replyLine
+    ? `<tr><td style="padding:16px 28px 0 28px;${font}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#eff6ff" style="padding:10px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:14px;line-height:20px;font-weight:600;color:#1e3a8a;${font}">${escapeHtml(replyLine)}</td></tr></table></td></tr>`
+    : ""
+}
 <tr><td style="padding:20px 28px 28px 28px;${font}">
 ${shownHeading ? `<h1 style="margin:0 0 14px 0;font-size:19px;line-height:1.35;font-weight:700;color:#18181b">${escapeHtml(shownHeading)}</h1>` : ""}
 ${intro ? p(intro, "color:#3f3f46") : ""}
@@ -152,9 +176,10 @@ ${
     : ""
 }
 ${signOff ? small(signOff) : ""}
+${noReply ? small(noReply) : ""}
 </td></tr>
 </table>
 </td></tr></table>
 </body></html>`;
-  return { subject, text, html };
+  return { subject, text, html, replyable };
 }
