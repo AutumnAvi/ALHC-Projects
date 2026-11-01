@@ -698,20 +698,22 @@ declare
   t uuid;
   opts jsonb := '[{"id": "o1", "name": "High", "color": "red"}, {"id": "o2", "name": "Low", "color": "zinc"}]';
 begin
-  -- Creating one without options: this release's editors and createField refuse it, but the database
-  -- lets people's inserts through while the release still on main (whose Add field and Choose from
-  -- library can create one) is live; a later migration adds the insert check. Like that release, the
-  -- options then come with an edit, and from then on the field can't be emptied.
-  insert into public.custom_fields (project_id, name, field_type) values (a, 'Early pick', 'single_select')
+  -- Creating one without options: refused since Nov 1 notes (batch 8) added the insert check (suite zz37
+  -- covers it). Once it has an option it can't be emptied.
+  insert into public.custom_fields (project_id, name, field_type, options)
+  values (a, 'Early pick', 'single_select', '[{"id": "e1", "name": "One", "color": "blue"}]')
   returning id into early;
-  update public.custom_fields set options = '[{"id": "e1", "name": "One", "color": "blue"}]' where id = early;
   begin
     update public.custom_fields set options = '[]' where id = early;
     raise exception 'emptying it once it has an option must be refused';
   exception when check_violation then
     assert sqlerrm like 'Add at least one option to the “Early pick” field%', 'says what to do: ' || sqlerrm;
   end;
-  insert into public.custom_fields (project_id, name, field_type, options) values (a, 'Early channels', 'multi_select', '[]');
+  begin
+    insert into public.custom_fields (project_id, name, field_type, options) values (a, 'Early channels', 'multi_select', '[]');
+    raise exception 'an option-less multi-select insert is refused since batch 8';
+  exception when check_violation then null;
+  end;
 
   -- With an option it's fine; other types and the section-bound Status need none.
   insert into public.custom_fields (project_id, name, field_type, options) values (a, 'Priority', 'single_select', opts)
@@ -861,11 +863,11 @@ declare
   p uuid := (select id from b7f_ids where name = 'p');
   pf uuid;
 begin
-  -- The release still on main adds a portfolio single-select with no options, then its options on the
-  -- row: that keeps working until this release is merged (createPortfolioField refuses an option-less one).
-  insert into public.portfolio_fields (portfolio_id, name, field_type) values (p, 'Phase', 'single_select')
+  -- Since Nov 1 notes (batch 8) a portfolio single-select is created with its options (zz37 checks the
+  -- insert refusal).
+  insert into public.portfolio_fields (portfolio_id, name, field_type, options)
+  values (p, 'Phase', 'single_select', '[{"id": "ph1", "name": "Plan", "color": "blue"}]')
   returning id into pf;
-  update public.portfolio_fields set options = '[{"id": "ph1", "name": "Plan", "color": "blue"}]' where id = pf;
   insert into public.portfolio_fields (portfolio_id, name, field_type) values (p, 'Spend', 'number');
   begin
     update public.portfolio_fields set options = '[]' where id = pf;
