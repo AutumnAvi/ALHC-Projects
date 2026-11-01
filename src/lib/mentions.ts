@@ -51,3 +51,36 @@ export function mentionSegments(body: string, people: MentionPerson[], teams: Pi
   if (last < body.length) segments.push({ type: "text", text: body.slice(last) });
   return segments;
 }
+
+// The name a person is mentioned by (mirrors profile_mention_name()): their name, unless it's empty or
+// really an email address, else the part of their email before the @. Never the whole address.
+export function mentionName(person: Pick<MentionPerson, "full_name" | "email">): string {
+  const name = person.full_name?.trim();
+  if (name && !name.includes("@")) return name;
+  return person.email.split("@")[0] || person.email;
+}
+
+// Nov 1 notes, batch 12 (84): an automation's comment written before people became @mentions there could
+// carry someone's raw email address ("hi ann@example.com"). Splits text at the email addresses of the
+// given people (whole addresses, any case), so each can be drawn as that person's chip instead.
+export function personEmailSegments(text: string, people: Pick<MentionPerson, "id" | "email">[]): MentionSegment[] {
+  const byEmail = new Map<string, string>();
+  for (const p of people) {
+    const email = p.email.trim().toLowerCase();
+    if (email && !byEmail.has(email)) byEmail.set(email, p.id);
+  }
+  if (!text || byEmail.size === 0) return text ? [{ type: "text", text }] : [];
+  const emails = [...byEmail.keys()].sort((a, b) => b.length - a.length).map(escapeRegex);
+  // Not part of a longer address: no address character right before or after it.
+  const pattern = new RegExp(`(?<![\\w.+-])(${emails.join("|")})(?![\\w.-]*@|[\\w-]|\\.[\\w-])`, "giu");
+  const segments: MentionSegment[] = [];
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    if (start > last) segments.push({ type: "text", text: text.slice(last, start) });
+    segments.push({ type: "mention", profileId: byEmail.get(match[1].toLowerCase())!, raw: match[0] });
+    last = start + match[0].length;
+  }
+  if (last < text.length) segments.push({ type: "text", text: text.slice(last) });
+  return segments;
+}
