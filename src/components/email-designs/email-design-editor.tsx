@@ -15,6 +15,7 @@ import {
   designProblem,
   fillInFieldsFor,
   isHexColor,
+  previewFromLabel,
   type BlockDesignField,
   type DesignField,
   type DesignSample,
@@ -90,7 +91,7 @@ export function EmailDesignEditor({
   const [pending, run] = useServerAction();
   const notify = useNotify();
   const [sample, setSample] = useState<DesignSample>(DESIGN_SAMPLES[kind][0].key);
-  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
+  const [preview, setPreview] = useState<{ subject: string; html: string; from: string | null; replyable: boolean } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sending, startSending] = useTransition();
   const [uploading, setUploading] = useState(false);
@@ -118,7 +119,12 @@ export function EmailDesignEditor({
       }));
       if (id !== requestId.current) return;
       if ("html" in result && result.html) {
-        setPreview({ subject: result.subject ?? "", html: result.html });
+        setPreview({
+          subject: result.subject ?? "",
+          html: result.html,
+          from: "from" in result ? (result.from ?? null) : null,
+          replyable: "replyable" in result && result.replyable === true,
+        });
         setPreviewError(null);
       } else setPreviewError(result.error ?? "Couldn’t render the preview");
     }, 300);
@@ -492,13 +498,13 @@ export function EmailDesignEditor({
           })}
 
           {block("showNotice", "Small print", {
-            note: "The reply line and “Turn off” links always stay, so replies and unsubscribing keep working.",
+            note: "The reply lines (“You can reply to this email to respond.” / “Do not reply to this email.”) and “Turn off” links always stay, so replies and unsubscribing keep working.",
             children: textSetting({
               field: "noticeText",
               label: "Text",
               multiline: true,
               placeholder: "Each email’s own small print",
-              hint: "Empty = each email’s own (how to reply, why they got it).",
+              hint: "Empty = each email’s own (why they got it, what happens to a reply).",
             }),
           })}
 
@@ -548,9 +554,20 @@ export function EmailDesignEditor({
             />
           </div>
           <div className="mt-1.5 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
-            <div className="border-b border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
-              <span className="text-zinc-400">Subject: </span>
-              {preview?.subject ?? "…"}
+            <div className="space-y-0.5 border-b border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
+              <p className="truncate" data-testid="email-preview-from">
+                <span className="text-zinc-400">From: </span>
+                {preview ? previewFromLabel(preview.from) : "…"}
+                {preview ? (
+                  <span className={`chip ml-2 ${preview.replyable ? "bg-accent-50 text-accent-800" : ""}`}>
+                    {preview.replyable ? "Replies come back to the request" : "No-reply"}
+                  </span>
+                ) : null}
+              </p>
+              <p className="truncate">
+                <span className="text-zinc-400">Subject: </span>
+                {preview?.subject ?? "…"}
+              </p>
             </div>
             {preview ? (
               <iframe title={`${title} preview`} sandbox="" srcDoc={preview.html} className="block h-[34rem] w-full bg-[#f4f4f5]" />

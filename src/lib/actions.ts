@@ -72,6 +72,9 @@ import {
   isChoice,
   isQuestionType,
   parseQuestions,
+  NAME_QUESTION_ID,
+  ensureNameQuestion,
+  NAME_QUESTION_LABEL,
   validateSubmission,
   type FormAnswers,
   type FormQuestion,
@@ -4568,7 +4571,8 @@ function cleanQuestions(value: unknown): FormQuestion[] {
   const parsed = parseQuestions(value as Json);
   if (parsed.length !== value.length) throw new InputError("A question is missing its label or type");
   const seen = new Set<string>();
-  return parsed.map((q) => {
+  // Every form keeps its required "Your name" question (Nov 1 notes, batch 8; the database does too).
+  return ensureNameQuestion(parsed.map((q) => {
     if (!q.id || q.id.length > 64 || seen.has(q.id)) throw new InputError("Question ids must be unique");
     const parentIsEarlier = q.show_if ? seen.has(q.show_if.question_id) : true;
     seen.add(q.id);
@@ -4592,7 +4596,7 @@ function cleanQuestions(value: unknown): FormQuestion[] {
     if (q.type === "attachment") delete question.maps_to;
     if (!parentIsEarlier || question.show_if?.option_ids.length === 0) delete question.show_if;
     return question;
-  });
+  }));
 }
 
 export async function createForm(projectId: string, title: string): Promise<ActionResult> {
@@ -4613,6 +4617,9 @@ export async function createForm(projectId: string, title: string): Promise<Acti
         title: text(title, "Form name", { max: 200 }),
         destination_section_id: sections.data?.[0]?.id ?? null,
         questions: [
+          // Nov 1 notes (batch 8): every form asks for the requester's name (forms_04_requester_name adds
+          // it anyway; listing it here keeps the new form's first question in place).
+          { id: NAME_QUESTION_ID, type: "short_text", role: "name", label: NAME_QUESTION_LABEL, required: true },
           {
             id: crypto.randomUUID(),
             type: "short_text",

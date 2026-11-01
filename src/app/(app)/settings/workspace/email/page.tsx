@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SenderNameSettings } from "@/components/workspace/email-settings";
-import { EmailDeliveryCard, fromAddress } from "@/components/workspace/email-status";
+import { EmailDeliveryCard, fromAddress, noReplyFromAddress } from "@/components/workspace/email-status";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { ADMIN_PATH_FOR_SETTINGS } from "@/lib/admin";
 import { getWorkspace, isWorkspaceAdmin, listOwnProjectRoles, listProjects } from "@/lib/data";
@@ -23,7 +23,7 @@ export default async function WorkspaceEmailPage() {
 
   return (
     <>
-      <SenderNameSettings senderName={workspace?.emailSenderName ?? null} fromAddress={fromAddress()} isAdmin={false} />
+      <SenderNameSettings senderName={workspace?.emailSenderName ?? null} fromAddress={fromAddress()} noReplyAddress={noReplyFromAddress()} isAdmin={false} />
       <EmailDeliveryCard isAdmin={false} invitesHref="/settings/workspace/members" />
       <SettingsCard
         id="workspace-deliveries"

@@ -55,9 +55,9 @@ reset role;
 set role anon;
 select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
 insert into ce_ids
-select 'formtask', (public.submit_form((select id from ce_ids where name = 'form'), 'Terry.Jones@Example.net', '{}') ->> 'task_id')::uuid;
+select 'formtask', (public.submit_form((select id from ce_ids where name = 'form'), 'Terry.Jones@Example.net', '{"requester_name": "Test Requester"}') ->> 'task_id')::uuid;
 insert into ce_ids
-select 'formtask2', (public.submit_form((select id from ce_ids where name = 'form'), 'gwen.perrin@example.net', '{}') ->> 'task_id')::uuid;
+select 'formtask2', (public.submit_form((select id from ce_ids where name = 'form'), 'gwen.perrin@example.net', '{"requester_name": "Test Requester"}') ->> 'task_id')::uuid;
 reset role;
 
 -- Grants -------------------------------------------------------------------------------------------

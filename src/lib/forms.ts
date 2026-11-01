@@ -84,6 +84,9 @@ export type FormQuestion = {
   options?: QuestionOption[];
   maps_to?: { target: MapTarget; field_id?: string };
   show_if?: { question_id: string; option_ids: string[] };
+  // Nov 1 notes (batch 8): the requester's name. Every form has exactly one: a required, always-shown,
+  // unmapped short-text question (kept that way by forms_04_requester_name in the database).
+  role?: "name";
 };
 
 export type FormAnswers = Record<string, string | string[] | boolean | number | FormFile[] | null>;
@@ -146,6 +149,7 @@ export function parseQuestions(value: Json): FormQuestion[] {
     const question: FormQuestion = { id: q.id, type: q.type, label: q.label };
     if (typeof q.help === "string" && q.help) question.help = q.help;
     if (q.required === true) question.required = true;
+    if (q.role === "name") question.role = "name";
     if (Array.isArray(q.options)) {
       question.options = q.options.flatMap((o) => {
         const opt = obj(o);
@@ -332,8 +336,15 @@ export function mappingAllowed(question: FormQuestion, fields: FieldDef[]) {
 // isn't lost; saving drops it.
 export function normalizeQuestions(questions: FormQuestion[], fields: FieldDef[], forSave = false): FormQuestion[] {
   const earlier = new Map<string, FormQuestion>();
-  return questions.map((q) => {
+  return ensureNameQuestion(questions).map((q) => {
     const next: FormQuestion = { ...q };
+    if (isNameQuestion(next)) {
+      delete next.maps_to;
+      delete next.show_if;
+      delete next.options;
+      earlier.set(next.id, next);
+      return next;
+    }
     if (!isChoice(next.type)) delete next.options;
     if (next.type === "heading") {
       delete next.required;
@@ -425,4 +436,69 @@ export function questionForField(field: FieldDef, sectionOptions: QuestionOption
     default:
       return null;
   }
+}
+
+// Nov 1 notes (batch 8, item 61): forms require the requester's name. Mirrors ensure_form_requester_name()
+// (forms_04_requester_name): one question with role "name" — the first one marked, else the one with id
+// requester_name — kept a required short-text question with no mapping or branching; a form without one
+// gets "Your name" first. Others lose the role.
+export const NAME_QUESTION_ID = "requester_name";
+export const NAME_QUESTION_LABEL = "Your name";
+export const MAX_REQUESTER_NAME = 200;
+
+export function isNameQuestion(question: Pick<FormQuestion, "role">): boolean {
+  return question.role === "name";
+}
+
+export function ensureNameQuestion(questions: FormQuestion[]): FormQuestion[] {
+  let at = questions.findIndex((q) => q.role === "name");
+  if (at < 0) at = questions.findIndex((q) => q.id === NAME_QUESTION_ID);
+  const out = questions.map((q, i) => {
+    if (i === at) {
+      const next: FormQuestion = {
+        ...q,
+        type: "short_text",
+        role: "name",
+        required: true,
+        label: q.label.trim() ? q.label : NAME_QUESTION_LABEL,
+      };
+      delete next.maps_to;
+      delete next.show_if;
+      delete next.options;
+      return next;
+    }
+    if (q.role) {
+      const rest = { ...q };
+      delete rest.role;
+      return rest;
+    }
+    return q;
+  });
+  if (at >= 0) return out;
+  const taken = questions.some((q) => q.id === NAME_QUESTION_ID);
+  const id = taken ? `${NAME_QUESTION_ID}_${Math.random().toString(16).slice(2, 8)}` : NAME_QUESTION_ID;
+  return [{ id, type: "short_text", role: "name", label: NAME_QUESTION_LABEL, required: true }, ...out];
+}
+
+// The requester's name in a submission's answers (the name question's answer), trimmed, or null.
+export function requesterNameFrom(questions: FormQuestion[], answers: Record<string, unknown>): string | null {
+  const question = questions.find(isNameQuestion);
+  const value = question ? answers[question.id] : undefined;
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, MAX_REQUESTER_NAME) : null;
+}
+
+// The requester's name on a form submission (Nov 1 notes, batch 8): the name question's answer, else a
+// short answer to a question labelled like a name (mirrors submission_requester_name()'s fallback).
+const NAME_LABELS = new Set(["name", "your name", "full name", "first name", "requester", "requester name", "requested by", "contact name"]);
+export function submissionRequesterName(questionsJson: Json, answersJson: Json): string | null {
+  const answers = answersJson && typeof answersJson === "object" && !Array.isArray(answersJson) ? answersJson : {};
+  const questions = parseQuestions(questionsJson);
+  const named = requesterNameFrom(questions, answers);
+  if (named) return named;
+  for (const q of questions) {
+    if (q.type !== "short_text" || !NAME_LABELS.has(q.label.trim().toLowerCase())) continue;
+    const value = answers[q.id];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 200);
+  }
+  return null;
 }

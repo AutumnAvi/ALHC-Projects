@@ -19,6 +19,14 @@ export function senderNameProblem(value: string): string | null {
   return null;
 }
 
+// The sender name settings' preview (Nov 1 notes, batch 8): "Emails come from: Name <no-reply@…>", and the
+// replyable sender too when it's a different address ("…; responses to a form's submitter from Name <…>").
+export function senderPreview(name: string, replyable: string, noReply: string | null): string {
+  const label = (address: string) => (name.trim() ? `${name.trim()} <${address}>` : address);
+  const main = noReply ?? replyable;
+  return main === replyable ? label(main) : `${label(main)}; responses to a form’s submitter from ${label(replyable)}`;
+}
+
 // projects.visibility (CHECK projects_visibility_check).
 export const PROJECT_VISIBILITIES = ["team", "private"] as const;
 export type ProjectVisibility = (typeof PROJECT_VISIBILITIES)[number];

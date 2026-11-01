@@ -344,8 +344,8 @@ export function FormQuestionField({
           {...common}
           type={question.type === "date" ? "date" : question.type === "number" ? "number" : question.type === "email" ? "email" : "text"}
           inputMode={question.type === "number" ? "decimal" : undefined}
-          autoComplete={question.type === "email" ? "off" : undefined}
-          maxLength={question.type === "short_text" ? 500 : question.type === "email" ? 320 : undefined}
+          autoComplete={question.role === "name" ? "name" : question.type === "email" ? "off" : undefined}
+          maxLength={question.role === "name" ? 200 : question.type === "short_text" ? 500 : question.type === "email" ? 320 : undefined}
           onChange={(e) => onChange(e.currentTarget.value)}
         />
       )}

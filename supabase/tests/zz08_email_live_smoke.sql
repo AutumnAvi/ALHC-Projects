@@ -94,11 +94,11 @@ create temporary table el_submissions (who text primary key, task_id uuid) on co
 grant all on el_submissions to anon, authenticated, service_role;
 
 insert into el_submissions
-select 'member', (public.submit_form((select id from el_ids where name = 'form'), 'EL-Member@Example.com', '{}') ->> 'task_id')::uuid;
+select 'member', (public.submit_form((select id from el_ids where name = 'form'), 'EL-Member@Example.com', '{"requester_name": "Test Requester"}') ->> 'task_id')::uuid;
 insert into el_submissions
-select 'outsider', (public.submit_form((select id from el_ids where name = 'form'), 'el-outsider@example.com', '{}') ->> 'task_id')::uuid;
+select 'outsider', (public.submit_form((select id from el_ids where name = 'form'), 'el-outsider@example.com', '{"requester_name": "Test Requester"}') ->> 'task_id')::uuid;
 insert into el_submissions
-select 'stranger', (public.submit_form((select id from el_ids where name = 'form'), 'stranger@example.net', '{}') ->> 'task_id')::uuid;
+select 'stranger', (public.submit_form((select id from el_ids where name = 'form'), 'stranger@example.net', '{"requester_name": "Test Requester"}') ->> 'task_id')::uuid;
 
 reset role;
 

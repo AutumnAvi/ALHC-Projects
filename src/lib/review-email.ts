@@ -5,12 +5,14 @@ import { escapeHtml, layout, type Rendered } from "@/lib/email-layout";
 import { REVIEW_LINK_DAYS, reviewMediaKind, roundLabel } from "@/lib/review-checks";
 
 // Oct 26 notes (batch 3) / Oct 27 notes (batch 5): the review check email. The project's (or the request
-// form's) requester design — logo, accent, header, sign-off — then the sender's message, a grid of the
-// files (a thumbnail of each image and each PDF's first page, drawn on the server and linked through a
-// signed link that lasts as long as the review link; a file tile for anything else), each opening that
-// file on the review page, and two buttons: Approve and Leave feedback (both open the review page;
-// nothing is decided by the click alone, so link scanners can't approve anything), plus an "Open the
-// review" link. The link's token is in the review page's URLs only, never in an image's address.
+// form's) requester design — logo, accent, header, sign-off — then the sender's message, the files (a
+// thumbnail of each image and each PDF's first page, drawn on the server and linked through a signed link
+// that lasts as long as the review link; a file tile for anything else), each opening that file on the
+// review page, and two buttons: Approve and Leave feedback (both open the review page; nothing is decided
+// by the click alone, so link scanners can't approve anything), plus an "Open the review" link. The link's
+// token is in the review page's URLs only, never in an image's address. Since Nov 1 notes (batch 8) each
+// file is one row, its preview near the full width of the email (EMAIL_IMAGE_WIDTH), built only from
+// tables and inline styles (width attributes for Outlook, no grid / flex / background images).
 
 export type ReviewEmailAsset = {
   assetId: string;
@@ -18,6 +20,8 @@ export type ReviewEmailAsset = {
   contentType: string | null;
   // A signed link to its stored thumbnail (review-thumbnails.ts), or none: the email shows a file tile.
   thumbnailUrl?: string | null;
+  // The thumbnail's width in pixels when known: it's drawn at min(this, EMAIL_IMAGE_WIDTH), never upscaled.
+  thumbnailWidth?: number | null;
 };
 
 export type ReviewEmailInput = {
@@ -34,9 +38,17 @@ export type ReviewEmailInput = {
   design: unknown;
 };
 
-// The grid shows this many files; the rest are counted ("and 3 more files").
+// The email lists this many files; the rest are counted ("and 3 more files").
 export const EMAIL_GRID_FILES = 9;
-const PER_ROW = 3;
+// The width of the email's content (layout(): a 560 px card with 28 px padding on each side): a preview
+// fills it, one per row.
+export const EMAIL_IMAGE_WIDTH = 504;
+
+// The width a thumbnail is drawn at: the content width, or its own width when it's narrower (an image
+// smaller than that is never blown up).
+export function emailImageWidth(thumbnailWidth: number | null | undefined): number {
+  return thumbnailWidth && thumbnailWidth > 0 ? Math.min(EMAIL_IMAGE_WIDTH, Math.round(thumbnailWidth)) : EMAIL_IMAGE_WIDTH;
+}
 
 export function reviewUrls(origin: string, token: string) {
   const page = `${origin}/review/${token}`;
@@ -62,16 +74,18 @@ function kindWord(asset: ReviewEmailAsset) {
 
 const FONT = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
-function fileCell(asset: ReviewEmailAsset, href: string) {
+// One file: its preview (or a file tile) and its name under it, the whole row a link to that file on the
+// review page.
+function fileRow(asset: ReviewEmailAsset, href: string) {
   const name = escapeHtml(asset.name);
+  const link = escapeHtml(href);
+  const width = emailImageWidth(asset.thumbnailWidth);
   const picture = asset.thumbnailUrl
-    ? `<img src="${escapeHtml(asset.thumbnailUrl)}" alt="${name}" width="160" style="display:block;width:100%;max-width:160px;height:auto;border:1px solid #e4e4e7;border-radius:6px">`
-    : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="104" align="center" valign="middle" bgcolor="#f4f4f5" style="height:104px;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:6px;${FONT}"><span style="display:block;font-size:15px;font-weight:700;letter-spacing:0.5px;color:#52525b">${escapeHtml(
+    ? `<a href="${link}" target="_blank" style="display:block;text-decoration:none"><img src="${escapeHtml(asset.thumbnailUrl)}" alt="${name}" width="${width}" style="display:block;width:100%;max-width:${width}px;height:auto;border:1px solid #e4e4e7;border-radius:8px;outline:none;text-decoration:none"></a>`
+    : `<a href="${link}" target="_blank" style="display:block;text-decoration:none;color:#18181b"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="96" align="center" valign="middle" bgcolor="#f4f4f5" style="height:96px;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:8px;${FONT}"><span style="display:block;font-size:18px;font-weight:700;letter-spacing:0.5px;color:#52525b">${escapeHtml(
         extensionLabel(asset.name),
-      )}</span><span style="display:block;margin-top:2px;font-size:11px;color:#71717a">${kindWord(asset)}</span></td></tr></table>`;
-  return `<td width="33%" valign="top" style="width:33%;padding:0 4px 10px 4px"><a href="${escapeHtml(
-    href,
-  )}" target="_blank" style="display:block;text-decoration:none;color:#18181b">${picture}<span style="display:block;margin-top:4px;font-size:12px;line-height:16px;color:#3f3f46;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${FONT}">${name}</span></a></td>`;
+      )}</span><span style="display:block;margin-top:2px;font-size:12px;color:#71717a">${kindWord(asset)}</span></td></tr></table></a>`;
+  return `<tr><td valign="top" style="padding:0 0 16px 0">${picture}<a href="${link}" target="_blank" style="display:block;margin-top:6px;font-size:13px;line-height:18px;color:#3f3f46;text-decoration:none;word-break:break-word;${FONT}">${name}</a></td></tr>`;
 }
 
 export function renderReviewEmail(input: ReviewEmailInput): Rendered {
@@ -93,18 +107,11 @@ export function renderReviewEmail(input: ReviewEmailInput): Rendered {
   const paragraphs = [greeting, input.message?.trim() || "", intro].filter(Boolean);
 
   const shown = input.assets.slice(0, EMAIL_GRID_FILES);
-  const rows: string[] = [];
-  for (let i = 0; i < shown.length; i += PER_ROW) {
-    const cells = shown.slice(i, i + PER_ROW).map((a) => fileCell(a, urls.file(a.assetId)));
-    // Short rows keep their cells a third wide.
-    while (cells.length < PER_ROW) cells.push(`<td width="33%" style="width:33%;padding:0 4px">&nbsp;</td>`);
-    rows.push(`<tr>${cells.join("")}</tr>`);
-  }
   const more = input.assets.length - shown.length;
   const grid = shown.length
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 0 0;width:100%;max-width:520px">${rows.join(
-        "",
-      )}</table>${
+    ? `<table role="presentation" width="${EMAIL_IMAGE_WIDTH}" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 0 0;width:100%;max-width:${EMAIL_IMAGE_WIDTH}px">${shown
+        .map((a) => fileRow(a, urls.file(a.assetId)))
+        .join("")}</table>${
         more > 0
           ? `<p style="margin:0 0 4px 0;font-size:12px;color:#71717a;${FONT}">And ${more} more file${more === 1 ? "" : "s"} on the review page.</p>`
           : ""

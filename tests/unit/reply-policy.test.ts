@@ -65,7 +65,7 @@ test("follower comment emails and notifications are no-reply", async () => {
   assert.equal(lookups.length, 0, "no token is even looked up");
   const text = renderEmail(comment).text;
   assert.doesNotMatch(text, /Reply above this line|Reply to this email/);
-  assert.match(text, /Replies to this email aren’t read/);
+  assert.match(text, /Do not reply to this email\. Open the task to answer\./);
 });
 
 test("without the inbound webhook secret even a response carries no Reply-To", async () => {
@@ -73,7 +73,7 @@ test("without the inbound webhook secret even a response carries no Reply-To", a
   delete process.env.RESEND_WEBHOOK_SECRET;
   assert.equal(await replyToFor(response, token), null);
   process.env.RESEND_WEBHOOK_SECRET = saved;
-  assert.match(renderEmail(response, { canReply: false }).text, /Replies to this email aren’t read/);
+  assert.match(renderEmail(response, { canReply: false }).text, /Do not reply to this email\./);
 });
 
 test("inbound addresses: r- and f- tokens on the reply domain only", () => {

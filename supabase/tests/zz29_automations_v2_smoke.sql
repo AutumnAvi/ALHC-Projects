@@ -618,7 +618,7 @@ end $$;
 do $$
 begin
   insert into av2_ids values ('t_form', (public.submit_form((select id from av2_ids where name = 'form'), 'sam@example.com',
-    '{"q1": "$2,000", "q2": "A rush poster"}') ->> 'task_id')::uuid);
+    '{"requester_name": "Test Requester", "q1": "$2,000", "q2": "A rush poster"}') ->> 'task_id')::uuid);
 end $$;
 
 reset role;

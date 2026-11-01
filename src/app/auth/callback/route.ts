@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { safeNextPath } from "@/lib/auth";
+import { expiredResetPath, isResetNext } from "@/lib/password-reset";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -9,6 +10,9 @@ export async function GET(request: NextRequest) {
   const providerError = searchParams.get("error_description") ?? searchParams.get("error");
 
   const toLogin = (message: string) => {
+    // A reset link that expired, was used already, or opened in another browser (its PKCE verifier is a
+    // cookie of the browser that asked) goes back to Forgot password with a note, not to Sign in.
+    if (isResetNext(next)) return NextResponse.redirect(new URL(expiredResetPath(), origin));
     const url = new URL("/login", origin);
     url.searchParams.set("error", message);
     return NextResponse.redirect(url);

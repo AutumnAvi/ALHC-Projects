@@ -23,7 +23,7 @@ import {
   type TaskReviewRound,
 } from "@/lib/review-checks";
 import { reviewUrls, renderReviewEmail } from "@/lib/review-email";
-import { reviewThumbnails } from "@/lib/review-thumbnails";
+import { reviewThumbnails, type ReviewThumbnail } from "@/lib/review-thumbnails";
 import { createClient } from "@/lib/supabase/server";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -122,8 +122,8 @@ async function emailRound(
               : [];
           }),
           review.expiresAt,
-        ).catch(() => new Map<string, string>())
-      : new Map<string, string>();
+        ).catch(() => new Map<string, ReviewThumbnail>())
+      : new Map<string, ReviewThumbnail>();
     const email = renderReviewEmail({
       origin,
       token: review.token,
@@ -135,7 +135,10 @@ async function emailRound(
       message: review.message,
       assets: assetIds.flatMap(({ assetId, attachmentId }) => {
         const a = byId.get(attachmentId);
-        return a ? [{ assetId, name: a.file_name, contentType: a.content_type, thumbnailUrl: thumbnails.get(assetId) ?? null }] : [];
+        const thumb = thumbnails.get(assetId);
+        return a
+          ? [{ assetId, name: a.file_name, contentType: a.content_type, thumbnailUrl: thumb?.url ?? null, thumbnailWidth: thumb?.width ?? null }]
+          : [];
       }),
       design: design.data ?? null,
     });

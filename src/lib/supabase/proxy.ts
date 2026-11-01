@@ -8,6 +8,10 @@ import type { Database } from "./database.types";
 const PUBLIC_PATHS = [
   "/login",
   "/signup",
+  // Forgot password (Nov 1 notes, batch 8): the request form, and the new-password page, which checks the
+  // reset link's session itself (signed out = the link expired, explained on /forgot-password).
+  "/forgot-password",
+  "/reset-password",
   "/denied",
   "/auth",
   "/forms",

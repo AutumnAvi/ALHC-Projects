@@ -56,6 +56,8 @@ import {
   moveQuestionBefore,
   moveQuestionBy,
   normalizeQuestions,
+  isNameQuestion,
+  ensureNameQuestion,
   questionForField,
   visibleQuestionIds,
   type FormAnswers,
@@ -136,7 +138,7 @@ export function FormEditor({
   const [accepting, setAccepting] = useState(form.acceptingResponses);
   const [sendConfirmation, setSendConfirmation] = useState(form.sendConfirmation);
   const [confirmationMessage, setConfirmationMessage] = useState(form.confirmationMessage ?? "");
-  const [questions, setQuestions] = useState<FormQuestion[]>(form.questions);
+  const [questions, setQuestions] = useState<FormQuestion[]>(() => ensureNameQuestion(form.questions));
   const [dirty, setDirty] = useState(false);
   const [tab, setTab] = useState<"questions" | "settings">("questions");
   const [selectedId, setSelectedId] = useState<string | null>(form.questions[0]?.id ?? null);
@@ -934,6 +936,9 @@ function QuestionCard({
             {question.label.trim() || "Untitled question"}
             {question.required ? <span className="text-red-600"> *</span> : null}
           </span>
+          {isNameQuestion(question) ? (
+            <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-px text-2xs text-zinc-600">Requester’s name</span>
+          ) : null}
           {question.show_if ? <GitBranch className="size-3.5 shrink-0 text-zinc-400" aria-label="Shown by a branch" /> : null}
           {question.maps_to ? (
             <span className="max-w-28 shrink-0 truncate rounded bg-zinc-100 px-1.5 py-px text-2xs text-zinc-600">
@@ -971,6 +976,13 @@ function QuestionCard({
               className="field mt-1 h-auto w-full py-1.5"
             />
           </div>
+          {isNameQuestion(question) ? (
+            <p className="rounded-md bg-zinc-50 px-2.5 py-2 text-xs text-zinc-600">
+              Every form asks for the requester’s name: a required short answer, always shown. You can rename the
+              question, but not remove it or make it optional. The name is used in emails to the requester and in
+              review checks.
+            </p>
+          ) : (
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label htmlFor={`${prefix}-type`} className={LABEL}>
@@ -1009,6 +1021,7 @@ function QuestionCard({
               </label>
             ) : null}
           </div>
+          )}
 
           {isChoice(question.type) ? <OptionsEditor question={question} sections={sections} fields={fields} onChange={onChange} /> : null}
 
@@ -1018,7 +1031,7 @@ function QuestionCard({
               documents, spreadsheets, slides, images, audio, video, design files, or a zip). The files are added to the
               new task, where everyone who can open the task can open them (the submitter can’t see them afterwards).
             </p>
-          ) : isAnswerable(question) ? (
+          ) : isAnswerable(question) && !isNameQuestion(question) ? (
             <MappingSelect question={question} fields={fields} onChange={onChange} prefix={prefix} />
           ) : null}
 
@@ -1051,14 +1064,18 @@ function QuestionCard({
             >
               <ArrowDown className="size-4" />
             </button>
+            {isNameQuestion(question) ? null : (
             <button type="button" aria-label="Duplicate question" data-tooltip="Duplicate" onClick={onDuplicate} className="btn-icon">
               <CopyPlus className="size-4" />
             </button>
+            )}
             <span className="flex-1" />
+            {isNameQuestion(question) ? null : (
             <button type="button" onClick={onRemove} className="btn-ghost h-7 text-red-700 hover:bg-red-50 hover:text-red-800">
               <Trash2 className="size-4" aria-hidden />
               Delete
             </button>
+            )}
           </div>
         </div>
       ) : null}
@@ -1247,7 +1264,7 @@ function BranchEditor({
         <ul className="mt-1.5 flex flex-col gap-1.5">
           {options.map((option) => {
             const children = later.filter((q) => q.show_if?.question_id === question.id && q.show_if.option_ids.includes(option.id));
-            const addable = later.filter((q) => !children.includes(q));
+            const addable = later.filter((q) => !children.includes(q) && !isNameQuestion(q));
             return (
               <li key={option.id} className="flex flex-wrap items-center gap-1 text-xs text-zinc-600">
                 <span>

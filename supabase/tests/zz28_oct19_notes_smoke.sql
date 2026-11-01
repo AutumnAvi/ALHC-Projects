@@ -353,10 +353,10 @@ reset role;
 
 set role anon;
 select set_config('request.jwt.claim.sub', '', false) is not null as ok \gset
-insert into o19_ids select 'ma1', (public.submit_form((select id from o19_ids where name = 'fa'), 'Rhea@Example.org', '{"q1":"Rhea Rowntree"}') ->> 'task_id')::uuid;
-insert into o19_ids select 'ma2', (public.submit_form((select id from o19_ids where name = 'fa'), 'rhea2@example.org', '{"q1":"Rex Second"}') ->> 'task_id')::uuid;
-insert into o19_ids select 'mb1', (public.submit_form((select id from o19_ids where name = 'fb'), 'bea@example.org', '{}') ->> 'task_id')::uuid;
-insert into o19_ids select 'mb2', (public.submit_form((select id from o19_ids where name = 'fb'), 'bo@example.org', '{}') ->> 'task_id')::uuid;
+insert into o19_ids select 'ma1', (public.submit_form((select id from o19_ids where name = 'fa'), 'Rhea@Example.org', '{"requester_name": "Rhea Rowntree", "q1":"Rhea Rowntree"}') ->> 'task_id')::uuid;
+insert into o19_ids select 'ma2', (public.submit_form((select id from o19_ids where name = 'fa'), 'rhea2@example.org', '{"requester_name": "Rex Second", "q1":"Rex Second"}') ->> 'task_id')::uuid;
+insert into o19_ids select 'mb1', (public.submit_form((select id from o19_ids where name = 'fb'), 'bea@example.org', '{"requester_name": "Test Requester"}') ->> 'task_id')::uuid;
+insert into o19_ids select 'mb2', (public.submit_form((select id from o19_ids where name = 'fb'), 'bo@example.org', '{"requester_name": "Test Requester"}') ->> 'task_id')::uuid;
 reset role;
 
 set role authenticated;

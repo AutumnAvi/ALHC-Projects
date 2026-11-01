@@ -30,7 +30,7 @@ import {
   type FieldType,
   type LibraryField,
 } from "@/lib/fields";
-import { parseQuestions, type FormDef, type PublicForm } from "@/lib/forms";
+import { parseQuestions, submissionRequesterName, type FormDef, type PublicForm } from "@/lib/forms";
 import {
   parsePresetInputs,
   toRuleDef,
@@ -285,7 +285,9 @@ export type TaskDetail = {
   // notes (55b) the first number the viewer can read in the stable order (no home project).
   requestLabel: RequestLabel | null;
   canAssignRequestNumber: boolean;
-  submission: { email: string; formId: string; formTitle: string | null; createdAt: string } | null;
+  // `name`: the requester's name from the form's required name question (Nov 1 notes, batch 8), else a
+  // short answer to a question labelled like a name, else null.
+  submission: { email: string; name: string | null; formId: string; formTitle: string | null; createdAt: string } | null;
   // The database has Comments and reply by email (20261014030000): responses to a form's submitter can
   // be sent (see canRespondToSubmitter()).
   submitterResponses: boolean;
@@ -1552,7 +1554,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     // A subtask of a form task answers the request's submitter (its top-level task's submission).
     supabase
       .from("form_submissions")
-      .select("form_id, submitter_email, created_at")
+      .select("form_id, submitter_email, created_at, answers")
       .eq("task_id", scopeTaskId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
@@ -1675,7 +1677,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       ? supabase.from("rules").select("id, name").in("id", approvalRuleIds)
       : Promise.resolve({ data: [], error: null }),
     submission
-      ? supabase.from("forms").select("title").eq("id", submission.form_id).maybeSingle()
+      ? supabase.from("forms").select("title, questions").eq("id", submission.form_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     early,
     withSubtaskApprovals(supabase, toSubtaskItems(subtaskRows, grandchildren)).then((items) => withRequestLabels(items)),
@@ -1810,6 +1812,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     submission: submission
       ? {
           email: submission.submitter_email,
+          name: submissionRequesterName(formTitle.data?.questions ?? [], submission.answers),
           formId: submission.form_id,
           formTitle: formTitle.data?.title ?? null,
           createdAt: submission.created_at,
@@ -7060,3 +7063,4 @@ async function openBlockerCounts(supabase: ServerClient, ids: string[]): Promise
   }
   return counts;
 }
+

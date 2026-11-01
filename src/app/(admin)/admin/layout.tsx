@@ -6,6 +6,7 @@ import { AdminTopBar } from "@/components/admin/admin-chrome";
 import { AdminNav } from "@/components/admin/admin-nav";
 import { SetupRequired } from "@/components/setup-required";
 import { ShellDialogs } from "@/components/shell/shell-dialogs";
+import { ADMIN_SHELL_FRAME, SCROLL_AREA } from "@/components/shell/shell-frame";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { ToastProvider } from "@/components/toast";
@@ -38,11 +39,11 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
         >
           <TimeZoneCookie />
-          <div className="flex h-full flex-col">
+          <div className={ADMIN_SHELL_FRAME}>
             <AdminTopBar workspace={shownWorkspace} />
             <div className="flex min-h-0 flex-1 flex-col md:flex-row">
               <AdminNav />
-              <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white">{children}</main>
+              <main className={`flex min-h-0 min-w-0 flex-1 flex-col bg-white ${SCROLL_AREA}`}>{children}</main>
             </div>
           </div>
           <ShellDialogs />
