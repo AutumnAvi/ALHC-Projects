@@ -60,21 +60,3 @@ export function ReadOnlyNotice({ need, what }: { need: ProjectRole; what: string
     </p>
   );
 }
-
-// Wraps a management page: below `need`, every form control inside is disabled (links still work)
-// and a notice explains why. Saves would be rejected by RLS anyway.
-export function RoleGate({ need, what, children }: { need: ProjectRole; what: string; children: ReactNode }) {
-  const allowed = hasRole(useProjectRole(), need);
-  return (
-    <>
-      {allowed ? null : (
-        <div className="px-gutter pt-3">
-          <ReadOnlyNotice need={need} what={what} />
-        </div>
-      )}
-      <fieldset disabled={!allowed} className="m-0 min-w-0 border-0 p-0">
-        {children}
-      </fieldset>
-    </>
-  );
-}

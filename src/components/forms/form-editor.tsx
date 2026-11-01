@@ -426,7 +426,9 @@ export function FormEditor({
                 <CopyRow label="Embed code" value={embedSnippet} multiline onCopy={() => copy(embedSnippet, "Embed code")} />
                 {!accepting ? (
                   <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
-                    The form is off: turn it on with the Live switch at the top before sharing it.
+                    {canEdit
+                      ? "The form is off: turn it on with the Live switch at the top before sharing it."
+                      : "The form is off: visitors see a closed notice until a project admin turns it on."}
                   </p>
                 ) : null}
               </div>
@@ -454,8 +456,11 @@ export function FormEditor({
         <p aria-live="polite" className="sr-only">
           {announcement}
         </p>
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_28rem]">
-          <section aria-label="Preview" className="hidden min-h-0 overflow-y-auto bg-zinc-100 px-6 py-8 lg:block">
+        <div className={`grid min-h-0 flex-1 ${canEdit ? "lg:grid-cols-[minmax(0,1fr)_28rem]" : ""}`}>
+          <section
+            aria-label="Preview"
+            className={`min-h-0 overflow-y-auto bg-zinc-100 px-6 py-8 ${canEdit ? "hidden lg:block" : "block"}`}
+          >
             <Preview
               projectId={form.projectId}
               title={title}
@@ -472,130 +477,128 @@ export function FormEditor({
               }}
             />
           </section>
-          <section aria-label="Edit the form" className="flex min-h-0 flex-col border-l border-zinc-200">
-            <div role="tablist" aria-label="Form editor" className="tab-strip shrink-0 gap-1 px-4">
-              {(
-                [
-                  { key: "questions", label: `Questions (${questions.length})` },
-                  { key: "settings", label: "Settings" },
-                ] as const
-              ).map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === t.key}
-                  data-autofocus={t.key === "questions" ? true : undefined}
-                  onClick={() => setTab(t.key)}
-                  className="inline-flex h-10 shrink-0 items-center border-b-2 border-transparent px-2 text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-            <fieldset disabled={!canEdit} role="tabpanel" className="m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 px-4 py-4">
-              {!canEdit ? (
-                <p className="mb-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-                  View only: project admins and owners edit forms.
-                </p>
-              ) : null}
-              {tab === "questions" ? (
-                // The whole Questions tab takes drops (a release below the last card, or on a drop line
-                // drawn just outside the list, lands at the end), and the line goes away when a drag
-                // leaves it.
-                <div
-                  className="flex flex-col gap-2"
-                  onDragOver={(e) => {
-                    if (!dragging) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                    if (dropBefore === undefined) setDropBefore(null);
-                  }}
-                  onDragLeave={(e) => {
-                    if (dragging && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDropBefore(undefined);
-                  }}
-                  onDrop={dragging ? dropQuestion : undefined}
-                >
-                  <p className="text-xs text-zinc-500">
-                    Every submission also asks for the submitter’s email. Answers that don’t fill in a task detail are
-                    listed in the task description.
-                  </p>
-                  <NewQuestionMenu
-                    fields={fields}
-                    sections={sections}
-                    questions={questions}
-                    batch4={batch4}
-                    real1={real1}
-                    onAdd={insertQuestion}
-                  />
-                  {questions.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-6 text-center text-xs text-zinc-500">
-                      No questions yet. Add one, or ask about one of this project’s fields.
+          {/* Nov 1 notes (batch 11): below Admin the editing side isn't shown at all: the form reads as its preview. */}
+          {canEdit ? (
+            <section aria-label="Edit the form" className="flex min-h-0 flex-col border-l border-zinc-200">
+              <div role="tablist" aria-label="Form editor" className="tab-strip shrink-0 gap-1 px-4">
+                {(
+                  [
+                    { key: "questions", label: `Questions (${questions.length})` },
+                    { key: "settings", label: "Settings" },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === t.key}
+                    data-autofocus={t.key === "questions" ? true : undefined}
+                    onClick={() => setTab(t.key)}
+                    className="inline-flex h-10 shrink-0 items-center border-b-2 border-transparent px-2 text-sm text-zinc-500 hover:text-zinc-900 aria-selected:border-accent-500 aria-selected:font-medium aria-selected:text-zinc-900"
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <fieldset role="tabpanel" className="m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 px-4 py-4">
+                {tab === "questions" ? (
+                  // The whole Questions tab takes drops (a release below the last card, or on a drop line
+                  // drawn just outside the list, lands at the end), and the line goes away when a drag
+                  // leaves it.
+                  <div
+                    className="flex flex-col gap-2"
+                    onDragOver={(e) => {
+                      if (!dragging) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dropBefore === undefined) setDropBefore(null);
+                    }}
+                    onDragLeave={(e) => {
+                      if (dragging && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDropBefore(undefined);
+                    }}
+                    onDrop={dragging ? dropQuestion : undefined}
+                  >
+                    <p className="text-xs text-zinc-500">
+                      Every submission also asks for the submitter’s email. Answers that don’t fill in a task detail are
+                      listed in the task description.
                     </p>
-                  ) : (
-                    <ol className="flex flex-col gap-2" aria-label="Questions">
-                      {questions.map((question, index) => (
-                        <QuestionCard
-                          key={question.id}
-                          index={index}
-                          count={questions.length}
-                          question={question}
-                          questions={questions}
-                          sections={sections}
-                          fields={fields}
-                          batch4={batch4}
-                          real1={real1}
-                          open={selectedId === question.id}
-                          draggable={canEdit && questions.length > 1}
-                          dragging={dragging === question.id}
-                          dropLine={dropLineFor(index)}
-                          onDragStart={() => startDrag(question.id)}
-                          onDragEnd={endDrag}
-                          onDragOverCard={
-                            dragging
-                              ? (after) => setDropBefore(after ? (questions[index + 1]?.id ?? null) : question.id)
-                              : undefined
-                          }
-                          onToggle={() => setSelectedId(selectedId === question.id ? null : question.id)}
-                          onChange={(next) => updateQuestion(question.id, next)}
-                          onChangeAll={changeQuestions}
-                          onCreateBranch={(optionId) => createBranchQuestion(question.id, optionId)}
-                          onMove={(delta) => moveQuestion(question.id, delta)}
-                          onDuplicate={() => duplicateQuestion(question)}
-                          onRemove={() => removeQuestion(question.id)}
-                        />
-                      ))}
-                    </ol>
-                  )}
-                </div>
-              ) : (
-                <SettingsTab
-                  formId={form.id}
-                  projectId={form.projectId}
-                  title={title}
-                  setTitle={touch(setTitle)}
-                  description={description}
-                  setDescription={touch(setDescription)}
-                  destination={destination}
-                  setDestination={touch(setDestination)}
-                  accepting={accepting}
-                  setAccepting={changeLive}
-                  livePending={livePending}
-                  sendConfirmation={sendConfirmation}
-                  setSendConfirmation={touch(setSendConfirmation)}
-                  verifiedOnly={verifiedOnly}
-                  setVerifiedOnly={touch(setVerifiedOnly)}
-                  confirmationMessage={confirmationMessage}
-                  setConfirmationMessage={touch(setConfirmationMessage)}
-                  sections={sections}
-                  publicUrl={publicUrl}
-                  embedSnippet={embedSnippet}
-                  onCopy={copy}
-                  onDeleted={() => setDirty(false)}
-                />
-              )}
-            </fieldset>
-          </section>
+                    <NewQuestionMenu
+                      fields={fields}
+                      sections={sections}
+                      questions={questions}
+                      batch4={batch4}
+                      real1={real1}
+                      onAdd={insertQuestion}
+                    />
+                    {questions.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-6 text-center text-xs text-zinc-500">
+                        No questions yet. Add one, or ask about one of this project’s fields.
+                      </p>
+                    ) : (
+                      <ol className="flex flex-col gap-2" aria-label="Questions">
+                        {questions.map((question, index) => (
+                          <QuestionCard
+                            key={question.id}
+                            index={index}
+                            count={questions.length}
+                            question={question}
+                            questions={questions}
+                            sections={sections}
+                            fields={fields}
+                            batch4={batch4}
+                            real1={real1}
+                            open={selectedId === question.id}
+                            draggable={canEdit && questions.length > 1}
+                            dragging={dragging === question.id}
+                            dropLine={dropLineFor(index)}
+                            onDragStart={() => startDrag(question.id)}
+                            onDragEnd={endDrag}
+                            onDragOverCard={
+                              dragging
+                                ? (after) => setDropBefore(after ? (questions[index + 1]?.id ?? null) : question.id)
+                                : undefined
+                            }
+                            onToggle={() => setSelectedId(selectedId === question.id ? null : question.id)}
+                            onChange={(next) => updateQuestion(question.id, next)}
+                            onChangeAll={changeQuestions}
+                            onCreateBranch={(optionId) => createBranchQuestion(question.id, optionId)}
+                            onMove={(delta) => moveQuestion(question.id, delta)}
+                            onDuplicate={() => duplicateQuestion(question)}
+                            onRemove={() => removeQuestion(question.id)}
+                          />
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+                ) : (
+                  <SettingsTab
+                    formId={form.id}
+                    projectId={form.projectId}
+                    title={title}
+                    setTitle={touch(setTitle)}
+                    description={description}
+                    setDescription={touch(setDescription)}
+                    destination={destination}
+                    setDestination={touch(setDestination)}
+                    accepting={accepting}
+                    setAccepting={changeLive}
+                    livePending={livePending}
+                    sendConfirmation={sendConfirmation}
+                    setSendConfirmation={touch(setSendConfirmation)}
+                    verifiedOnly={verifiedOnly}
+                    setVerifiedOnly={touch(setVerifiedOnly)}
+                    confirmationMessage={confirmationMessage}
+                    setConfirmationMessage={touch(setConfirmationMessage)}
+                    sections={sections}
+                    publicUrl={publicUrl}
+                    embedSnippet={embedSnippet}
+                    onCopy={copy}
+                    onDeleted={() => setDirty(false)}
+                  />
+                )}
+              </fieldset>
+            </section>
+          ) : null}
         </div>
       </div>
     </div>

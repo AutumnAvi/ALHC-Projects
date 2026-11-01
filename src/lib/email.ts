@@ -2,7 +2,7 @@ import "server-only";
 import {
   applyDesign,
   defaultAppliedDesign,
-  designFromJson,
+  DESIGN_DEFAULTS,
   formatDesignDate,
   DESIGN_SAMPLES,
   isEmailDesignKind,
@@ -486,10 +486,18 @@ async function renderScheduled(
 ): Promise<{ email: Rendered; headers: Record<string, string> } | { error: string }> {
   let email: Rendered;
   if (kind === "digest") {
-    const items = await admin.rpc("digest_email_items", { target_email: row.id });
+    const [items, tasks] = await Promise.all([
+      admin.rpc("digest_email_items", { target_email: row.id }),
+      admin.rpc("digest_email_tasks", { target_email: row.id }),
+    ]);
     if (items.error) return { error: "Couldn’t read the digest’s items" };
-    if (!items.data?.length) return { error: "Not sent: everything in it was read, archived, or can no longer be opened" };
-    email = renderDigestEmail(row, items.data, design);
+    // Nov 1 notes (batch 11): the tasks due or overdue (none on a database without the update).
+    if (tasks.error && tasks.error.code !== "PGRST202") return { error: "Couldn’t read the digest’s tasks" };
+    const dueTasks = tasks.error ? [] : (tasks.data ?? []);
+    if (!items.data?.length && !dueTasks.length) {
+      return { error: "Not sent: everything in it was read, archived, finished, or can no longer be opened" };
+    }
+    email = renderDigestEmail(row, items.data ?? [], design, dueTasks);
   } else {
     email = renderReportEmail(row, design);
   }
@@ -537,9 +545,11 @@ async function designFor(
   const taskId = s("task_id");
   const projectId = s("task_project_id");
   const formId = typeof ctx.form_id === "string" ? ctx.form_id : null;
+  // Nov 1 notes (batch 11): emails are hard-coded in these templates; a stored design (email_designs,
+  // no longer editable in the app) is never applied — only the built-in look of the kind.
   const design = applyDesign(
     kind,
-    designFromJson(kind, ctx.design),
+    DESIGN_DEFAULTS[kind],
     {
       requester_name: s("requester_name"),
       request_number: s("request_number"),
@@ -714,13 +724,7 @@ export function renderDesignSample(
   return renderEmail(row, { design: applied, canReply: Boolean(options.canReply), requestWrap: options.requestWrap !== false });
 }
 
-// "Send me a test": one email straight to the signed-in person (never another address). Mocked without
-// an email provider, like the drain.
-export async function sendTestEmail(to: string, email: Rendered): Promise<"sent" | "mocked"> {
-  return sendEmailNow(to, { ...email, subject: `[Test] ${email.subject}` }, "design test");
-}
-
-// One email sent right away (not through the outbox): "Send me a test", and a review check's email (Oct 26
+// One email sent right away (not through the outbox): a review check's email (Oct 26
 // notes, batch 3), whose link carries a token the database keeps only as a hash, so it can't wait in the
 // outbox. Mocked without an email provider. Logs only `what`, never an address or a link.
 export async function sendEmailNow(

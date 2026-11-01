@@ -191,7 +191,9 @@ test("every date change in the app goes through useDependencyShift, and the sett
   assert.match(bar, /shift\.changeMany\(ids\.map\(\(taskId\) => \(\{ taskId, dueOn \}\)\), taskCount\(ids\.length\), null, \{/, "a bulk due date goes through changeTaskDates, not the bulk path");
   const page = readFileSync("src/app/(app)/projects/[projectId]/settings/page.tsx", "utf8");
   assert.match(page, /getDependencyShiftMode\(projectId\)/);
-  assert.match(page, /canEdit=\{hasRole\(role, "admin"\)\}/);
+  // Nov 1 notes (batch 11): shown only to Admins+ (hidden, not disabled, for everyone else).
+  assert.match(page, /hasRole\(role, "admin"\) \? \(/);
+  assert.match(page, /<DependencyShiftSettings projectId=\{project.id\} mode=\{shiftMode\} canEdit \/>/);
   const shift = readFileSync("src/components/task/dependency-shift.tsx", "utf8");
   assert.match(shift, /changeTaskDates\(moves\)/);
   assert.ok(!/previewDependencyShift/.test(shift), "one server call, no separate previews");

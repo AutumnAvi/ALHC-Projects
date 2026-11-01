@@ -195,3 +195,31 @@ export const isResendDeliveryEvent = (value: unknown): value is (typeof RESEND_D
 export type UnsubscribeWhat = "digest" | "reports";
 export const isUnsubscribeWhat = (value: unknown): value is UnsubscribeWhat => value === "digest" || value === "reports";
 export const UNSUBSCRIBE_TOKEN = /^[0-9a-f]{64}$/i;
+
+// Nov 1 notes (batch 11): the email digest only goes out on the workspace's workdays (workspaces.work_week,
+// Sunday–Thursday by default — never Friday or Saturday), mirrored from digest_next_at(). A weekly digest
+// is picked from the workdays; an older setting on a day off reads as the first workday after it.
+export const DEFAULT_DIGEST_WORK_WEEK: readonly number[] = [0, 1, 2, 3, 4];
+
+export function digestWorkWeek(workWeek: readonly number[] | null | undefined): number[] {
+  const days = [...new Set((workWeek ?? []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
+  return days.length ? days : [...DEFAULT_DIGEST_WORK_WEEK];
+}
+
+export function digestWeekday(weekday: number, workWeek: readonly number[] | null | undefined): number {
+  const days = digestWorkWeek(workWeek);
+  for (let step = 0; step < 7; step += 1) {
+    const day = (((weekday + step) % 7) + 7) % 7;
+    if (days.includes(day)) return day;
+  }
+  return days[0];
+}
+
+// "Sundays–Thursdays only" style note: which days a digest can go out.
+export function digestDaysNote(workWeek: readonly number[] | null | undefined): string {
+  const days = digestWorkWeek(workWeek);
+  const off = WEEKDAYS.filter((_, i) => !days.includes(i));
+  if (!off.length) return "Sent any day of the week.";
+  const list = off.length === 1 ? off[0] : `${off.slice(0, -1).join(", ")} or ${off[off.length - 1]}`;
+  return `Only sent on workdays — never on a ${list}.`;
+}

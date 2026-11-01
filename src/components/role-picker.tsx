@@ -20,9 +20,11 @@ import {
 } from "@/lib/roles";
 
 // The four project roles (Owner, Editor, Commenter, Viewer), highest first, each with its one-line hint.
-// Roles the viewer can't give are listed greyed out with the reason (so nobody wonders where Viewer or
-// Commenter went); the member's current role is always selectable — an older Admin membership shows as
-// Admin until someone picks another. With includeDefault, "Their default role" comes first.
+// Nov 1 notes (batch 11): roles the viewer's own role can't give aren't listed at all; Commenter while the
+// workspace has it off (a workspace setting, with where to turn it on) and Owner while adding people (made
+// from the list afterwards) stay greyed out with the reason. The member's current role is always
+// selectable — an older Admin membership shows as Admin until someone picks another. With includeDefault,
+// "Their default role" comes first.
 export function projectRoleOptions({
   grantable,
   allowCommenter,
@@ -40,21 +42,15 @@ export function projectRoleOptions({
   inviting?: boolean;
 }): SmartOption[] {
   const listed: ProjectRole[] = current === "admin" ? ["owner", "admin", "editor", "commenter", "viewer"] : [...OFFERED_PROJECT_ROLES];
-  const roles: SmartOption[] = listed.map((role) => {
+  const roles: SmartOption[] = listed.flatMap((role): SmartOption[] => {
     const base = { value: role, label: ROLE_LABELS[role], description: ROLE_DESCRIPTIONS[role] };
-    if (role === current) return base;
-    if (role === "commenter" && !allowCommenter) return { ...base, disabled: true, disabledReason: COMMENTER_OFF_REASON };
+    if (role === current) return [base];
+    if (!grantable.includes(role) && !(role === "commenter" && !allowCommenter)) return [];
+    if (role === "commenter" && !allowCommenter) return [{ ...base, disabled: true, disabledReason: COMMENTER_OFF_REASON }];
     if (role === "owner" && inviting) {
-      return { ...base, disabled: true, disabledReason: "Add them first, then make them an owner from the list" };
+      return [{ ...base, disabled: true, disabledReason: "Add them first, then make them an owner from the list" }];
     }
-    if (!grantable.includes(role)) {
-      return {
-        ...base,
-        disabled: true,
-        disabledReason: role === "owner" ? "Only project owners can make someone an owner" : "Your role here can’t give this role",
-      };
-    }
-    return base;
+    return [base];
   });
   return includeDefault
     ? [{ value: PERSON_DEFAULT_ROLE, label: "Their default role", description: defaultDescription }, ...roles]
@@ -62,15 +58,12 @@ export function projectRoleOptions({
 }
 
 export function portfolioRoleOptions({ grantable, current }: { grantable: readonly PortfolioRole[]; current?: string | null }): SmartOption[] {
-  return PORTFOLIO_ROLES.map((role) => {
-    const base = { value: role, label: PORTFOLIO_ROLE_LABELS[role], description: PORTFOLIO_ROLE_DESCRIPTIONS[role] };
-    if (role === current || grantable.includes(role)) return base;
-    return {
-      ...base,
-      disabled: true,
-      disabledReason: role === "owner" ? "Only portfolio owners can make someone an owner" : "Your role here can’t give this role",
-    };
-  });
+  // Nov 1 notes (batch 11): roles the viewer can't give aren't listed.
+  return PORTFOLIO_ROLES.filter((role) => role === current || grantable.includes(role)).map((role) => ({
+    value: role,
+    label: PORTFOLIO_ROLE_LABELS[role],
+    description: PORTFOLIO_ROLE_DESCRIPTIONS[role],
+  }));
 }
 
 export function teamRoleOptions(): SmartOption[] {

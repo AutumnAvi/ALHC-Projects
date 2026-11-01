@@ -12,6 +12,33 @@ import type { Json } from "@/lib/supabase/database.types";
 // send time with the recipient's own access (digest_email_items), and a report's numbers were built as
 // the recipient. Nothing here reads anything else.
 
+// One task in the digest (Nov 1 notes, batch 11), as digest_email_tasks() returns it: still open and
+// assigned to the recipient, read with their own access.
+export type DigestTask = {
+  task_id: string;
+  title: string;
+  due_on: string | null;
+  overdue: boolean;
+  project_name: string | null;
+  path: string;
+};
+
+// "Oct 28" for a YYYY-MM-DD date.
+function shortDay(day: string | null): string {
+  const m = day?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(
+    new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))),
+  );
+}
+
+// "Overdue · was due Oct 28", "Due today", or "Due Thu, Nov 5" (weekly digests list the week).
+export function digestTaskWhen(task: Pick<DigestTask, "due_on" | "overdue">, today: string | null): string {
+  if (task.overdue) return `Overdue · was due ${shortDay(task.due_on)}`;
+  if (task.due_on && today && task.due_on.slice(0, 10) === today.slice(0, 10)) return "Due today";
+  return `Due ${shortDay(task.due_on)}`;
+}
+
 // One digest line, as digest_email_items() returns it.
 export type DigestItem = { item_id: string; kind: string; data: Json; created_at: string; parts: Json };
 
@@ -100,7 +127,12 @@ const MUTED = "color:#71717a;font-size:12px";
 
 // "3 unread notifications in your Inbox", grouped by project (or team) in the order of their newest
 // item, each line linking to the task, message, or project, with a short excerpt and its time.
-export function renderDigestEmail(row: OutboxRow, items: DigestItem[], design?: AppliedDesign | null): Rendered {
+export function renderDigestEmail(
+  row: OutboxRow,
+  items: DigestItem[],
+  design?: AppliedDesign | null,
+  tasks: DigestTask[] = [],
+): Rendered {
   const p = payloadOf(row);
   const frequency = isDigestFrequency(p.frequency) ? p.frequency : "daily";
   const timeZone = str(p.time_zone) ?? "UTC";
@@ -148,7 +180,45 @@ export function renderDigestEmail(row: OutboxRow, items: DigestItem[], design?: 
       ].join("\n"),
     )
     .join("\n\n");
-  const blocks: Block[] = [{ html: htmlGroups, text: textGroups }];
+  const blocks: Block[] = [];
+  // Nov 1 notes (batch 11): the person's tasks first — overdue, then due today (this week, weekly).
+  const today = str(p.today);
+  const taskCount = tasks.length;
+  const queuedTasks = typeof p.task_total === "number" ? p.task_total : taskCount;
+  const moreTasks = queuedTasks > 50 ? queuedTasks - 50 : 0;
+  if (taskCount) {
+    const label = frequency === "weekly" ? "Your tasks due this week" : "Your tasks due today and overdue";
+    const htmlTasks = tasks
+      .map((task) => {
+        const title = escapeHtml(task.title);
+        const href = origin && task.path.startsWith("/") ? `${origin}${task.path}` : null;
+        const when = escapeHtml(digestTaskWhen(task, today));
+        return `<li style="margin:0 0 10px;font-size:14px;line-height:1.5">${
+          href ? `<a href="${escapeHtml(href)}" style="${LINK}">${title}</a>` : title
+        }<br><span style="${task.overdue ? "color:#b91c1c;font-size:12px" : MUTED}">${when}</span>${
+          task.project_name ? `<span style="${MUTED}"> · ${escapeHtml(task.project_name)}</span>` : ""
+        }</li>`;
+      })
+      .join("");
+    const textTasks = tasks
+      .map((task) => {
+        const href = origin && task.path.startsWith("/") ? ` — ${origin}${task.path}` : "";
+        return `- ${task.title} (${digestTaskWhen(task, today)}${task.project_name ? ` · ${task.project_name}` : ""})${href}`;
+      })
+      .join("\n");
+    blocks.push({
+      html: `<h2 style="${H2}">${escapeHtml(label)}</h2><ul style="margin:0;padding:0 0 0 18px">${htmlTasks}</ul>${
+        moreTasks ? `<p style="margin:4px 0 0;font-size:13px;color:#52525b">And ${moreTasks} more in My tasks.</p>` : ""
+      }`,
+      text: `${label}\n${textTasks}${moreTasks ? `\nAnd ${moreTasks} more in My tasks.` : ""}`,
+    });
+  }
+  if (total) {
+    blocks.push({
+      html: `${taskCount ? `<h2 style="${H2};margin-top:28px">Unread in your Inbox</h2>` : ""}${htmlGroups}`,
+      text: `${taskCount ? "Unread in your Inbox\n\n" : ""}${textGroups}`,
+    });
+  }
   if (more > 0) {
     blocks.push({
       html: `<p style="margin:12px 0 0;font-size:13px;color:#52525b">And ${more} more in your Inbox.</p>`,
@@ -157,13 +227,21 @@ export function renderDigestEmail(row: OutboxRow, items: DigestItem[], design?: 
   }
 
   const links = unsubscribeLinks(row, "digest");
-  const heading = `${total} unread ${noun} in your Inbox`;
-  return layout(heading, [`Here’s what’s waiting for you${frequency === "weekly" ? " this week" : " since your last digest"}.`], [], {
-    subject: `Your ${frequency} Inbox digest: ${total} unread ${noun}`,
+  const taskNoun = taskCount === 1 ? "task" : "tasks";
+  const parts = [
+    taskCount ? `${taskCount} ${taskNoun} ${frequency === "weekly" ? "due this week" : "due or overdue"}` : null,
+    total ? `${total} unread ${noun}` : null,
+  ].filter((part): part is string => Boolean(part));
+  const heading = parts.length ? parts.join(" · ") : `${total} unread ${noun} in your Inbox`;
+  const intro = taskCount
+    ? `Here’s your ${frequency === "weekly" ? "week" : "day"}: what’s due and what’s waiting for you.`
+    : `Here’s what’s waiting for you${frequency === "weekly" ? " this week" : " since your last digest"}.`;
+  return layout(heading, [intro], [], {
+    subject: `Your ${frequency} digest: ${heading}`,
     blocks,
-    action: origin ? { label: "Open Inbox", href: `${origin}/inbox` } : null,
+    action: origin ? (taskCount ? { label: "Open My tasks", href: `${origin}/my-tasks` } : { label: "Open Inbox", href: `${origin}/inbox` }) : null,
     footer: [
-      `You get this ${frequency} digest because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Things you’ve read or archived aren’t included.`,
+      `You get this ${frequency} digest because you turned it on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. It’s sent on workdays only. Things you’ve read or archived and tasks you’ve finished aren’t included.`,
     ],
     footerLink: links ? { label: "Turn off digest", href: links.page } : null,
     design,

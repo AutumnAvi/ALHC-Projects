@@ -381,57 +381,66 @@ export function RuleCanvas({
             <span aria-hidden className="hidden text-xs text-zinc-500 lg:inline">
               Owner
             </span>
-            <SmartPicker
-              id="rule-owner"
-              label={`Owner: ${ownerName}`}
-              value={ownerId}
-              options={(ctx.members ?? ctx.people).map((p) => ({ value: p.id, label: p.name, icon: <Avatar name={p.name} profileId={p.id} /> }))}
-              onChange={(v) => {
-                setOwnerId(v);
-                setDirty(true);
-              }}
-              variant="ghost"
-              searchable
-              disabled={!canEdit}
-              panelWidth={280}
-              emptyText="Nobody matches"
-              className="h-8 max-w-48 px-1.5"
-              renderValue={(chosen) =>
-                chosen[0] ? (
-                  <>
-                    <Avatar name={chosen[0].label} profileId={chosen[0].value} />
-                    <span className="hidden truncate md:inline">{chosen[0].label}</span>
-                  </>
-                ) : (
-                  <>
-                    <UserRound className="size-4" aria-hidden />
-                    <span className="hidden md:inline">{ownerId ? "Someone removed" : rule ? "Creator" : "You"}</span>
-                  </>
-                )
-              }
-            />
+            {!canEdit ? (
+              <span className="flex max-w-48 items-center gap-1.5 text-sm text-zinc-700">
+                <Avatar name={owner?.name ?? ownerName} profileId={ownerId || undefined} />
+                <span className="hidden truncate md:inline">{owner?.name ?? (rule ? "Creator" : "You")}</span>
+              </span>
+            ) : (
+              <SmartPicker
+                id="rule-owner"
+                label={`Owner: ${ownerName}`}
+                value={ownerId}
+                options={(ctx.members ?? ctx.people).map((p) => ({ value: p.id, label: p.name, icon: <Avatar name={p.name} profileId={p.id} /> }))}
+                onChange={(v) => {
+                  setOwnerId(v);
+                  setDirty(true);
+                }}
+                variant="ghost"
+                searchable
+                panelWidth={280}
+                emptyText="Nobody matches"
+                className="h-8 max-w-48 px-1.5"
+                renderValue={(chosen) =>
+                  chosen[0] ? (
+                    <>
+                      <Avatar name={chosen[0].label} profileId={chosen[0].value} />
+                      <span className="hidden truncate md:inline">{chosen[0].label}</span>
+                    </>
+                  ) : (
+                    <>
+                      <UserRound className="size-4" aria-hidden />
+                      <span className="hidden md:inline">{ownerId ? "Someone removed" : rule ? "Creator" : "You"}</span>
+                    </>
+                  )
+                }
+              />
+            )}
           </span>
         ) : null}
-        <label className="flex shrink-0 items-center gap-2 text-sm text-zinc-700">
-          <input
-            type="checkbox"
-            role="switch"
-            checked={enabled}
-            disabled={!canEdit}
-            onChange={(e) => {
-              setEnabled(e.currentTarget.checked);
-              setDirty(true);
-            }}
-            className="peer sr-only"
-          />
-          <span
-            aria-hidden
-            className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
-          />
-          <span className="hidden sm:inline">{enabled ? "Active" : paused ? "Paused" : "Off"}</span>
-          <span className="sr-only sm:hidden">Active</span>
-        </label>
-        {revealed ? null : (
+        {canEdit ? (
+          <label className="flex shrink-0 items-center gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={enabled}
+              onChange={(e) => {
+                setEnabled(e.currentTarget.checked);
+                setDirty(true);
+              }}
+              className="peer sr-only"
+            />
+            <span
+              aria-hidden
+              className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+            />
+            <span className="hidden sm:inline">{enabled ? "Active" : paused ? "Paused" : "Off"}</span>
+            <span className="sr-only sm:hidden">Active</span>
+          </label>
+        ) : (
+          <span className={`chip shrink-0 ${enabled ? "text-green-700" : ""}`}>{enabled ? "Active" : paused ? "Paused" : "Off"}</span>
+        )}
+        {revealed || !canEdit ? null : (
           <button
             ref={testButtonRef}
             type="button"
@@ -506,11 +515,6 @@ export function RuleCanvas({
           ) : (
             <div className="min-w-0 flex-1 bg-zinc-50 lg:min-h-0 lg:overflow-y-auto">
               <fieldset disabled={!canEdit} className="m-0 mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 border-0 px-4 py-6">
-                {!canEdit ? (
-                  <p className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
-                    View only: project admins and owners change automations.
-                  </p>
-                ) : null}
                 {rule && paused ? (
                   <div role="note" className="flex flex-wrap items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-900">
                     <CirclePause className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden />
@@ -546,124 +550,130 @@ export function RuleCanvas({
                     From a template. Still to pick (highlighted below): {initial.missing.join(", ")}.
                   </p>
                 ) : null}
-                <PickerHighlightContext.Provider value={Boolean(initial)}>
-                <section aria-label="Automation" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-                  <SentenceRow word="When">
-                    <div className="flex flex-wrap items-center gap-1">
-                    <VocabPicker
-                      kind="trigger"
-                      id="rule-trigger"
-                      label="Trigger"
-                      value={triggerType}
-                      options={vocabOptions(TRIGGERS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, [triggerType]) })}
-                      onChange={(v) => {
-                        setTriggerType(v as TriggerType);
-                        setTriggerConfig({});
-                        setDirty(true);
-                      }}
-                      variant="chip"
-                      searchable
-                      panelWidth={340}
-                    />
-                    <StepParams missing={missingKeys({ type: triggerType, ...triggerConfig }, { system: "project", kind: "trigger", v3: ctx.v3 })}>
-                      <TriggerFields
-                        prefix="rule"
-                        triggerType={triggerType}
-                        triggerConfig={triggerConfig}
-                        ctx={ctx}
-                        onChange={(config) => {
-                          setTriggerConfig(config);
+                {/* Nov 1 notes (batch 11): below Admin the builder isn't shown — the summary above says what
+                    the automation does, and the Activity tab shows its runs. */}
+                {canEdit ? (
+                  <PickerHighlightContext.Provider value={Boolean(initial)}>
+                  <section aria-label="Automation" className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+                    <SentenceRow word="When">
+                      <div className="flex flex-wrap items-center gap-1">
+                      <VocabPicker
+                        kind="trigger"
+                        id="rule-trigger"
+                        label="Trigger"
+                        value={triggerType}
+                        options={vocabOptions(TRIGGERS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, [triggerType]) })}
+                        onChange={(v) => {
+                          setTriggerType(v as TriggerType);
+                          setTriggerConfig({});
                           setDirty(true);
                         }}
+                        variant="chip"
+                        searchable
+                        panelWidth={340}
                       />
-                    </StepParams>
-                    <StepPrompt problems={stepProblems({ type: triggerType, ...triggerConfig }, { system: "project", kind: "trigger", v3: ctx.v3 })} />
-                    </div>
-                  </SentenceRow>
-                  {branches.map((branch, index) => (
-                    <BranchRows
-                      key={index}
-                      index={index}
-                      count={branches.length}
-                      branch={branch}
-                      ctx={ctx}
-                      projectId={projectId}
-                      canEdit={canEdit}
-                      onChange={(next) => setBranch(index, next)}
-                      onRemove={index === 0 ? undefined : () => changeBranches((current) => current.filter((_, i) => i !== index))}
-                      onDuplicate={
-                        batch4 && branches.length < MAX_RULE_BRANCHES && branch.conditions.length > 0 ? () => duplicateBranch(index) : undefined
-                      }
-                      onMove={branches.length > 1 && branch.conditions.length > 0 ? (delta) => moveBranch(index, delta) : undefined}
-                      canMoveUp={index > 0}
-                      canMoveDown={index < branches.length - (hasOtherwise ? 2 : 1)}
-                    />
-                  ))}
-                  {canEdit ? (
-                    <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-4 py-2.5">
-                      <button
-                        type="button"
-                        onClick={addElseIf}
-                        disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES || (branches.length === 1 && branches[0].conditions.length === 0)}
-                        data-tooltip={
-                          !batch4
-                            ? "Branches arrive with this release’s database update"
-                            : branches.length === 1 && branches[0].conditions.length === 0
-                              ? "Add an If condition first"
-                              : "Runs when the conditions above don’t match"
-                        }
-                        className="btn-ghost h-7 text-xs"
-                      >
-                        <GitBranch className="size-3.5" aria-hidden />
-                        Otherwise if…
-                      </button>
-                      {!hasOtherwise && branches.some((b) => b.conditions.length > 0) ? (
-                        <button
-                          type="button"
-                          onClick={addOtherwise}
-                          disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES}
-                          data-tooltip={!batch4 ? "Branches arrive with this release’s database update" : "Runs when nothing above matches"}
-                          className="btn-ghost h-7 text-xs"
-                        >
-                          <Plus className="size-3.5" aria-hidden />
-                          Otherwise…
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {v2 && !NOT_CHANGE_TRIGGERS.has(triggerType) ? (
-                    <SentenceRow word="Also">
-                      {/* Off: fire_rules skips this rule for changes another rule makes (no chains through it). */}
-                      <div className="pt-0.5">
-                        <label className="flex items-start gap-2">
-                          <input
-                            type="checkbox"
-                            checked={runOnRuleChanges}
-                            aria-describedby={ruleChangesHintId}
-                            onChange={(e) => {
-                              setRunOnRuleChanges(e.currentTarget.checked);
-                              setDirty(true);
-                            }}
-                            className="mt-0.5 size-4 accent-accent-600"
-                          />
-                          <span>
-                            <span className="sr-only">Also </span>
-                            <span className="text-zinc-800">Run when another automation makes the change</span>
-                          </span>
-                        </label>
-                        {/* Outside the label: it describes the checkbox rather than being part of its name. */}
-                        <p id={ruleChangesHintId} className="ml-6 text-xs text-zinc-500">
-                          Turn off to avoid chains: only people’s changes trigger it
-                        </p>
+                      <StepParams missing={missingKeys({ type: triggerType, ...triggerConfig }, { system: "project", kind: "trigger", v3: ctx.v3 })}>
+                        <TriggerFields
+                          prefix="rule"
+                          triggerType={triggerType}
+                          triggerConfig={triggerConfig}
+                          ctx={ctx}
+                          onChange={(config) => {
+                            setTriggerConfig(config);
+                            setDirty(true);
+                          }}
+                        />
+                      </StepParams>
+                      <StepPrompt problems={stepProblems({ type: triggerType, ...triggerConfig }, { system: "project", kind: "trigger", v3: ctx.v3 })} />
                       </div>
                     </SentenceRow>
-                  ) : null}
-                </section>
-                </PickerHighlightContext.Provider>
-                <p className="text-center text-xs text-zinc-500">
-                  Click a highlighted block to change it. Automations never trigger themselves, loop protection stops two that undo
-                  each other, chains stop after ten, and the Status field always follows the section. Text can use placeholders like {"{{task.name}}"} (the {"{ }"} button lists them all).
-                </p>
+                    {branches.map((branch, index) => (
+                      <BranchRows
+                        key={index}
+                        index={index}
+                        count={branches.length}
+                        branch={branch}
+                        ctx={ctx}
+                        projectId={projectId}
+                        canEdit={canEdit}
+                        onChange={(next) => setBranch(index, next)}
+                        onRemove={index === 0 ? undefined : () => changeBranches((current) => current.filter((_, i) => i !== index))}
+                        onDuplicate={
+                          batch4 && branches.length < MAX_RULE_BRANCHES && branch.conditions.length > 0 ? () => duplicateBranch(index) : undefined
+                        }
+                        onMove={branches.length > 1 && branch.conditions.length > 0 ? (delta) => moveBranch(index, delta) : undefined}
+                        canMoveUp={index > 0}
+                        canMoveDown={index < branches.length - (hasOtherwise ? 2 : 1)}
+                      />
+                    ))}
+                    {canEdit ? (
+                      <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-4 py-2.5">
+                        <button
+                          type="button"
+                          onClick={addElseIf}
+                          disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES || (branches.length === 1 && branches[0].conditions.length === 0)}
+                          data-tooltip={
+                            !batch4
+                              ? "Branches arrive with this release’s database update"
+                              : branches.length === 1 && branches[0].conditions.length === 0
+                                ? "Add an If condition first"
+                                : "Runs when the conditions above don’t match"
+                          }
+                          className="btn-ghost h-7 text-xs"
+                        >
+                          <GitBranch className="size-3.5" aria-hidden />
+                          Otherwise if…
+                        </button>
+                        {!hasOtherwise && branches.some((b) => b.conditions.length > 0) ? (
+                          <button
+                            type="button"
+                            onClick={addOtherwise}
+                            disabled={!batch4 || branches.length >= MAX_RULE_BRANCHES}
+                            data-tooltip={!batch4 ? "Branches arrive with this release’s database update" : "Runs when nothing above matches"}
+                            className="btn-ghost h-7 text-xs"
+                          >
+                            <Plus className="size-3.5" aria-hidden />
+                            Otherwise…
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {v2 && !NOT_CHANGE_TRIGGERS.has(triggerType) ? (
+                      <SentenceRow word="Also">
+                        {/* Off: fire_rules skips this rule for changes another rule makes (no chains through it). */}
+                        <div className="pt-0.5">
+                          <label className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={runOnRuleChanges}
+                              aria-describedby={ruleChangesHintId}
+                              onChange={(e) => {
+                                setRunOnRuleChanges(e.currentTarget.checked);
+                                setDirty(true);
+                              }}
+                              className="mt-0.5 size-4 accent-accent-600"
+                            />
+                            <span>
+                              <span className="sr-only">Also </span>
+                              <span className="text-zinc-800">Run when another automation makes the change</span>
+                            </span>
+                          </label>
+                          {/* Outside the label: it describes the checkbox rather than being part of its name. */}
+                          <p id={ruleChangesHintId} className="ml-6 text-xs text-zinc-500">
+                            Turn off to avoid chains: only people’s changes trigger it
+                          </p>
+                        </div>
+                      </SentenceRow>
+                    ) : null}
+                  </section>
+                  </PickerHighlightContext.Provider>
+                ) : null}
+                {canEdit ? (
+                  <p className="text-center text-xs text-zinc-500">
+                    Click a highlighted block to change it. Automations never trigger themselves, loop protection stops two that undo
+                    each other, chains stop after ten, and the Status field always follows the section. Text can use placeholders like {"{{task.name}}"} (the {"{ }"} button lists them all).
+                  </p>
+                ) : null}
                 {rule?.lastEditedAt ? (
                   <p className="text-center text-xs text-zinc-400">
                     Last edited{editor ? ` by ${editor.name}` : ""} · <Timestamp iso={rule.lastEditedAt} />

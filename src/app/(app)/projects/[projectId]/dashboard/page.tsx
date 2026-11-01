@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { RoleGate } from "@/components/project/project-access";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import {
   getProject,
@@ -49,9 +48,7 @@ export default async function ProjectDashboardPage({ params }: PageProps<"/proje
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
-      <RoleGate need="editor" what="dashboard widgets">
-        <DashboardView projectId={projectId} widgets={data} context={{ sections, profiles, fields, tags }} />
-      </RoleGate>
+      <DashboardView projectId={projectId} widgets={data} context={{ sections, profiles, fields, tags }} />
     </main>
   );
 }

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
-import { ReadOnlyNotice, useProjectPermissions } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { setProjectStatus } from "@/lib/actions";
@@ -38,56 +38,56 @@ export function ProjectStatusForm({ project }: { project: Project }) {
             </>
           ) : null}
         </p>
-        {canEdit ? null : (
-          <div className="mt-3">
-            <ReadOnlyNotice need="editor" what="the project status" />
-          </div>
+        {/* Nov 1 notes (batch 11): below Editor the status reads as text — no form. */}
+        {!canEdit ? (
+          project.status_note ? <p className="mt-3 whitespace-pre-wrap text-sm text-zinc-700">{project.status_note}</p> : null
+        ) : (
+          <form
+            className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run(() => setProjectStatus(project.id, status, note));
+            }}
+          >
+            <fieldset disabled={pending} className="contents">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="project-status" className="text-xs font-medium text-zinc-600">
+                  Status
+                </label>
+                <SmartPicker
+                  id="project-status"
+                  label="Status"
+                  value={status}
+                  disabled={pending}
+                  onChange={(next) => setStatus(next as ProjectStatus)}
+                  className="h-9"
+                  options={PROJECT_STATUSES.map((value) => ({ value, label: PROJECT_STATUS_LABELS[value] }))}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="project-status-note" className="text-xs font-medium text-zinc-600">
+                  Note (optional)
+                </label>
+                <input
+                  id="project-status-note"
+                  value={note}
+                  maxLength={2000}
+                  placeholder="What’s changed, what’s blocking"
+                  onChange={(e) => setNote(e.currentTarget.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <button
+                  type="submit"
+                  className="rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
+                >
+                  Save status
+                </button>
+              </div>
+            </fieldset>
+          </form>
         )}
-        <form
-          className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]"
-          onSubmit={(e) => {
-            e.preventDefault();
-            run(() => setProjectStatus(project.id, status, note));
-          }}
-        >
-          <fieldset disabled={!canEdit || pending} className="contents">
-            <div className="flex flex-col gap-1">
-              <label htmlFor="project-status" className="text-xs font-medium text-zinc-600">
-                Status
-              </label>
-              <SmartPicker
-                id="project-status"
-                label="Status"
-                value={status}
-                disabled={!canEdit || pending}
-                onChange={(next) => setStatus(next as ProjectStatus)}
-                className="h-9"
-                options={PROJECT_STATUSES.map((value) => ({ value, label: PROJECT_STATUS_LABELS[value] }))}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label htmlFor="project-status-note" className="text-xs font-medium text-zinc-600">
-                Note (optional)
-              </label>
-              <input
-                id="project-status-note"
-                value={note}
-                maxLength={2000}
-                placeholder="What’s changed, what’s blocking"
-                onChange={(e) => setNote(e.currentTarget.value)}
-                className={inputClass}
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <button
-                type="submit"
-                className="rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
-              >
-                Save status
-              </button>
-            </div>
-          </fieldset>
-        </form>
       </section>
     </div>
   );

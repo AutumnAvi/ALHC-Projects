@@ -5689,6 +5689,18 @@ export type Database = {
         Args: { target_email: string };
         Returns: { item_id: string; kind: string; data: Json; created_at: string; parts: Json }[];
       };
+      digest_email_tasks: {
+        Args: { target_email: string };
+        Returns: { task_id: string; title: string; due_on: string | null; overdue: boolean; project_name: string | null; path: string }[];
+      };
+      digest_work_week: {
+        Args: Record<PropertyKey, never>;
+        Returns: number[];
+      };
+      digest_next_at: {
+        Args: { frequency: string; send_hour: number; send_weekday: number; zone: string; after_time: string };
+        Returns: string | null;
+      };
       claim_scheduled_emails: {
         Args: { max_items?: number; only_id?: string | null };
         Returns: Database["public"]["Tables"]["email_outbox"]["Row"][];

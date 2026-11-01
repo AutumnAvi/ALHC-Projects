@@ -32,7 +32,6 @@ import { addLibraryField, createField, deleteField, loadFieldLibrary, updateFiel
 import {
   FIELD_TYPES,
   LOCK_FIELD_HINT,
-  LOCKED_FIELD_NOTE,
   MAX_FIELD_DESCRIPTION,
   NUMBER_PREFIX_EXAMPLES,
   OPTION_COLORS,
@@ -45,7 +44,6 @@ import {
   numberPrefixOf,
   numberPrefixProblem,
   selectOptionsProblem,
-  lockFieldUnavailable,
   lockedFieldNote,
   libraryChoices,
   removeFieldWording,
@@ -613,13 +611,13 @@ function FieldForm({
           </p>
         ) : null}
       </div>
-      {numeric ? (
-        <NumberSymbolInput
-          id={`${prefix}-symbol`}
-          value={draft.numberPrefix}
-          disabled={readOnly}
-          onChange={(v) => set("numberPrefix", v)}
-        />
+      {/* Nov 1 notes (batch 11): people who can't change the definition see the symbol, not a disabled box. */}
+      {numeric && !readOnly ? (
+        <NumberSymbolInput id={`${prefix}-symbol`} value={draft.numberPrefix} onChange={(v) => set("numberPrefix", v)} />
+      ) : numeric && draft.numberPrefix ? (
+        <p className="text-sm text-zinc-700">
+          Symbol: <span className="font-medium">{draft.numberPrefix}</span>
+        </p>
       ) : null}
       {batch4 ? (
         <div>
@@ -763,24 +761,24 @@ function FieldForm({
         {batch4 && !bound ? (
           <>
             {/* A placement isn't listed in the library itself: its source is. */}
-            {!view?.placement ? (
+            {!view?.placement && !readOnly ? (
               <Toggle
                 id={`${prefix}-library`}
                 checked={draft.inLibrary}
-                disabled={readOnly}
                 onChange={(v) => set("inLibrary", v)}
                 label="Add to field library"
                 hint={`Everyone in the workspace can find this field’s title, type, description, and options and add it to their projects. Projects that add it share it: one definition, and one value for a task in several of them. Tasks stay private to their projects.${view?.shared ? " Projects that already use it keep it either way." : ""}`}
               />
             ) : null}
-            <Toggle
-              id={`${prefix}-notify`}
-              checked={draft.notifyOnChange}
-              disabled={readOnly}
-              onChange={(v) => set("notifyOnChange", v)}
-              label="Notify followers when changed"
-              hint="When a task’s value changes, its followers get an Inbox notification."
-            />
+            {!readOnly ? (
+              <Toggle
+                id={`${prefix}-notify`}
+                checked={draft.notifyOnChange}
+                onChange={(v) => set("notifyOnChange", v)}
+                label="Notify followers when changed"
+                hint="When a task’s value changes, its followers get an Inbox notification."
+              />
+            ) : null}
           </>
         ) : null}
         {!batch4 ? (
@@ -789,28 +787,22 @@ function FieldForm({
           </p>
         ) : null}
         {/* Oct 29 notes (batch 7): lock an existing field (never the section-bound Status). */}
-        {field && !bound ? (
+        {field && !bound && lockManageable ? (
           <Toggle
             id={`${prefix}-locked`}
             checked={draft.locked}
-            disabled={!lockManageable}
             onChange={(v) => set("locked", v)}
             label="Lock field"
-            hint={
-              lockManageable
-                ? `${LOCK_FIELD_HINT}${view?.shared ? " Locks it in every project that uses it." : ""}${lockedSince(field)}`
-                : `${lockFieldUnavailable(field)}${lockedSince(field)}`
-            }
+            hint={`${LOCK_FIELD_HINT}${view?.shared ? " Locks it in every project that uses it." : ""}${lockedSince(field)}`}
           />
         ) : null}
       </div>
 
       <div className="flex items-center gap-2">
-        {!creating ? (
+        {!creating && !removeLocked ? (
           <button
             type="button"
-            disabled={pending || removeLocked}
-            data-tooltip={removeLocked ? LOCKED_FIELD_NOTE : undefined}
+            disabled={pending}
             onClick={async () => {
               if (!removal) return;
               const ok = await confirm({

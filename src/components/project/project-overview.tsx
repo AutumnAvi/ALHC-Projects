@@ -302,24 +302,33 @@ function StatusSummary({
       <h2 id="overview-status" className={SECTION_TITLE}>
         What’s the status?
       </h2>
-      <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Post a status update">
-        {PROJECT_STATUSES.map((value) => (
-          <button
-            key={value}
-            type="button"
-            disabled={!canPost}
-            aria-pressed={current === value}
-            onClick={() => openStatusUpdate(value)}
-            className={`inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-default ${
-              current === value ? PROJECT_STATUS_CLASS[value] : "text-zinc-700 ring-zinc-200 enabled:hover:bg-zinc-50"
-            }`}
-          >
-            <span aria-hidden className={`size-2 rounded-full ${PROJECT_STATUS_DOT[value]}`} />
-            {PROJECT_STATUS_LABELS[value]}
-          </button>
-        ))}
-      </div>
-      {canPost ? null : <p className="mt-1.5 text-xs text-zinc-500">Editors and above post status updates.</p>}
+      {/* Nov 1 notes (batch 11): below Editor no status buttons, just the current status. */}
+      {!canPost ? (
+        current ? (
+          <div className="mt-3">
+            <ProjectStatusBadge status={current} />
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-zinc-500">No status yet.</p>
+        )
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Post a status update">
+          {PROJECT_STATUSES.map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={current === value}
+              onClick={() => openStatusUpdate(value)}
+              className={`inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-default ${
+                current === value ? PROJECT_STATUS_CLASS[value] : "text-zinc-700 ring-zinc-200 enabled:hover:bg-zinc-50"
+              }`}
+            >
+              <span aria-hidden className={`size-2 rounded-full ${PROJECT_STATUS_DOT[value]}`} />
+              {PROJECT_STATUS_LABELS[value]}
+            </button>
+          ))}
+        </div>
+      )}
 
       {latestUpdate ? (
         <article className="mt-4 rounded-lg border border-zinc-200 p-3">

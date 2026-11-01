@@ -34,7 +34,8 @@ export function WorkspaceSettingsTabs() {
   );
 }
 
-// One settings card. adminOnly + !isAdmin: the body is shown disabled with the note under the title.
+// One settings card. adminOnly + !isAdmin: the note under the title says only admins change it; since Nov 1
+// notes (batch 11) each card shows members its values as text instead of disabled controls.
 export function SettingsCard({
   id,
   title,
@@ -64,9 +65,7 @@ export function SettingsCard({
         {readOnly ? <AdminOnlyNote className="mt-2" /> : null}
       </div>
       {children ? (
-        <fieldset disabled={readOnly} className={`min-w-0 ${flush ? "" : "px-5 py-4"} disabled:opacity-90`}>
-          {children}
-        </fieldset>
+        <div className={`min-w-0 ${flush ? "" : "px-5 py-4"}`}>{children}</div>
       ) : null}
     </section>
   );

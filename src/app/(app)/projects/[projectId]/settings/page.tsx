@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { History } from "lucide-react";
-import { RoleGate } from "@/components/project/project-access";
 import { DependencyShiftSettings, ProjectSettings } from "@/components/project/project-settings";
 import { TaskNumberingForm } from "@/components/project/task-numbering";
 import { ProjectStatusForm } from "@/components/project/project-status-form";
@@ -64,27 +63,33 @@ export default async function ProjectSettingsPage({
       {origin ? <OriginNote origin={origin} timeZone={timeZone} /> : null}
       <ProjectStatusForm project={project} />
       <ProjectStatusHistory updates={statusUpdates} />
-      <div className="mx-auto max-w-3xl px-gutter pt-5">
-        <TaskNumberingForm
-          projectId={project.id}
-          sequence={sequence}
-          sections={sections.map((section) => ({ id: section.id, name: section.name }))}
-          fields={fields}
-        />
-      </div>
+      {/* Nov 1 notes (batch 11): each part is shown only to the roles that can change it — Editors+ for
+          numbering, Admins+ for the rest — instead of a disabled form. */}
+      {hasRole(role, "editor") ? (
+        <div className="mx-auto max-w-3xl px-gutter pt-5">
+          <TaskNumberingForm
+            projectId={project.id}
+            sequence={sequence}
+            sections={sections.map((section) => ({ id: section.id, name: section.name }))}
+            fields={fields}
+          />
+        </div>
+      ) : null}
       {/* Oct 27 notes (batch 6): Admin+ by their own role (archived projects cap everyone at Viewer). */}
-      <div className="mx-auto max-w-3xl px-gutter pt-5">
-        <DependencyShiftSettings projectId={project.id} mode={shiftMode} canEdit={hasRole(role, "admin")} />
-      </div>
-      <RoleGate need="admin" what="project settings">
-        <ProjectTeamSettings
-          projectId={project.id}
-          teamId={project.team_id}
-          visibility={isProjectVisibility(project.visibility) ? project.visibility : "private"}
-          teams={teamChoices}
-        />
-        <ProjectSettings project={project} />
-      </RoleGate>
+      {hasRole(role, "admin") ? (
+        <>
+          <div className="mx-auto max-w-3xl px-gutter pt-5">
+            <DependencyShiftSettings projectId={project.id} mode={shiftMode} canEdit />
+          </div>
+          <ProjectTeamSettings
+            projectId={project.id}
+            teamId={project.team_id}
+            visibility={isProjectVisibility(project.visibility) ? project.visibility : "private"}
+            teams={teamChoices}
+          />
+          <ProjectSettings project={project} />
+        </>
+      ) : null}
     </>
   );
 }

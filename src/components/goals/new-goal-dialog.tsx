@@ -133,17 +133,23 @@ export function NewGoalDialog({
             <label htmlFor={`${formId}-owner`} className={DIALOG_LABEL}>
               Owner
             </label>
-            <SmartPicker
-              id={`${formId}-owner`}
-              label="Owner"
-              value={canPickOwner ? ownerId : viewer.id}
-              disabled={!canPickOwner}
-              onChange={setOwnerId}
-              searchable
-              className="mt-1 w-full disabled:opacity-60"
-              options={people.map((p) => ({ value: p.id, label: p.id === viewer.id ? `${p.name} (you)` : p.name }))}
-            />
-            {!canPickOwner ? <p className={DIALOG_HINT}>Team leads and workspace admins can pick someone else.</p> : null}
+            {/* Nov 1 notes (batch 11): only team leads and workspace admins pick an owner; everyone else
+                owns the goals they create, shown as text. */}
+            {canPickOwner ? (
+              <SmartPicker
+                id={`${formId}-owner`}
+                label="Owner"
+                value={ownerId}
+                onChange={setOwnerId}
+                searchable
+                className="mt-1 w-full"
+                options={people.map((p) => ({ value: p.id, label: p.id === viewer.id ? `${p.name} (you)` : p.name }))}
+              />
+            ) : (
+              <p id={`${formId}-owner`} className="mt-1 flex h-9 items-center text-sm text-zinc-900">
+                {people.find((p) => p.id === viewer.id)?.name ?? "You"} (you)
+              </p>
+            )}
           </div>
         </div>
 

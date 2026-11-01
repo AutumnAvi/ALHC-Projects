@@ -25,7 +25,6 @@ function email(overrides: Partial<Parameters<typeof renderReviewEmail>[0]> = {})
       { assetId: "asset-2", name: "proof.pdf", contentType: "application/pdf", thumbnailUrl: null },
       { assetId: "asset-3", name: "notes.docx", contentType: null },
     ],
-    design: null,
     ...overrides,
   });
 }

@@ -11,16 +11,6 @@ import type { SidebarFolderState } from "@/lib/sidebar-folders";
 import { SKIP_REASONS, type SkipReason } from "@/lib/reply-attachments";
 import type { MentionTeam } from "@/lib/mentions";
 import { DEFAULT_SUBTASK_PREFS, parseSubtaskPrefs, type SubtaskPrefs } from "@/lib/subtask-view";
-import {
-  DESIGN_COLUMNS,
-  DESIGN_FIELDS,
-  isEmailDesignKind,
-  LEGACY_DESIGN_FIELDS,
-  settingsFromRow,
-  type DesignField,
-  type EmailDesignKind,
-  type EmailDesignSettings,
-} from "@/lib/email-design";
 import { parseColumnWidths, type ColumnWidths } from "@/lib/column-widths";
 import {
   isFieldType,
@@ -4101,6 +4091,8 @@ export type MySettings = {
   openPersonalView: boolean | null;
   // Nov 1 notes (batch 9b): what a task ticked on the My tasks checklist does (saved on the account).
   myTasksChecked: CheckedMode;
+  // Nov 1 notes (batch 11): the workspace's workdays (the email digest only goes out on them).
+  workWeek: number[];
 };
 
 // The person's forwarding address row (made on first use) and their latest forwarded emails (Real
@@ -4156,7 +4148,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     getMyEmailPreferences(),
     getProfilePreferences(),
   ]);
-  const myTasksChecked = await getMyTasksChecked();
+  const [myTasksChecked, workWeek] = await Promise.all([getMyTasksChecked(), getWorkWeek()]);
   const layout = cookieStore.get(MY_TASKS_LAYOUT_COOKIE)?.value;
   const row = maybe(profile, "profile");
   const meta = user.user_metadata ?? {};
@@ -4185,6 +4177,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     myTasksLayout: myTasksLayoutOf(layout),
     openPersonalView: preferences.available ? preferences.openPersonalView : null,
     myTasksChecked,
+    workWeek,
   };
 });
 
@@ -6714,61 +6707,6 @@ export const getPersonProfile = cache(async (profileId: string): Promise<PersonP
 // overrides, and its forms' overrides — whatever RLS lets the viewer read. null = a database without
 // the update (the pages say so).
 // ---------------------------------------------------------------------------------------------
-
-export type EmailDesignRow = {
-  id: string;
-  kind: EmailDesignKind;
-  projectId: string | null;
-  formId: string | null;
-  settings: EmailDesignSettings;
-  updatedAt: string;
-};
-
-export type EmailDesignScopes = {
-  workspaceId: string;
-  workspace: Partial<Record<EmailDesignKind, EmailDesignRow>>;
-  project: Partial<Record<EmailDesignKind, EmailDesignRow>>;
-  forms: Record<string, EmailDesignRow>;
-};
-
-export const listEmailDesigns = cache(async (projectId: string | null): Promise<EmailDesignScopes | null> => {
-  const workspace = await getWorkspace();
-  if (!workspace) return null;
-  const supabase = await createClient();
-  const run = (fields: readonly DesignField[]) => {
-    const columns = fields.map((f) => DESIGN_COLUMNS[f]).join(", ");
-    let query = supabase
-      .from("email_designs")
-      .select(`id, kind, project_id, form_id, updated_at, ${columns}`)
-      .is("deleted_at", null)
-      .eq("workspace_id", workspace.id);
-    query = projectId ? query.or(`project_id.is.null,project_id.eq.${projectId}`) : query.is("project_id", null);
-    return query.returns<({ id: string; kind: string; project_id: string | null; form_id: string | null; updated_at: string } & Record<string, unknown>)[]>();
-  };
-  let result = await run(DESIGN_FIELDS);
-  // A database without Oct 19 notes' update has only the first settings.
-  if (result.error && isMissingColumn(result.error)) result = await run(LEGACY_DESIGN_FIELDS);
-  if (result.error) {
-    if (result.error.code === "PGRST205" || result.error.code === "42P01") return null;
-    throw new Error(`Failed to load email designs: ${result.error.message}`);
-  }
-  const scopes: EmailDesignScopes = { workspaceId: workspace.id, workspace: {}, project: {}, forms: {} };
-  for (const row of result.data ?? []) {
-    if (!isEmailDesignKind(row.kind)) continue;
-    const design: EmailDesignRow = {
-      id: row.id,
-      kind: row.kind,
-      projectId: row.project_id,
-      formId: row.form_id,
-      settings: settingsFromRow(row)!,
-      updatedAt: row.updated_at,
-    };
-    if (row.form_id) scopes.forms[row.form_id] = design;
-    else if (row.project_id) scopes.project[row.kind] = design;
-    else scopes.workspace[row.kind] = design;
-  }
-  return scopes;
-});
 
 // Whether the Commenter project role is offered (Admin console → Security). A database without the
 // update keeps the old behavior (offered).

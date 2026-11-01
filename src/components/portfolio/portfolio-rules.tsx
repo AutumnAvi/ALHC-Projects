@@ -180,24 +180,29 @@ export function PortfolioRulesView({
           {rules.map((rule) => (
             <li key={rule.id} className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
               <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2" data-tooltip={canEdit ? (rule.enabled ? "Turn off" : "Turn on") : undefined}>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={rule.enabled}
-                    disabled={!canEdit || pending}
-                    aria-label={`${rule.name}: ${rule.enabled ? "on" : "off"}`}
-                    onChange={(e) => {
-                      const on = e.currentTarget.checked;
-                      run(() => setPortfolioRuleEnabled(rule.id, on));
-                    }}
-                    className="peer sr-only"
-                  />
-                  <span
-                    aria-hidden
-                    className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
-                  />
-                </label>
+                {/* Nov 1 notes (batch 11): below Admin the switch is hidden; the state reads as text. */}
+                {canEdit ? (
+                  <label className="flex items-center gap-2" data-tooltip={rule.enabled ? "Turn off" : "Turn on"}>
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={rule.enabled}
+                      disabled={pending}
+                      aria-label={`${rule.name}: ${rule.enabled ? "on" : "off"}`}
+                      onChange={(e) => {
+                        const on = e.currentTarget.checked;
+                        run(() => setPortfolioRuleEnabled(rule.id, on));
+                      }}
+                      className="peer sr-only"
+                    />
+                    <span
+                      aria-hidden
+                      className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+                    />
+                  </label>
+                ) : (
+                  <span className={`chip ${rule.enabled ? "text-green-700" : ""}`}>{rule.enabled ? "On" : "Off"}</span>
+                )}
                 <Link href={`/portfolios/${portfolioId}/rules/${rule.id}`} className="min-w-0 flex-1 truncate font-medium text-zinc-900 hover:underline">
                   {rule.name}
                 </Link>
@@ -872,30 +877,40 @@ export function PortfolioRuleBuilder({
           onChange={(e) => nameBox.onChange(e.currentTarget.value)}
           className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-base font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none data-[auto-name]:text-zinc-500"
         />
-        <SmartPicker
-          label={`Owner: ${owner?.name ?? (ownerId ? "someone removed" : rule ? "the automation’s creator" : "you")}`}
-          value={ownerId}
-          options={ctx.members.map((m) => ({ value: m.id, label: m.name, icon: <Avatar name={m.name} profileId={m.id} /> }))}
-          onChange={setOwnerId}
-          variant="ghost"
-          searchable
-          disabled={!canEdit}
-          className="h-8 max-w-48 px-1.5"
-          renderValue={() => (
-            <>
-              {owner ? <Avatar name={owner.name} profileId={owner.id} /> : <UserRound className="size-4" aria-hidden />}
-              <span className="hidden truncate md:inline">{owner?.name ?? (rule ? "Creator" : "You")}</span>
-            </>
-          )}
-        />
-        <label className="flex items-center gap-2 text-sm text-zinc-700">
-          <input type="checkbox" role="switch" checked={enabled} disabled={!canEdit} onChange={(e) => setEnabled(e.currentTarget.checked)} className="peer sr-only" />
-          <span
-            aria-hidden
-            className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+        {!canEdit ? (
+          <span className="flex max-w-48 items-center gap-1.5 text-sm text-zinc-700">
+            {owner ? <Avatar name={owner.name} profileId={owner.id} /> : <UserRound className="size-4" aria-hidden />}
+            <span className="hidden truncate md:inline">{owner?.name ?? (rule ? "Creator" : "You")}</span>
+          </span>
+        ) : (
+          <SmartPicker
+            label={`Owner: ${owner?.name ?? (ownerId ? "someone removed" : rule ? "the automation’s creator" : "you")}`}
+            value={ownerId}
+            options={ctx.members.map((m) => ({ value: m.id, label: m.name, icon: <Avatar name={m.name} profileId={m.id} /> }))}
+            onChange={setOwnerId}
+            variant="ghost"
+            searchable
+            className="h-8 max-w-48 px-1.5"
+            renderValue={() => (
+              <>
+                {owner ? <Avatar name={owner.name} profileId={owner.id} /> : <UserRound className="size-4" aria-hidden />}
+                <span className="hidden truncate md:inline">{owner?.name ?? (rule ? "Creator" : "You")}</span>
+              </>
+            )}
           />
-          {enabled ? "Active" : "Off"}
-        </label>
+        )}
+        {canEdit ? (
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input type="checkbox" role="switch" checked={enabled} onChange={(e) => setEnabled(e.currentTarget.checked)} className="peer sr-only" />
+            <span
+              aria-hidden
+              className="relative inline-block h-5 w-9 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-4 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+            />
+            {enabled ? "Active" : "Off"}
+          </label>
+        ) : (
+          <span className={`chip ${enabled ? "text-green-700" : ""}`}>{enabled ? "Active" : "Off"}</span>
+        )}
         {canEdit && blocked ? (
           <span id="portfolio-rule-save-blocked" role="status" className="max-w-64 truncate text-xs text-amber-800" title={problems.join("\n")}>
             {blocked}
@@ -926,130 +941,133 @@ export function PortfolioRuleBuilder({
         </p>
       </div>
 
-      <fieldset disabled={!canEdit} className="m-0 rounded-xl border border-zinc-200 bg-white p-0 shadow-sm">
-        <SentenceRow word="When">
-          <Row>
-            <VocabPicker
-              kind="trigger"
-              label="Trigger"
-              value={triggerType}
-              options={vocab(PORTFOLIO_TRIGGERS)}
-              onChange={(v) => {
-                setTriggerType(v as PortfolioTriggerType);
-                setTriggerConfig(v === "scheduled" ? { frequency: "weekly", weekdays: [ctx.workWeek?.[0] ?? 0], hour: 9 } : {});
-              }}
-              variant="chip"
-              searchable
-              panelWidth={340}
-            />
-            <StepParams missing={missingKeys({ type: triggerType, ...triggerConfig }, { system: "portfolio", kind: "trigger" })}>
-              <TriggerSettings triggerType={triggerType} config={triggerConfig} ctx={ctx} onChange={setTriggerConfig} />
-            </StepParams>
-            <StepPrompt problems={stepProblems({ type: triggerType, ...triggerConfig }, { system: "portfolio", kind: "trigger" })} />
-          </Row>
-        </SentenceRow>
-        <SentenceRow word="If">
-          {conditions.length === 0 ? <p className="pt-1 text-xs text-zinc-500">Every project (no conditions).</p> : null}
-          {conditions.map((c, i) => (
-            <Row key={i}>
-              {i > 0 ? <span className="text-xs font-semibold text-zinc-400">and</span> : null}
+      {/* Nov 1 notes (batch 11): below Admin the builder isn't shown; the summary says what it does. */}
+      {canEdit ? (
+        <fieldset className="m-0 rounded-xl border border-zinc-200 bg-white p-0 shadow-sm">
+          <SentenceRow word="When">
+            <Row>
               <VocabPicker
-                kind="condition"
-                label={`Condition ${i + 1}`}
-                value={c.type}
-                options={vocab(PORTFOLIO_CONDITIONS)}
-                onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? portfolioConditionDefaults(v as PortfolioConditionType) : x)))}
+                kind="trigger"
+                label="Trigger"
+                value={triggerType}
+                options={vocab(PORTFOLIO_TRIGGERS)}
+                onChange={(v) => {
+                  setTriggerType(v as PortfolioTriggerType);
+                  setTriggerConfig(v === "scheduled" ? { frequency: "weekly", weekdays: [ctx.workWeek?.[0] ?? 0], hour: 9 } : {});
+                }}
                 variant="chip"
                 searchable
+                panelWidth={340}
               />
-              <StepParams missing={missingKeys(c, CONDITION_SCOPE)}>
-                <ConditionSettings c={c} ctx={ctx} onChange={(next) => setConditions(conditions.map((x, j) => (j === i ? next : x)))} />
+              <StepParams missing={missingKeys({ type: triggerType, ...triggerConfig }, { system: "portfolio", kind: "trigger" })}>
+                <TriggerSettings triggerType={triggerType} config={triggerConfig} ctx={ctx} onChange={setTriggerConfig} />
               </StepParams>
-              <StepPrompt problems={stepProblems(c, CONDITION_SCOPE)} />
-              {canEdit ? (
-                <button type="button" aria-label={`Remove condition ${i + 1}`} data-tooltip="Remove condition" onClick={() => setConditions(conditions.filter((_, j) => j !== i))} className="btn-icon size-6">
-                  <X className="size-3.5" />
-                </button>
-              ) : null}
+              <StepPrompt problems={stepProblems({ type: triggerType, ...triggerConfig }, { system: "portfolio", kind: "trigger" })} />
             </Row>
-          ))}
-          {canEdit && conditions.length < 20 ? (
-            <VocabPicker
-              kind="condition"
-              label="Add condition"
-              value={null}
-              options={vocab(PORTFOLIO_CONDITIONS)}
-              onChange={(v) => setConditions([...conditions, portfolioConditionDefaults(v as PortfolioConditionType)])}
-              variant="ghost"
-              searchable
-              className="h-6 self-start px-1.5 text-xs"
-              renderValue={() => (
-                <>
-                  <Plus className="size-3.5" aria-hidden />
-                  {conditions.length ? "And…" : "Add condition"}
-                </>
-              )}
-            />
-          ) : null}
-        </SentenceRow>
-        <SentenceRow word="Then">
-          <ol className="flex flex-col gap-2">
-            {actions.map((a, i) => (
-              <li key={i} className="flex flex-col gap-1">
-                <Row>
-                  <span className="w-4 text-xs font-medium tabular-nums text-zinc-400">{i + 1}.</span>
-                  <VocabPicker
-                    kind="action"
-                    label={`Action ${i + 1}`}
-                    value={a.type}
-                    options={vocab(PORTFOLIO_ACTIONS)}
-                    onChange={(v) => setActions(actions.map((x, j) => (j === i ? portfolioActionDefaults(v as PortfolioActionType) : x)))}
-                    variant="chip"
-                    searchable
-                    panelWidth={340}
-                  />
-                  <StepParams missing={missingKeys(a, ACTION_SCOPE)}>
-                    <ActionSettings a={a} ctx={ctx} onChange={(next) => setActions(actions.map((x, j) => (j === i ? next : x)))} />
-                  </StepParams>
-                  <StepPrompt problems={stepProblems(a, ACTION_SCOPE)} />
-                  {canEdit ? (
-                    <button
-                      type="button"
-                      aria-label={`Remove action ${i + 1}`}
-                      data-tooltip="Remove action"
-                      disabled={actions.length === 1}
-                      onClick={() => setActions(actions.filter((_, j) => j !== i))}
-                      className="btn-icon size-6"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  ) : null}
-                </Row>
-                <span className="sr-only">{describePortfolioAction(a, ctx)}</span>
-              </li>
+          </SentenceRow>
+          <SentenceRow word="If">
+            {conditions.length === 0 ? <p className="pt-1 text-xs text-zinc-500">Every project (no conditions).</p> : null}
+            {conditions.map((c, i) => (
+              <Row key={i}>
+                {i > 0 ? <span className="text-xs font-semibold text-zinc-400">and</span> : null}
+                <VocabPicker
+                  kind="condition"
+                  label={`Condition ${i + 1}`}
+                  value={c.type}
+                  options={vocab(PORTFOLIO_CONDITIONS)}
+                  onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? portfolioConditionDefaults(v as PortfolioConditionType) : x)))}
+                  variant="chip"
+                  searchable
+                />
+                <StepParams missing={missingKeys(c, CONDITION_SCOPE)}>
+                  <ConditionSettings c={c} ctx={ctx} onChange={(next) => setConditions(conditions.map((x, j) => (j === i ? next : x)))} />
+                </StepParams>
+                <StepPrompt problems={stepProblems(c, CONDITION_SCOPE)} />
+                {canEdit ? (
+                  <button type="button" aria-label={`Remove condition ${i + 1}`} data-tooltip="Remove condition" onClick={() => setConditions(conditions.filter((_, j) => j !== i))} className="btn-icon size-6">
+                    <X className="size-3.5" />
+                  </button>
+                ) : null}
+              </Row>
             ))}
-          </ol>
-          {canEdit && actions.length < 10 ? (
-            <VocabPicker
-              kind="action"
-              label="Add action"
-              value={null}
-              options={vocab(PORTFOLIO_ACTIONS)}
-              onChange={(v) => setActions([...actions, portfolioActionDefaults(v as PortfolioActionType)])}
-              variant="ghost"
-              searchable
-              panelWidth={340}
-              className="h-6 self-start px-1.5 text-xs"
-              renderValue={() => (
-                <>
-                  <Plus className="size-3.5" aria-hidden />
-                  Then…
-                </>
-              )}
-            />
-          ) : null}
-        </SentenceRow>
-      </fieldset>
+            {canEdit && conditions.length < 20 ? (
+              <VocabPicker
+                kind="condition"
+                label="Add condition"
+                value={null}
+                options={vocab(PORTFOLIO_CONDITIONS)}
+                onChange={(v) => setConditions([...conditions, portfolioConditionDefaults(v as PortfolioConditionType)])}
+                variant="ghost"
+                searchable
+                className="h-6 self-start px-1.5 text-xs"
+                renderValue={() => (
+                  <>
+                    <Plus className="size-3.5" aria-hidden />
+                    {conditions.length ? "And…" : "Add condition"}
+                  </>
+                )}
+              />
+            ) : null}
+          </SentenceRow>
+          <SentenceRow word="Then">
+            <ol className="flex flex-col gap-2">
+              {actions.map((a, i) => (
+                <li key={i} className="flex flex-col gap-1">
+                  <Row>
+                    <span className="w-4 text-xs font-medium tabular-nums text-zinc-400">{i + 1}.</span>
+                    <VocabPicker
+                      kind="action"
+                      label={`Action ${i + 1}`}
+                      value={a.type}
+                      options={vocab(PORTFOLIO_ACTIONS)}
+                      onChange={(v) => setActions(actions.map((x, j) => (j === i ? portfolioActionDefaults(v as PortfolioActionType) : x)))}
+                      variant="chip"
+                      searchable
+                      panelWidth={340}
+                    />
+                    <StepParams missing={missingKeys(a, ACTION_SCOPE)}>
+                      <ActionSettings a={a} ctx={ctx} onChange={(next) => setActions(actions.map((x, j) => (j === i ? next : x)))} />
+                    </StepParams>
+                    <StepPrompt problems={stepProblems(a, ACTION_SCOPE)} />
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        aria-label={`Remove action ${i + 1}`}
+                        data-tooltip="Remove action"
+                        disabled={actions.length === 1}
+                        onClick={() => setActions(actions.filter((_, j) => j !== i))}
+                        className="btn-icon size-6"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </Row>
+                  <span className="sr-only">{describePortfolioAction(a, ctx)}</span>
+                </li>
+              ))}
+            </ol>
+            {canEdit && actions.length < 10 ? (
+              <VocabPicker
+                kind="action"
+                label="Add action"
+                value={null}
+                options={vocab(PORTFOLIO_ACTIONS)}
+                onChange={(v) => setActions([...actions, portfolioActionDefaults(v as PortfolioActionType)])}
+                variant="ghost"
+                searchable
+                panelWidth={340}
+                className="h-6 self-start px-1.5 text-xs"
+                renderValue={() => (
+                  <>
+                    <Plus className="size-3.5" aria-hidden />
+                    Then…
+                  </>
+                )}
+              />
+            ) : null}
+          </SentenceRow>
+        </fieldset>
+      ) : null}
 
       {rule ? (
         <section aria-label="Activity">
