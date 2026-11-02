@@ -4768,6 +4768,7 @@ export type Database = {
           email_sender_name: string | null;
           allow_commenter_role: boolean;
           tags_enabled: boolean;
+          goals_enabled: boolean;
           work_week: number[];
           // Nov 1 notes, batch 9a (item 69); absent on a database without it.
           verified_domain_conversations?: boolean;
@@ -4783,6 +4784,7 @@ export type Database = {
           email_sender_name?: string | null;
           allow_commenter_role?: boolean;
           tags_enabled?: boolean;
+          goals_enabled?: boolean;
           work_week?: number[];
         };
         Update: {
@@ -4796,6 +4798,7 @@ export type Database = {
           email_sender_name?: string | null;
           allow_commenter_role?: boolean;
           tags_enabled?: boolean;
+          goals_enabled?: boolean;
           work_week?: number[];
           verified_domain_conversations?: boolean;
         };
@@ -6313,6 +6316,22 @@ export type Database = {
       retry_integration_delivery: {
         Args: { target_delivery: string };
         Returns: Json;
+      };
+      workload_people_summary: {
+        Args: {
+          target_project: string | null;
+          target_portfolio: string | null;
+          range_start: string;
+          range_end: string;
+          tz?: string;
+        };
+        Returns: {
+          assignee_id: string;
+          open_count: number;
+          overdue_count: number;
+          completed_count: number;
+          completed_days: Json;
+        }[];
       };
       project_workload: {
         Args: { target_project: string; range_start?: string | null; range_end?: string | null; value_field?: string | null };

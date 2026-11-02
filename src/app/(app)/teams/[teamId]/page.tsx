@@ -7,6 +7,7 @@ import {
   canManageTeam,
   getTeam,
   getWorkspace,
+  goalsEnabled,
   listGoalProgress,
   listGoals,
   listPortfolios,
@@ -28,6 +29,7 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]">)
 export default async function TeamOverviewPage({ params }: PageProps<"/teams/[teamId]">) {
   const { teamId } = await params;
   await requireTeamView(teamId);
+  const goalsOn = await goalsEnabled();
   const [member, team, canManage, workspace, curated, readable, portfolios, teamProjects, goals, progress] =
     await Promise.all([
       requireMember(),
@@ -38,8 +40,8 @@ export default async function TeamOverviewPage({ params }: PageProps<"/teams/[te
       listReadableProjects(),
       listPortfolios(),
       browseProjects(teamId),
-      listGoals(),
-      listGoalProgress(),
+      goalsOn ? listGoals() : Promise.resolve([]),
+      goalsOn ? listGoalProgress() : Promise.resolve(new Map()),
     ]);
   if (!team) notFound();
 
@@ -105,7 +107,7 @@ export default async function TeamOverviewPage({ params }: PageProps<"/teams/[te
           canManage={canManage}
           membersHref={teamTabHref(team.id, "members")}
         />
-        <TeamGoalsCard teamId={team.id} goals={goals.filter((g) => g.teamId === team.id)} progress={progress} />
+        {goalsOn ? <TeamGoalsCard teamId={team.id} goals={goals.filter((g) => g.teamId === team.id)} progress={progress} /> : null}
       </aside>
     </div>
   );

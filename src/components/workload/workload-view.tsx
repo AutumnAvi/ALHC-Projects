@@ -51,6 +51,8 @@ export function WorkloadView({
   canEditCapacity,
   projectNames,
   hiddenProjects = 0,
+  workWeek,
+  focus = null,
 }: {
   scope: WorkloadScope;
   anchor: string;
@@ -67,6 +69,10 @@ export function WorkloadView({
   canEditCapacity: boolean;
   projectNames?: Record<string, string>;
   hiddenProjects?: number;
+  // The workspace's workdays (days off are shaded; a day's capacity is the week's share).
+  workWeek?: number[];
+  // Nov 2 notes (batch 13): opened from the people view for one person (?person=), with Show everyone.
+  focus?: WorkloadPerson | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -86,7 +92,8 @@ export function WorkloadView({
   const byField = measure !== "";
   const unit = byField ? (measures.find((m) => m.value === measure)?.label ?? "value") : "tasks";
   const symbol = byField ? (measures.find((m) => m.value === measure)?.symbol ?? null) : null;
-  const { start, end, columns } = workloadWindow(anchor, zoom);
+  const { start, end, columns } = workloadWindow(anchor, zoom, workWeek);
+  const workdays = workWeek?.length ?? 5;
   const todayColumn = columns.findIndex((c) => c.start <= today && today <= c.end);
 
   function navigate(next: { d?: string | null; wl?: WorkloadZoom; m?: string }) {
@@ -187,6 +194,27 @@ export function WorkloadView({
         </div>
       </PeriodNav>
 
+      {focus ? (
+        <p className="mb-2 flex items-center gap-2 text-sm text-zinc-700">
+          <Avatar name={focus.name} profileId={focus.id} />
+          <span>
+            Day by day for <span className="font-medium text-zinc-900">{focus.name}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const params = new URLSearchParams(searchParams.toString());
+              params.delete("person");
+              params.delete("task");
+              startNavigation(() => router.push(`${pathname}?${params.toString()}`, { scroll: false }));
+            }}
+            className="btn-ghost h-7 text-xs"
+          >
+            <X className="size-3.5" aria-hidden /> Show everyone
+          </button>
+        </p>
+      ) : null}
+
       {hiddenProjects > 0 ? (
         <p className="mb-2 text-xs text-zinc-500">
           {hiddenProjects === 1 ? "1 project" : `${hiddenProjects} projects`} in this portfolio {hiddenProjects === 1 ? "isn’t" : "aren’t"}{" "}
@@ -243,7 +271,7 @@ export function WorkloadView({
                   {columns.map((column, i) => {
                     const load = cellLoad(person.id, i);
                     const count = cellTasks(person.id, i).length;
-                    const capacity = columnCapacity(capacities[person.id], column, zoom);
+                    const capacity = columnCapacity(capacities[person.id], column, zoom, workdays);
                     const over = capacity !== null && load > capacity + 1e-9;
                     const key = `${person.id}:${i}`;
                     const isSelected = selected?.personId === person.id && selected.column === i;
@@ -308,7 +336,7 @@ export function WorkloadView({
                 {selectedTasks.length === 1 ? "1 task" : `${selectedTasks.length} tasks`}
                 {byField ? ` · ${formatLoad(cellLoad(selected.personId, selected.column))} ${unit}` : ""}
                 {(() => {
-                  const capacity = columnCapacity(capacities[selected.personId], columns[selected.column], zoom);
+                  const capacity = columnCapacity(capacities[selected.personId], columns[selected.column], zoom, workdays);
                   return capacity !== null ? ` · capacity ${formatLoad(capacity)}` : "";
                 })()}
                 {selectedTasks.some((t) => t.canEdit) ? " · Drag a task onto another person or day to reassign or reschedule it." : ""}

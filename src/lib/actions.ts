@@ -1,6 +1,7 @@
 "use server";
 
 import { refresh, revalidatePath } from "next/cache";
+import { starterDashboardWidgets } from "@/lib/personal-dashboards";
 import { normalizeDomainInput } from "@/lib/verified-domains";
 import { redirect } from "next/navigation";
 import { parseSubtaskPrefs, type SubtaskPrefs } from "@/lib/subtask-view";
@@ -953,6 +954,60 @@ export async function addPortfolioProject(portfolioId: string, projectId: string
       }),
     );
   });
+}
+
+// Nov 2 notes (batch 13, note 85): the Add to portfolio picker adds several projects at once. Each goes
+// through add_portfolio_project (Editor+ on the portfolio, Viewer+ on the project), one after another in
+// the order picked; a project that fails stops the rest and says which one.
+export async function addPortfolioProjects(portfolioId: string, projectIds: string[]): Promise<ActionResult & { added?: number }> {
+  let added = 0;
+  const result = await run(async () => {
+    const ids = [...new Set((Array.isArray(projectIds) ? projectIds : []).map((p) => id(p, "project")))];
+    if (ids.length === 0) throw new InputError("Pick at least one project");
+    if (ids.length > 200) throw new InputError("Add at most 200 projects at a time");
+    const supabase = await createClient();
+    for (const projectId of ids) {
+      check(await supabase.rpc("add_portfolio_project", { target_portfolio: id(portfolioId), target_project: projectId }));
+      added += 1;
+    }
+  });
+  return { ...result, added };
+}
+
+// Nov 2 notes (batch 13, note 85): Create new project inside the Add to portfolio picker. A blank project
+// like New project (default team, private, the default sections), owned by the caller, then added to the
+// portfolio. Returns its id so the picker can say so; no redirect — the person stays on the portfolio.
+export async function createProjectInPortfolio(portfolioId: string, projectName: string): Promise<ActionResult & { projectId?: string }> {
+  let projectId: string | null = null;
+  const result = await run(async () => {
+    const name = text(projectName, "Project name", { max: 200 });
+    const portfolio = id(portfolioId);
+    const supabase = await createClient();
+    const workspace = await getWorkspace();
+    if (!workspace) throw new DbError("No workspace is available");
+    const { data: last } = await supabase
+      .from("projects")
+      .select("sort_order")
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const inserted = await supabase
+      .from("projects")
+      .insert({ workspace_id: workspace.id, name, sort_order: (last?.sort_order ?? 0) + ORDER_STEP, visibility: "private" })
+      .select("id")
+      .single();
+    check(inserted);
+    projectId = inserted.data!.id;
+    check(
+      await supabase.from("sections").insert(
+        DEFAULT_SECTIONS.map((sectionName, index) => ({ project_id: projectId!, name: sectionName, sort_order: (index + 1) * ORDER_STEP })),
+      ),
+    );
+    check(await supabase.rpc("add_portfolio_project", { target_portfolio: portfolio, target_project: projectId }));
+    revalidatePath("/", "layout");
+  });
+  return { ...result, projectId: projectId ?? undefined };
 }
 
 export async function removePortfolioProject(portfolioId: string, projectId: string): Promise<ActionResult> {
@@ -3521,6 +3576,26 @@ export async function setTagsEnabled(enabled: boolean): Promise<ActionResult> {
   });
 }
 
+// Nov 2 notes (batch 13, note 88): the workspace's Goals switch (Admin console → Organization; workspace
+// admins, RLS and the column grant decide). Off only hides goals; nothing is removed.
+export async function setGoalsEnabled(enabled: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const workspace = await getWorkspace();
+    if (!workspace) throw new InputError("No workspace found");
+    const supabase = await createClient();
+    const result = await supabase
+      .from("workspaces")
+      .update({ goals_enabled: enabled === true })
+      .eq("id", workspace.id)
+      .select("id");
+    if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
+      throw new InputError("This setting needs this release’s database update");
+    }
+    checkUpdated(result, WORKSPACE_ADMINS_ONLY);
+    revalidatePath("/", "layout");
+  });
+}
+
 // The Commenter project role (Admin console → Security; workspace admins, RLS and the column grant
 // decide). Turning it off never changes anyone's role.
 export async function setCommenterRoleAllowed(allowed: boolean): Promise<ActionResult> {
@@ -6004,18 +6079,7 @@ export async function createPersonalDashboard(formData: FormData): Promise<Actio
     check(inserted);
     dashboardId = inserted.data!.id;
     check(
-      await supabase.from("personal_dashboard_widgets").insert([
-        { dashboard_id: dashboardId, kind: "count", title: "Open tasks", filters: { status: "open" }, sort_order: ORDER_STEP },
-        { dashboard_id: dashboardId, kind: "count", title: "Overdue", filters: { status: "overdue" }, sort_order: 2 * ORDER_STEP },
-        {
-          dashboard_id: dashboardId,
-          kind: "completed_series",
-          title: "Completed per week",
-          series_interval: "week",
-          sort_order: 3 * ORDER_STEP,
-        },
-        { dashboard_id: dashboardId, kind: "by_project", title: "Open tasks by project", filters: { status: "open" }, sort_order: 4 * ORDER_STEP },
-      ]),
+      await supabase.from("personal_dashboard_widgets").insert(starterDashboardWidgets(dashboardId)),
     );
   });
   if (dashboardId && !result.error) redirect(`/reports/dashboards/${dashboardId}`);

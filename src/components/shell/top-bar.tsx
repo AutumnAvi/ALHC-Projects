@@ -71,7 +71,8 @@ const CREATE_ITEMS: { kind: ShellDialog["kind"]; label: string; icon: LucideIcon
 ];
 
 function CreateMenu() {
-  const { openDialog } = useShell();
+  const { openDialog, goalsEnabled } = useShell();
+  const items = goalsEnabled ? CREATE_ITEMS : CREATE_ITEMS.filter((item) => item.kind !== "goal");
   return (
     <Popover
       label="Create"
@@ -86,7 +87,7 @@ function CreateMenu() {
     >
       {(close) => (
         <>
-          {CREATE_ITEMS.map(({ kind, label, icon: Icon, shortcut }) => (
+          {items.map(({ kind, label, icon: Icon, shortcut }) => (
             <MenuItem
               key={kind}
               onClick={() => {

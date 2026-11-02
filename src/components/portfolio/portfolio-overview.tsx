@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ArrowDown, ArrowUp, Briefcase, EyeOff, FolderClosed, Plus, X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
+import { AddToPortfolioButton } from "@/components/portfolio/add-projects-dialog";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { usePortfolioCan } from "@/components/portfolio/portfolio-access";
 import { PortfolioFieldDisplay, PortfolioFieldInput } from "@/components/portfolio/portfolio-field-value";
@@ -13,7 +14,6 @@ import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import {
   addPortfolioChild,
-  addPortfolioProject,
   movePortfolioProject,
   removePortfolioChild,
   removePortfolioProject,
@@ -21,6 +21,7 @@ import {
 } from "@/lib/actions";
 import type { Portfolio, PortfolioChild, PortfolioField, PortfolioProject, ProjectStatusUpdate } from "@/lib/data";
 import type { Json } from "@/lib/supabase/database.types";
+import type { NestedProject, PickerProject } from "@/lib/portfolio-picker";
 import { RECENT_DAYS, formatProgress, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
 import { ROLE_LABELS, type ProjectRole } from "@/lib/roles";
 import { EmptyState } from "@/components/ui";
@@ -32,12 +33,21 @@ type Card = {
   latest: ProjectStatusUpdate | null;
 };
 type Nested = PortfolioChild & { total: number; completed: number };
+// Nov 2 notes (batch 13, note 87): a project of a nested portfolio, shown smaller under the own ones.
+type NestedCard = NestedProject & {
+  status: string;
+  statusNote: string | null;
+  role: ProjectRole | null;
+  counts: PortfolioCounts;
+  latest: ProjectStatusUpdate | null;
+};
 
 export function PortfolioOverview({
   portfolio,
   totals,
   hiddenCount,
   cards,
+  nestedCards,
   candidates,
   nested,
   nestCandidates,
@@ -48,7 +58,9 @@ export function PortfolioOverview({
   totals: PortfolioCounts;
   hiddenCount: number;
   cards: Card[];
-  candidates: { id: string; name: string }[];
+  nestedCards: NestedCard[];
+  // Every project the viewer is a member of (Nov 2 notes, batch 13: the Add to portfolio picker).
+  candidates: PickerProject[];
   nested: Nested[];
   nestCandidates: { id: string; name: string }[];
   fields: PortfolioField[];
@@ -57,9 +69,7 @@ export function PortfolioOverview({
   const [pending, run] = useServerAction();
   const confirm = useConfirm();
   const canEdit = usePortfolioCan("editor");
-  const [selected, setSelected] = useState("");
   const percent = progressPercent(totals.completed, totals.total);
-  const choice = candidates.some((c) => c.id === selected) ? selected : (candidates[0]?.id ?? "");
   const [selectedChild, setSelectedChild] = useState("");
   const childChoice = nestCandidates.some((c) => c.id === selectedChild) ? selectedChild : (nestCandidates[0]?.id ?? "");
 
@@ -131,55 +141,25 @@ export function PortfolioOverview({
       <section aria-labelledby="projects-heading">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h2 id="projects-heading" className="text-sm font-semibold text-zinc-900">
-            Projects <span className="font-normal text-zinc-500">· {cards.length}</span>
+            Projects <span className="font-normal text-zinc-500">· {cards.length + nestedCards.length}</span>
+            {nestedCards.length > 0 ? (
+              <span className="ml-1 text-xs font-normal text-zinc-500">
+                ({nestedCards.length} from nested {nestedCards.length === 1 ? "portfolio" : "portfolios"})
+              </span>
+            ) : null}
           </h2>
-          {canEdit ? (
-            candidates.length > 0 ? (
-              <form
-                className="flex items-end gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (choice) run(() => addPortfolioProject(portfolio.id, choice));
-                }}
-              >
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="add-project" className="text-xs font-medium text-zinc-600">
-                    Add a project you’re a member of
-                  </label>
-                  <SmartPicker
-                    id="add-project"
-                    label="Add a project you’re a member of"
-                    value={choice}
-                    onChange={setSelected}
-                    searchable
-                    className="h-9 w-64 max-w-64"
-                    options={candidates.map((c) => ({ value: c.id, label: c.name }))}
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={pending || !choice}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Add
-                </button>
-              </form>
-            ) : (
-              <p className="text-xs text-zinc-500">Every project you’re a member of is already here.</p>
-            )
-          ) : null}
+          {canEdit ? <AddToPortfolioButton portfolioId={portfolio.id} projects={candidates} /> : null}
         </div>
 
-        {cards.length === 0 ? (
+        {cards.length === 0 && nestedCards.length === 0 ? (
           <div className="mt-4">
             <EmptyState icon={FolderClosed} title={canEdit ? "No projects yet" : "No projects you can see"}>
               {canEdit
-                ? "Add projects above to see their progress side by side."
+                ? "Use Add to portfolio to see your projects’ progress side by side."
                 : "There are no projects here that you’re a member of."}
             </EmptyState>
           </div>
-        ) : (
+        ) : cards.length === 0 ? null : (
           <ol className="mt-4 grid gap-3 md:grid-cols-2">
             {cards.map(({ project, role, counts, latest }, index) => {
               const projectPercent = progressPercent(counts.completed, counts.total);
@@ -288,6 +268,13 @@ export function PortfolioOverview({
             })}
           </ol>
         )}
+        {nestedCards.length > 0 ? (
+          <ul aria-label="Projects from nested portfolios" className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {nestedCards.map((card) => (
+              <NestedProjectCard key={card.id} card={card} />
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       <section aria-labelledby="nested-heading">
@@ -389,6 +376,41 @@ export function PortfolioOverview({
         )}
       </section>
     </div>
+  );
+}
+
+// A nested portfolio's project: smaller than the portfolio's own cards, with "from <portfolio>" linking
+// to the portfolio it sits in. No reorder / remove here — those belong to that portfolio.
+function NestedProjectCard({ card }: { card: NestedCard }) {
+  const percent = progressPercent(card.counts.completed, card.counts.total);
+  return (
+    <li className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 py-2.5">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <Link href={`/projects/${card.id}`} className="flex items-center gap-1.5 text-xs font-medium text-zinc-900 hover:underline">
+            <FolderClosed className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+            <span className="truncate">{card.name}</span>
+          </Link>
+          <p className="mt-0.5 truncate text-2xs text-zinc-500">
+            from{" "}
+            <Link href={`/portfolios/${card.fromPortfolioId}`} className="inline-flex items-center gap-0.5 text-accent-700 hover:underline">
+              <Briefcase className="size-3" aria-hidden />
+              {card.fromPortfolioName}
+            </Link>
+            {card.role ? ` · You’re ${card.role === "admin" || card.role === "editor" ? "an" : "a"} ${ROLE_LABELS[card.role]}` : null}
+          </p>
+        </div>
+        <ProjectStatusBadge status={card.status} note={card.statusNote} />
+      </div>
+      <div className="flex items-center gap-2">
+        <ProgressBar percent={percent} label={`${card.name} progress`} size="sm" />
+        <span className="shrink-0 text-2xs tabular-nums text-zinc-600">{formatProgress(percent)}</span>
+      </div>
+      <p className="text-2xs tabular-nums text-zinc-500">
+        {card.counts.incomplete} incomplete · {card.counts.completed} complete
+        {card.counts.overdue > 0 ? <span className="text-red-700"> · {card.counts.overdue} overdue</span> : null}
+      </p>
+    </li>
   );
 }
 

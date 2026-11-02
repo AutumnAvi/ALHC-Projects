@@ -11,6 +11,8 @@ type Shell = {
   member: ShellMember;
   isWorkspaceAdmin: boolean;
   workspace: { name: string; logoUrl: string | null };
+  // Nov 2 notes (batch 13, note 88): whether the workspace uses Goals (off hides them in the shell).
+  goalsEnabled: boolean;
   // Sidebar: hidden or shown on wide screens, open groups (remembered in a cookie), and the drawer on
   // narrow screens (open only on the page it was opened from, so following a link closes it).
   sidebar: SidebarPrefs;
@@ -31,12 +33,14 @@ export function ShellProvider({
   member,
   isWorkspaceAdmin,
   workspace,
+  goalsEnabled = true,
   initialSidebar,
   children,
 }: {
   member: ShellMember;
   isWorkspaceAdmin: boolean;
   workspace: { name: string; logoUrl: string | null };
+  goalsEnabled?: boolean;
   initialSidebar: SidebarPrefs;
   children: ReactNode;
 }) {
@@ -55,6 +59,7 @@ export function ShellProvider({
       member,
       isWorkspaceAdmin,
       workspace,
+      goalsEnabled,
       sidebar,
       setSidebarCollapsed: (collapsed) => save({ ...sidebar, collapsed }),
       setGroupOpen: (group, open) => save({ ...sidebar, groups: { ...sidebar.groups, [group]: open } }),
@@ -67,7 +72,7 @@ export function ShellProvider({
       },
       closeDialog: () => setDialogOn(null),
     }),
-    [member, isWorkspaceAdmin, workspace, sidebar, save, drawerOn, dialogOn, pathname],
+    [member, isWorkspaceAdmin, workspace, goalsEnabled, sidebar, save, drawerOn, dialogOn, pathname],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

@@ -15,6 +15,7 @@ import {
   countUnreadInbox,
   getSubtaskPreferences,
   getWorkspace,
+  goalsEnabled,
   isWorkspaceAdmin,
   listProfileAvatars,
   listProjects,
@@ -30,7 +31,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!isSupabaseConfigured()) return <SetupRequired />;
 
   const member = await requireMember();
-  const [workspace, projects, starredIds, unreadCount, admin, cookieStore, avatars, tagsOn, folders, subtaskPrefs] = await Promise.all([
+  const [workspace, projects, starredIds, unreadCount, admin, cookieStore, avatars, tagsOn, folders, subtaskPrefs, goalsOn] = await Promise.all([
     getWorkspace(),
     listProjects(),
     listStarredProjectIds(),
@@ -41,6 +42,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     tagsEnabled(),
     listSidebarFolders(),
     getSubtaskPreferences(),
+    goalsEnabled(),
   ]);
 
   return (
@@ -50,6 +52,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           member={{ id: member.id, name: member.name, email: member.email }}
           isWorkspaceAdmin={admin}
           workspace={{ name: workspace?.name ?? "ALHC Projects", logoUrl: workspace?.logoUrl ?? null }}
+          goalsEnabled={goalsOn}
           initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
         >
           <TagsEnabledProvider enabled={tagsOn}>
