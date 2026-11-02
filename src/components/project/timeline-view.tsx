@@ -7,6 +7,9 @@ import { Inbox, Route, Spline } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useDependencyShift } from "@/components/task/dependency-shift";
+import { planDependencyShifts } from "@/lib/dependency-plan";
+import type { DependencyShiftMode } from "@/lib/dependencies";
+import { DEFAULT_WORK_WEEK } from "@/lib/workdays";
 import { EMPTY_CRITICAL_PATH, slackLabel, type CriticalPath, type TaskSchedule } from "@/lib/critical-path";
 import { dependencyConflict, fromPredecessorStart, toSuccessorFinish } from "@/lib/dependencies";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
@@ -62,6 +65,10 @@ type Props = {
   today?: string | null;
   anchor?: string | null;
   zoom?: Zoom;
+  // Nov 2 notes (batch 16, 125): the project's Settings → Dependencies and the workspace's workweek, so
+  // Auto-shift moves dependents on screen at once (planDependencyShifts; the database's answer wins).
+  shiftMode?: DependencyShiftMode | null;
+  workWeek?: readonly number[];
 };
 
 const LABEL_WIDTH = 256;
@@ -86,6 +93,8 @@ export function TimelineView({
   today: todayFromServer = null,
   anchor: anchorFromServer = null,
   zoom: zoomFromServer = "week",
+  shiftMode = null,
+  workWeek = DEFAULT_WORK_WEEK,
 }: Props) {
   const pathname = usePathname();
   const router = useRouter();
@@ -220,6 +229,20 @@ export function TimelineView({
     shift.changeDates(task, dates, {
       onOptimistic: (moves) => moves.forEach((m) => applyChange({ type: "dates", ...m })),
       projectId,
+      mode: shiftMode,
+      localPlan: (moves, pullEarlier) =>
+        planDependencyShifts({
+          tasks: new Map(
+            optimisticTasks.map((t) => [
+              t.id,
+              { id: t.id, title: t.title, startOn: t.startOn, dueOn: t.dueOn, kind: t.kind, completed: Boolean(t.completedAt), canEdit },
+            ]),
+          ),
+          links: dependencies,
+          moves,
+          pullEarlier,
+          workWeek,
+        }),
     });
   }
 

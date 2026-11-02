@@ -24,7 +24,7 @@ import { trackCompletion } from "@/lib/completion-store";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { blockedCount } from "./inline-cells";
 import { GroupTitle } from "./list-view";
-import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, addTaskKindOf } from "./shared";
+import { ADD_TASK_EVENT, AddSection, AddTaskInput, PendingTaskRows, SectionActions, addTaskKindOf } from "./shared";
 import { isPendingSection, useSectionsWithPending } from "./pending-sections";
 import { Assignee, CommentCount, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { useProjectTaskSeeds } from "./task-seeds";
@@ -265,6 +265,15 @@ export function BoardView({
             ) : null}
 
             <ol className="flex min-h-8 flex-col gap-2 overflow-y-auto p-0.5">
+              {group.target.kind === "section" ? (
+                <PendingTaskRows
+                  projectId={projectId}
+                  sectionId={group.target.sectionId}
+                  tasks={optimisticTasks.filter((t) => t.sectionId === (group.target.kind === "section" ? group.target.sectionId : null))}
+                  position="top"
+                  variant="card"
+                />
+              ) : null}
               {visibleTasks(group).map((task, index) => (
                 <li
                   key={task.id}
@@ -319,6 +328,15 @@ export function BoardView({
                   />
                 </li>
               ))}
+              {group.target.kind === "section" ? (
+                <PendingTaskRows
+                  projectId={projectId}
+                  sectionId={group.target.sectionId}
+                  tasks={optimisticTasks.filter((t) => t.sectionId === (group.target.kind === "section" ? group.target.sectionId : null))}
+                  position="bottom"
+                  variant="card"
+                />
+              ) : null}
               {isTarget && dropTarget?.beforeId === null ? <DropIndicator /> : null}
               {(group.total ?? group.tasks.length) > visibleTasks(group).length ? (
                 <li>

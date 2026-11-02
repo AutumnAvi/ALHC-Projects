@@ -12,6 +12,7 @@ import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
 import type { TaskDetail } from "@/lib/data";
 import { MAX_REVIEW_ASSETS, MAX_REVIEW_MESSAGE, reviewMediaKind } from "@/lib/review-checks";
 import { sendReviewCheck } from "@/lib/review-actions";
+import { finishPendingReview, startPendingReview } from "./review-events";
 
 // Oct 26 notes (batch 3): "Send review check" — pick the task's files and who reviews them (the form's
 // submitter by default), add a message, send. The reviewer gets an email with Approve and Leave feedback.
@@ -102,19 +103,28 @@ export function SendReviewDialog({
 
   function send() {
     setError(null);
+    const attachmentIds = files.filter((f) => picked.has(f.id)).map((f) => f.id);
+    // Nov 2 notes (batch 16, 122): the round shows on the Reviews tab at once ("Sending…").
+    const pendingKey = startPendingReview(task.id, recipient, attachmentIds.length);
+    setActivityTab("reviews");
     start(async () => {
-      const result = await sendReviewCheck({
-        taskId: task.id,
-        attachmentIds: files.filter((f) => picked.has(f.id)).map((f) => f.id),
-        recipientEmail: recipient,
-        recipientName: name,
-        message,
-      });
+      let result: Awaited<ReturnType<typeof sendReviewCheck>>;
+      try {
+        result = await sendReviewCheck({
+          taskId: task.id,
+          attachmentIds,
+          recipientEmail: recipient,
+          recipientName: name,
+          message,
+        });
+      } catch {
+        result = { error: "Couldn’t send. Check your connection and try again." };
+      }
+      finishPendingReview(pendingKey, !result.error);
       if (result.error) {
         setError(result.error);
         return;
       }
-      setActivityTab("reviews");
       onSent?.();
       if (result.emailed) {
         notify(`Round ${result.round ?? 1} sent to ${recipient}`);
