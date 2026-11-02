@@ -22,16 +22,13 @@ test("the four project roles are listed, highest first, each with a one-line hin
   assert.deepEqual(older.map((o) => o.value), ["owner", "admin", "editor", "commenter", "viewer"]);
 });
 
-test("Commenter is greyed out (not hidden) while the workspace has it off", () => {
+test("Commenter isn't listed at all while the workspace has it off (Nov 2 notes, batch 15, 107)", () => {
   const options = projectRoleOptions({ grantable: assignableRoles("owner", false), allowCommenter: false });
-  const commenter = options.find((o) => o.value === "commenter");
-  assert.ok(commenter, "still listed");
-  assert.equal(commenter.disabled, true);
-  assert.equal(commenter.disabledReason, COMMENTER_OFF_REASON);
-  assert.equal(COMMENTER_OFF_REASON, "Turn on in Admin console → Security");
+  assert.equal(options.find((o) => o.value === "commenter"), undefined, "no greyed option");
+  assert.ok(options.every((o) => o.disabledReason !== COMMENTER_OFF_REASON), "no Turn on hint");
   // Someone who already is a Commenter keeps it selectable.
   const current = projectRoleOptions({ grantable: assignableRoles("owner", false), allowCommenter: false, current: "commenter" });
-  assert.ok(!current.find((o) => o.value === "commenter")?.disabled);
+  assert.ok(current.find((o) => o.value === "commenter") && !current.find((o) => o.value === "commenter")?.disabled);
 });
 
 test("roles the viewer can't give aren't listed (Nov 1 notes, batch 11); owners while adding are greyed out", () => {

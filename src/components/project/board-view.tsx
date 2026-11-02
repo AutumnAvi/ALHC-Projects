@@ -20,6 +20,7 @@ import { displayTaskTitle } from "@/lib/request-numbers";
 import { fieldLockedFor, type FieldDef } from "@/lib/fields";
 import { LockedFieldValue } from "./field-lock";
 import { columnsOf, groupOf, orderSections, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
+import { trackCompletion } from "@/lib/completion-store";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { blockedCount } from "./inline-cells";
 import { GroupTitle } from "./list-view";
@@ -184,7 +185,7 @@ export function BoardView({
     // A blocked card has a lock instead of a checkbox (Oct 27 notes, batch 6): never try and undo.
     if (completed && blockedCount(task) > 0) return;
     run(
-      () => setTaskCompleted(task.id, completed),
+      trackCompletion(task.id, completed, () => setTaskCompleted(task.id, completed)),
       () => applyChange({ type: "complete", taskId: task.id, completed }),
     );
   }

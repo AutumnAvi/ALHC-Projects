@@ -62,6 +62,7 @@ import {
   setDefaultView,
   setProjectStarred,
   setProjectTabHidden,
+  setProjectViewHidden,
   updateProject,
   updateView,
 } from "@/lib/actions";
@@ -100,6 +101,7 @@ export function ProjectHeader({
   starred,
   members,
   hiddenTabs = [],
+  hiddenViewIds = [],
   defaultViewId = null,
   personalViews = true,
 }: {
@@ -116,6 +118,8 @@ export function ProjectHeader({
   // Oct 26 notes (batch 4): fixed tabs Editors+ hid, the default view Owners picked, and whether this
   // database has this release (personal views, hiding tabs, the default view).
   hiddenTabs?: FixedTab[];
+  // Nov 2 notes (batch 15, 117): shared view tabs hidden for everyone.
+  hiddenViewIds?: string[];
   defaultViewId?: string | null;
   personalViews?: boolean;
 }) {
@@ -125,7 +129,24 @@ export function ProjectHeader({
   const { canEdit: canEditViews, canManage: canEditProject } = useProjectPermissions();
   const base = `/projects/${project.id}`;
   const { shared, mine } = splitViews(views);
-  const hidden = new Set(hiddenTabs);
+  // Hiding or showing a tab takes effect at once (the refresh confirms it).
+  const [tabState, applyTabState] = useOptimistic(
+    { tabs: hiddenTabs as string[], views: hiddenViewIds },
+    (current, change: { kind: "tab" | "view"; key: string; hidden: boolean }) => {
+      const list = change.kind === "tab" ? current.tabs : current.views;
+      const next = change.hidden ? [...list.filter((k) => k !== change.key), change.key] : list.filter((k) => k !== change.key);
+      return change.kind === "tab" ? { ...current, tabs: next } : { ...current, views: next };
+    },
+  );
+  const hidden = new Set(tabState.tabs as FixedTab[]);
+  const hiddenViews = new Set(tabState.views);
+  function setTabHidden(kind: "tab" | "view", key: string, hide: boolean) {
+    run(
+      () => (kind === "tab" ? setProjectTabHidden(project.id, key, hide) : setProjectViewHidden(project.id, key, hide)),
+      () => applyTabState({ kind, key, hidden: hide }),
+    );
+  }
+  const shownShared = shared.filter((v) => !hiddenViews.has(v.id));
 
   // Asana's tab bar: Overview, the views, then Dashboard, Messages, Workload, and Files. Fields, forms,
   // rules, task templates, integrations, and settings live in the Customize panel instead. Since Oct 26
@@ -222,22 +243,31 @@ export function ProjectHeader({
             active={pathname === overviewHref}
             isHidden={hidden.has("overview")}
             canHide={canEditViews && personalViews}
+            onHidden={(hide) => setTabHidden("tab", "overview", hide)}
           />
         ) : null}
-        {shared.map((view, index) => (
-          <ViewTab
-            key={view.id}
-            view={view}
-            href={`${base}/views/${view.id}`}
-            active={pathname === `${base}/views/${view.id}`}
-            first={index === 0}
-            last={index === shared.length - 1}
-            canDelete={shared.length > 1}
-            canEdit={canEditViews}
-            isDefault={view.id === defaultViewId}
-            personalViews={personalViews}
-          />
-        ))}
+        {shared
+          .filter((view) => !hiddenViews.has(view.id) || pathname === `${base}/views/${view.id}`)
+          .map((view) => {
+            const index = shared.indexOf(view);
+            return (
+              <ViewTab
+                key={view.id}
+                view={view}
+                href={`${base}/views/${view.id}`}
+                active={pathname === `${base}/views/${view.id}`}
+                first={index === 0}
+                last={index === shared.length - 1}
+                canDelete={shared.length > 1}
+                canEdit={canEditViews}
+                isDefault={view.id === defaultViewId}
+                personalViews={personalViews}
+                isHidden={hiddenViews.has(view.id)}
+                canHide={!hiddenViews.has(view.id) ? shownShared.length > 1 : true}
+                onHidden={(hide) => setTabHidden("view", view.id, hide)}
+              />
+            );
+          })}
         {mine.length > 0 ? <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-zinc-200" /> : null}
         {mine.map((view, index) => (
           <ViewTab
@@ -261,12 +291,15 @@ export function ProjectHeader({
             active={isActive(tab.href)}
             isHidden={hidden.has(tab.key)}
             canHide={canEditViews && personalViews}
+            onHidden={(hide) => setTabHidden("tab", tab.key, hide)}
           />
         ))}
         <AddTabMenu
           projectId={project.id}
           canEdit={canEditViews}
           hiddenFixed={hiddenFixed}
+          hiddenViews={shared.filter((v) => hiddenViews.has(v.id))}
+          onShow={(kind, key) => setTabHidden(kind, key, false)}
           personalViews={personalViews}
         />
       </nav>
@@ -289,6 +322,7 @@ function FixedTabLink({
   active,
   isHidden,
   canHide,
+  onHidden,
 }: {
   projectId: string;
   tab: { key: FixedTab; label: string; href: string; icon: typeof List };
@@ -296,8 +330,9 @@ function FixedTabLink({
   // Hidden, but shown while you're on its page.
   isHidden: boolean;
   canHide: boolean;
+  onHidden: (hidden: boolean) => void;
 }) {
-  const [, run] = useServerAction();
+  void projectId;
   const Icon = tab.icon;
   return (
     <span className="group inline-flex shrink-0 items-center">
@@ -318,7 +353,7 @@ function FixedTabLink({
             <MenuItem
               onClick={() => {
                 close();
-                run(() => setProjectTabHidden(projectId, tab.key, !isHidden));
+                onHidden(!isHidden);
               }}
             >
               {isHidden ? (
@@ -344,11 +379,15 @@ function AddTabMenu({
   projectId,
   canEdit,
   hiddenFixed,
+  hiddenViews,
+  onShow,
   personalViews,
 }: {
   projectId: string;
   canEdit: boolean;
   hiddenFixed: { key: FixedTab; label: string; icon: typeof List }[];
+  hiddenViews: ProjectView[];
+  onShow: (kind: "tab" | "view", key: string) => void;
   personalViews: boolean;
 }) {
   const [, run] = useServerAction();
@@ -386,13 +425,28 @@ function AddTabMenu({
                   key={key}
                   onClick={() => {
                     close();
-                    run(() => setProjectTabHidden(projectId, key, false));
+                    onShow("tab", key);
                   }}
                 >
                   <Icon className="size-4 text-zinc-500" /> {label}
                   <span className="ml-auto text-2xs text-zinc-400">Hidden</span>
                 </MenuItem>
               ))}
+              {hiddenViews.map((view) => {
+                const Icon = LAYOUT_ICONS[view.layout];
+                return (
+                  <MenuItem
+                    key={view.id}
+                    onClick={() => {
+                      close();
+                      onShow("view", view.id);
+                    }}
+                  >
+                    <Icon className="size-4 text-zinc-500" /> <span className="truncate">{view.name}</span>
+                    <span className="ml-auto text-2xs text-zinc-400">Hidden</span>
+                  </MenuItem>
+                );
+              })}
             </>
           ) : null}
           {personalViews ? (
@@ -771,6 +825,9 @@ function ViewTab({
   canEdit,
   isDefault,
   personalViews,
+  isHidden = false,
+  canHide = false,
+  onHidden,
 }: {
   view: ProjectView;
   href: string;
@@ -783,6 +840,11 @@ function ViewTab({
   // The project's default view (Owners pick it).
   isDefault: boolean;
   personalViews: boolean;
+  // Nov 2 notes (batch 15, 117): a shared view tab hidden for everyone (shown while you're on it).
+  isHidden?: boolean;
+  // false: it's the last shown view tab.
+  canHide?: boolean;
+  onHidden?: (hidden: boolean) => void;
 }) {
   const [, run] = useServerAction();
   const confirm = useConfirm();
@@ -828,10 +890,11 @@ function ViewTab({
         href={href}
         aria-current={active ? "page" : undefined}
         data-tooltip={mine ? "Your own view. Only you see it." : isDefault ? "The project opens on this view" : undefined}
-        className={TAB_CLASS}
+        className={`${TAB_CLASS} ${isHidden ? "opacity-60" : ""}`}
       >
         <Icon className="size-3.5" />
         {view.name}
+        {isHidden ? <span className="sr-only"> (hidden tab)</span> : null}
         {mine ? (
           <>
             <UserRound aria-hidden className="size-3 text-zinc-400" />
@@ -891,6 +954,25 @@ function ViewTab({
                   >
                     <ChevronRight className="size-4 text-zinc-500" /> Move right
                   </MenuItem>
+                  {!mine && onHidden ? (
+                    <MenuItem
+                      disabled={!isHidden && !canHide}
+                      onClick={() => {
+                        close();
+                        onHidden(!isHidden);
+                      }}
+                    >
+                      {isHidden ? (
+                        <>
+                          <Plus className="size-4 text-zinc-500" /> Show this tab again
+                        </>
+                      ) : (
+                        <>
+                          <EyeOff className="size-4 text-zinc-500" /> {canHide ? "Hide tab" : "Hide tab (keep one view shown)"}
+                        </>
+                      )}
+                    </MenuItem>
+                  ) : null}
                   {/* The default view is the Owners' choice; only they see Delete on it (batch 11: hidden, not disabled). */}
                   {isDefault && !isOwner ? null : (
                     <MenuItem

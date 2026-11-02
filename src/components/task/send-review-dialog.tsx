@@ -1,18 +1,17 @@
 "use client";
 
-import { useId, useRef, useState, useTransition, type DragEvent } from "react";
-import { AlertCircle, Copy, FileText, Image as ImageIcon, Loader2, Lock, Paperclip, Upload, Video, X } from "lucide-react";
+import { useId, useState, useTransition, type DragEvent } from "react";
+import { AlertCircle, Copy, Loader2, Lock, Upload, X } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
 import { setActivityTab } from "@/components/task/pane-size";
-import { ImageLightbox, Thumbnail } from "@/components/task/task-attachments";
+import { ImageLightbox } from "@/components/task/task-attachments";
+import { PickableFileCard, useTaskFileUploads, type PickableFile } from "@/components/task/task-file-uploads";
 import { previewKind } from "@/lib/attachment-preview";
-import { registerAttachment } from "@/lib/actions";
-import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL, attachmentPath } from "@/lib/attachments";
+import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
 import type { TaskDetail } from "@/lib/data";
 import { MAX_REVIEW_ASSETS, MAX_REVIEW_MESSAGE, reviewMediaKind } from "@/lib/review-checks";
 import { sendReviewCheck } from "@/lib/review-actions";
-import { createClient } from "@/lib/supabase/client";
 
 // Oct 26 notes (batch 3): "Send review check" — pick the task's files and who reviews them (the form's
 // submitter by default), add a message, send. The reviewer gets an email with Approve and Leave feedback.
@@ -23,9 +22,6 @@ import { createClient } from "@/lib/supabase/client";
 // right as thumbnails (click to preview: images in the pane's lightbox, PDFs / videos in the browser's
 // viewer); the reviewer's email is the requester's, read-only; their name comes from the form.
 
-type PickableFile = { id: string; fileName: string; contentType: string | null };
-// A file being uploaded from the dialog (or one that couldn't be).
-type Upload = { key: string; name: string; error: string | null };
 
 // The files the dialog lists: the task's attachments, then ones uploaded here that the task (refreshed
 // after each upload) doesn't list yet.
@@ -39,15 +35,6 @@ export function pickWithLimit(picked: ReadonlySet<string>, id: string): Set<stri
   const next = new Set(picked);
   if (next.size < MAX_REVIEW_ASSETS) next.add(id);
   return next;
-}
-
-function FileKindIcon({ file }: { file: PickableFile }) {
-  const kind = reviewMediaKind(file.fileName, file.contentType);
-  const className = "size-6";
-  if (kind === "image") return <ImageIcon className={className} aria-hidden />;
-  if (kind === "video") return <Video className={className} aria-hidden />;
-  if (kind === "pdf") return <FileText className={className} aria-hidden />;
-  return <Paperclip className={className} aria-hidden />;
 }
 
 export function SendReviewDialog({
@@ -65,9 +52,7 @@ export function SendReviewDialog({
   const notify = useNotify();
   const ids = useId();
   const [uploaded, setUploaded] = useState<PickableFile[]>([]);
-  const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
   const files = reviewFileList(task.attachments, uploaded);
   // Files that can be looked at in the browser are picked to start with.
   const [picked, setPicked] = useState<Set<string>>(
@@ -79,6 +64,11 @@ export function SendReviewDialog({
           .map((f) => f.id),
       ),
   );
+  // Nov 2 notes (batch 15, 113): the upload code is shared with Ready for approval's "Files to approve".
+  const { uploads, uploadFiles, dismiss, fileInput } = useTaskFileUploads(task.id, (file) => {
+    setUploaded((current) => [...current, file]);
+    setPicked((current) => pickWithLimit(current, file.id));
+  });
   // Item 61: the reviewer is the requester (the form's submitter), shown read-only; a task that didn't
   // come from a form takes a typed address.
   const requesterEmail = task.submission?.email ?? null;
@@ -102,51 +92,6 @@ export function SendReviewDialog({
       }
       return pickWithLimit(current, id);
     });
-  }
-
-  async function uploadFiles(list: FileList | File[] | null) {
-    const chosen = Array.from(list ?? []);
-    if (fileInput.current) fileInput.current.value = "";
-    if (!chosen.length) return;
-    const supabase = createClient();
-    // One at a time, in the order picked, so the review lists them that way.
-    for (const file of chosen) {
-      const key = `${file.name}-${crypto.randomUUID()}`;
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        setUploads((current) => [...current, { key, name: file.name, error: `Larger than ${MAX_ATTACHMENT_LABEL}` }]);
-        continue;
-      }
-      if (file.size === 0) {
-        setUploads((current) => [...current, { key, name: file.name, error: "The file is empty" }]);
-        continue;
-      }
-      setUploads((current) => [...current, { key, name: file.name, error: null }]);
-      const fail = (message: string) =>
-        setUploads((current) => current.map((u) => (u.key === key ? { ...u, error: message } : u)));
-      const path = attachmentPath(task.id, file.name, crypto.randomUUID());
-      const stored = await supabase.storage
-        .from(ATTACHMENTS_BUCKET)
-        .upload(path, file, { contentType: file.type || undefined, upsert: false });
-      if (stored.error) {
-        fail("Couldn’t upload. Try again.");
-        continue;
-      }
-      const registered = await registerAttachment({
-        taskId: task.id,
-        storagePath: path,
-        fileName: file.name,
-        contentType: file.type || null,
-        sizeBytes: file.size,
-      });
-      if (registered.error || !registered.attachmentId) {
-        fail(registered.error ?? "Couldn’t attach it to the task");
-        continue;
-      }
-      const attachmentId = registered.attachmentId;
-      setUploaded((current) => [...current, { id: attachmentId, fileName: file.name, contentType: file.type || null }]);
-      setPicked((current) => pickWithLimit(current, attachmentId));
-      setUploads((current) => current.filter((u) => u.key !== key));
-    }
   }
 
   function onDrop(e: DragEvent) {
@@ -291,7 +236,7 @@ export function SendReviewDialog({
                     {u.error ? (
                       <button
                         type="button"
-                        onClick={() => setUploads((current) => current.filter((x) => x.key !== u.key))}
+                        onClick={() => dismiss(u.key)}
                         aria-label={`Dismiss ${u.name}`}
                         data-tooltip="Dismiss"
                         className="btn-icon size-6"
@@ -321,7 +266,7 @@ export function SendReviewDialog({
             ) : (
               <ul className="grid max-h-[22rem] grid-cols-2 gap-2 overflow-y-auto overscroll-contain p-0.5 sm:grid-cols-3">
                 {files.map((f) => (
-                  <ReviewFileCard
+                  <PickableFileCard
                     key={f.id}
                     file={f}
                     picked={picked.has(f.id)}
@@ -443,70 +388,5 @@ export function SendReviewDialog({
         />
       ) : null}
     </Dialog>
-  );
-}
-
-// One file in "Files attached to this task": a thumbnail (images) or a type tile, a tick box to pick it,
-// and its name. Clicking the preview opens images in the pane's lightbox and PDFs / videos in the
-// browser's viewer (the same /attachments routes the pane uses); other files have no preview.
-function ReviewFileCard({
-  file,
-  picked,
-  full,
-  onToggle,
-  onPreviewImage,
-}: {
-  file: PickableFile;
-  picked: boolean;
-  full: boolean;
-  onToggle: () => void;
-  onPreviewImage: () => void;
-}) {
-  const [broken, setBroken] = useState(false);
-  const kind = reviewMediaKind(file.fileName, file.contentType);
-  const inline = previewKind(file.fileName, file.contentType);
-  const ext = file.fileName.match(/\.([A-Za-z0-9]{1,6})$/)?.[1]?.toUpperCase() ?? "FILE";
-  const tile = (
-    <span className="flex size-full flex-col items-center justify-center gap-1 bg-zinc-50 text-zinc-500">
-      <FileKindIcon file={file} />
-      <span className="text-2xs font-semibold tracking-wide">{ext}</span>
-    </span>
-  );
-  const thumb = inline === "image" && !broken ? <Thumbnail src={`/attachments/${file.id}?preview=1`} onBroken={() => setBroken(true)} /> : tile;
-  const previewHref = kind === "pdf" ? `/attachments/${file.id}?preview=1` : kind === "video" ? `/attachments/${file.id}?media=1` : null;
-  const frame = `block aspect-[4/3] w-full overflow-hidden rounded-t-lg`;
-  return (
-    <li
-      className={`relative flex flex-col rounded-lg border bg-white ${
-        picked ? "border-accent-400 ring-1 ring-accent-300" : "border-zinc-200"
-      } ${full ? "opacity-60" : ""}`}
-    >
-      {inline === "image" ? (
-        <button type="button" onClick={onPreviewImage} aria-label={`Preview ${file.fileName}`} data-tooltip="Preview" className={frame}>
-          {thumb}
-        </button>
-      ) : previewHref ? (
-        <a href={previewHref} target="_blank" rel="noreferrer" aria-label={`Preview ${file.fileName} (opens in a new tab)`} data-tooltip="Preview" className={frame}>
-          {thumb}
-        </a>
-      ) : (
-        <span className={frame} data-tooltip="No preview for this file type">
-          {thumb}
-        </span>
-      )}
-      <label className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-xs text-zinc-800">
-        <input
-          type="checkbox"
-          checked={picked}
-          disabled={full}
-          onChange={onToggle}
-          className="size-3.5 shrink-0 accent-accent-600"
-        />
-        <span className="min-w-0 flex-1 truncate" title={file.fileName}>
-          {file.fileName}
-        </span>
-        {kind ? null : <span className="shrink-0 text-2xs text-zinc-400">download only</span>}
-      </label>
-    </li>
   );
 }

@@ -26,7 +26,7 @@ import {
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
-import { deleteTask, restoreTask, setReplyThreadClosed, setTaskKind } from "@/lib/actions";
+import { deleteTask, restoreTask, setReplyThreadClosed, setTaskKind, type ActionResult } from "@/lib/actions";
 import { requestApprovalAction } from "./approval-action";
 import type { TaskDetail } from "@/lib/data";
 import { describeRecurrence } from "@/lib/recurrence";
@@ -66,6 +66,7 @@ export function TaskMoreMenu({
   onAttach,
   onCopyLink,
   onDeleted,
+  onApprovalSetup,
 }: {
   task: TaskDetail;
   canEdit: boolean;
@@ -75,6 +76,8 @@ export function TaskMoreMenu({
   onAttach: () => void;
   onCopyLink: () => void;
   onDeleted: () => void;
+  // Opens the approval setup at once; `ready` settles when the task type is saved.
+  onApprovalSetup?: (ready: Promise<ActionResult>) => void;
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
@@ -100,10 +103,21 @@ export function TaskMoreMenu({
     ) {
       return;
     }
+    // Nov 2 notes (batch 15, 112): a new approval task opens the guided setup at once (approvers, then
+    // what happens after approval); the type is saved in the background and the setup waits for it
+    // before saving its own choices.
+    if (kind === "approval" && onApprovalSetup) {
+      let settle: (result: ActionResult) => void = () => {};
+      onApprovalSetup(new Promise<ActionResult>((resolve) => (settle = resolve)));
+      run(async () => {
+        const result = await setTaskKind(task.id, kind);
+        settle(result);
+        return result;
+      });
+      return;
+    }
     run(async () => {
       const result = await setTaskKind(task.id, kind);
-      // Nov 1 notes, batch 9a: a new approval task opens the guided setup (approvers, then what happens
-      // after approval). The banner takes the request once it shows.
       if (!result.error && kind === "approval") requestApprovalAction(task.id, "setup");
       return result;
     });

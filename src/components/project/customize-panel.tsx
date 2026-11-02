@@ -20,6 +20,7 @@ import {
   ListChecks,
   Lock,
   Mail,
+  PanelsTopLeft,
   Plus,
   SlidersHorizontal,
   ThumbsUp,
@@ -34,7 +35,8 @@ import { useProjectPermissions } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useRightPanel } from "@/components/shell/right-panel";
 import { useNotify, useServerAction } from "@/components/toast";
-import { createForm, duplicateRule, setRuleEnabled, setSectionsLocked } from "@/lib/actions";
+import { createForm, duplicateRule, setProjectTabHidden, setProjectViewHidden, setRuleEnabled, setSectionsLocked } from "@/lib/actions";
+import type { ProjectTabEntry } from "@/lib/views";
 import type { FieldDef } from "@/lib/fields";
 import type { CustomizeDetails } from "@/lib/project-page";
 import type { StatusTemplate } from "@/lib/status-templates";
@@ -65,9 +67,11 @@ export type CustomizeSummary = {
   sections: { id: string; name: string }[];
   // Oct 27 notes (batch 5): Owner settings, sent only to the project's Owners (null for everyone else).
   owner?: { sectionsLocked: boolean } | null;
+  // Nov 2 notes (batch 15, 117): every tab and whether it's hidden (null without the database support).
+  tabs?: ProjectTabEntry[] | null;
 };
 
-type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types" | "status" | "numbers" | "owner";
+type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types" | "status" | "numbers" | "owner" | "tabs";
 
 const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   rules: "Automations",
@@ -79,6 +83,7 @@ const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   status: "Status templates",
   numbers: "Task numbering",
   owner: "Owner settings",
+  tabs: "Tabs",
 };
 
 // Asana's Customize panel (Asana parity, batch 4): a ~320px panel on the right with a card row per
@@ -203,6 +208,8 @@ export function CustomizePanel({
                 sections={summary.sections}
                 fields={summary.fields}
               />
+            ) : view === "tabs" && summary.tabs ? (
+              <TabsView projectId={projectId} tabs={summary.tabs} />
             ) : view === "owner" && summary.owner ? (
               <OwnerSettingsView projectId={projectId} settings={summary.owner} />
             ) : view === "status" ? (
@@ -292,6 +299,19 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         }
         onClick={() => onOpen("status")}
       />
+      {summary.tabs ? (
+        <CardRow
+          icon={PanelsTopLeft}
+          label="Tabs"
+          count={summary.tabs.length}
+          meta={
+            summary.tabs.some((t) => t.hidden)
+              ? `${summary.tabs.filter((t) => t.hidden).length} hidden · show or hide any tab`
+              : "Show or hide any tab, views included"
+          }
+          onClick={() => onOpen("tabs")}
+        />
+      ) : null}
       {summary.owner ? (
         <CardRow
           icon={Crown}
@@ -301,6 +321,58 @@ function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: V
         />
       ) : null}
     </ul>
+  );
+}
+
+// Nov 2 notes (batch 15, 117): every tab of the project — Overview, each shared view (List, Board,
+// Calendar, Timeline, …), Dashboard, Messages, Workload, Files — with a Shown / Hidden switch. Hidden tabs
+// are hidden for everyone; their pages still open from a link. One view tab always stays shown.
+function TabsView({ projectId, tabs }: { projectId: string; tabs: ProjectTabEntry[] }) {
+  const [, run] = useServerAction();
+  const [shown, apply] = useOptimistic(tabs, (current, change: { key: string; hidden: boolean }) =>
+    current.map((t) => (t.key === change.key ? { ...t, hidden: change.hidden } : t)),
+  );
+  const shownViews = shown.filter((t) => t.kind === "view" && !t.hidden).length;
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-zinc-500">
+        Hidden tabs disappear from the tab bar for everyone. Their pages still open from a link, and you can show them
+        again here or from the “+” at the end of the tabs.
+      </p>
+      <ul className="flex flex-col divide-y divide-zinc-100 rounded-lg border border-zinc-200 bg-white" aria-label="Tabs">
+        {shown.map((tab) => {
+          const lastView = tab.kind === "view" && !tab.hidden && shownViews <= 1;
+          return (
+            <li key={tab.key} className="flex items-center gap-2 px-3 py-2">
+              <span className={`min-w-0 flex-1 truncate text-sm ${tab.hidden ? "text-zinc-400" : "text-zinc-900"}`}>{tab.label}</span>
+              {tab.kind === "view" ? <span className="text-2xs text-zinc-400">View</span> : null}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!tab.hidden}
+                aria-label={`Show the ${tab.label} tab`}
+                disabled={lastView}
+                data-tooltip={lastView ? "Keep at least one view tab shown" : tab.hidden ? "Hidden for everyone" : "Shown"}
+                onClick={() =>
+                  run(
+                    () =>
+                      tab.kind === "view"
+                        ? setProjectViewHidden(projectId, tab.key, !tab.hidden)
+                        : setProjectTabHidden(projectId, tab.key, !tab.hidden),
+                    () => apply({ key: tab.key, hidden: !tab.hidden }),
+                  )
+                }
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                  tab.hidden ? "bg-zinc-300" : "bg-accent-600"
+                }`}
+              >
+                <span className={`size-4 rounded-full bg-white shadow transition-transform ${tab.hidden ? "translate-x-0.5" : "translate-x-4.5"}`} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

@@ -31,6 +31,7 @@ import { useToday } from "@/lib/dates";
 import type { MyTask } from "@/lib/data";
 import { bareTaskTitle, formatRequestLabel } from "@/lib/request-numbers";
 import { seedFromMyTask } from "@/lib/task-seed";
+import { trackCompletion } from "@/lib/completion-store";
 
 // My tasks as a simple checklist (Nov 1 notes, batch 9b, item 64), also Home's Today list: one list in
 // automatic date groups (Overdue, Today, This week, Later, No date), big tap targets, and a tick that
@@ -98,7 +99,7 @@ export function useChecklist(
     if (next) settle(task.id);
     run(
       async () => {
-        const result = await setTaskCompleted(task.id, next);
+        const result = await trackCompletion(task.id, next, () => setTaskCompleted(task.id, next))();
         if (!result.error && next) {
           const name = bareTaskTitle(task.title, task.requestLabel);
           notify(task.recurring ? `Completed “${name}”. The next one is on your list.` : `Completed “${name}”`, {

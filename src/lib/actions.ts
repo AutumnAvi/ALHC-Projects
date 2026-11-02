@@ -1732,9 +1732,20 @@ export async function undoTaskCompleted(taskId: string): Promise<ActionResult> {
 // Star or unstar a project for the signed-in person (the sidebar's Starred section). Starring needs
 // Viewer+ of the project; unstarring always works.
 export async function setProjectStarred(projectId: string, starred: boolean): Promise<ActionResult> {
+  return setProjectsStarred([projectId], starred);
+}
+
+// Nov 2 notes (batch 15, 110): star or unstar several projects at once (a multi-project drag in the
+// sidebar). The sidebar lives in the app layout, so the layout is revalidated too: a plain refresh could
+// leave the old starred list there, and the dropped projects vanished until a reload.
+export async function setProjectsStarred(projectIds: string[], starred: boolean): Promise<ActionResult> {
   return run(async () => {
+    if (!Array.isArray(projectIds) || projectIds.length === 0 || projectIds.length > 100) throw new InputError("Pick 1–100 projects");
     const supabase = await createClient();
-    check(await supabase.rpc("set_project_starred", { target_project: id(projectId, "project"), starred: starred === true }));
+    for (const projectId of projectIds) {
+      check(await supabase.rpc("set_project_starred", { target_project: id(projectId, "project"), starred: starred === true }));
+    }
+    revalidatePath("/", "layout");
   });
 }
 
@@ -1826,6 +1837,7 @@ export async function fileSidebarProject(projectId: string, folderId: string | n
     if (!Number.isFinite(sortOrder)) throw new InputError("Invalid position");
     const supabase = await createClient();
     await placeProject(supabase, id(projectId, "project"), folderId ? id(folderId, "folder") : null, sortOrder);
+    revalidatePath("/", "layout");
   });
 }
 
@@ -5674,6 +5686,58 @@ export async function setProjectTabHidden(projectId: string, tab: string, hidden
       if (inserted.error?.code === "23505") {
         checkUpdated(
           await supabase.from("project_view_settings").update({ hidden_tabs: hiddenTabs }).eq("project_id", project).select("project_id"),
+          "Only Editors and up change a project’s tabs",
+        );
+      } else {
+        check(inserted, "Only Editors and up change a project’s tabs");
+      }
+    }
+  });
+}
+
+// Nov 2 notes (batch 15, 117): hide one of the project's shared view tabs (List, Board, Calendar,
+// Timeline, …) for everyone, or show it again. Editors+ (RLS); the view and its page stay. The last shown
+// view can't be hidden (the project's link has to open something).
+export async function setProjectViewHidden(projectId: string, viewId: string, hidden: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const project = id(projectId);
+    const view = id(viewId, "view");
+    const supabase = await createClient();
+    const current = await supabase
+      .from("project_view_settings")
+      .select("hidden_view_ids")
+      .eq("project_id", project)
+      .maybeSingle();
+    if (current.error?.code === "PGRST205" || current.error?.code === "42P01" || current.error?.code === "42703") {
+      throw new InputError("Hiding view tabs needs this release’s database update");
+    }
+    check(current);
+    const set = new Set(current.data?.hidden_view_ids ?? []);
+    if (hidden) {
+      const shared = await supabase
+        .from("project_views")
+        .select("id")
+        .eq("project_id", project)
+        .is("owner_id", null)
+        .is("deleted_at", null);
+      check(shared);
+      const shown = (shared.data ?? []).filter((v) => v.id !== view && !set.has(v.id));
+      if (shown.length === 0) throw new InputError("Keep at least one view tab shown");
+      set.add(view);
+    } else {
+      set.delete(view);
+    }
+    const hiddenViewIds = [...set];
+    if (current.data) {
+      checkUpdated(
+        await supabase.from("project_view_settings").update({ hidden_view_ids: hiddenViewIds }).eq("project_id", project).select("project_id"),
+        "Only Editors and up change a project’s tabs",
+      );
+    } else {
+      const inserted = await supabase.from("project_view_settings").insert({ project_id: project, hidden_view_ids: hiddenViewIds });
+      if (inserted.error?.code === "23505") {
+        checkUpdated(
+          await supabase.from("project_view_settings").update({ hidden_view_ids: hiddenViewIds }).eq("project_id", project).select("project_id"),
           "Only Editors and up change a project’s tabs",
         );
       } else {

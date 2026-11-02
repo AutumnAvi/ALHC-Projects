@@ -174,21 +174,24 @@ export function ViewToolbar({
         ) : null}
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
-          {isDraft ? (
+          {isDraft && view ? (
             <>
-              <span className="mr-0.5 text-xs text-zinc-500">{view ? "Unsaved changes" : "Filtered"}</span>
+              <ViewChangedPill
+                ownView={ownView}
+                canSaveForEveryone={canSaveForEveryone}
+                pending={pending}
+                onSaveForMe={saveForMe}
+                onSaveForEveryone={saveForEveryone}
+                onReset={() => apply(base)}
+              />
+              <span aria-hidden className="mx-1 h-4 w-px bg-zinc-200" />
+            </>
+          ) : isDraft ? (
+            <>
+              <span className="mr-0.5 text-xs text-zinc-500">Filtered</span>
               <button type="button" onClick={() => apply(base)} className="btn-ghost">
                 Reset
               </button>
-              {view ? (
-                <SaveViewMenu
-                  ownView={ownView}
-                  canSaveForEveryone={canSaveForEveryone}
-                  pending={pending}
-                  onSaveForMe={saveForMe}
-                  onSaveForEveryone={saveForEveryone}
-                />
-              ) : null}
               <span aria-hidden className="mx-1 h-4 w-px bg-zinc-200" />
             </>
           ) : hasPersonalVersion && view ? (
@@ -432,84 +435,64 @@ function CompletedToggle({ completion, onChange }: { completion: ReturnType<type
   );
 }
 
-// Nov 2 notes (batch 14, 94): Save view, with the choice spelled out. A person's own view just saves;
-// a shared view saves for the person, or (project Owners) as the default for everyone.
-function SaveViewMenu({
+// Nov 2 notes (batch 14, 94; batch 15, 118): when the view on screen differs from the saved one, an
+// obvious pill says so, with the saves spelled out as buttons: "Save for me" (only you see your version),
+// "Save as default for everyone" (project Owners; a person's own view just saves), and Reset.
+export function ViewChangedPill({
   ownView,
   canSaveForEveryone,
   pending,
   onSaveForMe,
   onSaveForEveryone,
+  onReset,
 }: {
   ownView: boolean;
   canSaveForEveryone: boolean;
   pending: boolean;
   onSaveForMe: () => void;
   onSaveForEveryone: () => void;
+  onReset: () => void;
 }) {
-  if (ownView || !canSaveForEveryone) {
-    // Controls a role can't use are hidden (Nov 1 notes, batch 11): below Owner it's simply "Save for me".
-    return (
+  // Controls a role can't use are hidden (Nov 1 notes, batch 11): below Owner it's simply "Save for me".
+  const justSave = ownView || !canSaveForEveryone;
+  return (
+    <div
+      role="status"
+      data-view-changed=""
+      className="inline-flex flex-wrap items-center gap-1 rounded-full border border-amber-300 bg-amber-50 py-0.5 pr-0.5 pl-2.5 text-xs text-amber-900 shadow-xs"
+    >
+      <span aria-hidden className="size-1.5 rounded-full bg-amber-500" />
+      <span className="mr-1 font-medium">You changed this view</span>
       <button
         type="button"
         disabled={pending}
         onClick={onSaveForMe}
         data-tooltip={ownView ? undefined : "Only you see this version. Everyone else keeps the view as it is."}
-        className="btn-secondary"
+        className="inline-flex h-6 items-center gap-1 rounded-full bg-amber-600 px-2.5 font-medium text-white hover:bg-amber-700 disabled:opacity-60"
       >
+        {ownView ? <Check className="size-3.5" aria-hidden /> : <UserRound className="size-3.5" aria-hidden />}
         {ownView ? "Save view" : "Save for me"}
       </button>
-    );
-  }
-  return (
-    <Popover
-      label="Save view"
-      align="end"
-      panelClassName="w-72 p-1.5"
-      buttonClassName="btn-secondary"
-      disabled={pending}
-      button={
-        <>
-          Save view
-          <ChevronDown className="size-3.5" aria-hidden />
-        </>
-      }
-    >
-      {(close) => (
-        <div role="group" aria-label="Save view">
-          <button
-            type="button"
-            onClick={() => {
-              close();
-              onSaveForMe();
-            }}
-            className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100"
-          >
-            <UserRound className="mt-0.5 size-4 shrink-0 text-zinc-500" aria-hidden />
-            <span>
-              <span className="block text-sm font-medium text-zinc-800">Save for me</span>
-              <span className="block text-xs text-zinc-500">Only you see this version. Everyone else keeps the view as it is.</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              close();
-              onSaveForEveryone();
-            }}
-            className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100"
-          >
-            <Users className="mt-0.5 size-4 shrink-0 text-zinc-500" aria-hidden />
-            <span>
-              <span className="block text-sm font-medium text-zinc-800">Save as default for everyone</span>
-              <span className="block text-xs text-zinc-500">
-                Everyone in the project sees the view this way (unless they saved their own version).
-              </span>
-            </span>
-          </button>
-        </div>
+      {justSave ? null : (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={onSaveForEveryone}
+          data-tooltip="Everyone in the project sees the view this way (unless they saved their own version)."
+          className="inline-flex h-6 items-center gap-1 rounded-full border border-amber-300 bg-white px-2.5 font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-60"
+        >
+          <Users className="size-3.5" aria-hidden />
+          Save as default for everyone
+        </button>
       )}
-    </Popover>
+      <button
+        type="button"
+        onClick={onReset}
+        className="inline-flex h-6 items-center rounded-full px-2 font-medium text-amber-800 hover:bg-amber-100"
+      >
+        Reset
+      </button>
+    </div>
   );
 }
 

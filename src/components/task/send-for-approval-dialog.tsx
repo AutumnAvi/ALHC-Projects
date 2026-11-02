@@ -1,15 +1,19 @@
 "use client";
 
 import { useId, useState } from "react";
-import { Copy, FileText, Image as ImageIcon, Paperclip, Video } from "lucide-react";
+import { AlertCircle, Copy, Loader2, Upload, X } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { Dialog } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
+import { ImageLightbox } from "@/components/task/task-attachments";
+import { PickableFileCard, useTaskFileUploads, type PickableFile } from "@/components/task/task-file-uploads";
+import { reviewFileList } from "@/components/task/send-review-dialog";
+import { previewKind } from "@/lib/attachment-preview";
 import { useNotify, useServerAction } from "@/components/toast";
 import { sendForApproval } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";
 import { taskPermissions } from "@/lib/permissions";
-import { MAX_REVIEW_ASSETS, reviewMediaKind } from "@/lib/review-checks";
+import { MAX_REVIEW_ASSETS } from "@/lib/review-checks";
 import { sendReviewCheck } from "@/lib/review-actions";
 import type { AfterApproval } from "@/lib/task-kinds";
 
@@ -56,11 +60,6 @@ export function joinNames(names: readonly string[]): string {
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
-function iconFor(fileName: string, contentType: string | null) {
-  const kind = reviewMediaKind(fileName, contentType);
-  return kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "pdf" ? FileText : Paperclip;
-}
-
 export function SendForApprovalDialog({
   task,
   profiles,
@@ -103,7 +102,19 @@ export function SendForApprovalDialog({
   const firstApprover = approvers[0] ?? null;
   // Review checks are made by Editors+ (create_review_check).
   const canReview = taskPermissions(task).canEdit && Boolean(firstApprover);
-  const attachmentIds = task.attachments.filter((a) => picked.has(a.id)).map((a) => a.id);
+  // Nov 2 notes (batch 15, 113): files can be uploaded right here (Editors+: uploading is an edit); each
+  // is attached to the task and picked. Thumbnails preview like the review dialog's.
+  const canUpload = taskPermissions(task).canEdit;
+  const [uploaded, setUploaded] = useState<PickableFile[]>([]);
+  const { uploads, uploadFiles, dismiss, fileInput, uploading } = useTaskFileUploads(task.id, (file) => {
+    setUploaded((current) => [...current, file]);
+    setPicked((current) => new Set(current).add(file.id));
+  });
+  const files = reviewFileList(task.attachments, uploaded);
+  const images = files.filter((f) => previewKind(f.fileName, f.contentType) === "image");
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const openImage = lightboxIndex === null ? null : (images[lightboxIndex] ?? null);
+  const attachmentIds = files.filter((a) => picked.has(a.id)).map((a) => a.id);
 
   // Sections of the task's projects where the viewer edits (the database moves it only there). Subtasks
   // and private tasks have no sections of their own.
@@ -257,32 +268,78 @@ export function SendForApprovalDialog({
               {picked.size ? `${picked.size} picked` : "optional if you add the final text"}
             </span>
           </p>
-          {task.attachments.length === 0 ? (
+          {canUpload ? (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden
+                onChange={(e) => void uploadFiles(e.currentTarget.files)}
+              />
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                onDragOver={(e) => {
+                  if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "copy";
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (e.dataTransfer.files.length) void uploadFiles(e.dataTransfer.files);
+                }}
+                className="btn-secondary h-8"
+              >
+                <Upload className="size-3.5" aria-hidden />
+                Upload files
+              </button>
+              <span className="text-2xs text-zinc-500">They’re attached to the task and picked here. Or drop files on the button.</span>
+            </div>
+          ) : null}
+          {uploads.length ? (
+            <ul className="mt-1.5 flex flex-col gap-1">
+              {uploads.map((u) => (
+                <li
+                  key={u.key}
+                  role={u.error ? "alert" : "status"}
+                  className={`flex items-center gap-2 rounded px-1.5 py-1 text-xs ${u.error ? "text-red-700" : "text-zinc-500"}`}
+                >
+                  {u.error ? <AlertCircle className="size-4 shrink-0" aria-hidden /> : <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />}
+                  <span className="min-w-0 flex-1 truncate">
+                    {u.name}
+                    {u.error ? `: ${u.error}` : " — uploading…"}
+                  </span>
+                  {u.error ? (
+                    <button type="button" onClick={() => dismiss(u.key)} aria-label={`Dismiss ${u.name}`} data-tooltip="Dismiss" className="btn-icon size-6">
+                      <X className="size-3.5" />
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {files.length === 0 ? (
             <p className="mt-1.5 rounded-md border border-dashed border-zinc-300 px-3 py-3 text-xs text-zinc-600">
-              This task has no files yet. Attach them with the paperclip at the top of the task, then send them here.
+              {canUpload ? "This task has no files yet. Upload them here." : "This task has no files yet. Ask an Editor to attach them."}
             </p>
           ) : (
             <>
-              <ul className="mt-1.5 max-h-48 space-y-1 overflow-y-auto rounded-md border border-zinc-200 p-1.5">
-                {task.attachments.map((f) => {
-                  const Icon = iconFor(f.fileName, f.contentType);
-                  return (
-                    <li key={f.id}>
-                      <label className="flex items-center gap-2 rounded px-1.5 py-1 text-sm text-zinc-800 hover:bg-zinc-50">
-                        <input
-                          type="checkbox"
-                          checked={picked.has(f.id)}
-                          onChange={() => toggle(f.id)}
-                          className="size-3.5 accent-accent-600"
-                        />
-                        <Icon className="size-4 shrink-0 text-zinc-500" aria-hidden />
-                        <span className="min-w-0 flex-1 truncate">{f.fileName}</span>
-                      </label>
-                    </li>
-                  );
-                })}
+              <ul className="mt-1.5 grid max-h-72 grid-cols-2 gap-2 overflow-y-auto overscroll-contain p-0.5 sm:grid-cols-3" aria-label="Files">
+                {files.map((f) => (
+                  <PickableFileCard
+                    key={f.id}
+                    file={f}
+                    picked={picked.has(f.id)}
+                    full={false}
+                    onToggle={() => toggle(f.id)}
+                    onPreviewImage={() => setLightboxIndex(images.findIndex((i) => i.id === f.id))}
+                  />
+                ))}
               </ul>
-              <p className="mt-1 text-2xs text-zinc-500">To add a file, attach it with the paperclip at the top of the task.</p>
+              <p className="mt-1 text-2xs text-zinc-500">Tick the files to approve. Click a preview to look at it.</p>
             </>
           )}
         </div>
@@ -386,14 +443,24 @@ export function SendForApprovalDialog({
           <button
             type="button"
             onClick={send}
-            disabled={pending || approverNames.length === 0}
+            disabled={pending || uploading || approverNames.length === 0}
             aria-disabled={Boolean(problem) || undefined}
             className="btn-primary"
           >
-            {pending ? "Sending…" : "Send for approval"}
+            {pending ? "Sending…" : uploading ? "Uploading…" : "Send for approval"}
           </button>
         </div>
       </div>
+      {openImage && lightboxIndex !== null ? (
+        <ImageLightbox
+          image={openImage}
+          position={lightboxIndex + 1}
+          total={images.length}
+          onPrevious={() => setLightboxIndex((i) => (i === null ? i : (i - 1 + images.length) % images.length))}
+          onNext={() => setLightboxIndex((i) => (i === null ? i : (i + 1) % images.length))}
+          onClose={() => setLightboxIndex(null)}
+        />
+      ) : null}
     </Dialog>
   );
 }

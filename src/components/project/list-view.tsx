@@ -117,6 +117,7 @@ import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./v
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
 import type { TaskSeed } from "@/lib/task-seed";
+import { trackCompletion } from "@/lib/completion-store";
 
 type Seeds = ReturnType<typeof useProjectTaskSeeds>;
 
@@ -351,7 +352,7 @@ export function ListView({
     // A blocked task has a lock instead of a checkbox; never try (and undo) completing it.
     if (completed && blockedCount(task) > 0) return;
     run(
-      () => setTaskCompleted(task.id, completed),
+      trackCompletion(task.id, completed, () => setTaskCompleted(task.id, completed)),
       () => applyChange({ type: "complete", taskId: task.id, completed }),
     );
   };
@@ -444,7 +445,7 @@ export function ListView({
     toggle(subtask) {
       const completed = !subtask.completedAt;
       if (completed && blockedCount(subtask) > 0) return;
-      editSubtask(subtask, { completedAt: completed ? new Date().toISOString() : null }, () => setTaskCompleted(subtask.id, completed));
+      editSubtask(subtask, { completedAt: completed ? new Date().toISOString() : null }, trackCompletion(subtask.id, completed, () => setTaskCompleted(subtask.id, completed)));
     },
     rename: (subtask, title) => editSubtask(subtask, { title }, () => updateSubtask(subtask.id, { title })),
     assign(subtask, assigneeId) {

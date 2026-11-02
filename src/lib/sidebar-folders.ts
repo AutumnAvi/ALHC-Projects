@@ -129,3 +129,27 @@ export function applySidebarChange(state: SidebarState, change: SidebarChange): 
       };
   }
 }
+
+// Nov 2 notes (batch 15, 110): stars the sidebar has saved but the page's props may not show yet. The
+// optimistic star ends with its save; until the next render of the layout brings the new starred list,
+// these keep the project where it was dropped (so it never appears, vanishes, and comes back on reload).
+export type StarOverrides = Record<string, boolean>;
+
+export function withStarOverrides(starredIds: readonly string[], overrides: StarOverrides): string[] {
+  const out = starredIds.filter((id) => overrides[id] !== false);
+  for (const [id, on] of Object.entries(overrides)) if (on && !out.includes(id)) out.push(id);
+  return out;
+}
+
+// Overrides the props already agree with are dropped, so a later change made elsewhere (the project
+// header's star, another tab) wins again. Returns the same object when nothing changed.
+export function pruneStarOverrides(starredIds: readonly string[], overrides: StarOverrides): StarOverrides {
+  const starred = new Set(starredIds);
+  const kept = Object.entries(overrides).filter(([id, on]) => starred.has(id) !== on);
+  return kept.length === Object.keys(overrides).length ? overrides : Object.fromEntries(kept);
+}
+
+// The projects a drag carries: the selection when the dragged row is part of it, else just that row.
+export function draggedProjectIds(projectId: string, selected: readonly string[]): string[] {
+  return selected.includes(projectId) ? [...selected] : [projectId];
+}

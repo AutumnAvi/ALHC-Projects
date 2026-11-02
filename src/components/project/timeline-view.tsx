@@ -14,7 +14,7 @@ import type { Profile, ProjectDependency, ProjectTask, Section } from "@/lib/dat
 import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
 import { TaskNumberBadge } from "@/components/task/task-number";
 import { useNotify, useServerAction } from "@/components/toast";
-import { setTaskDependency } from "@/lib/actions";
+import { removeTaskDependency, setTaskDependency } from "@/lib/actions";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { groupOf, isIsoDate, type ViewConfig } from "@/lib/views";
 import { useOpenTaskId } from "@/components/shell/right-panel";
@@ -113,6 +113,57 @@ export function TimelineView({
   const [link, setLink] = useState<{ fromId: string; x1: number; y1: number; x2: number; y2: number; overId: string | null } | null>(null);
   const [, runLink] = useServerAction();
   const notify = useNotify();
+  // Nov 2 notes (batch 15, 116): dependency lines are selectable (click; Delete / Backspace removes the
+  // selected one) and show a small × on hover — while drawing too. Removed lines vanish at once.
+  const [selectedDep, setSelectedDep] = useState<string | null>(null);
+  const [hoverDep, setHoverDepNow] = useState<string | null>(null);
+  // Leaving a line waits a moment, so the pointer can reach its ×.
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function setHoverDep(next: string | null) {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+    if (next) setHoverDepNow(next);
+    else hoverTimer.current = setTimeout(() => setHoverDepNow(null), 300);
+  }
+  const [removedDeps, setRemovedDeps] = useState<ReadonlySet<string>>(() => new Set());
+
+  function removeDependency(depId: string) {
+    setSelectedDep(null);
+    setHoverDepNow(null);
+    setRemovedDeps((current) => new Set(current).add(depId));
+    runLink(async () => {
+      const result = await removeTaskDependency(depId);
+      if (result.error) {
+        setRemovedDeps((current) => {
+          const next = new Set(current);
+          next.delete(depId);
+          return next;
+        });
+      } else {
+        notify("Dependency removed");
+      }
+      return result;
+    });
+  }
+
+  useEffect(() => {
+    if (!selectedDep) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      if (document.querySelector("[role='dialog'], [role='alertdialog']")) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        if (selectedDep) removeDependency(selectedDep);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setSelectedDep(null);
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
 
   useEffect(() => {
     if (!linking) return;
@@ -228,6 +279,7 @@ export function TimelineView({
   );
   const tasksById = new Map(optimisticTasks.map((t) => [t.id, t] as const));
   const arrows = dependencies.flatMap((dep) => {
+    if (removedDeps.has(dep.id)) return [];
     const pred = tasksById.get(dep.predecessorId);
     const succ = tasksById.get(dep.successorId);
     const y1 = rowCenter.get(dep.predecessorId);
@@ -261,7 +313,13 @@ export function TimelineView({
       criticalPath.tasks[dep.predecessorId]?.critical && criticalPath.tasks[dep.successorId]?.critical,
     );
     const conflict = dependencyConflict(pred, succ, dep.kind, dep.lagDays);
-    return [{ id: dep.id, path, conflict, tone: showCritical ? (onPath ? "path" : "dim") : "normal" } as const];
+    // Where the × sits: on the line's vertical stretch, halfway between the rows.
+    const handleX = toEnd ? Math.max(out, x2 + pad) : fromStart ? Math.min(out, x2 - pad) : out;
+    const handleY = !toEnd && !fromStart && x2 - x1 < 2 * pad ? y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 4) : (y1 + y2) / 2;
+    const label = `“${bareTaskTitle(succ.title, succ.requestLabel)}” waits on “${bareTaskTitle(pred.title, pred.requestLabel)}”`;
+    return [
+      { id: dep.id, path, conflict, tone: showCritical ? (onPath ? "path" : "dim") : "normal", handle: { x: handleX, y: handleY }, label } as const,
+    ];
   });
 
   function dayAt(clientX: number, clientY: number) {
@@ -327,8 +385,9 @@ export function TimelineView({
           });
         },
         onPointerCancel: () => setLink(null),
-        // No pane opens and no link is followed while drawing.
+        // No pane opens and no link is followed while drawing (dependency lines stay clickable).
         onClickCapture: (e: MouseEvent<HTMLDivElement>) => {
+          if ((e.target as Element).closest("[data-dependency-line]")) return;
           e.preventDefault();
           e.stopPropagation();
         },
@@ -403,15 +462,24 @@ export function TimelineView({
                 Draw dependencies
               </button>
             ) : null}
+            {/* Nov 2 notes (batch 15, 116): a show / hide switch, not a mode — it only highlights the chain
+                the dependencies already make. Drawing (the button before it) always makes ordinary links. */}
             <button
               type="button"
-              aria-pressed={showCritical}
+              role="switch"
+              aria-checked={showCritical}
               onClick={() => navigate({ cp: !showCritical })}
-              title="Highlight the longest chain of dependencies ending at the project’s last due date"
-              className={`btn-secondary ${showCritical ? "border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800" : ""}`}
+              data-tooltip="Highlight the longest chain of dependencies ending at the project’s last due date. It’s calculated, not drawn."
+              className="btn-ghost gap-2"
             >
+              <span
+                aria-hidden
+                className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${showCritical ? "bg-zinc-900" : "bg-zinc-300"}`}
+              >
+                <span className={`size-3 rounded-full bg-white shadow transition-transform ${showCritical ? "translate-x-3.5" : "translate-x-0.5"}`} />
+              </span>
               <Route className="size-4" aria-hidden />
-              Critical path
+              Show critical path
             </button>
             <Segmented label="Timeline scale" options={ZOOMS} value={zoom} onChange={(z) => navigate({ tl: z })} />
           </div>
@@ -419,13 +487,15 @@ export function TimelineView({
         {linking ? (
           <p className="mb-2 rounded-md bg-accent-50 px-2.5 py-1.5 text-xs text-accent-900" role="status">
             Drawing dependencies: drag from a task (its bar or its row) to the task that has to wait for it. The second
-            one becomes blocked by the first. Press Esc or the button again to stop.
+            one becomes blocked by the first. Click a line to select it (Delete removes it), or use its ×. Press Esc
+            or the button again to stop.
+            {showCritical ? " Lines you draw are ordinary dependencies; the critical path is worked out from them." : ""}
           </p>
         ) : null}
         {showCritical ? (
           <p className="mb-2 text-xs text-zinc-500" role="status">
-            Outlined bars are on the critical path: the chain of dependencies that ends at the project’s last due date
-            with no slack. Other bars are faded; hover a bar for its slack. Counts every task in this project you can
+            Showing the critical path, worked out from the dependencies (you can’t draw it): outlined bars are the
+            chain of dependencies that ends at the project’s last due date with no slack. Other bars are faded; hover a bar for its slack. Counts every task in this project you can
             see, not only this view’s.
             {criticalPath.skipped > 0
               ? ` ${criticalPath.skipped === 1 ? "1 task has" : `${criticalPath.skipped} tasks have`} no due date and ${
@@ -444,6 +514,9 @@ export function TimelineView({
             ref={contentRef}
             className={`relative min-h-full ${linking ? "cursor-crosshair select-none [&_*]:cursor-crosshair" : ""}`}
             style={{ width: LABEL_WIDTH + width, minHeight: contentHeight }}
+            onPointerDown={(e) => {
+              if (selectedDep && !(e.target as Element).closest("[data-dependency-line]")) setSelectedDep(null);
+            }}
             {...linkHandlers}
           >
             <div
@@ -559,7 +632,17 @@ export function TimelineView({
             )}
 
             {arrows.length > 0 ? (
-              <DependencyArrows arrows={arrows} width={width} height={contentHeight} />
+              <DependencyArrows
+                arrows={arrows}
+                width={width}
+                height={contentHeight}
+                editable={canEdit}
+                selectedId={selectedDep}
+                hoverId={hoverDep}
+                onSelect={setSelectedDep}
+                onHover={setHoverDep}
+                onRemove={removeDependency}
+              />
             ) : null}
             {link ? (
               <svg aria-hidden className="pointer-events-none absolute inset-0 z-30" width={LABEL_WIDTH + width} height={contentHeight}>
@@ -633,28 +716,51 @@ export function TimelineView({
   );
 }
 
-// Dependency arrows (finish-to-start and start-to-start) drawn over the bars (pointer-transparent; the pane lists dependencies for
-// keyboard and screen-reader users). The sticky header and label column paint above them.
+// Dependency arrows drawn over the bars. Nov 2 notes (batch 15, 116): for Editors each line is a target
+// (a wide invisible stroke): hover shows a small × that removes it, a click selects it (Delete /
+// Backspace removes it, Esc lets go), and Tab reaches each line too. The pane still lists dependencies for
+// everyone. The sticky header and label column paint above them.
+type Arrow = {
+  id: string;
+  path: string;
+  conflict: boolean;
+  tone: "normal" | "path" | "dim";
+  handle: { x: number; y: number };
+  label: string;
+};
+
 function DependencyArrows({
   arrows,
   width,
   height,
+  editable,
+  selectedId,
+  hoverId,
+  onSelect,
+  onHover,
+  onRemove,
 }: {
-  arrows: { id: string; path: string; conflict: boolean; tone: "normal" | "path" | "dim" }[];
+  arrows: Arrow[];
   width: number;
   height: number;
+  editable: boolean;
+  selectedId: string | null;
+  hoverId: string | null;
+  onSelect: (id: string | null) => void;
+  onHover: (id: string | null) => void;
+  onRemove: (id: string) => void;
 }) {
   const id = useId();
   return (
     <svg
-      aria-hidden
-      className="pointer-events-none absolute top-0"
+      aria-hidden={editable ? undefined : true}
+      className="pointer-events-none absolute top-0 z-[5]"
       style={{ left: LABEL_WIDTH }}
       width={width}
       height={height}
     >
       <defs>
-        {(["ok", "conflict"] as const).map((tone) => (
+        {(["ok", "conflict", "selected"] as const).map((tone) => (
           <marker
             key={tone}
             id={`${id}-${tone}`}
@@ -665,21 +771,77 @@ function DependencyArrows({
             markerHeight="6"
             orient="auto"
           >
-            <path d="M0,0 L6,3 L0,6 z" className={tone === "ok" ? "fill-zinc-400" : "fill-red-400"} />
+            <path d="M0,0 L6,3 L0,6 z" className={tone === "ok" ? "fill-zinc-400" : tone === "selected" ? "fill-accent-600" : "fill-red-400"} />
           </marker>
         ))}
       </defs>
-      {arrows.map((arrow) => (
-        <path
-          key={arrow.id}
-          d={arrow.path}
-          fill="none"
-          strokeWidth={arrow.tone === "path" ? 2 : 1.25}
-          opacity={arrow.tone === "dim" ? 0.35 : 1}
-          className={arrow.conflict ? "stroke-red-400" : arrow.tone === "path" ? "stroke-zinc-800" : "stroke-zinc-400"}
-          markerEnd={`url(#${id}-${arrow.conflict ? "conflict" : "ok"})`}
-        />
-      ))}
+      {arrows.map((arrow) => {
+        const selected = selectedId === arrow.id;
+        const hovered = hoverId === arrow.id;
+        return (
+          <g key={arrow.id} data-dependency-line={arrow.id}>
+            <path
+              d={arrow.path}
+              fill="none"
+              strokeWidth={selected ? 2.5 : arrow.tone === "path" ? 2 : hovered ? 2 : 1.25}
+              opacity={arrow.tone === "dim" && !selected && !hovered ? 0.35 : 1}
+              className={
+                selected
+                  ? "stroke-accent-600"
+                  : arrow.conflict
+                    ? "stroke-red-400"
+                    : arrow.tone === "path"
+                      ? "stroke-zinc-800"
+                      : hovered
+                        ? "stroke-zinc-600"
+                        : "stroke-zinc-400"
+              }
+              markerEnd={`url(#${id}-${selected ? "selected" : arrow.conflict ? "conflict" : "ok"})`}
+            />
+            {editable ? (
+              <path
+                d={arrow.path}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={10}
+                style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected}
+                aria-label={`Dependency: ${arrow.label}. Press Delete to remove it.`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerEnter={() => onHover(arrow.id)}
+                onPointerLeave={() => onHover(null)}
+                onFocus={() => onSelect(arrow.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(selected ? null : arrow.id);
+                }}
+                className="outline-none"
+              />
+            ) : null}
+            {editable && (hovered || selected) ? (
+              <g
+                transform={`translate(${arrow.handle.x}, ${arrow.handle.y})`}
+                style={{ pointerEvents: "all", cursor: "pointer" }}
+                role="button"
+                aria-label={`Remove the dependency: ${arrow.label}`}
+                onPointerEnter={() => onHover(arrow.id)}
+                onPointerLeave={() => onHover(null)}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(arrow.id);
+                }}
+              >
+                <title>Remove this dependency</title>
+                <circle r={8} className="fill-white stroke-zinc-400" strokeWidth={1} />
+                <path d="M-3,-3 L3,3 M3,-3 L-3,3" className="stroke-zinc-700" strokeWidth={1.5} strokeLinecap="round" />
+              </g>
+            ) : null}
+          </g>
+        );
+      })}
     </svg>
   );
 }

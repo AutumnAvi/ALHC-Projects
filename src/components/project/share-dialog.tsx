@@ -27,6 +27,7 @@ import { isAccessGrantRole } from "@/lib/access-requests";
 import { loadProjectShare } from "@/lib/project-page-actions";
 import { PERSON_DEFAULT_ROLE, ROLE_DESCRIPTIONS, ROLE_LABELS, assignableRoles, hasRole, isProjectRole } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
+import { ROLES_HELP_HREF } from "@/lib/role-help";
 import {
   EMAIL_PATTERN,
   VISIBILITY_DESCRIPTIONS,
@@ -144,6 +145,10 @@ export function ShareDialog({
               className="text-xs text-accent-700 hover:underline"
             >
               Manage members
+            </Link>
+            {/* Nov 2 notes (batch 15, 109): what each role can do, in one page. */}
+            <Link href={ROLES_HELP_HREF} onClick={onClose} className="text-xs text-accent-700 hover:underline">
+              Roles &amp; permissions
             </Link>
             <button type="button" onClick={onClose} className="btn-primary ml-auto">
               Done

@@ -25,7 +25,6 @@ import {
   setDefaultProjectRole,
 } from "@/lib/actions";
 import {
-  COMMENTER_OFF_REASON,
   DEFAULT_PROJECT_ROLES,
   ROLE_DESCRIPTIONS,
   ROLE_LABELS,
@@ -582,14 +581,10 @@ function NewProjectRoleSetting({
             onChange={(next) => {
               if (next !== stored) onChange(next);
             }}
-            options={DEFAULT_PROJECT_ROLES.map((role) => ({
-              value: role,
-              label: ROLE_LABELS[role],
-              description: ROLE_DESCRIPTIONS[role],
-              ...(role === "commenter" && !allowCommenter && stored !== "commenter"
-                ? { disabled: true, disabledReason: COMMENTER_OFF_REASON }
-                : {}),
-            }))}
+            // Nov 2 notes (batch 15, 107): Commenter isn't offered while the workspace has it off.
+            options={DEFAULT_PROJECT_ROLES.filter((role) => role !== "commenter" || allowCommenter || stored === "commenter").map(
+              (role) => ({ value: role, label: ROLE_LABELS[role], description: ROLE_DESCRIPTIONS[role] }),
+            )}
           />
           {effective !== stored ? <p className="mt-0.5 text-2xs text-amber-700">Added as Viewer while Commenter is off</p> : null}
         </div>

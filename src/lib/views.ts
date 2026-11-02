@@ -132,8 +132,36 @@ export function isFixedTab(value: unknown): value is FixedTab {
   return typeof value === "string" && FIXED_TABS.some((t) => t.key === value);
 }
 
-export type ProjectViewSettings = { defaultViewId: string | null; hiddenTabs: FixedTab[] };
-export const NO_VIEW_SETTINGS: ProjectViewSettings = { defaultViewId: null, hiddenTabs: [] };
+// Nov 2 notes (batch 15, 117): hiddenViewIds = shared view tabs hidden for everyone (Editors+).
+export type ProjectViewSettings = { defaultViewId: string | null; hiddenTabs: FixedTab[]; hiddenViewIds?: string[] };
+export const NO_VIEW_SETTINGS: ProjectViewSettings = { defaultViewId: null, hiddenTabs: [], hiddenViewIds: [] };
+
+// Nov 2 notes (batch 15, 117): every project tab in the header's order — Overview, the shared views,
+// Dashboard, Messages, Workload, Files — and whether it's hidden (Customize → Tabs).
+export type ProjectTabEntry = { kind: "tab" | "view"; key: string; label: string; layout: ViewLayout | null; hidden: boolean };
+export function projectTabList(views: ProjectView[], settings: ProjectViewSettings): ProjectTabEntry[] {
+  const hiddenTabs = new Set<string>(settings.hiddenTabs);
+  const hiddenViews = new Set(settings.hiddenViewIds ?? []);
+  const fixed = (key: FixedTab): ProjectTabEntry => ({
+    kind: "tab",
+    key,
+    label: FIXED_TABS.find((t) => t.key === key)!.label,
+    layout: null,
+    hidden: hiddenTabs.has(key),
+  });
+  return [
+    fixed("overview"),
+    ...splitViews(views).shared.map((v): ProjectTabEntry => ({ kind: "view", key: v.id, label: v.name, layout: v.layout, hidden: hiddenViews.has(v.id) })),
+    ...FIXED_TABS.filter((t) => t.key !== "overview").map((t) => fixed(t.key)),
+  ];
+}
+
+// Whether hiding this shared view would leave the project with no shown view tab (not allowed: the
+// project's link has to open something).
+export function isLastShownView(views: ProjectView[], hiddenViewIds: readonly string[], viewId: string): boolean {
+  const { shared } = splitViews(views);
+  return !shared.some((v) => v.id !== viewId && !hiddenViewIds.includes(v.id));
+}
 
 /** Shared tabs and the viewer's own views, each in tab order. */
 export function splitViews(views: ProjectView[]): { shared: ProjectView[]; mine: ProjectView[] } {
@@ -152,7 +180,10 @@ export function openingView(
 ): ProjectView | null {
   const { shared, mine } = splitViews(views);
   if (preferPersonal && mine.length > 0) return mine[0];
-  return shared.find((v) => v.id === settings.defaultViewId) ?? shared[0] ?? mine[0] ?? null;
+  // Hidden tabs aren't opened by the project's link (their pages still open from a link to them).
+  const hidden = new Set(settings.hiddenViewIds ?? []);
+  const shown = shared.filter((v) => !hidden.has(v.id));
+  return shown.find((v) => v.id === settings.defaultViewId) ?? shown[0] ?? shared[0] ?? mine[0] ?? null;
 }
 
 /** The name a personal copy of a shared view gets when someone saves their changes to it. */
