@@ -36,6 +36,7 @@ import { SendReviewDialog } from "./send-review-dialog";
 import { RunRuleDialog } from "./run-rule-dialog";
 import { SaveTaskTemplateDialog } from "./save-task-template";
 import { ConvertTaskDialog, convertMenuItem } from "./task-convert";
+import { prefetchParents } from "./parent-search";
 import { OPEN_REPEATS_EVENT } from "./task-dates";
 import { displayTaskTitle } from "@/lib/request-numbers";
 
@@ -183,6 +184,10 @@ export function TaskMoreMenu({
         panelClassName="w-64 p-1.5"
         buttonClassName="btn-icon"
         button={<MoreHorizontal className="size-4" aria-hidden />}
+        // Nov 2 notes (batch 16, 124): "Make a subtask of…" opens with its list already loaded.
+        onOpenChange={(open) => {
+          if (open && convert?.to === "subtask") prefetchParents(task.id);
+        }}
       >
         {(close) => (
           <>

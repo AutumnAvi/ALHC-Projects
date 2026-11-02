@@ -6993,6 +6993,14 @@ export type Database = {
         Args: { target_task: string; target_project?: string | null; target_section?: string | null };
         Returns: undefined;
       };
+      convert_subtask_to_task: {
+        Args: { target_task: string; target_project?: string | null; target_section?: string | null; block_parent?: boolean };
+        Returns: Json;
+      };
+      workday_steps: {
+        Args: { from_date: string; to_date: string; work_week: number[] };
+        Returns: number;
+      };
       project_critical_path: {
         Args: { target_project: string };
         Returns: {

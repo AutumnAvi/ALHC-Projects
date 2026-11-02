@@ -22,6 +22,7 @@ import { useTaskTemplates } from "@/components/project/task-templates-context";
 import { useNotify, useServerAction } from "@/components/toast";
 import { useApprovalAction } from "@/components/task/approval-action";
 import { withPendingSection } from "./pending-sections";
+import { usePendingCreates, withPendingCreate } from "@/lib/pending-creates";
 import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
 import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, type TaskKind } from "@/lib/task-kinds";
 import type { Section } from "@/lib/data";
@@ -303,6 +304,55 @@ export function addTaskKindOf(event: Event): TaskKind {
   return parseTaskKind(detail?.kind);
 }
 
+// Nov 2 notes (batch 16, 121): tasks being added to a section, drawn by List / Board where they'll land
+// (the top of the section for "+ Add task", else its end) until the saved task shows in the list.
+export function pendingTaskScope(projectId: string, sectionId: string | null) {
+  return `tasks:${projectId}:${sectionId ?? "none"}`;
+}
+
+export function PendingTaskRows({
+  projectId,
+  sectionId,
+  tasks,
+  position,
+  variant,
+  indent = "pl-9",
+}: {
+  projectId: string;
+  sectionId: string | null;
+  // Every task the page has in the section (the saved one is matched among them).
+  tasks: readonly { id: string; title: string }[];
+  position: "top" | "bottom";
+  variant: "row" | "card";
+  indent?: string;
+}) {
+  const pending = usePendingCreates(pendingTaskScope(projectId, sectionId), tasks).filter(
+    (p) => Boolean(p.meta?.atTop) === (position === "top"),
+  );
+  if (pending.length === 0) return null;
+  return pending.map((p) =>
+    variant === "row" ? (
+      <div
+        key={p.key}
+        data-pending-task=""
+        aria-busy="true"
+        className={`sticky left-0 flex min-h-row w-[min(100%,48rem)] items-center gap-2 border-b border-zinc-100 pr-3 ${indent}`}
+      >
+        <span aria-hidden className="size-4 shrink-0 rounded-full border border-zinc-300" />
+        <span className="min-w-0 flex-1 truncate text-sm text-zinc-800">{p.title}</span>
+        <span className="shrink-0 text-2xs text-zinc-400">Saving…</span>
+      </div>
+    ) : (
+      <li key={p.key} data-pending-task="" aria-busy="true">
+        <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-800 shadow-xs">
+          <p className="truncate">{p.title}</p>
+          <p className="mt-1 text-2xs text-zinc-400">Saving…</p>
+        </div>
+      </li>
+    ),
+  );
+}
+
 // `defaultOpen` starts with the input showing (Tab then Q, or the toolbar's "+ Add task", remounts it
 // with a new key to open it). `atTop` puts new tasks at the top of the section. In a List row the
 // closed state is Asana's grey "Add task…" text lined up with the task names (`indent`).
@@ -373,7 +423,13 @@ export function AddTaskInput({
         if (!input || !title) return;
         input.value = "";
         run(async () => {
-          const result = await createTask(projectId, sectionId, title, kind, atTop);
+          // Nov 2 notes (batch 16, 121): the new task shows at once in its section (PendingTaskRows).
+          const result = await withPendingCreate(
+            pendingTaskScope(projectId, sectionId),
+            title,
+            () => createTask(projectId, sectionId, title, kind, atTop),
+            { atTop, kind },
+          );
           // Nov 1 notes, batch 9a: a new approval task opens in the pane with the guided setup.
           if (!result.error && kind === "approval" && result.taskId) approvalAction(result.taskId, "setup");
           return result;

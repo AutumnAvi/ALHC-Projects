@@ -134,6 +134,17 @@ export type FlatSubtaskRow = {
   expanded: boolean;
 };
 
+// Nov 2 notes (batch 16, 120): while a view hides completed tasks, its subtask rows hide completed
+// subtasks too (and what's under them). How many subtasks a row would show when opened.
+export type SubtaskRowOptions = { hideCompleted?: boolean };
+
+export function shownSubtaskCount(
+  task: { subtaskCount: number; subtaskDoneCount: number },
+  options: SubtaskRowOptions = {},
+): number {
+  return options.hideCompleted ? Math.max(0, task.subtaskCount - task.subtaskDoneCount) : task.subtaskCount;
+}
+
 // The subtask rows under an open row, in order: each subtask, then (when it is open too) its own subtasks
 // one level deeper, down to the nesting limit.
 export function flattenSubtaskRows(
@@ -142,13 +153,17 @@ export function flattenSubtaskRows(
   childrenOf: Map<string, SubtaskItem[]>,
   isExpanded: (id: string) => boolean,
   depth = 1,
+  options: SubtaskRowOptions = {},
 ): FlatSubtaskRow[] {
   const rows: FlatSubtaskRow[] = [];
-  for (const item of childrenOf.get(parentId) ?? []) {
-    const hasChildren = (childrenOf.get(item.id)?.length ?? 0) > 0 || item.subtaskCount > 0;
+  const shown = (items: SubtaskItem[] | undefined) =>
+    (items ?? []).filter((item) => !(options.hideCompleted && item.completedAt));
+  for (const item of shown(childrenOf.get(parentId))) {
+    const loaded = childrenOf.get(item.id);
+    const hasChildren = loaded ? shown(loaded).length > 0 : shownSubtaskCount(item, options) > 0;
     const expanded = hasChildren && depth < MAX_SUBTASK_DEPTH && isExpanded(item.id);
     rows.push({ item, depth, parentTitle, hasChildren: hasChildren && depth < MAX_SUBTASK_DEPTH, expanded });
-    if (expanded) rows.push(...flattenSubtaskRows(item.id, item.title, childrenOf, isExpanded, depth + 1));
+    if (expanded) rows.push(...flattenSubtaskRows(item.id, item.title, childrenOf, isExpanded, depth + 1, options));
   }
   return rows;
 }

@@ -61,6 +61,7 @@ import { OPTION_COLOR_CLASSES, fieldLockManageable, fieldLockedFor, type FieldDe
 import type { Json } from "@/lib/supabase/database.types";
 import {
   columnsOf,
+  completionOf,
   fieldRef,
   groupOf,
   hasActiveFilters,
@@ -84,15 +85,17 @@ import {
   blockedCount,
   blockedSkipMessage,
   flattenSubtaskRows,
+  shownSubtaskCount,
   mergeDateEdit,
   splitBlocked,
   useSubtaskTrees,
   type DateEdit,
   type FlatSubtaskRow,
   type RowPatch,
+  type SubtaskRowOptions,
   type SubtaskTrees,
 } from "./inline-cells";
-import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf } from "./shared";
+import { ADD_TASK_EVENT, AddSection, AddTaskInput, PendingTaskRows, SectionActions, SectionTitle, addTaskKindOf } from "./shared";
 import { isPendingSection, useSectionsWithPending } from "./pending-sections";
 import { AttachmentCount, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
 import {
@@ -345,6 +348,8 @@ export function ListView({
   const navIds = groups.filter((group) => !collapsed.has(group.key)).flatMap((group) => shownIds(group));
   const selection = useTaskSelection(allIds, navIds);
   const tasksById = new Map(optimisticTasks.map((t) => [t.id, t]));
+  // Every task the page has per section: a pending new task gives way once its saved one is among them.
+  const tasksInSection = (sectionId: string | null) => optimisticTasks.filter((t) => t.sectionId === sectionId);
   const approvalShortcut = useApprovalShortcut();
 
   const toggle = (task: ProjectTask) => {
@@ -367,12 +372,15 @@ export function ListView({
   // (item 41). Dates go through the dependency shift (dependents may move too), never a plain update.
   const shift = useDependencyShift();
   const showAll = showsSubtasks(config);
+  // Nov 2 notes (batch 16, 120): completed tasks hidden = completed subtasks hidden in the rows too.
+  const subtaskRowOptions = { hideCompleted: completionOf(config.filters) === "incomplete" };
+  const hasShownSubtasks = (task: ProjectTask) => shownSubtaskCount(task, subtaskRowOptions) > 0;
   const treeRows: { id: string; rootId: string }[] = [];
   const treeRowIds = new Set<string>();
   for (const group of groups) {
     if (collapsed.has(group.key)) continue;
     for (const task of visibleTasks(group)) {
-      if (task.subtaskCount <= 0 || treeRowIds.has(task.id)) continue;
+      if (!hasShownSubtasks(task) || treeRowIds.has(task.id)) continue;
       treeRowIds.add(task.id);
       treeRows.push({ id: task.id, rootId: task.id });
     }
@@ -617,6 +625,7 @@ export function ListView({
     columns,
     gridStyle,
     handlers: subtaskHandlers,
+    rowOptions: subtaskRowOptions,
   };
   const sectionGroups = groups.filter((g) => g.section);
   const firstSectionGroup = groups.find((g) => g.target.kind === "section");
@@ -822,6 +831,16 @@ export function ListView({
                 />
               </div>
             ) : null}
+            {group.target.kind === "section" ? (
+              <PendingTaskRows
+                projectId={projectId}
+                sectionId={group.target.sectionId}
+                tasks={tasksInSection(group.target.sectionId)}
+                position="top"
+                variant="row"
+                indent={NAME_INDENT[who].title}
+              />
+            ) : null}
             {visibleTasks(group).map((task, index) => (
               <div
                 key={task.id}
@@ -841,7 +860,8 @@ export function ListView({
                 <TaskRow
                   task={task}
                   {...rowProps}
-                  expanded={task.subtaskCount > 0 && trees.isExpanded(task.id)}
+                  expandable={hasShownSubtasks(task)}
+                  expanded={hasShownSubtasks(task) && trees.isExpanded(task.id)}
                   onToggleExpanded={() => trees.toggle(task.id)}
                   draggable={canDragTasks}
                   dragging={draggingTask === task.id}
@@ -855,7 +875,7 @@ export function ListView({
                     setTaskDrop(null);
                   }}
                 />
-                {task.subtaskCount > 0 && trees.isExpanded(task.id) ? (
+                {hasShownSubtasks(task) && trees.isExpanded(task.id) ? (
                   <SubtaskRows root={task} {...subtaskProps} />
                 ) : null}
               </div>
@@ -878,6 +898,16 @@ export function ListView({
               <p className={`sticky left-0 flex min-h-row items-center border-b border-zinc-100 text-xs text-zinc-400 ${NAME_INDENT[who].title}`}>
                 {draggingTask ? "Drop here" : filtered ? "No matching tasks in this section." : "No tasks in this section yet."}
               </p>
+            ) : null}
+            {group.target.kind === "section" ? (
+              <PendingTaskRows
+                projectId={projectId}
+                sectionId={group.target.sectionId}
+                tasks={tasksInSection(group.target.sectionId)}
+                position="bottom"
+                variant="row"
+                indent={NAME_INDENT[who].title}
+              />
             ) : null}
             {group.target.kind === "section" && !saving ? (
               // Asana's inline "Add task…" row at the end of every section: grey text under the names.
@@ -1364,6 +1394,7 @@ function TaskRow({
   selecting,
   tagsInline,
   edit,
+  expandable,
   expanded,
   onToggleExpanded,
   draggable,
@@ -1387,6 +1418,8 @@ function TaskRow({
   selecting: boolean;
   tagsInline: boolean;
   edit: RowEdit;
+  // Whether the row has subtasks to show (Nov 2 notes, batch 16, 120: open ones while completed are hidden).
+  expandable: boolean;
   expanded: boolean;
   onToggleExpanded: () => void;
   draggable: boolean;
@@ -1471,7 +1504,7 @@ function TaskRow({
             }`}
           />
         ) : null}
-        <ExpandToggle expandable={task.subtaskCount > 0} expanded={expanded} title={task.title} onToggle={onToggleExpanded} />
+        <ExpandToggle expandable={expandable} expanded={expanded} title={task.title} onToggle={onToggleExpanded} />
         {/* Blocked tasks wear a lock (item 43); approval tasks only their approvers tick (Oct 29 notes, batch 7). */}
         <RowCompleteControl
           task={task}
@@ -1627,13 +1660,14 @@ type SubtaskRowsProps = {
   columns: ColumnKey[];
   gridStyle: React.CSSProperties;
   handlers: SubtaskHandlers;
+  rowOptions: SubtaskRowOptions;
 };
 
 // An open row's subtasks (Oct 27 notes, batch 6; also every row's with “Show subtasks”): every level,
 // indented, each one expandable when it has subtasks of its own, edited in place like a task row
 // (complete, rename, assignee, dates) for Editors. Subtasks aren't selected, dragged, or filtered — they
 // follow their task — and open in the pane with a click.
-function SubtaskRows({ root, trees, canEdit, ...rest }: { root: ProjectTask } & SubtaskRowsProps) {
+function SubtaskRows({ root, trees, canEdit, rowOptions, ...rest }: { root: ProjectTask } & SubtaskRowsProps) {
   const who = canEdit ? "editor" : "viewer";
   if (trees.isLoading(root.id)) {
     return (
@@ -1646,13 +1680,20 @@ function SubtaskRows({ root, trees, canEdit, ...rest }: { root: ProjectTask } & 
       </p>
     );
   }
-  const rows = flattenSubtaskRows(root.id, root.title, trees.childrenOf, trees.isExpanded);
+  const rows = flattenSubtaskRows(root.id, root.title, trees.childrenOf, trees.isExpanded, 1, rowOptions);
   if (rows.length === 0) return null;
   return (
     <ul aria-label={`Subtasks of “${root.title}”`}>
       {rows.map((row) => (
         <li key={row.item.id}>
-          <SubtaskRow row={row} indentRem={subtaskIndentRem(who, row.depth)} canEdit={canEdit} trees={trees} {...rest} />
+          <SubtaskRow
+            row={row}
+            indentRem={subtaskIndentRem(who, row.depth)}
+            canEdit={canEdit}
+            trees={trees}
+            rowOptions={rowOptions}
+            {...rest}
+          />
         </li>
       ))}
     </ul>

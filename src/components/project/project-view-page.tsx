@@ -31,6 +31,8 @@ import {
   getListColumnWidths,
   getProjectShowCompleted,
   getViewPersonalConfig,
+  getDependencyShiftMode,
+  getWorkWeek,
   type SubtaskItem,
 } from "@/lib/data";
 import { todayIn } from "@/lib/workload";
@@ -125,11 +127,15 @@ export async function ProjectViewPage({
     getProject(projectId),
   ]);
 
-  const [collapsedGroups, showCompleted, expandedTaskIds, personalConfig] = await Promise.all([
+  // Nov 2 notes (batch 16, 125): Timeline moves dependents at once with Auto-shift.
+  const shiftLoad =
+    layout === "timeline" ? Promise.all([getDependencyShiftMode(projectId), getWorkWeek()]) : Promise.resolve(null);
+  const [collapsedGroups, showCompleted, expandedTaskIds, personalConfig, shiftSettings] = await Promise.all([
     collapsedGroupsLoad,
     showCompletedLoad,
     expandedLoad,
     personalLoad,
+    shiftLoad,
   ]);
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
@@ -291,6 +297,8 @@ export async function ProjectViewPage({
             {...props}
             dependencies={dependencies}
             criticalPath={criticalPath}
+            shiftMode={shiftSettings?.[0] ?? null}
+            workWeek={shiftSettings?.[1]}
             windowed={scheduleTasks !== null}
             today={today}
             anchor={requestedDay}

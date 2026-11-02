@@ -870,7 +870,6 @@ function CommentItem({
             <FeedbackSubtaskButton
               task={feedbackTask}
               feedback={comment.body}
-              feedbackId={comment.id}
               from={comment.email.address}
               className="mt-1"
             />

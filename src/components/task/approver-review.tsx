@@ -66,7 +66,10 @@ export function ApproverReview({
   variant = "compact",
   onExpand,
   onDone,
+  onDecide,
 }: {
+  // Nov 2 notes (batch 16, 126): the approval card shows the decision at once.
+  onDecide?: (decision: "approved" | "changes_requested", note: string) => void;
   taskId: string;
   requestId: string;
   round: ApprovalRound;
@@ -126,14 +129,18 @@ export function ApproverReview({
       confirmLabel: submitLabel(decision),
     });
     if (!ok) return;
-    run(async () => {
-      const result = await decideApproval(requestId, decision, approverDecisionNote(assets, files, stored.overall));
-      if (!result.error) {
-        writeStored(key, null);
-        onDone?.();
-      }
-      return result;
-    });
+    const note = approverDecisionNote(assets, files, stored.overall);
+    run(
+      async () => {
+        const result = await decideApproval(requestId, decision, note);
+        if (!result.error) {
+          writeStored(key, null);
+          onDone?.();
+        }
+        return result;
+      },
+      () => onDecide?.(decision, note),
+    );
   }
 
   return (

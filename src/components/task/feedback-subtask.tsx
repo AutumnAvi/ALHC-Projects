@@ -6,7 +6,7 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { createSubtaskFromFeedback } from "@/lib/actions";
 import type { TaskDetail } from "@/lib/data";
 import { feedbackSubtaskNotes, feedbackSubtaskTitle } from "@/lib/feedback-subtask";
-import { addPendingSubtask, dropPendingSubtasks, settlePendingSubtask, usePendingSubtasks } from "./pending-subtasks-store";
+import { withPendingCreate } from "@/lib/pending-creates";
 
 // A link back to the task the feedback is on (the subtask's description; its breadcrumb also leads there).
 function taskLink(task: TaskDetail): string | null {
@@ -17,31 +17,26 @@ function taskLink(task: TaskDetail): string | null {
 }
 
 // Nov 2 notes (batch 17, 131): "Create subtask" next to a piece of feedback. The subtask shows in the
-// task's Subtasks at once (pending-subtasks-store.ts) and is saved in the background; a refusal takes it
+// task's Subtasks at once (batch 16's pending-creates.ts, the subtask list's own scope) and is saved in the
+// background; a refusal takes it
 // away again and the toast says why. Once made (or while a subtask by that name exists) it reads
 // "Subtask created". Editors only (the caller decides; create_subtask checks).
 export function FeedbackSubtaskButton({
   task,
   feedback,
-  feedbackId,
   from,
   className = "",
 }: {
   task: TaskDetail;
   feedback: string;
-  // Tells two pieces of feedback with the same text apart while one is saving.
-  feedbackId: string;
   from: string;
   className?: string;
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
-  const pending = usePendingSubtasks();
   const [made, setMade] = useState(false);
   const title = feedbackSubtaskTitle(feedback);
-  const tempId = `feedback-${feedbackId}`;
-  const exists =
-    made || pending.some((p) => p.tempId === tempId) || task.subtasks.some((s) => s.title.trim() === title);
+  const exists = made || task.subtasks.some((s) => s.title.trim() === title);
 
   if (exists) {
     return (
@@ -54,17 +49,11 @@ export function FeedbackSubtaskButton({
 
   function create() {
     setMade(true);
-    addPendingSubtask({ tempId, parentId: task.id, title });
     const notes = feedbackSubtaskNotes({ feedback, from, link: taskLink(task) });
     run(async () => {
-      const result = await createSubtaskFromFeedback(task.id, title, notes);
-      if (result.error || !result.subtaskId) {
-        dropPendingSubtasks([tempId]);
-        setMade(false);
-      } else {
-        settlePendingSubtask(tempId, result.subtaskId);
-        notify(`Subtask “${title}” created`);
-      }
+      const result = await withPendingCreate(`subtasks:${task.id}`, title, () => createSubtaskFromFeedback(task.id, title, notes));
+      if (result.error) setMade(false);
+      else notify(`Subtask “${title}” created`);
       return result;
     });
   }

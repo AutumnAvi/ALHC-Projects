@@ -7586,3 +7586,61 @@ export async function loadCommentRefs(supabase: Supabase, bodies: string[]): Pro
   for (const p of projects.data ?? []) refs.projects[p.id] = { name: p.name };
   return refs;
 }
+
+// A task's number and the project named next to it, picked together (Oct 29 notes, 55b): the first
+// number the viewer can read with the project that issued it, else (no number) the first project they can
+// read. A database without task_project_labels: the release before this one — each task's home-project
+// label, next to the project the RPC named.
+export async function numbersWithTheirProjects(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tasks: { id: string; projectId: string | null }[],
+): Promise<Map<string, { label: RequestLabel | null; projectName: string | null }>> {
+  const ids = tasks.map((t) => t.id);
+  const places = await visibleTaskPlacesOrNull(ids);
+  if (places) {
+    return new Map(
+      tasks.map((t) => {
+        const paired = numberWithItsProject(places.get(t.id));
+        return [t.id, { label: paired.label, projectName: paired.projectName }] as const;
+      }),
+    );
+  }
+  const projectIds = [...new Set(tasks.map((t) => t.projectId).filter((p): p is string => Boolean(p)))];
+  const [labels, projects] = await Promise.all([
+    firstVisibleNumbers(ids),
+    projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  ]);
+  const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
+  return new Map(
+    tasks.map((t) => [t.id, { label: labels.get(t.id) ?? null, projectName: t.projectId ? (names.get(t.projectId) ?? null) : null }] as const),
+  );
+}
+
+// 42. "Make a subtask of…": tasks the viewer edits that this task can go under (searchable). Read by
+// GET /api/task-pane/<id>/parents (Nov 2 notes, batch 16, 124) with the person's own client.
+export type ParentCandidate = { id: string; title: string; label: RequestLabel | null; projectName: string | null; isSubtask: boolean; completed: boolean };
+
+export async function listSubtaskParents(taskId: string, query: string): Promise<{ error?: string; data?: ParentCandidate[] }> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("subtask_parent_candidates", {
+    target_task: taskId,
+    query: query.slice(0, 200),
+    max_results: 30,
+  });
+  if (result.error) return { error: result.error.message };
+  const found = result.data ?? [];
+  const named = await numbersWithTheirProjects(
+    supabase,
+    found.map((c) => ({ id: c.id, projectId: c.home_project_id })),
+  );
+  return {
+    data: found.map((c) => ({
+      id: c.id,
+      title: c.title,
+      label: named.get(c.id)?.label ?? null,
+      projectName: named.get(c.id)?.projectName ?? null,
+      isSubtask: c.parent_task_id !== null,
+      completed: c.completed_at !== null,
+    })),
+  };
+}

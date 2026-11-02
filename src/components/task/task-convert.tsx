@@ -5,7 +5,9 @@ import { Check, Search } from "lucide-react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { convertToSubtask, convertToTask, searchSubtaskParents, type ParentCandidate } from "@/lib/actions";
+import { convertToSubtask, convertToTask } from "@/lib/actions";
+import type { ParentCandidate } from "@/lib/data";
+import { forgetParents, searchParents } from "./parent-search";
 import type { TaskDetail, TaskMembership } from "@/lib/data";
 import { taskPermissions } from "@/lib/permissions";
 import { TaskNumberBadge, taskNumberText } from "./task-number";
@@ -79,6 +81,17 @@ export function mainTaskNote(projectName: string) {
   return `It gets ${projectName}’s next number and keeps its comments, files, followers, and subtasks.`;
 }
 
+// Nov 2 notes (batch 16, 123): the checkbox under Convert to main task.
+export function blockParentLabel(parentTitle: string | null) {
+  return parentTitle ? `Make this task block “${parentTitle}”` : "Make this task block the task it came from";
+}
+
+export function convertedToast(title: string, projectName: string, blocks: string | null) {
+  return blocks
+    ? `“${title}” is now a task in ${projectName}, and blocks “${blocks}”`
+    : `“${title}” is now a task in ${projectName}`;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Dialogs
 // ---------------------------------------------------------------------------------------------
@@ -90,6 +103,7 @@ export function ConvertTaskDialog({ task, onClose }: { task: TaskDetail; onClose
       <ConvertToMainTaskDialog
         taskId={task.id}
         title={task.title}
+        parent={task.ancestors.at(-1) ?? null}
         memberships={task.memberships}
         editableProjectIds={task.editableProjectIds}
         onClose={onClose}
@@ -113,21 +127,30 @@ export function MakeSubtaskDialog({ taskId, title, onClose }: { taskId: string; 
   const [picked, setPicked] = useState<ParentCandidate | null>(null);
   const ticket = useRef(0);
 
-  // Debounced search; an answer to an older query is dropped.
+  // Debounced search through a GET route (Nov 2 notes, batch 16, 124): a newer query aborts the older
+  // one, and the blank list (prefetched when the "…" menu opened) shows at once.
   useEffect(() => {
     const mine = ++ticket.current;
     const trimmed = query.trim();
+    const controller = new AbortController();
     const timer = window.setTimeout(
       async () => {
-        const result = await searchSubtaskParents(taskId, trimmed);
-        if (mine !== ticket.current) return;
-        setError(result.error ?? null);
-        setResults(result.data ?? []);
-        setActive(0);
+        try {
+          const result = await searchParents(taskId, trimmed, controller.signal);
+          if (mine !== ticket.current) return;
+          setError(result.error ?? null);
+          setResults(result.data);
+          setActive(0);
+        } catch {
+          // Aborted by a newer search.
+        }
       },
-      trimmed ? 200 : 0,
+      trimmed ? 150 : 0,
     );
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [taskId, query]);
 
   const list = results ?? [];
@@ -138,6 +161,7 @@ export function MakeSubtaskDialog({ taskId, title, onClose }: { taskId: string; 
     run(async () => {
       const result = await convertToSubtask(taskId, parent.id);
       if (!result.error) {
+        forgetParents();
         onClose();
         notify(`“${title}” is now a subtask of “${parent.title}”`);
       }
@@ -258,12 +282,15 @@ export function MakeSubtaskDialog({ taskId, title, onClose }: { taskId: string; 
 export function ConvertToMainTaskDialog({
   taskId,
   title,
+  parent = null,
   memberships,
   editableProjectIds,
   onClose,
 }: {
   taskId: string;
   title: string;
+  // The task it's a subtask of (the checkbox "Make this task block …" links them).
+  parent?: { id: string; title: string } | null;
   // The tree's projects (a subtask's are its top-level task's), with their sections.
   memberships: TaskMembership[];
   editableProjectIds: string[];
@@ -276,6 +303,8 @@ export function ConvertToMainTaskDialog({
   const fallback = editable[0];
   const [projectId, setProjectId] = useState(fallback?.projectId ?? "");
   const [sectionId, setSectionId] = useState("");
+  const [blockParent, setBlockParent] = useState(false);
+  const blockId = useId();
   const project = editable.find((m) => m.projectId === projectId) ?? fallback;
 
   return (
@@ -289,10 +318,12 @@ export function ConvertToMainTaskDialog({
           onSubmit={(e) => {
             e.preventDefault();
             run(async () => {
-              const result = await convertToTask(taskId, project.projectId, sectionId || null);
+              const blocks = blockParent && parent ? parent : null;
+              const result = await convertToTask(taskId, project.projectId, sectionId || null, { blockParent: Boolean(blocks) });
               if (!result.error) {
                 onClose();
-                notify(`“${title}” is now a task in ${project.projectName}`);
+                forgetParents();
+                notify(convertedToast(title, project.projectName, blocks?.title ?? null));
               }
               return result;
             });
@@ -330,6 +361,24 @@ export function ConvertToMainTaskDialog({
               options={[{ value: "", label: "No section" }, ...project.sections.map((s) => ({ value: s.id, label: s.name }))]}
             />
           </div>
+          {parent ? (
+            <label htmlFor={blockId} className="flex cursor-pointer items-start gap-2 text-sm text-zinc-800">
+              <input
+                id={blockId}
+                type="checkbox"
+                data-block-parent=""
+                checked={blockParent}
+                onChange={(e) => setBlockParent(e.currentTarget.checked)}
+                className="mt-0.5 size-4 accent-accent-600"
+              />
+              <span>
+                {blockParentLabel(parent.title)}
+                <span className="block text-xs text-zinc-500">
+                  “{parent.title}” can’t be completed until this one is (a finish-to-start dependency).
+                </span>
+              </span>
+            </label>
+          ) : null}
           <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">{mainTaskNote(project.projectName)}</p>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn-ghost" onClick={onClose}>

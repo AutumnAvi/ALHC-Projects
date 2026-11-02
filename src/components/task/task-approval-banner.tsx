@@ -1,6 +1,7 @@
 "use client";
 
-import { useId, useOptimistic, useRef, useState } from "react";
+import { useEffect, useId, useOptimistic, useRef, useState, type ReactNode } from "react";
+import { DECISION_NOTE_OPEN_MS, applyApprovalChange, decisionSummary } from "@/lib/approval-optimistic";
 import { CalendarDays, Check, ChevronDown, ChevronRight, Clock, History, Lock, Paperclip, Send, ThumbsUp, UserRound, Users } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
@@ -161,7 +162,7 @@ export function ApprovalTaskBanner({
 // approved, history, changing approvers) behind Details, open or closed as this browser last left it.
 function ApprovalPanel({
   task,
-  info,
+  info: serverInfo,
   profiles,
   memberId,
 }: {
@@ -171,6 +172,10 @@ function ApprovalPanel({
   memberId: string;
 }) {
   const [pending, run] = useServerAction();
+  // Nov 2 notes (batch 16, 126): every approval action changes the card at once (approval-optimistic.ts);
+  // the server's answer replaces it.
+  const [info, applyInfo] = useOptimistic(serverInfo, applyApprovalChange);
+  const nowIso = () => new Date().toISOString();
   const notify = useNotify();
   const confirm = useConfirm();
   const today = useToday();
@@ -415,7 +420,7 @@ function ApprovalPanel({
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => run(() => acknowledgeApproval(task.id))}
+                onClick={() => run(() => acknowledgeApproval(task.id), () => applyInfo({ type: "acknowledge", at: nowIso() }))}
                 className={`btn-primary ${small}`}
               >
                 <Check className="size-3.5" aria-hidden />
@@ -434,7 +439,7 @@ function ApprovalPanel({
                     cancelLabel: "Keep it",
                     tone: "danger",
                   });
-                  if (ok) run(() => withdrawApproval(task.id));
+                  if (ok) run(() => withdrawApproval(task.id), () => applyInfo({ type: "withdraw", at: nowIso() }));
                 }}
                 className={`btn-ghost text-zinc-600 ${small}`}
               >
@@ -502,38 +507,25 @@ function ApprovalPanel({
         </div>
       </div>
       <div className="px-3 pb-2.5 empty:hidden">
-      {decisionRequest ? (
-        <div
-          className={`mt-2 rounded-md border px-2.5 py-1.5 text-sm ${
-            status === "rejected" ? "border-red-200 bg-red-50 text-red-900" : "border-amber-200 bg-amber-50 text-amber-900"
-          } ${paused ? "shadow-sm" : ""}`}
-          data-approval-decision-note=""
-        >
-          <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-medium">
-            <Avatar name={nameOf(decisionRequest.approverId, true)} profileId={decisionRequest.approverId} />
-            {nameOf(decisionRequest.approverId, true)} {status === "rejected" ? "rejected this" : "requested changes"}
-            {decisionRequest.decidedAt ? (
-              <span className="font-normal opacity-75">
-                · <Timestamp iso={decisionRequest.decidedAt} />
-              </span>
-            ) : null}
-          </p>
-          {decisionRequest.decisionNote ? (
-            <p className="mt-1 whitespace-pre-wrap">{decisionRequest.decisionNote}</p>
-          ) : (
-            <p className="mt-1 italic opacity-75">No note.</p>
-          )}
-          {/* Nov 2 notes (batch 17, 131): Feedback received stays above; this turns the note into a subtask. */}
-          {decisionRequest.decisionNote && canAddSubtask(task) ? (
-            <FeedbackSubtaskButton
-              task={task}
-              feedback={decisionRequest.decisionNote}
-              feedbackId={decisionRequest.id}
-              from={nameOf(decisionRequest.approverId)}
-              className="-ml-1.5 mt-1"
-            />
-          ) : null}
-        </div>
+      {decisionRequest && (status === "changes_requested" || status === "rejected") ? (
+        <DecisionNote
+          key={decisionRequest.id}
+          request={decisionRequest}
+          decision={status}
+          name={nameOf(decisionRequest.approverId, true)}
+          paused={paused}
+          action={
+            // Nov 2 notes (batch 17, 131): next to Feedback received, turn the note into a subtask.
+            decisionRequest.decisionNote && canAddSubtask(task) ? (
+              <FeedbackSubtaskButton
+                task={task}
+                feedback={decisionRequest.decisionNote}
+                from={nameOf(decisionRequest.approverId)}
+                className="-ml-1.5 mt-1"
+              />
+            ) : null
+          }
+        />
       ) : null}
 
       {reviewsFiles && myRequest && latest && !decision ? (
@@ -543,6 +535,9 @@ function ApprovalPanel({
           round={latest}
           attachments={task.attachments}
           onExpand={() => setReviewExpanded(true)}
+          onDecide={(choice, note) =>
+            applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() })
+          }
         />
       ) : null}
       {reviewExpanded && reviewsFiles && myRequest && latest ? (
@@ -551,6 +546,9 @@ function ApprovalPanel({
           requestId={myRequest.id}
           round={latest}
           attachments={task.attachments}
+          onDecide={(choice, note) =>
+            applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() })
+          }
           onClose={() => setReviewExpanded(false)}
         />
       ) : null}
@@ -567,7 +565,11 @@ function ApprovalPanel({
             onCancel={() => setDecision(null)}
             onDecide={(choice, note) => {
               setDecision(null);
-              run(() => decideApproval(myRequest.id, choice, note || undefined));
+              run(
+                () => decideApproval(myRequest.id, choice, note || undefined),
+                () =>
+                  applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() }),
+              );
             }}
           />
         </div>
@@ -663,7 +665,14 @@ function ApprovalPanel({
           <div className="mt-2">
             <HandOffButton
               candidates={eligible.filter((p) => p.id !== memberId && !settings.approverIds.includes(p.id))}
-              onHandOff={(personId, note) => run(() => handOffApproval(task.id, personId, note))}
+              onHandOff={(personId, note) =>
+                run(
+                  () => handOffApproval(task.id, personId, note),
+                  () =>
+                    myRequest &&
+                    applyInfo({ type: "hand_off", requestId: myRequest.id, from: memberId, to: personId, note: note || null, at: nowIso() }),
+                )
+              }
             />
           </div>
         ) : null}
@@ -675,6 +684,74 @@ function ApprovalPanel({
       {sending ? <SendForApprovalDialog task={task} profiles={profiles} onClose={() => setSending(false)} /> : null}
       {settingUp ? <ApprovalSetupDialog task={task} profiles={profiles} onClose={() => setSettingUp(false)} /> : null}
     </section>
+  );
+}
+
+// Nov 2 notes (batch 16, 126): the approver's "requested changes" / "rejected" note shows in full when it
+// appears, then folds to one line after a few seconds (unless the pointer or focus is on it); a click on
+// the line opens it again, and it stays open then.
+function DecisionNote({
+  request,
+  decision,
+  name,
+  paused,
+  action = null,
+}: {
+  request: TaskApproval;
+  decision: "changes_requested" | "rejected";
+  name: string;
+  paused: boolean;
+  // Nov 2 notes (batch 17, 131): "Create subtask" under the note.
+  action?: ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+  const [pinned, setPinned] = useState(false);
+  const [holding, setHolding] = useState(false);
+  const bodyId = useId();
+  useEffect(() => {
+    if (!open || pinned || holding) return;
+    const timer = window.setTimeout(() => setOpen(false), DECISION_NOTE_OPEN_MS);
+    return () => window.clearTimeout(timer);
+  }, [open, pinned, holding]);
+  const tone = decision === "rejected" ? "border-red-200 bg-red-50 text-red-900" : "border-amber-200 bg-amber-50 text-amber-900";
+  const toggle = () => {
+    setOpen((value) => !value);
+    setPinned(true);
+  };
+  return (
+    <div
+      className={`mt-2 rounded-md border text-sm ${tone} ${paused && open ? "shadow-sm" : ""}`}
+      data-approval-decision-note=""
+      data-collapsed={open ? undefined : ""}
+      onPointerEnter={() => setHolding(true)}
+      onPointerLeave={() => setHolding(false)}
+      onFocus={() => setHolding(true)}
+      onBlur={() => setHolding(false)}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={toggle}
+        className="flex w-full min-w-0 items-center gap-1.5 px-2.5 py-1.5 text-left text-xs font-medium"
+      >
+        <Avatar name={name} profileId={request.approverId} />
+        <span className="min-w-0 flex-1 truncate">
+          {open ? `${name} ${decision === "rejected" ? "rejected this" : "requested changes"}` : decisionSummary(name, decision, request.decisionNote)}
+          {request.decidedAt ? (
+            <span className="font-normal opacity-75">
+              {" "}
+              · <Timestamp iso={request.decidedAt} />
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      <div id={bodyId} hidden={!open} className="px-2.5 pb-1.5">
+        {request.decisionNote ? <p className="whitespace-pre-wrap">{request.decisionNote}</p> : <p className="italic opacity-75">No note.</p>}
+        {action}
+      </div>
+    </div>
   );
 }
 
@@ -789,7 +866,7 @@ function ApprovalHistory({
                   ) : null}
                   {r.decisionNote ? <span className="block whitespace-pre-wrap pl-2 text-zinc-600">“{r.decisionNote}”</span> : null}
                   {r.decisionNote && (r.status === "changes_requested" || r.status === "rejected") && canAddSubtask(task) ? (
-                    <FeedbackSubtaskButton task={task} feedback={r.decisionNote} feedbackId={r.id} from={nameOf(r.approverId)} className="ml-0.5" />
+                    <FeedbackSubtaskButton task={task} feedback={r.decisionNote} from={nameOf(r.approverId)} className="ml-0.5" />
                   ) : null}
                   {r.cancelReason === "handed_off" && r.handoffNote ? (
                     <span className="block whitespace-pre-wrap pl-2 text-zinc-600">“{r.handoffNote}”</span>

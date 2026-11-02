@@ -19,11 +19,12 @@ import {
   listTeams,
   loadTaskCommentPage,
   loadSubmitterConversation,
-  firstVisibleNumbers,
   countOpenRoleTasks,
   listTaskRoleLinks,
   visibleRequestLabelsIn,
-  visibleTaskPlacesOrNull,
+  listSubtaskParents,
+  numbersWithTheirProjects,
+  type ParentCandidate,
   type SubmitterConversation,
   type SubtaskItem,
   type TaskComment,
@@ -34,7 +35,7 @@ import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/
 import { safeDownload } from "@/lib/safe-fetch";
 import { drainOutbox, isEmailConfigured } from "@/lib/email";
 import { forwardingAddress } from "@/lib/email-reply";
-import { numberWithItsProject, templateProblem } from "@/lib/request-numbers";
+import { templateProblem } from "@/lib/request-numbers";
 import { drainIntegrationOutbox, generateSigningSecret } from "@/lib/integrations";
 import { ImportParseError, buildImportPlan, importSteps, planExternalIds, type ImportPlan } from "@/lib/asana-import";
 import {
@@ -2513,12 +2514,13 @@ export async function removeTaskFromProject(
 // Subtasks are tasks (parent_task_id). Assignee, dates, notes, and fields go through updateTask and
 // friends like any task; these cover creating, renaming, completing, ordering, and deleting from a list.
 
+// Returns the new subtask's id (Nov 2 notes, batch 16: the pane's pending row gives way to it).
 export async function createSubtask(
   parentId: string,
   title: string,
   beforeId?: string | null,
-): Promise<ActionResult & { subtaskId?: string }> {
-  let subtaskId: string | undefined;
+): Promise<ActionResult & { taskId?: string }> {
+  let taskId: string | undefined;
   const result = await run(async () => {
     const supabase = await createClient();
     const created = await supabase.rpc("create_subtask", {
@@ -2527,22 +2529,21 @@ export async function createSubtask(
       before_task: beforeId ? id(beforeId, "subtask") : null,
     });
     check(created);
-    // The pane's pending row (Nov 2 notes, batch 17) goes once the list has this id.
-    subtaskId = typeof created.data === "string" ? created.data : undefined;
+    if (typeof created.data === "string") taskId = created.data;
   });
-  return { ...result, subtaskId };
+  return result.error ? result : { ...result, taskId };
 }
 
 // Nov 2 notes (batch 17, 131): a subtask made from a piece of feedback (an approver's requested changes,
 // a submitter's emailed reply, a review's outcome): its title from the feedback and a description with
 // the full text and a link back to the task the feedback is on. Editors of the task (create_subtask and
-// the tasks update policy decide).
+// the tasks update policy decide). Returns the new subtask's id, like createSubtask (pending-creates.ts).
 export async function createSubtaskFromFeedback(
   parentId: string,
   title: string,
   notes: string,
-): Promise<ActionResult & { subtaskId?: string }> {
-  let subtaskId: string | undefined;
+): Promise<ActionResult & { taskId?: string }> {
+  let taskId: string | undefined;
   const result = await run(async () => {
     const supabase = await createClient();
     const created = await supabase.rpc("create_subtask", {
@@ -2551,13 +2552,13 @@ export async function createSubtaskFromFeedback(
       before_task: null,
     });
     check(created);
-    subtaskId = typeof created.data === "string" ? created.data : undefined;
+    taskId = typeof created.data === "string" ? created.data : undefined;
     const description = optionalText(notes);
-    if (subtaskId && description) {
-      checkUpdated(await supabase.from("tasks").update({ notes: description }).eq("id", subtaskId).select("id"));
+    if (taskId && description) {
+      checkUpdated(await supabase.from("tasks").update({ notes: description }).eq("id", taskId).select("id"));
     }
   });
-  return { ...result, subtaskId };
+  return result.error ? result : { ...result, taskId };
 }
 
 export async function updateSubtask(
@@ -2585,20 +2586,28 @@ export async function convertToSubtask(taskId: string, parentId: string): Promis
 
 // Makes a subtask a top-level task of a project the viewer edits. The pane always names one (the first of
 // the tree's projects the viewer edits, by default; Oct 29 notes, 55b); without one the database picks.
+// Nov 2 notes (batch 16, 123): `blockParent` also makes the new task block the task it came from (one
+// transaction: convert_subtask_to_task).
 export async function convertToTask(
   taskId: string,
   projectId?: string | null,
   sectionId?: string | null,
+  options: { blockParent?: boolean } = {},
 ): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.rpc("convert_to_task", {
-        target_task: id(taskId, "task"),
-        target_project: projectId ? id(projectId, "project") : null,
-        target_section: sectionId ? id(sectionId, "section") : null,
-      }),
-    );
+    const args = {
+      target_task: id(taskId, "task"),
+      target_project: projectId ? id(projectId, "project") : null,
+      target_section: sectionId ? id(sectionId, "section") : null,
+    };
+    if (options.blockParent === true) {
+      const both = await supabase.rpc("convert_subtask_to_task", { ...args, block_parent: true });
+      if (both.error?.code === "PGRST202") throw new InputError("Blocking the parent task needs this release’s database update");
+      check(both);
+      return;
+    }
+    check(await supabase.rpc("convert_to_task", args));
   });
 }
 
@@ -7355,60 +7364,16 @@ export async function loadTaskBlockers(taskId: string): Promise<{ error?: string
   });
 }
 
-// A task's number and the project named next to it, picked together (Oct 29 notes, 55b): the first
-// number the viewer can read with the project that issued it, else (no number) the first project they can
-// read. A database without task_project_labels: the release before this one — each task's home-project
-// label, next to the project the RPC named.
-async function numbersWithTheirProjects(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  tasks: { id: string; projectId: string | null }[],
-): Promise<Map<string, { label: RequestLabel | null; projectName: string | null }>> {
-  const ids = tasks.map((t) => t.id);
-  const places = await visibleTaskPlacesOrNull(ids);
-  if (places) {
-    return new Map(
-      tasks.map((t) => {
-        const paired = numberWithItsProject(places.get(t.id));
-        return [t.id, { label: paired.label, projectName: paired.projectName }] as const;
-      }),
-    );
-  }
-  const projectIds = [...new Set(tasks.map((t) => t.projectId).filter((p): p is string => Boolean(p)))];
-  const [labels, projects] = await Promise.all([
-    firstVisibleNumbers(ids),
-    projectIds.length ? supabase.from("projects").select("id, name").in("id", projectIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-  ]);
-  const names = new Map((projects.data ?? []).map((p) => [p.id, p.name] as const));
-  return new Map(
-    tasks.map((t) => [t.id, { label: labels.get(t.id) ?? null, projectName: t.projectId ? (names.get(t.projectId) ?? null) : null }] as const),
-  );
-}
-
-// 42. "Make a subtask of…": tasks the viewer edits that this task can go under (searchable).
-export type ParentCandidate = { id: string; title: string; label: RequestLabel | null; projectName: string | null; isSubtask: boolean; completed: boolean };
+// 42. "Make a subtask of…": tasks the viewer edits that this task can go under (searchable). Since Nov 2
+// notes (batch 16, 124) the picker reads GET /api/task-pane/<id>/parents (a route, so searches never queue
+// behind other actions); this action stays for callers that want it.
+export type { ParentCandidate } from "@/lib/data";
 
 export async function searchSubtaskParents(taskId: string, query: string): Promise<{ error?: string; data?: ParentCandidate[] }> {
   return read(async () => {
-    const supabase = await createClient();
-    const result = await supabase.rpc("subtask_parent_candidates", {
-      target_task: id(taskId, "task"),
-      query: typeof query === "string" ? query.slice(0, 200) : "",
-      max_results: 30,
-    });
-    check(result);
-    const found = result.data ?? [];
-    const named = await numbersWithTheirProjects(
-      supabase,
-      found.map((c) => ({ id: c.id, projectId: c.home_project_id })),
-    );
-    return found.map((c) => ({
-      id: c.id,
-      title: c.title,
-      label: named.get(c.id)?.label ?? null,
-      projectName: named.get(c.id)?.projectName ?? null,
-      isSubtask: c.parent_task_id !== null,
-      completed: c.completed_at !== null,
-    }));
+    const result = await listSubtaskParents(id(taskId, "task"), typeof query === "string" ? query : "");
+    if (result.error) throw new DbError(result.error);
+    return result.data;
   });
 }
 

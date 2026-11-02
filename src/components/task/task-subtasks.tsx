@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useOptimistic, useRef, useState, type DragEvent } from "react";
-import { addPendingSubtask, dropPendingSubtasks, settlePendingSubtask, usePendingSubtasks } from "./pending-subtasks-store";
+import { useOptimistic, useRef, useState, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
@@ -22,6 +21,7 @@ import { useDateText } from "./task-dates";
 import { PANE_HEADING } from "./pane-styles";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromSubtask } from "@/lib/task-seed";
+import { usePendingCreates, withPendingCreate } from "@/lib/pending-creates";
 import { useSubtaskPrefs } from "./subtask-prefs";
 import { SUBTASK_SORTS, SUBTASK_SORT_LABELS, isOrganized, organizeSummary, organizeSubtasks, type SubtaskPrefs } from "@/lib/subtask-view";
 
@@ -83,16 +83,10 @@ export function TaskSubtasks({
   };
   const inputRef = useRef<HTMLInputElement>(null);
   const [allSubtasks, change] = useOptimistic(task.subtasks, applyChange);
-  // Nov 2 notes (batch 17, 131): subtasks still saving ("+ Add subtask", "Create subtask" from feedback),
-  // drawn at once at the end; each goes once the saved one is in the list.
-  const pendingAll = usePendingSubtasks();
-  const savedIds = new Set(task.subtasks.map((s) => s.id));
-  const arrived = pendingAll.filter((p) => p.parentId === task.id && p.serverId && savedIds.has(p.serverId)).map((p) => p.tempId);
-  const arrivedKey = arrived.join(",");
-  useEffect(() => {
-    if (arrivedKey) dropPendingSubtasks(arrivedKey.split(","));
-  }, [arrivedKey]);
-  const pendingRows = pendingAll.filter((p) => p.parentId === task.id && !(p.serverId && savedIds.has(p.serverId)));
+  // Nov 2 notes (batch 16, 121): a new subtask shows at once with what was typed; its number fills in
+  // when the saved one replaces it (pending-creates.ts).
+  const pendingScope = `subtasks:${task.id}`;
+  const pendingAdds = usePendingCreates(pendingScope, task.subtasks);
   // Oct 27 notes (batch 5): Filter (Hide completed, Assigned to me) and Sort, remembered per person.
   const { prefs, setPrefs } = useSubtaskPrefs();
   const me = memberId ?? null;
@@ -122,7 +116,7 @@ export function TaskSubtasks({
         (s.kind === "approval" ? hasRole(task.memberRoles[p.id], "commenter") : p.id in task.memberRoles),
     );
 
-  if (allSubtasks.length === 0 && pendingRows.length === 0 && !(canEdit && !atDepthLimit)) return null;
+  if (allSubtasks.length === 0 && pendingAdds.length === 0 && !(canEdit && !atDepthLimit)) return null;
 
   function move(subtask: SubtaskItem, beforeId: string | null) {
     if (beforeId === subtask.id) return;
@@ -167,14 +161,7 @@ export function TaskSubtasks({
     const title = input?.value.trim();
     if (!input || !title) return;
     input.value = "";
-    const tempId = `subtask-${crypto.randomUUID()}`;
-    addPendingSubtask({ tempId, parentId: task.id, title });
-    run(async () => {
-      const result = await createSubtask(task.id, title);
-      if (result.error || !result.subtaskId) dropPendingSubtasks([tempId]);
-      else settlePendingSubtask(tempId, result.subtaskId);
-      return result;
-    });
+    run(() => withPendingCreate(pendingScope, title, () => createSubtask(task.id, title)));
   }
 
   return (
@@ -184,6 +171,7 @@ export function TaskSubtasks({
         <ConvertToMainTaskDialog
           taskId={converting.id}
           title={converting.title}
+          parent={{ id: task.id, title: task.title }}
           memberships={task.memberships}
           editableProjectIds={task.editableProjectIds}
           onClose={() => setConverting(null)}
@@ -213,7 +201,7 @@ export function TaskSubtasks({
         </p>
       ) : null}
 
-      {allSubtasks.length > 0 || pendingRows.length > 0 || adding ? (
+      {allSubtasks.length > 0 || adding || pendingAdds.length > 0 ? (
         <ul
           className="mt-1.5 border-t border-zinc-100"
           onDragOver={(e) => {
@@ -399,16 +387,16 @@ export function TaskSubtasks({
               </li>
             );
           })}
-          {pendingRows.map((p) => (
+          {pendingAdds.map((p) => (
             <li
-              key={p.tempId}
-              className="flex min-h-9 items-center gap-1.5 border-b border-zinc-100 pl-5 pr-1"
-              aria-busy="true"
+              key={p.key}
               data-pending-subtask=""
+              aria-busy="true"
+              className="flex min-h-9 items-center gap-1.5 border-b border-zinc-100 pl-5 pr-1"
             >
               <span aria-hidden className="size-4 shrink-0 rounded-full border border-zinc-300" />
               <span className="min-w-0 flex-1 truncate px-1 text-sm text-zinc-800">{p.title}</span>
-              <span className="shrink-0 text-xs text-zinc-400">Saving…</span>
+              <span className="shrink-0 pr-1 text-2xs text-zinc-400">Saving…</span>
             </li>
           ))}
           {adding ? (
