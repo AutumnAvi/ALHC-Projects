@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { ROLES_HELP_HREF } from "@/lib/role-help";
 import { Crown, LogOut, UserMinus, UserPlus, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
@@ -21,7 +22,6 @@ import {
 } from "@/lib/actions";
 import type { ProjectMember } from "@/lib/data";
 import {
-  COMMENTER_SWITCH_HREF,
   PERSON_DEFAULT_ROLE,
   OFFERED_PROJECT_ROLES,
   ROLE_DESCRIPTIONS,
@@ -367,34 +367,19 @@ export function MembersManager({
           Roles
         </h2>
         <dl className="mt-2 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
-          {OFFERED_PROJECT_ROLES.map((role) => (
+          {OFFERED_PROJECT_ROLES.filter((role) => role !== "commenter" || allowCommenter).map((role) => (
             <div key={role} className="contents">
               <dt className="font-medium text-zinc-800">{ROLE_LABELS[role]}</dt>
-              <dd className="text-zinc-600">
-                {ROLE_DESCRIPTIONS[role]}
-                {role === "commenter" && !allowCommenter ? (
-                  <>
-                    {" "}
-                    (turned off in this workspace —{" "}
-                    {isWorkspaceAdmin ? (
-                      <Link href={COMMENTER_SWITCH_HREF} className="text-accent-700 hover:underline">
-                        turn on in Admin console → Security
-                      </Link>
-                    ) : (
-                      "a workspace admin can turn it on in Admin console → Security"
-                    )}
-                    )
-                  </>
-                ) : (
-                  ""
-                )}
-              </dd>
+              <dd className="text-zinc-600">{ROLE_DESCRIPTIONS[role]}</dd>
             </div>
           ))}
         </dl>
         <p className="mt-3 text-xs text-zinc-500">
           Workspace access (who can sign in at all) is managed by workspace admins on Settings → Workspace → Members.
-          Removing someone here only removes them from this project.
+          Removing someone here only removes them from this project.{" "}
+          <Link href={ROLES_HELP_HREF} className="text-accent-700 hover:underline">
+            See everything each role can do
+          </Link>
         </p>
       </section>
     </div>

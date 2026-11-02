@@ -1,7 +1,7 @@
 "use client";
 
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
-import { useOptimistic, useState } from "react";
+import { useOptimistic, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { Check, ChevronRight, Clock, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, Send, ThumbsUp, UserRound, X } from "lucide-react";
 import { usePaneExpanded, usePaneWide } from "./pane-size";
@@ -15,6 +15,7 @@ import { taskPermissions } from "@/lib/permissions";
 import type { Tag } from "@/lib/tags";
 import { completeModeLabel, completeModeOf } from "@/lib/approval-complete";
 import { requestApprovalAction } from "./approval-action";
+import { ApprovalSetupDialog } from "./approval-setup-dialog";
 import { ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
 import { BlockersHover } from "./blockers-popover";
 import { TaskActivity, TaskPaneFooter } from "./task-activity";
@@ -34,6 +35,7 @@ import { paneTaskNumbers } from "@/lib/request-numbers";
 import { TaskNumberChips } from "./task-number";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
+import { completionsVersion, recentCompletion, subscribeCompletions, trackCompletion } from "@/lib/completion-store";
 import { SCROLL_AREA } from "@/components/shell/shell-frame";
 
 export function TaskDetailPanel({
@@ -61,14 +63,21 @@ export function TaskDetailPanel({
   const [assigneeId, setOptimisticAssignee] = useOptimistic(task.assigneeId);
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [requestingApproval, setRequestingApproval] = useState(false);
+  // Nov 2 notes (batch 15, 112): the approval setup opened from Task type → Approval, before the type is saved.
+  const [approvalSetup, setApprovalSetup] = useState<Promise<{ error?: string }> | null>(null);
   const completed = Boolean(completedAt);
   // Finish → start and finish → finish links block completion while the other task is open (start →
   // finish until it starts; the database checks that one); hidden ones (tasks the viewer can't open)
   // count too.
+  // Nov 2 notes (batch 15, 111): a blocker completed in this browser counts as done at once (and one
+  // reopened here as open), before this pane's data is loaded again.
+  useSyncExternalStore(subscribeCompletions, completionsVersion, () => 0);
   const openBlockers =
-    task.dependencies.filter(
-      (d) => d.relation === "blocked_by" && (d.kind === "finish_to_start" || d.kind === "finish_to_finish") && !d.completedAt,
-    ).length +
+    task.dependencies.filter((d) => {
+      if (d.relation !== "blocked_by" || (d.kind !== "finish_to_start" && d.kind !== "finish_to_finish")) return false;
+      const here = recentCompletion(d.taskId);
+      return here === undefined ? !d.completedAt : !here;
+    }).length +
     task.hiddenBlockers;
   const blocked = !completed && openBlockers > 0;
   // Oct 29 notes, batch 7 (item 52): only an approval task's approvers complete it. Everyone else's
@@ -231,7 +240,7 @@ export function TaskDetailPanel({
             aria-pressed={completed}
             onClick={() =>
               run(
-                () => setTaskCompleted(task.id, !completed),
+                trackCompletion(task.id, !completed, () => setTaskCompleted(task.id, !completed)),
                 () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
               )
             }
@@ -303,6 +312,12 @@ export function TaskDetailPanel({
             onAttach={upload.pick}
             onCopyLink={copyLink}
             onDeleted={close}
+            onApprovalSetup={(ready) => {
+              setApprovalSetup(ready);
+              ready.then((result) => {
+                if (result.error) setApprovalSetup(null);
+              });
+            }}
           />
           <CloseButton />
         </div>
@@ -312,6 +327,9 @@ export function TaskDetailPanel({
         <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
           {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
+          {approvalSetup ? (
+            <ApprovalSetupDialog task={task} profiles={profiles} ready={approvalSetup} onClose={() => setApprovalSetup(null)} />
+          ) : null}
           <TaskNumberChips numbers={numbers} currentProjectId={pathProjectId} className="mb-1.5" />
           {canEdit ? (
             <label htmlFor="task-title" className="sr-only">

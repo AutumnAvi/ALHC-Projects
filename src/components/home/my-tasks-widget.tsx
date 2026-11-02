@@ -19,6 +19,7 @@ import { seedFromMyTask } from "@/lib/task-seed";
 import { MoreTaskNumbers } from "@/components/task/task-number";
 import { HOME_TASK_TABS, RECENT_COMPLETED_LIMIT, createdFirst, type HomeTaskTab } from "@/lib/home";
 import { projectColorClass } from "@/lib/project-colors";
+import { trackCompletion } from "@/lib/completion-store";
 
 // A task being saved from the add row: its title shows where it was typed until the page refreshes.
 type SavingTask = { key: number; title: string };
@@ -99,7 +100,7 @@ export function MyTasksWidget({
   const toggle = (task: MyTask) => {
     const next = !isDone(task);
     run(
-      () => setTaskCompleted(task.id, next),
+      trackCompletion(task.id, next, () => setTaskCompleted(task.id, next)),
       () => setToggled({ id: task.id, completed: next }),
     );
   };

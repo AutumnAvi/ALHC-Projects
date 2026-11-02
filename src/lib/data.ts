@@ -218,6 +218,9 @@ export type ProjectTask = {
   // Links that hold up completing the task (open predecessors the viewer can read; since Oct 27 notes,
   // batch 6, every kind the completion check counts, not only finish-to-start).
   blockedBy: number;
+  // Nov 2 notes (batch 15, 111): which visible tasks those are, so completing one here unblocks this
+  // row at once (completion-store.ts). Absent on a database without the batch 15 update.
+  blockerIds?: string[];
   kind: TaskKind;
   // Approval tasks: the latest round's status (Not sent before the first); null for other kinds.
   approvalStatus: ApprovalTaskStatus | null;
@@ -804,6 +807,7 @@ function projectTasksFromCards(data: Json): ProjectTask[] {
       fieldValues,
       recurring: card.recurring === true,
       blockedBy: typeof card.blocked_by === "number" ? card.blocked_by : 0,
+      blockerIds: Array.isArray(card.blocker_ids) ? card.blocker_ids.filter((x): x is string => typeof x === "string") : undefined,
       kind: parseTaskKind(card.kind),
       approvalStatus: parseTaskKind(card.kind) === "approval" ? (parseApprovalTaskStatus(card.approval_status) ?? "not_sent") : null,
       approvalPaused: card.approval_paused === true,
@@ -4394,6 +4398,21 @@ export const hasOct26Batch4Schema = cache(async (): Promise<boolean> => {
 export const getProjectViewSettings = cache(async (projectId: string): Promise<ProjectViewSettings> => {
   if (!(await hasOct26Batch4Schema())) return NO_VIEW_SETTINGS;
   const supabase = await createClient();
+  // Nov 2 notes (batch 15, 117): hidden view tabs; a database without the update has no such column.
+  const withViews = await supabase
+    .from("project_view_settings")
+    .select("default_view_id, hidden_tabs, hidden_view_ids")
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!withViews.error) {
+    const row = withViews.data;
+    if (!row) return NO_VIEW_SETTINGS;
+    return {
+      defaultViewId: row.default_view_id,
+      hiddenTabs: (row.hidden_tabs ?? []).filter(isFixedTab),
+      hiddenViewIds: row.hidden_view_ids ?? [],
+    };
+  }
   const row = maybe(
     await supabase
       .from("project_view_settings")
@@ -4403,7 +4422,7 @@ export const getProjectViewSettings = cache(async (projectId: string): Promise<P
     "tab settings",
   );
   if (!row) return NO_VIEW_SETTINGS;
-  return { defaultViewId: row.default_view_id, hiddenTabs: (row.hidden_tabs ?? []).filter(isFixedTab) };
+  return { defaultViewId: row.default_view_id, hiddenTabs: (row.hidden_tabs ?? []).filter(isFixedTab), hiddenViewIds: [] };
 });
 
 // The signed-in person's own app preferences.

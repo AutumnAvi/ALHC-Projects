@@ -1,12 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
-import { useShell } from "@/components/shell/shell-context";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import {
-  COMMENTER_OFF_REASON,
-  COMMENTER_SWITCH_HREF,
   PERSON_DEFAULT_ROLE,
   PORTFOLIO_ROLES,
   PORTFOLIO_ROLE_DESCRIPTIONS,
@@ -20,9 +16,9 @@ import {
 } from "@/lib/roles";
 
 // The four project roles (Owner, Editor, Commenter, Viewer), highest first, each with its one-line hint.
-// Nov 1 notes (batch 11): roles the viewer's own role can't give aren't listed at all; Commenter while the
-// workspace has it off (a workspace setting, with where to turn it on) and Owner while adding people (made
-// from the list afterwards) stay greyed out with the reason. The member's current role is always
+// Nov 1 notes (batch 11): roles the viewer's own role can't give aren't listed at all; Owner while adding
+// people (made from the list afterwards) stays greyed out with the reason. Nov 2 notes (batch 15, 107):
+// Commenter while the workspace has it off isn't listed either (no greyed option, no "Turn on" link). The member's current role is always
 // selectable — an older Admin membership shows as Admin until someone picks another. With includeDefault,
 // "Their default role" comes first.
 export function projectRoleOptions({
@@ -45,8 +41,10 @@ export function projectRoleOptions({
   const roles: SmartOption[] = listed.flatMap((role): SmartOption[] => {
     const base = { value: role, label: ROLE_LABELS[role], description: ROLE_DESCRIPTIONS[role] };
     if (role === current) return [base];
-    if (!grantable.includes(role) && !(role === "commenter" && !allowCommenter)) return [];
-    if (role === "commenter" && !allowCommenter) return [{ ...base, disabled: true, disabledReason: COMMENTER_OFF_REASON }];
+    // Nov 2 notes (batch 15, 107): Commenter while the workspace has it off isn't listed at all (a person
+    // who already is a Commenter still sees it as their current role).
+    if (role === "commenter" && !allowCommenter) return [];
+    if (!grantable.includes(role)) return [];
     if (role === "owner" && inviting) {
       return [{ ...base, disabled: true, disabledReason: "Add them first, then make them an owner from the list" }];
     }
@@ -74,8 +72,7 @@ export function teamRoleOptions(): SmartOption[] {
 }
 
 // The one role picker (Share, project / portfolio / team members, the Admin console): searchable, every
-// role with what it can do. When Commenter is greyed out because the workspace turned it off, the list
-// ends with where to turn it on (a link for workspace admins).
+// role with what it can do.
 export function RolePicker({
   label,
   value,
@@ -99,8 +96,6 @@ export function RolePicker({
   compact?: boolean;
   title?: string;
 }) {
-  const { isWorkspaceAdmin } = useShell();
-  const commenterOff = options.some((o) => o.value === "commenter" && o.disabled && o.disabledReason === COMMENTER_OFF_REASON);
   return (
     <span title={title} className="inline-flex shrink-0">
       <SmartPicker
@@ -115,17 +110,6 @@ export function RolePicker({
         panelWidth={320}
         className={`${compact ? "h-7 w-32 text-xs" : "h-9 w-40"} ${className}`}
         renderValue={(chosen) => (chosen[0] ? <span className="truncate">{chosen[0].label}</span> : null)}
-        footer={
-          commenterOff ? (
-            isWorkspaceAdmin ? (
-              <Link href={COMMENTER_SWITCH_HREF} className="font-medium text-accent-700 hover:underline">
-                Turn on Commenter in Admin console → Security
-              </Link>
-            ) : (
-              "Commenter is turned off in this workspace. A workspace admin can turn it on in Admin console → Security."
-            )
-          ) : undefined
-        }
       />
     </span>
   );

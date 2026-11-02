@@ -3021,6 +3021,7 @@ export type Database = {
           project_id: string;
           default_view_id: string | null;
           hidden_tabs: string[];
+          hidden_view_ids: string[];
           updated_by: string | null;
           created_at: string;
           updated_at: string;
@@ -3029,6 +3030,7 @@ export type Database = {
           project_id: string;
           default_view_id?: string | null;
           hidden_tabs?: string[];
+          hidden_view_ids?: string[];
           updated_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -3037,6 +3039,7 @@ export type Database = {
           project_id?: string;
           default_view_id?: string | null;
           hidden_tabs?: string[];
+          hidden_view_ids?: string[];
           updated_by?: string | null;
           created_at?: string;
           updated_at?: string;

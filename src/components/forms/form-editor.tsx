@@ -474,10 +474,16 @@ export function FormEditor({
               answers={answers}
               selectedId={selectedId}
               onAnswer={(id, value) => setAnswers((current) => ({ ...current, [id]: value }))}
-              onSelect={(id) => {
-                setSelectedId(id);
-                setTab("questions");
-              }}
+              // Nov 2 notes (batch 15, 108): below Admin there's nothing to edit, so the preview has no
+              // per-question Edit button or selection.
+              onSelect={
+                canEdit
+                  ? (id) => {
+                      setSelectedId(id);
+                      setTab("questions");
+                    }
+                  : null
+              }
             />
           </section>
           {/* Nov 1 notes (batch 11): below Admin the editing side isn't shown at all: the form reads as its preview. */}
@@ -651,7 +657,8 @@ function Preview({
   answers: FormAnswers;
   selectedId: string | null;
   onAnswer: (id: string, value: FormAnswers[string]) => void;
-  onSelect: (id: string) => void;
+  // null: read-only (no selecting, no Edit buttons).
+  onSelect: ((id: string) => void) | null;
 }) {
   const labels = new Map(questions.map((q) => [q.id, q] as const));
   return (
@@ -678,9 +685,9 @@ function Preview({
             return (
               <div
                 key={question.id}
-                onClick={() => onSelect(question.id)}
+                onClick={onSelect ? () => onSelect(question.id) : undefined}
                 className={`group relative rounded-lg border px-3 py-3 transition-colors ${
-                  selected ? "border-accent-400 bg-accent-50/30 ring-1 ring-accent-300" : "border-transparent hover:border-zinc-200"
+                  selected ? "border-accent-400 bg-accent-50/30 ring-1 ring-accent-300" : onSelect ? "border-transparent hover:border-zinc-200" : "border-transparent"
                 } ${shown ? "" : "opacity-60"}`}
               >
                 {parent ? (
@@ -699,16 +706,18 @@ function Preview({
                   onChange={(value) => onAnswer(question.id, value)}
                   idPrefix="preview"
                 />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSelect(question.id);
-                  }}
-                  className="absolute right-2 top-2 rounded px-1.5 py-0.5 text-2xs font-medium text-accent-700 opacity-0 hover:bg-accent-50 focus-visible:opacity-100 group-hover:opacity-100"
-                >
-                  Edit
-                </button>
+                {onSelect ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelect(question.id);
+                    }}
+                    className="absolute right-2 top-2 rounded px-1.5 py-0.5 text-2xs font-medium text-accent-700 opacity-0 hover:bg-accent-50 focus-visible:opacity-100 group-hover:opacity-100"
+                  >
+                    Edit
+                  </button>
+                ) : null}
               </div>
             );
           })}

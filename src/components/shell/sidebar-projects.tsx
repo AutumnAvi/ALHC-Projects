@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useOptimistic, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useOptimistic, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -27,7 +27,7 @@ import {
   createSidebarFolder,
   deleteSidebarFolder,
   fileSidebarProject,
-  setProjectStarred,
+  setProjectsStarred,
   updateSidebarFolder,
 } from "@/lib/actions";
 import { projectColorClass } from "@/lib/project-colors";
@@ -36,15 +36,19 @@ import {
   MAX_FOLDER_NAME,
   applySidebarChange,
   arrangeSidebar,
+  draggedProjectIds,
   folderNameProblem,
   folderOrderBefore,
   folderOrderMoved,
   orderBetween,
   placementOrder,
+  pruneStarOverrides,
+  withStarOverrides,
   type SidebarChange,
   type SidebarFolder,
   type SidebarFolderState,
   type SidebarState,
+  type StarOverrides,
 } from "@/lib/sidebar-folders";
 
 export type SidebarProject = { id: string; name: string };
@@ -53,7 +57,8 @@ export type SidebarProject = { id: string; name: string };
 const PROJECT_DRAG = "application/x-alhc-sidebar-project";
 const FOLDER_DRAG = "application/x-alhc-sidebar-folder";
 
-type Dragging = { kind: "project"; id: string; from: "starred" | "projects" } | { kind: "folder"; id: string };
+// A project drag carries one project, or every selected one (Nov 2 notes, batch 15, 110).
+type Dragging = { kind: "project"; id: string; ids: string[]; from: "starred" | "projects" } | { kind: "folder"; id: string };
 
 const ROW_MENU_BUTTON =
   "absolute right-1 top-1 inline-flex size-6 items-center justify-center rounded text-shell-muted opacity-0 hover:bg-shell-hover hover:text-white focus-visible:opacity-100 group-hover/row:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100";
@@ -78,8 +83,19 @@ export function SidebarProjects({
   const { openDialog } = useShell();
   const [, run] = useServerAction();
   const confirm = useConfirm();
+  // Nov 2 notes (batch 15, 110): saved stars the props don't show yet (see withStarOverrides).
+  const [starOverrides, setStarOverrides] = useState<StarOverrides>({});
+  // When the props change, drop overrides they now agree with (React's "adjust state while rendering").
+  const [seenStarredIds, setSeenStarredIds] = useState(starredIds);
+  if (seenStarredIds !== starredIds) {
+    setSeenStarredIds(starredIds);
+    const pruned = pruneStarOverrides(starredIds, starOverrides);
+    if (pruned !== starOverrides) setStarOverrides(pruned);
+  }
+  // ⌘/Ctrl- or Shift-click selects projects; dragging a selected one drags them all.
+  const [selected, setSelected] = useState<string[]>([]);
   const [state, apply] = useOptimistic<SidebarState, SidebarChange[]>(
-    { ...folders, starredIds },
+    { ...folders, starredIds: withStarOverrides(starredIds, starOverrides) },
     (current, changes) => changes.reduce(applySidebarChange, current),
   );
   const [dragging, setDragging] = useState<Dragging | null>(null);
@@ -93,7 +109,12 @@ export function SidebarProjects({
     return project ? [project] : [];
   });
   const starredSet = new Set(state.starredIds);
-  const arranged = arrangeSidebar(projects, state);
+  // Nov 2 notes (batch 15, 110): starring moves a project into Starred — it isn't listed under Projects
+  // (or its folder) too. Unstarring puts it back where it was.
+  const arranged = arrangeSidebar(
+    projects.filter((p) => !starredSet.has(p.id)),
+    state,
+  );
   const folderOf = new Map(
     arranged.folders.flatMap(({ folder, projects: list }) => list.map((p) => [p.id, folder.id] as const)),
   );
@@ -102,14 +123,70 @@ export function SidebarProjects({
   // ----- Changes (optimistic; the server's answer replaces them) -----
 
   function star(projectId: string, on: boolean) {
-    run(() => setProjectStarred(projectId, on), () => apply([{ type: "star", projectId, starred: on }]));
+    starMany([projectId], on);
+  }
+
+  function starMany(projectIds: string[], on: boolean) {
+    const ids = projectIds.filter((projectId) => starredSet.has(projectId) !== on);
+    if (!ids.length) return;
+    setSelected([]);
+    run(
+      async () => {
+        const result = await setProjectsStarred(ids, on);
+        // Saved: keep the projects where they were dropped until the layout's props show it.
+        if (!result.error) setStarOverrides((current) => ({ ...current, ...Object.fromEntries(ids.map((projectId) => [projectId, on])) }));
+        return result;
+      },
+      () => apply(ids.map((projectId) => ({ type: "star" as const, projectId, starred: on }))),
+    );
   }
 
   function file(projectId: string, folderId: string | null, beforeProjectId: string | null = null) {
-    const sortOrder = folderId ? placementOrder(state, folderId, projectId, beforeProjectId) : FOLDER_STEP;
+    fileMany([projectId], folderId, beforeProjectId);
+  }
+
+  // Files projects into a folder (or back under Projects: folderId null), in the order given, before
+  // `beforeProjectId` (null = at the end). Starred ones are unstarred first: a drag moves them.
+  function fileMany(projectIds: string[], folderId: string | null, beforeProjectId: string | null = null) {
+    const ids = projectIds.filter((projectId) => projectId !== beforeProjectId);
+    if (!ids.length) return;
+    setSelected([]);
+    const unstar = ids.filter((projectId) => starredSet.has(projectId));
+    const changes: SidebarChange[] = unstar.map((projectId) => ({ type: "star" as const, projectId, starred: false }));
+    let working: SidebarState = changes.reduce(applySidebarChange, state);
+    const moves = ids.map((projectId) => {
+      const sortOrder = folderId ? placementOrder(working, folderId, projectId, beforeProjectId) : FOLDER_STEP;
+      const change: SidebarChange = { type: "file", projectId, folderId, sortOrder };
+      working = applySidebarChange(working, change);
+      changes.push(change);
+      return { projectId, sortOrder };
+    });
     run(
-      () => fileSidebarProject(projectId, folderId, sortOrder),
-      () => apply([{ type: "file", projectId, folderId, sortOrder }]),
+      async () => {
+        if (unstar.length) {
+          const result = await setProjectsStarred(unstar, false);
+          if (result.error) return result;
+          setStarOverrides((current) => ({ ...current, ...Object.fromEntries(unstar.map((projectId) => [projectId, false])) }));
+        }
+        for (const move of moves) {
+          const result = await fileSidebarProject(move.projectId, folderId, move.sortOrder);
+          if (result.error) return result;
+        }
+        return {};
+      },
+      () => apply(changes),
+    );
+  }
+
+  // ⌘/Ctrl-click toggles a project in the selection, Shift-click adds it; a plain click opens it.
+  function selectClick(e: MouseEvent<HTMLElement>, projectId: string) {
+    if (!(e.metaKey || e.ctrlKey || e.shiftKey)) {
+      if (selected.length) setSelected([]);
+      return;
+    }
+    e.preventDefault();
+    setSelected((current) =>
+      current.includes(projectId) && !e.shiftKey ? current.filter((x) => x !== projectId) : current.includes(projectId) ? current : [...current, projectId],
     );
   }
 
@@ -147,9 +224,10 @@ export function SidebarProjects({
   // ----- Drag and drop -----
 
   function startProjectDrag(e: DragEvent<HTMLElement>, projectId: string, from: "starred" | "projects") {
-    e.dataTransfer.setData(PROJECT_DRAG, projectId);
+    const ids = draggedProjectIds(projectId, selected);
+    e.dataTransfer.setData(PROJECT_DRAG, ids.join(","));
     e.dataTransfer.effectAllowed = "move";
-    setDragging({ kind: "project", id: projectId, from });
+    setDragging({ kind: "project", id: projectId, ids, from });
   }
   function startFolderDrag(e: DragEvent<HTMLElement>, folderId: string) {
     e.dataTransfer.setData(FOLDER_DRAG, folderId);
@@ -192,17 +270,19 @@ export function SidebarProjects({
         className={`group/row relative ${target === key ? "border-t-2 border-accent-400" : ""}`}
         onDragOver={
           inFolder
-            ? (e) => over(e, key, Boolean(draggedProject) && draggedProject?.id !== project.id)
+            ? (e) => over(e, key, Boolean(draggedProject) && !draggedProject?.ids.includes(project.id))
             : undefined
         }
         onDragLeave={inFolder ? (e) => leave(e, key) : undefined}
-        onDrop={inFolder ? (e) => drop(e, () => draggedProject && file(draggedProject.id, folderId, project.id)) : undefined}
+        onDrop={inFolder ? (e) => drop(e, () => draggedProject && fileMany(draggedProject.ids, folderId, project.id)) : undefined}
       >
         <Link
           href={`/projects/${project.id}`}
           aria-current={isCurrent(project.id) ? "page" : undefined}
-          className={`${NAV_LINK} pr-8`}
-          title={project.name}
+          aria-selected={selected.includes(project.id) || undefined}
+          className={`${NAV_LINK} pr-8 ${selected.includes(project.id) ? "bg-accent-600/40 text-white ring-1 ring-accent-400" : ""}`}
+          title={selected.length ? `${project.name} (⌘/Ctrl-click to select more, drag to move them together)` : project.name}
+          onClick={(e) => selectClick(e, project.id)}
           draggable
           onDragStart={(e) => startProjectDrag(e, project.id, from)}
           onDragEnd={endDrag}
@@ -287,13 +367,13 @@ export function SidebarProjects({
           className={`group/row relative ${target === intoKey ? DROP_TARGET : ""}`}
           onDragOver={(e) => {
             if (draggedFolder) over(e, beforeKey, draggedFolder.id !== folder.id);
-            else over(e, intoKey, Boolean(draggedProject) && folderOf.get(draggedProject!.id) !== folder.id);
+            else over(e, intoKey, Boolean(draggedProject) && draggedProject!.ids.some((projectId) => folderOf.get(projectId) !== folder.id));
           }}
           onDragLeave={(e) => leave(e, draggedFolder ? beforeKey : intoKey)}
           onDrop={(e) =>
             drop(e, () => {
               if (draggedFolder) saveFolder(stateFolder(draggedFolder.id)!, { sortOrder: folderOrderBefore(state.folders, draggedFolder.id, folder.id) });
-              else if (draggedProject) file(draggedProject.id, folder.id);
+              else if (draggedProject) fileMany(draggedProject.ids, folder.id);
             })
           }
         >
@@ -400,9 +480,9 @@ export function SidebarProjects({
         group="starred"
         title="Starred"
         dropHighlight={target === "starred"}
-        onDragOver={(e) => over(e, "starred", draggedProject !== null && draggedProject.from !== "starred" && !starredSet.has(draggedProject.id))}
+        onDragOver={(e) => over(e, "starred", draggedProject !== null && draggedProject.ids.some((projectId) => !starredSet.has(projectId)))}
         onDragLeave={(e) => leave(e, "starred")}
-        onDrop={(e) => drop(e, () => draggedProject && star(draggedProject.id, true))}
+        onDrop={(e) => drop(e, () => draggedProject && starMany(draggedProject.ids, true))}
       >
         {starred.map((project) => projectRow(project, "starred", null))}
         {starred.length === 0 ? (
@@ -422,7 +502,7 @@ export function SidebarProjects({
             e,
             "projects",
             draggedFolder !== null ||
-              (draggedProject !== null && (draggedProject.from === "starred" || folderOf.has(draggedProject.id))),
+              (draggedProject !== null && draggedProject.ids.some((projectId) => starredSet.has(projectId) || folderOf.has(projectId))),
           )
         }
         onDragLeave={(e) => leave(e, "projects")}
@@ -431,10 +511,12 @@ export function SidebarProjects({
             if (draggedFolder) {
               const folder = stateFolder(draggedFolder.id);
               if (folder) saveFolder(folder, { sortOrder: folderOrderBefore(state.folders, folder.id, null) });
-            } else if (draggedProject?.from === "starred") {
-              star(draggedProject.id, false);
             } else if (draggedProject) {
-              file(draggedProject.id, null);
+              // Starred ones are unstarred (back where they were); filed ones leave their folder.
+              const starredOnes = draggedProject.ids.filter((projectId) => starredSet.has(projectId));
+              if (starredOnes.length) starMany(starredOnes, false);
+              const filed = draggedProject.ids.filter((projectId) => !starredSet.has(projectId) && folderOf.has(projectId));
+              if (filed.length) fileMany(filed, null);
             }
           })
         }

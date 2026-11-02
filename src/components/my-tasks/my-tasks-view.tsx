@@ -70,6 +70,7 @@ import { ApprovalStatusBadge, DueDate, EmptyCellHint } from "@/components/projec
 import type { AwaitingApproval, MyTask, Profile, SubtaskItem } from "@/lib/data";
 import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
 import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@/lib/task-seed";
+import { trackCompletion } from "@/lib/completion-store";
 import {
   saveMyTasksLayout,
   type MyTaskPlacement,
@@ -248,7 +249,7 @@ export function MyTasksView({
     // A blocked task has a lock instead of a checkbox; never try (and undo) completing it.
     if (next && blockedCount(task) > 0) return;
     run(
-      () => setTaskCompleted(task.id, next),
+      trackCompletion(task.id, next, () => setTaskCompleted(task.id, next)),
       () => setToggled({ id: task.id, completed: next }),
     );
   };
@@ -299,7 +300,7 @@ export function MyTasksView({
     toggle(subtask) {
       const done = !subtask.completedAt;
       if (done && blockedCount(subtask) > 0) return;
-      editSubtask(subtask, { completedAt: done ? new Date().toISOString() : null }, () => setTaskCompleted(subtask.id, done));
+      editSubtask(subtask, { completedAt: done ? new Date().toISOString() : null }, trackCompletion(subtask.id, done, () => setTaskCompleted(subtask.id, done)));
     },
     rename: (subtask, title) => editSubtask(subtask, { title }, () => updateSubtask(subtask.id, { title })),
     assign(subtask, assigneeId) {

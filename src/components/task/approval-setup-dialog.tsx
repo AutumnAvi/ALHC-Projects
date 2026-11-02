@@ -30,10 +30,13 @@ export function ApprovalSetupDialog({
   task,
   profiles,
   onClose,
+  ready,
 }: {
   task: TaskDetail;
   profiles: Profile[];
   onClose: () => void;
+  // Nov 2 notes (batch 15, 112): opened while the task type is still being saved; saving waits for it.
+  ready?: Promise<{ error?: string }> | null;
 }) {
   const ids = useId();
   const notify = useNotify();
@@ -92,6 +95,10 @@ export function ApprovalSetupDialog({
     }
     if (problem) return;
     run(async () => {
+      if (ready) {
+        const made = await ready;
+        if (made.error) return made;
+      }
       const approvers = await setTaskApprovers(task.id, { approverIds: draft.approverIds, mode: draft.mode, dueOn: draft.dueOn });
       if (approvers.error) return approvers;
       const followUp = await setApprovalFollowUp(task.id, {

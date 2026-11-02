@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
+import { completionsVersion, recentCompletion, subscribeCompletions } from "@/lib/completion-store";
 import type { ProjectTask } from "@/lib/data";
 import {
   currentMutationToken,
@@ -103,6 +104,23 @@ export function changeAbsorbed(tasks: ProjectTask[], change: TaskChange) {
   }
 }
 
+// Rows whose visible blockers were completed in this browser (or in this list's overlay) count them as
+// done before the server's refresh says so (Nov 2 notes, batch 15, 111). `version` only re-runs it.
+export function unblockCompleted(tasks: ProjectTask[], version: number): ProjectTask[] {
+  void version;
+  const doneHere = new Set(tasks.filter((t) => t.completedAt).map((t) => t.id));
+  let changed = false;
+  const next = tasks.map((task) => {
+    if (!task.blockedBy || !task.blockerIds?.length) return task;
+    const done = task.blockerIds.filter((id) => doneHere.has(id) || recentCompletion(id) === true).length;
+    const open = Math.max(0, task.blockedBy - done);
+    if (open === task.blockedBy) return task;
+    changed = true;
+    return { ...task, blockedBy: open };
+  });
+  return changed ? next : tasks;
+}
+
 export function overlayProjectTasks(tasks: ProjectTask[], changes: TaskChange[]) {
   const latestAt = new Map<string, number>();
   changes.forEach((change, index) => latestAt.set(changeKey(change), index));
@@ -148,8 +166,10 @@ export function useProjectTasks(tasks: ProjectTask[]) {
   // `revision` re-renders this list when a write fails or a bulk skip drops rows.
   const pending = pendingChanges(changes, tasks, revision);
   if (pending.length !== changes.length) setChanges(pending);
+  // Nov 2 notes (batch 15, 111): a task blocked only by tasks just completed here is unblocked at once.
+  const completions = useSyncExternalStore(subscribeCompletions, completionsVersion, () => 0);
 
-  return [overlayProjectTasks(tasks, pending.map((item) => item.change)), applyChange] as const;
+  return [unblockCompleted(overlayProjectTasks(tasks, pending.map((item) => item.change)), completions), applyChange] as const;
 }
 
 // Fractional ordering: place a task before `beforeId` within `column`, or at the end.

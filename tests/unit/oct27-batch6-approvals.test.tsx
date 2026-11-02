@@ -214,7 +214,21 @@ test("pending: an approver sees Approve / Request changes / Reject and Hand off;
   assert.match(approver, /data-approval-status="pending"/);
   assert.match(approver, /Waiting on you to approve\./);
   assert.match(approver, /Your decision/);
-  assert.ok(button(approver, "Approve") && button(approver, "Request changes") && button(approver, "Reject"));
+  // Nov 2 notes (batch 15, 114): a round with files is decided file by file in the task (Approve / feedback
+  // on each, Submit once all are reviewed); Reject stays in the row.
+  assert.ok(button(approver, "Reject"));
+  assert.ok(!button(approver, "Approve"), "files are approved one by one, not with one button");
+  assert.match(approver, /data-approver-review="compact"/);
+  assert.match(approver, /Review the files/);
+  assert.match(approver, /0 of 1 reviewed/);
+  assert.match(approver, /Open review page/);
+  assert.match(approver, /href="\/approve\/t1"/);
+  assert.match(approver, /Approve or add feedback to 1 more file to submit\./, "Submit waits for every file");
+  assert.match(approver, /<button[^>]*disabled=""[^>]*>Submit review<\/button>/);
+  const textOnly = banner(
+    approvalTask("commenter", info({ approverIds: ["me"], status: "pending", waitingOnMe: true, rounds: [round({ attachmentIds: [], requests: [request({ id: "req-me", approverId: "me" })] })] })),
+  );
+  assert.ok(button(textOnly, "Approve") && button(textOnly, "Request changes") && button(textOnly, "Reject"), "no files: one decision");
   assert.match(approver, /Hand off…/);
   assert.ok(!button(approver, "Withdraw"), "a Commenter approver who didn't send it can't withdraw it");
   assert.match(approver, /What’s being approved/);
@@ -437,7 +451,7 @@ test("the Ready for approval dialog: final text, the task's files, review check,
   assert.ok(!/review check/.test(commenter), "review checks are made by Editors+");
 
   const noFiles = render(<SendForApprovalDialog task={approvalTask("editor", info(), { attachments: [] })} profiles={people} onClose={() => {}} />);
-  assert.match(noFiles, /This task has no files yet\. Attach them with the paperclip/);
+  assert.match(noFiles, /This task has no files yet\. Upload them here\./);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -600,4 +614,15 @@ test("Inbox reminders read 'Reminder: approval due tomorrow / overdue', and appr
   const decided = card(inboxItem({ data: { approval_id: "req-me" }, approval: { id: "req-me", status: "approved", approverId: "me" } }));
   assert.ok(!button(decided, "Approve"), "only while it's pending");
   assert.match(decided, /You approved this/);
+});
+
+test("Nov 2 notes (batch 15, 113): Files to approve shows thumbnails with previews and an Upload button for Editors", () => {
+  const editor = render(<SendForApprovalDialog task={approvalTask("editor", info())} profiles={people} onClose={() => {}} />);
+  assert.match(editor, />Upload files<\/button>/, "Editors upload right here");
+  assert.match(editor, /aria-label="Preview flyer\.pdf \(opens in a new tab\)"/, "a PDF previews in the browser's viewer");
+  assert.match(editor, /Tick the files to approve\. Click a preview to look at it\./);
+  const assignee = render(
+    <SendForApprovalDialog task={approvalTask("commenter", info(), { assigneeId: "me" })} profiles={people} onClose={() => {}} />,
+  );
+  assert.ok(!/>Upload files<\/button>/.test(assignee), "uploading is an edit: a Commenter assignee picks existing files");
 });

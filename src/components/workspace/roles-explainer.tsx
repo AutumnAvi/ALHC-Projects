@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Info } from "lucide-react";
+import { ROLES_HELP_HREF } from "@/lib/role-help";
 import { COMMENTER_SWITCH_HREF } from "@/lib/roles";
 
 // The plain-words box at the top of Settings → Workspace → Members and Admin console → Users: three short
@@ -35,6 +36,11 @@ export function RolesExplainer({ isAdmin, allowCommenter }: { isAdmin: boolean; 
           ) : (
             "Workspace admins change it in Admin console → Security."
           )}
+        </p>
+        <p className="text-xs">
+          <Link href={ROLES_HELP_HREF} className="font-medium text-accent-700 hover:underline">
+            Roles &amp; permissions: everything each role can do
+          </Link>
         </p>
       </div>
     </aside>

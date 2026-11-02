@@ -28,6 +28,7 @@ import {
   listTaskTemplates,
 } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
+import { projectTabList } from "@/lib/views";
 import { permissionsFor } from "@/lib/permissions";
 import { compareMembers, hasRole } from "@/lib/roles";
 import { ruleBranchCount, triggerLabel } from "@/lib/rules";
@@ -114,6 +115,10 @@ export default async function ProjectLayout({
     sections: sections.map((section) => ({ id: section.id, name: section.name })),
     // Oct 27 notes (batch 5): Owner settings (Owners only).
     owner: permissionsFor(role).isOwner ? { sectionsLocked } : null,
+    // Nov 2 notes (batch 15, 117): every tab, to hide or show (Editors+; batch 4's settings table).
+    tabs: batch4Schema
+      ? projectTabList(views, viewSettings)
+      : null,
   };
   // The header's avatars (owners first, then by role and name); Share lists everyone.
   const headerMembers = members.map(({ profileId, name, role }) => ({ profileId, name, role })).sort(compareMembers);
@@ -138,6 +143,7 @@ export default async function ProjectLayout({
               starred={starredIds.includes(project.id)}
               members={headerMembers}
               hiddenTabs={viewSettings.hiddenTabs}
+              hiddenViewIds={viewSettings.hiddenViewIds ?? []}
               defaultViewId={viewSettings.defaultViewId}
               personalViews={batch4Schema}
             />
