@@ -35,6 +35,20 @@ export function permissionsFor(role: ProjectRole | null | undefined): Permission
   };
 }
 
+// Nov 2 security fix (note 119): what picking a person in the task's Followers list does. Commenters
+// follow and unfollow themselves and add people; removing someone else is an Editor's (the database's
+// follower policies refuse it below Editor). null = nothing (the control isn't offered).
+export function followerChange(
+  permissions: Pick<Permissions, "canComment" | "canEdit">,
+  memberId: string,
+  profileId: string,
+  following: boolean,
+): "add" | "remove" | null {
+  if (!permissions.canComment) return null;
+  if (!following) return "add";
+  return profileId === memberId || permissions.canEdit ? "remove" : null;
+}
+
 // A task's permissions come from the viewer's role on the task (task_role(): the highest of its projects,
 // a subtask through its root, Editor for a private task's creator and assignee).
 export function taskPermissions(task: { viewerRole: ProjectRole | null }): Permissions {

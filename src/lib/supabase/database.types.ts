@@ -6899,6 +6899,10 @@ export type Database = {
         Args: { target_project: string; destination: string | null };
         Returns: Json;
       };
+      trash_task: {
+        Args: { target_task: string };
+        Returns: string;
+      };
       slack_bot_token: {
         Args: { target_workspace?: string | null };
         Returns: string | null;
