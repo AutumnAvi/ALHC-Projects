@@ -118,6 +118,37 @@ export function filtersToParams(filters: ReportFilters): URLSearchParams {
   return params;
 }
 
+// Nov 2 notes (batch 13, note 89): a report with no date range in its URL covers 30 days centered on
+// today — two weeks back, two weeks ahead (local days). `range=all` in the URL is the person choosing
+// every date (they emptied both date boxes); explicit from / to always win.
+export const DEFAULT_WINDOW_DAYS = 14;
+export const ALL_DATES_PARAM = "range";
+
+export function addIsoDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return date.toISOString().slice(0, 10);
+}
+
+export function defaultReportWindow(today: string): { from: string; to: string } {
+  return { from: addIsoDays(today, -DEFAULT_WINDOW_DAYS), to: addIsoDays(today, DEFAULT_WINDOW_DAYS) };
+}
+
+export function wantsAllDates(params: Params): boolean {
+  return param(params, ALL_DATES_PARAM) === "all";
+}
+
+// The filters a report page runs with: the URL's, plus the default window when the URL names no dates.
+export function withDefaultWindow(filters: ReportFilters, params: Params, today: string): ReportFilters {
+  if (filters.from || filters.to || wantsAllDates(params)) return filters;
+  return { ...filters, ...defaultReportWindow(today) };
+}
+
+export function isDefaultWindow(filters: ReportFilters, today: string): boolean {
+  const window = defaultReportWindow(today);
+  return filters.from === window.from && filters.to === window.to;
+}
+
 export function hasReportFilters(filters: ReportFilters) {
   return Object.keys(parseReportFilters(filters)).length > 0;
 }

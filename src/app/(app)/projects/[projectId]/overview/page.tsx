@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ProjectOverview } from "@/components/project/project-overview";
 import {
   getGoalViewer,
+  goalsEnabled,
   getProject,
   getProjectOverviewInfo,
   listGoals,
@@ -27,14 +28,15 @@ export async function generateMetadata({ params }: PageProps<"/projects/[project
 // viewer's client (project Viewers+; goal links only for projects they can read).
 export default async function ProjectOverviewPage({ params }: PageProps<"/projects/[projectId]/overview">) {
   const { projectId } = await params;
+  const goalsOn = await goalsEnabled();
   const [project, info, members, updates, stories, links, goals, viewer, emailIn] = await Promise.all([
     getProject(projectId),
     getProjectOverviewInfo(projectId),
     listProjectMembers(projectId),
     listProjectStatusUpdates(projectId),
     listProjectStories(projectId),
-    listProjectGoalLinks(projectId),
-    listGoals(),
+    goalsOn ? listProjectGoalLinks(projectId) : Promise.resolve([]),
+    goalsOn ? listGoals() : Promise.resolve([]),
     getGoalViewer(),
     listProjectEmailActivity(projectId),
   ]);
@@ -84,14 +86,14 @@ export default async function ProjectOverviewPage({ params }: PageProps<"/projec
         statusSet={project.status_updated_at !== null}
         latestUpdate={updates[0] ?? null}
         members={members.map(({ profileId, name, role }) => ({ profileId, name, role })).sort(compareMembers)}
-        goals={links.map(({ linkId, goal }) => ({
+        goals={goalsOn ? links.map(({ linkId, goal }) => ({
           linkId,
           id: goal.id,
           title: goal.title,
           status: goal.status,
           period: periodLabel(goal.periodStart, goal.periodEnd),
           editable: goalEditable(goal, viewer),
-        }))}
+        })) : null}
         connectable={goals
           .filter((g) => !linked.has(g.id) && goalEditable(g, viewer))
           .map((g) => ({ id: g.id, title: g.title }))

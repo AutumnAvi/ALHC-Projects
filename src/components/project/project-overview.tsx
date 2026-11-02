@@ -63,7 +63,8 @@ export function ProjectOverview({
   statusSet: boolean;
   latestUpdate: ProjectStatusUpdate | null;
   members: OverviewMember[];
-  goals: OverviewGoal[];
+  // null while the workspace has Goals off (Nov 2 notes, batch 13): the card isn't drawn.
+  goals: OverviewGoal[] | null;
   // Goals the viewer may connect (ones they can edit that aren't connected yet).
   connectable: { id: string; title: string }[];
   activity: ProjectActivityItem[];
@@ -73,7 +74,7 @@ export function ProjectOverview({
       <div className="flex min-w-0 flex-col gap-8">
         <Description projectId={projectId} description={description} />
         <ProjectRoles members={members} />
-        <ConnectedGoals projectId={projectId} goals={goals} connectable={connectable} />
+        {goals ? <ConnectedGoals projectId={projectId} goals={goals} connectable={connectable} /> : null}
       </div>
       <aside className="flex min-w-0 flex-col gap-6 lg:border-l lg:border-zinc-100 lg:pl-8">
         <StatusSummary

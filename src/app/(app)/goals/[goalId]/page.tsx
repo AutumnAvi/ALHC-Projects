@@ -2,9 +2,12 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { displayName } from "@/components/avatar";
 import { GoalDetail } from "@/components/goals/goal-detail";
+import { GoalsTurnedOff } from "@/components/goals/goals-off";
 import {
   getGoal,
   getGoalViewer,
+  goalsEnabled,
+  isWorkspaceAdmin,
   listGoalLinks,
   listGoalProgress,
   listGoalStatusUpdates,
@@ -20,6 +23,7 @@ import { todayIn } from "@/lib/workload";
 
 export async function generateMetadata({ params }: PageProps<"/goals/[goalId]">): Promise<Metadata> {
   const { goalId } = await params;
+  if (!(await goalsEnabled())) return { title: "Goals" };
   const goal = await getGoal(goalId);
   return { title: goal ? `${goal.title} · Goals` : "Goal" };
 }
@@ -29,6 +33,7 @@ export async function generateMetadata({ params }: PageProps<"/goals/[goalId]">)
 // only counted.
 export default async function GoalPage({ params }: PageProps<"/goals/[goalId]">) {
   const { goalId } = await params;
+  if (!(await goalsEnabled())) return <GoalsTurnedOff admin={await isWorkspaceAdmin()} />;
   const goal = await getGoal(goalId);
   if (!goal) notFound();
   const [goals, progress, viewer, links, updates, profiles, teams, projects, portfolios, timeZone] = await Promise.all([

@@ -63,7 +63,8 @@ export function SidebarContent({
   unreadCount: number;
 }) {
   const pathname = usePathname();
-  const { member, openDialog } = useShell();
+  const { member, openDialog, goalsEnabled } = useShell();
+  const workLinks = goalsEnabled ? WORK_LINKS : WORK_LINKS.filter((l) => l.href !== "/goals");
   const unread = useUnreadCount(unreadCount, member.id, "sidebar");
   const moreActive = MORE_LINKS.some((l) => isCurrent(pathname, l.href));
 
@@ -81,7 +82,7 @@ export function SidebarContent({
         </ul>
 
         <ul className="flex flex-col gap-px">
-          {WORK_LINKS.map((link) => (
+          {workLinks.map((link) => (
             <li key={link.href}>
               <NavLink {...link} current={isCurrent(pathname, link.href)} />
             </li>

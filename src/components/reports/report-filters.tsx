@@ -6,9 +6,12 @@ import { ChevronDown, X } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import {
+  ALL_DATES_PARAM,
   REPORT_STATUSES,
+  defaultReportWindow,
   filtersToParams,
   hasReportFilters,
+  isDefaultWindow,
   isReportStatus,
   type ReportFilters,
 } from "@/lib/reports";
@@ -186,35 +189,87 @@ export function ReportFilterFields({
 }
 
 // Reports page filter bar: edits write the filter to the URL (shareable, and the CSV links reuse it).
+// Nov 2 notes (batch 13, note 89): without dates in the URL the page runs over 30 days centered on today
+// (`today` ± 14 days); emptying both date boxes, or "All dates", writes range=all so the default doesn't
+// come back; "Around today" and Clear filters go back to the default window.
 export function ReportFiltersBar({
   filters,
   projects,
   people,
   tags,
+  today,
 }: {
   filters: ReportFilters;
   projects: FilterOption[];
   people: FilterOption[];
   tags?: FilterOption[];
+  today: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
+  const aroundToday = isDefaultWindow(filters, today);
+  const allDates = !filters.from && !filters.to;
 
-  function apply(next: ReportFilters) {
-    const params = filtersToParams(next);
+  function apply(next: ReportFilters, mode: "edit" | "default" = "edit") {
+    let target = next;
+    if (mode === "default") {
+      // Back to the default window: the page adds it when the URL has no dates.
+      target = { ...next };
+      delete target.from;
+      delete target.to;
+    } else if (isDefaultWindow(next, today)) {
+      // Still the default window: keep the URL free of dates so it moves with today.
+      target = { ...next };
+      delete target.from;
+      delete target.to;
+    }
+    const params = filtersToParams(target);
+    if (mode === "edit" && !next.from && !next.to) params.set(ALL_DATES_PARAM, "all");
     const interval = searchParams.get("int");
     if (interval) params.set("int", interval);
     const query = params.toString();
     startTransition(() => router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false }));
   }
 
+  const around = defaultReportWindow(today);
+  const custom = { ...filters };
+  if (aroundToday) {
+    delete custom.from;
+    delete custom.to;
+  }
+  const changed = hasReportFilters(custom) || allDates;
+
   return (
     <div className="flex flex-wrap items-end gap-3 print:hidden" aria-busy={pending}>
-      <ReportFilterFields value={filters} onChange={apply} projects={projects} people={people} tags={tags} idPrefix="report" />
-      {hasReportFilters(filters) ? (
-        <button type="button" onClick={() => apply({})} className="btn-ghost h-7">
+      <ReportFilterFields value={filters} onChange={(next) => apply(next)} projects={projects} people={people} tags={tags} idPrefix="report" />
+      <div className="flex h-7 items-center rounded-md border border-zinc-200 bg-white p-0.5 text-xs" role="group" aria-label="Date range">
+        <button
+          type="button"
+          aria-pressed={aroundToday}
+          onClick={() => apply(filters, "default")}
+          title={`${around.from} to ${around.to}`}
+          className={`rounded px-2 py-0.5 ${aroundToday ? "bg-accent-50 font-medium text-accent-800" : "text-zinc-600 hover:bg-zinc-50"}`}
+        >
+          ±2 weeks
+        </button>
+        <button
+          type="button"
+          aria-pressed={allDates}
+          onClick={() => {
+            const next = { ...filters };
+            delete next.from;
+            delete next.to;
+            apply(next);
+          }}
+          className={`rounded px-2 py-0.5 ${allDates ? "bg-accent-50 font-medium text-accent-800" : "text-zinc-600 hover:bg-zinc-50"}`}
+        >
+          All dates
+        </button>
+      </div>
+      {changed ? (
+        <button type="button" onClick={() => apply({}, "default")} className="btn-ghost h-7">
           <X className="size-3.5" aria-hidden /> Clear filters
         </button>
       ) : null}

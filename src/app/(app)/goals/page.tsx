@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { Target } from "lucide-react";
 import { displayName } from "@/components/avatar";
+import { GoalsTurnedOff } from "@/components/goals/goals-off";
 import { GoalsView } from "@/components/goals/goals-view";
 import { PageHeader } from "@/components/ui";
-import { getGoalViewer, listGoalProgress, listGoals, listProfiles, listTeams } from "@/lib/data";
+import { getGoalViewer, goalsEnabled, isWorkspaceAdmin, listGoalProgress, listGoals, listProfiles, listTeams } from "@/lib/data";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@/lib/workload";
 
@@ -13,6 +14,7 @@ export const metadata: Metadata = { title: "Goals" };
 // and never counts projects they can't open.
 export default async function GoalsPage({ searchParams }: PageProps<"/goals">) {
   const { team, period } = await searchParams;
+  if (!(await goalsEnabled())) return <GoalsTurnedOff admin={await isWorkspaceAdmin()} />;
   const [goals, progress, viewer, profiles, teams, timeZone] = await Promise.all([
     listGoals(),
     listGoalProgress(),

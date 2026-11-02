@@ -11,10 +11,13 @@ import {
   listPortfolioFields,
   listPortfolioProgress,
   listPortfolioProjects,
+  listPortfolioRollupProjects,
   listPortfolios,
   listProjects,
+  listTeams,
   portfolioReport,
 } from "@/lib/data";
+import { nestedPortfolioProjects } from "@/lib/portfolio-picker";
 import { EMPTY_COUNTS } from "@/lib/portfolios";
 import { getViewerTimeZone } from "@/lib/timezone";
 
@@ -40,6 +43,8 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
     progress,
     fields,
     values,
+    rollup,
+    teams,
   ] = await Promise.all([
     getPortfolio(portfolioId),
     listPortfolioProjects(portfolioId),
@@ -53,13 +58,24 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
     listPortfolioProgress(),
     listPortfolioFields(portfolioId),
     listPortfolioFieldValues(portfolioId),
+    listPortfolioRollupProjects(portfolioId),
+    listTeams(),
   ]);
   if (!portfolio) notFound();
-  const latest = await listLatestStatusUpdates(projects.map((p) => p.id));
-
-  const counts = new Map(byProject.map((row) => [row.bucket, row]));
   const inPortfolio = new Set(projects.map((p) => p.id));
   const nested = new Set(children.map((c) => c.id));
+  // Nov 2 notes (batch 13, note 87): projects reached only through nested portfolios the viewer is in.
+  const fromNested = nestedPortfolioProjects(
+    rollup,
+    inPortfolio,
+    children.map((c) => c.id),
+    new Map(allPortfolios.map((p) => [p.id, p.name])),
+  );
+  const latest = await listLatestStatusUpdates([...projects.map((p) => p.id), ...fromNested.map((p) => p.id)]);
+
+  const counts = new Map(byProject.map((row) => [row.bucket, row]));
+  const statusOf = new Map(rollup.map((r) => [r.id, { status: r.status, note: r.statusNote }]));
+  const teamName = new Map(teams.map((t) => [t.id, t.name]));
 
   return (
     <PortfolioOverview
@@ -72,7 +88,21 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
         counts: counts.get(project.id) ?? EMPTY_COUNTS,
         latest: latest.get(project.id) ?? null,
       }))}
-      candidates={allProjects.filter((p) => !inPortfolio.has(p.id)).map(({ id, name }) => ({ id, name }))}
+      nestedCards={fromNested.map((project) => ({
+        ...project,
+        status: statusOf.get(project.id)?.status ?? "on_track",
+        statusNote: statusOf.get(project.id)?.note ?? null,
+        role: myRoles.get(project.id) ?? null,
+        counts: counts.get(project.id) ?? EMPTY_COUNTS,
+        latest: latest.get(project.id) ?? null,
+      }))}
+      candidates={allProjects
+        .map(({ id, name, team_id }) => ({
+          id,
+          name,
+          teamName: teamName.get(team_id) ?? null,
+          inPortfolio: inPortfolio.has(id),
+        }))}
       nested={children.map((child) => ({
         ...child,
         total: progress.get(child.id)?.total ?? 0,

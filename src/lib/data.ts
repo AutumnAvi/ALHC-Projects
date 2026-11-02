@@ -138,6 +138,7 @@ import {
 } from "@/lib/calendar-events";
 import { toStatusTemplate, type StatusTemplate } from "@/lib/status-templates";
 import type { Json, Tables } from "@/lib/supabase/database.types";
+import { parseCompletedDays } from "@/lib/workload-people";
 import { isInboundCallStatus, type InboundCall, type InboundEndpoint } from "@/lib/inbound-shared";
 import {
   parseApprovalTaskStatus,
@@ -1318,6 +1319,22 @@ export const tagsEnabled = cache(async (): Promise<boolean> => {
     throw new Error(`Failed to load the Tags setting: ${error.message}`);
   }
   return data?.tags_enabled ?? false;
+});
+
+// Nov 2 notes (batch 13, note 88): the workspace's Goals switch (Admin console → Organization; off by
+// default). Off hides Goals from the sidebar, the Create menu, project and team Overviews, and the Goals
+// pages say they're turned off; goals, links, and status updates are kept. Without this release's
+// database goals stay on as before.
+export const goalsEnabled = cache(async (): Promise<boolean> => {
+  const workspace = await getWorkspace();
+  if (!workspace) return false;
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("workspaces").select("goals_enabled").eq("id", workspace.id).maybeSingle();
+  if (error) {
+    if (isMissingColumn(error)) return true;
+    throw new Error(`Failed to load the Goals setting: ${error.message}`);
+  }
+  return data?.goals_enabled ?? false;
 });
 
 // The tags the app shows: every tag while tags are on, none while they're off (so chips, pickers, and
@@ -5345,6 +5362,42 @@ const toWorkloadTask = (r: WorkloadRow): WorkloadTask => ({
   projectId: r.project_id,
   canEdit: r.can_edit,
 });
+
+export type WorkloadSummaryRow = {
+  assigneeId: string;
+  open: number;
+  overdue: number;
+  completed: number;
+  completedDays: Record<string, number>;
+};
+
+// Nov 2 notes (batch 13, note 86): per assignee in a project or a portfolio's rollup, open and overdue
+// tasks today and tasks completed in [start, end] by local day (workload_people_summary, invoker: only
+// projects the viewer can read). null when the database doesn't have it yet (a preview before this
+// release's migration), so the page can say so instead of breaking.
+export async function workloadPeopleSummary(
+  scope: { projectId: string } | { portfolioId: string },
+  rangeStart: string,
+  rangeEnd: string,
+  timeZone: string,
+): Promise<WorkloadSummaryRow[] | null> {
+  const supabase = await createClient();
+  const result = await supabase.rpc("workload_people_summary", {
+    target_project: "projectId" in scope ? scope.projectId : null,
+    target_portfolio: "portfolioId" in scope ? scope.portfolioId : null,
+    range_start: rangeStart,
+    range_end: rangeEnd,
+    tz: timeZone,
+  });
+  if (result.error?.code === "PGRST202") return null;
+  return rows(result, "workload summary").map((r) => ({
+    assigneeId: r.assignee_id,
+    open: Number(r.open_count),
+    overdue: Number(r.overdue_count),
+    completed: Number(r.completed_count),
+    completedDays: parseCompletedDays(r.completed_days),
+  }));
+}
 
 export async function projectWorkload(
   projectId: string,

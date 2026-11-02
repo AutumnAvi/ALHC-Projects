@@ -46,8 +46,13 @@ export function todayIn(timeZone: string) {
 }
 
 // Visible columns around an anchor: day zoom = the anchor's week and the next; week zoom = the
-// week before the anchor's week and the 11 after it.
-export function workloadWindow(anchor: string, zoom: WorkloadZoom): { start: string; end: string; columns: WorkloadColumn[] } {
+// week before the anchor's week and the 11 after it. Days off are the workspace's (Nov 2 notes, batch 13:
+// Friday and Saturday for the default Sunday–Thursday week), not always the weekend.
+export function workloadWindow(
+  anchor: string,
+  zoom: WorkloadZoom,
+  workWeek: readonly number[] = [1, 2, 3, 4, 5],
+): { start: string; end: string; columns: WorkloadColumn[] } {
   const sunday = addDays(anchor, -weekdayOf(anchor));
   if (zoom === "day") {
     const columns = Array.from({ length: DAY_COLUMNS }, (_, i) => {
@@ -57,7 +62,7 @@ export function workloadWindow(anchor: string, zoom: WorkloadZoom): { start: str
         end: day,
         label: WEEKDAYS[weekdayOf(day)],
         sublabel: shortDate(day),
-        weekend: weekdayOf(day) === 0 || weekdayOf(day) === 6,
+        weekend: !workWeek.includes(weekdayOf(day)),
       };
     });
     return { start: columns[0].start, end: columns.at(-1)!.end, columns };
@@ -109,11 +114,11 @@ export function taskLoad(task: WorkloadTask, column: Pick<WorkloadColumn, "start
   return (task.value * (daysBetween(from, to) + 1)) / (daysBetween(span.start, span.end) + 1);
 }
 
-// Weekly capacity applies to week columns as is and to weekdays as a fifth of it; weekends have none.
-export function columnCapacity(weekly: number | undefined, column: WorkloadColumn, zoom: WorkloadZoom) {
+// Weekly capacity applies to week columns as is and to each workday as its share; days off have none.
+export function columnCapacity(weekly: number | undefined, column: WorkloadColumn, zoom: WorkloadZoom, workdays = 5) {
   if (weekly === undefined) return null;
   if (zoom === "week") return weekly;
-  return column.weekend ? null : weekly / 5;
+  return column.weekend ? null : weekly / Math.max(1, workdays);
 }
 
 export function formatLoad(value: number) {

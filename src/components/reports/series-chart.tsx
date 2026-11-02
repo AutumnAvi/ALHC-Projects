@@ -26,7 +26,7 @@ export function SeriesChart({
         {rows.map((item) => (
           <div key={item.start} className="flex h-full min-w-0 flex-1 flex-col justify-end" title={`${interval === "week" ? "Week of " : ""}${item.label}: ${item.count} completed`}>
             <span
-              className="w-full rounded-t bg-accent-500"
+              className="mx-auto w-full max-w-10 rounded-t bg-emerald-500 transition-colors hover:bg-emerald-600"
               style={{ height: `${Math.max(item.count === 0 ? 0 : 2, (item.count / max) * 100)}%` }}
             />
             <span className="mt-1 truncate text-center text-[10px] text-zinc-500">{item.label}</span>
