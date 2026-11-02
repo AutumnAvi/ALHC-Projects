@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 
@@ -25,6 +26,8 @@ export function Dialog({
   const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
+  // Nov 2 notes (batch 14, 99): a dialog closes any open menu (except one it is drawn inside).
+  useClosesPopovers(true, panelRef);
 
   useEffect(() => {
     closeRef.current = onClose;

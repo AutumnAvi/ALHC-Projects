@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -334,6 +335,8 @@ export function RuleCanvas({
   const owner = ownerId ? ctx.people.find((p) => p.id === ownerId) : null;
   const ownerName = ownerId ? (owner?.name ?? "someone removed") : rule ? "the automation’s creator" : "you";
   const editor = rule?.lastEditedBy ? ctx.people.find((p) => p.id === rule.lastEditedBy) : null;
+
+  useClosesPopovers(true, rootRef);
 
   return (
     <div ref={rootRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-50 flex flex-col bg-white text-sm">

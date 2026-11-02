@@ -43,6 +43,9 @@ export type ImportPreview = {
     rules: number;
     // Attachments the JSON export has a download link for ("Download attachments").
     attachmentFiles: number;
+    // Nov 2 notes (batch 14, 103): Asana-stored attachments without a download link (Asana's own JSON
+    // export never has them) — copied only with an Asana personal access token entered for the import.
+    attachmentFilesNeedToken?: number;
   };
   people: {
     matched: ImportPerson[];
@@ -93,7 +96,18 @@ export type AttachmentFileProgress = {
   already: number;
   tooLarge: number;
   failed: number;
+  // Files without a download link left as links because no Asana token was given (Nov 2 notes, batch 14).
+  needToken?: number;
 };
+
+// Asana personal access tokens ("2/1204…/1209…:abc…" or the older "1/…"): checked for shape only, used
+// for one import, never stored or logged.
+export const ASANA_TOKEN_PATTERN = /^[0-9]\/[0-9A-Za-z/:._-]{16,200}$/;
+export function asanaTokenProblem(token: string): string | null {
+  const t = token.trim();
+  if (!t) return null;
+  return ASANA_TOKEN_PATTERN.test(t) ? null : "That doesn’t look like an Asana personal access token (it starts with 1/ or 2/).";
+}
 
 export type ImportProgress = {
   runId: string;
@@ -120,6 +134,7 @@ export function describeAttachmentFiles(files: unknown): string | null {
       .join(", ");
     parts.push(`${plural(skipped, "file")} skipped (${why})`);
   }
+  if (n("need_token")) parts.push(`${plural(n("need_token"), "file")} left as links (no Asana token)`);
   return parts.join("; ");
 }
 

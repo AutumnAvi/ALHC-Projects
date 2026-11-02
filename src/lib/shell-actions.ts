@@ -32,6 +32,7 @@ import { forwardingAddress, isInboundEmailConfigured } from "@/lib/email-reply";
 import { fieldTypeLabel, isFieldType } from "@/lib/fields";
 import type { GalleryTemplate, TemplatePreview } from "@/lib/templates";
 import { isUuid } from "@/lib/ids";
+import { templateOutline, type TemplateOutline } from "@/lib/project-roles";
 import { hasRole, type ProjectRole } from "@/lib/roles";
 import {
   EMPTY_RESULTS,
@@ -325,6 +326,30 @@ export async function loadTemplatePreview(templateId: string): Promise<TemplateP
       if (!name || !isFieldType(f.field_type)) return [];
       return [{ name, type: fieldTypeLabel({ fieldType: f.field_type, boundToSections: f.bound_to_sections === true }) }];
     }),
+  };
+}
+
+// Nov 2 notes (batch 14, 95): what a template holds, for "Customize before creating" — its sections, tasks,
+// fields, and roles (from the template's snapshot, readable by everyone signed in) — and the people of the
+// workspace who can fill its roles.
+export async function loadTemplateOutline(
+  templateId: string,
+): Promise<{ outline: TemplateOutline; people: { id: string; name: string }[] } | null> {
+  if (!isUuid(templateId) || !(await signedIn())) return null;
+  const supabase = await createClient();
+  const [{ data }, people] = await Promise.all([
+    supabase
+      .from("project_templates")
+      .select("sections:content->sections, tasks:content->tasks, fields:content->fields, roles:content->roles")
+      .eq("id", templateId)
+      .is("deleted_at", null)
+      .maybeSingle(),
+    listActivePeople(),
+  ]);
+  if (!data) return null;
+  return {
+    outline: templateOutline({ sections: data.sections, tasks: data.tasks, fields: data.fields, roles: data.roles }),
+    people: people.map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
 

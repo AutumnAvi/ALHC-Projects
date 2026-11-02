@@ -1743,6 +1743,7 @@ export type Database = {
         Row: {
           project_id: string;
           slack_webhook_url: string | null;
+          slack_destination_id: string | null;
           webhook_url: string | null;
           webhook_secret_header: string | null;
           webhook_secret: string | null;
@@ -1754,6 +1755,7 @@ export type Database = {
         Insert: {
           project_id: string;
           slack_webhook_url?: string | null;
+          slack_destination_id?: string | null;
           webhook_url?: string | null;
           webhook_secret_header?: string | null;
           webhook_secret?: string | null;
@@ -1765,6 +1767,7 @@ export type Database = {
         Update: {
           project_id?: string;
           slack_webhook_url?: string | null;
+          slack_destination_id?: string | null;
           webhook_url?: string | null;
           webhook_secret_header?: string | null;
           webhook_secret?: string | null;
@@ -3100,6 +3103,102 @@ export type Database = {
           show_completed?: boolean | null;
           created_at?: string;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      project_view_personal_configs: {
+        Row: {
+          profile_id: string;
+          view_id: string;
+          project_id: string;
+          config: Json | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          profile_id?: string;
+          view_id: string;
+          project_id: string;
+          config?: Json | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          profile_id?: string;
+          view_id?: string;
+          project_id?: string;
+          config?: Json | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      project_roles: {
+        Row: {
+          id: string;
+          project_id: string;
+          name: string;
+          profile_id: string | null;
+          sort_order: number;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          name: string;
+          profile_id?: string | null;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          name?: string;
+          profile_id?: string | null;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
+      task_role_links: {
+        Row: {
+          id: string;
+          task_id: string;
+          project_role_id: string;
+          slot: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          project_role_id: string;
+          slot: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          project_role_id?: string;
+          slot?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
         };
         Relationships: [];
       };
@@ -6760,6 +6859,46 @@ export type Database = {
       set_open_personal_view: {
         Args: { enabled: boolean };
         Returns: boolean;
+      };
+      set_view_personal_config: {
+        Args: { target_view: string; new_config: Json | null };
+        Returns: Json;
+      };
+      normalized_task_label: {
+        Args: { raw: string };
+        Returns: string;
+      };
+      set_project_role_person: {
+        Args: { target_role: string; person: string | null; update_open_tasks?: boolean };
+        Returns: Json;
+      };
+      set_task_role_link: {
+        Args: { target_task: string; target_role: string; link_slot: string; linked: boolean };
+        Returns: Json;
+      };
+      customize_template_snapshot: {
+        Args: { snapshot: Json; customization: Json };
+        Returns: Json;
+      };
+      create_project_from_template_custom: {
+        Args: { target_template: string; project_name: string; start_on?: string | null; customization?: Json };
+        Returns: Json;
+      };
+      slack_settings: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
+      manage_slack_workspace: {
+        Args: { slack_action: string; payload?: Json };
+        Returns: Json;
+      };
+      set_project_slack_destination: {
+        Args: { target_project: string; destination: string | null };
+        Returns: Json;
+      };
+      slack_bot_token: {
+        Args: { target_workspace?: string | null };
+        Returns: string | null;
       };
       set_project_show_completed: {
         Args: { target_project: string; show: boolean | null };

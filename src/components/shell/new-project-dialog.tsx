@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { useActionState, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
@@ -83,6 +84,7 @@ export function NewProjectDialog({ onClose, teamId }: { onClose: () => void; tea
     target?.focus();
   }, [step]);
 
+  useClosesPopovers(true, panelRef);
   const back = () => setStep({ kind: "gallery" });
   const heading =
     step.kind === "blank"

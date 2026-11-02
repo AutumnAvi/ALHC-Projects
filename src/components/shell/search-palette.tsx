@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { CheckCircle2, Circle, Clock, Loader2, Lock, Search, SearchX } from "lucide-react";
@@ -107,6 +108,8 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
   const [recents, setRecents] = useState<RecentItem[] | null>(null);
   const [active, setActive] = useState(0);
   const requestRef = useRef(0);
+  // Nov 2 notes (batch 14, 99): ⌘K closes any open menu first and sits above every menu (layers.ts).
+  useClosesPopovers();
 
   const trimmed = query.trim();
   const searchKey = `${kind ?? "all"}:${trimmed}`;
@@ -180,14 +183,15 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
       document.getElementById(optionId(next))?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (activeIndex >= 0) go(items[activeIndex]);
-      else if (trimmed && (!kind || kind === "tasks")) seeAll();
+      if ((e.metaKey || e.ctrlKey) && trimmed) seeAll();
+      else if (activeIndex >= 0) go(items[activeIndex]);
+      else if (trimmed) seeAll();
     }
   }
 
   let index = -1;
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-900/40 print:hidden" onMouseDown={() => onClose(false)}>
+    <div className="fixed inset-0 z-[75] bg-zinc-900/40 print:hidden" onMouseDown={() => onClose(false)}>
       <div
         role="dialog"
         aria-label="Search"
@@ -275,14 +279,19 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
             <EmptyHint query={trimmed} loading={loading || (!trimmed && recents === null)} kind={kind} />
           ) : null}
         </div>
-        {trimmed && (!kind || kind === "tasks") ? (
+        {trimmed ? (
+          // Nov 2 notes (batch 14, 101): ⌘K is the quick jump; the Search page is the full list with
+          // filters. This row (or ⌘/Ctrl+Enter) opens it with the same words.
           <button
             type="button"
             onClick={seeAll}
-            className="flex w-full items-center gap-2 border-t border-zinc-100 px-3 py-2 text-left text-xs text-zinc-600 hover:bg-zinc-50"
+            className="flex w-full items-center gap-2 border-t border-zinc-100 px-3 py-2 text-left text-xs font-medium text-accent-700 hover:bg-zinc-50"
           >
-            <Search className="size-3.5 text-zinc-400" aria-hidden />
-            See all task results for “{trimmed}”
+            <Search className="size-3.5 text-accent-600" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">See all results for “{trimmed}”</span>
+            <kbd className="hidden shrink-0 rounded border border-zinc-200 px-1.5 font-sans text-2xs font-normal text-zinc-500 sm:inline">
+              {isMac() ? "⌘" : "Ctrl"} Enter
+            </kbd>
           </button>
         ) : null}
       </div>

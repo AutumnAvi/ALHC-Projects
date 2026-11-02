@@ -1,4 +1,5 @@
 import "server-only";
+import { isSlackWebApi, slackApiError } from "@/lib/slack";
 import { createHmac, randomBytes } from "node:crypto";
 import { backgroundOrigin } from "@/lib/origin";
 import { BlockedAddressError, safePost, type SafePostResult } from "@/lib/safe-fetch";
@@ -95,6 +96,13 @@ function headers(row: OutboxRow, rawBody: string): Record<string, string> {
     "Content-Type": "application/json",
     "User-Agent": WEBHOOK_USER_AGENT,
   };
+  // Nov 2 notes (batch 14, 105): a channel of the workspace's connected Slack app posts through Slack's
+  // Web API with the bot token the database stored on the row (the outbox has no client access).
+  if (row.channel === "slack" && isSlackWebApi(row.target_url)) {
+    const auth = record(row.headers).Authorization;
+    if (typeof auth === "string" && auth.startsWith("Bearer xox")) out.Authorization = auth;
+    out["Content-Type"] = "application/json; charset=utf-8";
+  }
   if (row.channel === "webhook") {
     out["Idempotency-Key"] = `integration-outbox-${row.id}`;
     for (const [name, value] of Object.entries(record(row.headers))) {
@@ -135,6 +143,11 @@ async function deliver(row: OutboxRow): Promise<Result> {
   const summary: Json = { status: response.status, body: text };
   if (!response.ok) {
     return { outcome: "error", response: summary, error: `${row.target_hint} responded ${response.status}` };
+  }
+  // Slack's Web API answers 200 with { ok: false, error } when the post didn't go through.
+  if (row.channel === "slack" && isSlackWebApi(row.target_url)) {
+    const problem = slackApiError(response.body);
+    if (problem) return { outcome: "error", response: summary, error: `${row.target_hint}: ${problem}` };
   }
   return { outcome: "sent", response: summary };
 }

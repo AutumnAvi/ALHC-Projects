@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { useEffect, useRef, useState } from "react";
 import { Keyboard, X } from "lucide-react";
 import { OPEN_SEARCH_EVENT } from "@/components/shell/search-palette";
@@ -105,6 +106,7 @@ export function KeyboardShortcuts() {
     };
   }, [open]);
 
+  useClosesPopovers(open);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/30 p-4" onMouseDown={() => setOpen(false)}>

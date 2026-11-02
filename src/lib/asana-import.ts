@@ -40,7 +40,16 @@ export type PlanComment = {
 export type PlanAttachment = { gid: string; name: string; url: string | null };
 // An attachment's file, for "Download attachments": the export's download link (signed by Asana and
 // short-lived, so it works only with a fresh export) and the size Asana reports. Kept out of the batches.
-export type PlanAttachmentFile = { taskGid: string; gid: string; name: string; downloadUrl: string; size: number | null };
+// Nov 2 notes (batch 14, 103): Asana's own JSON export (project menu → Export → JSON) lists attachments
+// without download links; those files have `downloadUrl: null` and can be fetched only through the Asana
+// API with a personal access token the importer enters for that import (never stored). Files stored
+// outside Asana (Google Drive, Dropbox, Box, OneDrive links) have no file to copy and stay links.
+export type PlanAttachmentFile = { taskGid: string; gid: string; name: string; downloadUrl: string | null; size: number | null };
+
+// Where an attachment's file lives, from Asana's `host` (missing on older exports = Asana).
+export function asanaHostsFile(host: unknown): boolean {
+  return host === undefined || host === null || host === "" || host === "asana";
+}
 export type PlanTask = {
   gid: string;
   title: string;
@@ -661,13 +670,14 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
       const url = str(a.permanent_url) ?? str(a.view_url);
       attachments.push({ gid: ag, name: name.slice(0, 255), url: url && url.startsWith("https://") ? url : null });
       const download = str(a.download_url);
-      if (download && download.startsWith("https://")) {
+      const hasLink = Boolean(download && download.startsWith("https://"));
+      if (hasLink || asanaHostsFile(a.host)) {
         const files = filesByTask.get(gid) ?? [];
         files.push({
           taskGid: gid,
           gid: ag,
           name: name.slice(0, 255),
-          downloadUrl: download,
+          downloadUrl: hasLink ? download : null,
           size: typeof a.size === "number" && Number.isFinite(a.size) ? a.size : null,
         });
         filesByTask.set(gid, files);

@@ -18,13 +18,15 @@ import {
   listTags,
   tagsEnabled,
   listTaskTemplates,
+  listProjectRoles,
 } from "@/lib/data";
+import { loadSlackSettings } from "@/lib/slack-actions";
 
 // What the rule builder needs to name sections, fields, people, forms, integrations, and inbound
 // webhooks (the Rules page and the rule canvas). Read with the viewer's client: below Admin the
 // integration defaults and inbound webhooks come back empty.
 export async function loadRuleContext(projectId: string): Promise<RuleContext> {
-  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members, v3, projectTemplates, portfolios, tagsOn] = await Promise.all([
+  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members, v3, projectTemplates, portfolios, tagsOn, roles, slack] = await Promise.all([
     getProject(projectId),
     listSections(projectId),
     listProjectFields(projectId),
@@ -42,7 +44,13 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     listProjectTemplates(),
     listEditablePortfolios(""),
     tagsEnabled(),
+    listProjectRoles(projectId),
+    loadSlackSettings(),
   ]);
+  const nameOf = (profileId: string | null) => {
+    const p = profileId ? profiles.find((x) => x.id === profileId) : null;
+    return p ? p.full_name || p.email : null;
+  };
   return {
     sections: sections.map((s) => ({ id: s.id, name: s.name })),
     fields,
@@ -67,6 +75,9 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     // Oct 26 notes (batch 3): tags switched off hide the tag triggers, conditions, and actions (rules that
     // already use them keep showing them, named from every tag).
     tagsEnabled: tagsOn,
+    // Nov 2 notes (batch 14): project roles (95) and the workspace's Slack channels (105).
+    projectRoles: roles.map((r) => ({ id: r.id, name: r.name, personName: nameOf(r.profileId) })),
+    slackDestinations: slack.destinations,
   };
 }
 

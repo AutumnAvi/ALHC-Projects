@@ -126,7 +126,9 @@ test("List: Viewers and Commenters get no checkbox, drag handle, add rows, or cl
     assert.ok(html.includes("Write the brief"), `${role}: the task is listed`);
     assert.ok(!rowCheckbox(html), `${role}: no row checkbox (so no selection and no bulk bar)`);
     assert.ok(!clickableComplete(html), `${role}: completion is read-only`);
-    assert.ok(!html.includes("Drag to reorder"), `${role}: no drag handle`);
+    // Nov 2 notes (batch 14, 94): section handles reorder this person's own view, so they're everyone's; task
+    // rows (which move tasks for everyone) aren't draggable below Editor.
+    assert.ok(!/draggable="true"[^>]*data-task-row|data-task-row="t1"[^>]*draggable="true"/.test(html), `${role}: no row drag`);
     assert.ok(!/Add task/.test(html), `${role}: no Add task`);
     assert.ok(!/Add section/.test(html), `${role}: no Add section`);
     assert.ok(!html.includes('id="section-s1"'), `${role}: the section name isn't an edit box`);

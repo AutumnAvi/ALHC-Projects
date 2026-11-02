@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { registerPopover } from "@/components/overlay-registry";
 import { useParamSlot } from "@/components/param-slot";
 import {
   filterOptions,
@@ -196,6 +197,18 @@ export function SmartPicker(props: SingleProps | MultiProps) {
   useLayoutEffect(() => {
     if (open) place();
   }, [open, place, visible.length]);
+
+  // Nov 2 notes (batch 14, 99): one menu at a time (a picker inside a menu keeps that menu open).
+  useEffect(() => {
+    if (!open) return;
+    return registerPopover(
+      {
+        close: () => close(false),
+        contains: (node) => Boolean(panelRef.current?.contains(node) || buttonRef.current?.contains(node)),
+      },
+      buttonRef.current,
+    );
+  }, [open, close]);
 
   useEffect(() => {
     if (!open) return;

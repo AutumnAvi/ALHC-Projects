@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { usePathname, useSearchParams } from "next/navigation";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { ArrowRightToLine, Maximize2, Minimize2, MoveHorizontal, RotateCcw, SearchX, Trash2, X } from "lucide-react";
@@ -48,6 +49,9 @@ export function PaneShell({
   const { visible } = useTaskPane();
   const expanded = usePaneExpanded();
   const wide = usePaneWide();
+
+  // Full screen covers the page: menus open on it close (Nov 2 notes, batch 14, 99).
+  useClosesPopovers(visible && expanded);
 
   useEffect(() => {
     if (!visible) return;

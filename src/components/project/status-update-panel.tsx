@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { useEffect, useId, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
@@ -89,6 +90,8 @@ export function StatusUpdatePanel({
       return result;
     });
   }
+
+  useClosesPopovers();
 
   return (
     <div className="fixed inset-0 z-40 bg-zinc-900/10 print:hidden" onMouseDown={onClose}>

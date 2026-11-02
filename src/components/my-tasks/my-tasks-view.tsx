@@ -1206,7 +1206,8 @@ function MyTaskRow({
       className={`cv-row group flex min-h-row cursor-pointer items-center gap-3 border-b border-zinc-100 px-3 py-1 ${
         dropBefore ? "shadow-[inset_0_2px_0_var(--color-accent-500)]" : ""
       } ${
-        selected ? "bg-accent-50" : open ? "bg-accent-50/60" : "hover:bg-zinc-50"
+        // Nov 2 notes (batch 14, 97): the keyboard cursor lights the whole row, like a selected one.
+        selected || selection.cursor === task.id ? "bg-accent-50" : open ? "bg-accent-50/60" : "hover:bg-zinc-50"
       } ${selection.cursor === task.id ? "shadow-[inset_2px_0_0_var(--color-accent-500)]" : ""} ${
         dragging ? "opacity-40" : ""
       } ${onDragStart ? "cursor-grab active:cursor-grabbing" : ""}`}

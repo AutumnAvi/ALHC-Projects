@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { Lock, X } from "lucide-react";
@@ -227,6 +228,7 @@ export function LongTextEditorView({
   const countId = useId();
   const hintId = useId();
   const errorId = useId();
+  useClosesPopovers();
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (isSaveShortcut(e)) {

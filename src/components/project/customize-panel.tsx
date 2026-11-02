@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { FormStatusBadge } from "@/components/forms/form-status";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -85,10 +86,20 @@ const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
 // and (Real features 4) Status templates —
 // each opening its own view in the panel (back arrow to return). It sits next to the page, so new
 // fields show up in the List while it's open. The pages it links to keep their own role checks.
-export function CustomizePanel({ projectId, summary }: { projectId: string; summary: CustomizeSummary }) {
+export function CustomizePanel({
+  projectId,
+  summary,
+  buttonClassName = "",
+}: {
+  projectId: string;
+  summary: CustomizeSummary;
+  // Extra classes for the toolbar button (the header hides it on narrow widths; Nov 2 notes, batch 14).
+  buttonClassName?: string;
+}) {
   // The app's one right-panel slot: opening Customize closes the task pane (and the status sheet), and
   // opening a task closes Customize.
   const { open, setOpen } = useRightPanel(`customize:${projectId}`);
+  useClosesPopovers(open);
   const [view, setView] = useState<View>("home");
   // Closed for any reason (a task opened too): the next open starts on the card list.
   if (!open && view !== "home") setView("home");
@@ -140,7 +151,7 @@ export function CustomizePanel({ projectId, summary }: { projectId: string; summ
         onClick={() => (open ? close() : setOpen(true))}
         aria-expanded={open}
         aria-controls={open ? "customize-panel" : undefined}
-        className={`btn-secondary h-7 gap-1.5 px-2.5 ${customizing || open ? "border-accent-300 text-accent-700" : ""}`}
+        className={`btn-secondary h-7 gap-1.5 px-2.5 ${customizing || open ? "border-accent-300 text-accent-700" : ""} ${buttonClassName}`}
       >
         <SlidersHorizontal className="size-3.5" aria-hidden />
         Customize

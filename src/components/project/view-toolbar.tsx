@@ -6,9 +6,6 @@ import { useState } from "react";
 import {
   ArrowDownUp,
   Check,
-  CheckCircle2,
-  Eye,
-  EyeOff,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -20,6 +17,8 @@ import {
   Rows3,
   Search,
   SlidersHorizontal,
+  UserRound,
+  Users,
   X,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
@@ -27,8 +26,17 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { useViewConfig } from "@/components/project/view-config";
-import { createSection, createTask, createView, saveViewChanges, setProjectShowCompleted } from "@/lib/actions";
+import {
+  createSection,
+  createTask,
+  createView,
+  saveViewChanges,
+  saveViewForEveryone,
+  saveViewForMe,
+  setProjectShowCompleted,
+} from "@/lib/actions";
 import { requestAddTask } from "./shared";
+import { withPendingSection } from "./pending-sections";
 import {
   columnsOf,
   completionOf,
@@ -68,6 +76,8 @@ export function ViewToolbar({
   layout,
   context,
   showCompleted = null,
+  sharedConfig,
+  hasPersonalVersion = false,
 }: {
   projectId: string;
   view: ProjectView | null;
@@ -75,6 +85,10 @@ export function ViewToolbar({
   context: FilterContext;
   // The viewer's own Show / Hide completed for this project (null = what the view says).
   showCompleted?: boolean | null;
+  // Nov 2 notes (batch 14, 94): the view as everyone sees it, and whether this person saved their own
+  // version of it ("Save for me").
+  sharedConfig?: ViewConfig;
+  hasPersonalVersion?: boolean;
 }) {
   const router = useRouter();
   const viewConfig = useViewConfig();
@@ -88,28 +102,60 @@ export function ViewToolbar({
   const { current, base, isDraft, apply, urlFor } = viewConfig;
   const filters = current.filters ?? {};
   const setFilters = (next: ViewFilters) => apply(withFilters(current, next));
-  // Oct 26 notes (batch 4): Save view works for everyone. Your own view, or a shared one when you own the
-  // project, saves in place; anyone else's changes to a shared view become their own copy of it.
-  const savesInPlace = Boolean(view && (view.ownerId !== null || isOwner));
+  // Nov 2 notes (batch 14, 94): every view change (filter, sort, group, columns, section order) is the
+  // person's own until they save it: "Save for me" keeps their own version of a shared view (only they see
+  // it); "Save as default for everyone" changes the shared view (project Owners only). Their own views
+  // simply save. Nothing changes what others see without that explicit choice.
+  const ownView = Boolean(view && view.ownerId !== null);
+  const canSaveForEveryone = Boolean(view && (ownView || isOwner));
 
-  function save() {
+  // The person's own Show / Hide completed isn't part of the view: keep the view's own completion unless
+  // it was changed some other way (the Filter's completion choice).
+  function withoutPersonalCompletion(config: ViewConfig) {
+    if (!view) return config;
+    const personal = showCompleted !== null && completionOf(config.filters) === (showCompleted ? "all" : "incomplete");
+    return personal ? withCompletionOf(config, sharedConfig ?? view.config) : config;
+  }
+
+  function saveForMe() {
     if (!view) return;
-    // The person's own Show / Hide completed isn't part of the view: keep the view's own completion unless
-    // it was changed some other way (the Filter's completion choice).
-    const personal = showCompleted !== null && completionOf(current.filters) === (showCompleted ? "all" : "incomplete");
-    const toSave = personal ? withCompletionOf(current, view.config) : current;
     run(async () => {
-      const result = await saveViewChanges(view.id, toSave);
-      if (!result.error && !result.copied) router.replace(urlFor(null), { scroll: false });
-      if (!result.error && result.copied && result.viewId) {
+      const result = ownView ? await saveViewChanges(view.id, withoutPersonalCompletion(current)) : await saveViewForMe(view.id, withoutPersonalCompletion(current));
+      if (!result.error && "copied" in result && result.copied && result.viewId) {
         notify("Saved as your own view. The shared view stays as it was.");
         router.push(`/projects/${projectId}/views/${result.viewId}`);
+      } else if (!result.error) {
+        if (!ownView) notify("Saved for you. Everyone else still sees the view as it was.");
+        router.replace(urlFor(null), { scroll: false });
       }
       return result;
     });
   }
 
-  const activeCount = filterChips(filters, context).length;
+  function saveForEveryone() {
+    if (!view) return;
+    run(async () => {
+      const result = await saveViewForEveryone(view.id, withoutPersonalCompletion(current));
+      if (!result.error) {
+        notify("Saved as the default view for everyone.");
+        router.replace(urlFor(null), { scroll: false });
+      }
+      return result;
+    });
+  }
+
+  function resetToDefault() {
+    if (!view) return;
+    run(async () => {
+      const result = await saveViewForMe(view.id, null);
+      if (!result.error) router.replace(urlFor(null), { scroll: false });
+      return result;
+    });
+  }
+
+  // Show completed is a view option with its own button (93 / 102): never counted or drawn as a filter.
+  const optionCompletion = layout === "list" || layout === "board";
+  const activeCount = filterChips(filters, context, { completionIsViewOption: optionCompletion }).length;
   const sorts = sortOf(current);
   const sorted = sorts[0]?.key !== "manual";
   const sortChoices = sortOptions(context.fields);
@@ -135,14 +181,31 @@ export function ViewToolbar({
                 Reset
               </button>
               {view ? (
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={save}
-                  data-tooltip={savesInPlace ? undefined : "Saves your own copy of this view. Only you see it."}
-                  className="btn-secondary"
-                >
-                  Save view
+                <SaveViewMenu
+                  ownView={ownView}
+                  canSaveForEveryone={canSaveForEveryone}
+                  pending={pending}
+                  onSaveForMe={saveForMe}
+                  onSaveForEveryone={saveForEveryone}
+                />
+              ) : null}
+              <span aria-hidden className="mx-1 h-4 w-px bg-zinc-200" />
+            </>
+          ) : hasPersonalVersion && view ? (
+            <>
+              <span
+                className="mr-0.5 inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600"
+                data-tooltip="You saved your own version of this view. Only you see it."
+              >
+                <UserRound className="size-3" aria-hidden />
+                Your version
+              </span>
+              <button type="button" disabled={pending} onClick={resetToDefault} className="btn-ghost">
+                Reset to default
+              </button>
+              {canSaveForEveryone ? (
+                <button type="button" disabled={pending} onClick={saveForEveryone} className="btn-ghost">
+                  Save as default for everyone
                 </button>
               ) : null}
               <span aria-hidden className="mx-1 h-4 w-px bg-zinc-200" />
@@ -153,7 +216,11 @@ export function ViewToolbar({
             <CompletedToggle
               completion={completionOf(filters)}
               onChange={(show) =>
-                viewConfig.applyPersonal(withShowCompleted(current, show), () => setProjectShowCompleted(projectId, show))
+                viewConfig.applyPersonal(
+                  withShowCompleted(current, show),
+                  () => setProjectShowCompleted(projectId, show),
+                  withShowCompleted(base, show),
+                )
               }
             />
           ) : null}
@@ -323,39 +390,126 @@ export function ViewToolbar({
       </div>
       {activeCount > 0 ? (
         <div className="mt-1.5 mb-0.5">
-          <FilterChips filters={filters} context={context} onChange={setFilters} />
+          <FilterChips
+            filters={filters}
+            context={context}
+            onChange={setFilters}
+            completionIsViewOption={optionCompletion}
+          />
         </div>
       ) : null}
     </div>
   );
 }
 
-// Oct 27 notes (batch 5): an obvious Show / Hide completed in the List and Board toolbar, with what's
-// shown spelled out next to it. Remembered per person per project (setProjectShowCompleted).
+// Oct 27 notes (batch 5): Show / Hide completed in the List and Board toolbar, remembered per person per
+// project (setProjectShowCompleted). Nov 2 notes (batch 14, 93 / 102): one button whose label never
+// changes width (only its check mark and pressed state do), so the toolbar doesn't jump, styled like the
+// other view options rather than a filter chip. "Completed only" (a filter) still shows as a chip.
 function CompletedToggle({ completion, onChange }: { completion: ReturnType<typeof completionOf>; onChange: (show: boolean) => void }) {
   const showing = completion !== "incomplete";
   return (
-    <span role="group" aria-label="Completed tasks" className="mr-1 inline-flex items-center gap-1">
+    <button
+      type="button"
+      role="switch"
+      aria-checked={showing}
+      onClick={() => onChange(!showing)}
+      data-tooltip={`${completionStateLabel(completion)} shown. ${
+        showing ? "Click to hide completed tasks" : "Click to show completed tasks too"
+      } (remembered for you in this project).`}
+      className={`${toolButton} mr-0.5`}
+    >
       <span
-        className={`inline-flex h-6 items-center gap-1 rounded-full px-2 text-xs font-medium ${
-          showing ? "bg-green-50 text-green-800" : "bg-zinc-100 text-zinc-600"
+        aria-hidden
+        className={`inline-flex size-3.5 items-center justify-center rounded-[4px] border ${
+          showing ? "border-accent-600 bg-accent-600 text-white" : "border-zinc-300 bg-white"
         }`}
-        aria-live="polite"
       >
-        <CheckCircle2 className="size-3.5" aria-hidden />
-        {completionStateLabel(completion)}
+        {showing ? <Check className="size-3" strokeWidth={3} /> : null}
       </span>
+      Show completed
+    </button>
+  );
+}
+
+// Nov 2 notes (batch 14, 94): Save view, with the choice spelled out. A person's own view just saves;
+// a shared view saves for the person, or (project Owners) as the default for everyone.
+function SaveViewMenu({
+  ownView,
+  canSaveForEveryone,
+  pending,
+  onSaveForMe,
+  onSaveForEveryone,
+}: {
+  ownView: boolean;
+  canSaveForEveryone: boolean;
+  pending: boolean;
+  onSaveForMe: () => void;
+  onSaveForEveryone: () => void;
+}) {
+  if (ownView || !canSaveForEveryone) {
+    // Controls a role can't use are hidden (Nov 1 notes, batch 11): below Owner it's simply "Save for me".
+    return (
       <button
         type="button"
-        aria-pressed={showing}
-        onClick={() => onChange(!showing)}
-        data-tooltip={showing ? "Hide completed tasks (remembered for you in this project)" : "Show completed tasks too (remembered for you in this project)"}
-        className={`${toolButton} ${showing ? activeTool : ""}`}
+        disabled={pending}
+        onClick={onSaveForMe}
+        data-tooltip={ownView ? undefined : "Only you see this version. Everyone else keeps the view as it is."}
+        className="btn-secondary"
       >
-        {showing ? <EyeOff className="size-3.5" aria-hidden /> : <Eye className="size-3.5" aria-hidden />}
-        {showing ? "Hide completed" : "Show completed"}
+        {ownView ? "Save view" : "Save for me"}
       </button>
-    </span>
+    );
+  }
+  return (
+    <Popover
+      label="Save view"
+      align="end"
+      panelClassName="w-72 p-1.5"
+      buttonClassName="btn-secondary"
+      disabled={pending}
+      button={
+        <>
+          Save view
+          <ChevronDown className="size-3.5" aria-hidden />
+        </>
+      }
+    >
+      {(close) => (
+        <div role="group" aria-label="Save view">
+          <button
+            type="button"
+            onClick={() => {
+              close();
+              onSaveForMe();
+            }}
+            className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100"
+          >
+            <UserRound className="mt-0.5 size-4 shrink-0 text-zinc-500" aria-hidden />
+            <span>
+              <span className="block text-sm font-medium text-zinc-800">Save for me</span>
+              <span className="block text-xs text-zinc-500">Only you see this version. Everyone else keeps the view as it is.</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              close();
+              onSaveForEveryone();
+            }}
+            className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100"
+          >
+            <Users className="mt-0.5 size-4 shrink-0 text-zinc-500" aria-hidden />
+            <span>
+              <span className="block text-sm font-medium text-zinc-800">Save as default for everyone</span>
+              <span className="block text-xs text-zinc-500">
+                Everyone in the project sees the view this way (unless they saved their own version).
+              </span>
+            </span>
+          </button>
+        </div>
+      )}
+    </Popover>
   );
 }
 
@@ -702,7 +856,7 @@ function AddMenu({
           submit="Add section"
           onSubmit={(name, run) => {
             close();
-            run(() => createSection(projectId, name));
+            run(() => withPendingSection(projectId, name, null, () => createSection(projectId, name)));
           }}
         />
       </div>
