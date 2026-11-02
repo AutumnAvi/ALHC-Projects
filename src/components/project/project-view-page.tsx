@@ -30,6 +30,7 @@ import {
   getListCollapsedGroups,
   getListColumnWidths,
   getProjectShowCompleted,
+  getViewPersonalConfig,
   type SubtaskItem,
 } from "@/lib/data";
 import { todayIn } from "@/lib/workload";
@@ -104,6 +105,8 @@ export async function ProjectViewPage({
   const showCompletedLoad = paging ? getProjectShowCompleted(projectId) : Promise.resolve(null);
   // Oct 27 notes (batch 6): the List rows this person opened to show their subtasks.
   const expandedLoad = layout === "list" ? getExpandedTaskIds() : Promise.resolve([] as string[]);
+  // Nov 2 notes (batch 14, 94): the viewer's own version of this shared view ("Save for me").
+  const personalLoad = view && view.ownerId === null ? getViewPersonalConfig(view.id) : Promise.resolve(null);
   const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, tagsOn, columnWidths, sectionCounts, project] =
     await Promise.all([
     listSections(projectId),
@@ -122,10 +125,11 @@ export async function ProjectViewPage({
     getProject(projectId),
   ]);
 
-  const [collapsedGroups, showCompleted, expandedTaskIds] = await Promise.all([
+  const [collapsedGroups, showCompleted, expandedTaskIds, personalConfig] = await Promise.all([
     collapsedGroupsLoad,
     showCompletedLoad,
     expandedLoad,
+    personalLoad,
   ]);
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
@@ -138,7 +142,9 @@ export async function ProjectViewPage({
   // The person's Show / Hide completed applies to the saved view (an unsaved ?f= draft carries its own, set
   // by the same toggle), so turning it on or off never shows as an unsaved change.
   const personal = (c: ViewConfig) => (showCompleted === null ? c : withShowCompleted(c, showCompleted));
-  const baseConfig = personal(tagless(pruneConfig(view?.config ?? {}, context)));
+  // What everyone sees, and what this person sees: their own version when they saved one.
+  const sharedConfig = personal(tagless(pruneConfig(view?.config ?? {}, context)));
+  const baseConfig = personalConfig ? personal(tagless(pruneConfig(personalConfig, context))) : sharedConfig;
   let config = tagless(pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context));
   // Older links carry ?sub=1: show it as an unsaved draft of the view's Show subtasks setting.
   if (layout === "list" && searchParams.sub === "1" && !showsSubtasks(config)) config = { ...config, show_subtasks: true };
@@ -235,6 +241,8 @@ export async function ProjectViewPage({
           layout={layout}
           context={{ sections, profiles, fields, tags }}
           showCompleted={showCompleted}
+          sharedConfig={sharedConfig}
+          hasPersonalVersion={personalConfig !== null}
         />
         {layout === "list" ? (
           // The toolbar stays put; the list scrolls under it with a sticky column header.

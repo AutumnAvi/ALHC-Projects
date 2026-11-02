@@ -64,7 +64,48 @@ export type ViewConfig = {
   columns?: ColumnKey[];
   // List: draw each task's subtask tree under its row (absent = off). Since Scheduling depth and polish.
   show_subtasks?: boolean;
+  // Nov 2 notes (batch 14, 94): this view's own order of the project's sections (dragging or Move up /
+  // down a section changes it, as an unsaved draft like any other view change). Sections it doesn't list
+  // keep their place in the project's order. Mirrored by validate_view_config.
+  section_order?: string[];
 };
+
+export const MAX_SECTION_ORDER = 500;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The sections in this view's order: the ones `section_order` lists take the places those sections have
+// in the project's order, in the listed order; every other section keeps its own place (so a section
+// someone adds later shows where it was added).
+export function orderSections<T extends { id: string }>(sections: T[], config: ViewConfig): T[] {
+  const order = config.section_order;
+  if (!order?.length) return sections;
+  const rank = new Map(order.map((id, i) => [id, i] as const));
+  const listed = sections.filter((s) => rank.has(s.id)).sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+  let next = 0;
+  return sections.map((s) => (rank.has(s.id) ? listed[next++] : s));
+}
+
+// The config after moving `sectionId` before `beforeId` (null = last) in this view; drops the key when the
+// result is the project's own order.
+export function withSectionMoved<T extends { id: string }>(
+  config: ViewConfig,
+  sections: T[],
+  sectionId: string,
+  beforeId: string | null,
+  include: (section: T) => boolean = () => true,
+): ViewConfig {
+  const physical = sections.filter(include);
+  const current = orderSections(physical, config).map((s) => s.id);
+  if (!current.includes(sectionId) || beforeId === sectionId) return config;
+  const without = current.filter((id) => id !== sectionId);
+  const at = beforeId === null ? without.length : without.indexOf(beforeId);
+  if (at === -1) return config;
+  without.splice(at, 0, sectionId);
+  const next: ViewConfig = { ...config };
+  if (without.every((id, i) => id === physical[i]?.id)) delete next.section_order;
+  else next.section_order = without;
+  return next;
+}
 
 export type ProjectView = {
   id: string;
@@ -307,6 +348,10 @@ export function parseViewConfig(value: unknown): ViewConfig {
     out.columns = columns;
   }
   if (value.show_subtasks === true) out.show_subtasks = true;
+  if (Array.isArray(value.section_order)) {
+    const order = [...new Set(value.section_order.filter((id): id is string => typeof id === "string" && UUID_RE.test(id)))];
+    if (order.length) out.section_order = order.slice(0, MAX_SECTION_ORDER);
+  }
   return out;
 }
 
@@ -336,6 +381,11 @@ export function pruneConfig(
     else if (field.boundToSections) out.group_by = "section";
   }
   if (config.columns) out.columns = config.columns.filter((c) => !c.startsWith("field:") || fieldOk(c));
+  if (config.section_order) {
+    const order = config.section_order.filter((id) => context.sectionIds.has(id));
+    if (order.length) out.section_order = order;
+    else delete out.section_order;
+  }
   return out;
 }
 

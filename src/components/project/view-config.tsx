@@ -16,7 +16,13 @@ type ViewConfigState = {
   // A person's own choice that the server applies to the saved view (Oct 27 notes, batch 5: Show / Hide
   // completed): shown at once, saved by `save` (a Server Action whose refresh brings the page back with it
   // applied). An unsaved draft gets it too; if it couldn't be remembered, it becomes part of the draft.
-  applyPersonal: (next: ViewConfig, save: () => Promise<{ error?: string; remembered?: boolean }>) => void;
+  // `nextBase` is the saved view with the same personal choice applied, so the toggle never flashes
+  // "Unsaved changes" while the server catches up (Nov 2 notes, batch 14, 93).
+  applyPersonal: (
+    next: ViewConfig,
+    save: () => Promise<{ error?: string; remembered?: boolean }>,
+    nextBase?: ViewConfig,
+  ) => void;
   // The page URL for a config (null = the saved view, ?f= dropped).
   urlFor: (next: ViewConfig | null) => string;
 };
@@ -37,6 +43,7 @@ export function ViewConfigProvider({
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
   const [current, setCurrent] = useOptimistic(config);
+  const [base, setBase] = useOptimistic(baseConfig);
 
   const value = useMemo<ViewConfigState>(() => {
     const urlFor = (next: ViewConfig | null) => {
@@ -45,31 +52,32 @@ export function ViewConfigProvider({
       params.delete("sub");
       // A new filter, sort, or group starts again at the first page of cards.
       params.delete("n");
-      if (next === null || sameConfig(next, baseConfig)) params.delete("f");
+      if (next === null || sameConfig(next, base)) params.delete("f");
       else params.set("f", encodeConfig(next));
       const query = params.toString();
       return query ? `${pathname}?${query}` : pathname;
     };
     return {
       current,
-      base: baseConfig,
-      isDraft: !sameConfig(current, baseConfig),
+      base,
+      isDraft: !sameConfig(current, base),
       urlFor,
       apply: (next) =>
         startTransition(() => {
           setCurrent(next);
           router.replace(urlFor(next), { scroll: false });
         }),
-      applyPersonal: (next, save) =>
+      applyPersonal: (next, save, nextBase) =>
         startTransition(async () => {
           setCurrent(next);
+          if (nextBase) setBase(nextBase);
           const drafting = searchParams.has("f");
           const result = await save();
           if (result.error) return;
           if (drafting || result.remembered === false) router.replace(urlFor(next), { scroll: false });
         }),
     };
-  }, [current, baseConfig, searchParams, pathname, router, setCurrent]);
+  }, [current, base, searchParams, pathname, router, setCurrent, setBase]);
 
   return <ViewConfigContext.Provider value={value}>{children}</ViewConfigContext.Provider>;
 }

@@ -17,6 +17,7 @@ import {
   isAllowedHeaderName,
   isAllowedWebhookUrl,
 } from "@/lib/integrations-shared";
+import { destinationLabel } from "@/lib/slack";
 import { ParamSlot, useParamSlot } from "@/components/param-slot";
 import { SmartPicker } from "@/components/smart-picker";
 import { VocabPicker } from "@/components/rules/vocab-picker";
@@ -1421,6 +1422,23 @@ export function ActionFields({
                 />
               </ParamSlot>
             ) : null}
+            {action.to === "role" ? (
+              <ParamSlot param="role_id">
+                <SmartPicker
+                  id={`${prefix}-email-role`}
+                  label="Project role"
+                  value={str(action.role_id) || null}
+                  options={(ctx.projectRoles ?? []).map((r) => ({
+                    value: r.id,
+                    label: r.name,
+                    description: r.personName ? `Now ${r.personName}` : "Nobody fills it yet",
+                  }))}
+                  onChange={(v) => onChange({ ...action, role_id: v })}
+                  variant="chip"
+                  placeholder={(ctx.projectRoles ?? []).length ? "choose a role" : "add roles on the Overview first"}
+                />
+              </ParamSlot>
+            ) : null}
             {action.to === "address" ? (
               <ParamSlot param="address">
                 <TextBox
@@ -2150,6 +2168,88 @@ function CreateSubtasksFields({
 // Slack / webhook fields. Saved URLs and secrets are never sent to the browser: the action only carries
 // a redacted hint (host + last 4 characters, or "saved" for a secret). Typing a value sends it once in
 // plain text; the database stores it out of reach of clients and writes back a fresh hint.
+// Nov 2 notes (batch 14, 105): where a Send Slack message action posts — the project's channel (Settings →
+// Integrations), or one of the workspace's channels / saved webhooks (Admin console → Integrations). Slack
+// is connected once; nothing is pasted per automation. An older action with its own webhook keeps it until
+// another choice is made.
+function SlackDestinationField({
+  prefix,
+  action,
+  ctx,
+  onChange,
+  settingsLink,
+}: {
+  prefix: string;
+  action: RuleAction;
+  ctx: RuleContext;
+  onChange: (next: RuleAction) => void;
+  settingsLink: React.ReactNode;
+}) {
+  const destinations = ctx.slackDestinations ?? [];
+  const ownHint = typeof action.webhook_hint === "string" ? action.webhook_hint : null;
+  const chosen = typeof action.destination_id === "string" ? action.destination_id : null;
+  const value = chosen ?? (ownHint && action.use_project_webhook !== true ? "own" : "project");
+  const projectChannel = ctx.integrations?.slackDestination
+    ? destinationLabel(ctx.integrations.slackDestination)
+    : ctx.integrations?.slackWebhook
+      ? `its old webhook (${ctx.integrations.slackWebhook})`
+      : null;
+  const withoutTarget = (a: RuleAction) => {
+    const next = { ...a };
+    delete next.destination_id;
+    delete next.use_project_webhook;
+    delete next.webhook_ref;
+    delete next.webhook_hint;
+    delete next.webhook_url;
+    return next;
+  };
+  const options = [
+    {
+      value: "project",
+      label: "This project’s channel",
+      group: "Default",
+      description: projectChannel ? `Now ${projectChannel}` : "None set yet (Settings → Integrations)",
+    },
+    ...(ownHint ? [{ value: "own", label: "This automation’s own webhook", group: "Default", description: ownHint }] : []),
+    ...destinations.map((d) => ({
+      value: d.id,
+      label: destinationLabel(d),
+      group: d.kind === "channel" ? "Channels" : "Saved webhooks",
+      description: d.kind === "webhook" ? (d.hint ?? undefined) : d.available ? undefined : "Posts once Slack is connected again",
+    })),
+  ];
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={`${prefix}-slack-destination`} className={labelClass}>
+        Post to
+      </label>
+      <ParamSlot param="destination_id">
+        <SmartPicker
+          id={`${prefix}-slack-destination`}
+          label="Slack channel"
+          value={value}
+          searchable
+          options={options}
+          onChange={(v) => {
+            if (v === "own") return;
+            const next = withoutTarget(action);
+            if (v === "project") next.use_project_webhook = true;
+            else next.destination_id = v;
+            onChange(next);
+          }}
+          className="w-full max-w-sm"
+        />
+      </ParamSlot>
+      {destinations.length === 0 ? (
+        <p className="text-xs text-zinc-500">
+          No Slack channels yet: a workspace admin connects Slack once in Admin console → Integrations. The project’s
+          channel is set in {settingsLink}.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function IntegrationFields({
   projectId,
   prefix,
@@ -2227,82 +2327,88 @@ function IntegrationFields({
         </p>
       )}
 
-      {projectDefault || useProject ? (
-        <label className="flex items-center gap-2 text-sm text-zinc-700">
-          <input
-            type="checkbox"
-            checked={useProject}
-            onChange={(e) => {
-              const next = { ...action };
-              if (e.currentTarget.checked) next.use_project_webhook = true;
-              else delete next.use_project_webhook;
-              onChange(next);
-            }}
-          />
-          Use the project {slack ? "Slack webhook" : "webhook"} ({projectDefault ?? <>not set — add it in {settingsLink}</>})
-        </label>
-      ) : null}
-
-      {useProject ? null : (
+      {slack ? (
+        <SlackDestinationField prefix={prefix} action={action} ctx={ctx} onChange={onChange} settingsLink={settingsLink} />
+      ) : (
         <>
-          <SecretField
-            id={`${prefix}-url`}
-            label={slack ? "Slack incoming webhook URL" : "Webhook URL (https://)"}
-            placeholder={slack ? "https://hooks.slack.com/services/…" : "https://example.com/hooks/alhc"}
-            action={action}
-            plainKey={slack ? "webhook_url" : "url"}
-            savedHint={typeof action[slack ? "webhook_hint" : "url_hint"] === "string" ? String(action[slack ? "webhook_hint" : "url_hint"]) : null}
-            validate={(v) => (isAllowedWebhookUrl(v) ? null : WEBHOOK_URL_ERROR)}
-            onChange={onChange}
-          />
-          {!projectDefault && !action[slack ? "webhook_ref" : "url_ref"] && !action[slack ? "webhook_url" : "url"] ? (
-            <p className="text-xs text-zinc-500">
-              Paste a URL here, or add a project default in {settingsLink}. Without either, runs fail with a clear error.
-            </p>
-          ) : null}
-          {projectDefault ? (
-            <p className="text-xs text-zinc-500">Leave the URL empty to use the project default.</p>
-          ) : null}
-          {slack ? null : (
-            <>
-              <SecretField
-                id={`${prefix}-secret`}
-                label="Shared secret (optional)"
-                placeholder="Sent as a header, never in the body"
-                action={action}
-                plainKey="secret"
-                savedHint={action.secret_set === true ? "Saved secret" : null}
-                validate={(v) => (v.length > 500 ? "The shared secret is limited to 500 characters" : null)}
-                onChange={onChange}
-              />
-              <div className="flex flex-col gap-1">
-                <label htmlFor={`${prefix}-header`} className={labelClass}>
-                  Secret header name
-                </label>
-                <input
-                  id={`${prefix}-header`}
-                  value={typeof action.secret_header === "string" ? action.secret_header : ""}
-                  placeholder={DEFAULT_SECRET_HEADER}
-                  maxLength={100}
-                  aria-invalid={
-                    typeof action.secret_header === "string" && action.secret_header !== "" && !isAllowedHeaderName(action.secret_header)
-                  }
-                  aria-describedby={`${prefix}-header-help`}
-                  onChange={(e) => {
-                    const next = { ...action };
-                    if (e.currentTarget.value) next.secret_header = e.currentTarget.value;
-                    else delete next.secret_header;
-                    onChange(next);
-                  }}
-                  className={`${inputClass} w-full max-w-xs`}
+        {projectDefault || useProject ? (
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              checked={useProject}
+              onChange={(e) => {
+                const next = { ...action };
+                if (e.currentTarget.checked) next.use_project_webhook = true;
+                else delete next.use_project_webhook;
+                onChange(next);
+              }}
+            />
+            Use the project {slack ? "Slack webhook" : "webhook"} ({projectDefault ?? <>not set — add it in {settingsLink}</>})
+          </label>
+        ) : null}
+
+        {useProject ? null : (
+          <>
+            <SecretField
+              id={`${prefix}-url`}
+              label={slack ? "Slack incoming webhook URL" : "Webhook URL (https://)"}
+              placeholder={slack ? "https://hooks.slack.com/services/…" : "https://example.com/hooks/alhc"}
+              action={action}
+              plainKey={slack ? "webhook_url" : "url"}
+              savedHint={typeof action[slack ? "webhook_hint" : "url_hint"] === "string" ? String(action[slack ? "webhook_hint" : "url_hint"]) : null}
+              validate={(v) => (isAllowedWebhookUrl(v) ? null : WEBHOOK_URL_ERROR)}
+              onChange={onChange}
+            />
+            {!projectDefault && !action[slack ? "webhook_ref" : "url_ref"] && !action[slack ? "webhook_url" : "url"] ? (
+              <p className="text-xs text-zinc-500">
+                Paste a URL here, or add a project default in {settingsLink}. Without either, runs fail with a clear error.
+              </p>
+            ) : null}
+            {projectDefault ? (
+              <p className="text-xs text-zinc-500">Leave the URL empty to use the project default.</p>
+            ) : null}
+            {slack ? null : (
+              <>
+                <SecretField
+                  id={`${prefix}-secret`}
+                  label="Shared secret (optional)"
+                  placeholder="Sent as a header, never in the body"
+                  action={action}
+                  plainKey="secret"
+                  savedHint={action.secret_set === true ? "Saved secret" : null}
+                  validate={(v) => (v.length > 500 ? "The shared secret is limited to 500 characters" : null)}
+                  onChange={onChange}
                 />
-                <p id={`${prefix}-header-help`} className="text-xs text-zinc-500">
-                  Defaults to {DEFAULT_SECRET_HEADER}. Use “Authorization” with a secret like “Bearer …” for token auth.
-                </p>
-              </div>
-              <SigningSecretField action={action} onChange={onChange} />
-            </>
-          )}
+                <div className="flex flex-col gap-1">
+                  <label htmlFor={`${prefix}-header`} className={labelClass}>
+                    Secret header name
+                  </label>
+                  <input
+                    id={`${prefix}-header`}
+                    value={typeof action.secret_header === "string" ? action.secret_header : ""}
+                    placeholder={DEFAULT_SECRET_HEADER}
+                    maxLength={100}
+                    aria-invalid={
+                      typeof action.secret_header === "string" && action.secret_header !== "" && !isAllowedHeaderName(action.secret_header)
+                    }
+                    aria-describedby={`${prefix}-header-help`}
+                    onChange={(e) => {
+                      const next = { ...action };
+                      if (e.currentTarget.value) next.secret_header = e.currentTarget.value;
+                      else delete next.secret_header;
+                      onChange(next);
+                    }}
+                    className={`${inputClass} w-full max-w-xs`}
+                  />
+                  <p id={`${prefix}-header-help`} className="text-xs text-zinc-500">
+                    Defaults to {DEFAULT_SECRET_HEADER}. Use “Authorization” with a secret like “Bearer …” for token auth.
+                  </p>
+                </div>
+                <SigningSecretField action={action} onChange={onChange} />
+              </>
+            )}
+          </>
+        )}
         </>
       )}
     </div>

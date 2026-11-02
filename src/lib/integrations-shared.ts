@@ -92,6 +92,8 @@ export type ProjectIntegrations = {
   webhookSecretHeader: string | null;
   signingSecretSet: boolean;
   signingSecretCreatedAt: string | null;
+  // Nov 2 notes (batch 14, 105): the project's Slack channel from the workspace's list (null = none).
+  slackDestination?: { id: string; name: string; kind: "channel" | "webhook" } | null;
 };
 
 export function toProjectIntegrations(value: Json): ProjectIntegrations {
@@ -103,7 +105,15 @@ export function toProjectIntegrations(value: Json): ProjectIntegrations {
     webhookSecretHeader: typeof r.webhook_secret_header === "string" ? r.webhook_secret_header : null,
     signingSecretSet: r.signing_secret_set === true,
     signingSecretCreatedAt: typeof r.signing_secret_created_at === "string" ? r.signing_secret_created_at : null,
+    slackDestination: slackDestinationOf(r.slack_destination),
   };
+}
+
+function slackDestinationOf(value: Json | undefined): ProjectIntegrations["slackDestination"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return typeof value.id === "string" && typeof value.name === "string"
+    ? { id: value.id, name: value.name, kind: value.kind === "channel" ? "channel" : "webhook" }
+    : null;
 }
 
 export const INTEGRATION_SETTINGS = [

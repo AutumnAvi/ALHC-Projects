@@ -21,6 +21,7 @@ import { SECTIONS_LOCKED_NOTE, useProjectPermissions, useSectionPermissions } fr
 import { useTaskTemplates } from "@/components/project/task-templates-context";
 import { useNotify, useServerAction } from "@/components/toast";
 import { useApprovalAction } from "@/components/task/approval-action";
+import { withPendingSection } from "./pending-sections";
 import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
 import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, type TaskKind } from "@/lib/task-kinds";
 import type { Section } from "@/lib/data";
@@ -199,7 +200,7 @@ function SectionMenu({
           const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
           if (!name) return;
           close();
-          run(() => createSection(projectId, name, adding.before));
+          run(() => withPendingSection(projectId, name, adding.before, () => createSection(projectId, name, adding.before)));
         }}
       >
         <label htmlFor={`new-section-${section.id}`} className="mb-1 block text-xs font-medium text-zinc-600">
@@ -501,10 +502,10 @@ export function AddSection({ projectId, variant }: { projectId: string; variant:
         e.preventDefault();
         const name = inputRef.current?.value.trim();
         if (!name) return;
-        run(
-          () => createSection(projectId, name),
-          () => setOpen(false),
-        );
+        // Nov 2 notes (batch 14, 92): the section shows at once; the box stays open for the next one.
+        if (inputRef.current) inputRef.current.value = "";
+        setOpen(false);
+        run(() => withPendingSection(projectId, name, null, () => createSection(projectId, name)));
       }}
       className={variant === "board" ? "w-70 shrink-0 self-start rounded-xl bg-zinc-100/70 p-2" : "max-w-sm"}
     >

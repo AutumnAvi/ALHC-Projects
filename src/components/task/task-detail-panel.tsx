@@ -28,6 +28,7 @@ import { PersonPicker } from "./person-picker";
 import { TaskProjects, type ProjectOption } from "./task-projects";
 import { TaskSubtasks, canAddSubtask } from "./task-subtasks";
 import { TaskTags } from "./task-tags";
+import { TaskRolesRow } from "./task-roles";
 import { PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
 import { paneTaskNumbers } from "@/lib/request-numbers";
 import { TaskNumberChips } from "./task-number";
@@ -411,6 +412,8 @@ export function TaskDetailPanel({
                 </dd>
               </>
             ) : null}
+
+            <TaskRolesRow taskId={task.id} canEdit={canEdit} kind={task.kind} />
 
             {tagsOn && (canEdit || task.tagIds.length) ? (
               <>

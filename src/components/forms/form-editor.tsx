@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import {
@@ -370,6 +371,8 @@ export function FormEditor({
       notify("Couldn’t copy. Select the text and copy it instead.");
     }
   }
+
+  useClosesPopovers();
 
   return (
     <div className="fixed inset-0 z-50 flex bg-zinc-900/40 p-2 sm:p-4" onMouseDown={close}>

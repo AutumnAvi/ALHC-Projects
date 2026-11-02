@@ -10,6 +10,7 @@ import { SingleDatePicker } from "@/components/task/date-picker";
 import { dayLabel, formatTime } from "@/lib/date-input";
 import { OPTION_SWATCH_CLASSES, formatNumberValue, numberPrefixOf, type FieldDef, type OptionColor } from "@/lib/fields";
 import type { ProjectIntegrations } from "@/lib/integrations-shared";
+import type { SlackDestination } from "@/lib/slack";
 import {
   ACTIONS,
   APPROVAL_DECISIONS,
@@ -38,6 +39,8 @@ import {
   V3_TRIGGERS,
   fieldOfSlot,
   fieldSlot,
+  roleOfSlot,
+  roleSlot,
   labelOf,
   splitBranches,
   splitGroups,
@@ -78,6 +81,10 @@ export type RuleContext = {
   portfolios?: { id: string; name: string }[];
   // Oct 26 notes (batch 3): the workspace's Tags switch (missing = on).
   tagsEnabled?: boolean;
+  // Nov 2 notes (batch 14, 95): the project's roles — "the person in role X" (project_role:<id>).
+  projectRoles?: { id: string; name: string; personName: string | null }[];
+  // Nov 2 notes (batch 14, 105): Slack channels and saved webhooks of the workspace (Send Slack message).
+  slackDestinations?: SlackDestination[];
 };
 
 // The tag vocabulary, hidden from the pickers while tags are switched off (Admin console → Tags). A
@@ -154,6 +161,11 @@ export function personName(ctx: RuleContext, value: Json | undefined) {
   if (role) return `the ${role.label.toLowerCase()}`;
   const field = fieldOfSlot(value);
   if (field !== null) return `the ${peopleFieldName(ctx, field)} field`;
+  const roleId = roleOfSlot(value);
+  if (roleId !== null) {
+    const name = ctx.projectRoles?.find((r) => r.id === roleId)?.name;
+    return name ? `the ${name}` : "a removed role";
+  }
   return ctx.people.find((p) => p.id === value)?.name ?? "someone removed";
 }
 
@@ -724,6 +736,14 @@ export function personOptions(ctx: RuleContext, opts: { none?: string; many?: bo
       group: "Roles",
       description: r.value === "assignee" ? "Whoever the task is assigned to when the automation runs" : "Whoever created the task",
       icon: <User className="size-4" />,
+    })),
+    ...(ctx.projectRoles ?? []).map((r) => ({
+      value: roleSlot(r.id),
+      label: `${r.name} (project role)`,
+      group: "Project roles",
+      description: r.personName ? `Whoever fills the role — now ${r.personName}` : "Whoever fills the role (nobody yet)",
+      keywords: ["role", "project role", r.name],
+      icon: <Contact className="size-4" />,
     })),
     ...peopleFields(ctx).map((f) => ({
       value: fieldSlot(f.id),

@@ -98,7 +98,9 @@ test("locked sections: Editors can't rename, add, or reorder them; Owners still 
 
   const editorOpen = render(<ListView {...viewProps} />, "editor", false);
   assert.ok(editorOpen.includes('id="section-s1"'), "unlocked: Editors rename");
-  assert.equal(handles(editorOpen) - handles(editorLocked), 2, "locked: no section drag handles (task rows keep theirs)");
+  // Nov 2 notes (batch 14, 94): dragging a section is this person's own view order (a draft they save for
+  // themselves), so the lock — which guards the project's shared order — doesn't take the handles away.
+  assert.equal(handles(editorOpen), handles(editorLocked), "section handles reorder the view, locked or not");
   assert.match(editorOpen, /Add section/);
 
   const ownerLocked = render(<ListView {...viewProps} />, "owner", true);

@@ -5,6 +5,10 @@ import { useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { useServerAction } from "@/components/toast";
 import { clearProjectSigningSecret, generateProjectSigningSecret, setProjectIntegration } from "@/lib/actions";
+import { Hash, Link2 } from "lucide-react";
+import { SmartPicker } from "@/components/smart-picker";
+import { NO_SLACK, destinationLabel, type SlackSettings } from "@/lib/slack";
+import { setProjectSlackDestination } from "@/lib/slack-actions";
 import {
   DEFAULT_SECRET_HEADER,
   SIGNATURE_HEADER,
@@ -17,6 +21,79 @@ import {
   type ProjectIntegrations,
 } from "@/lib/integrations-shared";
 
+// Nov 2 notes (batch 14, 105): the project's Slack channel, picked from the workspace's list. Slack is
+// connected once in Admin console → Integrations; nobody pastes a webhook per project any more. A project
+// still on its own old webhook keeps posting there until a channel is picked.
+function SlackChannelSetting({
+  projectId,
+  slack,
+  current,
+  legacyWebhook,
+}: {
+  projectId: string;
+  slack: SlackSettings;
+  current: ProjectIntegrations["slackDestination"];
+  legacyWebhook: string | null;
+}) {
+  const [pending, run] = useServerAction();
+  const [value, setValue] = useState(current?.id ?? "");
+  const options = slack.destinations.map((d) => ({
+    value: d.id,
+    label: destinationLabel(d),
+    group: d.kind === "channel" ? "Channels" : "Saved webhooks",
+    description: d.kind === "channel" ? (d.available ? undefined : "Posts once Slack is connected again") : d.hint ?? undefined,
+    icon: d.kind === "channel" ? <Hash className="size-3.5 text-zinc-400" aria-hidden /> : <Link2 className="size-3.5 text-zinc-400" aria-hidden />,
+  }));
+  return (
+    <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="slack-heading">
+      <h2 id="slack-heading" className="text-sm font-semibold text-zinc-900">
+        Slack
+      </h2>
+      <p className="mt-1 text-sm text-zinc-600">
+        Where this project’s <span className="font-medium text-zinc-900">Send Slack message</span> automations post
+        (each automation can also pick its own channel). Slack is connected once for the whole workspace in{" "}
+        <span className="font-medium text-zinc-900">Admin console → Integrations</span>; pick one of its channels here.
+      </p>
+      {options.length === 0 ? (
+        <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+          No Slack channels yet. Ask a workspace admin to connect Slack in Admin console → Integrations.
+        </p>
+      ) : (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <label htmlFor="project-slack-channel" className="text-sm text-zinc-700">
+            Channel
+          </label>
+          <SmartPicker
+            id="project-slack-channel"
+            label="Slack channel"
+            value={value}
+            searchable
+            placeholder="Choose a channel"
+            className="min-w-56"
+            options={[{ value: "", label: "None", group: "Channels" }, ...options]}
+            onChange={(next) => {
+              const previous = value;
+              setValue(next);
+              run(async () => {
+                const result = await setProjectSlackDestination(projectId, next || null);
+                if (result.error) setValue(previous);
+                return result;
+              });
+            }}
+            disabled={pending}
+          />
+        </div>
+      )}
+      {legacyWebhook && !value ? (
+        <p className="mt-3 text-xs text-amber-800">
+          This project still posts through its own old webhook ({legacyWebhook}). Pick a channel above to use the
+          workspace’s Slack connection instead.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 const inputClass =
   "field h-auto py-1.5";
 const buttonClass = "rounded-md px-2.5 py-1 text-sm text-zinc-700 hover:bg-zinc-100 disabled:opacity-50";
@@ -26,37 +103,18 @@ const buttonClass = "rounded-md px-2.5 py-1 text-sm text-zinc-700 hover:bg-zinc-
 export function IntegrationsSettings({
   projectId,
   initial,
+  slack = NO_SLACK,
 }: {
   projectId: string;
   initial: ProjectIntegrations;
+  // Nov 2 notes (batch 14, 105): the workspace's Slack connection and channels (Admin console → Integrations).
+  slack?: SlackSettings;
 }) {
   const [settings, setSettings] = useState(initial);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-gutter py-5">
-      <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="slack-heading">
-        <h2 id="slack-heading" className="text-sm font-semibold text-zinc-900">
-          Slack
-        </h2>
-        <p className="mt-1 text-sm text-zinc-600">
-          The default channel for the <span className="font-medium text-zinc-900">Send Slack message</span> automation
-          action. In Slack, create an app (or open an existing one), turn on <em>Incoming Webhooks</em>, choose{" "}
-          <em>Add New Webhook to Workspace</em>, pick a channel, and paste the URL it gives you (it starts with
-          https://hooks.slack.com/services/). Anyone with that URL can post to the channel, so treat it like a
-          password.
-        </p>
-        <dl className="mt-4 divide-y divide-zinc-100">
-          <SecretSetting
-            projectId={projectId}
-            setting="slack_webhook_url"
-            label="Slack incoming webhook URL"
-            placeholder="https://hooks.slack.com/services/…"
-            current={settings.slackWebhook}
-            validate={(v) => (isAllowedWebhookUrl(v) ? null : WEBHOOK_URL_ERROR)}
-            onSaved={setSettings}
-          />
-        </dl>
-      </section>
+      <SlackChannelSetting projectId={projectId} slack={slack} current={settings.slackDestination ?? null} legacyWebhook={settings.slackWebhook} />
 
       <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="webhook-heading">
         <h2 id="webhook-heading" className="text-sm font-semibold text-zinc-900">

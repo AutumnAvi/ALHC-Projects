@@ -26,6 +26,7 @@ import {
   Lock,
   MessagesSquare,
   MoreHorizontal,
+  SlidersHorizontal,
   Paperclip,
   Pencil,
   Plus,
@@ -48,6 +49,7 @@ import { projectColorClass } from "@/lib/project-colors";
 import { SyncCalendarDialog } from "@/components/calendar/sync-calendar-dialog";
 import { DuplicateProjectDialog } from "@/components/project/duplicate-project-dialog";
 import { CustomizePanel, type CustomizeSummary } from "@/components/project/customize-panel";
+import { useRightPanel } from "@/components/shell/right-panel";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { copyProjectLink, useProjectPage } from "@/components/project/project-page-context";
 import { useNotify, useServerAction } from "@/components/toast";
@@ -146,11 +148,15 @@ export function ProjectHeader({
     if (name && name !== project.name) run(() => updateProject(project.id, { name }));
   }
 
+  // Nov 2 notes (batch 14, 98): the header reads its own width (a container), so it adapts whether the
+  // window, the task pane, or Customize makes it narrow. The name shrinks and truncates; the status pill
+  // stays; below ~42rem the member avatars and Customize fold into a "…" menu (Share stays). Every
+  // control has its own box, so a click never lands on a neighbour.
   return (
-    <header className="px-gutter pt-2.5">
-      <div className="flex items-center gap-2">
+    <header className="@container/header px-gutter pt-2.5">
+      <div className="flex min-w-0 items-center gap-2">
         <HeaderGlyph icon={FolderClosed} color={projectColorClass(project.id)} />
-        <div className="flex min-w-0 flex-1 items-center gap-0.5">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
           <label htmlFor="project-name" className="sr-only">
             Project name
           </label>
@@ -170,16 +176,21 @@ export function ProjectHeader({
                 e.currentTarget.blur();
               }
             }}
-            className={`${HEADER_TITLE_INPUT} field-sizing-content min-w-24 max-w-full`}
+            title={project.name}
+            className={`${HEADER_TITLE_INPUT} field-sizing-content min-w-16 max-w-full shrink text-ellipsis`}
           />
-          <ProjectMenu project={project} canArchive={canArchive} />
-          <StarToggle projectId={project.id} starred={starred} />
-          <span className="ml-1.5 hidden sm:inline-flex">
+          <span className="flex shrink-0 items-center gap-0.5">
+            <ProjectMenu project={project} canArchive={canArchive} />
+            <StarToggle projectId={project.id} starred={starred} />
+          </span>
+          <span className="ml-1.5 hidden shrink-0 @md/header:inline-flex">
             <StatusControl project={project} overviewHref={overviewHref} />
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-2 print:hidden">
-          <MemberStack members={members} onOpen={openShare} />
+          <span className="hidden @2xl/header:inline-flex">
+            <MemberStack members={members} onOpen={openShare} />
+          </span>
           <button type="button" onClick={openShare} className="btn-primary h-7 px-3">
             {project.visibility === "team" ? (
               <Users className="size-3.5" aria-hidden />
@@ -188,7 +199,18 @@ export function ProjectHeader({
             )}
             Share
           </button>
-          {customize && canEditViews ? <CustomizePanel projectId={project.id} summary={customize} /> : null}
+          {customize && canEditViews ? (
+            // Always mounted (the panel lives here); its button folds into "…" on a narrow header.
+            <CustomizePanel projectId={project.id} summary={customize} buttonClassName="hidden @2xl/header:inline-flex" />
+          ) : null}
+          <HeaderOverflow
+            projectId={project.id}
+            members={members}
+            onMembers={openShare}
+            customize={Boolean(customize && canEditViews)}
+            project={project}
+            overviewHref={overviewHref}
+          />
         </div>
       </div>
 
@@ -630,7 +652,90 @@ function StatusControl({ project, overviewHref }: { project: Project; overviewHr
   );
 }
 
-// Up to three member avatars and a count; opens Share.
+// Nov 2 notes (batch 14, 98): on a narrow header, members, Customize, and the status fold in here.
+function HeaderOverflow({
+  projectId,
+  members,
+  onMembers,
+  customize,
+  project,
+  overviewHref,
+}: {
+  projectId: string;
+  members: HeaderMember[];
+  onMembers: () => void;
+  customize: boolean;
+  project: Project;
+  overviewHref: string;
+}) {
+  const { setOpen: openCustomize } = useRightPanel(`customize:${projectId}`);
+  const { openStatusUpdate } = useProjectPage();
+  const canEdit = useProjectPermissions().canEdit;
+  const status = isProjectStatus(project.status) ? project.status : null;
+  const statusSet = status !== null && project.status_updated_at !== null;
+  return (
+    <span className="inline-flex @2xl/header:hidden">
+      <Popover
+        label="More project actions"
+        tooltip="More"
+        align="end"
+        panelClassName="w-56 p-1.5"
+        buttonClassName="btn-icon"
+        button={<MoreHorizontal className="size-4" aria-hidden />}
+      >
+        {(close) => (
+          <>
+            <MenuItem
+              onClick={() => {
+                close();
+                onMembers();
+              }}
+            >
+              <Users className="size-4 text-zinc-500" />
+              <span className="flex-1">Members</span>
+              <span className="text-xs tabular-nums text-zinc-400">{members.length}</span>
+            </MenuItem>
+            {customize ? (
+              <MenuItem
+                onClick={() => {
+                  close();
+                  openCustomize(true);
+                }}
+              >
+                <SlidersHorizontal className="size-4 text-zinc-500" /> Customize
+              </MenuItem>
+            ) : null}
+            <span className="@md/header:hidden">
+              <div role="separator" className="my-1 border-t border-zinc-100" />
+              {canEdit ? (
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    openStatusUpdate(status ?? "on_track");
+                  }}
+                >
+                  <span aria-hidden className={`ml-0.5 size-2.5 rounded-full ${status ? PROJECT_STATUS_DOT[status] : "bg-zinc-300"}`} />
+                  <span className="flex-1">{statusSet ? `Status: ${PROJECT_STATUS_LABELS[status]}` : "Set status"}</span>
+                </MenuItem>
+              ) : (
+                <Link
+                  href={overviewHref}
+                  onClick={close}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+                >
+                  <span aria-hidden className={`ml-0.5 size-2.5 rounded-full ${status ? PROJECT_STATUS_DOT[status] : "bg-zinc-300"}`} />
+                  {statusSet ? `Status: ${PROJECT_STATUS_LABELS[status]}` : "Project status"}
+                </Link>
+              )}
+            </span>
+          </>
+        )}
+      </Popover>
+    </span>
+  );
+}
+
+// Up to three member avatars and a count; opens Share (who has access).
 function MemberStack({ members, onOpen }: { members: HeaderMember[]; onOpen: () => void }) {
   if (members.length === 0) return null;
   const shown = members.slice(0, 3);
@@ -641,7 +746,8 @@ function MemberStack({ members, onOpen }: { members: HeaderMember[]; onOpen: () 
       type="button"
       onClick={onOpen}
       aria-label={`${members.length} ${members.length === 1 ? "member" : "members"}: ${names}${more ? ` and ${more} more` : ""}. Share`}
-      className="hidden items-center rounded-full p-0.5 hover:bg-zinc-100 md:inline-flex"
+      data-tooltip="Members"
+      className="inline-flex items-center rounded-full p-0.5 hover:bg-zinc-100"
     >
       <span className="flex -space-x-1">
         {shown.map((m) => (

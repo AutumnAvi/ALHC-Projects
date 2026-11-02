@@ -20,6 +20,8 @@ import {
   loadTaskCommentPage,
   loadSubmitterConversation,
   firstVisibleNumbers,
+  countOpenRoleTasks,
+  listTaskRoleLinks,
   visibleRequestLabelsIn,
   visibleTaskPlacesOrNull,
   type SubmitterConversation,
@@ -27,6 +29,7 @@ import {
   type TaskComment,
 } from "@/lib/data";
 import type { RequestLabel } from "@/lib/request-numbers";
+import type { TemplateCustomization } from "@/lib/project-roles";
 import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/attachments";
 import { safeDownload } from "@/lib/safe-fetch";
 import { drainOutbox, isEmailConfigured } from "@/lib/email";
@@ -39,6 +42,7 @@ import {
   MAX_IMPORT_FILES,
   MAX_IMPORT_FILE_BYTES,
   addTotals,
+  asanaTokenProblem,
   importFileKind,
   importFileName,
   type AttachmentFileProgress,
@@ -417,14 +421,33 @@ export async function saveProjectAsTemplate(
 
 export async function createProjectFromTemplate(
   templateId: string,
-  input: { name: string; startOn: string | null; teamId?: string | null; visibility?: string | null },
+  input: {
+    name: string;
+    startOn: string | null;
+    teamId?: string | null;
+    visibility?: string | null;
+    // Nov 2 notes (batch 14, 95): the "Customize before creating" edits and the people for its roles.
+    customization?: TemplateCustomization | null;
+  },
 ): Promise<ActionResult> {
   let projectId: string | null = null;
   const result = await run(async () => {
     const teamId = input.teamId ? id(input.teamId, "team") : null;
     const visibility = input.visibility ? projectVisibility(input.visibility) : null;
     const supabase = await createClient();
-    const created = await supabase.rpc("create_project_from_template", {
+    const custom = input.customization ? customizationJson(input.customization) : null;
+    let created = custom
+      ? await supabase.rpc("create_project_from_template_custom", {
+          target_template: id(templateId, "template"),
+          project_name: text(input.name, "Project name", { max: 200 }),
+          start_on: optionalIsoDate(input.startOn, "start date"),
+          customization: custom,
+        })
+      : null;
+    if (created?.error?.code === "PGRST202") {
+      throw new InputError("Customizing a template before creating needs this release’s database update");
+    }
+    created ??= await supabase.rpc("create_project_from_template", {
       target_template: id(templateId, "template"),
       project_name: text(input.name, "Project name", { max: 200 }),
       start_on: optionalIsoDate(input.startOn, "start date"),
@@ -436,6 +459,31 @@ export async function createProjectFromTemplate(
   });
   if (projectId && !result.error) redirect(`/projects/${projectId}`);
   return result;
+}
+
+// The customize step's edits as the database takes them: ids checked, text trimmed and capped.
+function customizationJson(c: TemplateCustomization): Json | null {
+  const entries = <T,>(o: Record<string, T>) => Object.entries(o ?? {}).filter(([k]) => isUuid(k)).slice(0, 2000);
+  const named = (o: Record<string, { name?: string; skip?: boolean }>, max: number) =>
+    Object.fromEntries(
+      entries(o).map(([k, v]) => [k, v?.skip ? { skip: true } : { name: typeof v?.name === "string" ? v.name.trim().slice(0, max) : "" }]),
+    );
+  const out = {
+    sections: named(c.sections, 200),
+    fields: named(c.fields, 100),
+    tasks: Object.fromEntries(
+      entries(c.tasks).map(([k, v]) => [k, v?.skip ? { skip: true } : { title: typeof v?.title === "string" ? v.title.trim().slice(0, 1000) : "" }]),
+    ),
+    added_tasks: (Array.isArray(c.added_tasks) ? c.added_tasks : [])
+      .filter((a) => a && typeof a.title === "string" && a.title.trim())
+      .slice(0, 200)
+      .map((a) => ({ section_id: a.section_id && isUuid(a.section_id) ? a.section_id : null, title: a.title.trim().slice(0, 1000) })),
+    roles: Object.fromEntries(entries(c.roles).filter(([, v]) => typeof v === "string" && isUuid(v))),
+  };
+  const empty =
+    !Object.keys(out.sections).length && !Object.keys(out.fields).length && !Object.keys(out.tasks).length &&
+    !out.added_tasks.length && !Object.keys(out.roles).length;
+  return empty ? null : (out as unknown as Json);
 }
 
 export async function duplicateProject(
@@ -5420,7 +5468,8 @@ export async function updateView(
 }
 
 // Saves a view's unsaved changes: into the view itself when it's yours or you own the project, else as
-// your own copy of it (the shared view stays as everyone sees it), which then opens.
+// your own copy of it (the shared view stays as everyone sees it), which then opens. (Kept for older
+// callers; since Nov 2 notes, batch 14 the toolbar offers "Save for me" / "Save as default for everyone".)
 export async function saveViewChanges(
   viewId: string,
   config: ViewConfig,
@@ -5441,6 +5490,38 @@ export async function saveViewChanges(
     false,
   );
   return { ...result, copied: true };
+}
+
+const PERSONAL_VIEW_MISSING = "Saving a view for yourself needs this release’s database update";
+
+// Nov 2 notes (batch 14, 94): "Save for me" — the viewer's own version of a shared view (sort, filters,
+// grouping, columns, section order): only they see it, and the view stays as everyone else sees it. Null
+// clears it ("Reset to default"). A database without this release falls back to a personal copy.
+export async function saveViewForMe(
+  viewId: string,
+  config: ViewConfig | null,
+): Promise<ActionResult & { copied?: boolean; viewId?: string }> {
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const saved = await supabase.rpc("set_view_personal_config", {
+      target_view: id(viewId),
+      new_config: config === null ? null : toJson(parseViewConfig(config)),
+    });
+    if (saved.error?.code === "PGRST202") throw new InputError(PERSONAL_VIEW_MISSING);
+    check(saved);
+  });
+  if (result.error === PERSONAL_VIEW_MISSING && config !== null) return saveViewChanges(viewId, config);
+  return result;
+}
+
+// "Save as default for everyone": the shared view itself (Owners only — the database says so) — and the
+// Owner's own version is cleared so they see what everyone sees.
+export async function saveViewForEveryone(viewId: string, config: ViewConfig): Promise<ActionResult> {
+  const result = await updateView(viewId, { config });
+  if (result.error) return result;
+  const supabase = await createClient();
+  await supabase.rpc("set_view_personal_config", { target_view: id(viewId), new_config: null });
+  return result;
 }
 
 export async function duplicateView(viewId: string): Promise<ActionResult> {
@@ -5842,7 +5923,8 @@ export async function previewAsanaImport(
         tags: plan.tagCount,
         dependencies: plan.dependencies.length,
         rules: plan.rules.length,
-        attachmentFiles: plan.attachmentFiles.length,
+        attachmentFiles: plan.attachmentFiles.filter((f) => f.downloadUrl !== null).length,
+        attachmentFilesNeedToken: plan.attachmentFiles.filter((f) => f.downloadUrl === null).length,
       },
       people,
       warnings: plan.warnings,
@@ -5869,6 +5951,9 @@ export async function runAsanaImport(input: {
   // files into Storage, resumably (files: where the last call stopped).
   downloadAttachments?: boolean;
   files?: AttachmentFileProgress | null;
+  // Nov 2 notes (batch 14, 103): an Asana personal access token for files the export has no download link
+  // for. Sent with each call by the browser (which keeps it only in memory); never stored or logged.
+  asanaToken?: string | null;
 }): Promise<ActionResult & { progress?: ImportProgress }> {
   const started = Date.now();
   try {
@@ -5913,6 +5998,8 @@ export async function runAsanaImport(input: {
       step++;
     }
 
+    const token = typeof input.asanaToken === "string" ? input.asanaToken.trim() : "";
+    if (token && asanaTokenProblem(token)) throw new InputError(asanaTokenProblem(token)!);
     let fileProgress: AttachmentFileProgress | null = input.downloadAttachments
       ? {
           index: 0,
@@ -5920,12 +6007,13 @@ export async function runAsanaImport(input: {
           already: 0,
           tooLarge: 0,
           failed: 0,
+          needToken: 0,
           ...(input.files ?? {}),
           total: plan.attachmentFiles.length,
         }
       : null;
     if (fileProgress && step >= steps.length) {
-      fileProgress = await downloadImportFiles(supabase, runId, plan, fileProgress, started);
+      fileProgress = await downloadImportFiles(supabase, runId, plan, fileProgress, started, token || null);
     }
 
     const done = step >= steps.length && (!fileProgress || fileProgress.index >= fileProgress.total);
@@ -5945,6 +6033,7 @@ export async function runAsanaImport(input: {
                     already: fileProgress.already,
                     too_large: fileProgress.tooLarge,
                     failed: fileProgress.failed,
+                    need_token: fileProgress.needToken ?? 0,
                   },
                 }
               : {}),
@@ -5963,15 +6052,19 @@ export async function runAsanaImport(input: {
 }
 
 // Downloads the plan's attachment files from where it stopped, until the time budget is used: each file
-// is fetched from the export's own link (never the Asana API; safeDownload refuses private addresses and
-// stops past 25 MB), uploaded to the imported task's folder with the importer's own client, and recorded
-// by import_attachment_file — which skips files already there, so re-running never duplicates.
+// is fetched from the export's own link (safeDownload refuses private addresses and stops past 25 MB),
+// uploaded to the imported task's folder with the importer's own client, and recorded by
+// import_attachment_file — which skips files already there, so re-running never duplicates. Since Nov 2
+// notes (batch 14, 103), a file the export has no link for is asked of the Asana API (GET
+// /attachments/<gid>, the only Asana API call the app makes) with the importer's own personal access
+// token, when they gave one for this import; without one it stays a link and is counted.
 async function downloadImportFiles(
   supabase: Awaited<ReturnType<typeof createClient>>,
   runId: string,
   plan: ImportPlan,
   progress: AttachmentFileProgress,
   started: number,
+  asanaToken: string | null = null,
 ): Promise<AttachmentFileProgress> {
   const files = { ...progress };
   while (files.index < files.total && Date.now() - started < IMPORT_TIME_BUDGET_MS) {
@@ -5999,8 +6092,29 @@ async function downloadImportFiles(
         files.tooLarge += 1;
         continue;
       }
+      let downloadUrl = file.downloadUrl;
+      if (!downloadUrl) {
+        if (!asanaToken) {
+          files.needToken = (files.needToken ?? 0) + 1;
+          continue;
+        }
+        const fromApi = await asanaAttachmentLink(file.gid, asanaToken);
+        if (fromApi.kind === "unauthorized") {
+          // Stop here: the person fixes the token and tries again (files copied so far are never copied twice).
+          throw new InputError("Asana didn’t accept that personal access token. Check it and choose Try again.");
+        }
+        if (fromApi.kind !== "ok") {
+          files.failed += 1;
+          continue;
+        }
+        if (fromApi.size !== null && fromApi.size > MAX_ATTACHMENT_BYTES) {
+          files.tooLarge += 1;
+          continue;
+        }
+        downloadUrl = fromApi.url;
+      }
       try {
-        const got = await safeDownload(file.downloadUrl, { timeoutMs: 20_000, maxBytes: MAX_ATTACHMENT_BYTES });
+        const got = await safeDownload(downloadUrl, { timeoutMs: 20_000, maxBytes: MAX_ATTACHMENT_BYTES });
         if (!got.ok) {
           if (got.tooLarge) files.tooLarge += 1;
           else files.failed += 1;
@@ -6032,6 +6146,177 @@ async function downloadImportFiles(
     }
   }
   return files;
+}
+
+// One attachment's fresh download link from the Asana API, with the importer's own token (a GET of public
+// metadata about a file they can already open in Asana). No redirects, 15 seconds, never logged.
+async function asanaAttachmentLink(
+  gid: string,
+  token: string,
+): Promise<{ kind: "ok"; url: string; size: number | null } | { kind: "unauthorized" } | { kind: "failed" }> {
+  if (!/^[0-9]{1,30}$/.test(gid)) return { kind: "failed" };
+  try {
+    const response = await fetch(
+      `https://app.asana.com/api/1.0/attachments/${gid}?opt_fields=download_url,size,host`,
+      {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
+        cache: "no-store",
+      },
+    );
+    if (response.status === 401 || response.status === 403) return { kind: "unauthorized" };
+    if (!response.ok) return { kind: "failed" };
+    const body = (await response.json().catch(() => null)) as { data?: { download_url?: unknown; size?: unknown } } | null;
+    const url = typeof body?.data?.download_url === "string" ? body.data.download_url : null;
+    if (!url || !url.startsWith("https://")) return { kind: "failed" };
+    const size = typeof body?.data?.size === "number" && Number.isFinite(body.data.size) ? body.data.size : null;
+    return { kind: "ok", url, size };
+  } catch {
+    return { kind: "failed" };
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Project roles (Nov 2 notes, batch 14, 95): named roles of a project and who fills each. Editors+ (RLS
+// and the RPCs decide). Tasks follow a role through task_role_links; automations name "the person in
+// role X".
+// ---------------------------------------------------------------------------------------------
+
+const ROLES_MISSING = "Project roles need this release’s database update";
+
+export async function createProjectRole(projectId: string, name: string, profileId: string | null = null): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const inserted = await supabase.from("project_roles").insert({
+      project_id: id(projectId, "project"),
+      name: text(name, "Role name", { max: 60 }),
+      profile_id: profileId ? id(profileId, "person") : null,
+    });
+    if (inserted.error?.code === "42P01" || inserted.error?.code === "PGRST205") throw new InputError(ROLES_MISSING);
+    if (inserted.error?.code === "23505") throw new InputError("This project already has a role with that name");
+    check(inserted);
+  });
+}
+
+export async function renameProjectRole(roleId: string, name: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    const updated = await supabase
+      .from("project_roles")
+      .update({ name: text(name, "Role name", { max: 60 }) })
+      .eq("id", id(roleId, "role"))
+      .select("id");
+    if (updated.error?.code === "23505") throw new InputError("This project already has a role with that name");
+    checkUpdated(updated);
+  });
+}
+
+export async function removeProjectRole(roleId: string): Promise<ActionResult> {
+  return run(async () => {
+    const supabase = await createClient();
+    checkUpdated(
+      await supabase.from("project_roles").update({ deleted_at: now() }).eq("id", id(roleId, "role")).select("id"),
+    );
+  });
+}
+
+// Who fills a role; with updateOpenTasks, the open tasks linked to it follow (assignee, approvers,
+// followers). Returns how many tasks changed and how many couldn't (e.g. the caller can't edit them).
+export async function setProjectRolePerson(
+  roleId: string,
+  profileId: string | null,
+  updateOpenTasks: boolean,
+): Promise<ActionResult & { updated?: number; skipped?: number }> {
+  let counts: { updated?: number; skipped?: number } = {};
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const saved = await supabase.rpc("set_project_role_person", {
+      target_role: id(roleId, "role"),
+      person: profileId ? id(profileId, "person") : null,
+      update_open_tasks: Boolean(updateOpenTasks),
+    });
+    if (saved.error?.code === "PGRST202") throw new InputError(ROLES_MISSING);
+    check(saved);
+    const data = saved.data as { updated?: unknown; skipped?: unknown } | null;
+    counts = {
+      updated: typeof data?.updated === "number" ? data.updated : 0,
+      skipped: typeof data?.skipped === "number" ? data.skipped : 0,
+    };
+  });
+  return result.error ? result : { ...counts };
+}
+
+// How many open tasks follow a role (asked before changing its person).
+export async function loadRoleOpenTaskCount(roleId: string): Promise<number> {
+  return countOpenRoleTasks(roleId);
+}
+
+// The roles a task can take people from (roles of its — its top-level task's — projects) and its links,
+// for the task pane's Roles row. Read with the viewer's own client.
+export type TaskRolesInfo = {
+  roles: { id: string; name: string; projectName: string; personName: string | null }[];
+  links: { roleId: string; slot: "assignee" | "approver" | "follower" }[];
+};
+
+export async function loadTaskRoles(taskId: string): Promise<TaskRolesInfo> {
+  if (!isUuid(taskId)) return { roles: [], links: [] };
+  const supabase = await createClient();
+  const { data: task } = await supabase.from("tasks").select("id, root_task_id").eq("id", taskId).maybeSingle();
+  if (!task) return { roles: [], links: [] };
+  const { data: places } = await supabase
+    .from("task_projects")
+    .select("project_id, project:projects!inner(name)")
+    .eq("task_id", task.root_task_id ?? task.id)
+    .is("deleted_at", null);
+  const projectIds = (places ?? []).map((p) => p.project_id);
+  if (projectIds.length === 0) return { roles: [], links: [] };
+  const { data: roles, error } = await supabase
+    .from("project_roles")
+    .select("id, name, project_id, profile_id, sort_order")
+    .in("project_id", projectIds)
+    .is("deleted_at", null)
+    .order("sort_order");
+  if (error || !roles?.length) return { roles: [], links: [] };
+  const people = [...new Set(roles.map((r) => r.profile_id).filter((x): x is string => Boolean(x)))];
+  const { data: profiles } = people.length
+    ? await supabase.from("profiles").select("id, full_name, email").in("id", people)
+    : { data: [] as { id: string; full_name: string | null; email: string }[] };
+  const nameOf = new Map((profiles ?? []).map((p) => [p.id, p.full_name || p.email] as const));
+  const projectName = new Map(
+    (places ?? []).map((p) => [p.project_id, (p.project as unknown as { name: string } | null)?.name ?? ""] as const),
+  );
+  const links = await listTaskRoleLinks(taskId);
+  return {
+    roles: roles.map((r) => ({
+      id: r.id,
+      name: r.name,
+      projectName: projectName.get(r.project_id) ?? "",
+      personName: r.profile_id ? (nameOf.get(r.profile_id) ?? null) : null,
+    })),
+    links: links.filter((l) => roles.some((r) => r.id === l.roleId)),
+  };
+}
+
+// Links (or unlinks) a project role to a task's assignee / approver / follower and applies its person.
+export async function setTaskRoleLink(
+  taskId: string,
+  roleId: string,
+  slot: "assignee" | "approver" | "follower",
+  linked: boolean,
+): Promise<ActionResult> {
+  return run(async () => {
+    if (slot !== "assignee" && slot !== "approver" && slot !== "follower") throw new InputError("Choose assignee, approver, or follower");
+    const supabase = await createClient();
+    const saved = await supabase.rpc("set_task_role_link", {
+      target_task: id(taskId, "task"),
+      target_role: id(roleId, "role"),
+      link_slot: slot,
+      linked: Boolean(linked),
+    });
+    if (saved.error?.code === "PGRST202") throw new InputError(ROLES_MISSING);
+    check(saved);
+  });
 }
 
 // Removes uploaded export files that won't be imported (e.g. after "Start over").

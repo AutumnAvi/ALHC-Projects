@@ -100,6 +100,8 @@ export function sortTasks(tasks: ProjectTask[], config: ViewConfig, context: Con
 
 // Groups already-filtered tasks. `sectionFilter` hides sections excluded by the view's filter so a
 // "Section is A" view doesn't render empty B/C groups.
+// Sections come in `context.sections` already in the view's order (orderSections with the page's
+// current config, Nov 2 notes batch 14), so an unsaved section move shows on a paged list too.
 export function groupTasks(
   tasks: ProjectTask[],
   config: ViewConfig,

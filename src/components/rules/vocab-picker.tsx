@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { ChevronDown, PenLine, Search, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -55,6 +56,8 @@ export function VocabPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<string | null>(null);
+  // A modal pop-up: any open menu closes first (Nov 2 notes, batch 14, 99).
+  useClosesPopovers(open);
 
   const selected = options.find((o) => o.value === value) ?? null;
   const groups = useMemo(() => filterOptions(options, query), [options, query]);

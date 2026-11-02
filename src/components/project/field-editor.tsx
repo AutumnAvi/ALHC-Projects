@@ -3,25 +3,18 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
-  Calendar,
-  CircleChevronDown,
   Columns3,
-  Hash,
   Library,
   Link2,
   Lock,
-  ListChecks,
   Plus,
   Search,
-  SquareCheck,
   Trash2,
-  Type,
-  Users,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { ColorPicker } from "@/components/color-picker";
 import { FieldLockIcon } from "@/components/project/field-lock";
+import { FieldTypeIcon } from "@/components/project/field-type-icon";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useConfirm } from "@/components/confirm";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
@@ -58,27 +51,7 @@ import {
   type LibraryField,
 } from "@/lib/fields";
 
-const TYPE_ICONS: Record<FieldType, LucideIcon> = {
-  text: Type,
-  number: Hash,
-  date: Calendar,
-  boolean: SquareCheck,
-  single_select: CircleChevronDown,
-  multi_select: ListChecks,
-  people: Users,
-};
-
-// The small icon in front of a field's name (Fields list, Customize → Fields, the field library).
-export function FieldTypeIcon({
-  field,
-  className = "size-4",
-}: {
-  field: Pick<FieldDef, "fieldType" | "boundToSections">;
-  className?: string;
-}) {
-  const Icon = field.boundToSections ? Columns3 : TYPE_ICONS[field.fieldType];
-  return <Icon className={`shrink-0 text-zinc-500 ${className}`} aria-hidden />;
-}
+export { FieldTypeIcon };
 
 // The first few options as pills, then "+N".
 export function OptionPreview({ options, max = 3 }: { options: FieldOption[]; max?: number }) {

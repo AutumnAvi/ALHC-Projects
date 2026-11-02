@@ -18,6 +18,7 @@ import {
   type ImportPerson,
   type ImportPreview,
   type ImportProgress,
+  asanaTokenProblem,
 } from "@/lib/imports-shared";
 import { createClient } from "@/lib/supabase/client";
 
@@ -29,13 +30,17 @@ type Phase =
   | { kind: "done"; progress: ImportProgress };
 
 // Admin+ Asana import: upload export files (to private Storage), preview a dry run, then import in
-// batches with a progress bar. The files are parsed on the server; Asana itself is never contacted.
+// batches with a progress bar. The files are parsed on the server; Asana itself is contacted only to fetch
+// attachment links with a personal access token the importer enters for that import (never stored).
 export function ImportSettings({ projectId, userId, runs }: { projectId: string; userId: string; runs: ImportRun[] }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "pick" });
   const [error, setError] = useState<string | null>(null);
   const [invite, setInvite] = useState(false);
   const [download, setDownload] = useState(false);
+  // Nov 2 notes (batch 14, 103): an Asana personal access token for this import only — kept in this page's
+  // memory, sent with each import step, never saved anywhere.
+  const [asanaToken, setAsanaToken] = useState("");
 
   async function upload(files: File[]) {
     setError(null);
@@ -88,6 +93,7 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
         inviteRole: invite ? "editor" : null,
         downloadAttachments: download,
         files: progress?.files ?? null,
+        asanaToken: download && asanaToken.trim() ? asanaToken.trim() : null,
       }).catch(() => ({ error: "Lost the connection to the server.", progress: undefined }));
       if (result.error || !result.progress) {
         setPhase({ kind: "importing", paths, preview, progress });
@@ -120,8 +126,8 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
           In Asana, open the project, click the arrow next to its name, and choose <em>Export/Print</em> → <em>JSON</em>{" "}
           (and/or <em>CSV</em>). Upload one or both exports of the same project. The JSON export brings comments,
           attachment links, and memberships in other projects; the CSV export adds assignee emails, which is how people
-          are matched to members here. The Asana API is never used — only the files you upload are read (and, if you
-          choose Download attachments, the file links inside them).
+          are matched to members here. Only the files you upload are read — plus, if you choose Download attachments,
+          the file links inside them, or (with an Asana token you enter for that import) Asana’s link for each file.
         </p>
         <p className="mt-2 text-sm text-zinc-600">
           Re-importing the same export never duplicates anything: tasks already imported are skipped and never
@@ -170,6 +176,8 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
           onInviteChange={setInvite}
           download={download}
           onDownloadChange={setDownload}
+          asanaToken={asanaToken}
+          onAsanaTokenChange={setAsanaToken}
           importing={phase.kind === "importing"}
           progress={phase.kind === "importing" ? phase.progress : null}
           failed={phase.kind === "importing" && error !== null}
@@ -191,6 +199,7 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
                 already: phase.progress.files.already,
                 too_large: phase.progress.files.tooLarge,
                 failed: phase.progress.files.failed,
+                need_token: phase.progress.files.needToken ?? 0,
               })}
               .
             </p>
@@ -244,12 +253,121 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
   );
 }
 
+// Nov 2 notes (batch 14, 103): say plainly what can happen to the export's attachment files. Asana's own
+// JSON export (project menu → Export → JSON) lists attachments but never includes their download links;
+// only the Asana API hands those out. With a personal access token entered here (used for this import only,
+// never saved) the importer asks the API for each file's link; without one, files stay as links.
+function AttachmentFilesChoice({
+  linked,
+  needToken,
+  attachments,
+  download,
+  onDownloadChange,
+  asanaToken,
+  onAsanaTokenChange,
+  disabled,
+}: {
+  linked: number;
+  needToken: number;
+  attachments: number;
+  download: boolean;
+  onDownloadChange: (value: boolean) => void;
+  asanaToken: string;
+  onAsanaTokenChange: (value: string) => void;
+  disabled: boolean;
+}) {
+  const total = linked + needToken;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const tokenProblem = asanaTokenProblem(asanaToken);
+  if (attachments === 0) {
+    return (
+      <p className="mt-5 rounded-md border border-zinc-200 px-3 py-2.5 text-sm text-zinc-600">
+        <span className="font-medium text-zinc-800">No attachments.</span> This export has no attachments, so there are
+        no files to copy.
+      </p>
+    );
+  }
+  if (total === 0) {
+    return (
+      <p className="mt-5 rounded-md border border-zinc-200 px-3 py-2.5 text-sm text-zinc-600">
+        <span className="font-medium text-zinc-800">Attachments come in as links.</span> This export’s{" "}
+        {plural(attachments, "attachment")} are stored outside Asana (for example Google Drive or Dropbox), so there’s no file
+        to copy — each is added to its task as a link. (A CSV export has no attachments at all; add the JSON export for them.)
+      </p>
+    );
+  }
+  return (
+    <div className="mt-5 rounded-md border border-zinc-200 px-3 py-2.5">
+      <label className="flex items-start gap-2 text-sm text-zinc-800">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={download}
+          disabled={disabled}
+          onChange={(e) => onDownloadChange(e.target.checked)}
+        />
+        <span>
+          <span className="font-medium">Download attachments</span>
+          <span className="block text-xs text-zinc-500">
+            Copies the export’s {plural(total, "attachment file")} into this project, so they open here like any attachment.
+            Files over 25 MB are skipped and counted, and re-running never copies a file twice.
+            {linked > 0 ? ` ${linked} ${linked === 1 ? "has" : "have"} a download link in the export (Asana’s links expire after a while, so use a fresh export).` : ""}
+          </span>
+        </span>
+      </label>
+      {needToken > 0 ? (
+        <div className="mt-3 rounded-md bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+          <p>
+            <span className="font-medium">
+              {needToken === total ? "This export has no download links." : `${plural(needToken, "file")} ${needToken === 1 ? "has" : "have"} no download link.`}
+            </span>{" "}
+            Asana’s JSON export (project menu → Export → JSON) lists attachments but doesn’t include links to download them —
+            only Asana’s API gives those out. To copy {needToken === 1 ? "it" : "them"}, paste an Asana personal access token
+            below. It’s used only for this import to ask Asana for each file’s link, and is never saved. Without one,
+            {needToken === 1 ? " it is" : " they are"} added as {needToken === 1 ? "a link" : "links"} to Asana.
+          </p>
+          <p className="mt-1">
+            Make one in Asana: your profile picture → <em>My settings</em> → <em>Apps</em> → <em>Developer apps</em> →{" "}
+            <a href="https://app.asana.com/0/my-apps" target="_blank" rel="noreferrer" className="underline">
+              Create new token
+            </a>
+            . You can delete the token in Asana once the import is done.
+          </p>
+          <label htmlFor="asana-token" className="mt-2 block font-medium">
+            Asana personal access token (optional)
+          </label>
+          <input
+            id="asana-token"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={asanaToken}
+            disabled={disabled || !download}
+            onChange={(e) => onAsanaTokenChange(e.target.value)}
+            placeholder={download ? "2/1204…:…" : "Turn on Download attachments first"}
+            aria-invalid={tokenProblem ? true : undefined}
+            aria-describedby={tokenProblem ? "asana-token-problem" : undefined}
+            className="field mt-1 w-full bg-white font-mono text-xs"
+          />
+          {tokenProblem ? (
+            <p id="asana-token-problem" className="mt-1 text-red-700">
+              {tokenProblem}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PreviewCard({
   preview,
   invite,
   onInviteChange,
   download,
   onDownloadChange,
+  asanaToken,
+  onAsanaTokenChange,
   importing,
   progress,
   failed,
@@ -261,6 +379,8 @@ function PreviewCard({
   onInviteChange: (value: boolean) => void;
   download: boolean;
   onDownloadChange: (value: boolean) => void;
+  asanaToken: string;
+  onAsanaTokenChange: (value: string) => void;
   importing: boolean;
   progress: ImportProgress | null;
   failed: boolean;
@@ -376,25 +496,16 @@ function PreviewCard({
         />
       </div>
 
-      <div className="mt-5 rounded-md border border-zinc-200 px-3 py-2.5">
-        <label className="flex items-start gap-2 text-sm text-zinc-800">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={download}
-            disabled={importing || c.attachmentFiles === 0}
-            onChange={(e) => onDownloadChange(e.target.checked)}
-          />
-          <span>
-            <span className="font-medium">Download attachments</span>
-            <span className="block text-xs text-zinc-500">
-              {c.attachmentFiles > 0
-                ? `Copies ${c.attachmentFiles} attachment file${c.attachmentFiles === 1 ? "" : "s"} from the export’s download links into this project, so they open here like any attachment. Files over 25 MB are skipped and counted. Asana’s download links expire after a while, so use a fresh export. Re-running never copies a file twice.`
-                : "This export has no attachment download links (only the JSON export carries them). Attachments are still added as links."}
-            </span>
-          </span>
-        </label>
-      </div>
+      <AttachmentFilesChoice
+        linked={c.attachmentFiles}
+        needToken={c.attachmentFilesNeedToken ?? 0}
+        attachments={c.attachments.total}
+        download={download}
+        onDownloadChange={onDownloadChange}
+        asanaToken={asanaToken}
+        onAsanaTokenChange={onAsanaTokenChange}
+        disabled={importing}
+      />
 
       {preview.warnings.length > 0 ? (
         <div className="mt-5">

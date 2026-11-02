@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, MailCheck, ShieldCheck, Tag, Users, UsersRound, type LucideIcon } from "lucide-react";
+import { Building2, MailCheck, Plug, ShieldCheck, Tag, Users, UsersRound, type LucideIcon } from "lucide-react";
 import { ADMIN_SECTIONS, type AdminSection } from "@/lib/admin";
 
 const ICONS: Record<AdminSection, LucideIcon> = {
@@ -12,6 +12,7 @@ const ICONS: Record<AdminSection, LucideIcon> = {
   organization: Building2,
   email: MailCheck,
   tags: Tag,
+  integrations: Plug,
 };
 
 // The Admin console's left nav (a scrolling row on narrow screens). The current section is highlighted.

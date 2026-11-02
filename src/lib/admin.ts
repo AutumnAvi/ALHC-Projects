@@ -10,6 +10,8 @@ export const ADMIN_SECTIONS = [
   { key: "organization", href: "/admin/organization", label: "Organization", description: "Name, logo, and default team" },
   { key: "email", href: "/admin/email", label: "Email delivery", description: "Sender name and deliveries" },
   { key: "tags", href: "/admin/tags", label: "Tags", description: "Workspace tags" },
+  // Nov 2 notes (batch 14, 105): Slack, connected once for every project.
+  { key: "integrations", href: "/admin/integrations", label: "Integrations", description: "Slack for every project" },
 ] as const;
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]["key"];
 

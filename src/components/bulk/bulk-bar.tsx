@@ -1,5 +1,6 @@
 "use client";
 
+import { FieldTypeIcon } from "@/components/project/field-type-icon";
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
   CalendarDays,
@@ -633,6 +634,8 @@ function FieldPicker({
         options={fields.map((f) => ({
           value: f.id,
           label: f.name,
+          // Nov 2 notes (batch 14, 96): each field's type icon, as on the Fields list and in Customize.
+          icon: <FieldTypeIcon field={f} className="size-3.5" />,
           ...(locked(f) ? { disabled: true, disabledReason: LOCKED_FIELD_NOTE, icon: <Lock className="size-3.5 text-zinc-400" aria-hidden /> } : {}),
         }))}
       />

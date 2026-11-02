@@ -1,5 +1,6 @@
 "use client";
 
+import { useClosesPopovers } from "@/components/overlay-registry";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Paperclip, Trash2, X } from "lucide-react";
@@ -363,6 +364,8 @@ export function ImageLightbox({
   }, []);
 
   const several = total > 1;
+
+  useClosesPopovers();
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950/90" onMouseDown={onClose}>

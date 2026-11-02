@@ -138,6 +138,8 @@ export const EMAIL_RECIPIENTS = [
   { value: "assignee", label: "Assignee", description: "The task's assignee." },
   { value: "field", label: "Email in a field", description: "The address written in a text field." },
   { value: "address", label: "Fixed address", description: "Always the same address." },
+  // Nov 2 notes (batch 14, 95): whoever fills one of the project's roles when the automation runs.
+  { value: "role", label: "Person in a project role", description: "Whoever fills the role you pick (Overview → Project roles)." },
 ] as const;
 
 export const EMAIL_TEMPLATES = [
@@ -219,6 +221,16 @@ export function fieldSlot(fieldId: string) {
 }
 export function fieldOfSlot(value: unknown): string | null {
   return typeof value === "string" && value.startsWith(FIELD_SLOT_PREFIX) ? value.slice(FIELD_SLOT_PREFIX.length) : null;
+}
+
+// Nov 2 notes (batch 14, 95): "the person in role X" as a person slot (resolve_rule_person reads
+// project_roles). Templates carry roles, so an automation saved in a template keeps pointing at the role.
+export const ROLE_SLOT_PREFIX = "project_role:";
+export function roleSlot(roleId: string) {
+  return `${ROLE_SLOT_PREFIX}${roleId}`;
+}
+export function roleOfSlot(value: unknown): string | null {
+  return typeof value === "string" && value.startsWith(ROLE_SLOT_PREFIX) ? value.slice(ROLE_SLOT_PREFIX.length) : null;
 }
 
 // "Set assignee" (mirrors execute_rule_actions / rule_pick_assignee): one person (a profile, a role, or

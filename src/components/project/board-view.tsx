@@ -19,11 +19,12 @@ import type { Profile, ProjectTask, ProjectTaskGroupPage, Section } from "@/lib/
 import { displayTaskTitle } from "@/lib/request-numbers";
 import { fieldLockedFor, type FieldDef } from "@/lib/fields";
 import { LockedFieldValue } from "./field-lock";
-import { columnsOf, groupOf, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
+import { columnsOf, groupOf, orderSections, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { blockedCount } from "./inline-cells";
 import { GroupTitle } from "./list-view";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, addTaskKindOf } from "./shared";
+import { isPendingSection, useSectionsWithPending } from "./pending-sections";
 import { Assignee, CommentCount, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { useProjectTaskSeeds } from "./task-seeds";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
@@ -92,7 +93,9 @@ export function BoardView({
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
-  const groupContext = { sections, profilesById, fields, tags };
+  // Sections being added show at once (92), in this view's order (94).
+  const allSections = useSectionsWithPending(projectId, sections);
+  const groupContext = { sections: orderSections(allSections, config), profilesById, fields, tags };
   const groups =
     taskPage && optimisticTasks === tasks && sameConfig(config, configProp)
       ? groupsFromPage(taskPage, configProp, groupContext)
@@ -228,7 +231,11 @@ export function BoardView({
           >
             <header className="flex h-8 shrink-0 items-center gap-1 pl-1">
               <GroupTitle group={group} />
-              {group.section && sectionId ? (
+              {group.section && isPendingSection(group.section) ? (
+                <span className="ml-auto pr-1 text-xs text-zinc-400" aria-live="polite">
+                  Saving…
+                </span>
+              ) : group.section && sectionId ? (
                 <SectionActions
                   projectId={projectId}
                   section={group.section}
@@ -240,7 +247,7 @@ export function BoardView({
               ) : null}
             </header>
 
-            {group.target.kind === "section" ? (
+            {group.target.kind === "section" && !(group.section && isPendingSection(group.section)) ? (
               <div className="pb-1.5">
                 <AddTaskInput
                   key={topTarget && topAdd ? `top-${topAdd.nonce}` : "top"}

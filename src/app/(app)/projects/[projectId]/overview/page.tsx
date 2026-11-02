@@ -12,6 +12,7 @@ import {
   listProjectEmailActivity,
   listProjectStatusUpdates,
   listProjectStories,
+  listProjectRoles,
 } from "@/lib/data";
 import { goalEditable, periodLabel } from "@/lib/goals";
 import { sortActivity, type ProjectActivityItem } from "@/lib/project-page";
@@ -29,7 +30,7 @@ export async function generateMetadata({ params }: PageProps<"/projects/[project
 export default async function ProjectOverviewPage({ params }: PageProps<"/projects/[projectId]/overview">) {
   const { projectId } = await params;
   const goalsOn = await goalsEnabled();
-  const [project, info, members, updates, stories, links, goals, viewer, emailIn] = await Promise.all([
+  const [project, info, members, updates, stories, links, goals, viewer, emailIn, roles] = await Promise.all([
     getProject(projectId),
     getProjectOverviewInfo(projectId),
     listProjectMembers(projectId),
@@ -39,6 +40,7 @@ export default async function ProjectOverviewPage({ params }: PageProps<"/projec
     goalsOn ? listGoals() : Promise.resolve([]),
     getGoalViewer(),
     listProjectEmailActivity(projectId),
+    listProjectRoles(projectId),
   ]);
   if (!project || !info) notFound();
 
@@ -99,6 +101,7 @@ export default async function ProjectOverviewPage({ params }: PageProps<"/projec
           .map((g) => ({ id: g.id, title: g.title }))
           .sort((a, b) => a.title.localeCompare(b.title))}
         activity={activity}
+        roles={roles.map((r) => ({ id: r.id, name: r.name, profileId: r.profileId }))}
       />
     </main>
   );

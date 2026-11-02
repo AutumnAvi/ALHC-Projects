@@ -4,6 +4,7 @@ import { IntegrationsSettings } from "@/components/project/integrations-settings
 import { ReadOnlyNotice } from "@/components/project/project-access";
 import { getProject, getProjectIntegrations, getProjectRole } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
+import { loadSlackSettings } from "@/lib/slack-actions";
 
 export async function generateMetadata({
   params,
@@ -30,7 +31,7 @@ export default async function ProjectIntegrationsPage({
     );
   }
 
-  const settings = await getProjectIntegrations(projectId);
+  const [settings, slack] = await Promise.all([getProjectIntegrations(projectId), loadSlackSettings()]);
   if (!settings) notFound();
-  return <IntegrationsSettings projectId={projectId} initial={settings} />;
+  return <IntegrationsSettings projectId={projectId} initial={settings} slack={slack} />;
 }

@@ -169,6 +169,7 @@ import {
   type DashboardWidget,
   type ProjectView,
   type ProjectViewSettings,
+  type ViewConfig,
   type ViewFilters,
   type ViewSort,
 } from "@/lib/views";
@@ -6096,6 +6097,72 @@ export const getProjectSectionsLocked = cache(async (projectId: string): Promise
 
 // Oct 27 notes (batch 5): the viewer's own Show / Hide completed for a project's List and Board (null = what
 // the view says; also null on a database without this release).
+// Nov 2 notes (batch 14, 95): a project's roles (Approver, Designer, Lead) and who fills each. Read with
+// the viewer's own client (project Viewers+). A database without this release has none.
+export type ProjectRoleDef = { id: string; projectId: string; name: string; profileId: string | null; sortOrder: number };
+
+export const listProjectRoles = cache(async (projectId: string): Promise<ProjectRoleDef[]> => {
+  if (!isUuid(projectId)) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("project_roles")
+    .select("id, project_id, name, profile_id, sort_order")
+    .eq("project_id", projectId)
+    .is("deleted_at", null)
+    .order("sort_order");
+  if (error) return [];
+  return (data ?? []).map((r) => ({ id: r.id, projectId: r.project_id, name: r.name, profileId: r.profile_id, sortOrder: r.sort_order }));
+});
+
+// A task's role links (which roles give its assignee, approvers, or followers).
+export type TaskRoleLink = { roleId: string; slot: "assignee" | "approver" | "follower" };
+
+export async function listTaskRoleLinks(taskId: string): Promise<TaskRoleLink[]> {
+  if (!isUuid(taskId)) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("task_role_links")
+    .select("project_role_id, slot")
+    .eq("task_id", taskId)
+    .is("deleted_at", null);
+  if (error) return [];
+  return (data ?? [])
+    .filter((l) => l.slot === "assignee" || l.slot === "approver" || l.slot === "follower")
+    .map((l) => ({ roleId: l.project_role_id, slot: l.slot as TaskRoleLink["slot"] }));
+}
+
+// How many open tasks follow a role (the "update open tasks too?" prompt).
+export async function countOpenRoleTasks(roleId: string): Promise<number> {
+  if (!isUuid(roleId)) return 0;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("task_role_links")
+    .select("task_id, task:tasks!inner(completed_at, deleted_at)")
+    .eq("project_role_id", roleId)
+    .is("deleted_at", null)
+    .is("task.completed_at", null)
+    .is("task.deleted_at", null);
+  if (error) return 0;
+  return new Set((data ?? []).map((r) => r.task_id)).size;
+}
+
+// Nov 2 notes (batch 14, 94): the viewer's own version of a shared view ("Save for me"), or null. A
+// database without this release has no table: null (everyone sees the view as saved).
+export const getViewPersonalConfig = cache(async (viewId: string): Promise<ViewConfig | null> => {
+  if (!isUuid(viewId)) return null;
+  const supabase = await createClient();
+  const { user } = await getViewer();
+  if (!user) return null;
+  const { data, error } = await supabase
+    .from("project_view_personal_configs")
+    .select("config")
+    .eq("view_id", viewId)
+    .eq("profile_id", user.id)
+    .maybeSingle();
+  if (error || !data?.config) return null;
+  return parseViewConfig(data.config);
+});
+
 export const getProjectShowCompleted = cache(async (projectId: string): Promise<boolean | null> => {
   if (!isUuid(projectId)) return null;
   const supabase = await createClient();

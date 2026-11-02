@@ -1,7 +1,7 @@
 "use client";
 
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
-import { useEffect, useOptimistic, useRef, useState, useTransition, type DragEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useTransition, type DragEvent, type ReactNode } from "react";
 import {
   ArrowDownNarrowWide,
   ArrowUpNarrowWide,
@@ -23,7 +23,7 @@ import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task
 import { MenuItem, Popover } from "@/components/popover";
 import type { TaskKind } from "@/lib/task-kinds";
 import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
-import { useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
+import { useProjectPermissions } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
 import { FieldLockIcon, LockedFieldValue } from "@/components/project/field-lock";
 import { useFieldSharing } from "@/components/project/project-page-context";
@@ -38,7 +38,6 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import {
   moveTask,
-  placeSection,
   placeTask,
   saveListCollapsedGroups,
   saveListColumnWidths,
@@ -68,7 +67,9 @@ import {
   refFieldId,
   sameConfig,
   showsSubtasks,
+  orderSections,
   sortOf,
+  withSectionMoved,
   type ColumnKey,
   type SortKey,
   type ViewConfig,
@@ -92,6 +93,7 @@ import {
   type SubtaskTrees,
 } from "./inline-cells";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, SectionActions, SectionTitle, addTaskKindOf } from "./shared";
+import { isPendingSection, useSectionsWithPending } from "./pending-sections";
 import { AttachmentCount, CommentCount, DueDate, EmptyCellHint, StartDate, TaskBadges } from "./task-meta";
 import {
   LIST_CELL,
@@ -155,12 +157,6 @@ const SECTION_DRAG = "application/x-alhc-section";
 // The grid, the pinned Name cell, and the Name cell's leading controls are defined once for the header
 // and every row (list-grid.ts; Oct 29 notes, batch 7, item 53).
 
-function sortSections(list: Section[], change: { id: string; sortOrder: number }) {
-  return list
-    .map((s) => (s.id === change.id ? { ...s, sort_order: change.sortOrder } : s))
-    .sort((a, b) => a.sort_order - b.sort_order);
-}
-
 // What a column sorts by (Name = title); Section and Tags columns have no sort.
 function sortKeyFor(column: ColumnKey | "task", fieldsById: Map<string, FieldDef>): SortKey | null {
   if (column === "task") return "title";
@@ -195,7 +191,8 @@ export function ListView({
   const config = viewConfig?.current ?? configProp;
   const tagsOn = useTagsEnabled();
   const [optimisticTasks, applyChange] = useProjectTasks(tasks);
-  const [optimisticSections, moveSectionLocally] = useOptimistic(sections, sortSections);
+  // Nov 2 notes (batch 14, 92): sections being added show at once (pending-sections.ts).
+  const optimisticSections = useSectionsWithPending(projectId, sections);
   const [, run] = useServerAction();
   const notify = useNotify();
   const [, startTransition] = useTransition();
@@ -319,7 +316,7 @@ export function ListView({
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const fieldsById = new Map(fields.map((f) => [f.id, f]));
-  const groupContext = { sections: optimisticSections, profilesById, fields, tags };
+  const groupContext = { sections: orderSections(optimisticSections, config), profilesById, fields, tags };
   // A paged list keeps the server's groups until the loaded cards change (a drag) or the
   // saved config is what the page was built from. Sorting the partial page here would hide tasks.
   const groups =
@@ -334,9 +331,10 @@ export function ListView({
   // Precise drop positions only make sense in manual (sort_order) order, like Board.
   const manualOrder = bySection && sortOf(config)[0]?.key === "manual";
   const canDragTasks = canEdit && manualOrder;
-  // Oct 27 notes (batch 5): while the owner has locked the sections, only owners reorder them.
-  const { canEditSections } = useSectionPermissions();
-  const canDragSections = canEditSections && bySection && !config.filters?.sections;
+  // Nov 2 notes (batch 14, 94): reordering sections here is this view's own order — an unsaved change
+  // like a sort or a filter, saved for you or (Owners) for everyone — so anyone can do it, and the
+  // project's own section order (and the Owner's lock on it) is never changed by a drag.
+  const canDragSections = bySection && !config.filters?.sections;
   const filtered = hasActiveFilters(config.filters);
 
   const visibleTasks = (group: TaskGroup) =>
@@ -551,18 +549,10 @@ export function ListView({
     );
   }
 
+  // Nov 2 notes (batch 14, 94): a section move is a view change (section_order in the draft config).
   function moveSection(sectionId: string, beforeId: string | null) {
-    if (beforeId === sectionId) return;
-    const others = optimisticSections.filter((s) => s.id !== sectionId);
-    const index = beforeId ? others.findIndex((s) => s.id === beforeId) : -1;
-    const next = index === -1 ? null : others[index].sort_order;
-    const prev = index === -1 ? (others.at(-1)?.sort_order ?? 0) : index > 0 ? others[index - 1].sort_order : null;
-    const sortOrder = next === null ? (prev ?? 0) + 1024 : prev === null ? next - 1024 : (prev + next) / 2;
-    startTransition(async () => {
-      moveSectionLocally({ id: sectionId, sortOrder });
-      const result = await placeSection(sectionId, beforeId);
-      if (result.error) notify(result.error);
-    });
+    if (beforeId === sectionId || !viewConfig) return;
+    viewConfig.apply(withSectionMoved(config, optimisticSections, sectionId, beforeId, (s) => !isPendingSection(s)));
   }
 
   function dropSection(event: DragEvent) {
@@ -726,6 +716,8 @@ export function ListView({
           (topAdd.groupKey === group.key || (topAdd.groupKey === null && group === firstSectionGroup));
         const isTaskTarget = draggingTask !== null && taskDrop?.groupKey === group.key;
         const sectionId = group.section?.id;
+        // A section still being saved (92): no menu, drag handle, or add row until it's real.
+        const saving = group.section ? isPendingSection(group.section) : false;
         return (
           <SectionGroup
             key={group.key}
@@ -742,7 +734,7 @@ export function ListView({
             highlight={isTaskTarget && taskDrop?.beforeId === null}
             sectionDropBefore={draggingSection !== null && sectionDrop?.beforeId === sectionId && sectionId !== undefined}
             dragHandle={
-              canDragSections && sectionId ? (
+              canDragSections && sectionId && !saving ? (
                 <span
                   draggable
                   onDragStart={(e) => {
@@ -765,7 +757,11 @@ export function ListView({
               ) : null
             }
             actions={
-              group.section && sectionId ? (
+              saving ? (
+                <span className="text-xs text-zinc-400" aria-live="polite">
+                  Saving…
+                </span>
+              ) : group.section && sectionId ? (
                 <SectionActions
                   projectId={projectId}
                   section={group.section}
@@ -882,7 +878,7 @@ export function ListView({
                 {draggingTask ? "Drop here" : filtered ? "No matching tasks in this section." : "No tasks in this section yet."}
               </p>
             ) : null}
-            {group.target.kind === "section" ? (
+            {group.target.kind === "section" && !saving ? (
               // Asana's inline "Add task…" row at the end of every section: grey text under the names.
               <div className="sticky left-0 w-[min(100%,48rem)]">
                 <AddTaskInput
@@ -1409,10 +1405,12 @@ function TaskRow({
   const assignee = task.assigneeId ? profilesById.get(task.assigneeId) : undefined;
   const open = openTaskId === task.id;
   const selected = selection.isSelected(task.id);
-  // The keyboard cursor's blue edge (after ↑/↓ only; a clicked row keeps none once the pane closes).
+  // The keyboard cursor (after ↑/↓ only; a clicked row keeps none once the pane closes). Nov 2 notes
+  // (batch 14, 97): the whole row takes the blue highlight, like a hovered or selected row, plus the edge.
   const active = selection.cursor === task.id;
+  const lit = selected || open || active;
   // The sticky Name cell needs an opaque background of its own.
-  const tone = selected || open ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50";
+  const tone = lit ? "bg-accent-50" : "bg-white group-hover:bg-zinc-50";
 
   return (
     <div
@@ -1434,8 +1432,9 @@ function TaskRow({
         selection.setActive(task.id);
         if (!open) openTask(task.id, seed());
       }}
+      data-cursor={active ? "true" : undefined}
       className={`cv-row group ${LIST_GRID} min-h-row cursor-pointer border-b border-zinc-100 ${
-        selected || open ? "bg-accent-50" : "hover:bg-zinc-50"
+        lit ? "bg-accent-50" : "hover:bg-zinc-50"
       } ${dragging ? "opacity-40" : ""} ${draggable ? "active:cursor-grabbing" : ""}`}
       style={gridStyle}
     >

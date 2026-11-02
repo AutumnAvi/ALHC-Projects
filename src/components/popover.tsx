@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { registerPopover } from "@/components/overlay-registry";
 
 // A button with a floating panel. The panel is position: fixed and rendered on document.body (a portal),
 // so neither scrolling containers (e.g. the project tab bar) nor a transformed ancestor (the bulk bar is
@@ -91,6 +92,19 @@ export function Popover({
     setPosition(next);
   }, [position]);
 
+  // Nov 2 notes (batch 14, 99): one menu at a time. Opening this one closes any other (except the one it
+  // was opened from), and a modal or the ⌘K palette closes it.
+  useEffect(() => {
+    if (!open) return;
+    return registerPopover(
+      {
+        close: () => setPosition(null),
+        contains: (node) => Boolean(panelRef.current?.contains(node) || buttonRef.current?.contains(node)),
+      },
+      buttonRef.current,
+    );
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     // A SmartPicker opened from the panel draws its list on document.body: clicks and scrolls in it
@@ -162,7 +176,8 @@ export function Popover({
               role="dialog"
               aria-label={label}
               style={{ top: position.top, bottom: position.bottom, left: position.left, right: position.right }}
-              // Above dialogs (z-50): a popover opened from a dialog must not sit under it.
+              // Above dialogs (z-50): a popover opened from a dialog must not sit under it (layers.ts).
+              data-popover-panel=""
               className={`fixed z-[60] max-h-[70vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-3 text-sm shadow-lg ${panelClassName}`}
             >
               {children(close)}

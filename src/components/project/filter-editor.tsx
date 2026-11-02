@@ -94,11 +94,18 @@ function fieldFilterLabel(filter: FieldFilter, field: FieldDef, context: FilterC
   return `${field.name}: ${names.join(", ")}`;
 }
 
-export function filterChips(filters: ViewFilters, context: FilterContext): Chip[] {
+// Nov 2 notes (batch 14, 93 / 102): in a view's toolbar "show completed" (completion = all) is the Show
+// completed option's state, not a filter, so it never shows as a chip there (`viewOption`). Completed
+// only (and "completed in the last N days") still narrows the list and keeps its chip.
+export function filterChips(
+  filters: ViewFilters,
+  context: FilterContext,
+  options: { completionIsViewOption?: boolean } = {},
+): Chip[] {
   const profiles = new Map(context.profiles.map((p) => [p.id, p]));
   const chips: Chip[] = [];
   const completion = completionOf(filters);
-  if (completion !== "incomplete") {
+  if (completion !== "incomplete" && !(options.completionIsViewOption && completion === "all")) {
     chips.push({
       key: "completion",
       label:
@@ -153,12 +160,14 @@ export function FilterChips({
   filters,
   context,
   onChange,
+  completionIsViewOption = false,
 }: {
   filters: ViewFilters;
   context: FilterContext;
   onChange?: (filters: ViewFilters) => void;
+  completionIsViewOption?: boolean;
 }) {
-  const chips = filterChips(filters, context);
+  const chips = filterChips(filters, context, { completionIsViewOption });
   if (chips.length === 0) return null;
   return (
     <ul className="flex flex-wrap items-center gap-1.5" aria-label="Active filters">

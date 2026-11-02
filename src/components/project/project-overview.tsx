@@ -1,5 +1,6 @@
 "use client";
 
+import { ProjectRolesSection, type RoleRow } from "@/components/project/project-roles";
 import Link from "next/link";
 import { useState } from "react";
 import {
@@ -55,6 +56,7 @@ export function ProjectOverview({
   goals,
   connectable,
   activity,
+  roles = null,
 }: {
   projectId: string;
   description: string | null;
@@ -68,11 +70,21 @@ export function ProjectOverview({
   // Goals the viewer may connect (ones they can edit that aren't connected yet).
   connectable: { id: string; title: string }[];
   activity: ProjectActivityItem[];
+  // Nov 2 notes (batch 14, 95): the project's roles (null on a database without this release).
+  roles?: RoleRow[] | null;
 }) {
   return (
     <div className="grid w-full gap-x-10 gap-y-8 px-gutter py-6 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
       <div className="flex min-w-0 flex-col gap-8">
         <Description projectId={projectId} description={description} />
+        {roles ? (
+          <ProjectRolesSection
+            projectId={projectId}
+            roles={roles}
+            members={members.map((m) => ({ profileId: m.profileId, name: m.name }))}
+            titleClass={SECTION_TITLE}
+          />
+        ) : null}
         <ProjectRoles members={members} />
         {goals ? <ConnectedGoals projectId={projectId} goals={goals} connectable={connectable} /> : null}
       </div>
@@ -128,7 +140,7 @@ function ProjectRoles({ members }: { members: OverviewMember[] }) {
   return (
     <section aria-labelledby="overview-roles">
       <h2 id="overview-roles" className={SECTION_TITLE}>
-        Project roles
+        Members
       </h2>
       <ul className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2">
         <li>
