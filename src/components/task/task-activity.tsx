@@ -3,6 +3,8 @@
 import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
+import { clearPinOverrides, setPinOverride, settledPinOverrides, usePinOverrides } from "@/components/task/pinned-comments-store";
+import { FeedbackSubtaskButton } from "@/components/task/feedback-subtask";
 import Link from "next/link";
 import { Bell, BellOff, FileCheck, Mail, Pencil, Pin, PinOff, SmilePlus, Trash2, UserPlus, X, Zap } from "lucide-react";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
@@ -49,9 +51,25 @@ import { useRealtimeRefresh } from "@/lib/realtime";
 import { describeRecurrence, parseRecurrence } from "@/lib/recurrence";
 import { TASK_KIND_LABELS, parseTaskKind } from "@/lib/task-kinds";
 import { dependencyLabel, parseDependencyKind } from "@/lib/dependencies";
-import { setActivityTab, useActivityTab } from "./pane-size";
+import { setActivityTab, useActivityTab, type ActivityTab } from "./pane-size";
+
+// Nov 2 notes (batch 17, 129): after posting, scroll the feed so the new comment is in view (it's drawn
+// at the end of the feed, below any older comments). The pending row shows up within a frame or two.
+function revealPendingComment(tempId: string) {
+  let tries = 0;
+  const step = () => {
+    const row = document.querySelector(`[data-pending-comment="${CSS.escape(tempId)}"]`);
+    if (row) {
+      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      return;
+    }
+    if (++tries < 30) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 import { PeopleList } from "./person-picker";
 import { TaskLink } from "@/components/task/task-link";
+import { canAddSubtask } from "@/components/task/task-subtasks";
 import { seedFromTitle } from "@/lib/task-seed";
 
 // The live state of a queued email, after "queued an email to …": sending, sent, failed with the reason,
@@ -156,6 +174,8 @@ export function TaskActivity({
   const canComment = taskPermissions(task).canComment;
   // Nov 1 notes, batch 9a (10.4): Editors and above pin and unpin comments (set_comment_pinned).
   const canPin = taskPermissions(task).canEdit && task.pinnedComments !== undefined;
+  // Nov 2 notes (batch 17, 131): Editors turn a piece of feedback into a subtask.
+  const canFeedbackSubtask = canAddSubtask(task);
   const refs: CommentRefs = task.commentRefs ?? { tasks: {}, projects: {} };
   const candidates = mentionCandidates(task, profiles, memberId);
   const nameOf = (profileId: string | null) => {
@@ -170,10 +190,30 @@ export function TaskActivity({
   const [earlier, setEarlier] = useState<TaskComment[]>([]);
   const [olderCursor, setOlderCursor] = useState(task.olderComments);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const commentsOnTask = useMemo(() => {
+  // Nov 2 notes (batch 17, 128): pins and unpins show at once (pinned-comments-store.ts).
+  const pinOverrides = usePinOverrides();
+  const serverComments = useMemo(() => {
     const seen = new Set(task.comments.map((comment) => comment.id));
     return [...earlier.filter((comment) => !seen.has(comment.id)), ...task.comments];
   }, [earlier, task.comments]);
+  const commentsOnTask = useMemo(
+    () =>
+      pinOverrides.size === 0
+        ? serverComments
+        : serverComments.map((comment) => {
+            const o = pinOverrides.get(comment.id);
+            return o && o.taskId === task.id ? { ...comment, pinnedAt: o.pinnedAt } : comment;
+          }),
+    [serverComments, pinOverrides, task.id],
+  );
+  useEffect(() => {
+    if (pinOverrides.size === 0) return;
+    const pinnedOnServer = new Map((task.pinnedComments ?? []).map((c) => [c.id, c.pinnedAt] as const));
+    const loaded = new Map(serverComments.map((c) => [c.id, c.pinnedAt] as const));
+    clearPinOverrides(
+      settledPinOverrides(pinOverrides, task.id, (commentId) => pinnedOnServer.get(commentId) ?? loaded.get(commentId)),
+    );
+  }, [pinOverrides, serverComments, task.pinnedComments, task.id]);
   const merged = mergePendingComments(commentsOnTask, pending, rememberedCommentKeys());
   const arrivedKey = merged.arrived.map((a) => a.tempId).join(",");
   useEffect(() => {
@@ -467,10 +507,20 @@ export function TaskActivity({
   const comments = entries.filter(
     (entry) => entry.type === "comment" || (entry.type === "email" && entry.email.kind === "task_created"),
   );
-  // Pinned comments at the top of the feed (newest pin first); the loaded page's copy carries the latest pin.
-  const pinned = (task.pinnedComments ?? [])
-    .map((p) => commentsOnTask.find((c) => c.id === p.id) ?? p)
-    .filter((c) => c.pinnedAt && !c.deleted);
+  // Pinned comments at the top of the feed (newest pin first); the loaded page's copy carries the latest pin,
+  // and a pin or unpin still saving wins (128).
+  const serverPinned = task.pinnedComments ?? [];
+  const pinned = [
+    ...serverPinned.map((p) => {
+      const loaded = commentsOnTask.find((c) => c.id === p.id);
+      if (loaded) return loaded;
+      const o = pinOverrides.get(p.id);
+      return o && o.taskId === task.id ? { ...p, pinnedAt: o.pinnedAt } : p;
+    }),
+    ...commentsOnTask.filter((c) => c.pinnedAt && !serverPinned.some((p) => p.id === c.id)),
+  ]
+    .filter((c) => c.pinnedAt && !c.deleted)
+    .sort((a, b) => (b.pinnedAt ?? "").localeCompare(a.pinnedAt ?? ""));
   const shown = tab === "comments" ? comments : entries;
   const commentCount = task.commentTotal + merged.waiting.length;
 
@@ -536,6 +586,8 @@ export function TaskActivity({
                     canPin={canPin}
                     inPinned
                     people={profiles}
+                    taskId={task.id}
+                    feedbackTask={canFeedbackSubtask ? task : null}
                   />
                 ))}
               </ol>
@@ -607,6 +659,8 @@ export function TaskActivity({
                   refs={refs}
                   canPin={canPin}
                   people={profiles}
+                  taskId={task.id}
+                  feedbackTask={canFeedbackSubtask ? task : null}
                 />
               ),
             )}
@@ -653,6 +707,8 @@ function CommentItem({
   canPin = false,
   inPinned = false,
   people = [],
+  taskId,
+  feedbackTask = null,
 }: {
   comment: TaskComment;
   // Still on its way to the server (optimistic): no edit, delete, or reactions yet.
@@ -672,7 +728,11 @@ function CommentItem({
   inPinned?: boolean;
   // Everyone in the workspace: in an automation's comment their raw email addresses show as chips.
   people?: Profile[];
+  taskId: string;
+  // Editors (131): a submitter's emailed reply or a review's outcome gets "Create subtask".
+  feedbackTask?: TaskDetail | null;
 }) {
+  const notify = useNotify();
   const [pending, run] = useServerAction();
   // Nov 1 notes, batch 12 (84): posted by an automation — its own look (lightning, tint, "Automation · X").
   const automation = Boolean(comment.ruleName);
@@ -720,7 +780,24 @@ function CommentItem({
       aria-label={comment.pinnedAt ? "Unpin comment" : "Pin comment to the top"}
       data-tooltip={comment.pinnedAt ? "Unpin" : "Pin to top"}
       data-pin-comment={comment.pinnedAt ? "unpin" : "pin"}
-      onClick={() => run(() => setCommentPinned(comment.id, !comment.pinnedAt))}
+      onClick={() => {
+        // Shown at once; a refused save puts it back and the toast says why (128).
+        const before = comment.pinnedAt ?? null;
+        const next = before ? null : new Date().toISOString();
+        setPinOverride(taskId, comment.id, next);
+        void setCommentPinned(comment.id, Boolean(next)).then(
+          (result) => {
+            if (result.error) {
+              setPinOverride(taskId, comment.id, before);
+              notify(result.error);
+            }
+          },
+          () => {
+            setPinOverride(taskId, comment.id, before);
+            notify(next ? "Couldn’t pin the comment" : "Couldn’t unpin the comment");
+          },
+        );
+      }}
       className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
     >
       {comment.pinnedAt ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
@@ -770,7 +847,12 @@ function CommentItem({
   if (comment.email) {
     const received = comment.email.direction === "received";
     return (
-      <li className="group flex gap-2.5" data-comment-id={sending ? undefined : comment.id} aria-busy={sending || undefined}>
+      <li
+        className="group flex gap-2.5"
+        data-comment-id={sending ? undefined : comment.id}
+        data-pending-comment={sending ? comment.id : undefined}
+        aria-busy={sending || undefined}
+      >
         {received ? <MailAvatar /> : automation ? <AutomationAvatar /> : <Avatar name={authorName} profileId={comment.authorId} size="md" />}
         <div className="min-w-0 flex-1">
           <EmailCommentHeader email={comment.email} authorName={authorName} createdAt={comment.createdAt} actions={controls} />
@@ -784,6 +866,14 @@ function CommentItem({
             {received ? comment.body : <MentionText body={comment.body} people={mentioned} describe={describe} teams={teams} refs={refs} />}
           </EmailCard>
           {comment.reviewCheckId ? <ReviewLink /> : null}
+          {received && feedbackTask && !sending ? (
+            <FeedbackSubtaskButton
+              task={feedbackTask}
+              feedback={comment.body}
+              from={comment.email.address}
+              className="mt-1"
+            />
+          ) : null}
           {sending ? null : <Reactions comment={comment} canReact={canComment} memberId={memberId} nameOf={nameOf} />}
         </div>
       </li>
@@ -798,6 +888,7 @@ function CommentItem({
           : "group flex gap-2.5"
       }
       data-comment-id={sending ? undefined : comment.id}
+      data-pending-comment={sending ? comment.id : undefined}
       data-automation-comment={automation ? "" : undefined}
       aria-busy={sending || undefined}
     >
@@ -1103,6 +1194,7 @@ export function TaskPaneFooter({
   const canSendReview = permissions.canEdit;
   const [reviewing, setReviewing] = useState<string | null>(null);
   const open = focused || draft.trim() !== "" || toSubmitter;
+  const activityTab: ActivityTab = useActivityTab();
 
   // ⌘/Ctrl+Enter and the Comment button: the comment shows in the feed at once (a pending row), the
   // server saves it, and the real row takes its place; a failure takes the row away, puts the text back,
@@ -1133,6 +1225,9 @@ export function TaskPaneFooter({
     });
     setDraft("");
     setToSubmitter(false);
+    // The Reviews tab doesn't list comments: show the comments the new one joins.
+    if (activityTab === "reviews") setActivityTab("comments");
+    revealPendingComment(tempId);
     run(async () => {
       const result = emailed ? await sendSubmitterResponse(task.id, body) : await addComment(task.id, body);
       if (result.error || !result.commentId) {
@@ -1166,6 +1261,7 @@ export function TaskPaneFooter({
           }}
         />
       ) : null}
+      {/* Nov 2 notes (batch 17, 130): only a note when the email conversation is off; never "on … Change". */}
       {canComment ? <RequestConversationNotice task={task} /> : null}
       {canComment ? (
         <div className="flex items-start gap-2">
@@ -1175,7 +1271,7 @@ export function TaskPaneFooter({
             onBlur={(e) => {
               if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
             }}
-            className={`min-w-0 flex-1 rounded-lg border bg-white transition-[border-color,box-shadow] ${
+            className={`@container/composer min-w-0 flex-1 rounded-lg border bg-white transition-[border-color,box-shadow] ${
               open ? "border-accent-500/60 shadow-[0_0_0_3px_var(--focus-ring)]" : "border-zinc-200 hover:border-zinc-300"
             }`}
           >
@@ -1195,10 +1291,17 @@ export function TaskPaneFooter({
                 open ? "min-h-16 py-2" : "h-8 min-h-8 py-1.5"
               }`}
             />
+            {/* Nov 2 notes (batch 17, 132): at most two short lines under the text. The text eases down to
+                12px in a narrow pane (container units) before anything wraps, the email stays on one line
+                (cut with an ellipsis, the whole address in its tooltip), and the labels shorten instead of
+                stacking word by word. */}
             {open && (submitterEmail || canSendReview) ? (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-1.5 pt-0.5 text-sm text-zinc-600">
+              <div
+                className="flex min-w-0 items-center gap-2 px-3 pb-1 pt-0.5 text-[clamp(0.75rem,3.2cqi,0.8125rem)] text-zinc-600"
+                data-composer-options=""
+              >
                 {submitterEmail ? (
-                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5">
                     <input
                       id="send-to-submitter"
                       type="checkbox"
@@ -1206,11 +1309,18 @@ export function TaskPaneFooter({
                       onChange={(e) => setToSubmitter(e.target.checked)}
                       className="size-4 shrink-0 rounded border-zinc-300 accent-accent-600"
                     />
-                    <label htmlFor="send-to-submitter" className="min-w-0">
-                      Send response to submitter{" "}
+                    <label
+                      htmlFor="send-to-submitter"
+                      className="flex min-w-0 items-baseline gap-1 whitespace-nowrap"
+                      title={`Send response to submitter ${submitterEmail}`}
+                    >
+                      <span className="shrink-0 @max-[30rem]/composer:hidden">Send response to submitter</span>
+                      <span className="hidden shrink-0 @max-[30rem]/composer:inline">Email submitter</span>
                       <a
                         href={`mailto:${submitterEmail}`}
-                        className="break-all text-accent-700 hover:underline"
+                        title={submitterEmail}
+                        className="min-w-0 truncate text-accent-700 hover:underline"
+                        data-submitter-email=""
                       >
                         {submitterEmail}
                       </a>
@@ -1223,25 +1333,32 @@ export function TaskPaneFooter({
                   <button
                     type="button"
                     onClick={() => setReviewing(draft.trim())}
+                    aria-label="Send for review…"
                     data-tooltip="Pick or upload files and send them for approval or feedback"
-                    className="btn-secondary h-7 shrink-0 px-2.5 text-xs"
+                    className="btn-secondary h-7 shrink-0 gap-1 whitespace-nowrap px-2 text-xs"
                   >
                     <FileCheck className="size-3.5" aria-hidden />
-                    Send for review…
+                    <span className="@max-[22rem]/composer:hidden">Send for review…</span>
                   </button>
                 ) : null}
               </div>
             ) : null}
             {open ? (
-              <div className="flex items-center gap-2 px-2 pb-1.5">
-                <span className="mr-auto text-2xs text-zinc-500">
-                  {toSubmitter && submitterEmail
-                    ? task.replyThread?.closed
-                      ? "Emailed to the submitter. Replies are closed, so their answers won’t be posted"
-                      : "This comment is emailed to the submitter; their reply comes back here"
-                    : "Type @ for people, tasks, or projects · ⌘/Ctrl+Enter to send"}
-                </span>
-                <button type="button" onClick={submit} disabled={!draft.trim()} className="btn-primary h-7 px-3">
+              <div className="flex min-w-0 items-center gap-2 px-2 pb-1.5">
+                {(() => {
+                  const hint =
+                    toSubmitter && submitterEmail
+                      ? task.replyThread?.closed
+                        ? "Emailed to the submitter. Replies are closed, so their answers won’t be posted"
+                        : "This comment is emailed to the submitter; their reply comes back here"
+                      : "Type @ for people, tasks, or projects · ⌘/Ctrl+Enter to send";
+                  return (
+                    <span className="mr-auto min-w-0 truncate pl-1 text-2xs text-zinc-500" title={hint}>
+                      {hint}
+                    </span>
+                  );
+                })()}
+                <button type="button" onClick={submit} disabled={!draft.trim()} className="btn-primary h-7 shrink-0 px-3">
                   {toSubmitter && submitterEmail ? "Send" : "Comment"}
                 </button>
               </div>

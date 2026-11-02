@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useOptimistic, useRef, useState } from "react";
+import { useEffect, useId, useOptimistic, useRef, useState, type ReactNode } from "react";
 import { DECISION_NOTE_OPEN_MS, applyApprovalChange, decisionSummary } from "@/lib/approval-optimistic";
 import { CalendarDays, Check, ChevronDown, ChevronRight, Clock, History, Lock, Paperclip, Send, ThumbsUp, UserRound, Users } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
@@ -31,6 +31,8 @@ import { SendForApprovalDialog, joinNames } from "./send-for-approval-dialog";
 import { ApprovalSetupDialog } from "./approval-setup-dialog";
 import { ApproverReview, ApproverReviewDialog } from "./approver-review";
 import { approverReviewFiles } from "@/lib/approver-review";
+import { FeedbackSubtaskButton } from "./feedback-subtask";
+import { canAddSubtask } from "./task-subtasks";
 
 // Oct 27 notes (batch 6, items 45 / 45b): the approval panel at the top of an approval task's pane.
 // The assignee does the work and sends it with "Ready for approval"; the task's approvers (separate
@@ -512,6 +514,17 @@ function ApprovalPanel({
           decision={status}
           name={nameOf(decisionRequest.approverId, true)}
           paused={paused}
+          action={
+            // Nov 2 notes (batch 17, 131): next to Feedback received, turn the note into a subtask.
+            decisionRequest.decisionNote && canAddSubtask(task) ? (
+              <FeedbackSubtaskButton
+                task={task}
+                feedback={decisionRequest.decisionNote}
+                from={nameOf(decisionRequest.approverId)}
+                className="-ml-1.5 mt-1"
+              />
+            ) : null
+          }
         />
       ) : null}
 
@@ -682,11 +695,14 @@ function DecisionNote({
   decision,
   name,
   paused,
+  action = null,
 }: {
   request: TaskApproval;
   decision: "changes_requested" | "rejected";
   name: string;
   paused: boolean;
+  // Nov 2 notes (batch 17, 131): "Create subtask" under the note.
+  action?: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
   const [pinned, setPinned] = useState(false);
@@ -733,6 +749,7 @@ function DecisionNote({
       </button>
       <div id={bodyId} hidden={!open} className="px-2.5 pb-1.5">
         {request.decisionNote ? <p className="whitespace-pre-wrap">{request.decisionNote}</p> : <p className="italic opacity-75">No note.</p>}
+        {action}
       </div>
     </div>
   );
@@ -848,6 +865,9 @@ function ApprovalHistory({
                     </span>
                   ) : null}
                   {r.decisionNote ? <span className="block whitespace-pre-wrap pl-2 text-zinc-600">“{r.decisionNote}”</span> : null}
+                  {r.decisionNote && (r.status === "changes_requested" || r.status === "rejected") && canAddSubtask(task) ? (
+                    <FeedbackSubtaskButton task={task} feedback={r.decisionNote} from={nameOf(r.approverId)} className="ml-0.5" />
+                  ) : null}
                   {r.cancelReason === "handed_off" && r.handoffNote ? (
                     <span className="block whitespace-pre-wrap pl-2 text-zinc-600">“{r.handoffNote}”</span>
                   ) : null}

@@ -116,7 +116,7 @@ export function TaskSubtasks({
         (s.kind === "approval" ? hasRole(task.memberRoles[p.id], "commenter") : p.id in task.memberRoles),
     );
 
-  if (allSubtasks.length === 0 && !(canEdit && !atDepthLimit)) return null;
+  if (allSubtasks.length === 0 && pendingAdds.length === 0 && !(canEdit && !atDepthLimit)) return null;
 
   function move(subtask: SubtaskItem, beforeId: string | null) {
     if (beforeId === subtask.id) return;
