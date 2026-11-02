@@ -26,6 +26,10 @@ export const THUMB_QUALITIES = [82, 72, 62, 52] as const;
 export const MAX_THUMBNAILS = 6;
 const RENDER_TIMEOUT_MS = 12000;
 const CONCURRENCY = 3;
+// Nov 2 notes (batch 16, 122): the review email waits at most this long for thumbnails, so it goes out in
+// seconds; files whose thumbnail isn't ready by then get a file tile (their thumbnails still finish and
+// are stored, so the next round reuses them).
+export const THUMBNAIL_BUDGET_MS = 4000;
 
 export type ThumbnailSource = {
   assetId: string;
@@ -247,6 +251,7 @@ export async function reviewThumbnails(
   taskId: string,
   assets: ThumbnailSource[],
   expiresAt: Date,
+  budgetMs = THUMBNAIL_BUDGET_MS,
 ): Promise<Map<string, ReviewThumbnail>> {
   const urls = new Map<string, ReviewThumbnail>();
   const seconds = Math.max(3600, Math.ceil((expiresAt.getTime() - Date.now()) / 1000));
@@ -264,6 +269,13 @@ export async function reviewThumbnails(
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, work));
-  return urls;
+  const done = Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, work));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, budgetMs);
+  });
+  await Promise.race([done, budget]);
+  clearTimeout(timer);
+  // A copy: thumbnails that finish after the budget don't change the email being sent.
+  return new Map(urls);
 }

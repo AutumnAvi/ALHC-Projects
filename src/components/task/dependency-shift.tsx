@@ -9,6 +9,7 @@ import { applyDependencyShifts, changeTaskDates, undoDependencyShift } from "@/l
 import { currentMutationToken, dropTokenTasks, holdTaskChanges } from "@/lib/optimistic-session";
 import {
   shiftLabel,
+  type DependencyShiftMode,
   type ShiftChange,
   type ShiftMove,
   type ShiftPlanRow,
@@ -32,6 +33,12 @@ type Options = {
   projectId?: string | null;
   // Several tasks at once: which of the given tasks moved and which couldn't (a bulk change's summary).
   onResult?: (result: { moved: string[]; skipped: ShiftSkip[] }) => void;
+  // Nov 2 notes (batch 16, 125): what the screen already knows, so dependents move at once. `mode` is the
+  // project's setting as the page read it; with Auto-shift, `localPlan` (planDependencyShifts over the
+  // page's tasks and links) moves the dependents on screen before the server answers. The database's
+  // answer wins: a dependent it didn't move goes back.
+  mode?: DependencyShiftMode | null;
+  localPlan?: (moves: ShiftMove[], pullEarlier: boolean) => ShiftPlanRow[];
 };
 
 export type ShiftChoice = { confirmed: string[]; pull: boolean } | "only" | "cancel";
@@ -163,6 +170,34 @@ export function shiftToastText({
   return kept ? `${text}; ${kept}` : text;
 }
 
+// Nov 2 notes (batch 16, 125): with Auto-shift, the dependents the page can see move at once — the same
+// plan the database runs (planDependencyShifts). Nothing for Ask me (the prompt decides) or Off.
+export function predictedDependents(
+  moves: ShiftMove[],
+  mode: DependencyShiftMode | null | undefined,
+  localPlan: ((moves: ShiftMove[], pullEarlier: boolean) => ShiftPlanRow[]) | undefined,
+): MovedTask[] {
+  if (mode !== "auto" || !localPlan) return [];
+  const given = new Set(moves.map((m) => m.taskId));
+  return movesOf(localPlan(moves, true))
+    .filter((r) => !given.has(r.taskId))
+    .map((r) => ({ taskId: r.taskId, startOn: r.newStart, dueOn: r.newDue }));
+}
+
+function predictDependents(moves: ShiftMove[], options: Options) {
+  try {
+    return predictedDependents(moves, options.mode, options.localPlan);
+  } catch {
+    return [];
+  }
+}
+
+// A dependent drawn ahead of the server that the server didn't move goes back to its saved dates.
+function dropUnconfirmed(token: number, predicted: MovedTask[], changed: Set<string>) {
+  const wrong = predicted.filter((p) => !changed.has(p.taskId)).map((p) => p.taskId);
+  if (wrong.length) dropTokenTasks(token, wrong);
+}
+
 // ---------------------------------------------------------------------------------------------
 // The hook
 // ---------------------------------------------------------------------------------------------
@@ -239,18 +274,19 @@ export function useDependencyShift(): {
     [notify, undo],
   );
 
+  // The change on the server; the ids of every task it moved (null: nothing changed).
   const shift = useCallback(
-    async (moves: ShiftMove[], subject: string, options: Options): Promise<boolean> => {
+    async (moves: ShiftMove[], subject: string, options: Options): Promise<Set<string> | null> => {
       const answer = await changeTaskDates(moves);
       if (answer.error || !answer.outcome) {
         notify(answer.error ?? "Couldn’t change the dates");
         options.onRevert?.();
-        return false;
+        return null;
       }
       const outcome = answer.outcome;
       if (outcome.kind === "done") {
         report(moves, subject, outcome, options);
-        return true;
+        return new Set(outcome.changes.map((c) => c.task_id));
       }
 
       // Ask me: keep the transition (and the optimistic position) while the person decides.
@@ -273,7 +309,7 @@ export function useDependencyShift(): {
       setPrompt(null);
       if (choice === "cancel") {
         options.onRevert?.();
-        return false;
+        return null;
       }
       const confirmed = choice === "only" ? [] : choice.confirmed;
       const pull = choice !== "only" && choice.pull;
@@ -286,17 +322,17 @@ export function useDependencyShift(): {
       if (applied.error || !applied.result) {
         notify(applied.error ?? "Couldn’t change the dates");
         options.onRevert?.();
-        return false;
+        return null;
       }
       // One task that couldn't move: say why and put it back.
       const refused = moves.length === 1 ? applied.result.skipped.find((s) => s.taskId === moves[0].taskId) : undefined;
       if (refused) {
         notify(refused.reason || "Your role doesn’t allow changing this task’s dates");
         options.onRevert?.();
-        return false;
+        return null;
       }
       report(moves, subject, applied.result, options);
-      return true;
+      return new Set(applied.result.changes.map((c) => c.task_id));
     },
     [notify, report],
   );
@@ -307,11 +343,17 @@ export function useDependencyShift(): {
         // The prompt outlives one transition. Hold the optimistic dates until the save lands, and drop
         // them if the person cancels or the database refuses.
         const held = holdTaskChanges();
+        const token = currentMutationToken();
         let ok = false;
         try {
-          // Instant: the task moves on screen before the server answers.
-          options.onOptimistic?.([{ taskId: task.id, ...dates }]);
-          ok = await shift([{ taskId: task.id, ...dates }], `“${task.title}”`, options);
+          const moves: ShiftMove[] = [{ taskId: task.id, ...dates }];
+          // Instant: the task moves on screen before the server answers — and with Auto-shift its
+          // dependents too, chained (Nov 2 notes, batch 16, 125).
+          const predicted = predictDependents(moves, options);
+          options.onOptimistic?.([{ taskId: task.id, ...dates }, ...predicted]);
+          const changed = await shift(moves, `“${task.title}”`, options);
+          ok = changed !== null;
+          if (changed) dropUnconfirmed(token, predicted, changed);
         } finally {
           if (ok) held.ok();
           else held.cancel();
@@ -326,12 +368,18 @@ export function useDependencyShift(): {
     (moves: ShiftMove[], subject: string, _plain: (() => void) | null, options: Options = {}) => {
       startShift(async () => {
         const held = holdTaskChanges();
+        const token = currentMutationToken();
         let ok = false;
         try {
-          // Moves that give both dates can be drawn at once.
+          // Moves that give both dates can be drawn at once (with Auto-shift, their dependents too).
           const full = moves.filter((m): m is MovedTask => m.startOn !== undefined && m.dueOn !== undefined);
-          if (full.length) options.onOptimistic?.(full.map((m) => ({ taskId: m.taskId, startOn: m.startOn, dueOn: m.dueOn })));
-          ok = await shift(moves, subject, options);
+          const predicted = predictDependents(moves, options);
+          if (full.length || predicted.length) {
+            options.onOptimistic?.([...full.map((m) => ({ taskId: m.taskId, startOn: m.startOn, dueOn: m.dueOn })), ...predicted]);
+          }
+          const changed = await shift(moves, subject, options);
+          ok = changed !== null;
+          if (changed) dropUnconfirmed(token, predicted, changed);
         } finally {
           if (ok) held.ok();
           else held.cancel();

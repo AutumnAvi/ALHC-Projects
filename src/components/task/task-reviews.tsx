@@ -21,6 +21,7 @@ import {
   type TaskReviewRound,
 } from "@/lib/review-checks";
 import { loadTaskReviews, resendReviewCheck, withdrawReviewCheck } from "@/lib/review-actions";
+import { reviewsChanged, reviewsReloaded, useReviewEvents } from "./review-events";
 
 // Oct 26 notes (batch 3): the pane's Reviews tab. Every review check of the task, newest round first: who
 // it went to, its status, the files in full quality with the reviewer's pins (pick a pin to see it; a
@@ -65,14 +66,21 @@ function iconFor(file: ReviewFile) {
 export function TaskReviews({ task, profiles }: { task: TaskDetail; profiles: Profile[] }) {
   const canEdit = taskPermissions(task).canEdit;
   const [rounds, setRounds] = useState<TaskReviewRound[] | null | undefined>(undefined);
-  const [version, setVersion] = useState(0);
   const [sending, setSending] = useState(false);
+  // Nov 2 notes (batch 16, 122): reviews sent, sent again, or withdrawn anywhere in this browser reload the
+  // tab, and a review being sent shows at once (review-events.ts).
+  const { version, pending } = useReviewEvents(task.id);
 
-  // Reload when the task changes (a reviewer's decision posts a comment) or after an action here.
+  // Reload when the task changes (a reviewer's decision posts a comment) or after a review action.
   useEffect(() => {
     let live = true;
+    const startedAt = version;
     loadTaskReviews(task.id)
-      .then((loaded) => live && setRounds(loaded))
+      .then((loaded) => {
+        if (!live) return;
+        setRounds(loaded);
+        reviewsReloaded(task.id, startedAt);
+      })
       .catch(() => live && setRounds([]));
     return () => {
       live = false;
@@ -97,13 +105,29 @@ export function TaskReviews({ task, profiles }: { task: TaskDetail; profiles: Pr
           </button>
         ) : null}
       </div>
+      {pending.map((p) => (
+        <div
+          key={p.key}
+          data-pending-review=""
+          aria-busy="true"
+          className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+        >
+          <Send className="size-3.5 shrink-0 text-accent-600" aria-hidden />
+          <span className="min-w-0 flex-1 truncate text-zinc-800">
+            New round to {p.recipient || "the reviewer"} · {plural(p.files, "file")}
+          </span>
+          <span role="status" className="shrink-0 text-xs text-zinc-500">
+            {p.settled ? "Sent" : "Sending…"}
+          </span>
+        </div>
+      ))}
       {rounds === undefined ? (
         <p role="status" className="text-sm text-zinc-500">
           Loading reviews…
         </p>
       ) : rounds === null ? (
         <p className="text-sm text-zinc-500">Review checks need this release’s database update.</p>
-      ) : rounds.length === 0 ? (
+      ) : rounds.length === 0 && pending.length === 0 ? (
         <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500">
           No review checks yet.{canEdit ? " Use Send review check to ask for an approval." : ""}
         </p>
@@ -115,7 +139,7 @@ export function TaskReviews({ task, profiles }: { task: TaskDetail; profiles: Pr
             senderName={nameOf(round.senderId)}
             canEdit={canEdit}
             defaultOpen={index === 0}
-            onChanged={() => setVersion((v) => v + 1)}
+            onChanged={() => reviewsChanged(task.id)}
           />
         ))
       )}
