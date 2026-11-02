@@ -14,17 +14,24 @@ import {
   Tag as TagIcon,
   Trash2,
   UserRound,
+  Workflow,
   X,
 } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useDependencyShift } from "@/components/task/dependency-shift";
-import { useNotify } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
 import { beginLocalMutation, dropTokenTasks, endLocalMutation, failMutation } from "@/lib/optimistic-session";
-import { addProjectMemberByProfile, bulkEditTasks } from "@/lib/actions";
+import {
+  addProjectMemberByProfile,
+  bulkEditTasks,
+  listBulkManualRules,
+  runManualRuleOnTasks,
+  type BulkManualRule,
+} from "@/lib/actions";
 import { Dialog } from "@/components/dialog";
-import { MAX_BULK_TASKS, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
+import { MAX_BULK_TASKS, bulkRuleRunMessage, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import type { Section } from "@/lib/data";
 import { NumberInput } from "@/components/number-input";
 import { LOCKED_FIELD_NOTE, OPTION_COLOR_CLASSES, fieldLockedFor, numberPrefixOf, type FieldDef } from "@/lib/fields";
@@ -143,6 +150,21 @@ export function BulkBar({
       return;
     }
     run({ action: "assign", assignee_id: assigneeId });
+  }
+
+  const [, runAction] = useServerAction();
+  function runAutomation(rule: BulkManualRule) {
+    const ids = [...selected];
+    if (ids.length > MAX_BULK_TASKS) {
+      notify(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
+      return;
+    }
+    notify(`Running “${rule.name}” on ${taskCount(Math.min(ids.length, rule.taskCount))}…`);
+    runAction(async () => {
+      const result = await runManualRuleOnTasks(rule.id, ids);
+      if (result.run) notify(bulkRuleRunMessage(rule.name, result.run));
+      return result;
+    });
   }
 
   function addAndAssign() {
@@ -428,6 +450,31 @@ export function BulkBar({
             </Popover>
           ) : null}
 
+          {/* Nov 2 notes (batch 17, 127): run one of the projects' "Run manually" automations on every selected
+              task. Only automations of projects where you're an Editor are listed; the database checks again. */}
+          <Popover
+            label="Run an automation on selected tasks"
+            side="top"
+            buttonClassName={BAR_BUTTON}
+            panelClassName="w-72"
+            button={
+              <>
+                <Workflow className="size-4" aria-hidden />
+                Run automation
+              </>
+            }
+          >
+            {(close) => (
+              <BulkRulePicker
+                taskIds={selected}
+                onPick={(rule) => {
+                  close();
+                  runAutomation(rule);
+                }}
+              />
+            )}
+          </Popover>
+
           <button
             type="button"
             className={`${BAR_BUTTON} hover:bg-red-600`}
@@ -460,6 +507,52 @@ export function BulkBar({
         </div>
       ) : null}
     </>
+  );
+}
+
+// The automations the selection can run, loaded when the menu opens.
+function BulkRulePicker({ taskIds, onPick }: { taskIds: string[]; onPick: (rule: BulkManualRule) => void }) {
+  const [loaded, setLoaded] = useState<{ rules: BulkManualRule[] } | { error: string } | null>(null);
+  const key = taskIds.join(",");
+  useEffect(() => {
+    let live = true;
+    listBulkManualRules(key.split(","))
+      .then((result) => live && setLoaded(result.error ? { error: result.error } : { rules: result.rules }))
+      .catch(() => live && setLoaded({ error: "Couldn’t load the automations" }));
+    return () => {
+      live = false;
+    };
+  }, [key]);
+
+  if (!loaded) return <p className="px-2 py-1.5 text-xs text-zinc-500">Loading automations…</p>;
+  if ("error" in loaded) return <p className="px-2 py-1.5 text-xs text-red-600">{loaded.error}</p>;
+  if (loaded.rules.length === 0) {
+    return (
+      <p className="px-2 py-1.5 text-xs text-zinc-500">
+        No automations to run. Add one with the “Run manually” trigger in a project’s Customize → Automations. Automations of
+        projects where you’re an Editor show up here.
+      </p>
+    );
+  }
+  const grouped = new Set(loaded.rules.map((r) => r.projectId)).size > 1;
+  return (
+    <div className="flex max-h-72 flex-col overflow-y-auto">
+      <p className="px-2 pb-1 text-xs font-medium text-zinc-500">Run on the selected tasks</p>
+      {loaded.rules.map((rule, index) => (
+        <div key={rule.id}>
+          {grouped && loaded.rules[index - 1]?.projectId !== rule.projectId ? (
+            <p className="truncate px-2 pb-0.5 pt-1.5 text-2xs font-semibold uppercase tracking-wide text-zinc-400">{rule.projectName}</p>
+          ) : null}
+          <MenuItem onClick={() => onPick(rule)}>
+            <Workflow className="size-4 shrink-0 text-zinc-400" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">{rule.name}</span>
+            {rule.taskCount < taskIds.length ? (
+              <span className="shrink-0 text-2xs text-zinc-400">{taskCount(rule.taskCount)}</span>
+            ) : null}
+          </MenuItem>
+        </div>
+      ))}
+    </div>
   );
 }
 

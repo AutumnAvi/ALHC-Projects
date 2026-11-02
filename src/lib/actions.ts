@@ -119,7 +119,7 @@ import {
   type DuplicateTaskOptions,
   type DuplicateTaskResult,
 } from "@/lib/duplicate-task";
-import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult } from "@/lib/bulk";
+import { MAX_BULK_TASKS, parseBulkResult, type BulkOperation, type BulkResult, type BulkRuleRun } from "@/lib/bulk";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import { isCheckedMode, type CheckedMode } from "@/lib/checklist";
 import { PERSON_DEFAULT_ROLE, hasRole, isDefaultProjectRole, isPortfolioRole, isProjectRole } from "@/lib/roles";
@@ -2513,17 +2513,51 @@ export async function removeTaskFromProject(
 // Subtasks are tasks (parent_task_id). Assignee, dates, notes, and fields go through updateTask and
 // friends like any task; these cover creating, renaming, completing, ordering, and deleting from a list.
 
-export async function createSubtask(parentId: string, title: string, beforeId?: string | null): Promise<ActionResult> {
-  return run(async () => {
+export async function createSubtask(
+  parentId: string,
+  title: string,
+  beforeId?: string | null,
+): Promise<ActionResult & { subtaskId?: string }> {
+  let subtaskId: string | undefined;
+  const result = await run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.rpc("create_subtask", {
-        parent_task: id(parentId, "task"),
-        task_title: text(title, "Subtask name"),
-        before_task: beforeId ? id(beforeId, "subtask") : null,
-      }),
-    );
+    const created = await supabase.rpc("create_subtask", {
+      parent_task: id(parentId, "task"),
+      task_title: text(title, "Subtask name"),
+      before_task: beforeId ? id(beforeId, "subtask") : null,
+    });
+    check(created);
+    // The pane's pending row (Nov 2 notes, batch 17) goes once the list has this id.
+    subtaskId = typeof created.data === "string" ? created.data : undefined;
   });
+  return { ...result, subtaskId };
+}
+
+// Nov 2 notes (batch 17, 131): a subtask made from a piece of feedback (an approver's requested changes,
+// a submitter's emailed reply, a review's outcome): its title from the feedback and a description with
+// the full text and a link back to the task the feedback is on. Editors of the task (create_subtask and
+// the tasks update policy decide).
+export async function createSubtaskFromFeedback(
+  parentId: string,
+  title: string,
+  notes: string,
+): Promise<ActionResult & { subtaskId?: string }> {
+  let subtaskId: string | undefined;
+  const result = await run(async () => {
+    const supabase = await createClient();
+    const created = await supabase.rpc("create_subtask", {
+      parent_task: id(parentId, "task"),
+      task_title: text(title, "Subtask name"),
+      before_task: null,
+    });
+    check(created);
+    subtaskId = typeof created.data === "string" ? created.data : undefined;
+    const description = optionalText(notes);
+    if (subtaskId && description) {
+      checkUpdated(await supabase.from("tasks").update({ notes: description }).eq("id", subtaskId).select("id"));
+    }
+  });
+  return { ...result, subtaskId };
 }
 
 export async function updateSubtask(
@@ -5395,6 +5429,116 @@ export async function runManualRule(
   return { status, summary, ...(failure ? { error: failure } : {}), ...(reason ? { reason } : {}) };
 }
 
+// Nov 2 notes (batch 17, 127): the bulk bar's "Run automation". The "Run manually" automations of the
+// selected tasks' projects where the viewer is an Editor (the same rule as the pane's list), each with how
+// many of the selected tasks are in its project (only those can run it).
+export type BulkManualRule = ManualRule & { taskCount: number };
+
+export async function listBulkManualRules(taskIds: string[]): Promise<ActionResult & { rules: BulkManualRule[] }> {
+  const outcome = await read(async (): Promise<BulkManualRule[]> => {
+    const ids = [...new Set(taskIds.map((t) => id(t, "task")))];
+    if (ids.length === 0) return [];
+    if (ids.length > MAX_BULK_TASKS) throw new InputError(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
+    const supabase = await createClient();
+    const memberships = await supabase.from("task_projects").select("task_id, project_id").in("task_id", ids).is("deleted_at", null);
+    check(memberships);
+    const roles = await listMyProjectRoles();
+    const tasksIn = new Map<string, Set<string>>();
+    for (const m of memberships.data ?? []) {
+      if (!hasRole(roles.get(m.project_id) ?? null, "editor")) continue;
+      const set = tasksIn.get(m.project_id) ?? new Set<string>();
+      set.add(m.task_id);
+      tasksIn.set(m.project_id, set);
+    }
+    const projectIds = [...tasksIn.keys()];
+    if (projectIds.length === 0) return [];
+    const [projects, rules] = await Promise.all([
+      supabase.from("projects").select("id, name").in("id", projectIds).is("deleted_at", null).order("name"),
+      supabase
+        .from("rules")
+        .select("id, name, project_id")
+        .in("project_id", projectIds)
+        .eq("trigger_type", "manual")
+        .eq("enabled", true)
+        .is("deleted_at", null)
+        .order("sort_order")
+        .order("created_at"),
+    ]);
+    check(projects);
+    check(rules);
+    return (projects.data ?? []).flatMap((project) =>
+      (rules.data ?? [])
+        .filter((rule) => rule.project_id === project.id)
+        .map((rule) => ({
+          id: rule.id,
+          name: rule.name,
+          projectId: project.id,
+          projectName: project.name,
+          taskCount: tasksIn.get(project.id)?.size ?? 0,
+        })),
+    );
+  });
+  return { error: outcome.error, rules: outcome.data ?? [] };
+}
+
+// Runs one "Run manually" automation on each selected task in its project, one after the other (so round
+// robin assignment and other shared state see each run), through run_manual_rule — Editor+ of the
+// automation's project, checked by the database for every task. One refresh at the end.
+export async function runManualRuleOnTasks(ruleId: string, taskIds: string[]): Promise<ActionResult & { run?: BulkRuleRun }> {
+  const summary: BulkRuleRun = { ran: 0, conditions: 0, skipped: 0, failed: 0, notInProject: 0 };
+  const result = await run(async () => {
+    const ids = [...new Set(taskIds.map((t) => id(t, "task")))];
+    if (ids.length === 0) throw new InputError("Select at least one task");
+    if (ids.length > MAX_BULK_TASKS) throw new InputError(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
+    const supabase = await createClient();
+    const rule = await supabase.from("rules").select("project_id").eq("id", id(ruleId, "automation")).is("deleted_at", null).maybeSingle();
+    check(rule);
+    if (!rule.data) throw new InputError("That automation isn’t available any more");
+    const inProject = await supabase
+      .from("task_projects")
+      .select("task_id")
+      .eq("project_id", rule.data.project_id)
+      .in("task_id", ids)
+      .is("deleted_at", null);
+    check(inProject);
+    const runnable = new Set((inProject.data ?? []).map((m) => m.task_id));
+    const ordered = ids.filter((t) => runnable.has(t));
+    summary.notInProject = ids.length - ordered.length;
+    for (const taskId of ordered) {
+      const ran = await supabase.rpc("run_manual_rule", { target_rule: ruleId, target_task: taskId });
+      if (ran.error?.code === "PGRST202") throw new InputError("Running automations needs this release’s database update");
+      if (ran.error) {
+        summary.failed += 1;
+        summary.firstError ??= ran.error.code === "42501" ? NOT_ALLOWED : ran.error.message;
+        continue;
+      }
+      const data = (ran.data ?? {}) as { status?: unknown; detail?: Json | null };
+      switch (data.status) {
+        case "succeeded":
+        case "scheduled":
+          summary.ran += 1;
+          break;
+        case "conditions":
+          summary.conditions += 1;
+          break;
+        case "skipped":
+        case "duplicate":
+          summary.skipped += 1;
+          break;
+        default: {
+          summary.failed += 1;
+          const detail = data.detail && typeof data.detail === "object" && !Array.isArray(data.detail) ? data.detail : null;
+          const actions = detail?.actions;
+          const error = actions && typeof actions === "object" && !Array.isArray(actions) ? (actions as { error?: unknown }).error : null;
+          if (typeof error === "string" && error) summary.firstError ??= error;
+        }
+      }
+    }
+  });
+  if (result.error) return { error: result.error };
+  return { run: summary };
+}
+
 // The workspace's workweek (Admin console → Organization): the days "Set due date" actions count as
 // business days and "Every workday" schedules run on. Workspace admins only (workspaces_update_admin
 // and the work_week column grant); RLS turns anyone else's update into zero rows.
@@ -7454,13 +7598,21 @@ export async function loadRequestConversation(taskId: string): Promise<Submitter
 }
 
 // Comment pinning (Asana test 10.4): Editors and above of the task (set_comment_pinned checks).
+// Nov 2 notes (batch 17, 128): saved quietly. Going through run() made the action wait for refresh(), so
+// the person waited for the whole page and pane to re-render on the server (~2 s) before the pin showed.
+// The pane now shows the pin at once (pinned-comments-store.ts) and the comments Realtime feed brings
+// the saved state back.
 export async function setCommentPinned(commentId: string, pinned: boolean): Promise<ActionResult> {
-  return run(async () => {
+  try {
     const supabase = await createClient();
     const result = await supabase.rpc("set_comment_pinned", { target_comment: id(commentId, "comment"), pin: Boolean(pinned) });
     if (result.error?.code === "PGRST202") throw new InputError("Pinning comments needs this release’s database update");
     check(result);
-  });
+    return {};
+  } catch (error) {
+    if (error instanceof InputError || error instanceof DbError) return { error: error.message };
+    throw error;
+  }
 }
 
 // Nov 1 notes, batch 9a: an approval task's approver completes it (approvers often have only Commenter

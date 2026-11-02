@@ -76,3 +76,28 @@ export function bulkVerb(action: BulkOperation["action"]): string {
 export function taskCount(n: number) {
   return `${n} task${n === 1 ? "" : "s"}`;
 }
+
+// Nov 2 notes (batch 17, 127): what running one "Run manually" automation on the selected tasks did
+// (runManualRuleOnTasks), and the toast that says so.
+export type BulkRuleRun = {
+  ran: number;
+  conditions: number;
+  skipped: number;
+  failed: number;
+  // Selected tasks that aren't in the automation's project (it can't run on them).
+  notInProject: number;
+  firstError?: string;
+};
+
+// The toast after a bulk run: what ran, and what didn't and why.
+export function bulkRuleRunMessage(name: string, run: BulkRuleRun): string {
+  const parts = [
+    run.ran ? `Ran “${name}” on ${taskCount(run.ran)}` : `“${name}” didn’t change any task`,
+    run.conditions ? `${taskCount(run.conditions)} didn’t match its conditions` : null,
+    run.skipped ? `${taskCount(run.skipped)} skipped (ran too often or would loop)` : null,
+    run.notInProject ? `${taskCount(run.notInProject)} not in its project` : null,
+    run.failed ? `${taskCount(run.failed)} failed${run.firstError ? `: ${run.firstError.replace(/[.\s]+$/, "")}` : ""}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return `${parts.join(" · ")}.`;
+}
+

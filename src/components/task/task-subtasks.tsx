@@ -1,6 +1,7 @@
 "use client";
 
-import { useOptimistic, useRef, useState, type DragEvent } from "react";
+import { useEffect, useOptimistic, useRef, useState, type DragEvent } from "react";
+import { addPendingSubtask, dropPendingSubtasks, settlePendingSubtask, usePendingSubtasks } from "./pending-subtasks-store";
 import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
@@ -82,6 +83,16 @@ export function TaskSubtasks({
   };
   const inputRef = useRef<HTMLInputElement>(null);
   const [allSubtasks, change] = useOptimistic(task.subtasks, applyChange);
+  // Nov 2 notes (batch 17, 131): subtasks still saving ("+ Add subtask", "Create subtask" from feedback),
+  // drawn at once at the end; each goes once the saved one is in the list.
+  const pendingAll = usePendingSubtasks();
+  const savedIds = new Set(task.subtasks.map((s) => s.id));
+  const arrived = pendingAll.filter((p) => p.parentId === task.id && p.serverId && savedIds.has(p.serverId)).map((p) => p.tempId);
+  const arrivedKey = arrived.join(",");
+  useEffect(() => {
+    if (arrivedKey) dropPendingSubtasks(arrivedKey.split(","));
+  }, [arrivedKey]);
+  const pendingRows = pendingAll.filter((p) => p.parentId === task.id && !(p.serverId && savedIds.has(p.serverId)));
   // Oct 27 notes (batch 5): Filter (Hide completed, Assigned to me) and Sort, remembered per person.
   const { prefs, setPrefs } = useSubtaskPrefs();
   const me = memberId ?? null;
@@ -111,7 +122,7 @@ export function TaskSubtasks({
         (s.kind === "approval" ? hasRole(task.memberRoles[p.id], "commenter") : p.id in task.memberRoles),
     );
 
-  if (allSubtasks.length === 0 && !(canEdit && !atDepthLimit)) return null;
+  if (allSubtasks.length === 0 && pendingRows.length === 0 && !(canEdit && !atDepthLimit)) return null;
 
   function move(subtask: SubtaskItem, beforeId: string | null) {
     if (beforeId === subtask.id) return;
@@ -156,7 +167,14 @@ export function TaskSubtasks({
     const title = input?.value.trim();
     if (!input || !title) return;
     input.value = "";
-    run(() => createSubtask(task.id, title));
+    const tempId = `subtask-${crypto.randomUUID()}`;
+    addPendingSubtask({ tempId, parentId: task.id, title });
+    run(async () => {
+      const result = await createSubtask(task.id, title);
+      if (result.error || !result.subtaskId) dropPendingSubtasks([tempId]);
+      else settlePendingSubtask(tempId, result.subtaskId);
+      return result;
+    });
   }
 
   return (
@@ -195,7 +213,7 @@ export function TaskSubtasks({
         </p>
       ) : null}
 
-      {allSubtasks.length > 0 || adding ? (
+      {allSubtasks.length > 0 || pendingRows.length > 0 || adding ? (
         <ul
           className="mt-1.5 border-t border-zinc-100"
           onDragOver={(e) => {
@@ -381,6 +399,18 @@ export function TaskSubtasks({
               </li>
             );
           })}
+          {pendingRows.map((p) => (
+            <li
+              key={p.tempId}
+              className="flex min-h-9 items-center gap-1.5 border-b border-zinc-100 pl-5 pr-1"
+              aria-busy="true"
+              data-pending-subtask=""
+            >
+              <span aria-hidden className="size-4 shrink-0 rounded-full border border-zinc-300" />
+              <span className="min-w-0 flex-1 truncate px-1 text-sm text-zinc-800">{p.title}</span>
+              <span className="shrink-0 text-xs text-zinc-400">Saving…</span>
+            </li>
+          ))}
           {adding ? (
             <li className="flex min-h-9 items-center gap-1.5 border-b border-zinc-100 pl-5 pr-1">
               <span aria-hidden className="size-4 shrink-0 rounded-full border border-dashed border-zinc-300" />
