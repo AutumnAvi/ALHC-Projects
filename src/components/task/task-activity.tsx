@@ -26,7 +26,7 @@ import {
 import { canRespondToSubmitter, submitterResponseSubject } from "@/lib/comment-email";
 import { mentionSegments } from "@/lib/mentions";
 import { mergePendingComments, type PendingComment } from "@/lib/pending-comments";
-import { taskPermissions } from "@/lib/permissions";
+import { followerChange, taskPermissions } from "@/lib/permissions";
 import { ROLE_LABELS } from "@/lib/roles";
 import { EmailCard, EmailCommentHeader, EmailFiles, MailAvatar, MentionText, type DescribePerson } from "./comment-parts";
 import {
@@ -1264,7 +1264,7 @@ export function TaskPaneFooter({
               <span className="block rounded-full ring-2 ring-white" data-tooltip={displayName(p)}>
                 <Avatar name={displayName(p)} src={p.avatar_url} profileId={p.id} />
               </span>
-              {canComment ? (
+              {followerChange(permissions, memberId, p.id, true) === "remove" ? (
                 <button
                   type="button"
                   onClick={() => follow(p.id, false)}
@@ -1302,10 +1302,15 @@ export function TaskPaneFooter({
                 emptyNote="Only people who can open this task can follow it."
                 footer={
                   <p className="px-2.5 py-1.5 text-2xs text-zinc-500">
-                    Ticked people follow this task. Pick someone again to remove them.
+                    {permissions.canEdit
+                      ? "Ticked people follow this task. Pick someone again to remove them."
+                      : "Ticked people follow this task. Only Editors remove other followers."}
                   </p>
                 }
-                onPick={(profileId) => follow(profileId, !followerIds.includes(profileId))}
+                onPick={(profileId) => {
+                  const change = followerChange(permissions, memberId, profileId, followerIds.includes(profileId));
+                  if (change) follow(profileId, change === "add");
+                }}
               />
             )}
           </Popover>

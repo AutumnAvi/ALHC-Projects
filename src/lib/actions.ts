@@ -380,8 +380,9 @@ export async function updateProject(
 export async function deleteProject(projectId: string): Promise<ActionResult> {
   const result = await run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.from("projects").update({ deleted_at: now() }).eq("id", id(projectId)),
+    checkUpdated(
+      await supabase.from("projects").update({ deleted_at: now() }).eq("id", id(projectId)).select("id"),
+      "Only the project’s Owners can delete it",
     );
   });
   if (!result.error) redirect("/");
@@ -1405,11 +1406,12 @@ export async function createSection(
 export async function renameSection(sectionId: string, name: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
+    checkUpdated(
       await supabase
         .from("sections")
         .update({ name: text(name, "Section name", { max: 200 }) })
-        .eq("id", id(sectionId)),
+        .eq("id", id(sectionId))
+        .select("id"),
     );
   });
 }
@@ -2080,11 +2082,27 @@ export async function setTaskCompleted(taskId: string, completed: boolean): Prom
 }
 
 export async function deleteTask(taskId: string): Promise<ActionResult> {
-  return run(async () => {
-    const supabase = await createClient();
-    check(await supabase.from("tasks").update({ deleted_at: now() }).eq("id", id(taskId)));
-  });
+  return run(() => trashTask(id(taskId)));
 }
+
+// Nov 2 security fix (note 119): moving a task or subtask to the Trash goes through trash_task, which
+// refuses below Editor with a reason. A plain update that RLS filters out changes nothing and returns no
+// error, so the app used to say "moved to the Trash" when nothing had changed. Without this release's
+// database the update is checked for a changed row instead.
+async function trashTask(taskId: string): Promise<void> {
+  const supabase = await createClient();
+  const trashed = await supabase.rpc("trash_task", { target_task: taskId });
+  if (trashed.error?.code === "PGRST202") {
+    checkUpdated(
+      await supabase.from("tasks").update({ deleted_at: now() }).eq("id", taskId).select("id"),
+      TRASH_NOT_ALLOWED,
+    );
+    return;
+  }
+  check(trashed, TRASH_NOT_ALLOWED);
+}
+
+const TRASH_NOT_ALLOWED = "Only Editors and above can delete tasks";
 
 export async function restoreTask(taskId: string): Promise<ActionResult> {
   return run(async () => {
@@ -2322,12 +2340,13 @@ export async function moveTask(
         ? sortOrder
         : (await lastSortOrder(id(projectId), targetSection)) + ORDER_STEP;
     const supabase = await createClient();
-    check(
+    checkUpdated(
       await supabase
         .from("task_projects")
         .update({ section_id: targetSection, sort_order: order })
         .eq("task_id", id(taskId))
-        .eq("project_id", id(projectId)),
+        .eq("project_id", id(projectId))
+        .select("task_id"),
     );
   });
 }
@@ -2550,10 +2569,7 @@ export async function placeSubtask(subtaskId: string, beforeId: string | null): 
 }
 
 export async function deleteSubtask(subtaskId: string): Promise<ActionResult> {
-  return run(async () => {
-    const supabase = await createClient();
-    check(await supabase.from("tasks").update({ deleted_at: now() }).eq("id", id(subtaskId)));
-  });
+  return run(() => trashTask(id(subtaskId)));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -3338,8 +3354,8 @@ export async function loadFieldSharing(projectId: string): Promise<Record<string
 export async function deleteField(fieldId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.from("custom_fields").update({ deleted_at: now() }).eq("id", id(fieldId)),
+    checkUpdated(
+      await supabase.from("custom_fields").update({ deleted_at: now() }).eq("id", id(fieldId)).select("id"),
     );
   });
 }
@@ -3415,11 +3431,12 @@ export async function registerAttachment(input: {
 export async function deleteAttachment(attachmentId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
+    checkUpdated(
       await supabase
         .from("task_attachments")
         .update({ deleted_at: now() })
-        .eq("id", id(attachmentId)),
+        .eq("id", id(attachmentId))
+        .select("id"),
     );
   });
 }
@@ -4983,7 +5000,7 @@ export async function decideAccessRequest(
 export async function deleteForm(formId: string, projectId: string): Promise<ActionResult> {
   const result = await run(async () => {
     const supabase = await createClient();
-    check(await supabase.from("forms").update({ deleted_at: now() }).eq("id", id(formId)));
+    checkUpdated(await supabase.from("forms").update({ deleted_at: now() }).eq("id", id(formId)).select("id"));
   });
   if (!result.error) redirect(`/projects/${id(projectId)}/forms`);
   return result;
@@ -5239,15 +5256,15 @@ export async function testRule(
 export async function setRuleEnabled(ruleId: string, enabled: boolean): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(await supabase.from("rules").update({ enabled: Boolean(enabled) }).eq("id", id(ruleId)));
+    checkUpdated(await supabase.from("rules").update({ enabled: Boolean(enabled) }).eq("id", id(ruleId)).select("id"));
   });
 }
 
 export async function deleteRule(ruleId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.from("rules").update({ deleted_at: now(), enabled: false }).eq("id", id(ruleId)),
+    checkUpdated(
+      await supabase.from("rules").update({ deleted_at: now(), enabled: false }).eq("id", id(ruleId)).select("id"),
     );
   });
 }
@@ -5769,15 +5786,15 @@ export async function updateWidget(
     if (patch.title !== undefined) update.title = text(patch.title, "Widget title", { max: 100 });
     if (patch.filters !== undefined) update.filters = toJson(parseFilters(patch.filters));
     const supabase = await createClient();
-    check(await supabase.from("dashboard_widgets").update(update).eq("id", id(widgetId)));
+    checkUpdated(await supabase.from("dashboard_widgets").update(update).eq("id", id(widgetId)).select("id"));
   });
 }
 
 export async function deleteWidget(widgetId: string): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    check(
-      await supabase.from("dashboard_widgets").update({ deleted_at: now() }).eq("id", id(widgetId)),
+    checkUpdated(
+      await supabase.from("dashboard_widgets").update({ deleted_at: now() }).eq("id", id(widgetId)).select("id"),
     );
   });
 }
