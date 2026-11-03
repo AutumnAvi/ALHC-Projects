@@ -565,7 +565,9 @@ function RulesView({ base, back, rules }: { base: string; back: string; rules: C
           ))}
         </ul>
       )}
-      <PanelLink href={`${base}/rules`}>Automation templates and recent runs</PanelLink>
+      {/* Nov 3 notes (batch 18, 137): the templates and every automation's run history. */}
+      <PanelLink href={`${base}/rules?view=templates`}>Automation templates</PanelLink>
+      <PanelLink href={`${base}/rules?view=history`}>Automation history (recent runs)</PanelLink>
     </div>
   );
 }

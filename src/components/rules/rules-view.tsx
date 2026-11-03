@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { Fragment, useId, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ChevronRight, Copy, GitBranch, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
+import { ChevronRight, Copy, GitBranch, History, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { SmartPicker } from "@/components/smart-picker";
 import { useConfirm } from "@/components/confirm";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { Segmented } from "@/components/project/view-chrome";
@@ -11,6 +13,7 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { deleteRule, duplicateRule, installRulePreset, setRuleEnabled, setRulePausedUntil } from "@/lib/actions";
 import { RulePauseControls, isPausedNow } from "./rule-pause";
 import { runSteps } from "@/lib/rule-steps";
+import { HISTORY_LIMIT, rulesPageHref, type RulesPageView } from "@/lib/rules-page";
 import { runReason, type RuleDef, type RulePreset, type RuleRun, type RuleRunStats } from "@/lib/rules";
 import type { Json } from "@/lib/supabase/database.types";
 import {
@@ -92,10 +95,16 @@ export function RulesView({
   stats,
   presets,
   context,
+  view = "automations",
+  historyRuleId = null,
 }: {
   projectId: string;
   rules: RuleDef[];
   runs: RuleRun[];
+  // Nov 3 notes (batch 18, 137): which tab of the Automations page (?view=templates | history), and the
+  // automation History is narrowed to (?rule=<id>).
+  view?: RulesPageView;
+  historyRuleId?: string | null;
   // Each rule's health (last run, failures in the last 7 days), by rule id.
   stats?: Record<string, RuleRunStats>;
   presets: RulePreset[];
@@ -117,6 +126,8 @@ export function RulesView({
   const [filter, setFilter] = useState<RuleFilter>("all");
   const [runFilter, setRunFilter] = useState<RunFilter>("all");
   const ruleNames = new Map(rules.map((r) => [r.id, r.name] as const));
+  const router = useRouter();
+  const historyRule = historyRuleId ? (rules.find((r) => r.id === historyRuleId) ?? null) : null;
   const people = new Map(context.people.map((p) => [p.id, p.name] as const));
   // Without the run stats (a database before Automations V2), the newest of the recent runs.
   const latestRun = new Map<string, string>();
@@ -152,7 +163,30 @@ export function RulesView({
         ) : null}
       </div>
 
-      <h2 className="mt-6 text-sm font-semibold text-zinc-900">Automations</h2>
+      <nav aria-label="Automations page" className="tab-strip mt-5 flex gap-4 border-b border-zinc-200">
+        {(
+          [
+            ["automations", `Automations${optimisticRules.length ? ` (${optimisticRules.length})` : ""}`],
+            ["templates", "Templates"],
+            ["history", "History"],
+          ] as const
+        ).map(([key, label]) => (
+          <Link
+            key={key}
+            href={rulesPageHref(projectId, key)}
+            aria-current={view === key ? "page" : undefined}
+            className={`-mb-px border-b-2 px-0.5 pb-2 text-sm ${
+              view === key ? "border-accent-500 font-medium text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800"
+            }`}
+          >
+            {label}
+          </Link>
+        ))}
+      </nav>
+
+      {view === "automations" ? (
+      <>
+      <h2 className="sr-only">Automations</h2>
       {optimisticRules.length === 0 ? (
         <div className="mt-3">
           <EmptyState icon={Workflow} title="No automations yet" size="inline">
@@ -347,6 +381,14 @@ export function RulesView({
                       </button>
                     ) : null}
                     <Link
+                      href={rulesPageHref(projectId, "history", rule.id)}
+                      aria-label={`History of ${rule.name}`}
+                      data-tooltip="Run history"
+                      className="btn-icon"
+                    >
+                      <History className="size-4" />
+                    </Link>
+                    <Link
                       href={`${base}/rules/${rule.id}`}
                       aria-label={`${canEdit ? "Edit" : "Open"} ${rule.name}`}
                       data-tooltip={canEdit ? "Edit automation" : "Open automation"}
@@ -378,8 +420,17 @@ export function RulesView({
         </>
       )}
 
+      </>
+      ) : null}
+
+      {view === "templates" ? (
+        <>
       {/* Nov 1 notes (batch 11): templates only add automations, so they're shown only to those who can. */}
-      {canEdit ? <RuleTemplatesGallery projectId={projectId} ctx={context} canEdit={canEdit} /> : null}
+      {canEdit ? (
+        <RuleTemplatesGallery projectId={projectId} ctx={context} canEdit={canEdit} />
+      ) : (
+        <p className="mt-4 text-sm text-zinc-500">Templates add automations to this project. Ask a project Owner or Admin to add one.</p>
+      )}
 
       {presets.length && canEdit ? (
         <details className="group mt-6">
@@ -397,14 +448,37 @@ export function RulesView({
         </details>
       ) : null}
 
-      <section aria-labelledby="rule-runs" className="mt-8">
+        </>
+      ) : null}
+
+      {view === "history" ? (
+      <section aria-labelledby="rule-runs" className="mt-5">
         <div className="flex flex-wrap items-center gap-3">
           <h2 id="rule-runs" className="text-sm font-semibold text-zinc-900">
-            Recent runs
+            {historyRule ? `Runs of “${historyRule.name}”` : "Recent runs of every automation"}
           </h2>
+          {historyRule ? (
+            <Link href={rulesPageHref(projectId, "history")} className="text-xs font-medium text-accent-700 hover:underline">
+              Show every automation
+            </Link>
+          ) : null}
           <span className="flex-1" />
+          {optimisticRules.length > 1 ? (
+            <SmartPicker
+              label="Automation"
+              value={historyRuleId ?? ""}
+              options={[{ value: "", label: "Every automation" }, ...optimisticRules.map((r) => ({ value: r.id, label: r.name }))]}
+              onChange={(value) => router.push(rulesPageHref(projectId, "history", value || null))}
+              searchable
+              panelWidth={300}
+              className="w-56"
+            />
+          ) : null}
           {runs.length ? <Segmented label="Show runs" options={RUN_FILTERS} value={runFilter} onChange={setRunFilter} /> : null}
         </div>
+        <p className="mt-1 text-xs text-zinc-500">
+          The newest {HISTORY_LIMIT} runs: what ran, on which task, and each step. Open a run to see its steps.
+        </p>
         {runs.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-500">Nothing has run yet.</p>
         ) : shownRuns.length === 0 ? (
@@ -417,6 +491,7 @@ export function RulesView({
           </ul>
         )}
       </section>
+      ) : null}
     </div>
   );
 }

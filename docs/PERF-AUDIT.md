@@ -164,6 +164,29 @@ n = 16 opens, 16 closes, 10 switches, 10 subtasks on each side, no timeouts. Wit
 
 Browser checks on the same stack (`/tmp` script, not committed): row click, open link, switch, Back / Forward, rename from the pane reaching the List row, a comment, the dependency picker loading on open, Customize closing the pane (and a task closing Customize), the close button, Escape, a subtask and its breadcrumb, a cold link, Ctrl-click to a new tab, My tasks, and an Inbox card — 26 of 26 passed with no page errors.
 
+## Nov 3 notes (batch 18, note 135): moving between pages
+
+Avi's note: moving between projects and pages is slow, worse with lots of data. Local Postgres 17 with every migration, `scripts/perf/seed.sql` + `seed-pane.sql`, plus 150 more projects the seed person is a member of (40 tasks each; 16,060 tasks in all), 25 automations on the perf project, 200,000 automation runs, and a portfolio over 61 projects. Each query was run as `perf-seed@example.com` (`set role authenticated`, RLS on), the median of 3–5 warm runs, forcing the whole result to be read. DB time only; the app adds one PostgREST round trip per wave.
+
+**Root cause.** Every row of `tasks`, `task_projects`, and `rule_runs` was checked with `has_project_role` / `rule_has_role` (four nested SECURITY DEFINER functions, ~0.17 ms a call), so anything reading thousands of rows waited seconds; `task_project_labels` (every list outside a project) also walked every membership of every readable project. In the app, My tasks' access reads went one 200-id chunk after another (~18 round trips in a row for 1,700 tasks), and opening a project was two server renders (a redirect to its view).
+
+| Query (page) | Before | After |
+| --- | ---: | ---: |
+| Automations: newest 50 runs | > 60,000 ms (timed out) | **85 ms** |
+| Automations: `rule_run_stats` (25 automations) | 8,460 ms | **68 ms** |
+| My tasks / Home / search: `task_project_labels`, 100 tasks | 5,523 ms | — |
+| My tasks: `task_project_labels`, a 2,000-task chunk | > 18,000 ms (5 runs > 90 s) | **82 ms** |
+| My tasks: access reads, per 200-id chunk (tasks / memberships) | 32 / 33 ms, 18 in a row | **0.9 / 0.7 ms**, in parallel |
+| Portfolios: `list_portfolio_progress` | 4,268 ms | **57 ms** |
+| Portfolio report by project | 6,537 ms | **100 ms** |
+| Reports: `workspace_report` (total / by project) | 5,988 / 5,485 ms | **119 / 119 ms** |
+| Reports: `all_projects_report` | 5,443 ms | **175 ms** |
+| Home: `home_dashboard` | 424 ms | **245 ms** |
+| Project List first page (`project_task_card_page`) | 43 ms | 42 ms (already paged) |
+| Opening a project (`/projects/<id>`) | 2 server renders (redirect) | **1** |
+
+**What changed.** `viewer_project_ids()` / `viewer_rule_ids()` (the caller's readable projects / automations, once per statement) in the three hot read policies — same rows, pinned by `zz48`; `task_project_labels` reads memberships by task and checks each project once; `readInChunks` runs chunked reads in parallel; `/projects/<id>` renders its view and fixes the URL on the client (`CanonicalUrl`). Not changed: `open_blocker_counts` (1.2 s for 3,650 tasks; it counts blockers the caller can't open, so a cheaper prefilter needs its own definer) and the client bundle.
+
 ## Deferred
 
 Deferred: none.

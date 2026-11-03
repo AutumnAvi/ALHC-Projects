@@ -1,6 +1,8 @@
 // In-flight writes. Realtime refreshes wait until they finish (one trailing refresh if events
 // arrived during the write), and a failed write drops the optimistic rows tagged with its token.
 
+import { requestRuleFeedback } from "@/lib/rule-feedback-bus";
+
 let nextToken = 0;
 let activeToken = 0;
 let version = 0;
@@ -22,9 +24,13 @@ export function setMutationQuietHandler(handler: (() => void) | null) {
   onQuiet = handler;
 }
 
+// When each open write began (Nov 3 notes, batch 18, 138 / 139): ending one asks which automations it ran.
+const startedAt = new Map<number, number>();
+
 export function beginLocalMutation(): number {
   const token = ++nextToken;
   open.add(token);
+  startedAt.set(token, Date.now());
   activeToken = token;
   return token;
 }
@@ -42,6 +48,10 @@ export function noteMutationTraffic(): boolean {
 
 export function endLocalMutation(token: number) {
   if (!open.delete(token)) return;
+  // Every write that went through a local mutation — useServerAction, the bulk bar, … — tells the
+  // automation feedback layer, so "Automation X moved 3 tasks" shows whatever path made the change.
+  requestRuleFeedback(startedAt.get(token) ?? Date.now());
+  startedAt.delete(token);
   if (activeToken === token) activeToken = 0;
   if (open.size === 0 && dirty) {
     dirty = false;

@@ -22,6 +22,7 @@ import { TaskActivity, TaskPaneFooter } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
 import { OriginalRequestFiles, TaskAttachments, useAttachmentUpload } from "./task-attachments";
 import { TaskDueDate } from "./task-dates";
+import { TaskDescription } from "./task-description";
 import { TaskDependencies, hasDependencyRow } from "./task-dependencies";
 import { TaskFields } from "./task-fields";
 import { TaskMoreMenu } from "./task-more-menu";
@@ -449,25 +450,7 @@ export function TaskDetailPanel({
             <h3 id="task-notes-heading" className={PANE_HEADING}>
               <label htmlFor="task-notes">Description</label>
             </h3>
-            {canEdit ? (
-              <textarea
-                id="task-notes"
-                defaultValue={task.notes ?? ""}
-                placeholder="What is this task about? Add details, links, or context."
-                onBlur={(e) => {
-                  if (e.currentTarget.value.trim() !== (task.notes ?? "").trim()) {
-                    const notes = e.currentTarget.value;
-                    run(() => updateTask(task.id, { notes }));
-                  }
-                }}
-                // Borderless until hovered or focused, like Asana's description.
-                className="-mx-2 mt-1 field-sizing-content min-h-16 w-[calc(100%+1rem)] resize-none rounded-md border border-transparent bg-transparent px-2 py-1.5 text-sm leading-relaxed text-zinc-800 placeholder:text-zinc-500 hover:border-zinc-200 focus:border-accent-500/60 focus:bg-white focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none"
-              />
-            ) : task.notes ? (
-              <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">{task.notes}</p>
-            ) : (
-              <p className="mt-1 text-sm text-zinc-500">No description.</p>
-            )}
+            <TaskDescription task={task} canEdit={canEdit} />
             <OriginalRequestFiles attachments={task.attachments} />
           </section>
 

@@ -33,7 +33,7 @@ import {
 } from "@/lib/rules";
 import { DEFAULT_WORK_WEEK, normalizeWorkWeek } from "@/lib/workdays";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
-import type { FeedbackRun } from "@/lib/rule-feedback";
+import { firstChangingAction, type FeedbackRun } from "@/lib/rule-feedback";
 import {
   bareTaskTitle,
   displayTaskTitle,
@@ -1351,18 +1351,21 @@ export async function listTaskTagIds(taskIds: string[]): Promise<Map<string, str
   const out = new Map<string, string[]>();
   if (taskIds.length === 0) return out;
   const supabase = await createClient();
-  for (let i = 0; i < taskIds.length; i += 300) {
-    const result = await supabase
-      .from("task_tags")
-      .select("task_id, tag_id, tag:tags!inner(id)")
-      .in("task_id", taskIds.slice(i, i + 300))
-      .is("deleted_at", null)
-      .is("tag.deleted_at", null);
-    for (const r of rows(result, "task tags")) {
-      const list = out.get(r.task_id) ?? [];
-      list.push(r.tag_id);
-      out.set(r.task_id, list);
-    }
+  const found = await readInChunks(taskIds, 300, async (chunk) =>
+    rows(
+      await supabase
+        .from("task_tags")
+        .select("task_id, tag_id, tag:tags!inner(id)")
+        .in("task_id", chunk)
+        .is("deleted_at", null)
+        .is("tag.deleted_at", null),
+      "task tags",
+    ),
+  );
+  for (const r of found) {
+    const list = out.get(r.task_id) ?? [];
+    list.push(r.tag_id);
+    out.set(r.task_id, list);
   }
   return out;
 }
@@ -1841,7 +1844,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     pinnedComments: await withRuleProjects(supabase, pins.pinned, automationActivity.ruleProjects),
     ruleRuns: automationActivity.runs,
     emailActivity: automationActivity.email,
-    commentRefs: await loadCommentRefs(supabase, [...taskComments, ...pins.pinned].map((c) => c.body)),
+    // The description's # links too (Nov 3 notes, batch 18, 133).
+    commentRefs: await loadCommentRefs(supabase, [...[...taskComments, ...pins.pinned].map((c) => c.body), task.notes ?? ""]),
     commentTotal,
     mentionTeams: teams.map((t) => ({
       id: t.id,
@@ -2498,6 +2502,26 @@ export async function editableTaskIds(taskIds: string[]): Promise<Set<string>> {
 
 // editableTaskIds() and, from the same roles, the tasks the viewer can comment on (Commenter+: decide an
 // approval they're asked for, send their own approval task; Oct 29 notes, batch 7).
+// Nov 3 notes (batch 18, 135): reads of "these ids" in chunks (PostgREST puts .in() lists in the URL, so
+// a chunk stays a few hundred ids), all chunks at once (at most READ_CONCURRENCY in flight) instead of one
+// after another — My tasks with 1,700 tasks used to wait for ~18 round trips in a row here.
+const READ_CONCURRENCY = 6;
+
+export async function readInChunks<T>(ids: readonly string[], size: number, read: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) chunks.push(ids.slice(i, i + size));
+  const results: T[][] = new Array(chunks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const index = next++;
+      results[index] = await read(chunks[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, chunks.length) }, worker));
+  return results.flat();
+}
+
 export async function taskAccessSets(taskIds: string[]): Promise<{ editable: Set<string>; commentable: Set<string> }> {
   const editable = new Set<string>();
   const commentable = new Set<string>();
@@ -2508,17 +2532,13 @@ export async function taskAccessSets(taskIds: string[]): Promise<{ editable: Set
   if (!user) return access;
   const supabase = await createClient();
   type Row = { id: string; root_task_id: string | null; home_project_id: string | null; created_by: string | null; assignee_id: string | null };
-  const read = async (want: string[]) => {
-    const found: Row[] = [];
-    for (let i = 0; i < want.length; i += 200) {
-      const result = await supabase
-        .from("tasks")
-        .select("id, root_task_id, home_project_id, created_by, assignee_id")
-        .in("id", want.slice(i, i + 200));
-      found.push(...rows(result, "task access"));
-    }
-    return found;
-  };
+  const read = (want: string[]) =>
+    readInChunks(want, 200, async (chunk) =>
+      rows(
+        await supabase.from("tasks").select("id, root_task_id, home_project_id, created_by, assignee_id").in("id", chunk),
+        "task access",
+      ) as Row[],
+    );
   const tasks = await read(ids);
   const byId = new Map(tasks.map((t) => [t.id, t] as const));
   const rootOf = (t: Row) => t.root_task_id ?? t.id;
@@ -2527,18 +2547,9 @@ export async function taskAccessSets(taskIds: string[]): Promise<{ editable: Set
   const rootIds = [...new Set(tasks.map(rootOf))];
   const [roles, memberships] = await Promise.all([
     listMyProjectRoles(),
-    (async () => {
-      const found: { task_id: string; project_id: string }[] = [];
-      for (let i = 0; i < rootIds.length; i += 200) {
-        const result = await supabase
-          .from("task_projects")
-          .select("task_id, project_id")
-          .in("task_id", rootIds.slice(i, i + 200))
-          .is("deleted_at", null);
-        found.push(...rows(result, "task projects"));
-      }
-      return found;
-    })(),
+    readInChunks(rootIds, 200, async (chunk) =>
+      rows(await supabase.from("task_projects").select("task_id, project_id").in("task_id", chunk).is("deleted_at", null), "task projects"),
+    ),
   ]);
   const projectsOf = new Map<string, string[]>();
   for (const m of memberships) projectsOf.set(m.task_id, [...(projectsOf.get(m.task_id) ?? []), m.project_id]);
@@ -3790,7 +3801,7 @@ export const listRuleRunStats = cache(async (ruleIds: string[]): Promise<Map<str
   return out;
 });
 
-export const listRecentRuleRuns = cache(async (ruleIds: string[]): Promise<RuleRun[]> => {
+export const listRecentRuleRuns = cache(async (ruleIds: string[], limit = 50): Promise<RuleRun[]> => {
   if (ruleIds.length === 0) return [];
   const supabase = await createClient();
   const runs = rows(
@@ -3800,7 +3811,7 @@ export const listRecentRuleRuns = cache(async (ruleIds: string[]): Promise<RuleR
       .in("rule_id", ruleIds)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
-      .limit(50),
+      .limit(Math.min(Math.max(limit, 1), 500)),
     "automation runs",
   );
   const taskIds = [...new Set(runs.map((r) => r.task_id).filter((t): t is string => Boolean(t)))];
@@ -3869,6 +3880,7 @@ export async function listMyRecentRuleRuns(from: Date): Promise<FeedbackRun[]> {
         status: r.status as FeedbackRun["status"],
         reason,
         createdAt: r.created_at,
+        action: firstChangingAction(r.detail),
       },
     ];
   });
@@ -7203,15 +7215,21 @@ async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask
   if (ids.length === 0) return extras;
   const supabase = await createClient();
   const approvalIds = tasks.filter((t) => t.kind === "approval").map((t) => t.id);
+  // .in() lists go in the URL: chunks of 200 ids, read at once (Nov 3 notes, batch 18, 135; a list of
+  // 1,700 ids made a ~60 KB URL some proxies refuse).
   const [blocked, children, states, roots] = await Promise.all([
     openBlockerCounts(supabase, ids),
-    supabase.from("tasks").select("parent_task_id, completed_at").in("parent_task_id", ids).is("deleted_at", null),
+    readInChunks(ids, 200, async (chunk) =>
+      (await supabase.from("tasks").select("parent_task_id, completed_at").in("parent_task_id", chunk).is("deleted_at", null)).data ?? [],
+    ),
     approvalRowStates(supabase, approvalIds),
-    supabase.from("tasks").select("id, root_task_id").in("id", ids).not("root_task_id", "is", null),
+    readInChunks(ids, 200, async (chunk) =>
+      (await supabase.from("tasks").select("id, root_task_id").in("id", chunk).not("root_task_id", "is", null)).data ?? [],
+    ),
   ]);
   for (const [taskId, count] of blocked) extras.set(taskId, { ...extras.get(taskId), blockedBy: count });
-  for (const r of roots.data ?? []) extras.set(r.id, { ...extras.get(r.id), rootTaskId: r.root_task_id });
-  for (const c of children.data ?? []) {
+  for (const r of roots) extras.set(r.id, { ...extras.get(r.id), rootTaskId: r.root_task_id });
+  for (const c of children) {
     if (!c.parent_task_id) continue;
     const prev = extras.get(c.parent_task_id) ?? {};
     extras.set(c.parent_task_id, {

@@ -1627,10 +1627,15 @@ export async function createPrivateTask(
 // with the typed due date and repeat. The name, project, person, and date were parsed in the browser
 // (parseQuickAdd); every write goes through RLS as usual. When the chosen person can't be given the task
 // (they can't open the project), the task is kept, assigned to the person who added it, and `note` says so.
+// The My tasks / Home quick-add bar. Nov 3 notes (batch 18, 134): a task added here is always assigned
+// to the person who added it. An @person only adds them as a follower (so they're told and can find it)
+// when the task goes into a #project they can open; a private task stays private (only its creator and
+// assignee can read one), so the note says to add a #project. Reassigning stays a manual step.
 export async function quickAddTask(input: {
   title: string;
   projectId?: string | null;
-  assigneeId?: string | null;
+  // The @person typed in the bar: a follower, never the assignee.
+  mentionId?: string | null;
   dueOn?: string | null;
   repeat?: { freq: Recurrence["freq"]; interval: number; weekdays: number[]; fromCompletion: boolean } | null;
   timeZone?: string;
@@ -1651,6 +1656,7 @@ export async function quickAddTask(input: {
           fromCompletion: input.repeat.fromCompletion,
         })
       : null;
+    const mentionId = input.mentionId ? id(input.mentionId, "person") : null;
     const supabase = await createClient();
     const {
       data: { user },
@@ -1662,21 +1668,23 @@ export async function quickAddTask(input: {
     check(created);
     taskId = created.data ?? undefined;
     if (!taskId) throw new DbError("Couldn’t add the task");
-    const wanted = input.assigneeId ? id(input.assigneeId, "person") : user.id;
     const update: { assignee_id?: string; due_on?: string; recurrence?: Json } = {};
-    // create_private_task assigns the task to its creator already.
-    if (input.projectId || wanted !== user.id) update.assignee_id = wanted;
+    // create_private_task assigns the task to its creator already; a project task is assigned to me too.
+    if (input.projectId) update.assignee_id = user.id;
     if (dueOn) update.due_on = dueOn;
     if (rule) update.recurrence = rule;
-    if (Object.keys(update).length === 0) return;
-    const saved = await supabase.from("tasks").update(update).eq("id", taskId).select("id");
-    if (saved.error && update.assignee_id && update.assignee_id !== user.id) {
-      // The person couldn't be given it (no access to that project): keep the task, assigned to me.
-      checkUpdated(await supabase.from("tasks").update({ ...update, assignee_id: user.id }).eq("id", taskId).select("id"));
-      note = "Added, assigned to you: that person can’t open this project";
+    if (Object.keys(update).length > 0) checkUpdated(await supabase.from("tasks").update(update).eq("id", taskId).select("id"));
+    if (!mentionId || mentionId === user.id) return;
+    if (!input.projectId) {
+      note = "Added to your tasks. Private tasks are only yours — add a #project to share it with them.";
       return;
     }
-    checkUpdated(saved);
+    // The follower insert policy refuses (or follow rules skip) someone who can't read the task.
+    const followed = await supabase
+      .from("task_followers")
+      .upsert({ task_id: taskId, profile_id: mentionId, deleted_at: null }, { onConflict: "task_id,profile_id" })
+      .select("profile_id");
+    if (followed.error || !followed.data?.length) note = "Added, assigned to you. That person can’t open this project, so they weren’t added as a follower.";
   });
   return { ...result, taskId: result.error ? undefined : taskId, note };
 }

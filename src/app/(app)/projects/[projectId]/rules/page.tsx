@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { RulesView } from "@/components/rules/rules-view";
 import { getProject, listProjectRules, listRecentRuleRuns, listRulePresets, listRuleRunStats } from "@/lib/data";
+import { isUuid } from "@/lib/ids";
+import type { RuleRunStats } from "@/lib/rules";
+import { HISTORY_LIMIT, RECENT_RUNS, rulesPageView } from "@/lib/rules-page";
 import { loadRuleContext } from "./context";
 
 export async function generateMetadata({
@@ -11,21 +14,42 @@ export async function generateMetadata({
   return { title: project ? `${project.name} · Automations` : "Automations" };
 }
 
-export default async function ProjectRulesPage({ params }: PageProps<"/projects/[projectId]/rules">) {
+// Nov 3 notes (batch 18, 137): tabs Automations / Templates (?view=templates) / History (?view=history,
+// narrowed to one automation with &rule=<id>), so every run is reachable from here, not only inside each
+// automation's builder.
+export default async function ProjectRulesPage({ params, searchParams }: PageProps<"/projects/[projectId]/rules">) {
   const { projectId } = await params;
+  const query = await searchParams;
+  const view = rulesPageView(query.view);
+  const ruleParam = typeof query.rule === "string" && isUuid(query.rule) ? query.rule : null;
   const [rules, presets, context] = await Promise.all([
     listProjectRules(projectId),
-    listRulePresets(),
+    view === "templates" ? listRulePresets() : Promise.resolve([]),
     loadRuleContext(projectId),
   ]);
+  const ids = rules.map((r) => r.id);
+  const historyRuleId = view === "history" && ruleParam && ids.includes(ruleParam) ? ruleParam : null;
   const [runs, stats] = await Promise.all([
-    listRecentRuleRuns(rules.map((r) => r.id)),
-    listRuleRunStats(rules.map((r) => r.id)),
+    view === "history"
+      ? listRecentRuleRuns(historyRuleId ? [historyRuleId] : ids, HISTORY_LIMIT)
+      : view === "automations"
+        ? listRecentRuleRuns(ids, RECENT_RUNS)
+        : Promise.resolve([]),
+    view === "automations" ? listRuleRunStats(ids) : Promise.resolve(new Map<string, RuleRunStats>()),
   ]);
 
   return (
     <main className="min-h-0 flex-1 overflow-auto">
-      <RulesView projectId={projectId} rules={rules} runs={runs} stats={Object.fromEntries(stats)} presets={presets} context={context} />
+      <RulesView
+        projectId={projectId}
+        rules={rules}
+        runs={runs}
+        stats={Object.fromEntries(stats)}
+        presets={presets}
+        context={context}
+        view={view}
+        historyRuleId={historyRuleId}
+      />
     </main>
   );
 }
