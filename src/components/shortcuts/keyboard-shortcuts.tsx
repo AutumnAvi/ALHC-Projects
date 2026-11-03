@@ -33,6 +33,17 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
         { keys: ["Tab", "then", "M"], label: "Assign the selected tasks to me" },
       ],
     },
+    // Nov 3 notes (batch 19, 148): the keys held when a Timeline bar is dropped.
+    {
+      title: "Timeline",
+      note: "Hold the key when you let go of the bar. Elsewhere, date changes follow the project’s Settings → Dependencies.",
+      items: [
+        { keys: ["drag"], label: "Move or resize only this task" },
+        { keys: ["Shift", "drag"], label: "Move the tasks that depend on it along by the same amount" },
+        { keys: [mod === "⌘" ? "Option" : "Alt", "drag"], label: "Push the tasks that depend on it only as far as their links need" },
+        { keys: ["Esc"], label: "Cancel the drag" },
+      ],
+    },
   ];
 }
 
@@ -136,13 +147,14 @@ export function KeyboardShortcuts() {
         {groups(mod).map((group) => (
           <section key={group.title} className="mt-4">
             <h3 className="text-2xs font-semibold uppercase tracking-wider text-zinc-400">{group.title}</h3>
+            {group.note ? <p className="mt-0.5 text-xs text-zinc-500">{group.note}</p> : null}
             <dl className="mt-1.5 divide-y divide-zinc-100">
               {group.items.map((item) => (
                 <div key={item.label} className="flex items-center justify-between gap-4 py-1.5">
                   <dt className="text-zinc-700">{item.label}</dt>
                   <dd className="flex shrink-0 items-center gap-1">
                     {item.keys.map((key) =>
-                      key === "then" || key === "click" ? (
+                      key === "then" || key === "click" || key === "drag" ? (
                         <span key={key} className="text-xs text-zinc-500">
                           {key}
                         </span>

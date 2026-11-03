@@ -8,6 +8,7 @@ import { Segmented } from "@/components/project/view-chrome";
 import { CalendarSyncSettings } from "@/components/settings/calendar-sync";
 import { EmailDigestSettings } from "@/components/settings/email-digest-settings";
 import { EmailForwardingSection } from "@/components/settings/email-forwarding";
+import { MyWorkdays } from "@/components/settings/my-workdays";
 import {
   InboxNotifications,
   NotificationMatrix,
@@ -24,7 +25,8 @@ import { CHECKED_MODE_OPTIONS, type CheckedMode } from "@/lib/checklist";
 import { AVATAR_ACCEPT, MAX_PROFILE_NAME, avatarFileProblem, profileNameProblem } from "@/lib/profile";
 import { projectColorClass } from "@/lib/project-colors";
 import { SETTINGS_TABS, type EmailSetup, type SettingsTab } from "@/lib/shell";
-import { WORKSPACE_ROLE_LABELS } from "@/lib/workspace";
+import { describeWorkWeek } from "@/lib/workdays";
+import { ONLY_ADMINS_NOTE, WORKSPACE_ROLE_LABELS } from "@/lib/workspace";
 
 export type SettingsData = { me: MySettings; email: EmailSetup };
 
@@ -161,6 +163,8 @@ export function SettingsPanel({
           <CalendarSyncSettings />
         ) : tab === "account" ? (
           <AccountTab data={data.me} />
+        ) : tab === "workspace" ? (
+          <WorkspaceTab data={data.me} />
         ) : (
           <DisplayTab data={data.me} />
         )}
@@ -207,6 +211,14 @@ function ProfileTab({ data }: { data: MySettings }) {
             </p>
           </dd>
         </div>
+        {data.personalWorkWeek !== undefined ? (
+          <div className={ROW}>
+            <dt className={TERM}>My workdays</dt>
+            <dd>
+              <MyWorkdays own={data.personalWorkWeek} organization={data.workWeek} />
+            </dd>
+          </div>
+        ) : null}
         <div className={ROW}>
           <dt className={TERM}>Teams</dt>
           <dd className="flex flex-wrap gap-1">
@@ -507,6 +519,59 @@ function AccountTab({ data }: { data: MySettings }) {
           Log out
         </button>
       </form>
+    </div>
+  );
+}
+
+// Settings → Workspace (Nov 3 notes, batch 19): what the workspace's admins set, read-only for everyone
+// else, with the full read-only pages (members, teams, tags) one click away; admins change it all in the
+// Admin console.
+function WorkspaceTab({ data }: { data: MySettings }) {
+  return (
+    <div>
+      <dl className="-mt-3 divide-y divide-zinc-100 border-b border-zinc-100">
+        <div className={ROW}>
+          <dt className={TERM}>Workspace name</dt>
+          <dd className="flex items-center gap-2 text-sm text-zinc-900">
+            {data.workspaceLogoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- public Storage URL
+              <img src={data.workspaceLogoUrl} alt="" className="size-6 rounded object-contain" />
+            ) : null}
+            {data.workspaceName}
+          </dd>
+        </div>
+        <div className={ROW}>
+          <dt className={TERM}>Default team</dt>
+          <dd className="text-sm text-zinc-900">{data.defaultTeamName ?? "—"}</dd>
+        </div>
+        <div className={ROW}>
+          <dt className={TERM}>Email sender name</dt>
+          <dd className="text-sm text-zinc-900">{data.emailSenderName ?? data.workspaceName}</dd>
+        </div>
+        <div className={ROW}>
+          <dt className={TERM}>Workweek</dt>
+          <dd className="text-sm text-zinc-900">{describeWorkWeek(data.workWeek)}</dd>
+        </div>
+        <div className={ROW}>
+          <dt className={TERM}>Your role</dt>
+          <dd className="text-sm text-zinc-900">{data.isWorkspaceAdmin ? "Workspace admin" : "Member"}</dd>
+        </div>
+      </dl>
+      {data.isWorkspaceAdmin ? (
+        <p className="mt-3 text-xs text-zinc-500">
+          You’re a workspace admin.{" "}
+          <Link href="/admin/organization" className="text-accent-700 hover:underline">
+            Change these in the Admin console
+          </Link>
+        </p>
+      ) : (
+        <p className="mt-3 text-xs text-zinc-500">
+          {ONLY_ADMINS_NOTE}{" "}
+          <Link href="/settings/workspace" className="text-accent-700 hover:underline">
+            See members, teams, and tags
+          </Link>
+        </p>
+      )}
     </div>
   );
 }

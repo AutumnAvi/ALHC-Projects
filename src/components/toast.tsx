@@ -18,6 +18,13 @@ type Notify = (message: string, action?: ToastAction) => void;
 
 const ToastContext = createContext<Notify>(() => {});
 const RichToastContext = createContext<(toast: RichToast) => void>(() => {});
+// Nov 3 notes (batch 19, 141): a spot at the bottom of the toast column for something that stays while
+// it matters (the running-automations indicator), so toasts stack above it instead of over it.
+const ToastDockContext = createContext<HTMLElement | null>(null);
+
+export function useToastDock(): HTMLElement | null {
+  return useContext(ToastDockContext);
+}
 
 let nextId = 1;
 
@@ -31,6 +38,7 @@ const TOAST_CLASS: Record<ToastVariant, string> = {
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [dock, setDock] = useState<HTMLElement | null>(null);
 
   const dismiss = useCallback((id: number) => {
     setToasts((current) => current.filter((t) => t.id !== id));
@@ -50,6 +58,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={notify}>
       <RichToastContext.Provider value={show}>
+      <ToastDockContext.Provider value={dock}>
       {children}
       <div
         aria-live="polite"
@@ -90,7 +99,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             </button>
           </div>
         ))}
+        <div ref={setDock} data-toast-dock className="contents" />
       </div>
+      </ToastDockContext.Provider>
       </RichToastContext.Provider>
     </ToastContext.Provider>
   );

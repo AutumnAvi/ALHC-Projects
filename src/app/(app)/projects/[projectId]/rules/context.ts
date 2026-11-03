@@ -1,5 +1,6 @@
 import "server-only";
 import type { RuleContext } from "@/components/rules/rule-shared";
+import { requireMember } from "@/lib/auth";
 import {
   getProject,
   getProjectIntegrations,
@@ -19,6 +20,7 @@ import {
   tagsEnabled,
   listTaskTemplates,
   listProjectRoles,
+  listProjects,
 } from "@/lib/data";
 import { loadSlackSettings } from "@/lib/slack-actions";
 
@@ -26,7 +28,7 @@ import { loadSlackSettings } from "@/lib/slack-actions";
 // webhooks (the Rules page and the rule canvas). Read with the viewer's client: below Admin the
 // integration defaults and inbound webhooks come back empty.
 export async function loadRuleContext(projectId: string): Promise<RuleContext> {
-  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members, v3, projectTemplates, portfolios, tagsOn, roles, slack] = await Promise.all([
+  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members, v3, projectTemplates, portfolios, tagsOn, roles, slack, viewer, readable] = await Promise.all([
     getProject(projectId),
     listSections(projectId),
     listProjectFields(projectId),
@@ -46,6 +48,8 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     tagsEnabled(),
     listProjectRoles(projectId),
     loadSlackSettings(),
+    requireMember(),
+    listProjects(),
   ]);
   const nameOf = (profileId: string | null) => {
     const p = profileId ? profiles.find((x) => x.id === profileId) : null;
@@ -78,6 +82,9 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     // Nov 2 notes (batch 14): project roles (95) and the workspace's Slack channels (105).
     projectRoles: roles.map((r) => ({ id: r.id, name: r.name, personName: nameOf(r.profileId) })),
     slackDestinations: slack.destinations,
+    // Nov 3 notes (batch 19): "Task assigned to me" (37.1) and "Is in project" (39.3).
+    viewerId: viewer.id,
+    readableProjects: readable.filter((p) => p.id !== projectId).map((p) => ({ id: p.id, name: p.name })),
   };
 }
 

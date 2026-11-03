@@ -13,6 +13,8 @@ import { Avatar } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
 import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import { WorkdaysPicker } from "@/components/rules/workdays-picker";
+import { DEFAULT_WORK_WEEK } from "@/lib/workdays";
 import { VocabPicker } from "@/components/rules/vocab-picker";
 import { useAutoName } from "@/components/rules/use-auto-name";
 import { autoRuleName } from "@/lib/rule-autoname";
@@ -707,6 +709,15 @@ export function ActionSettings({ a, ctx, onChange }: { a: PortfolioRuleItem; ctx
                 onChange={(v) => onChange({ ...a, business_days: v === "business" })}
                 variant="chip"
               />
+              {a.business_days === true ? (
+                <WorkdaysPicker
+                  id="portfolio-rule-workdays"
+                  step={a}
+                  scope="portfolio"
+                  orgWorkWeek={ctx.workWeek ?? DEFAULT_WORK_WEEK}
+                  onChange={(next) => onChange(next as typeof a)}
+                />
+              ) : null}
               <span className="text-zinc-600">from today</span>
             </>
           ) : null}
@@ -877,6 +888,12 @@ export function PortfolioRuleBuilder({
           onChange={(e) => nameBox.onChange(e.currentTarget.value)}
           className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-base font-semibold text-zinc-900 hover:border-zinc-200 focus:border-zinc-300 focus:outline-none data-[auto-name]:text-zinc-500"
         />
+        {/* Nov 3 notes (batch 19, 35.19): says it's named from its steps, like the project builder. */}
+        {nameBox.isAuto && canEdit ? (
+          <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-2xs font-medium text-zinc-600" data-tooltip="Named from its steps. Type to rename it.">
+            Auto-named
+          </span>
+        ) : null}
         {!canEdit ? (
           <span className="flex max-w-48 items-center gap-1.5 text-sm text-zinc-700">
             {owner ? <Avatar name={owner.name} profileId={owner.id} /> : <UserRound className="size-4" aria-hidden />}
@@ -915,6 +932,11 @@ export function PortfolioRuleBuilder({
           <span id="portfolio-rule-save-blocked" role="status" className="max-w-64 truncate text-xs text-amber-800" title={problems.join("\n")}>
             {blocked}
           </span>
+        ) : null}
+        {canEdit ? (
+          <Link href={back} className="btn-ghost h-8 px-3">
+            Cancel
+          </Link>
         ) : null}
         {canEdit ? (
           <button

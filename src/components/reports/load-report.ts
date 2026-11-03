@@ -2,7 +2,7 @@ import "server-only";
 import { displayName } from "@/components/avatar";
 import type { BarDatum } from "@/components/dashboard/bar-chart";
 import type { OverdueRow } from "@/components/reports/report-blocks";
-import { allProjectsReport, listProfiles, listSectionLabels, listVisibleTags, reportOverdueTasks, type ReportRow } from "@/lib/data";
+import { allProjectsReport, listProfiles, listSectionLabels, listVisibleTags, reportOverdueTasks, type OverdueTask, type ReportRow } from "@/lib/data";
 import type { ReportFilters } from "@/lib/reports";
 
 // Labels for report buckets. Project names only ever come from all_projects_report (readable projects),
@@ -72,7 +72,11 @@ export async function loadOverdueRows(
   context: ReportContext,
   max = 200,
 ): Promise<OverdueRow[]> {
-  const tasks = await reportOverdueTasks(filters, timeZone, max);
+  return overdueRows(await reportOverdueTasks(filters, timeZone, max), context);
+}
+
+// The overdue table's rows from tasks already read (the Reports page reads them with everything else).
+export function overdueRows(tasks: OverdueTask[], context: ReportContext): OverdueRow[] {
   return tasks.map((t) => ({
     taskId: t.taskId,
     title: t.title,

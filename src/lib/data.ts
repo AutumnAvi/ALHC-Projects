@@ -1,4 +1,5 @@
 import "server-only";
+import { softRead } from "@/lib/soft-read";
 import { appLinkIds } from "@/lib/app-links";
 import { cache } from "react";
 import { cookies } from "next/headers";
@@ -3438,7 +3439,8 @@ export const searchTasks = cache(async (query: string) => {
   // search_tasks names each task's first project the viewer can read (its home_project_* columns; Oct 29
   // notes, 55b: there's no home project, the names are the database's); the numbers come from the same
   // projects, first one in front.
-  const numbers = await visibleTaskNumbers(found.map((task) => task.id));
+  // Nov 3 notes (batch 19, 142): the numbers are decoration; a slow read shows the results without them.
+  const numbers = await softRead("search numbers", visibleTaskNumbers(found.map((task) => task.id)), new Map<string, TaskNumber[]>());
   return found.map((task) => {
     const taskNumbers = numbers.get(task.id) ?? [];
     const label = taskNumbers[0]?.label ?? null;
@@ -4151,6 +4153,10 @@ export type MySettings = {
   email: string;
   isWorkspaceAdmin: boolean;
   workspaceName: string;
+  // Settings → Workspace for members (Nov 3 notes, batch 19): what the workspace's admins set, read-only.
+  workspaceLogoUrl: string | null;
+  defaultTeamName: string | null;
+  emailSenderName: string | null;
   teams: { id: string; name: string; lead: boolean }[];
   emailComments: boolean;
   // Real features 2: the Inbox / Email switch per kind (null on a database without its migration).
@@ -4167,7 +4173,22 @@ export type MySettings = {
   myTasksChecked: CheckedMode;
   // Nov 1 notes (batch 11): the workspace's workdays (the email digest only goes out on them).
   workWeek: number[];
+  // Nov 3 notes (batch 19, 140): the person's own workdays (null = the organization's); undefined = a database
+  // without this release's update.
+  personalWorkWeek?: number[] | null;
 };
+
+// Nov 3 notes (batch 19, 140): the viewer's own workdays (Settings → Profile → My workdays). Null = they count
+// the organization's; undefined = the column isn't there yet (a preview without the migration).
+export const getMyPersonalWorkWeek = cache(async (): Promise<number[] | null | undefined> => {
+  const { user } = await getViewer();
+  if (!user) return null;
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("profile_preferences").select("work_week").eq("profile_id", user.id).maybeSingle();
+  if (error) return error.code === "42703" || error.code === "PGRST204" ? undefined : null;
+  const days = data?.work_week ?? null;
+  return days && days.length ? normalizeWorkWeek(days) : null;
+});
 
 // The person's forwarding address row (made on first use) and their latest forwarded emails (Real
 // features 1). Null when this release's database update isn't applied.
@@ -4222,7 +4243,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     getMyEmailPreferences(),
     getProfilePreferences(),
   ]);
-  const [myTasksChecked, workWeek] = await Promise.all([getMyTasksChecked(), getWorkWeek()]);
+  const [myTasksChecked, workWeek, personalWorkWeek] = await Promise.all([getMyTasksChecked(), getWorkWeek(), getMyPersonalWorkWeek()]);
   const layout = cookieStore.get(MY_TASKS_LAYOUT_COOKIE)?.value;
   const row = maybe(profile, "profile");
   const meta = user.user_metadata ?? {};
@@ -4237,6 +4258,9 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     email,
     isWorkspaceAdmin: admin,
     workspaceName: workspace?.name ?? "ALHC Projects",
+    workspaceLogoUrl: workspace?.logoUrl ?? null,
+    defaultTeamName: teams.find((team) => team.id === workspace?.defaultTeamId)?.name ?? null,
+    emailSenderName: workspace?.emailSenderName ?? null,
     teams: teams.flatMap((team) => {
       const me = team.members.find((m) => m.profileId === user.id);
       return me ? [{ id: team.id, name: team.name, lead: me.role === "lead" }] : [];
@@ -4252,6 +4276,7 @@ export const getMySettings = cache(async (): Promise<MySettings | null> => {
     openPersonalView: preferences.available ? preferences.openPersonalView : null,
     myTasksChecked,
     workWeek,
+    personalWorkWeek,
   };
 });
 
@@ -6175,6 +6200,52 @@ export async function countOpenRoleTasks(roleId: string): Promise<number> {
     .is("task.deleted_at", null);
   if (error) return 0;
   return new Set((data ?? []).map((r) => r.task_id)).size;
+}
+
+// Nov 3 notes (batch 19, 146): everything that follows a role, for the "Change all current tasks …?" prompt:
+// the open tasks linked to it (and how: assignee, approver, follower) and the automations that name it
+// (they use whoever fills it when they run, so they follow the change on their own). Read with the
+// viewer's own client: only tasks and automations they can read.
+export type RoleUsage = {
+  tasks: { id: string; title: string; slots: string[]; assigneeId: string | null }[];
+  taskTotal: number;
+  automations: { id: string; name: string; enabled: boolean }[];
+};
+
+const ROLE_USAGE_TASKS_SHOWN = 50;
+
+export async function loadRoleUsage(roleId: string): Promise<RoleUsage> {
+  const empty: RoleUsage = { tasks: [], taskTotal: 0, automations: [] };
+  if (!isUuid(roleId)) return empty;
+  const supabase = await createClient();
+  const role = await supabase.from("project_roles").select("id, project_id").eq("id", roleId).maybeSingle();
+  if (role.error || !role.data) return empty;
+  const [links, rules] = await Promise.all([
+    supabase
+      .from("task_role_links")
+      .select("task_id, slot, task:tasks!inner(title, assignee_id, completed_at, deleted_at, created_at)")
+      .eq("project_role_id", roleId)
+      .is("deleted_at", null)
+      .is("task.completed_at", null)
+      .is("task.deleted_at", null),
+    supabase.from("rules").select("id, name, enabled, conditions, actions, trigger_config").eq("project_id", role.data.project_id).is("deleted_at", null),
+  ]);
+  const byTask = new Map<string, { id: string; title: string; slots: string[]; assigneeId: string | null; createdAt: string }>();
+  for (const link of links.data ?? []) {
+    const task = link.task as unknown as { title: string; assignee_id: string | null; created_at: string };
+    const row = byTask.get(link.task_id) ?? { id: link.task_id, title: task.title, slots: [], assigneeId: task.assignee_id, createdAt: task.created_at };
+    if (!row.slots.includes(link.slot)) row.slots.push(link.slot);
+    byTask.set(link.task_id, row);
+  }
+  const tasks = [...byTask.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  // An automation names a role as "project_role:<id>" (people) or Send email's role_id.
+  const mentions = (rule: { conditions: Json; actions: Json; trigger_config: Json }) =>
+    JSON.stringify([rule.conditions, rule.actions, rule.trigger_config]).includes(roleId);
+  return {
+    tasks: tasks.slice(0, ROLE_USAGE_TASKS_SHOWN).map((t) => ({ id: t.id, title: t.title, slots: t.slots, assigneeId: t.assigneeId })),
+    taskTotal: tasks.length,
+    automations: (rules.data ?? []).filter(mentions).map((r) => ({ id: r.id, name: r.name, enabled: r.enabled })),
+  };
 }
 
 // Nov 2 notes (batch 14, 94): the viewer's own version of a shared view ("Save for me"), or null. A

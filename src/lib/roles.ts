@@ -12,6 +12,12 @@ export const ROLE_LABELS: Record<ProjectRole, string> = {
   viewer: "Viewer",
 };
 
+// "an Owner", "an Editor", "a Viewer" (Nov 3 notes, batch 19: the cards read "You’re a Owner"). The
+// article follows the label's first sound: every role label starting with a vowel takes "an".
+export function roleWithArticle(label: string): string {
+  return `${/^[aeiou]/i.test(label) ? "an" : "a"} ${label}`;
+}
+
 // One plain line per role, shown under each option of the role picker (Oct 26 notes).
 export const ROLE_DESCRIPTIONS: Record<ProjectRole, string> = {
   owner: "Runs the project: people, settings, automations, and every task",

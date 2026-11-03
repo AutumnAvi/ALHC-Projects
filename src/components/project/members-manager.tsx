@@ -30,6 +30,7 @@ import {
   compareMembers,
   hasRole,
   isProjectRole,
+  roleWithArticle,
   type ProjectRole,
 } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
@@ -237,7 +238,7 @@ export function MembersManager({
             Members <span className="font-normal text-zinc-500">· {members.length}</span>
           </h2>
           <span className="text-xs text-zinc-500">
-            You’re {viewerRole === "admin" || viewerRole === "editor" ? "an" : "a"} {ROLE_LABELS[viewerRole]}
+            You’re {roleWithArticle(ROLE_LABELS[viewerRole])}
           </span>
         </div>
         {members.length <= 1 ? (

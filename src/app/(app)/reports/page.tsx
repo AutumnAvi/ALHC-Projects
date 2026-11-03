@@ -12,8 +12,8 @@ import {
 import {
   MAX_SECTION_BARS,
   assigneeBars,
-  loadOverdueRows,
   loadReportContext,
+  overdueRows,
   projectBars,
   sectionBars,
 } from "@/components/reports/load-report";
@@ -25,6 +25,7 @@ import {
   hasReal3Schema,
   listActivePeople,
   reportCompletedSeries,
+  reportOverdueTasks,
   tagsEnabled,
   workspaceReport,
 } from "@/lib/data";
@@ -38,6 +39,7 @@ import {
   withDefaultWindow,
   withoutReportTags,
 } from "@/lib/reports";
+import { softRead } from "@/lib/soft-read";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@/lib/workload";
 
@@ -59,22 +61,24 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const filters = withDefaultWindow(urlFilters, params, today);
   const interval = isSeriesInterval(params.int) ? params.int : "week";
 
-  const [context, totals, byProject, byAssignee, bySection, series, hidden, member, real3, people] = await Promise.all([
-    loadReportContext(timeZone),
-    workspaceReport(filters, "none", timeZone),
-    workspaceReport(filters, "project", timeZone),
-    workspaceReport(filters, "assignee", timeZone),
-    workspaceReport(filters, "section", timeZone),
-    reportCompletedSeries(filters, interval, timeZone),
-    countHiddenWorkspaceProjects(),
-    requireMember(),
-    hasReal3Schema(),
-    listActivePeople(),
-  ]);
-  const [sections, overdue] = await Promise.all([
-    sectionBars(bySection, context),
-    loadOverdueRows(filters, timeZone, context),
-  ]);
+  // Nov 3 notes (batch 19, 144): one wave of reads (the overdue list no longer waits for the rest), and the
+  // side reads (hidden count, schedule-email people) never take the page down.
+  const [context, totals, byProject, byAssignee, bySection, series, hidden, member, real3, people, overdueTasks] =
+    await Promise.all([
+      loadReportContext(timeZone),
+      workspaceReport(filters, "none", timeZone),
+      workspaceReport(filters, "project", timeZone),
+      workspaceReport(filters, "assignee", timeZone),
+      workspaceReport(filters, "section", timeZone),
+      reportCompletedSeries(filters, interval, timeZone),
+      softRead("reports hidden count", countHiddenWorkspaceProjects(), 0),
+      requireMember(),
+      softRead("reports schema", hasReal3Schema(), false),
+      softRead("reports people", listActivePeople(), []),
+      reportOverdueTasks(filters, timeZone),
+    ]);
+  const sections = await sectionBars(bySection, context);
+  const overdue = overdueRows(overdueTasks, context);
   const counts = totals[0] ?? EMPTY_COUNTS;
   const query = filtersToParams(filters);
   const exportHref = (table: string, extra?: Record<string, string>) => {

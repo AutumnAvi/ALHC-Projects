@@ -2,6 +2,7 @@
 
 import { FieldTypeIcon } from "@/components/project/field-type-icon";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   CalendarDays,
   Check,
@@ -23,6 +24,7 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { useNotify, useServerAction } from "@/components/toast";
 import { beginLocalMutation, dropTokenTasks, endLocalMutation, failMutation } from "@/lib/optimistic-session";
+import { finishRunning, startRunning } from "@/lib/rule-running";
 import {
   addProjectMemberByProfile,
   bulkEditTasks,
@@ -153,16 +155,28 @@ export function BulkBar({
   }
 
   const [, runAction] = useServerAction();
+  const router = useRouter();
+  const [, startRefresh] = useTransition();
   function runAutomation(rule: BulkManualRule) {
     const ids = [...selected];
     if (ids.length > MAX_BULK_TASKS) {
       notify(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
       return;
     }
-    notify(`Running “${rule.name}” on ${taskCount(Math.min(ids.length, rule.taskCount))}…`);
+    const count = Math.min(ids.length, rule.taskCount);
+    notify(`Running “${rule.name}” on ${taskCount(count)}…`);
+    // Nov 3 notes (batch 19, 141): listed in the running indicator until it's done; the page refreshes in the
+    // background afterwards (the action itself no longer waits for that).
+    const key = startRunning({ kind: "automation", ruleId: rule.id, ruleName: rule.name, projectId: rule.projectId, tasks: [], taskCount: count });
     runAction(async () => {
       const result = await runManualRuleOnTasks(rule.id, ids);
-      if (result.run) notify(bulkRuleRunMessage(rule.name, result.run));
+      if (result.run) {
+        notify(bulkRuleRunMessage(rule.name, result.run));
+        finishRunning(key, result.run.failed > 0 && result.run.ran === 0 ? "failed" : "ran", bulkRuleRunMessage(rule.name, result.run));
+      } else {
+        finishRunning(key, "failed", result.error ?? null);
+      }
+      startRefresh(() => router.refresh());
       return result;
     });
   }

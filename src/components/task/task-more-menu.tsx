@@ -263,7 +263,7 @@ export function TaskMoreMenu({
         <DuplicateTaskDialog taskId={task.id} title={task.title} isSubtask={task.isSubtask} onClose={() => setDialog(null)} />
       ) : null}
       {dialog === "convert" ? <ConvertTaskDialog task={task} onClose={() => setDialog(null)} /> : null}
-      {dialog === "rule" ? <RunRuleDialog taskId={task.id} onClose={() => setDialog(null)} /> : null}
+      {dialog === "rule" ? <RunRuleDialog taskId={task.id} taskTitle={task.title} onClose={() => setDialog(null)} /> : null}
       {dialog === "review" ? <SendReviewDialog task={task} onClose={() => setDialog(null)} /> : null}
       {dialog === "template" && editableProjects.length ? (
         <SaveTaskTemplateDialog

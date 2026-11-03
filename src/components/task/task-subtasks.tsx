@@ -1,7 +1,7 @@
 "use client";
 
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
-import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, Lock, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
@@ -104,6 +104,9 @@ export function TaskSubtasks({
   const shift = useDependencyShift();
   // "Convert to main task…" from a row's "…" menu.
   const [converting, setConverting] = useState<SubtaskItem | null>(null);
+  // Nov 3 notes (batch 19, 147): new subtasks block this task (it can't be completed before they're done).
+  // Stays ticked while adding several in a row.
+  const [blockParent, setBlockParent] = useState(false);
   const canEdit = taskPermissions(task).canEdit;
   const done = allSubtasks.filter((s) => s.completedAt).length;
   const approvalBySubtask = new Map(task.approvals.filter((a) => a.subtaskId).map((a) => [a.subtaskId!, a] as const));
@@ -161,7 +164,7 @@ export function TaskSubtasks({
     const title = input?.value.trim();
     if (!input || !title) return;
     input.value = "";
-    run(() => withPendingCreate(pendingScope, title, () => createSubtask(task.id, title)));
+    run(() => withPendingCreate(pendingScope, title, () => createSubtask(task.id, title, null, { blockParent })));
   }
 
   return (
@@ -400,7 +403,7 @@ export function TaskSubtasks({
             </li>
           ))}
           {adding ? (
-            <li className="flex min-h-9 items-center gap-1.5 border-b border-zinc-100 pl-5 pr-1">
+            <li className="flex min-h-9 flex-wrap items-center gap-x-1.5 border-b border-zinc-100 pl-5 pr-1">
               <span aria-hidden className="size-4 shrink-0 rounded-full border border-dashed border-zinc-300" />
               <form
                 onSubmit={(e) => {
@@ -418,6 +421,8 @@ export function TaskSubtasks({
                   autoFocus
                   placeholder="Write a subtask name, then press Enter"
                   onBlur={(e) => {
+                    // Ticking "Blocks …" next to the box keeps the row open.
+                    if (e.relatedTarget instanceof Node && e.currentTarget.closest("li")?.contains(e.relatedTarget)) return;
                     if (!e.currentTarget.value.trim()) onAddingChange(false);
                   }}
                   onKeyDown={(e) => {
@@ -431,6 +436,28 @@ export function TaskSubtasks({
                   className="h-7 w-full rounded-md border border-transparent bg-transparent px-1 text-sm placeholder:text-zinc-500 focus:outline-none"
                 />
               </form>
+              <label
+                data-tooltip={`“${task.title}” can't be completed until the new subtask is done`}
+                className={`inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2 text-xs ${
+                  blockParent ? "border-amber-300 bg-amber-50 text-amber-800" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={blockParent}
+                  onChange={(e) => {
+                    setBlockParent(e.target.checked);
+                    inputRef.current?.focus();
+                  }}
+                  onBlur={(e) => {
+                    if (e.relatedTarget instanceof Node && e.currentTarget.closest("li")?.contains(e.relatedTarget)) return;
+                    if (!inputRef.current?.value.trim()) onAddingChange(false);
+                  }}
+                  className="size-3.5 accent-amber-600"
+                />
+                <Lock className="size-3" aria-hidden />
+                Blocks parent
+              </label>
             </li>
           ) : null}
         </ul>

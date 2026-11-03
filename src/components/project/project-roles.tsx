@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Plus, Trash2, UserRound } from "lucide-react";
+import { Plus, Trash2, UserRound, Zap } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
@@ -10,12 +10,13 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
   createProjectRole,
-  loadRoleOpenTaskCount,
+  loadRoleUsageForChange,
   removeProjectRole,
   renameProjectRole,
   setProjectRolePerson,
 } from "@/lib/actions";
-import { describeRoleUpdate } from "@/lib/project-roles";
+import type { RoleUsage } from "@/lib/data";
+import { describeRoleUpdate, roleSlotsLabel } from "@/lib/project-roles";
 
 export type RoleRow = { id: string; name: string; profileId: string | null };
 export type RoleMember = { profileId: string; name: string };
@@ -108,8 +109,9 @@ function RoleItem({ role, members, personName }: { role: RoleRow; members: RoleM
   const notify = useNotify();
   const confirm = useConfirm();
   const [renaming, setRenaming] = useState(false);
-  // The person picked, waiting for "update open tasks too?" when tasks follow the role.
-  const [asking, setAsking] = useState<{ profileId: string | null; count: number } | null>(null);
+  // The person picked, waiting for "Change all current tasks …?" when tasks or automations follow the role
+  // (Nov 3 notes, batch 19, 146: the prompt lists them).
+  const [asking, setAsking] = useState<{ profileId: string | null; usage: RoleUsage } | null>(null);
 
   const change = (profileId: string | null, updateOpenTasks: boolean) =>
     run(async () => {
@@ -122,8 +124,8 @@ function RoleItem({ role, members, personName }: { role: RoleRow; members: RoleM
     const profileId = value || null;
     if (profileId === role.profileId) return;
     startCheck(async () => {
-      const count = await loadRoleOpenTaskCount(role.id);
-      if (count > 0) setAsking({ profileId, count });
+      const usage = await loadRoleUsageForChange(role.id);
+      if (usage.taskTotal > 0 || usage.automations.length > 0) setAsking({ profileId, usage });
       else change(profileId, false);
     });
   };
@@ -203,45 +205,101 @@ function RoleItem({ role, members, personName }: { role: RoleRow; members: RoleM
         </button>
       ) : null}
       {asking ? (
-        <Dialog title={`Update open tasks for ${role.name}?`} onClose={() => setAsking(null)}>
-          <p className="text-sm text-zinc-700">
-            {asking.count} open task{asking.count === 1 ? " follows" : "s follow"} the {role.name} role. Give{" "}
-            {asking.count === 1 ? "it" : "them"} to {newName} too?
-          </p>
-          <p className="mt-1 text-xs text-zinc-500">
-            Assignees change only on tasks that still have {personName ?? "nobody"} (or nobody); approvers and followers are
-            swapped. Completed tasks stay as they are.
-          </p>
-          <div className="mt-4 flex flex-wrap justify-end gap-2">
-            <button type="button" onClick={() => setAsking(null)} className="btn-ghost">
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const target = asking.profileId;
-                setAsking(null);
-                change(target, false);
-              }}
-              className="btn-secondary"
-            >
-              Only change the role
-            </button>
-            <button
-              type="button"
-              data-autofocus
-              onClick={() => {
-                const target = asking.profileId;
-                setAsking(null);
-                change(target, true);
-              }}
-              className="btn-primary"
-            >
-              Update {asking.count} task{asking.count === 1 ? "" : "s"}
-            </button>
-          </div>
-        </Dialog>
+        <RoleChangeDialog
+          roleName={role.name}
+          newName={newName}
+          oldName={personName}
+          usage={asking.usage}
+          onCancel={() => setAsking(null)}
+          onChoose={(updateTasks) => {
+            const target = asking.profileId;
+            setAsking(null);
+            change(target, updateTasks);
+          }}
+        />
       ) : null}
     </li>
+  );
+}
+
+// Nov 3 notes (batch 19, 146): "Change all current tasks assigned through this role to <person>?" with the
+// tasks that would change (and how) and the automations that name the role (they follow on their own).
+function RoleChangeDialog({
+  roleName,
+  newName,
+  oldName,
+  usage,
+  onCancel,
+  onChoose,
+}: {
+  roleName: string;
+  newName: string;
+  oldName: string | null;
+  usage: RoleUsage;
+  onCancel: () => void;
+  onChoose: (updateTasks: boolean) => void;
+}) {
+  const count = usage.taskTotal;
+  const more = count - usage.tasks.length;
+  return (
+    <Dialog
+      title={count > 0 ? `Change all current tasks assigned through ${roleName} to ${newName}?` : `Change who fills ${roleName}?`}
+      onClose={onCancel}
+    >
+      {count > 0 ? (
+        <>
+          <p className="text-sm text-zinc-700">
+            {count} open task{count === 1 ? " takes" : "s take"} people from the {roleName} role. Changing{" "}
+            {count === 1 ? "it" : "them"} gives {newName} the assignee, approver, or follower spot {oldName ?? "nobody"} has
+            there now. Completed tasks stay as they are.
+          </p>
+          <ul aria-label="Tasks that change" className="mt-3 max-h-56 divide-y divide-zinc-100 overflow-auto rounded-md border border-zinc-200">
+            {usage.tasks.map((task) => (
+              <li key={task.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                <span className="min-w-0 flex-1 truncate text-zinc-800">{task.title}</span>
+                <span className="shrink-0 text-xs text-zinc-500">{roleSlotsLabel(task.slots)}</span>
+              </li>
+            ))}
+            {more > 0 ? <li className="px-3 py-1.5 text-xs text-zinc-500">and {more} more</li> : null}
+          </ul>
+        </>
+      ) : null}
+      {usage.automations.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-sm text-zinc-700">
+            {usage.automations.length === 1 ? "This automation names" : "These automations name"} the role, so{" "}
+            {usage.automations.length === 1 ? "it uses" : "they use"} {newName} from now on:
+          </p>
+          <ul aria-label="Automations that use the role" className="mt-1.5 space-y-1">
+            {usage.automations.map((rule) => (
+              <li key={rule.id} className="flex items-center gap-1.5 text-sm text-zinc-700">
+                <Zap className="size-3.5 shrink-0 text-amber-500" aria-hidden />
+                <span className="min-w-0 truncate">{rule.name}</span>
+                {rule.enabled ? null : <span className="text-xs text-zinc-400">(off)</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <button type="button" onClick={onCancel} className="btn-ghost">
+          Cancel
+        </button>
+        {count > 0 ? (
+          <>
+            <button type="button" onClick={() => onChoose(false)} className="btn-secondary">
+              Only change the role
+            </button>
+            <button type="button" data-autofocus onClick={() => onChoose(true)} className="btn-primary">
+              Change {count} task{count === 1 ? "" : "s"}
+            </button>
+          </>
+        ) : (
+          <button type="button" data-autofocus onClick={() => onChoose(false)} className="btn-primary">
+            Change the role
+          </button>
+        )}
+      </div>
+    </Dialog>
   );
 }

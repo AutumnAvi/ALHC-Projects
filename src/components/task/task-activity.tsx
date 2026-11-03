@@ -1011,10 +1011,12 @@ function RunMarker({ run }: { run: TaskRuleRun }) {
       <span className="inline-flex min-w-0 max-w-[85%] items-center gap-1">
         <Zap className="size-3 shrink-0" aria-hidden />
         <span className="truncate">
+          {/* Nov 3 notes (batch 19, video 35.10): the line names it as an automation, like the comment cards. */}
+          Automation “
           <Link href={automationHref(run.projectId, run.ruleId)} className="hover:text-accent-700 hover:underline">
             {run.ruleName}
-          </Link>{" "}
-          {runVerb(run)}
+          </Link>
+          ” {runVerb(run)}
           {run.status === "failed" && run.reason ? <>: {run.reason}</> : null} · <Timestamp iso={run.createdAt} />
         </span>
       </span>

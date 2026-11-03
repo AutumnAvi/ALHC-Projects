@@ -83,7 +83,8 @@ test("121: a pending row gives way to the saved one — by the id the save retur
 
 test("121: new subtasks and tasks show at once in the pane, List, and Board", () => {
   const subtasks = fs.readFileSync("src/components/task/task-subtasks.tsx", "utf8");
-  assert.match(subtasks, /withPendingCreate\(pendingScope, title, \(\) => createSubtask\(task\.id, title\)\)/);
+  // Nov 3 notes (batch 19, 147): the create row also passes "Blocks parent".
+  assert.match(subtasks, /withPendingCreate\(pendingScope, title, \(\) => createSubtask\(task\.id, title(, null, \{ blockParent \})?\)\)/);
   assert.match(subtasks, /data-pending-subtask/);
   const shared = fs.readFileSync("src/components/project/shared.tsx", "utf8");
   assert.match(shared, /withPendingCreate\(\s*pendingTaskScope\(projectId, sectionId\)/);
@@ -234,7 +235,8 @@ test("125: Auto-shift moves the dependents on screen at once; Ask me and Off wai
   assert.deepEqual(predictedDependents(moves, "off", plan), []);
   assert.deepEqual(predictedDependents(moves, "auto", undefined), []);
   const timeline = fs.readFileSync("src/components/project/timeline-view.tsx", "utf8");
-  assert.match(timeline, /mode: shiftMode,\s*localPlan:/, "Timeline hands its plan to the shift");
+  // Nov 3 notes (batch 19, 148): Timeline drags pick the plan with keys (moveWith + planFor) instead.
+  assert.match(timeline, /shift\.moveWith\(task, dates, how, \{[\s\S]*?planFor,/, "Timeline hands its plan to the shift");
 });
 
 test("125: the database plan and the browser plan are written from one rule", () => {

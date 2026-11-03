@@ -43,6 +43,8 @@ export type MyTaskRule = {
 export type MyTaskRuleContext = {
   sections: { id: string; name: string }[];
   projects: { id: string; name: string }[];
+  // Nov 3 notes (batch 19, 140): the organization's workweek, named next to "whose workdays".
+  workWeek?: number[];
 };
 
 function record(value: Json | undefined): Record<string, Json> {

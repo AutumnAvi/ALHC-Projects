@@ -26,6 +26,7 @@ import {
   assignablePortfolioRoles,
   hasPortfolioRole,
   isPortfolioRole,
+  roleWithArticle,
   type PortfolioRole,
 } from "@/lib/roles";
 import { describePendingInvite, inviteHelp, type PendingInvite } from "@/lib/workspace";
@@ -143,8 +144,7 @@ export function PortfolioMembersManager({
             Members <span className="font-normal text-zinc-500">· {members.length}</span>
           </h2>
           <span className="text-xs text-zinc-500">
-            You’re {viewerRole === "admin" || viewerRole === "editor" || viewerRole === "owner" ? "an" : "a"}{" "}
-            {PORTFOLIO_ROLE_LABELS[viewerRole]}
+            You’re {roleWithArticle(PORTFOLIO_ROLE_LABELS[viewerRole])}
           </span>
         </div>
         {members.length <= 1 ? (
