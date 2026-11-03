@@ -3,12 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import {
+  mutationInFlight,
   noteMutationTraffic,
   setMutationQuietHandler,
 } from "@/lib/optimistic-session";
 import { createClient } from "@/lib/supabase/client";
 
 type Subscription = { table: string; filter?: string };
+
+// Nov 3 notes (batch 19): a channel on a table the hosted database may not publish yet (tasks and
+// task_projects join supabase_realtime in this batch's migration) gives up after a few errors instead of
+// retrying forever; the page keeps its server-rendered data.
+export type ChannelOptions = { maxErrors?: number };
 
 const REFRESH_MS = 400;
 const RECONNECT_BASE_MS = 800;
@@ -63,6 +69,7 @@ export function openRealtimeChannel(
   name: string,
   subscriptions: Subscription[],
   onChange: () => void,
+  options: ChannelOptions = {},
 ): () => void {
   const subs = usable(subscriptions);
   if (subs.length === 0) return () => {};
@@ -101,6 +108,12 @@ export function openRealtimeChannel(
       }
       if (status !== "CHANNEL_ERROR" && status !== "TIMED_OUT") return;
       window.clearTimeout(reconnectTimer);
+      if (options.maxErrors !== undefined && attempt >= options.maxErrors) {
+        stopped = true;
+        if (active) void supabase.removeChannel(active);
+        active = null;
+        return;
+      }
       const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
       attempt += 1;
       reconnectTimer = window.setTimeout(() => {
@@ -119,12 +132,25 @@ export function openRealtimeChannel(
   };
 }
 
+// Changes heard while the person's own write is saving: "defer" refreshes once it's done (the default:
+// someone else's change may have landed meanwhile); "skip" lets the write's own refresh cover them (busy
+// pages, e.g. a project's List, where every edit would otherwise render twice).
+export type RefreshOptions = ChannelOptions & { duringWrites?: "defer" | "skip" };
+
+function scheduleRefreshSkippingWrites() {
+  if (mutationInFlight()) return;
+  window.clearTimeout(refreshTimer);
+  refreshTimer = window.setTimeout(runRefresh, REFRESH_MS);
+}
+
 // Re-renders the current route when matching rows change. Realtime respects RLS; if the Realtime
 // service is unavailable the page simply keeps its server-rendered data.
-export function useRealtimeRefresh(channel: string, subscriptions: Subscription[]) {
+export function useRealtimeRefresh(channel: string, subscriptions: Subscription[], options: RefreshOptions = {}) {
   const router = useRouter();
   const refreshRef = useRef(router.refresh);
   const key = JSON.stringify(subscriptions);
+  const skip = options.duringWrites === "skip";
+  const maxErrors = options.maxErrors;
 
   useEffect(() => {
     refreshRef.current = router.refresh;
@@ -133,11 +159,16 @@ export function useRealtimeRefresh(channel: string, subscriptions: Subscription[
   useEffect(() => {
     const refresh = () => refreshRef.current();
     refreshers.add(refresh);
-    const stop = openRealtimeChannel(channel, JSON.parse(key) as Subscription[], scheduleRefresh);
+    const stop = openRealtimeChannel(
+      channel,
+      JSON.parse(key) as Subscription[],
+      skip ? scheduleRefreshSkippingWrites : scheduleRefresh,
+      maxErrors === undefined ? {} : { maxErrors },
+    );
     return () => {
       stop();
       refreshers.delete(refresh);
     };
     // router.refresh identity changes after every refresh; subscribing to it reconnects in a loop.
-  }, [channel, key]);
+  }, [channel, key, skip, maxErrors]);
 }

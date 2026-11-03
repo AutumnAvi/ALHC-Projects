@@ -16,9 +16,12 @@ import {
   listProjects,
   listTeams,
   portfolioReport,
+  type ProjectStatusUpdate,
 } from "@/lib/data";
 import { nestedPortfolioProjects } from "@/lib/portfolio-picker";
 import { EMPTY_COUNTS } from "@/lib/portfolios";
+import { softRead } from "@/lib/soft-read";
+import type { Json } from "@/lib/supabase/database.types";
 import { getViewerTimeZone } from "@/lib/timezone";
 
 export async function generateMetadata({ params }: PageProps<"/portfolios/[portfolioId]">): Promise<Metadata> {
@@ -50,16 +53,16 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
     listPortfolioProjects(portfolioId),
     portfolioReport(portfolioId, "project", timeZone),
     portfolioReport(portfolioId, "none", timeZone),
-    countHiddenPortfolioProjects(portfolioId),
+    softRead("portfolio hidden count", countHiddenPortfolioProjects(portfolioId), 0),
     listMyProjectRoles(),
     listProjects(),
     listPortfolioChildren(portfolioId),
     listPortfolios(),
-    listPortfolioProgress(),
-    listPortfolioFields(portfolioId),
-    listPortfolioFieldValues(portfolioId),
+    softRead("portfolio progress", listPortfolioProgress(), new Map<string, { total: number; completed: number }>()),
+    softRead("portfolio fields", listPortfolioFields(portfolioId), []),
+    softRead("portfolio field values", listPortfolioFieldValues(portfolioId), {} as Record<string, Record<string, Json>>),
     listPortfolioRollupProjects(portfolioId),
-    listTeams(),
+    softRead("teams", listTeams(), []),
   ]);
   if (!portfolio) notFound();
   const inPortfolio = new Set(projects.map((p) => p.id));
@@ -71,7 +74,11 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
     children.map((c) => c.id),
     new Map(allPortfolios.map((p) => [p.id, p.name])),
   );
-  const latest = await listLatestStatusUpdates([...projects.map((p) => p.id), ...fromNested.map((p) => p.id)]);
+  const latest = await softRead(
+    "latest status updates",
+    listLatestStatusUpdates([...projects.map((p) => p.id), ...fromNested.map((p) => p.id)]),
+    new Map<string, ProjectStatusUpdate>(),
+  );
 
   const counts = new Map(byProject.map((row) => [row.bucket, row]));
   const statusOf = new Map(rollup.map((r) => [r.id, { status: r.status, note: r.statusNote }]));

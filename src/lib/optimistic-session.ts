@@ -27,11 +27,36 @@ export function setMutationQuietHandler(handler: (() => void) | null) {
 // When each open write began (Nov 3 notes, batch 18, 138 / 139): ending one asks which automations it ran.
 const startedAt = new Map<number, number>();
 
+// Nov 3 notes (batch 19, 141): who wants to hear when a write starts or ends — the task pane refetches the
+// open task after one (39.x: the pane updates live), and the running indicator shows a slow write.
+const openListeners = new Set<() => void>();
+const endListeners = new Set<(startedAt: number) => void>();
+
+export function subscribeOpenMutations(listener: () => void): () => void {
+  openListeners.add(listener);
+  return () => openListeners.delete(listener);
+}
+
+export function onLocalMutationEnd(listener: (startedAt: number) => void): () => void {
+  endListeners.add(listener);
+  return () => endListeners.delete(listener);
+}
+
+// The open writes' start times (oldest first), for the running indicator.
+export function openMutationStarts(): number[] {
+  return [...open].map((token) => startedAt.get(token) ?? Date.now()).sort((a, b) => a - b);
+}
+
+export function mutationInFlight(): boolean {
+  return open.size > 0;
+}
+
 export function beginLocalMutation(): number {
   const token = ++nextToken;
   open.add(token);
   startedAt.set(token, Date.now());
   activeToken = token;
+  for (const listener of openListeners) listener();
   return token;
 }
 
@@ -50,9 +75,12 @@ export function endLocalMutation(token: number) {
   if (!open.delete(token)) return;
   // Every write that went through a local mutation — useServerAction, the bulk bar, … — tells the
   // automation feedback layer, so "Automation X moved 3 tasks" shows whatever path made the change.
-  requestRuleFeedback(startedAt.get(token) ?? Date.now());
+  const began = startedAt.get(token) ?? Date.now();
+  requestRuleFeedback(began);
   startedAt.delete(token);
   if (activeToken === token) activeToken = 0;
+  for (const listener of openListeners) listener();
+  for (const listener of endListeners) listener(began);
   if (open.size === 0 && dirty) {
     dirty = false;
     onQuiet?.();

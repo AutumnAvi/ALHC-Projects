@@ -41,7 +41,11 @@ import {
   MAX_BRANCH_CONDITIONS,
   MAX_RULE_BRANCHES,
   TRIGGERS,
+  TRIGGER_PRESETS,
   branchProblem,
+  presetTrigger,
+  triggerBlockLabel,
+  triggerPickerValue,
   joinBranches,
   runReason,
   splitBranches,
@@ -68,7 +72,7 @@ import {
 import { vocabOptions } from "./rule-icons";
 import { VocabPicker } from "./vocab-picker";
 import { useAutoName } from "./use-auto-name";
-import { branchLabel, needsUpdate, ruleSentence, tagsHidden, type RuleContext } from "./rule-shared";
+import { branchLabel, ruleSentence, vocabDisabled, type RuleContext } from "./rule-shared";
 import { RuleTestPanel, type RuleTestDraft, type RuleTestTask } from "./rule-test-panel";
 import { RunSteps } from "./run-steps";
 
@@ -154,7 +158,11 @@ export function RuleCanvas({
   const [revealed, setRevealed] = useState<RevealedSigningSecret[] | null>(null);
   // Batch 10 (76): unnamed rules are named from their steps (editable); Create never waits for a name.
   const autoName = autoRuleName(
-    stepLabel(TRIGGERS, triggerType, triggerConfig.section_id, ctx),
+    // Nov 3 notes (batch 19): presets read as themselves ("Task assigned to me", "Task is imported").
+    withTarget(
+      triggerBlockLabel(triggerType, triggerConfig, ctx.viewerId),
+      typeof triggerConfig.section_id === "string" ? ctx.sections.find((x) => x.id === triggerConfig.section_id)?.name : null,
+    ),
     branches[0]?.actions.map((a) => stepLabel(ACTIONS, a.type, a.section_id, ctx)) ?? [],
   );
   const nameBox = useAutoName(rule?.name ?? initial?.name, autoName);
@@ -564,11 +572,22 @@ export function RuleCanvas({
                         kind="trigger"
                         id="rule-trigger"
                         label="Trigger"
-                        value={triggerType}
-                        options={vocabOptions(TRIGGERS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, [triggerType]) })}
+                        value={triggerPickerValue(triggerType, triggerConfig)}
+                        // Nov 3 notes (batch 19): the When grid also lists presets (an existing trigger
+                        // with its settings filled in), and the tag steps stay visible while tags are off.
+                        options={vocabOptions([...TRIGGERS, ...TRIGGER_PRESETS], { disabled: (v) => vocabDisabled(ctx, [triggerType])(presetTrigger(v, ctx.viewerId)?.triggerType ?? v) })}
+                        renderValue={(chosen) =>
+                          chosen[0] ? (
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {chosen[0].icon ? <span className="shrink-0 text-accent-600">{chosen[0].icon}</span> : null}
+                              <span className="truncate">{triggerBlockLabel(triggerType, triggerConfig, ctx.viewerId)}</span>
+                            </span>
+                          ) : undefined
+                        }
                         onChange={(v) => {
-                          setTriggerType(v as TriggerType);
-                          setTriggerConfig({});
+                          const preset = presetTrigger(v, ctx.viewerId);
+                          setTriggerType(preset ? preset.triggerType : (v as TriggerType));
+                          setTriggerConfig(preset ? preset.triggerConfig : {});
                           setDirty(true);
                         }}
                         variant="chip"
@@ -791,13 +810,10 @@ function BranchRows({
 
   // OR groups: AND within a group, OR between groups (one group stores no group keys).
   const groups = splitGroups(branch.conditions);
-  const conditionOptions = vocabOptions(CONDITIONS, {
-    disabled: needsUpdate(ctx),
-    hidden: tagsHidden(ctx, branch.conditions.map((c) => c.type)),
-  });
+  const conditionOptions = vocabOptions(CONDITIONS, { disabled: vocabDisabled(ctx, branch.conditions.map((c) => c.type)) });
   const conditionScope: StepScope = { system: "project", kind: "condition", v3: ctx.v3 };
   const actionScope: StepScope = { system: "project", kind: "action", v3: ctx.v3 };
-  const actionOptions = vocabOptions(ACTIONS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, branch.actions.map((a) => a.type)) });
+  const actionOptions = vocabOptions(ACTIONS, { disabled: vocabDisabled(ctx, branch.actions.map((a) => a.type)) });
 
   function setGroups(next: RuleCondition[][]) {
     onChange({ ...branch, conditions: joinGroups(next) });

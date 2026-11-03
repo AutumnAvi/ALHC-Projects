@@ -12,6 +12,13 @@ export const isRoleSlot = (value: unknown): value is RoleSlot => ROLE_SLOTS.some
 
 export const MAX_ROLE_NAME = 60;
 
+// Nov 3 notes (batch 19, 146): "Assignee · Follower" for a task's links to one role, in the slots' order.
+export function roleSlotsLabel(slots: readonly string[]): string {
+  return ROLE_SLOTS.filter((s) => slots.includes(s.value))
+    .map((s) => s.label)
+    .join(" · ");
+}
+
 // "Updated 4 open tasks for Designer" (+ "; 1 you can't change was left as it was").
 export function describeRoleUpdate(roleName: string, updated: number, skipped: number): string {
   const tasks = (n: number) => `${n} open task${n === 1 ? "" : "s"}`;

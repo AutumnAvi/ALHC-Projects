@@ -5,8 +5,9 @@ import { AtSign, CalendarDays, FolderClosed, Plus, Repeat, X } from "lucide-reac
 import { useTabChord } from "@/components/shortcuts/keyboard";
 import { useNotify, useServerAction } from "@/components/toast";
 import { quickAddTask } from "@/lib/actions";
-import { checklistDueLabel } from "@/lib/checklist";
+import { QUICK_ADD_PENDING_SCOPE, checklistDueLabel } from "@/lib/checklist";
 import { useToday } from "@/lib/dates";
+import { withPendingCreate } from "@/lib/pending-creates";
 import {
   completeToken,
   describeRepeat,
@@ -25,6 +26,10 @@ const MAX_SUGGESTIONS = 6;
 // can add tasks) or people; the parts it understood show as chips under the box (× keeps that text in
 // the name). Enter adds it; the list refreshes with the new task in its date group. Tab then Q focuses it.
 // Nov 3 notes (batch 18, 134): the task is always yours; an @person is added as a follower, not the assignee.
+// Nov 3 notes (batch 19, video 34.12 / 34.13): the box never locks while an earlier add is saving (it did,
+// so a second task typed straight after the first was lost while the first one's toast still showed), each
+// Enter saves on its own, and the new task shows in its group at once as a pending row (with its date,
+// project, and repeat mark) until the refreshed list has it.
 export function QuickAddBar({
   projects,
   people,
@@ -41,7 +46,7 @@ export function QuickAddBar({
   const id = useId();
   const today = useToday();
   const notify = useNotify();
-  const [pending, run] = useServerAction();
+  const [, run] = useServerAction();
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [ignored, setIgnored] = useState<string[]>([]);
@@ -78,7 +83,7 @@ export function QuickAddBar({
   }
 
   function submit() {
-    if (!parsed || pending) return;
+    if (!parsed) return;
     if (!parsed.title) {
       notify(text.trim() ? "Type a name for the task too" : "Type a task first");
       return;
@@ -89,14 +94,25 @@ export function QuickAddBar({
     setIgnored([]);
     setCaret(0);
     run(async () => {
-      const result = await quickAddTask({
-        title: what.title,
-        projectId: what.project?.id ?? null,
-        mentionId: what.person?.id ?? null,
-        dueOn: what.dueOn,
-        repeat: what.repeat,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      });
+      const result = await withPendingCreate(
+        QUICK_ADD_PENDING_SCOPE,
+        what.title,
+        () =>
+          quickAddTask({
+            title: what.title,
+            projectId: what.project?.id ?? null,
+            mentionId: what.person?.id ?? null,
+            dueOn: what.dueOn,
+            repeat: what.repeat,
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          }),
+        {
+          dueOn: what.dueOn,
+          recurring: Boolean(what.repeat),
+          projectId: what.project?.id ?? null,
+          projectName: what.project?.name ?? null,
+        },
+      );
       if (result.error) {
         setText(typed);
         return result;
@@ -136,7 +152,6 @@ export function QuickAddBar({
           maxLength={1000}
           value={text}
           placeholder={placeholder}
-          disabled={pending && !text}
           onChange={(e) => {
             setText(e.currentTarget.value);
             setCaret(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
@@ -176,7 +191,7 @@ export function QuickAddBar({
           }`}
         />
         {text.trim() ? (
-          <button type="button" onClick={submit} disabled={pending} className="btn-primary h-8 shrink-0">
+          <button type="button" onClick={submit} className="btn-primary h-8 shrink-0">
             Add
           </button>
         ) : null}

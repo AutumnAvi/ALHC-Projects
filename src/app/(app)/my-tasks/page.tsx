@@ -66,7 +66,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
               <MyTaskRulesButton
                 className="btn-ghost"
                 rules={rules}
-                ctx={{ sections: sections.map((s) => ({ id: s.id, name: s.name })), projects: projects.map((p) => ({ id: p.id, name: p.name })) }}
+                ctx={{ sections: sections.map((s) => ({ id: s.id, name: s.name })), projects: projects.map((p) => ({ id: p.id, name: p.name })), workWeek }}
               />
               <SyncCalendarButton scope="my_tasks" className="btn-ghost" />
             </div>
@@ -96,7 +96,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
   // The layout call seeds the viewer's sections and places newly assigned tasks first, so it runs
   // before the task lists are read.
   const { sections, placements } = await listMyTaskLayout();
-  const [{ open, completed }, bulk, rules, projects, expandedTaskIds, awaiting, profiles] = await Promise.all([
+  const [{ open, completed }, bulk, rules, projects, expandedTaskIds, awaiting, profiles, classicWorkWeek] = await Promise.all([
     listMyTasks(member.id),
     listBulkContext(null),
     listMyTaskRules(),
@@ -105,6 +105,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
     getExpandedTaskIds(),
     listAwaitingMyApproval(),
     listProfiles(),
+    getWorkWeek(),
   ]);
   // The subtask trees of the open rows (trees load by their top-level task: a row that is itself a
   // subtask needs its root, when the data says which).
@@ -128,7 +129,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
           <div className="flex items-center gap-2">
             <MyTaskRulesButton
               rules={rules}
-              ctx={{ sections: sections.map((s) => ({ id: s.id, name: s.name })), projects: projects.map((p) => ({ id: p.id, name: p.name })) }}
+              ctx={{ sections: sections.map((s) => ({ id: s.id, name: s.name })), projects: projects.map((p) => ({ id: p.id, name: p.name })), workWeek: classicWorkWeek }}
             />
             <SyncCalendarButton scope="my_tasks" className="btn-secondary" />
           </div>

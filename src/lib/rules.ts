@@ -39,6 +39,63 @@ export const TRIGGERS = [
 
 export type TriggerType = (typeof TRIGGERS)[number]["value"];
 
+// Nov 3 notes (batch 19, 37.1 / 37.2 / 37.8): When-grid entries that are an existing trigger with its
+// settings filled in. The picker offers them next to the triggers; picking one sets the trigger and its
+// config (validate_rule and fire_rules know the settings):
+//   "Task assigned to me"  assignee_changed { to: [you] } — the people can be changed afterwards
+//   "Due date arrives"     due_approaching { days: 0 }
+//   "Due soon"             due_approaching { days: 2 }
+//   "Task is imported"     task_created { via: "import" } — runs when an Asana import finishes
+export const TRIGGER_PRESETS = [
+  { value: "preset:assigned_to_me", triggerType: "assignee_changed", label: "Task assigned to me", group: "People", description: "Fires when a task is assigned to you (add or swap people after picking it).", keywords: ["assign", "assigned", "me", "mine", "to someone"] },
+  { value: "preset:due_arrives", triggerType: "due_approaching", label: "Due date arrives", group: "Dates", description: "Fires once per open task on its due date.", keywords: ["deadline", "due today", "arrives", "reached"] },
+  { value: "preset:due_soon", triggerType: "due_approaching", label: "Due soon", group: "Dates", description: "Fires once per open task a couple of days before it's due (you pick how long).", keywords: ["deadline", "soon", "upcoming", "reminder"] },
+  { value: "preset:imported", triggerType: "task_created", label: "Task is imported", group: "Integrations", description: "Fires for each task an Asana import brings into this project, once the import finishes.", keywords: ["import", "asana", "csv", "json", "migrate"] },
+] as const;
+export type TriggerPreset = (typeof TRIGGER_PRESETS)[number]["value"];
+
+// A preset's trigger and starting settings (`viewerId` = whoever builds the automation: "me").
+export function presetTrigger(preset: string, viewerId: string | null | undefined): { triggerType: TriggerType; triggerConfig: Record<string, Json> } | null {
+  switch (preset) {
+    case "preset:assigned_to_me":
+      return { triggerType: "assignee_changed", triggerConfig: viewerId ? { to: [viewerId] } : {} };
+    case "preset:due_arrives":
+      return { triggerType: "due_approaching", triggerConfig: { days: 0 } };
+    case "preset:due_soon":
+      return { triggerType: "due_approaching", triggerConfig: { days: 2 } };
+    case "preset:imported":
+      return { triggerType: "task_created", triggerConfig: { via: "import" } };
+    default:
+      return null;
+  }
+}
+
+// Which When-grid entry a trigger and its settings read as (the block's label): a preset where one
+// fits, else the trigger itself.
+export function triggerPickerValue(triggerType: TriggerType, config: Record<string, Json>): string {
+  if (triggerType === "assignee_changed" && Array.isArray(config.to) && config.to.length) return "preset:assigned_to_me";
+  if (triggerType === "task_created" && config.via === "import") return "preset:imported";
+  if (triggerType === "due_approaching" && config.days === 0 && config.unit === undefined) return "preset:due_arrives";
+  return triggerType;
+}
+
+// The block's words for a trigger and its settings: "Task assigned to …" once its people aren't only
+// the viewer, else the entry's own label.
+export function triggerBlockLabel(triggerType: TriggerType, config: Record<string, Json>, viewerId?: string | null): string {
+  const value = triggerPickerValue(triggerType, config);
+  if (value === "preset:assigned_to_me") {
+    const to = Array.isArray(config.to) ? config.to : [];
+    return to.length === 1 && viewerId && to[0] === viewerId ? "Task assigned to me" : "Task is assigned to";
+  }
+  return TRIGGER_PRESETS.find((p) => p.value === value)?.label ?? labelOf(TRIGGERS, triggerType);
+}
+
+// "Task is added": in any way, or only by an import (task_created { via }).
+export const TASK_ADDED_VIA = [
+  { value: "any", label: "in the app, a form, or a webhook", description: "Every way a task is added here, except imports" },
+  { value: "import", label: "by an Asana import", description: "Each task an import brings in, once the import finishes" },
+] as const;
+
 export const CONDITIONS = [
   { value: "section_is", label: "Section is", group: "Task", description: "The task is in a section you pick.", keywords: ["column", "stage"] },
   { value: "section_is_not", label: "Section is not", group: "Task", description: "The task is in any other section.", keywords: ["column", "stage", "not"] },
@@ -85,6 +142,11 @@ export const CONDITIONS = [
   { value: "no_attachment", label: "Has no attachment", group: "Task", description: "No file is attached yet.", keywords: ["file", "upload", "missing"] },
   { value: "has_comment", label: "Has a comment", group: "Communication", description: "Someone (or an automation) commented.", keywords: ["reply", "message", "feedback"] },
   { value: "no_comment", label: "Has no comment", group: "Communication", description: "Nobody has commented yet.", keywords: ["reply", "message", "silent"] },
+  // Nov 3 notes (batch 19, 39.3 / 39.4; 20261103020000_nov3_batch19_a.sql).
+  { value: "in_project", label: "Is in project", group: "Task", description: "The task is (also) in one of the projects you pick.", keywords: ["project", "multi-home", "also in", "cross-project"] },
+  { value: "not_in_project", label: "Isn't in project", group: "Task", description: "The task is in none of the projects you pick.", keywords: ["project", "not", "except", "multi-home"] },
+  { value: "is_private", label: "Is private", group: "Task", description: "Only project members can see it: none of its projects is public to its team.", keywords: ["private", "visibility", "members only", "hidden"] },
+  { value: "is_not_private", label: "Isn't private", group: "Task", description: "Its team can find it: it's in a project that's public to the team.", keywords: ["public", "visibility", "team", "private"] },
 ] as const;
 
 export type ConditionType = (typeof CONDITIONS)[number]["value"];
@@ -371,6 +433,21 @@ export const TASK_KIND_OPTIONS = [
   { value: "milestone", label: "Milestone" },
   { value: "approval", label: "Approval" },
 ] as const;
+
+// Nov 3 notes (batch 19, note 145): Set task type → Approval's setup (mirrors rule_approval_setup_problem
+// / rule_apply_approval_setup): who approves and how, when it's due, and what happens after approval.
+export const APPROVAL_MODES = [
+  { value: "any", label: "any one can approve", description: "The first approval settles it" },
+  { value: "all", label: "everyone must approve", description: "Every approver has to approve" },
+] as const;
+
+export const AFTER_APPROVAL = [
+  { value: "complete", label: "then complete the task", description: "Approve completes it (the default)" },
+  { value: "move_section", label: "then move it to a section", description: "Moves it to a section you pick" },
+  { value: "notify", label: "then just notify", description: "Tells the assignee; nothing moves" },
+] as const;
+
+export const MAX_TASK_APPROVERS = 10;
 
 export type RuleCondition = { type: ConditionType } & Record<string, Json>;
 export type RuleAction = { type: ActionType } & Record<string, Json>;

@@ -23,7 +23,7 @@ import type { Portfolio, PortfolioChild, PortfolioField, PortfolioProject, Proje
 import type { Json } from "@/lib/supabase/database.types";
 import type { NestedProject, PickerProject } from "@/lib/portfolio-picker";
 import { RECENT_DAYS, formatProgress, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
-import { ROLE_LABELS, type ProjectRole } from "@/lib/roles";
+import { ROLE_LABELS, roleWithArticle, type ProjectRole } from "@/lib/roles";
 import { EmptyState } from "@/components/ui";
 
 type Card = {
@@ -175,7 +175,7 @@ export function PortfolioOverview({
                         <span className="truncate">{project.name}</span>
                       </Link>
                       <p className="mt-0.5 text-xs text-zinc-500">
-                        {role ? `You’re ${role === "admin" || role === "editor" ? "an" : "a"} ${ROLE_LABELS[role]}` : null}
+                        {role ? `You’re ${roleWithArticle(ROLE_LABELS[role])}` : null}
                       </p>
                     </div>
                     <ProjectStatusBadge status={project.status} note={project.status_note} />
@@ -397,7 +397,7 @@ function NestedProjectCard({ card }: { card: NestedCard }) {
               <Briefcase className="size-3" aria-hidden />
               {card.fromPortfolioName}
             </Link>
-            {card.role ? ` · You’re ${card.role === "admin" || card.role === "editor" ? "an" : "a"} ${ROLE_LABELS[card.role]}` : null}
+            {card.role ? ` · You’re ${roleWithArticle(ROLE_LABELS[card.role])}` : null}
           </p>
         </div>
         <ProjectStatusBadge status={card.status} note={card.statusNote} />

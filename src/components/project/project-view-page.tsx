@@ -5,6 +5,7 @@ import { ListView } from "@/components/project/list-view";
 import { TimelineView } from "@/components/project/timeline-view";
 import { ViewToolbar } from "@/components/project/view-toolbar";
 import { ViewConfigProvider } from "@/components/project/view-config";
+import { ProjectLiveUpdates } from "@/components/project/project-live";
 import { TaskPaneSlot } from "@/components/task/task-pane";
 import { listBulkContext } from "@/components/bulk/bulk-context";
 import { calendarVisibleDays, timelineWindow, type TimelineZoom } from "@/lib/date-input";
@@ -307,6 +308,7 @@ export async function ProjectViewPage({
         ) : null}
       </ViewConfigProvider>
       <TaskPaneSlot taskId={openTaskId} />
+      <ProjectLiveUpdates projectId={projectId} />
     </main>
   );
 }

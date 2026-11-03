@@ -6,6 +6,7 @@ import { SearchResults } from "@/components/search/search-results";
 import { TaskPaneSlot } from "@/components/task/task-pane";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { listVisibleTags, listTaskTagIds, searchTasks } from "@/lib/data";
+import { softRead } from "@/lib/soft-read";
 
 export const metadata: Metadata = { title: "Search" };
 
@@ -47,7 +48,10 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
       active ? "border-accent-500 bg-accent-50 text-accent-700" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
     }`;
   const [tags, tagIds] = results.length
-    ? await Promise.all([listVisibleTags(), listTaskTagIds(results.map((r) => r.id))])
+    ? await Promise.all([
+        softRead("search tags", listVisibleTags(), []),
+        softRead("search tag links", listTaskTagIds(results.map((r) => r.id)), new Map<string, string[]>()),
+      ])
     : [[], new Map<string, string[]>()];
 
   return (

@@ -17,6 +17,7 @@ import { blockedCount } from "@/components/project/inline-cells";
 import { ApprovalStatusBadge } from "@/components/project/task-meta";
 import { dismissDatePrompt, setTaskCompleted, undoTaskCompleted } from "@/lib/actions";
 import {
+  QUICK_ADD_PENDING_SCOPE,
   SETTLE_MS,
   checkedPlacement,
   checklistDueLabel,
@@ -32,6 +33,7 @@ import type { MyTask } from "@/lib/data";
 import { bareTaskTitle, formatRequestLabel } from "@/lib/request-numbers";
 import { seedFromMyTask } from "@/lib/task-seed";
 import { trackCompletion } from "@/lib/completion-store";
+import { isPendingCreateId, usePendingCreates, type PendingCreate } from "@/lib/pending-creates";
 
 // My tasks as a simple checklist (Nov 1 notes, batch 9b, item 64), also Home's Today list: one list in
 // automatic date groups (Overdue, Today, This week, Later, No date), big tap targets, and a tick that
@@ -146,16 +148,36 @@ export function useChecklist(
   const asksForDate = (task: MyTask) =>
     Boolean(task.datePrompt) && task.canEdit && !dismissed.has(task.id) && !dueOf(task) && !isDone(task);
 
-  // Every row the list may show: open tasks and today's completions (yesterday's are gone).
+  // Every row the list may show: open tasks, tasks typed into the quick add that the refreshed list doesn't
+  // have yet (Nov 3 notes, batch 19), and today's completions (yesterday's are gone).
   const doneToday = (task: MyTask) => (today ? completedToday(task.completedAt, today, initial.timeZone) : false);
   const openIds = new Set(open.map((t) => t.id));
-  const rows = [...open, ...completed.filter((t) => !openIds.has(t.id) && doneToday(t))];
+  const pending = usePendingCreates(QUICK_ADD_PENDING_SCOPE, open).map(pendingTask);
+  const rows = [...open, ...pending, ...completed.filter((t) => !openIds.has(t.id) && doneToday(t))];
   const placementOf = (task: MyTask) => (isDone(task) ? checkedPlacement(mode, !settling.has(task.id)) : "group");
 
   return { today, isDone, dueOf, check, setDue, notNow, asksForDate, rows, placementOf, dialog: shift.dialog };
 }
 
 export type Checklist = ReturnType<typeof useChecklist>;
+
+// A quick-added task still saving, drawn like a row (its id is the pending entry's key).
+function pendingTask(entry: PendingCreate): MyTask {
+  const meta = entry.meta ?? {};
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  return {
+    id: entry.key,
+    title: entry.title,
+    completedAt: null,
+    dueOn: text(meta.dueOn),
+    projectId: text(meta.projectId),
+    projectName: text(meta.projectName),
+    kind: "task",
+    parentTitle: null,
+    canEdit: false,
+    recurring: meta.recurring === true,
+  };
+}
 
 const GROUP_HINT: Partial<Record<ChecklistGroupKey, string>> = {
   week: "The next seven days",
@@ -335,6 +357,7 @@ function ChecklistRow({
   const blocked = done ? 0 : blockedCount(task);
   const title = bareTaskTitle(task.title, task.requestLabel);
   const label = formatRequestLabel(task.requestLabel);
+  if (isPendingCreateId(task.id)) return <PendingChecklistRow task={task} due={due} today={today} />;
 
   return (
     <li
@@ -391,12 +414,7 @@ function ChecklistRow({
             </span>
           )}
           {task.parentTitle ? <span className="truncate">in {task.parentTitle}</span> : null}
-          {task.recurring ? (
-            <span className="inline-flex items-center gap-1" title="Repeats">
-              <Repeat className="size-3" aria-hidden />
-              <span className="sr-only">Repeats</span>
-            </span>
-          ) : null}
+          {task.recurring ? <RepeatsMark /> : null}
           {(task.subtaskCount ?? 0) > 0 ? (
             <span className="tabular-nums" title={`${task.subtaskDoneCount ?? 0} of ${task.subtaskCount} subtasks done`}>
               {task.subtaskDoneCount ?? 0}/{task.subtaskCount} subtasks
@@ -460,6 +478,44 @@ function DateChips({ task, list, workWeek, prompt }: { task: MyTask; list: Check
 
 // The due date on the right: Today / Tomorrow / a weekday / Oct 28 (red when overdue); editors change it
 // from a date picker.
+// A repeating task's mark, spelled out (Nov 3 notes, batch 19: a bare 12px icon was easy to miss).
+function RepeatsMark() {
+  return (
+    <span className="inline-flex items-center gap-1 text-accent-700" title="Repeats: the next one is made when you check this off">
+      <Repeat className="size-3" aria-hidden />
+      Repeats
+    </span>
+  );
+}
+
+// A task typed into the quick add, in the group it will land in, until the saved row arrives.
+function PendingChecklistRow({ task, due, today }: { task: MyTask; due: string | null; today: string }) {
+  return (
+    <li data-checklist-row={task.id} data-pending="" aria-busy="true" className="flex items-start gap-3 rounded-lg px-2 py-2">
+      <span className="mt-0.5 inline-flex size-[22px] shrink-0 rounded-full border-2 border-dashed border-zinc-300" aria-hidden />
+      <div className="min-w-0 flex-1 py-0.5">
+        <span className="block min-w-0 truncate text-[15px] leading-6 text-zinc-500">{task.title}</span>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
+          {task.projectName ? (
+            <span className="inline-flex max-w-48 items-center gap-1 truncate">
+              <FolderClosed className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{task.projectName}</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1">
+              <Lock className="size-3" aria-hidden />
+              Private
+            </span>
+          )}
+          {task.recurring ? <RepeatsMark /> : null}
+          <span className="italic text-zinc-400">Saving…</span>
+        </div>
+      </div>
+      {due ? <span className="mt-1.5 shrink-0 text-xs tabular-nums text-zinc-500">{checklistDueLabel(due, today)}</span> : null}
+    </li>
+  );
+}
+
 function DueControl({ task, list, due, today, done }: { task: MyTask; list: Checklist; due: string | null; today: string; done: boolean }) {
   const overdue = Boolean(due && !done && due < today);
   const text = due ? checklistDueLabel(due, today) : "";

@@ -49,6 +49,9 @@ export const SETTINGS_TABS = [
   { key: "calendar", label: "Calendar sync" },
   { key: "account", label: "Account" },
   { key: "display", label: "Display" },
+  // Nov 3 notes (batch 19, video 36.6): members see the workspace's settings read-only here (admins get a
+  // link to the Admin console, where they change them).
+  { key: "workspace", label: "Workspace" },
 ] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
 export const isSettingsTab = (value: unknown): value is SettingsTab => SETTINGS_TABS.some((t) => t.key === value);

@@ -128,7 +128,8 @@ test("date conditions and actions read as sentences", () => {
 // ---------------------------------------------------------------------------------------------
 
 test("flow triggers, conditions, and actions read as sentences", () => {
-  assert.equal(describeTrigger({ triggerType: "task_unblocked", triggerConfig: {} }, ctx), "A task is no longer blocked by any dependency");
+  // Nov 3 notes (batch 19, 37.6): the kinds are required; missing reads as what to choose.
+  assert.equal(describeTrigger({ triggerType: "task_unblocked", triggerConfig: {} }, ctx), "A task is no longer blocked by (choose which dependencies)");
   assert.equal(
     describeTrigger({ triggerType: "task_unblocked", triggerConfig: { kinds: ["start_to_start", "finish_to_finish"] } }, ctx),
     "A task is no longer blocked by a start → start or finish → finish dependency",

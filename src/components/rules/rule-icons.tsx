@@ -174,6 +174,12 @@ const ICONS: Record<string, LucideIcon> = {
   is_archived: Archive,
   is_not_archived: Archive,
   is_private: Lock,
+  is_not_private: Unlock,
+  // Nov 3 notes (batch 19): When-grid presets.
+  "preset:assigned_to_me": UserCheck,
+  "preset:due_arrives": CalendarCheck,
+  "preset:due_soon": CalendarClock,
+  "preset:imported": FileInput,
   add_members: UserPlus,
   remove_members: UserMinus,
   add_to_portfolio: FolderPlus,

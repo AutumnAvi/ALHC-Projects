@@ -5,7 +5,8 @@ import { startTransition, useCallback, useEffect, useRef, useState, useTransitio
 import { ArrowRight, Settings2 } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
-import { applyDependencyShifts, changeTaskDates, undoDependencyShift } from "@/lib/actions";
+import { applyDependencyShifts, changeTaskDates, moveTaskDatesWith, undoDependencyShift } from "@/lib/actions";
+import type { TimelineDragHow } from "@/lib/dependency-plan";
 import { requestRuleFeedback } from "@/lib/rule-feedback-bus";
 import { currentMutationToken, dropTokenTasks, holdTaskChanges } from "@/lib/optimistic-session";
 import {
@@ -40,6 +41,9 @@ type Options = {
   // answer wins: a dependent it didn't move goes back.
   mode?: DependencyShiftMode | null;
   localPlan?: (moves: ShiftMove[], pullEarlier: boolean) => ShiftPlanRow[];
+  // Nov 3 notes (batch 19, 148): moveWith's own plan of the dependents the page can see for each choice
+  // (drawn at once; the database's answer wins).
+  planFor?: (moves: ShiftMove[], how: TimelineDragHow) => ShiftPlanRow[];
 };
 
 export type ShiftChoice = { confirmed: string[]; pull: boolean } | "only" | "cancel";
@@ -214,6 +218,9 @@ function dropUnconfirmed(token: number, predicted: MovedTask[], changed: Set<str
 // Dependents that can't move (completed, or the person can't edit them) are listed and left alone.
 export function useDependencyShift(): {
   changeDates: (task: { id: string; title: string }, dates: DateChange, options?: Options) => void;
+  // Nov 3 notes (batch 19, 148): a Timeline drag, where the keys held pick what its dependents do instead
+  // of the project's setting: only this task, along by the same amount (Shift), or pushed as needed (Alt).
+  moveWith: (task: { id: string; title: string }, dates: DateChange, how: TimelineDragHow, options?: Options) => void;
   // Several tasks at once (a bulk due date). `plain` is kept for older callers and no longer run:
   // changeTaskDates applies the change itself.
   changeMany: (moves: ShiftMove[], subject: string, plain: (() => void) | null, options?: Options) => void;
@@ -404,8 +411,53 @@ export function useDependencyShift(): {
     [shift],
   );
 
+  const moveWith = useCallback(
+    (task: { id: string; title: string }, dates: DateChange, how: TimelineDragHow, options: Options = {}) => {
+      startShift(async () => {
+        const held = holdTaskChanges();
+        const token = currentMutationToken();
+        const startedAt = Date.now();
+        let ok = false;
+        try {
+          const moves: ShiftMove[] = [{ taskId: task.id, ...dates }];
+          let predicted: MovedTask[] = [];
+          if (how !== "only" && options.planFor) {
+            try {
+              predicted = movesOf(options.planFor(moves, how))
+                .filter((r) => r.taskId !== task.id)
+                .map((r) => ({ taskId: r.taskId, startOn: r.newStart, dueOn: r.newDue }));
+            } catch {
+              predicted = [];
+            }
+          }
+          options.onOptimistic?.([{ taskId: task.id, ...dates }, ...predicted]);
+          const answer = await moveTaskDatesWith(moves, how);
+          if (answer.error || !answer.result) {
+            notify(answer.error ?? "Couldn’t change the dates");
+            options.onRevert?.();
+            return;
+          }
+          const refused = answer.result.skipped.find((s) => s.taskId === task.id);
+          if (refused) {
+            notify(refused.reason || "Your role doesn’t allow changing this task’s dates");
+            options.onRevert?.();
+            return;
+          }
+          report(moves, `“${task.title}”`, answer.result, options);
+          ok = true;
+          dropUnconfirmed(token, predicted, new Set(answer.result.changes.map((c) => c.task_id)));
+        } finally {
+          if (ok) held.ok();
+          else held.cancel();
+          requestRuleFeedback(startedAt);
+        }
+      });
+    },
+    [notify, report],
+  );
+
   const dialog = prompt ? <ShiftDialog prompt={prompt} /> : null;
-  return { changeDates, changeMany, pending, dialog };
+  return { changeDates, changeMany, moveWith, pending, dialog };
 }
 
 // The Ask me prompt: later and earlier the same way — one list of what would move, each with a

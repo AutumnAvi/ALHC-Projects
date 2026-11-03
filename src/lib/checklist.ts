@@ -25,6 +25,10 @@ export const CHECKED_MODE_OPTIONS: { value: CheckedMode; label: string; descript
 // How long a ticked row stays where it is before it moves (so a mis-tap can be caught), in ms.
 export const SETTLE_MS = 1000;
 
+// The pending-create scope of the quick add (My tasks and Home's Today card): a task typed into the bar
+// shows in its date group straight away, until the refreshed list has the saved one (Nov 3 notes, batch 19).
+export const QUICK_ADD_PENDING_SCOPE = "my-tasks:quick-add";
+
 // ---------------------------------------------------------------------------------------------
 // Groups
 // ---------------------------------------------------------------------------------------------

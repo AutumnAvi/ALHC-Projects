@@ -682,6 +682,8 @@ function EmailsView({
   summary: CustomizeSummary;
 }) {
   const details = useDetails(projectId);
+  // Delivery counts and the log are Admin+ (Nov 3 notes, batch 19, video 36.4: an Editor saw the heading).
+  const canManage = useProjectPermissions().canManage;
   const emailRules = summary.rules.filter((r) => r.actionTypes.includes("send_email"));
   const confirming = summary.forms.filter((f) => f.sendsConfirmation);
   return (
@@ -723,8 +725,8 @@ function EmailsView({
         Followers get an email for each new comment unless they turned it off in Settings → Notifications. These
         emails are no-reply; only a form’s submitter can answer a response by email.
       </p>
-      <SubHeading>Deliveries</SubHeading>
-      {details === "loading" ? (
+      {canManage ? <SubHeading>Deliveries</SubHeading> : null}
+      {!canManage ? null : details === "loading" ? (
         <p role="status" className="text-xs text-zinc-500">
           Loading…
         </p>

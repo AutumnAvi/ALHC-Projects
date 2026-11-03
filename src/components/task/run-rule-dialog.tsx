@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Workflow } from "lucide-react";
 import { DIALOG_LABEL, Dialog } from "@/components/dialog";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { listManualRules, runManualRule, type ManualRule, type ManualRuleStatus } from "@/lib/actions";
+import { finishRunning, startRunning } from "@/lib/rule-running";
 
 type Loaded = { rules: ManualRule[] } | { error: string } | "loading";
 
@@ -38,8 +40,10 @@ function outcomeMessage(status: ManualRuleStatus, name: string, error?: string, 
 // "Run an automation…" (the pane's "…" menu, Automations V2): pick one of the "Run manually" rules of the
 // task's projects where you're an Editor and run it on this task now. A run goes through the same
 // engine as any trigger — conditions first, then each action, logged in the rule's Activity.
-export function RunRuleDialog({ taskId, onClose }: { taskId: string; onClose: () => void }) {
+export function RunRuleDialog({ taskId, taskTitle, onClose }: { taskId: string; taskTitle?: string; onClose: () => void }) {
   const notify = useNotify();
+  const router = useRouter();
+  const [, startRefresh] = useTransition();
   const [pending, run] = useServerAction();
   const pickerId = `run-rule-${useId()}`;
   const [loaded, setLoaded] = useState<Loaded>("loading");
@@ -89,8 +93,23 @@ export function RunRuleDialog({ taskId, onClose }: { taskId: string; onClose: ()
   function submit() {
     if (!chosen) return;
     setOutcome(null);
+    // Nov 3 notes (batch 19, 141): the running indicator lists it ("Running…", then "Ran") when it takes a
+    // moment. The action answers as soon as the automation is done; the page refreshes in the background
+    // and the open pane fetches its task (task-pane-store), so the result shows without waiting on the List.
+    const key = startRunning({
+      kind: "automation",
+      ruleId: chosen.id,
+      ruleName: chosen.name,
+      projectId: chosen.projectId,
+      tasks: [{ id: taskId, title: taskTitle ?? null }],
+    });
     run(async () => {
       const result = await runManualRule(chosen.id, taskId);
+      if (result.status === "succeeded" || result.status === "scheduled") finishRunning(key, "ran", result.summary[0] ?? null);
+      else if (result.status === "conditions") finishRunning(key, "ran", "Its conditions don’t match this task");
+      else if (result.status === "skipped" || result.status === "duplicate") finishRunning(key, "ran", "Skipped");
+      else finishRunning(key, "failed", result.error ?? null);
+      if (result.status) startRefresh(() => router.refresh());
       // Refused before it ran (the rule was turned off, your role, …): the toast says why.
       if (!result.status) return result;
       if (result.status === "succeeded" || result.status === "scheduled") {

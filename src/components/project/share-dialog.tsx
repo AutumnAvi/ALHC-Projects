@@ -25,7 +25,7 @@ import {
 import type { ShareData, ShareMember, SharePerson, ShareTeam } from "@/lib/project-page";
 import { isAccessGrantRole } from "@/lib/access-requests";
 import { loadProjectShare } from "@/lib/project-page-actions";
-import { PERSON_DEFAULT_ROLE, ROLE_DESCRIPTIONS, ROLE_LABELS, assignableRoles, hasRole, isProjectRole } from "@/lib/roles";
+import { PERSON_DEFAULT_ROLE, ROLE_DESCRIPTIONS, ROLE_LABELS, assignableRoles, hasRole, isProjectRole, roleWithArticle } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
 import { ROLES_HELP_HREF } from "@/lib/role-help";
 import {
@@ -115,7 +115,7 @@ export function ShareDialog({
           ) : (
             <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
               Only project admins and owners can invite people or change access. You’re{" "}
-              {data.viewerRole === "admin" || data.viewerRole === "editor" ? "an" : "a"} {ROLE_LABELS[data.viewerRole]}{" "}
+              {roleWithArticle(ROLE_LABELS[data.viewerRole])}{" "}
               here.
             </p>
           )}

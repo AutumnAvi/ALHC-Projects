@@ -207,3 +207,26 @@ export function feedbackSince(cursor: string | null, startedAt: number, now: num
   if (cursor) return { since: cursor };
   return { within: Math.min(600, Math.ceil((now - startedAt) / 1000) + FEEDBACK_SLACK_SECONDS) };
 }
+
+// Nov 3 notes (batch 19, 141): the runs a feedback check reported, for the running indicator's list
+// ("Ran" / "Failed"). Loop-protection and limit stops stay toasts only.
+export function finishedRunsFromNotes(notes: readonly FeedbackNote[]): {
+  ruleId: string;
+  ruleName: string;
+  projectId: string;
+  tasks: { id: string; title: string | null }[];
+  taskCount: number;
+  failed: boolean;
+  detail: string | null;
+}[] {
+  const out: ReturnType<typeof finishedRunsFromNotes> = [];
+  for (const note of notes) {
+    const tasks = note.taskId ? [{ id: note.taskId, title: note.taskTitle }] : [];
+    if (note.kind === "ran") {
+      out.push({ ruleId: note.ruleId, ruleName: note.ruleName, projectId: note.projectId, tasks, taskCount: note.taskCount, failed: false, detail: ranText(note) });
+    } else if (note.stop === "failed") {
+      out.push({ ruleId: note.ruleId, ruleName: note.ruleName, projectId: note.projectId, tasks, taskCount: tasks.length, failed: true, detail: note.detail });
+    }
+  }
+  return out;
+}

@@ -20,9 +20,12 @@ import {
 import { destinationLabel } from "@/lib/slack";
 import { ParamSlot, useParamSlot } from "@/components/param-slot";
 import { SmartPicker } from "@/components/smart-picker";
+import { WorkdaysPicker } from "@/components/rules/workdays-picker";
 import { VocabPicker } from "@/components/rules/vocab-picker";
 import {
+  AFTER_APPROVAL,
   APPROVAL_DECISIONS,
+  APPROVAL_MODES,
   APPROVAL_STATUSES,
   ASSIGN_MODES,
   CREATE_LINKS,
@@ -39,6 +42,7 @@ import {
   OFFSET_UNITS,
   RANGE_OPS,
   SCHEDULE_FREQUENCIES,
+  TASK_ADDED_VIA,
   TASK_KIND_OPTIONS,
   TASK_SOURCES,
   compareOpsFor,
@@ -61,8 +65,8 @@ import {
   SectionSelect,
   inputClass,
   labelClass,
-  needsUpdate,
-  tagsHidden,
+  conditionProjects,
+  vocabDisabled,
   optionDot,
   personCompareVerb,
   ordinal,
@@ -326,6 +330,134 @@ export function RevealedSecrets({
   );
 }
 
+// Nov 3 notes (batch 19, note 145): Set task type → Approval prefills what an approval task needs — who
+// approves and how, when approval is due, what happens after approval, reminders, and who does the work
+// (rule_apply_approval_setup applies it as the automation; an approval someone already set up keeps its
+// own setup).
+function ApprovalSetupFields({
+  prefix,
+  action,
+  ctx,
+  onChange,
+}: {
+  prefix: string;
+  action: RuleAction;
+  ctx: RuleContext;
+  onChange: (next: RuleAction) => void;
+}) {
+  const due = wholeNumber(action.approval_due_days);
+  return (
+    <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-2.5 text-sm text-zinc-700" aria-label="Approval setup">
+      <p className="text-xs text-zinc-500">Set up the approval (optional; an approval someone already set up keeps its own):</p>
+      <Row>
+        <Word>Approvers</Word>
+        <ParamSlot param="approvers">
+          <PeoplePicker
+            idPrefix={`${prefix}-approvers`}
+            label="Approvers"
+            value={action.approvers}
+            ctx={ctx}
+            placeholder="choose approvers"
+            onChange={(v) => onChange(v.length ? { ...action, approvers: v.slice(0, 10) } : omit(action, "approvers"))}
+          />
+        </ParamSlot>
+        <ParamSlot param="approval_mode">
+          <SmartPicker
+            id={`${prefix}-approval-mode`}
+            label="Who must approve"
+            value={str(action.approval_mode) || "any"}
+            options={APPROVAL_MODES.map((m) => ({ ...m }))}
+            onChange={(v) => onChange({ ...action, approval_mode: v })}
+            variant="chip"
+          />
+        </ParamSlot>
+      </Row>
+      <Row>
+        <Word>Approval due</Word>
+        <ParamSlot param="approval_due_days">
+          <NumberBox
+            id={`${prefix}-approval-due`}
+            label="Approval due in how many days"
+            value={due}
+            min={0}
+            max={365}
+            placeholder="–"
+            onCommit={(n) => onChange(n === null ? omit(action, "approval_due_days", "approval_business_days") : { ...action, approval_due_days: Math.min(Math.max(n, 0), 365) })}
+          />
+        </ParamSlot>
+        <label className="flex items-center gap-1.5 text-sm text-zinc-700">
+          <input
+            type="checkbox"
+            checked={action.approval_business_days === true}
+            disabled={due === null}
+            onChange={(e) =>
+              onChange(e.currentTarget.checked ? { ...action, approval_business_days: true } : omit(action, "approval_business_days"))
+            }
+            className="size-4 rounded border-zinc-300"
+          />
+          business days
+        </label>
+        {action.approval_business_days === true && due !== null ? (
+          <WorkdaysPicker
+            id={`${prefix}-approval-workdays`}
+            step={action}
+            scope="project"
+            orgWorkWeek={normalizeWorkWeek(ctx.workWeek ?? DEFAULT_WORK_WEEK)}
+            onChange={(next) => onChange(next as RuleAction)}
+          />
+        ) : null}
+        <Word>after it becomes an approval (empty = no due date)</Word>
+      </Row>
+      <Row>
+        <Word>After approval</Word>
+        <ParamSlot param="after_approval">
+          <SmartPicker
+            id={`${prefix}-after-approval`}
+            label="After approval"
+            value={str(action.after_approval) || "complete"}
+            options={AFTER_APPROVAL.map((m) => ({ ...m }))}
+            onChange={(v) => onChange(v === "move_section" ? { ...action, after_approval: v } : { ...omit(action, "after_section_id"), after_approval: v })}
+            variant="chip"
+          />
+        </ParamSlot>
+        {action.after_approval === "move_section" ? (
+          <ParamSlot param="after_section_id">
+            <SectionSelect
+              id={`${prefix}-after-section`}
+              label="Section after approval"
+              value={action.after_section_id}
+              ctx={ctx}
+              onChange={(v) => onChange({ ...action, after_section_id: v })}
+            />
+          </ParamSlot>
+        ) : null}
+        <label className="flex items-center gap-1.5 text-sm text-zinc-700">
+          <input
+            type="checkbox"
+            checked={action.reminders !== false}
+            onChange={(e) => onChange(e.currentTarget.checked ? omit(action, "reminders") : { ...action, reminders: false })}
+            className="size-4 rounded border-zinc-300"
+          />
+          Remind approvers
+        </label>
+      </Row>
+      <Row>
+        <Word>Who does the work</Word>
+        <ParamSlot param="assignee">
+          <PersonSelect
+            id={`${prefix}-approval-assignee`}
+            label="Who does the work"
+            value={action.assignee}
+            ctx={ctx}
+            allowNone="keep the assignee"
+            onChange={(v) => onChange(v ? { ...action, assignee: v } : omit(action, "assignee"))}
+          />
+        </ParamSlot>
+      </Row>
+    </div>
+  );
+}
+
 // The trigger's own settings (which section, field, option, days, decisions, endpoint, or form).
 export function TriggerFields({
   prefix,
@@ -351,6 +483,34 @@ export function TriggerFields({
     onChange(next);
   }
   switch (triggerType) {
+    // Nov 3 notes (batch 19, 37.8): added in any way, or by an Asana import.
+    case "task_created":
+      return (
+        <ParamSlot param="via">
+          <SmartPicker
+            id={`${prefix}-trigger-via`}
+            label="How it’s added"
+            value={triggerConfig.via === "import" ? "import" : "any"}
+            options={TASK_ADDED_VIA.map((v) => ({ ...v }))}
+            onChange={(v) => setConfig({ via: v === "import" ? "import" : undefined })}
+            variant="chip"
+          />
+        </ParamSlot>
+      );
+    // Batch 19 (37.1): "Task assigned to me / someone" (none picked = any change of assignee).
+    case "assignee_changed":
+      return (
+        <ParamSlot param="to">
+          <PeoplePicker
+            idPrefix={`${prefix}-trigger-to`}
+            label="Assigned to"
+            value={triggerConfig.to}
+            ctx={ctx}
+            placeholder="to anyone (or nobody)"
+            onChange={(v) => setConfig({ to: v.length ? v : undefined })}
+          />
+        </ParamSlot>
+      );
     case "section_changed":
       return (
         <ParamSlot param="section_id">
@@ -400,7 +560,7 @@ export function TriggerFields({
             options={UNBLOCK_KINDS.map((k) => ({ ...k }))}
             onChange={(next) => setConfig({ kinds: next.length ? next : undefined })}
             variant="chip"
-            placeholder="any dependency"
+            placeholder="choose which dependencies"
             renderValue={(chosen) => (chosen.length ? <span>by {chosen.map((c) => c.label).join(" or ")} dependencies</span> : undefined)}
           />
   
@@ -484,7 +644,7 @@ export function TriggerFields({
             options={APPROVAL_DECISIONS.map((d) => ({ value: d.value, label: d.label }))}
             onChange={(next) => setConfig({ statuses: next.length ? next : undefined })}
             variant="chip"
-            placeholder="any decision"
+            placeholder="choose decisions"
             renderValue={(chosen) => (chosen.length ? <span>as {chosen.map((c) => c.label.toLowerCase()).join(" or ")}</span> : undefined)}
           />
   
@@ -589,7 +749,9 @@ function OffsetFields({
   }
   const tail =
     triggerType === "due_approaching"
-      ? "before it’s due"
+      ? unit === "days" && shown === 0
+        ? "before it’s due (on the due date)"
+        : "before it’s due"
       : triggerType === "start_approaching"
         ? "before it starts"
         : overdue
@@ -781,7 +943,7 @@ export function ConditionFields({
         kind="condition"
         label="Condition"
         value={condition.type}
-        options={vocabOptions(CONDITIONS, { disabled: needsUpdate(ctx), hidden: tagsHidden(ctx, [condition.type]) })}
+        options={vocabOptions(CONDITIONS, { disabled: vocabDisabled(ctx, [condition.type]) })}
         onChange={(v) => onChange(conditionDefaultsFor(v as ConditionType))}
         variant="chip"
         searchable
@@ -1051,6 +1213,29 @@ function V2ConditionFields({
         </>
       );
     }
+    // Nov 3 notes (batch 19, 39.3): the task is (or isn't) in projects you can open.
+    case "in_project":
+    case "not_in_project": {
+      const ids = (Array.isArray(condition.project_ids) ? condition.project_ids : typeof condition.project_ids === "string" ? [condition.project_ids] : [])
+        .filter((v): v is string => typeof v === "string");
+      const projects = conditionProjects(ctx);
+      return (
+        <ParamSlot param="project_ids">
+          <SmartPicker
+            multiple
+            id={`${prefix}-projects`}
+            label="Projects"
+            value={ids}
+            options={projects.map((p) => ({ value: p.id, label: p.name, icon: <FolderClosed className="size-4" /> }))}
+            onChange={(v) => onChange(v.length ? { ...condition, project_ids: v } : omit(condition, "project_ids"))}
+            variant="chip"
+            searchable
+            placeholder="choose projects"
+            emptyText={projects.length ? "No project matches" : "No other projects you can open"}
+          />
+        </ParamSlot>
+      );
+    }
     case "section_is_one_of":
     case "section_is_none_of": {
       const ids = Array.isArray(condition.section_ids) ? condition.section_ids.filter((v): v is string => typeof v === "string") : [];
@@ -1282,7 +1467,7 @@ export const INLINE_ACTION_TYPES: ReadonlySet<string> = new Set([
   "convert_to_project",
 ]);
 // Of those, the ones with more settings below the line too (part = block).
-export const INLINE_AND_BLOCK_ACTION_TYPES: ReadonlySet<string> = new Set(["request_approval", "set_description", "create_task", "convert_to_project"]);
+export const INLINE_AND_BLOCK_ACTION_TYPES: ReadonlySet<string> = new Set(["request_approval", "set_description", "create_task", "convert_to_project", "set_task_type"]);
 
 // An action's settings. The sentence builder draws short ones on the action's line (part = inline: a
 // section, a field and its value, a person, hours) and the rest below it (part = block: messages,
@@ -1510,21 +1695,32 @@ export function ActionFields({
     case "reopen_task":
     case "remove_from_project":
       return null;
-    case "set_task_type":
-      return !inline ? null : (
+    case "set_task_type": {
+      const kind = (
         <ParamSlot param="kind">
           <SmartPicker
             id={`${prefix}-set-kind`}
             label="Task type"
             value={str(action.kind) || null}
             options={TASK_KIND_OPTIONS.map((k) => ({ value: k.value, label: k.label.toLowerCase() }))}
-            onChange={(v) => onChange({ ...action, kind: v })}
+            // Nov 3 notes (batch 19, note 145): the approval's setup only goes with Approval.
+            onChange={(v) => onChange(v === "approval" ? { ...action, kind: v } : { type: action.type, kind: v })}
             variant="chip"
             placeholder="choose a task type"
             renderValue={(chosen) => (chosen[0] ? <span>to {chosen[0].label}</span> : undefined)}
           />
         </ParamSlot>
       );
+      const setup = action.kind === "approval" ? <ApprovalSetupFields prefix={prefix} action={action} ctx={ctx} onChange={onChange} /> : null;
+      if (part === "inline") return kind;
+      if (part === "block") return setup;
+      return (
+        <div className="space-y-2">
+          {kind}
+          {setup}
+        </div>
+      );
+    }
     case "set_description": {
       const mode = (
           <ParamSlot param="mode">
@@ -1855,6 +2051,15 @@ function CreateTaskFields({
               onChange={(v) => onChange({ ...action, business_days: v === "business" })}
               variant="chip"
             />
+            {action.business_days === true ? (
+              <WorkdaysPicker
+                id={`${prefix}-create-due-workdays`}
+                step={action}
+                scope="project"
+                orgWorkWeek={normalizeWorkWeek(ctx.workWeek ?? DEFAULT_WORK_WEEK)}
+                onChange={(next) => onChange(next as RuleAction)}
+              />
+            ) : null}
           </>
         ) : null}
       </Row>
@@ -2040,6 +2245,15 @@ function SetDateFields({
               variant="chip"
             />
           </span>
+          {business ? (
+            <WorkdaysPicker
+              id={`${prefix}-date-workdays`}
+              step={action}
+              scope="project"
+              orgWorkWeek={workWeek}
+              onChange={(next) => onChange(next as RuleAction)}
+            />
+          ) : null}
           {unit === "hours" ? (
             <Word>from now</Word>
           ) : (

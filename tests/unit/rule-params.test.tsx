@@ -149,7 +149,9 @@ function sample(system: RuleSystem, step: RuleStep, p: RuleParam): Sample {
     case "endpoint":
       return { value: "ep-1", shows: "Zapier" };
     case "project":
-      return system === "my_tasks" ? { value: ["mp-1"], shows: "Website" } : { value: "proj-2", shows: "Production" };
+      if (system === "my_tasks") return { value: ["mp-1"], shows: "Website" };
+      // "Is in project" (batch 19) takes a list.
+      return p.key === "project_ids" ? { value: ["proj-2"], shows: "Production" } : { value: "proj-2", shows: "Production" };
     case "task_template":
       return { value: "tt-1", shows: "Checklist" };
     case "project_template":
@@ -192,6 +194,13 @@ const BEFORE: Record<string, Record<string, Json>> = {
   "project.action.add_to_project.section_id": { project_id: "proj-2" },
   "project.action.move_to_project.section_id": { project_id: "proj-2" },
   "project.action.set_description.text": { mode: "append" },
+  // Batch 19 (note 145): the approval's setup applies to approvals; the section to "move it to a section".
+  "project.action.set_task_type.approvers": { kind: "approval" },
+  "project.action.set_task_type.approval_mode": { kind: "approval" },
+  "project.action.set_task_type.approval_due_days": { kind: "approval" },
+  "project.action.set_task_type.after_approval": { kind: "approval" },
+  "project.action.set_task_type.after_section_id": { kind: "approval", after_approval: "move_section" },
+  "project.action.set_task_type.assignee": { kind: "approval" },
   "portfolio.condition.date_compare.to": { op: "between" },
   "portfolio.action.set_due_date.date": { mode: "date" },
 };
@@ -413,7 +422,8 @@ test("stepProblems says, in plain English, what a step still needs", () => {
   assert.deepEqual(stepProblems({ type: "delay", hours: 0 }, action), ["Enter how many hours to wait: from 0.1 to 720"]);
   // An optional list emptied out is refused by the database: say so.
   const trigger: StepScope = { system: "project", kind: "trigger" };
-  assert.deepEqual(stepProblems({ type: "task_unblocked" }, trigger), []);
+  // Batch 19 (37.6): the kinds are picked before saving.
+  assert.deepEqual(stepProblems({ type: "task_unblocked" }, trigger), ["Choose which dependencies"]);
   assert.deepEqual(stepProblems({ type: "task_unblocked", kinds: [] }, trigger), ["Choose which dependencies"]);
   // "any section" arrives with Automations V3's database update.
   assert.deepEqual(stepProblems({ type: "section_changed" }, trigger), []);
@@ -466,9 +476,10 @@ test("Avi's case: Set task type shows its picker, asks for a type, and holds Sav
 
 test("the other three pickers that drew nothing show their placeholders", () => {
   const unblocked = slotHtml(renderBuilder("project", "trigger", { type: "task_unblocked" }), "kinds");
-  assert.match(unblocked ?? "", /any dependency/);
+  // Batch 19 (37.5 / 37.6): both are required now; the empty picker says what to choose.
+  assert.match(unblocked ?? "", /choose which dependencies/);
   const decided = slotHtml(renderBuilder("project", "trigger", { type: "approval_decided" }), "statuses");
-  assert.match(decided ?? "", /any decision/);
+  assert.match(decided ?? "", /choose decisions/);
   const status = slotHtml(renderBuilder("portfolio", "trigger", { type: "status_changed" }), "statuses");
   assert.match(status ?? "", /any status/);
 });
@@ -524,8 +535,8 @@ function pick(system: RuleSystem, kind: StepKind, step: RuleStep, key: string, v
 // One step per editor kind (and each builder's own number / text boxes).
 const EDITOR_CASES: { system: RuleSystem; kind: StepKind; step: RuleStep; key: string; value: unknown; placeholder: RegExp; shows: string }[] = [
   { system: "project", kind: "action", step: { type: "set_task_type" }, key: "kind", value: "milestone", placeholder: /choose a task type/, shows: "milestone" },
-  { system: "project", kind: "trigger", step: { type: "task_unblocked" }, key: "kinds", value: ["start_to_start"], placeholder: /any dependency/, shows: "Start → start" },
-  { system: "project", kind: "trigger", step: { type: "approval_decided" }, key: "statuses", value: ["rejected"], placeholder: /any decision/, shows: "rejected" },
+  { system: "project", kind: "trigger", step: { type: "task_unblocked" }, key: "kinds", value: ["start_to_start"], placeholder: /choose which dependencies/, shows: "Start → start" },
+  { system: "project", kind: "trigger", step: { type: "approval_decided" }, key: "statuses", value: ["rejected"], placeholder: /choose decisions/, shows: "rejected" },
   { system: "project", kind: "action", step: { type: "move_section" }, key: "section_id", value: "s-design", placeholder: /choose section/, shows: "Design" },
   { system: "project", kind: "condition", step: { type: "section_is_one_of" }, key: "section_ids", value: ["s-intake"], placeholder: /choose sections/, shows: "Intake" },
   { system: "project", kind: "condition", step: { type: "field_is_set" }, key: "field_id", value: "f-channel", placeholder: /choose field/, shows: "Channel" },

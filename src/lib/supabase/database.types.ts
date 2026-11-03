@@ -3056,6 +3056,7 @@ export type Database = {
           expanded_task_ids: string[];
           my_tasks_checked: string;
           date_prompt_dismissed: string[];
+          work_week: number[] | null;
           created_at: string;
           updated_at: string;
         };
@@ -3068,6 +3069,7 @@ export type Database = {
           expanded_task_ids?: string[];
           my_tasks_checked?: string;
           date_prompt_dismissed?: string[];
+          work_week?: number[] | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -3080,6 +3082,7 @@ export type Database = {
           expanded_task_ids?: string[];
           my_tasks_checked?: string;
           date_prompt_dismissed?: string[];
+          work_week?: number[] | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -6732,6 +6735,18 @@ export type Database = {
         Args: { parent_task: string; task_title: string; before_task?: string | null };
         Returns: string;
       };
+      create_subtask_blocking_parent: {
+        Args: { parent_task: string; task_title: string; before_task?: string | null };
+        Returns: string;
+      };
+      search_word_patterns: {
+        Args: { query: string };
+        Returns: string[];
+      };
+      set_my_work_week: {
+        Args: { days: number[] | null };
+        Returns: number[] | null;
+      };
       place_subtask: {
         Args: { target_task: string; before_task?: string | null; new_parent?: string | null };
         Returns: undefined;
@@ -6818,6 +6833,21 @@ export type Database = {
       apply_dependency_shifts: {
         Args: { moves: Json; confirmed_tasks?: string[]; pull_earlier?: boolean };
         Returns: Json;
+      };
+      // Nov 3 notes (batch 19, 148): Shift + drag on the Timeline.
+      preview_dependency_move_along: {
+        Args: { moves: Json };
+        Returns: {
+          task_id: string;
+          title: string;
+          start_on: string | null;
+          due_on: string | null;
+          new_start: string | null;
+          new_due: string | null;
+          shift_days: number;
+          status: string;
+          reason: string | null;
+        }[];
       };
       create_private_task: {
         Args: { task_title: string };

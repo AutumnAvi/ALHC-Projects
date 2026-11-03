@@ -3,12 +3,20 @@
 import type { Tag } from "@/lib/tags";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useRef, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
-import { Inbox, Route, Spline } from "lucide-react";
+import { Inbox, Keyboard, Route, Spline } from "lucide-react";
 import { displayName } from "@/components/avatar";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useDependencyShift } from "@/components/task/dependency-shift";
-import { planDependencyShifts } from "@/lib/dependency-plan";
-import type { DependencyShiftMode } from "@/lib/dependencies";
+import {
+  TIMELINE_DRAG_KEYS,
+  dependentCount,
+  planDependencyShifts,
+  planMoveAlong,
+  timelineDragHint,
+  timelineDragHow,
+  type TimelineDragHow,
+} from "@/lib/dependency-plan";
+import { DEPENDENCY_SHIFT_OPTIONS, type DependencyShiftMode, type ShiftMove } from "@/lib/dependencies";
 import { DEFAULT_WORK_WEEK } from "@/lib/workdays";
 import { EMPTY_CRITICAL_PATH, slackLabel, type CriticalPath, type TaskSchedule } from "@/lib/critical-path";
 import { dependencyConflict, fromPredecessorStart, toSuccessorFinish } from "@/lib/dependencies";
@@ -65,8 +73,10 @@ type Props = {
   today?: string | null;
   anchor?: string | null;
   zoom?: Zoom;
-  // Nov 2 notes (batch 16, 125): the project's Settings → Dependencies and the workspace's workweek, so
-  // Auto-shift moves dependents on screen at once (planDependencyShifts; the database's answer wins).
+  // Nov 2 notes (batch 16, 125): the project's Settings → Dependencies and the workspace's workweek. Since
+  // Nov 3 notes (batch 19, 148) Timeline drags pick what dependents do with keys (timelineDragHow) instead
+  // of the setting, which still applies to date changes elsewhere (named in the hint); the workweek plans
+  // the dependents drawn while dragging and right after the drop (the database's answer wins).
   shiftMode?: DependencyShiftMode | null;
   workWeek?: readonly number[];
 };
@@ -113,12 +123,17 @@ export function TimelineView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 720 });
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  // Nov 3 notes (batch 19, 148): the bar being dragged, how far, and the keys held — the dependents that
+  // would move are drawn where they'd go, and the arrows follow.
+  const [dragState, setDragState] = useState<BarDrag | null>(null);
   const trayDrag = useRef<{ taskId: string; originX: number; originY: number; moved: boolean } | null>(null);
   const suppressTrayClick = useRef(false);
   // Oct 26 notes (batch 4): Draw dependencies. While it's on, dragging from one task (its bar or its row)
   // to another makes the second one blocked by the first (finish-to-start); Esc or the button stops it.
   const contentRef = useRef<HTMLDivElement>(null);
   const [linking, setLinking] = useState(false);
+  // Nov 3 notes (batch 19, 148): the drag keys legend under the toolbar.
+  const [showKeys, setShowKeys] = useState(false);
   const [link, setLink] = useState<{ fromId: string; x1: number; y1: number; x2: number; y2: number; overId: string | null } | null>(null);
   const [, runLink] = useServerAction();
   const notify = useNotify();
@@ -222,27 +237,34 @@ export function TimelineView({
     }
   }
 
-  // Moving a task (later or earlier) moves the tasks that depend on it as the project's Settings →
-  // Dependencies says (Auto-shift, Ask me, or Off); the bar moves at once (useDependencyShift).
-  function reschedule(task: ProjectTask, dates: Dates) {
+  // What the page knows, for planning the dependents drawn while dragging and right after the drop.
+  function planTasks() {
+    return new Map(
+      optimisticTasks.map((t) => [
+        t.id,
+        { id: t.id, title: t.title, startOn: t.startOn, dueOn: t.dueOn, kind: t.kind, completed: Boolean(t.completedAt), canEdit },
+      ]),
+    );
+  }
+
+  function planFor(moves: ShiftMove[], how: TimelineDragHow) {
+    if (how === "only") return [];
+    const live = dependencies.filter((d) => !removedDeps.has(d.id));
+    return how === "along"
+      ? planMoveAlong({ tasks: planTasks(), links: live, moves, workWeek })
+      : planDependencyShifts({ tasks: planTasks(), links: live, moves, pullEarlier: false, workWeek });
+  }
+
+  // Nov 3 notes (batch 19, 148): on the Timeline the keys held when the bar is dropped decide what the tasks
+  // that depend on it do — a plain drag moves only this task, Shift moves them along by the same amount, Alt
+  // pushes them only as far as their links need (timelineDragHow). The bar moves at once; the database's
+  // answer wins.
+  function reschedule(task: ProjectTask, dates: Dates, how: TimelineDragHow) {
     if (task.startOn === dates.startOn && task.dueOn === dates.dueOn) return;
-    shift.changeDates(task, dates, {
+    shift.moveWith(task, dates, how, {
       onOptimistic: (moves) => moves.forEach((m) => applyChange({ type: "dates", ...m })),
       projectId,
-      mode: shiftMode,
-      localPlan: (moves, pullEarlier) =>
-        planDependencyShifts({
-          tasks: new Map(
-            optimisticTasks.map((t) => [
-              t.id,
-              { id: t.id, title: t.title, startOn: t.startOn, dueOn: t.dueOn, kind: t.kind, completed: Boolean(t.completedAt), canEdit },
-            ]),
-          ),
-          links: dependencies,
-          moves,
-          pullEarlier,
-          workWeek,
-        }),
+      planFor,
     });
   }
 
@@ -301,10 +323,31 @@ export function TimelineView({
       (slot.top + slot.height >= viewTop && slot.top <= viewBottom),
   );
   const tasksById = new Map(optimisticTasks.map((t) => [t.id, t] as const));
+  // While a bar is dragged: where it would go, and where its dependents would go with the keys held.
+  const dragged = dragState ? tasksById.get(dragState.taskId) : undefined;
+  const dragDates = dragged && dragState && dragState.delta !== 0 ? draggedDates(dragged, dragState.mode, dragState.delta) : null;
+  const previews = new Map<string, Dates>();
+  if (dragged && dragState && dragDates) {
+    try {
+      for (const row of planFor([{ taskId: dragged.id, ...dragDates }], dragState.how)) {
+        if (row.status === "move") previews.set(row.taskId, { startOn: row.newStart, dueOn: row.newDue });
+      }
+    } catch {
+      previews.clear();
+    }
+  }
+  const dependents = dragged ? dependentCount(dragged.id, dependencies.filter((d) => !removedDeps.has(d.id))) : 0;
+  const placed = (task: ProjectTask): ProjectTask => {
+    if (dragDates && task.id === dragged?.id) return { ...task, ...dragDates };
+    const preview = previews.get(task.id);
+    return preview ? { ...task, ...preview } : task;
+  };
   const arrows = dependencies.flatMap((dep) => {
     if (removedDeps.has(dep.id)) return [];
-    const pred = tasksById.get(dep.predecessorId);
-    const succ = tasksById.get(dep.successorId);
+    const predTask = tasksById.get(dep.predecessorId);
+    const succTask = tasksById.get(dep.successorId);
+    const pred = predTask ? placed(predTask) : undefined;
+    const succ = succTask ? placed(succTask) : undefined;
     const y1 = rowCenter.get(dep.predecessorId);
     const y2 = rowCenter.get(dep.successorId);
     if (!pred || !succ || y1 === undefined || y2 === undefined) return [];
@@ -438,7 +481,7 @@ export function TimelineView({
         if (drag?.moved) {
           suppressTrayClick.current = true;
           const index = dayAt(e.clientX, e.clientY);
-          if (index !== null) reschedule(task, { startOn: null, dueOn: addDays(start, index) });
+          if (index !== null) reschedule(task, { startOn: null, dueOn: addDays(start, index) }, timelineDragHow(e));
         }
         setTrayDragging(null);
         setDropDay(null);
@@ -460,7 +503,7 @@ export function TimelineView({
   return (
     <div className={VIEW_BODY} aria-busy={navigating}>
       {shift.dialog}
-      <div className={`flex min-w-0 flex-1 flex-col ${navigating ? "opacity-60 transition-opacity" : ""}`}>
+      <div className={`relative flex min-w-0 flex-1 flex-col ${navigating ? "opacity-60 transition-opacity" : ""}`}>
         <PeriodNav
           label={label}
           prevLabel={`Earlier (${zoom})`}
@@ -470,6 +513,18 @@ export function TimelineView({
           onToday={() => navigate({ d: null })}
         >
           <div className="flex items-center gap-2">
+            {canEdit ? (
+              <button
+                type="button"
+                aria-pressed={showKeys}
+                aria-label="Drag keys"
+                onClick={() => setShowKeys(!showKeys)}
+                data-tooltip="Drag: only this task · Shift+drag: its dependents move along · Alt+drag: they're pushed only as needed · Esc: cancel"
+                className={`btn-icon ${showKeys ? "bg-zinc-100 text-zinc-900" : ""}`}
+              >
+                <Keyboard className="size-4" aria-hidden />
+              </button>
+            ) : null}
             {canEdit ? (
               <button
                 type="button"
@@ -507,6 +562,25 @@ export function TimelineView({
             <Segmented label="Timeline scale" options={ZOOMS} value={zoom} onChange={(z) => navigate({ tl: z })} />
           </div>
         </PeriodNav>
+        {showKeys && canEdit ? (
+          <div className="mb-2 rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-xs text-zinc-600" role="note" aria-label="Drag keys">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+              {TIMELINE_DRAG_KEYS.map((k) => (
+                <div key={k.keys} className="contents">
+                  <dt>
+                    <kbd className="rounded border border-zinc-300 bg-zinc-50 px-1 font-sans text-2xs text-zinc-700">{k.keys}</kbd>
+                  </dt>
+                  <dd>{k.what}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-1.5 text-zinc-500">
+              Hold the key when you let go (you can press or release it while dragging; the tasks that would move are
+              outlined). On the Timeline the keys decide; elsewhere date changes follow this project’s Settings →
+              Dependencies{shiftMode ? ` (${DEPENDENCY_SHIFT_OPTIONS[shiftMode].label})` : ""}.
+            </p>
+          </div>
+        ) : null}
         {linking ? (
           <p className="mb-2 rounded-md bg-accent-50 px-2.5 py-1.5 text-xs text-accent-900" role="status">
             Drawing dependencies: drag from a task (its bar or its row) to the task that has to wait for it. The second
@@ -647,9 +721,11 @@ export function TimelineView({
                   schedule={criticalPath.tasks[slot.task.id]}
                   assignee={slot.task.assigneeId ? profilesById.get(slot.task.assigneeId) : undefined}
                   seed={() => seeds.task(slot.task!)}
-                  onCommit={(dates) => reschedule(slot.task!, dates)}
+                  preview={previews.get(slot.task.id) ?? null}
+                  onCommit={(dates, how) => reschedule(slot.task!, dates, how)}
                   onReveal={(date) => navigate({ d: date })}
                   onDragging={setDraggedId}
+                  onDragChange={setDragState}
                 />
               ) : null,
             )}
@@ -683,11 +759,21 @@ export function TimelineView({
             ) : null}
           </div>
         </div>
+        {dragState && dragged ? (
+          <p
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute bottom-12 left-1/2 z-40 w-max max-w-[min(90%,40rem)] -translate-x-1/2 rounded-md bg-zinc-900/90 px-3 py-1.5 text-center text-xs text-white shadow-lg"
+          >
+            {timelineDragHint(dragState.how, dependents, previews.size)}
+          </p>
+        ) : null}
         <p className={VIEW_HINT}>
           Bars run from start to due date; diamonds are milestones on their due day. Drag a bar or diamond to move
           it, drag either end of a bar to change its start or due date, or drag an unscheduled task onto a day to
-          give it a due date. Arrows link a task to the one waiting on it
-          (red when the waiting task starts before the first one is due).
+          give it a due date. A drag moves only that task: hold Shift to move the tasks that depend on it along by
+          the same amount, or Alt (Option) to push them only as far as their links need; Esc cancels. Arrows link a
+          task to the one waiting on it (red when the waiting task starts before the first one is due).
           {canEdit ? " Draw dependencies lets you drag from one task to another to link them." : ""}
         </p>
       </div>
@@ -885,9 +971,11 @@ function TimelineRow({
   schedule,
   assignee,
   seed,
+  preview,
   onCommit,
   onReveal,
   onDragging,
+  onDragChange,
 }: {
   top: number;
   task: ProjectTask;
@@ -905,9 +993,12 @@ function TimelineRow({
   schedule: TaskSchedule | undefined;
   assignee: Profile | undefined;
   seed: () => TaskSeed;
-  onCommit: (dates: Dates) => void;
+  // Where this task would go with the bar being dragged elsewhere (its dependents move with it).
+  preview: Dates | null;
+  onCommit: (dates: Dates, how: TimelineDragHow) => void;
   onReveal: (date: string) => void;
   onDragging: (taskId: string | null) => void;
+  onDragChange: (drag: BarDrag | null) => void;
 }) {
   const completed = Boolean(task.completedAt);
   const overdue = isOverdue(task.dueOn, today, completed);
@@ -959,16 +1050,20 @@ function TimelineRow({
           canEdit={canEdit}
           schedule={schedule}
           highlight={showCritical ? (schedule?.critical ? "critical" : "dim") : null}
+          preview={preview}
           onCommit={onCommit}
           onReveal={onReveal}
           onDragging={(active) => onDragging(active ? task.id : null)}
+          onDragChange={(drag) => onDragChange(drag ? { taskId: task.id, ...drag } : null)}
         />
       </div>
     </div>
   );
 }
 
-type Drag = { mode: DragMode; delta: number; moved: boolean };
+type Drag = { mode: DragMode; delta: number; moved: boolean; how: TimelineDragHow };
+// What the view knows about the bar being dragged (Nov 3 notes, batch 19, 148).
+type BarDrag = { taskId: string; mode: DragMode; delta: number; how: TimelineDragHow };
 
 function TimelineBar({
   task,
@@ -981,9 +1076,11 @@ function TimelineBar({
   canEdit,
   schedule,
   highlight,
+  preview = null,
   onCommit,
   onReveal,
   onDragging,
+  onDragChange,
 }: {
   task: ProjectTask;
   seed: () => TaskSeed;
@@ -995,20 +1092,72 @@ function TimelineBar({
   canEdit: boolean;
   schedule: TaskSchedule | undefined;
   highlight: "critical" | "dim" | null;
-  onCommit: (dates: Dates) => void;
+  preview?: Dates | null;
+  onCommit: (dates: Dates, how: TimelineDragHow) => void;
   onReveal: (date: string) => void;
   onDragging?: (active: boolean) => void;
+  onDragChange?: (drag: Omit<BarDrag, "taskId"> | null) => void;
 }) {
   const [drag, setDrag] = useState<Drag | null>(null);
   // Pointer-up can arrive before React renders the last move, so the gesture is tracked outside state.
-  const gesture = useRef<{ mode: DragMode; originX: number; moved: boolean } | null>(null);
+  const gesture = useRef<{
+    mode: DragMode;
+    originX: number;
+    lastX: number;
+    moved: boolean;
+    how: TimelineDragHow;
+    el: HTMLElement;
+    pointerId: number;
+  } | null>(null);
   const suppressClick = useRef(false);
-  const shown = drag && drag.delta !== 0 ? draggedDates(task, drag.mode, drag.delta) : task;
+  const published = useRef<string | null>(null);
+  const shown = drag && drag.delta !== 0 ? draggedDates(task, drag.mode, drag.delta) : preview ? { ...task, ...preview } : task;
   const span = spanOf(shown)!;
   const from = daysBetween(windowStart, span.start);
   const to = daysBetween(windowStart, span.end);
   const completed = Boolean(task.completedAt);
+  // Moving with the bar being dragged (Shift / Alt): drawn where it would go, outlined.
+  const moving = !drag && preview !== null;
+  const outline = moving
+    ? "outline-2 outline-dashed outline-offset-1 outline-accent-700"
+    : highlight === "critical"
+      ? "outline-2 outline-offset-1 outline-zinc-900"
+      : "";
+  const faded = highlight === "dim" && !moving ? "opacity-35" : "";
 
+  // While dragging: Shift / Alt can be pressed or let go without moving the pointer, and Esc cancels.
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    function onKey(e: KeyboardEvent) {
+      const g = gesture.current;
+      if (!g) return;
+      if (e.type === "keydown" && e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        try {
+          g.el.releasePointerCapture(g.pointerId);
+        } catch {
+          // Already released.
+        }
+        // The click that follows letting go must not open the task.
+        suppressClick.current = g.moved;
+        cancel();
+        return;
+      }
+      if (e.key === "Shift" || e.key === "Alt") {
+        // Alt alone would focus the browser's menu bar on some systems.
+        if (e.key === "Alt") e.preventDefault();
+        publish(track(g.lastX, e));
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKey, true);
+    };
+  });
   if (!drag && (to < 0 || from >= days)) {
     const before = to < 0;
     // Sticky inside the full-width row so the button stays visible at the scrolled edge.
@@ -1041,49 +1190,67 @@ function TimelineBar({
         ? "bg-red-500 text-white"
         : "bg-accent-500 text-white";
 
+  function publish(next: Drag | null) {
+    setDrag((prev) =>
+      prev && next && prev.delta === next.delta && prev.moved === next.moved && prev.how === next.how ? prev : next,
+    );
+    // The view redraws the dependents only when what it shows changes.
+    const key = next && next.moved ? `${next.mode} ${next.delta} ${next.how}` : null;
+    if (key === published.current) return;
+    published.current = key;
+    onDragChange?.(next && next.moved ? { mode: next.mode, delta: next.delta, how: next.how } : null);
+  }
+
   function onPointerDown(e: PointerEvent<HTMLAnchorElement>) {
+    suppressClick.current = false;
     if (e.button !== 0 || !canEdit) return;
     const edge = (e.target as HTMLElement).dataset.edge;
     const mode: DragMode = task.kind !== "milestone" && (edge === "start" || edge === "end") ? edge : "move";
     e.currentTarget.setPointerCapture(e.pointerId);
-    gesture.current = { mode, originX: e.clientX, moved: false };
-    setDrag({ mode, delta: 0, moved: false });
+    const how = timelineDragHow(e);
+    gesture.current = { mode, originX: e.clientX, lastX: e.clientX, moved: false, how, el: e.currentTarget, pointerId: e.pointerId };
+    publish({ mode, delta: 0, moved: false, how });
     onDragging?.(true);
   }
 
-  function track(clientX: number) {
+  function track(clientX: number, keys?: { shiftKey: boolean; altKey: boolean }): Drag {
     const g = gesture.current!;
+    g.lastX = clientX;
+    if (keys) g.how = timelineDragHow(keys);
     const dx = clientX - g.originX;
     g.moved = g.moved || Math.abs(dx) > 3;
-    return { mode: g.mode, delta: Math.round(dx / dayWidth), moved: g.moved };
+    return { mode: g.mode, delta: Math.round(dx / dayWidth), moved: g.moved, how: g.how };
   }
 
   function onPointerMove(e: PointerEvent<HTMLAnchorElement>) {
     if (!gesture.current) return;
-    const next = track(e.clientX);
-    setDrag((prev) => (prev && prev.delta === next.delta && prev.moved === next.moved ? prev : next));
+    publish(track(e.clientX, e));
   }
 
   function onPointerUp(e: PointerEvent<HTMLAnchorElement>) {
     if (!gesture.current) return;
-    const { mode, delta, moved } = track(e.clientX);
+    const { mode, delta, moved, how } = track(e.clientX, e);
     gesture.current = null;
     if (moved) suppressClick.current = true;
-    if (delta !== 0) onCommit(draggedDates(task, mode, delta));
-    setDrag(null);
+    if (delta !== 0) onCommit(draggedDates(task, mode, delta), how);
+    publish(null);
     onDragging?.(false);
   }
 
-  const cancel = () => {
+  function cancel() {
     gesture.current = null;
-    setDrag(null);
+    publish(null);
     onDragging?.(false);
-  };
+  }
+
   const suppress = (e: MouseEvent) => {
     if (suppressClick.current) {
       e.preventDefault();
       suppressClick.current = false;
+      return;
     }
+    // Shift and Alt are drag keys here: a click with them held isn't a new window or a download.
+    if (e.shiftKey || e.altKey) e.preventDefault();
   };
 
   // A milestone is a diamond on its due day: drag moves it, there are no ends to resize.
@@ -1105,15 +1272,15 @@ function TimelineBar({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={cancel}
-          className={`absolute top-1/2 flex touch-pan-y items-center justify-center select-none ${
-            highlight === "dim" ? "opacity-35" : ""
-          } ${drag?.moved ? "z-10 cursor-grabbing" : canEdit ? "cursor-grab" : "cursor-pointer"}`}
+          className={`absolute top-1/2 flex touch-pan-y items-center justify-center select-none ${faded} ${
+            drag?.moved ? "z-10 cursor-grabbing" : canEdit ? "cursor-grab" : "cursor-pointer"
+          }`}
           style={{ left: center - size, width: size * 2, height: size * 2, marginTop: -size }}
         >
           <span
-            className={`block rotate-45 rounded-[2px] ${fill} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${
-              highlight === "critical" ? "outline-2 outline-offset-1 outline-zinc-900" : ""
-            } ${drag?.moved ? "shadow-md" : ""}`}
+            className={`block rotate-45 rounded-[2px] ${fill} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${outline} ${
+              drag?.moved ? "shadow-md" : ""
+            }`}
             style={{ width: size - 2, height: size - 2 }}
           />
         </TaskLink>
@@ -1127,10 +1294,12 @@ function TimelineBar({
           {bareTaskTitle(task.title, task.requestLabel)}
           <TaskNumberBadge label={task.requestLabel} size="2xs" className="ml-1" />
         </span>
-        {drag?.moved ? (
+        {drag?.moved || moving ? (
           <span
             aria-hidden
-            className="pointer-events-none absolute -top-4 z-20 rounded bg-zinc-900 px-1.5 py-0.5 text-2xs whitespace-nowrap text-white tabular-nums"
+            className={`pointer-events-none absolute -top-4 z-20 rounded px-1.5 py-0.5 text-2xs whitespace-nowrap tabular-nums ${
+              moving ? "bg-accent-700 text-white" : "bg-zinc-900 text-white"
+            }`}
             style={{ left: center - size }}
           >
             {formatDueDate(span.end)}
@@ -1149,24 +1318,14 @@ function TimelineBar({
         tabIndex={-1}
         aria-hidden
         title={`${displayTaskTitle(task.title, task.requestLabel)} · ${spanLabel(span)}${schedule ? ` · ${slackLabel(schedule)}` : ""}`}
-        onClick={(e) => {
-          if (suppressClick.current) {
-            e.preventDefault();
-            suppressClick.current = false;
-          }
-        }}
+        onClick={suppress}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => {
-          gesture.current = null;
-          setDrag(null);
-        }}
+        onPointerCancel={cancel}
         className={`group absolute top-1.5 flex h-6 touch-pan-y items-center rounded-md text-xs select-none ${tone} ${
           clippedStart ? "rounded-l-none" : ""
-        } ${clippedEnd ? "rounded-r-none" : ""} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${
-          highlight === "critical" ? "outline-2 outline-offset-1 outline-zinc-900" : highlight === "dim" ? "opacity-35" : ""
-        } ${
+        } ${clippedEnd ? "rounded-r-none" : ""} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${outline} ${faded} ${
           drag?.moved ? "z-10 cursor-grabbing shadow-md" : canEdit ? "cursor-grab" : "cursor-pointer"
         }`}
         style={{ left, width }}
@@ -1196,10 +1355,12 @@ function TimelineBar({
           <TaskNumberBadge label={task.requestLabel} size="2xs" className="ml-1" />
         </span>
       ) : null}
-      {drag?.moved ? (
+      {drag?.moved || moving ? (
         <span
           aria-hidden
-          className="pointer-events-none absolute -top-4 z-20 rounded bg-zinc-900 px-1.5 py-0.5 text-2xs whitespace-nowrap text-white tabular-nums"
+          className={`pointer-events-none absolute -top-4 z-20 rounded px-1.5 py-0.5 text-2xs whitespace-nowrap tabular-nums ${
+            moving ? "bg-accent-700 text-white" : "bg-zinc-900 text-white"
+          }`}
           style={{ left }}
         >
           {spanLabel(span)}

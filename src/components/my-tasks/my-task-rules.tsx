@@ -10,6 +10,8 @@ import { Dialog } from "@/components/dialog";
 import { useConfirm } from "@/components/confirm";
 import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import { WorkdaysPicker } from "@/components/rules/workdays-picker";
+import { DEFAULT_WORK_WEEK } from "@/lib/workdays";
 import { VocabPicker } from "@/components/rules/vocab-picker";
 import { useAutoName } from "@/components/rules/use-auto-name";
 import { autoRuleName, withTarget } from "@/lib/rule-autoname";
@@ -255,6 +257,15 @@ export function MyTaskActionFields({ a, ctx, onChange }: { a: MyTaskRuleItem; ct
             onChange={(v) => onChange({ ...a, business_days: v === "business" })}
             variant="chip"
           />
+          {a.business_days === true ? (
+            <WorkdaysPicker
+              id="my-task-rule-workdays"
+              step={a}
+              scope="my_tasks"
+              orgWorkWeek={ctx.workWeek ?? DEFAULT_WORK_WEEK}
+              onChange={(next) => onChange(next as MyTaskRuleItem)}
+            />
+          ) : null}
         </>
       ) : null}
     </>
@@ -328,7 +339,7 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
           data-auto-name={nameBox.isAuto || undefined}
           className="field data-[auto-name]:text-zinc-500"
         />
-        {nameBox.isAuto ? <span className="font-normal text-zinc-500">Named from its steps. Type to rename it.</span> : null}
+        {nameBox.isAuto ? <span className="font-normal text-zinc-500">Auto-named from its steps. Type to rename it.</span> : null}
       </label>
       <p className="rounded-lg bg-accent-50/60 px-3 py-2 text-sm text-zinc-800" aria-live="polite">
         {myTaskRuleSentence({ triggerType, triggerConfig, conditions, actions }, ctx)}

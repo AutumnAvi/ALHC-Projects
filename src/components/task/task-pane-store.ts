@@ -2,6 +2,8 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import type { TaskDetail, TaskExtras, TaskPaneContext, TaskPanePayload } from "@/lib/data";
+import { mutationInFlight } from "@/lib/optimistic-session";
+import { onRuleFeedbackRequest } from "@/lib/rule-feedback-bus";
 import { createLimiter, PaneCache, type PaneEntry } from "@/lib/task-pane-cache";
 import type { TaskSeed } from "@/lib/task-seed";
 
@@ -151,6 +153,62 @@ export function invalidateTaskPanes() {
   details.markAllStale();
   extras.clear();
   extrasEvents.emit();
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Nov 3 notes (batch 19; video bugs 35.5, 35.8, 35.12, 35.17, 37.1, 39.x, 40.6): the open pane fetches its
+// own fresh copy after a write and when Realtime says the task changed, instead of waiting for the page's
+// whole refresh (which re-renders the List and could take seconds, so an automation's comment or due date
+// only showed after closing and reopening the task). The pane says which task it shows (watchTaskPane);
+// refreshes are coalesced, never overlap for one task, and wait until the person's own writes are done.
+
+const watched = new Map<string, number>();
+const queuedRefresh = new Set<string>();
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+// How long after the last write / event the refetch runs (a burst of events is one request).
+export const PANE_REFRESH_MS = 250;
+
+export function watchTaskPane(id: string): () => void {
+  watched.set(id, (watched.get(id) ?? 0) + 1);
+  return () => {
+    const n = (watched.get(id) ?? 1) - 1;
+    if (n <= 0) watched.delete(id);
+    else watched.set(id, n);
+  };
+}
+
+function flushPaneRefresh() {
+  refreshTimer = null;
+  // The person's own write is still saving: its end asks again (below).
+  if (mutationInFlight()) return;
+  const ids = [...queuedRefresh];
+  queuedRefresh.clear();
+  for (const id of ids) {
+    if (!watched.has(id)) continue;
+    const running = inflight.get(id);
+    // A fetch already on its way may have read before the change: fetch once more after it.
+    if (running) void running.then(() => load(id, false));
+    else void load(id, false);
+  }
+}
+
+// Fetch this task's pane again soon (when it's still open).
+export function refreshTaskPane(id: string) {
+  if (!watched.has(id)) return;
+  queuedRefresh.add(id);
+  if (refreshTimer !== null) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(flushPaneRefresh, PANE_REFRESH_MS);
+}
+
+export function refreshOpenTaskPanes() {
+  for (const id of watched.keys()) refreshTaskPane(id);
+}
+
+if (typeof window !== "undefined") {
+  // Every finished write asks the automation feedback layer what it ran (useServerAction and the bulk bar
+  // through optimistic-session, date changes through dependency-shift, a Realtime insert of one of the
+  // person's runs): the open pane refetches then too.
+  onRuleFeedbackRequest(() => refreshOpenTaskPanes());
 }
 
 export function useTaskPaneDetail(id: string | null): PaneEntry<TaskDetail | null> | undefined {

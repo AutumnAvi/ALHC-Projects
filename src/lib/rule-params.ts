@@ -1,7 +1,9 @@
 import type { Json } from "@/lib/supabase/database.types";
 import {
   ACTIONS,
+  AFTER_APPROVAL,
   APPROVAL_DECISIONS,
+  APPROVAL_MODES,
   APPROVAL_STATUSES,
   ASSIGN_MODES,
   CONDITIONS,
@@ -15,6 +17,7 @@ import {
   EMAIL_TEMPLATES,
   RANGE_OPS,
   SCHEDULE_FREQUENCIES,
+  TASK_ADDED_VIA,
   TASK_KIND_OPTIONS,
   TASK_SOURCES,
   TRIGGERS,
@@ -138,16 +141,19 @@ const relative = (step: RuleStep) => str("mode")(step) !== "clear" && str("mode"
 // ---------------------------------------------------------------------------------------------
 
 export const PROJECT_TRIGGER_PARAMS: Record<TriggerType, RuleParam[]> = {
-  task_created: [],
+  // Nov 3 notes (batch 19, 37.8): "by an Asana import" (via: import); missing = every other way.
+  task_created: [{ key: "via", editor: "choice", ask: "Choose how it’s added", options: TASK_ADDED_VIA }],
   // "any section" arrives with Automations V3's database update; before it a section must be picked.
   section_changed: [{ ...SECTION, required: (_step, scope) => scope.v3 === false }],
   field_changed: [
     { ...FIELD, ask: "Choose the field that changes" },
     { key: "option_id", editor: "option", ask: "Choose a value" },
   ],
-  assignee_changed: [],
+  // Batch 19 (37.1): "Task assigned to …" names who (missing = any assignee change).
+  assignee_changed: [{ ...PEOPLE, key: "to", required: false, ask: "Choose who it’s assigned to" }],
   due_approaching: [OFFSET],
-  approval_decided: [{ key: "statuses", editor: "choices", ask: "Choose decisions", options: APPROVAL_DECISIONS }],
+  // Batch 19 (37.5): the decisions are picked before saving (all three = any decision).
+  approval_decided: [{ key: "statuses", editor: "choices", ask: "Choose decisions", required: true, options: APPROVAL_DECISIONS }],
   form_submitted: [{ key: "form_id", editor: "form", ask: "Choose a form" }],
   inbound_received: [{ key: "endpoint_id", editor: "endpoint", ask: "Choose an inbound webhook" }],
   task_completed: [],
@@ -165,7 +171,8 @@ export const PROJECT_TRIGGER_PARAMS: Record<TriggerType, RuleParam[]> = {
   start_date_changed: [{ key: "change", editor: "choice", ask: "Choose which changes", options: DATE_CHANGES }],
   start_approaching: [OFFSET],
   start_reached: [OFFSET],
-  task_unblocked: [{ key: "kinds", editor: "choices", ask: "Choose which dependencies", options: UNBLOCK_KINDS }],
+  // Batch 19 (37.6): the kinds of link are picked before saving (all four = any).
+  task_unblocked: [{ key: "kinds", editor: "choices", ask: "Choose which dependencies", required: true, options: UNBLOCK_KINDS }],
   task_type_changed: [{ ...KIND, required: false }],
   section_left: [{ ...SECTION, ask: "Choose the section it leaves" }],
 };
@@ -234,6 +241,11 @@ export const PROJECT_CONDITION_PARAMS: Record<ConditionType, RuleParam[]> = {
   no_attachment: [],
   has_comment: [],
   no_comment: [],
+  // Batch 19 (39.3 / 39.4).
+  in_project: [{ key: "project_ids", editor: "project", ask: "Choose projects", required: true }],
+  not_in_project: [{ key: "project_ids", editor: "project", ask: "Choose projects", required: true }],
+  is_private: [],
+  is_not_private: [],
 };
 
 const assignMode = (step: RuleStep) => (step.mode === "round_robin" || step.mode === "balanced" ? step.mode : "person");
@@ -322,7 +334,16 @@ export const PROJECT_ACTION_PARAMS: Record<ActionType, RuleParam[]> = {
     { key: "section_id", editor: "section", ask: "Choose a section", when: (s) => Boolean(s.project_id) },
   ],
   remove_from_project: [],
-  set_task_type: [KIND],
+  // Batch 19 (note 145): an approval's setup goes with the step.
+  set_task_type: [
+    KIND,
+    { key: "approvers", editor: "people", ask: "Choose approvers", when: is("kind", "approval"), check: (v) => (Array.isArray(v) && v.length > 10 ? "Up to 10 approvers" : null) },
+    { key: "approval_mode", editor: "choice", ask: "Choose who must approve", options: APPROVAL_MODES, when: is("kind", "approval") },
+    { key: "approval_due_days", editor: "number", ask: "Enter when approval is due (days)", range: [0, 365], when: is("kind", "approval") },
+    { key: "after_approval", editor: "choice", ask: "Choose what happens after approval", options: AFTER_APPROVAL, when: is("kind", "approval") },
+    { key: "after_section_id", editor: "section", ask: "Choose the section it moves to", required: true, when: (s) => is("kind", "approval")(s) && is("after_approval", "move_section")(s) },
+    { key: "assignee", editor: "person", ask: "Choose who does the work", when: is("kind", "approval") },
+  ],
   set_description: [
     { key: "mode", editor: "choice", ask: "Choose replace or add", options: DESCRIPTION_MODES },
     // Replacing with nothing clears the description; adding needs some text.

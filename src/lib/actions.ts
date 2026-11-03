@@ -20,6 +20,8 @@ import {
   loadTaskCommentPage,
   loadSubmitterConversation,
   countOpenRoleTasks,
+  loadRoleUsage,
+  type RoleUsage,
   listTaskRoleLinks,
   visibleRequestLabelsIn,
   listSubtaskParents,
@@ -243,6 +245,21 @@ async function run(fn: () => Promise<void>): Promise<ActionResult> {
   }
   deliverQueuedEmail();
   refresh();
+  return {};
+}
+
+// Nov 3 notes (batch 19, 141): like run(), without the refresh. The caller refreshes the page in the
+// background (and the open task pane fetches just its task), so a slow page render never holds up the
+// answer — used where the answer is what the person is waiting on (running an automation by hand).
+async function runWithoutRefresh(fn: () => Promise<void>): Promise<ActionResult> {
+  try {
+    await fn();
+  } catch (error) {
+    if (error instanceof InputError) return { error: error.message };
+    if (error instanceof DbError) return { error: error.message };
+    throw error;
+  }
+  deliverQueuedEmail();
   return {};
 }
 
@@ -2280,6 +2297,76 @@ export async function applyDependencyShifts(
   return outcome.error ? outcome : { result };
 }
 
+// Nov 3 notes (batch 19, 148): a Timeline drag. The keys held decide what its dependents do
+// (timelineDragHow in src/lib/dependency-plan.ts), not the project's Settings → Dependencies:
+//   only   just the given tasks move;
+//   push   their dependents move only as far as their links ask (nothing earlier);
+//   along  their dependents move along by the same amount (preview_dependency_move_along; a database
+//          without it pulls / pushes them with the usual plan instead).
+// Every task still moves through apply_dependency_shifts, which checks the person can edit it; the
+// result's changes feed undoDependencyShift.
+export async function moveTaskDatesWith(
+  moves: ShiftMove[],
+  how: "only" | "along" | "push",
+): Promise<ActionResult & { result?: ShiftResult }> {
+  let result: ShiftResult | undefined;
+  const outcome = await run(async () => {
+    if (how !== "only" && how !== "along" && how !== "push") throw new InputError("Choose how dependent tasks move");
+    const input = shiftMovesInput(moves);
+    const givenIds = new Set(input.map((m) => m.task_id as string));
+    const supabase = await createClient();
+    let applyMoves: Record<string, string | null>[] = input;
+    let confirmed: string[] = [];
+    let pullEarlier = false;
+    let planSkipped: ShiftResult["skipped"] = [];
+    let alongIds = new Set<string>();
+    if (how === "push") {
+      const plan = await supabase.rpc("preview_dependency_shifts", { moves: input, pull_earlier: false });
+      check(plan);
+      confirmed = toPlanRows(plan.data ?? []).filter((r) => r.status === "move").map((r) => r.taskId);
+    } else if (how === "along") {
+      const plan = await supabase.rpc("preview_dependency_move_along", { moves: input });
+      if (plan.error?.code === "PGRST202") {
+        // Before this release's database update: the usual plan, pulling earlier too.
+        const fallback = await supabase.rpc("preview_dependency_shifts", { moves: input, pull_earlier: true });
+        check(fallback);
+        confirmed = toPlanRows(fallback.data ?? []).filter((r) => r.status === "move").map((r) => r.taskId);
+        pullEarlier = true;
+      } else {
+        check(plan);
+        const rows = toPlanRows(plan.data ?? []);
+        const along = rows.filter((r) => r.status === "move");
+        if (input.length + along.length > MAX_SHIFT_MOVES) {
+          throw new InputError(`That would move more than ${MAX_SHIFT_MOVES} tasks at once`);
+        }
+        alongIds = new Set(along.map((r) => r.taskId));
+        applyMoves = [...input, ...along.map((r) => ({ task_id: r.taskId, start_on: r.newStart, due_on: r.newDue }))];
+        planSkipped = rows
+          .filter((r) => r.status !== "move")
+          .map((r) => ({ taskId: r.taskId, title: r.title, reason: r.reason ?? "" }));
+      }
+    }
+    const response = await supabase.rpc("apply_dependency_shifts", {
+      moves: applyMoves,
+      confirmed_tasks: [...new Set(confirmed)],
+      pull_earlier: pullEarlier,
+    });
+    if (/tasks_start_(on_before_due_on|at_before_due_at)/.test(response.error?.message ?? "")) {
+      throw new InputError(START_AFTER_DUE);
+    }
+    check(response);
+    const parsed = parseShiftResult(response.data);
+    // The database lists the plan's other dependents as "not part of the confirmed change": with these keys
+    // they were never meant to move, so only refusals of tasks this change did move are worth saying.
+    const skipped =
+      how === "push"
+        ? parsed.skipped.filter((s) => s.reason !== "Not part of the confirmed change")
+        : [...parsed.skipped.filter((s) => givenIds.has(s.taskId) || alongIds.has(s.taskId)), ...planSkipped];
+    result = { changes: parsed.changes, skipped };
+  });
+  return outcome.error ? outcome : { result };
+}
+
 // Moves the task and the confirmed dependents in one call; the result's changes feed undoDependencyShift.
 export async function applyDependencyShift(
   taskId: string,
@@ -2527,15 +2614,21 @@ export async function createSubtask(
   parentId: string,
   title: string,
   beforeId?: string | null,
+  options?: { blockParent?: boolean },
 ): Promise<ActionResult & { taskId?: string }> {
   let taskId: string | undefined;
   const result = await run(async () => {
     const supabase = await createClient();
-    const created = await supabase.rpc("create_subtask", {
+    const args = {
       parent_task: id(parentId, "task"),
       task_title: text(title, "Subtask name"),
       before_task: beforeId ? id(beforeId, "subtask") : null,
-    });
+    };
+    // Nov 3 notes (batch 19, 147): "Blocks the parent" makes the new subtask block its parent in the same
+    // transaction (create_subtask + set_task_dependency, Editor on both).
+    const created = options?.blockParent
+      ? await supabase.rpc("create_subtask_blocking_parent", args)
+      : await supabase.rpc("create_subtask", args);
     check(created);
     if (typeof created.data === "string") taskId = created.data;
   });
@@ -5420,7 +5513,8 @@ export async function runManualRule(
   let summary: string[] = [];
   let failure: string | undefined;
   let reason: string | undefined;
-  const result = await run(async () => {
+  // Nov 3 notes (batch 19, 141): no refresh here; RunRuleDialog refreshes the page in the background.
+  const result = await runWithoutRefresh(async () => {
     const supabase = await createClient();
     const ran = await supabase.rpc("run_manual_rule", { target_rule: id(ruleId, "rule"), target_task: id(taskId, "task") });
     if (ran.error?.code === "PGRST202") throw new InputError("Running automations from a task needs this release’s database update");
@@ -5500,10 +5594,11 @@ export async function listBulkManualRules(taskIds: string[]): Promise<ActionResu
 
 // Runs one "Run manually" automation on each selected task in its project, one after the other (so round
 // robin assignment and other shared state see each run), through run_manual_rule — Editor+ of the
-// automation's project, checked by the database for every task. One refresh at the end.
+// automation's project, checked by the database for every task. The bulk bar refreshes the page once at the end.
 export async function runManualRuleOnTasks(ruleId: string, taskIds: string[]): Promise<ActionResult & { run?: BulkRuleRun }> {
   const summary: BulkRuleRun = { ran: 0, conditions: 0, skipped: 0, failed: 0, notInProject: 0 };
-  const result = await run(async () => {
+  // Nov 3 notes (batch 19, 141): no refresh here; the bulk bar refreshes the page in the background.
+  const result = await runWithoutRefresh(async () => {
     const ids = [...new Set(taskIds.map((t) => id(t, "task")))];
     if (ids.length === 0) throw new InputError("Select at least one task");
     if (ids.length > MAX_BULK_TASKS) throw new InputError(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
@@ -5559,6 +5654,28 @@ export async function runManualRuleOnTasks(ruleId: string, taskIds: string[]): P
 // The workspace's workweek (Admin console → Organization): the days "Set due date" actions count as
 // business days and "Every workday" schedules run on. Workspace admins only (workspaces_update_admin
 // and the work_week column grant); RLS turns anyone else's update into zero rows.
+// Nov 3 notes (batch 19, 140): the signed-in person's own workdays (null = count the organization's). Business-day
+// automation steps that count "the owner's own" days use them (My Tasks automations and personal projects by
+// default).
+export async function setMyWorkWeek(days: number[] | null): Promise<ActionResult> {
+  return run(async () => {
+    if (
+      days !== null &&
+      (!Array.isArray(days) ||
+        days.length < 1 ||
+        days.length > 7 ||
+        days.some((d) => !Number.isInteger(d) || d < 0 || d > 6) ||
+        new Set(days).size !== days.length)
+    ) {
+      throw new InputError("Choose 1 to 7 different days of the week");
+    }
+    const supabase = await createClient();
+    const saved = await supabase.rpc("set_my_work_week", { days: days === null ? null : normalizeWorkWeek(days) });
+    if (saved.error?.code === "PGRST202") throw new InputError("Your own workdays need this release’s database update");
+    check(saved);
+  });
+}
+
 export async function setWorkWeek(days: number[]): Promise<ActionResult> {
   return run(async () => {
     if (
@@ -6492,6 +6609,11 @@ export async function setProjectRolePerson(
 // How many open tasks follow a role (asked before changing its person).
 export async function loadRoleOpenTaskCount(roleId: string): Promise<number> {
   return countOpenRoleTasks(roleId);
+}
+
+// Nov 3 notes (batch 19, 146): the open tasks and automations that follow a role, listed in the prompt.
+export async function loadRoleUsageForChange(roleId: string): Promise<RoleUsage> {
+  return loadRoleUsage(roleId);
 }
 
 // The roles a task can take people from (roles of its — its top-level task's — projects) and its links,

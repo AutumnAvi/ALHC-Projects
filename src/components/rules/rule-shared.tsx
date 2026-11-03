@@ -13,7 +13,9 @@ import type { ProjectIntegrations } from "@/lib/integrations-shared";
 import type { SlackDestination } from "@/lib/slack";
 import {
   ACTIONS,
+  AFTER_APPROVAL,
   APPROVAL_DECISIONS,
+  APPROVAL_MODES,
   APPROVAL_STATUSES,
   COMPARE_OPS,
   CREATE_LINKS,
@@ -28,6 +30,7 @@ import {
   RANGE_OPS,
   PERSON_ROLES,
   PERSON_SIDES,
+  TASK_ADDED_VIA,
   TASK_KIND_OPTIONS,
   TRIGGERS,
   UNBLOCK_KINDS,
@@ -85,6 +88,10 @@ export type RuleContext = {
   projectRoles?: { id: string; name: string; personName: string | null }[];
   // Nov 2 notes (batch 14, 105): Slack channels and saved webhooks of the workspace (Send Slack message).
   slackDestinations?: SlackDestination[];
+  // Nov 3 notes (batch 19): who is building the automation ("Task assigned to me"), and the other
+  // projects they can open ("Is in project"; falls back to otherProjects).
+  viewerId?: string | null;
+  readableProjects?: { id: string; name: string }[];
 };
 
 // The tag vocabulary, hidden from the pickers while tags are switched off (Admin console → Tags). A
@@ -93,6 +100,22 @@ export const TAG_VOCABULARY: ReadonlySet<string> = new Set(["tag_added", "has_ta
 export function tagsHidden(ctx: RuleContext, keep: Iterable<string> = []) {
   const kept = new Set(keep);
   return (value: string) => ctx.tagsEnabled === false && TAG_VOCABULARY.has(value) && !kept.has(value);
+}
+
+// Nov 3 notes (batch 19, 37.4 / 39.3): while tags are off the tag steps stay in the pickers, greyed out
+// with the reason, so people can find them ("Tags are turned off").
+export const TAGS_OFF = "Tags are turned off (a workspace admin turns them on in Admin console → Tags)";
+
+export function tagsOffReason(ctx: RuleContext, keep: Iterable<string> = []) {
+  const hidden = tagsHidden(ctx, keep);
+  return (value: string) => (hidden(value) ? TAGS_OFF : null);
+}
+
+// The pickers' disabled reasons: a database update that isn't applied yet, then tags being off.
+export function vocabDisabled(ctx: RuleContext, keep: Iterable<string> = []) {
+  const update = needsUpdate(ctx);
+  const tags = tagsOffReason(ctx, keep);
+  return (value: string) => update(value) ?? tags(value);
 }
 
 export const NEEDS_UPDATE = "Needs this release’s database update";
@@ -220,6 +243,11 @@ export function templateName(ctx: RuleContext, id: Json | undefined) {
   return ctx.taskTemplates?.find((t) => t.id === id)?.name ?? "a removed template";
 }
 
+// Projects "Is in project" can name (the ones the viewer can open, this one left out).
+export function conditionProjects(ctx: RuleContext): { id: string; name: string }[] {
+  return ctx.readableProjects ?? (ctx.otherProjects ?? []).map((p) => ({ id: p.id, name: p.name }));
+}
+
 export function otherProjectOf(ctx: RuleContext, id: Json | undefined) {
   return ctx.otherProjects?.find((p) => p.id === id);
 }
@@ -332,7 +360,16 @@ export function describeDateAction(a: RuleAction) {
   const from = dueFromLabel(a.from);
   if (n === 0) return a.business_days === true && unit === "days" ? `set the ${what} to ${from} (or the next workday)` : `set the ${what} to ${from}`;
   const word = unit === "weeks" ? `week${Math.abs(n) === 1 ? "" : "s"}` : `${a.business_days === true ? "business " : ""}day${Math.abs(n) === 1 ? "" : "s"}`;
-  return `set the ${what} to ${Math.abs(n)} ${word} ${n < 0 ? "before" : "from"} ${from}`;
+  // Nov 3 notes (batch 19, 140): whose workdays, when the step says.
+  const whose =
+    a.business_days === true && unit === "days"
+      ? a.workdays === "personal"
+        ? " (the owner’s workdays)"
+        : a.workdays === "org"
+          ? " (the organization’s workdays)"
+          : ""
+      : "";
+  return `set the ${what} to ${Math.abs(n)} ${word} ${n < 0 ? "before" : "from"} ${from}${whose}`;
 }
 
 // "a task", "a milestone", "an approval".
@@ -354,13 +391,20 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
   const cfg = rule.triggerConfig;
   const t = rule.triggerType;
   switch (t) {
+    // Nov 3 notes (batch 19, 37.8 / 37.1).
+    case "task_created":
+      return cfg.via === "import" ? `A task is added ${labelOf(TASK_ADDED_VIA, "import")}` : "A task is added to this project";
+    case "assignee_changed": {
+      const names = peopleNames(ctx, cfg.to);
+      return names.length ? `A task is assigned to ${joinWords(names, "or")}` : "A task's assignee changes";
+    }
     case "section_changed":
       return cfg.section_id ? `A task moves into ${sectionName(ctx, cfg.section_id)}` : "A task moves to another section";
     case "section_left":
       return `A task moves out of ${given(cfg.section_id) ? sectionName(ctx, cfg.section_id) : ask.trigger(t, "section_id")}`;
     case "task_unblocked": {
       const kinds = Array.isArray(cfg.kinds) ? cfg.kinds.map((k) => labelOf(UNBLOCK_KINDS, k).toLowerCase()) : [];
-      return kinds.length ? `A task is no longer blocked by a ${joinWords(kinds, "or")} dependency` : "A task is no longer blocked by any dependency";
+      return kinds.length ? `A task is no longer blocked by a ${joinWords(kinds, "or")} dependency` : `A task is no longer blocked by ${ask.trigger(t, "kinds")}`;
     }
     case "task_type_changed":
       return cfg.kind ? `A task becomes ${kindArticle(cfg.kind)}` : "A task’s type changes to any type";
@@ -387,7 +431,7 @@ export function describeTrigger(rule: Pick<RuleDef, "triggerType" | "triggerConf
       const statuses = Array.isArray(cfg.statuses) ? cfg.statuses : [];
       return statuses.length
         ? `An approval is ${statuses.map((x) => labelOf(APPROVAL_DECISIONS, x).toLowerCase()).join(" or ")}`
-        : "An approval gets any decision";
+        : `An approval is decided ${ask.trigger(t, "statuses")}`;
     }
     case "form_submitted":
       return cfg.form_id
@@ -539,6 +583,19 @@ export function describeCondition(c: RuleCondition, ctx: RuleContext) {
       return "has a comment";
     case "no_comment":
       return "has no comment";
+    // Nov 3 notes (batch 19, 39.3 / 39.4).
+    case "in_project":
+    case "not_in_project": {
+      const known = conditionProjects(ctx);
+      const ids = Array.isArray(c.project_ids) ? c.project_ids : typeof c.project_ids === "string" ? [c.project_ids] : [];
+      const names = ids.map((id) => `“${known.find((p) => p.id === id)?.name ?? "a project"}”`);
+      if (!names.length) return `${t === "in_project" ? "is in" : "isn’t in"} ${choose("project_ids")}`;
+      return t === "in_project" ? `is in ${joinWords(names, "or")}` : names.length === 1 ? `isn’t in ${names[0]}` : `is in none of ${joinWords(names, "and")}`;
+    }
+    case "is_private":
+      return "is private (only project members can see it)";
+    case "is_not_private":
+      return "isn’t private (its team can find it)";
     case "has_open_subtasks":
       return "has open subtasks";
     case "all_subtasks_done":
@@ -651,8 +708,27 @@ export function describeAction(a: RuleAction, ctx: RuleContext) {
         portfolio ? ` in “${portfolio.name}”` : a.portfolio_id ? " in a portfolio" : ""
       }${a.complete_task === true ? " and complete the task" : ""}${a.members === "task_people" ? " (inviting the task’s people)" : ""}`;
     }
-    case "set_task_type":
-      return `make it ${a.kind ? kindArticle(a.kind) : choose("kind")}`;
+    case "set_task_type": {
+      const base = `make it ${a.kind ? kindArticle(a.kind) : choose("kind")}`;
+      if (a.kind !== "approval") return base;
+      // Batch 19 (note 145): who approves, how, when, what next, and who does the work.
+      const parts: string[] = [];
+      const approvers = peopleNames(ctx, a.approvers);
+      if (approvers.length) parts.push(`approved by ${joinWords(approvers, "and")}`);
+      if (given(a.approval_mode)) parts.push(labelOf(APPROVAL_MODES, a.approval_mode));
+      const due = wholeNumber(a.approval_due_days);
+      if (due !== null) parts.push(due === 0 ? "due today" : `due in ${due} ${a.approval_business_days === true ? "business " : ""}day${due === 1 ? "" : "s"}`);
+      if (given(a.after_approval)) {
+        parts.push(
+          a.after_approval === "move_section"
+            ? `then move it to ${given(a.after_section_id) ? sectionName(ctx, a.after_section_id) : choose("after_section_id")}`
+            : labelOf(AFTER_APPROVAL, a.after_approval),
+        );
+      }
+      if (a.reminders === false) parts.push("no reminders");
+      if (given(a.assignee)) parts.push(`${personName(ctx, a.assignee)} does the work`);
+      return parts.length ? `${base} (${parts.join(", ")})` : base;
+    }
     case "set_description": {
       const text = given(a.text) ? quoteText(a.text) : null;
       if (a.mode === "append") return `add ${text ?? choose("text")} to the end of the description`;
