@@ -5,7 +5,6 @@ import { X } from "lucide-react";
 import type { ActionResult } from "@/lib/actions";
 import { invalidateTaskPanes } from "@/components/task/task-pane-store";
 import { beginLocalMutation, endLocalMutation, failMutation } from "@/lib/optimistic-session";
-import { requestRuleFeedback } from "@/lib/rule-feedback-bus";
 
 // An optional button on the toast (e.g. Undo); clicking it runs the action and dismisses the toast.
 export type ToastAction = { label: string; onClick: () => void };
@@ -112,7 +111,6 @@ export function useServerAction() {
     (action: () => Promise<ActionResult | void>, optimistic?: () => void): Promise<ActionResult | void> =>
       new Promise((resolve) => {
         const token = beginLocalMutation();
-        const startedAt = Date.now();
         startTransition(async () => {
           try {
             optimistic?.();
@@ -127,9 +125,9 @@ export function useServerAction() {
             resolve({ error: ACTION_FAILED });
             throw error;
           } finally {
+            // Batch 10 / 18: ending the mutation tells the person what automations their change ran
+            // (optimistic-session.ts → rule-feedback.tsx).
             endLocalMutation(token);
-            // Batch 10: tell the person what automations their change ran (rule-feedback.tsx).
-            requestRuleFeedback(startedAt);
             // Cached task panes may be out of date now (the open one gets its fresh copy with the refresh).
             invalidateTaskPanes();
           }

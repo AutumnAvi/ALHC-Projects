@@ -86,3 +86,15 @@ export function taskLinkUrl(origin: string, taskId: string, projectId: string | 
 export function projectLinkUrl(origin: string, projectId: string): string {
   return `${origin}/projects/${projectId}`;
 }
+
+// Nov 3 notes (batch 18, 133): the "#" link picker. The search text of a "#" query: trimmed, single spaces.
+export function linkSearchText(query: string): string {
+  return query.trim().replace(/\s+/g, " ");
+}
+
+// A query that already came back empty: a longer one can't match more (names are matched as substrings),
+// except a number, which matches exactly ("1" finds nothing, "12" finds Task #12).
+export function extendsDeadQuery(query: string, dead: string | null): boolean {
+  if (!dead || /\d/.test(query)) return false;
+  return query.startsWith(dead);
+}

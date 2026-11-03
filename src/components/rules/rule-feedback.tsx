@@ -5,7 +5,9 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { AlertTriangle, Zap } from "lucide-react";
 import { useRichToast } from "@/components/toast";
-import { onRuleFeedbackRequest } from "@/lib/rule-feedback-bus";
+import { onRuleFeedbackRequest, requestRuleFeedback } from "@/lib/rule-feedback-bus";
+import { openRealtimeChannel } from "@/lib/realtime";
+import { useShell } from "@/components/shell/shell-context";
 import {
   STOP_EXPLAIN,
   STOP_HEADING,
@@ -20,16 +22,23 @@ import {
   type StopNote,
 } from "@/lib/rule-feedback";
 
-// How long after the last write the check runs (several quick writes are asked about once).
-const SETTLE_MS = 700;
+// How long after the last write the check runs (several quick writes are asked about once). Nov 3 notes
+// (batch 18, 139): shorter, so the note shows right after the change.
+const SETTLE_MS = 300;
+// A Realtime insert of one of the person's runs asks again (covers any path that made the change).
+const REALTIME_LOOKBACK_MS = 5000;
 
 // Nov 1 notes, batch 10 (77): live automation feedback, mounted once by the app shell. After each change
 // the person makes (useServerAction → requestRuleFeedback), it reads their own runs since the last check
 // (/api/rule-feedback) and shows a small, semi-transparent note per automation that ran ("Automation X ran
 // on 3 tasks") and an amber warning when loop protection, a limit, or an error stopped one — with the
 // automation's name, the task, and links to both.
+// Nov 3 notes (batch 18, 138 / 139): every local write asks (optimistic-session.ts ends each one with a
+// request), date changes ask too, and a Realtime insert of the person's own rule_runs row nudges a check —
+// so bulk edits ("Automation X moved 3 tasks") and date changes that fire an automation always show it.
 export function RuleFeedbackLayer() {
   const show = useRichToast();
+  const memberId = useShell().member.id;
   const pathname = usePathname();
   const pathRef = useRef(pathname);
   const state = useRef<{ cursor: string | null; seen: Set<string>; startedAt: number | null; timer: number | null; busy: boolean }>({
@@ -94,6 +103,14 @@ export function RuleFeedbackLayer() {
       if (s.timer !== null) window.clearTimeout(s.timer);
     };
   }, [show]);
+
+  // Realtime: the person's own runs (rule_runs RLS: Viewers+ of the automation's project).
+  useEffect(() => {
+    if (!memberId) return;
+    return openRealtimeChannel(`rule-runs-${memberId}`, [{ table: "rule_runs", filter: `actor_id=eq.${memberId}` }], () =>
+      requestRuleFeedback(Date.now() - REALTIME_LOOKBACK_MS),
+    );
+  }, [memberId]);
 
   return null;
 }

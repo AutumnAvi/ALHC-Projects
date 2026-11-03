@@ -24,6 +24,7 @@ const MAX_SUGGESTIONS = 6;
 // "Draft flu-shot email fri #Fall Campaign @Dana every week". Typing # or @ lists projects (where you
 // can add tasks) or people; the parts it understood show as chips under the box (× keeps that text in
 // the name). Enter adds it; the list refreshes with the new task in its date group. Tab then Q focuses it.
+// Nov 3 notes (batch 18, 134): the task is always yours; an @person is added as a follower, not the assignee.
 export function QuickAddBar({
   projects,
   people,
@@ -91,7 +92,7 @@ export function QuickAddBar({
       const result = await quickAddTask({
         title: what.title,
         projectId: what.project?.id ?? null,
-        assigneeId: what.person?.id ?? null,
+        mentionId: what.person?.id ?? null,
         dueOn: what.dueOn,
         repeat: what.repeat,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -102,7 +103,7 @@ export function QuickAddBar({
       }
       const where = [
         what.project ? `to ${what.project.name}` : null,
-        what.person ? `for ${what.person.name}` : null,
+        what.person ? `with ${what.person.name} following` : null,
         what.dueOn && today ? `due ${checklistDueLabel(what.dueOn, today)}` : null,
       ].filter(Boolean);
       notify(result.note ?? `Added “${what.title}”${where.length ? ` ${where.join(", ")}` : ""}`);
@@ -181,7 +182,7 @@ export function QuickAddBar({
         ) : null}
       </div>
       <p id={`${id}-hint`} className="sr-only">
-        Type a date like tomorrow or fri, # and a project, @ and a person, or every week. Enter adds the task.
+        Type a date like tomorrow or fri, # and a project, @ and a person to add as a follower, or every week. Enter adds the task, assigned to you.
       </p>
 
       {listOpen ? (
@@ -236,7 +237,7 @@ export function QuickAddBar({
 function chipLabel(part: QuickAddPart, parsed: NonNullable<ReturnType<typeof parseQuickAdd>>, today: string | null): string {
   if (part.kind === "date") return parsed.dueOn && today ? `Due ${checklistDueLabel(parsed.dueOn, today)}` : part.text;
   if (part.kind === "project") return parsed.project?.name ?? part.text;
-  if (part.kind === "person") return `For ${parsed.person?.name ?? part.text}`;
+  if (part.kind === "person") return `Follower: ${parsed.person?.name ?? part.text}`;
   return parsed.repeat ? describeRepeat(parsed.repeat) : part.text;
 }
 

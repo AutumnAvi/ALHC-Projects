@@ -1351,7 +1351,7 @@ export function TaskPaneFooter({
                       ? task.replyThread?.closed
                         ? "Emailed to the submitter. Replies are closed, so their answers won’t be posted"
                         : "This comment is emailed to the submitter; their reply comes back here"
-                      : "Type @ for people, tasks, or projects · ⌘/Ctrl+Enter to send";
+                      : "@ for people · # for tasks and projects · ⌘/Ctrl+Enter to send";
                   return (
                     <span className="mr-auto min-w-0 truncate pl-1 text-2xs text-zinc-500" title={hint}>
                       {hint}

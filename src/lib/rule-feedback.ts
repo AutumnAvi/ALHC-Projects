@@ -15,6 +15,9 @@ export type FeedbackRun = {
   // skipped: loop | depth_limit | throttled | rate_limited; failed: the error.
   reason: string | null;
   createdAt: string;
+  // Nov 3 notes (batch 18, 138): the type of the first step that changed something (move_section,
+  // add_comment, …), so the note can say what it did: "Automation X moved 3 tasks". Null = unknown.
+  action?: string | null;
 };
 
 export type FeedbackResponse = { cursor: string; runs: FeedbackRun[] };
@@ -28,6 +31,8 @@ export type RanNote = {
   // Set when it ran on one task the person can read.
   taskId: string | null;
   taskTitle: string | null;
+  // What it did (the first changing step of its runs), when every run did the same.
+  action?: string | null;
 };
 
 export type StopKind = "loop" | "depth_limit" | "throttled" | "rate_limited" | "failed";
@@ -55,13 +60,17 @@ export const FEEDBACK_SLACK_SECONDS = 5;
 export const FEEDBACK_OVERLAP_SECONDS = 30;
 
 export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
-  const ran = new Map<string, { run: FeedbackRun; tasks: Set<string>; readable: FeedbackRun | null; nullTasks: number }>();
+  const ran = new Map<
+    string,
+    { run: FeedbackRun; tasks: Set<string>; readable: FeedbackRun | null; nullTasks: number; actions: Set<string> }
+  >();
   const stops: StopNote[] = [];
   const seenStop = new Set<string>();
   const ordered = [...runs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   for (const run of ordered) {
     if (run.status === "succeeded" || run.status === "scheduled") {
-      const entry = ran.get(run.ruleId) ?? { run, tasks: new Set<string>(), readable: null, nullTasks: 0 };
+      const entry = ran.get(run.ruleId) ?? { run, tasks: new Set<string>(), readable: null, nullTasks: 0, actions: new Set<string>() };
+      entry.actions.add(run.action ?? "");
       if (run.taskId) entry.tasks.add(run.taskId);
       else entry.nullTasks += 1;
       if (run.taskId && run.taskTitle && !entry.readable) entry.readable = run;
@@ -86,9 +95,11 @@ export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
       detail: stop === "failed" ? run.reason : null,
     });
   }
-  const notes: FeedbackNote[] = [...ran.values()].map(({ run, tasks, readable, nullTasks }) => {
+  const notes: FeedbackNote[] = [...ran.values()].map(({ run, tasks, readable, nullTasks, actions }) => {
     const taskCount = tasks.size + nullTasks;
+    const only = actions.size === 1 ? [...actions][0] : "";
     return {
+      action: only || null,
       kind: "ran",
       ruleId: run.ruleId,
       ruleName: run.ruleName,
@@ -105,10 +116,58 @@ export function plural(n: number, one: string, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-// The quiet note's text.
+// What an automation's first changing step did, as a verb phrase around the task(s) (Nov 3 notes,
+// batch 18, 138): [before, after] — "moved" 3 tasks, "added a comment to" “Flyer”.
+const ACTION_VERBS: Record<string, [string, string]> = {
+  move_section: ["moved", ""],
+  set_field: ["set a field on", ""],
+  set_assignee: ["assigned", ""],
+  add_followers: ["added followers to", ""],
+  remove_followers: ["removed followers from", ""],
+  add_comment: ["commented on", ""],
+  notify: ["sent a notification about", ""],
+  send_email: ["sent an email about", ""],
+  request_approval: ["requested approval on", ""],
+  send_slack: ["posted to Slack about", ""],
+  call_webhook: ["called a webhook for", ""],
+  delay: ["is waiting on", ""],
+  complete_task: ["completed", ""],
+  reopen_task: ["reopened", ""],
+  set_title: ["renamed", ""],
+  create_subtasks: ["added subtasks to", ""],
+  apply_task_template: ["applied a template to", ""],
+  add_to_project: ["added", "to another project"],
+  set_due_date: ["set the due date of", ""],
+  set_start_date: ["set the start date of", ""],
+  add_tag: ["tagged", ""],
+  remove_tag: ["removed a tag from", ""],
+  create_task: ["created a task from", ""],
+  move_to_project: ["moved", "to another project"],
+  remove_from_project: ["removed", "from this project"],
+  set_task_type: ["changed the type of", ""],
+  set_description: ["updated the description of", ""],
+  convert_to_project: ["converted", "to a project"],
+};
+
+// The quiet note's text: "Automation “Triage” moved 3 tasks", else "… ran on 3 tasks".
 export function ranText(note: RanNote): string {
-  if (note.taskTitle) return `Automation “${note.ruleName}” ran on “${note.taskTitle}”`;
-  return `Automation “${note.ruleName}” ran on ${plural(note.taskCount, "task")}`;
+  const [verb, after] = (note.action && ACTION_VERBS[note.action]) || ["ran on", ""];
+  const what = note.taskTitle ? `“${note.taskTitle}”` : plural(note.taskCount, "task");
+  return `Automation “${note.ruleName}” ${verb} ${what}${after ? ` ${after}` : ""}`;
+}
+
+// The first step of a run's log that changed something (done / queued / scheduled), else null.
+export function firstChangingAction(detail: unknown): string | null {
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const actions = (detail as Record<string, unknown>).actions;
+  if (!Array.isArray(actions)) return null;
+  for (const step of actions) {
+    if (!step || typeof step !== "object") continue;
+    const { type, outcome } = step as Record<string, unknown>;
+    if (typeof type !== "string") continue;
+    if (outcome === undefined || outcome === "done" || outcome === "queued" || outcome === "scheduled") return type;
+  }
+  return null;
 }
 
 export const STOP_HEADING: Record<StopKind, string> = {

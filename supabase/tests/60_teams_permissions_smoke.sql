@@ -602,6 +602,9 @@ begin
   -- slack_settings (whether Slack is connected and the destinations' names — never a token or URL),
   -- manage_slack_workspace (workspace admins), set_project_slack_destination (project Admins), and
   -- slack_destination_usable (validate_rule's yes / no about a destination id).
+  -- Nov 3 notes (batch 18) added viewer_project_ids and viewer_rule_ids (used inside the tasks,
+  -- task_projects, and rule_runs read policies: the caller's own readable projects / automations, once
+  -- per statement instead of a role check per row).
   assert exposed =
     'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
     'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
@@ -616,7 +619,7 @@ begin
     'retry_email_delivery,retry_integration_delivery,rotate_review_check_token,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,send_for_approval,'
     'set_approval_followup,set_comment_pinned,set_default_project_role,set_email_conversation_override,set_project_archived,set_project_integration,set_project_slack_destination,set_project_status,set_submitter_thread_closed,set_task_approvers,set_task_dependency,'
     'slack_destination_usable,slack_settings,start_import_run,submit_form,submitter_conversation_status,submitter_thread_status,sync_my_task_placements,task_comment_page,task_role,test_rule,transfer_portfolio_ownership,'
-    'transfer_project_ownership,update_portfolio_member_role,update_project_member_role,update_project_template,withdraw_approval,workspace_email_summary,'
+    'transfer_project_ownership,update_portfolio_member_role,update_project_member_role,update_project_template,viewer_project_ids,viewer_rule_ids,withdraw_approval,workspace_email_summary,'
     'workspace_hidden_project_count',
     format('authenticated SECURITY DEFINER surface changed: %s', exposed);
 

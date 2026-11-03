@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
 import { CheckCircle2, CircleDot, FlaskConical, Loader2, X } from "lucide-react";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import { PILL } from "@/components/project/field-chips";
+import type { TaskDetail } from "@/lib/data";
+import { dayLabel } from "@/lib/date-input";
+import { OPTION_COLOR_CLASSES, fieldChips } from "@/lib/fields";
+import { formatRequestLabel } from "@/lib/request-numbers";
+import { TASK_KIND_LABELS } from "@/lib/task-kinds";
 import { testRule } from "@/lib/actions";
 import { conditionGroup, groupsPass, type RuleAction, type RuleCondition, type TriggerType } from "@/lib/rules";
 import { testHeadline, type RuleTestResult } from "@/lib/rule-steps";
@@ -139,6 +145,7 @@ export function RuleTestPanel({
               panelWidth={340}
               className="w-full"
             />
+            {taskId ? <TestTaskDetails taskId={taskId} projectId={projectId} ctx={ctx} /> : null}
             <button type="button" onClick={runTest} disabled={!taskId || loading} className="btn-primary h-8 self-start px-3">
               {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <FlaskConical className="size-4" aria-hidden />}
               {loading ? "Testing…" : tested ? "Run test again" : "Run test"}
@@ -156,6 +163,97 @@ export function RuleTestPanel({
         </div>
       </div>
     </aside>
+  );
+}
+
+// Nov 3 notes (batch 18, 136): what the chosen task looks like right now — its number, status, type,
+// section in this project, assignee, dates, tags, subtasks, followers, and every field with a value — so
+// it's clear what the test runs on. Read through the task pane's own route (GET /api/task-pane/<id>,
+// the viewer's own access), kept per task for the visit.
+const detailCache = new Map<string, TaskDetail>();
+
+function TestTaskDetails({ taskId, projectId, ctx }: { taskId: string; projectId: string; ctx: RuleContext }) {
+  const [loaded, setLoaded] = useState<{ id: string; task: TaskDetail | null } | null>(null);
+  useEffect(() => {
+    if (detailCache.has(taskId)) return;
+    const controller = new AbortController();
+    fetch(`/api/task-pane/${taskId}`, { signal: controller.signal, cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: { task?: TaskDetail } | null) => {
+        if (body?.task) detailCache.set(taskId, body.task);
+        setLoaded({ id: taskId, task: body?.task ?? null });
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [taskId]);
+
+  const task = detailCache.get(taskId) ?? (loaded?.id === taskId ? loaded.task : undefined);
+  if (task === undefined) {
+    return (
+      <p className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-500" aria-live="polite">
+        <Loader2 className="size-3.5 animate-spin" aria-hidden /> Loading the task’s details…
+      </p>
+    );
+  }
+  if (task === null) return <p className="text-xs text-zinc-500">Couldn’t load this task’s details.</p>;
+
+  const personName = (id: string) => ctx.people.find((p) => p.id === id)?.name ?? ctx.members?.find((m) => m.id === id)?.name ?? null;
+  const membership = task.memberships.find((m) => m.projectId === projectId) ?? task.memberships[0];
+  const sectionName = membership?.sections.find((sec) => sec.id === membership.sectionId)?.name ?? null;
+  const year = new Date().getFullYear();
+  const date = (value: string | null) => (value ? dayLabel(value, year) : null);
+  const tagNames = task.tagIds.map((id) => ctx.tags?.find((t) => t.id === id)?.name).filter((name): name is string => Boolean(name));
+  const done = task.subtasks.filter((sub) => sub.completedAt).length;
+  const fields = task.fields
+    .map((field) => ({
+      field,
+      chips: fieldChips(field, task.fieldValues[field.id], { personName, sectionName: field.boundToSections ? sectionName : null }),
+    }))
+    .filter((f) => f.chips.length > 0);
+  const rows: [string, ReactNode][] = [
+    ["Status", task.completedAt ? `Completed ${date(task.completedAt.slice(0, 10))}` : "Open"],
+    ["Type", TASK_KIND_LABELS[task.kind]],
+    ["Section", sectionName ?? (membership ? "No section" : "Not in a project")],
+    ["Assignee", task.assigneeId ? (personName(task.assigneeId) ?? "Someone") : "Unassigned"],
+    ["Start date", date(task.startOn) ?? "—"],
+    ["Due date", date(task.dueOn) ?? "—"],
+  ];
+  if (tagNames.length) rows.push(["Tags", tagNames.join(", ")]);
+  if (task.subtasks.length) rows.push(["Subtasks", `${done} of ${task.subtasks.length} done`]);
+  if (task.followerIds.length) rows.push(["Followers", String(task.followerIds.length)]);
+  if (task.attachments.length) rows.push(["Files", String(task.attachments.length)]);
+  if (task.submission) rows.push(["From form", task.submission.formTitle ?? "A form"]);
+
+  return (
+    <section aria-label="The task’s details" className="rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 py-2.5" data-test-task-details="">
+      <p className="flex items-baseline gap-1.5 text-sm font-medium text-zinc-900">
+        <span className="min-w-0 flex-1 truncate">{task.title}</span>
+        {task.requestLabel ? <span className="shrink-0 text-2xs tabular-nums text-zinc-500">{formatRequestLabel(task.requestLabel)}</span> : null}
+      </p>
+      <dl className="mt-1.5 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+        {rows.map(([label, value]) => (
+          <Fragment key={label}>
+            <dt className="text-zinc-500">{label}</dt>
+            <dd className="min-w-0 truncate text-zinc-800">{value}</dd>
+          </Fragment>
+        ))}
+        {fields.map(({ field, chips }) => (
+          <Fragment key={field.id}>
+            <dt className="truncate text-zinc-500" title={field.name}>
+              {field.name}
+            </dt>
+            <dd className="flex min-w-0 flex-wrap gap-1">
+              {chips.map((chip, i) => (
+                <span key={i} className={`${PILL} ${OPTION_COLOR_CLASSES[chip.color]}`}>
+                  {chip.label}
+                </span>
+              ))}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+      {task.notes ? <p className="mt-1.5 line-clamp-2 text-xs text-zinc-500" title={task.notes}>{task.notes}</p> : null}
+    </section>
   );
 }
 

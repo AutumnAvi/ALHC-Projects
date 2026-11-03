@@ -6,6 +6,7 @@ import { ArrowRight, Settings2 } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
 import { applyDependencyShifts, changeTaskDates, undoDependencyShift } from "@/lib/actions";
+import { requestRuleFeedback } from "@/lib/rule-feedback-bus";
 import { currentMutationToken, dropTokenTasks, holdTaskChanges } from "@/lib/optimistic-session";
 import {
   shiftLabel,
@@ -275,7 +276,7 @@ export function useDependencyShift(): {
   );
 
   // The change on the server; the ids of every task it moved (null: nothing changed).
-  const shift = useCallback(
+  const shiftOnce = useCallback(
     async (moves: ShiftMove[], subject: string, options: Options): Promise<Set<string> | null> => {
       const answer = await changeTaskDates(moves);
       if (answer.error || !answer.outcome) {
@@ -335,6 +336,20 @@ export function useDependencyShift(): {
       return new Set(applied.result.changes.map((c) => c.task_id));
     },
     [notify, report],
+  );
+
+  const shift = useCallback(
+    async (moves: ShiftMove[], subject: string, options: Options): Promise<Set<string> | null> => {
+      // Nov 3 notes (batch 18, 139): a date change can fire automations ("Due date changes → add a
+      // comment"); this path isn't a useServerAction write, so it asks for the feedback itself.
+      const startedAt = Date.now();
+      try {
+        return await shiftOnce(moves, subject, options);
+      } finally {
+        requestRuleFeedback(startedAt);
+      }
+    },
+    [shiftOnce],
   );
 
   const changeDates = useCallback(
