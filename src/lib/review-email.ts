@@ -86,6 +86,22 @@ function fileRow(asset: ReviewEmailAsset, href: string) {
   return `<tr><td valign="top" style="padding:0 0 16px 0">${picture}<a href="${link}" target="_blank" style="display:block;margin-top:6px;font-size:13px;line-height:18px;color:#3f3f46;text-decoration:none;word-break:break-word;${FONT}">${name}</a></td></tr>`;
 }
 
+// The email's file list: one row per file (at most EMAIL_GRID_FILES; the rest counted), each a link.
+// Shared with the approval request email (Nov 4 notes, batch 25, 160).
+export function emailFileList(assets: ReviewEmailAsset[], hrefFor: (asset: ReviewEmailAsset) => string, moreWhere = "on the review page"): string {
+  const shown = assets.slice(0, EMAIL_GRID_FILES);
+  const more = assets.length - shown.length;
+  return shown.length
+    ? `<table role="presentation" width="${EMAIL_IMAGE_WIDTH}" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 0 0;width:100%;max-width:${EMAIL_IMAGE_WIDTH}px">${shown
+        .map((a) => fileRow(a, hrefFor(a)))
+        .join("")}</table>${
+        more > 0
+          ? `<p style="margin:0 0 4px 0;font-size:12px;color:#71717a;${FONT}">And ${more} more file${more === 1 ? "" : "s"} ${moreWhere}.</p>`
+          : ""
+      }`
+    : "";
+}
+
 export function renderReviewEmail(input: ReviewEmailInput): Rendered {
   const urls = reviewUrls(input.origin, input.token);
   const design: AppliedDesign = applyDesign("requester", DESIGN_DEFAULTS.requester, {
@@ -101,17 +117,7 @@ export function renderReviewEmail(input: ReviewEmailInput): Rendered {
   }. Click a file to see it in full quality, pin comments right on it, and approve or leave feedback.`;
   const paragraphs = [greeting, input.message?.trim() || "", intro].filter(Boolean);
 
-  const shown = input.assets.slice(0, EMAIL_GRID_FILES);
-  const more = input.assets.length - shown.length;
-  const grid = shown.length
-    ? `<table role="presentation" width="${EMAIL_IMAGE_WIDTH}" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 0 0;width:100%;max-width:${EMAIL_IMAGE_WIDTH}px">${shown
-        .map((a) => fileRow(a, urls.file(a.assetId)))
-        .join("")}</table>${
-        more > 0
-          ? `<p style="margin:0 0 4px 0;font-size:12px;color:#71717a;${FONT}">And ${more} more file${more === 1 ? "" : "s"} on the review page.</p>`
-          : ""
-      }`
-    : "";
+  const grid = emailFileList(input.assets, (a) => urls.file(a.assetId));
   const buttons = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0 0 0"><tr><td bgcolor="${escapeHtml(
     design.buttonColor,
   )}" style="border-radius:8px;background:${escapeHtml(design.buttonColor)}"><a href="${escapeHtml(

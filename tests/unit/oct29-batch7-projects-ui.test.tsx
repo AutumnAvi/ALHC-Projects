@@ -259,7 +259,6 @@ test("Inbox: +N right after the task's name inside the card's link (hover list, 
         onRead={() => {}}
         onArchive={() => {}}
         onBookmark={() => {}}
-        onDecide={() => {}}
       />
     </ul>,
     "/inbox",

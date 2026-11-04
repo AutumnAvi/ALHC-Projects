@@ -23,6 +23,11 @@ import { backgroundOrigin } from "@/lib/origin";
 import { resolveTaskLinkMarkers } from "@/lib/rule-placeholders";
 import { settingsHref } from "@/lib/shell";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { EMAIL_GRID_FILES, emailFileList, type ReviewEmailAsset } from "@/lib/review-email";
+import { approverReviewHref } from "@/lib/approver-review";
+import { isUuid } from "@/lib/ids";
+import { ATTACHMENTS_BUCKET } from "@/lib/attachments";
+import { thumbnailPath } from "@/lib/review-thumbnail-shared";
 import { WORKSPACE_ASSETS_BUCKET } from "@/lib/workspace";
 
 // Email delivery for the outbox the database fills (form confirmations, rule emails, comment emails to
@@ -265,7 +270,27 @@ const DECISIONS: Record<string, string> = {
 // An Inbox notification the recipient asked to get by email too (Settings → Notifications, Real
 // features 2): who did what where, the comment / message / note, and a link to it. The database stored
 // the parts (payload) and checks again at send time that the recipient still wants it and can open it.
-function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null): Rendered {
+// Nov 4 notes (batch 25, 160): the files of the round an approval request is about, for its email — a
+// stored thumbnail (an image, or a PDF's first page, drawn when the round was sent) through a signed
+// link, else a file card; each opens the review page (sign-in required).
+export type ApprovalEmailFile = Pick<ReviewEmailAsset, "assetId" | "name" | "contentType" | "thumbnailUrl" | "thumbnailWidth">;
+
+// Approval requests and their reminders: decided only on the review page (note 159), never from the email.
+export function approvalNotificationParts(
+  data: Record<string, unknown>,
+  actor: string,
+  quoted: string,
+): { heading: string; action: string } {
+  const reminder = data.reminder === "overdue" ? "Reminder: approval overdue" : data.reminder === "due_soon" ? "Reminder: approval due tomorrow" : null;
+  const heading = reminder
+    ? `${reminder} · ${quoted}`
+    : data.resubmitted
+      ? `${actor} resubmitted ${quoted} for your approval`
+      : `${actor} asked for your approval on ${quoted}`;
+  return { heading, action: "Open review" };
+}
+
+function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null, approvalFiles: ApprovalEmailFile[] = []): Rendered {
   const p = payloadOf(row);
   const data = p.data && typeof p.data === "object" && !Array.isArray(p.data) ? p.data : {};
   const actor = str(p.actor_name) ?? "Someone";
@@ -286,7 +311,7 @@ function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null):
       rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
       break;
     case "approval_requested":
-      heading = data.resubmitted ? `${actor} resubmitted ${quoted} for your approval` : `${actor} asked for your approval on ${quoted}`;
+      ({ heading, action } = approvalNotificationParts(data, actor, quoted));
       rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
       break;
     case "approval_decided":
@@ -320,13 +345,26 @@ function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null):
   }
   const origin = backgroundOrigin();
   const path = str(p.path);
-  const href = origin && path && path.startsWith("/") ? `${origin}${path}` : null;
+  // An approval request opens its review page (note 159); everything else the item's own link.
+  const taskId = str(p.task_id);
+  const review = str(p.item_kind) === "approval_requested" && taskId && isUuid(taskId) ? approverReviewHref(taskId) : null;
+  const href = origin ? (review ? `${origin}${review}` : path && path.startsWith("/") ? `${origin}${path}` : null) : null;
   const field = str(data.field_name);
   const body =
     str(p.item_kind) === "rule" && field ? (detail ? `${field}: ${detail}` : `${field} was cleared`) : detail;
+  const files = review && href ? approvalFiles : [];
+  const blocks = files.length
+    ? [
+        {
+          html: emailFileList(files, () => href!, "to review"),
+          text: ["Files to review:", ...files.map((f) => `- ${f.name}`)].join("\n"),
+        },
+      ]
+    : [];
   return layout(heading, body ? [body] : [], rows, {
     subject: (row.subject ?? heading).slice(0, 300),
     action: href ? { label: action, href } : null,
+    blocks,
     footer: [
       `You get this email because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Your Inbox has it too unless you turned that off.`,
     ],
@@ -336,7 +374,13 @@ function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null):
 
 export function renderEmail(
   row: OutboxRow,
-  options: { canReply?: boolean; design?: AppliedDesign | null; requestWrap?: boolean; taskNumbers?: EmailNumber[] | null } = {},
+  options: {
+    canReply?: boolean;
+    design?: AppliedDesign | null;
+    requestWrap?: boolean;
+    taskNumbers?: EmailNumber[] | null;
+    approvalFiles?: ApprovalEmailFile[];
+  } = {},
 ): Rendered {
   const design = options.design ?? defaultAppliedDesign(guessDesignKind(row));
   const numbers = options.taskNumbers ?? null;
@@ -345,7 +389,7 @@ export function renderEmail(
     return renderSubmitterResponseEmail(row, Boolean(options.canReply), design, options.requestWrap !== false, numbers);
   }
   if (isInvite(row)) return renderInviteEmail(row, design);
-  if (isNotification(row)) return renderNotificationEmail(row, design);
+  if (isNotification(row)) return renderNotificationEmail(row, design, options.approvalFiles);
   const p = payloadOf(row);
   const { label, prefix, wrap } = emailTaskLabel(str(p.request_label), options.requestWrap !== false, numbers);
   const taskTitle = str(p.task_title) ?? "your request";
@@ -762,6 +806,65 @@ export async function sendEmailNow(
   return "sent";
 }
 
+// Signed thumbnail links in an approval request email last this long (the email's own life; after that
+// the cards still open the review page, which needs a sign-in).
+export const APPROVAL_PREVIEW_DAYS = 7;
+const EMAIL_FILES_SIGNED = EMAIL_GRID_FILES;
+
+// Nov 4 notes (batch 25, 160): the files of the round an approval request email is about. Read with the
+// service role only for a row the database just cleared to send (claim_notification_emails re-checks the
+// recipient can open the task): the approval named in the item's own data, its round's files on that
+// task, and for each only an already-drawn thumbnail (never the file itself) signed for a week. Anything
+// missing = a file card. Best effort: a failure leaves the email without previews.
+async function approvalEmailFiles(row: OutboxRow, admin: Admin): Promise<ApprovalEmailFile[]> {
+  const p = payloadOf(row);
+  if (!isNotification(row) || str(p.item_kind) !== "approval_requested") return [];
+  const data = p.data && typeof p.data === "object" && !Array.isArray(p.data) ? p.data : {};
+  const approvalId = data.approval_id;
+  if (!isUuid(approvalId)) return [];
+  try {
+    const request = await admin.from("approval_requests").select("task_id, round_id").eq("id", approvalId).maybeSingle();
+    const roundId = request.data?.round_id;
+    if (!request.data || !roundId) return [];
+    const round = await admin.from("approval_rounds").select("task_id, attachment_ids").eq("id", roundId).maybeSingle();
+    if (!round.data || round.data.task_id !== request.data.task_id) return [];
+    const taskId = round.data.task_id;
+    const ids = (round.data.attachment_ids ?? []).filter(isUuid);
+    if (ids.length === 0) return [];
+    const files = await admin
+      .from("task_attachments")
+      .select("id, file_name, content_type")
+      .in("id", ids)
+      .eq("task_id", taskId)
+      .is("deleted_at", null);
+    const byId = new Map((files.data ?? []).map((f) => [f.id, f] as const));
+    const ordered = ids.flatMap((id) => {
+      const f = byId.get(id);
+      return f ? [f] : [];
+    });
+    const seconds = APPROVAL_PREVIEW_DAYS * 86400;
+    return await Promise.all(
+      ordered.map(async (f, i) => {
+        // Only the first ones the email shows are signed.
+        const signed =
+          i < EMAIL_FILES_SIGNED
+            ? await admin.storage.from(ATTACHMENTS_BUCKET).createSignedUrl(thumbnailPath(taskId, f.id), seconds)
+            : null;
+        const url = signed && !signed.error ? (signed.data?.signedUrl ?? null) : null;
+        return {
+          assetId: f.id,
+          name: f.file_name,
+          contentType: f.content_type,
+          thumbnailUrl: url && url.startsWith("https://") ? url : null,
+          thumbnailWidth: null,
+        };
+      }),
+    );
+  } catch {
+    return [];
+  }
+}
+
 async function deliver(
   row: OutboxRow,
   admin: Admin,
@@ -779,7 +882,8 @@ async function deliver(
     headers = rendered.headers;
   } else {
     reply = await replyTo(row, admin);
-    email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap, taskNumbers });
+    const approvalFiles = await approvalEmailFiles(row, admin);
+    email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap, taskNumbers, approvalFiles });
   }
   if (!isEmailConfigured()) {
     const template =

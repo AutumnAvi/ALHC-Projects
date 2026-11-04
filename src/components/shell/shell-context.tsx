@@ -84,6 +84,11 @@ export function useShell(): Shell {
   return shell;
 }
 
+// The signed-in person's id where the shell is mounted (null outside it, e.g. a component test).
+export function useShellMemberId(): string | null {
+  return useContext(ShellContext)?.member.id ?? null;
+}
+
 // Recently opened tasks and projects for the search palette: ids only, per person, in this browser.
 // Names are looked up on the server each time (resolveRecents), so nothing stale or unreadable shows.
 const recentsKey = (memberId: string) => `alhc.recents.${memberId}`;
