@@ -218,7 +218,7 @@ function TestTaskDetails({ taskId, projectId, ctx }: { taskId: string; projectId
     ["Start date", date(task.startOn) ?? "—"],
     ["Due date", date(task.dueOn) ?? "—"],
   ];
-  if (tagNames.length) rows.push(["Tags", tagNames.join(", ")]);
+  if (tagNames.length && ctx.tagsEnabled !== false) rows.push(["Tags", tagNames.join(", ")]);
   if (task.subtasks.length) rows.push(["Subtasks", `${done} of ${task.subtasks.length} done`]);
   if (task.followerIds.length) rows.push(["Followers", String(task.followerIds.length)]);
   if (task.attachments.length) rows.push(["Files", String(task.attachments.length)]);

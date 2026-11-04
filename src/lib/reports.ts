@@ -203,6 +203,7 @@ export function describeReportFilters(
   projects: { id: string; name: string }[],
   people: { id: string; name: string }[],
   tags: { id: string; name: string }[] = [],
+  tagsOn = true,
 ): string[] {
   const parts: string[] = [];
   const projectNames = new Map(projects.map((p) => [p.id, p.name]));
@@ -219,7 +220,8 @@ export function describeReportFilters(
         .join(", ")}`,
     );
   }
-  if (filters.tags?.length) {
+  // Note 154: a saved tag filter isn't applied (withoutReportTags) or described while tags are off.
+  if (tagsOn && filters.tags?.length) {
     const tagNames = new Map(tags.map((t) => [t.id, t.name]));
     parts.push(`Tags: ${filters.tags.map((t) => tagNames.get(t) ?? "Deleted tag").join(", ")}`);
   }

@@ -27,6 +27,7 @@ import { projectColorClass } from "@/lib/project-colors";
 import { SETTINGS_TABS, type EmailSetup, type SettingsTab } from "@/lib/shell";
 import { describeWorkWeek } from "@/lib/workdays";
 import { ONLY_ADMINS_NOTE, WORKSPACE_ROLE_LABELS } from "@/lib/workspace";
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 
 export type SettingsData = { me: MySettings; email: EmailSetup };
 
@@ -527,6 +528,7 @@ function AccountTab({ data }: { data: MySettings }) {
 // else, with the full read-only pages (members, teams, tags) one click away; admins change it all in the
 // Admin console.
 function WorkspaceTab({ data }: { data: MySettings }) {
+  const tagsOn = useTagsEnabled();
   return (
     <div>
       <dl className="-mt-3 divide-y divide-zinc-100 border-b border-zinc-100">
@@ -568,7 +570,7 @@ function WorkspaceTab({ data }: { data: MySettings }) {
         <p className="mt-3 text-xs text-zinc-500">
           {ONLY_ADMINS_NOTE}{" "}
           <Link href="/settings/workspace" className="text-accent-700 hover:underline">
-            See members, teams, and tags
+            {tagsOn ? "See members, teams, and tags" : "See members and teams"}
           </Link>
         </p>
       )}

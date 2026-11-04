@@ -6716,7 +6716,7 @@ export const getPersonProfile = cache(async (profileId: string): Promise<PersonP
   if (!profile) return null;
   const email = profile.email.toLowerCase();
   const self = profileId === user.id;
-  const [allowed, admin, viewerIsAdmin, teamRows, memberRows, openResult, doneResult, stories, comments] =
+  const [allowed, admin, viewerIsAdmin, teamRows, memberRows, openResult, doneResult, stories, comments, tagsOn] =
     await Promise.all([
       supabase.from("allowed_emails").select("removed_at").eq("email", email).maybeSingle(),
       supabase.from("workspace_admins").select("id").eq("profile_id", profileId).is("deleted_at", null).limit(1),
@@ -6765,6 +6765,7 @@ export const getPersonProfile = cache(async (profileId: string): Promise<PersonP
         .is("task.deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(PROFILE_ACTIVITY_LIMIT),
+      tagsEnabled(),
     ]);
 
   const openRows = rows(openResult, "their open tasks");
@@ -6785,6 +6786,8 @@ export const getPersonProfile = cache(async (profileId: string): Promise<PersonP
   const activity: PersonActivity[] = [
     ...rows(stories, "their activity")
       .filter((s) => !(s.task.source === "inbound" && s.created_at === s.task.created_at))
+      // Note 154: no "tagged" / "untagged" lines while the workspace's tags are switched off.
+      .filter((s) => tagsOn || (s.kind !== "tag_added" && s.kind !== "tag_removed"))
       .map((s) => ({
         id: `story-${s.id}`,
         at: s.created_at,

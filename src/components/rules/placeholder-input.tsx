@@ -19,7 +19,8 @@ const KNOWN = new Set(PLACEHOLDERS.map((p) => p.key));
 // What the "{ }" picker lists: the fixed placeholders, this project's fields, and its forms' questions.
 function placeholderOptions(ctx: RuleContext): SmartOption[] {
   return [
-    ...PLACEHOLDERS.map((p) => ({
+    // Note 154: no {{task.tags}} while the workspace's tags are switched off.
+    ...PLACEHOLDERS.filter((p) => ctx.tagsEnabled !== false || p.key !== "task.tags").map((p) => ({
       value: `{{${p.key}}}`,
       label: p.label,
       group: p.group,

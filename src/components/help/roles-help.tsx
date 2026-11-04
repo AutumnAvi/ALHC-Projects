@@ -1,19 +1,20 @@
 import { Check, Minus } from "lucide-react";
-import { NAMED_ROLES_NOTE, ROLE_TABLES, type RoleTable } from "@/lib/role-help";
+import { NAMED_ROLES_NOTE, roleTablesFor, type RoleTable } from "@/lib/role-help";
 
 // Nov 2 notes (batch 15, 109): the "Roles & permissions" page — one plain table per kind of role. Server
 // component (no state). The Commenter column is left out while the workspace has the role turned off.
-export function RolesHelp({ allowCommenter }: { allowCommenter: boolean }) {
+export function RolesHelp({ allowCommenter, tagsOn = true }: { allowCommenter: boolean; tagsOn?: boolean }) {
+  const tables = roleTablesFor(tagsOn);
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-8 px-gutter py-6">
       <nav aria-label="On this page" className="flex flex-wrap gap-2 text-xs">
-        {ROLE_TABLES.map((table) => (
+        {tables.map((table) => (
           <a key={table.id} href={`#${table.id}`} className="chip hover:bg-zinc-200">
             {table.title}
           </a>
         ))}
       </nav>
-      {ROLE_TABLES.map((table) => (
+      {tables.map((table) => (
         <RoleTableSection
           key={table.id}
           table={allowCommenter ? table : { ...table, columns: table.columns.filter((c) => c.key !== "commenter") }}

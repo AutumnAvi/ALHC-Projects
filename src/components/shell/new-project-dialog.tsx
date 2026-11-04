@@ -24,6 +24,7 @@ import {
 } from "@/components/projects/project-placement";
 import { UseTemplateForm } from "@/components/templates/use-template-dialog";
 import { EmptyState } from "@/components/ui";
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { createProject, type ActionResult } from "@/lib/actions";
 import { projectColorClass } from "@/lib/project-colors";
 import { loadProjectGallery, loadTemplatePreview } from "@/lib/shell-actions";
@@ -463,6 +464,7 @@ function ProjectPreview({
 }
 
 function ImportPreview({ name }: { name: string }) {
+  const tagsOn = useTagsEnabled();
   const steps: { icon: typeof Upload; title: ReactNode; body: string }[] = [
     {
       icon: FolderClosed,
@@ -477,7 +479,7 @@ function ImportPreview({ name }: { name: string }) {
     {
       icon: ListChecks,
       title: "Check the preview, then import",
-      body: "Sections, tasks, subtasks, fields, tags, comments, and dependencies. Nothing is added until you confirm.",
+      body: `Sections, tasks, subtasks, fields, ${tagsOn ? "tags, " : ""}comments, and dependencies. Nothing is added until you confirm.`,
     },
   ];
   return (
