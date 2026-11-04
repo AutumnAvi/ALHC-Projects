@@ -124,17 +124,17 @@ test("141: running an automation by hand doesn't wait for the page to render aga
 test("39.x: the open pane refetches its own task after writes and on Realtime events", () => {
   const store = fs.readFileSync("src/components/task/task-pane-store.ts", "utf8");
   assert.ok(store.includes("onRuleFeedbackRequest(() => refreshOpenTaskPanes())"), "every finished write refreshes the open pane");
+  // Since Nov 4 notes (batch 26) the pane listens on its task's Broadcast topic and patches itself.
   const host = fs.readFileSync("src/components/task/task-pane-host.tsx", "utf8");
-  for (const table of ["comments", "task_stories", "rule_runs", "tasks"]) {
-    assert.ok(host.includes(`table: "${table}"`), `the pane listens to ${table}`);
-  }
-  assert.ok(host.includes("maxErrors: 3"), "the tasks channel gives up on a database that doesn't publish it");
+  assert.ok(host.includes("useLiveTopic(") && host.includes("taskTopic(taskId)"), "the pane listens on its task's topic");
+  assert.ok(store.includes("patchTaskDetail(") && store.includes("refreshTaskPane(id)"), "patches, else refetches the task");
 });
 
 test("23.5: project views listen to their tasks and memberships", () => {
+  // Since Nov 4 notes (batch 26): the project's Broadcast topic, patched in place.
   const live = fs.readFileSync("src/components/project/project-live.tsx", "utf8");
-  assert.ok(live.includes("home_project_id=eq.") && live.includes("project_id=eq."));
-  assert.ok(live.includes('duringWrites: "skip"'), "the person's own edits aren't rendered twice");
+  assert.ok(live.includes("projectTopic(projectId)") && live.includes("projectLiveChanges("));
+  assert.ok(live.includes('requestLiveRefresh("skip")'), "the person's own edits aren't rendered twice");
   const page = fs.readFileSync("src/components/project/project-view-page.tsx", "utf8");
   assert.ok(page.includes("<ProjectLiveUpdates projectId={projectId} />"));
 });

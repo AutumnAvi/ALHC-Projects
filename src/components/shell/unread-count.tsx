@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { openRealtimeChannel } from "@/lib/realtime";
+import { subscribeLive } from "@/lib/live";
+import { userTopic } from "@/lib/live-patch";
 import { createClient } from "@/lib/supabase/client";
 
 const POLL_MS = 60_000;
 
 // Server-rendered count (re-sent whenever a server action refreshes the layout), kept fresh between
-// refreshes by Realtime when it's live, and by polling / focus only while it isn't.
+// refreshes by Broadcast when it's live, and by polling / focus only while it isn't.
 export function useUnreadCount(initial: number, memberId: string, scope: string) {
   const [state, setState] = useState({ initial, count: initial });
   if (state.initial !== initial) setState({ initial, count: initial });
@@ -34,7 +35,7 @@ export function useUnreadCount(initial: number, memberId: string, scope: string)
     if (!error && count !== null && ticket === request.current) setState((current) => ({ ...current, count }));
   }, []);
 
-  // Nov 4 notes (batch 21, QW4): one mechanism at a time. While the Realtime channel is live it alone
+  // Nov 4 notes (batch 21, QW4): one mechanism at a time. While the live channel is up it alone
   // keeps the count fresh (plus one recount each time it (re)joins, for anything missed while it was
   // down); only while it's down or unavailable does the count poll every minute and recount on focus.
   useEffect(() => {
@@ -61,24 +62,24 @@ export function useUnreadCount(initial: number, memberId: string, scope: string)
       interval = undefined;
       window.removeEventListener("focus", onFocus);
     };
-    const stopChannel = openRealtimeChannel(
-      `inbox-count-${scope}-${memberId}`,
-      [{ table: "inbox_items", filter: `recipient_id=eq.${memberId}` }],
-      refetchSoon,
-      {
-        onStatus: (status) => {
-          if (stopped) return;
-          if (status === "live") {
-            stopPolling();
-            refetchSoon();
-          } else {
-            startPolling();
-          }
-        },
-      },
-    );
     // Until the channel says it's live (a second or so), poll as the fallback.
     startPolling();
+    // Nov 4 notes, batch 26 (M3): the person's Broadcast topic says when one of their items is added or
+    // read / archived elsewhere; the count is then asked again (one cheap count, never the page).
+    const stopChannel = subscribeLive(userTopic(memberId), {
+      message: (message) => {
+        if (!stopped && message.table === "inbox_items") refetchSoon();
+      },
+      status: (status) => {
+        if (stopped) return;
+        if (status === "live") {
+          stopPolling();
+          refetchSoon();
+        } else {
+          startPolling();
+        }
+      },
+    });
     return () => {
       stopped = true;
       window.clearTimeout(timer);

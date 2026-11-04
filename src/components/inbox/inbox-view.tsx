@@ -34,7 +34,7 @@ import {
   type InboxSort,
   type InboxTab,
 } from "@/lib/inbox";
-import { useRealtimeRefresh } from "@/lib/realtime";
+import { useLiveInboxItems } from "./use-live-inbox";
 
 // The Inbox (Asana parity, batch 5): tabs Activity / Bookmarks / Archive / @Mentioned, a toolbar
 // (Filter, Sort, Density, Manage notifications, "…"), and notification cards grouped by day in a
@@ -45,7 +45,7 @@ type Override = Partial<CardState>;
 
 export function InboxView({
   tab,
-  items,
+  items: serverItems,
   profiles,
   memberId,
   bookmarks,
@@ -62,9 +62,7 @@ export function InboxView({
   timeZone: string;
   today: string;
 }) {
-  useRealtimeRefresh(`inbox-${memberId}`, [
-    { table: "inbox_items", filter: `recipient_id=eq.${memberId}` },
-  ]);
+  const items = useLiveInboxItems(serverItems, memberId);
   const taskHref = useTaskHref();
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();

@@ -34,7 +34,8 @@ import type {
   TeamThreadSummary,
 } from "@/lib/data";
 import { personHref } from "@/lib/people";
-import { useRealtimeRefresh } from "@/lib/realtime";
+import { useLiveRefresh } from "@/lib/live";
+import { projectTopic } from "@/lib/live-patch";
 
 // Messages: threads (title + body) with replies, @mentions, and reactions on the comment machinery, for
 // a project (Viewers read; Commenters and above post, reply, and react) or, since Real features 2, a
@@ -72,15 +73,15 @@ const ACTIONS: Record<Scope["kind"], ScopeActions> = {
 
 const basePath = (scope: Scope) => (scope.kind === "project" ? `/projects/${scope.id}/messages` : `/teams/${scope.id}/messages`);
 
+// Nov 4 notes, batch 26 (M3): a project's threads follow its Broadcast topic (messages and reactions);
+// the page renders again on a change. Team Messages have no tab since Oct 26 notes (batch 4), so their
+// scope has no live updates.
 function useMessagesRealtime(scope: Scope, key: string, reactions: boolean) {
-  const table = scope.kind === "project" ? "project_messages" : "team_messages";
-  const column = scope.kind === "project" ? "project_id" : "team_id";
-  useRealtimeRefresh(`${key}-${scope.id}`, [
-    { table, filter: `${column}=eq.${scope.id}` },
-    ...(reactions
-      ? [{ table: scope.kind === "project" ? "project_message_reactions" : "team_message_reactions", filter: `${column}=eq.${scope.id}` }]
-      : []),
-  ]);
+  void key;
+  useLiveRefresh(
+    scope.kind === "project" ? projectTopic(scope.id) : null,
+    reactions ? ["project_messages", "project_message_reactions"] : ["project_messages"],
+  );
 }
 
 function useNames(profiles: Profile[]) {

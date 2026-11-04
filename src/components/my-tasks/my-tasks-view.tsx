@@ -71,6 +71,7 @@ import type { AwaitingApproval, MyTask, Profile, SubtaskItem } from "@/lib/data"
 import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
 import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@/lib/task-seed";
 import { trackCompletion } from "@/lib/completion-store";
+import { useLiveMyTasks } from "./use-live-my-tasks";
 import {
   saveMyTasksLayout,
   type MyTaskPlacement,
@@ -156,8 +157,8 @@ export function expandableMyTasks(tasks: MyTask[]): { id: string; rootId: string
 const NO_AWAITING: AwaitingApproval[] = [];
 
 export function MyTasksView({
-  open,
-  completed,
+  open: serverOpen,
+  completed: serverCompleted,
   bulk,
   layout: initialLayout,
   sections,
@@ -180,6 +181,7 @@ export function MyTasksView({
   awaiting?: AwaitingApproval[];
   profiles?: Profile[];
 }) {
+  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted);
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
   const openTask = useOpenTask();

@@ -4,10 +4,13 @@ import { Suspense, lazy, use, useEffect } from "react";
 import { useTaskPane } from "@/components/shell/right-panel";
 import type { TaskDetail, TaskPanePayload } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
-import { openRealtimeChannel } from "@/lib/realtime";
+import { useLiveTopic } from "@/lib/live";
+import { taskTopic } from "@/lib/live-patch";
+import { reviewsChanged } from "./review-events";
 import { TaskNotFoundPanel, TaskPaneLoading } from "./task-pane-frame";
 import { TaskPanePreview } from "./task-pane-preview";
 import {
+  applyLivePane,
   ensureTaskPane,
   primeTaskPane,
   refreshTaskPane,
@@ -63,41 +66,22 @@ export function TaskPaneHost({
   );
 }
 
-// Nov 3 notes (batch 19; video bugs 35.x, 37.1, 39.x, 40.6, 23.5): the open pane keeps itself current.
-// After the person's own writes it refetches (task-pane-store), and Realtime tells it about everything
-// else: comments and activity, automation runs on the task, and (once the database publishes tasks) the
-// task row and its subtasks — an automation's due date, a rename in another tab. Each event refetches just
-// this task (GET /api/task-pane), not the whole page.
+// The open pane keeps itself current. After the person's own writes it refetches (task-pane-store); for
+// everyone else's changes it listens on the task's Broadcast topic (Nov 4 notes, batch 26: only the task's
+// readers can join it) and patches itself in place — the task row, subtasks, comments, reactions,
+// followers, tags — refetching just this task (GET /api/task-pane) for the rest (activity, automation
+// runs, approvals, files, field values). After a lost connection it refetches once.
 function useLivePane(taskId: string) {
-  useEffect(() => {
-    const unwatch = watchTaskPane(taskId);
-    const refresh = () => refreshTaskPane(taskId);
-    const stopActivity = openRealtimeChannel(
-      `pane-${taskId}`,
-      [
-        { table: "comments", filter: `task_id=eq.${taskId}` },
-        { table: "task_stories", filter: `task_id=eq.${taskId}` },
-        { table: "rule_runs", filter: `task_id=eq.${taskId}` },
-      ],
-      refresh,
-    );
-    // Its own channel: a database without this batch's migration doesn't publish tasks, and that
-    // channel gives up after a few errors without taking the others with it.
-    const stopRows = openRealtimeChannel(
-      `pane-rows-${taskId}`,
-      [
-        { table: "tasks", filter: `id=eq.${taskId}` },
-        { table: "tasks", filter: `parent_task_id=eq.${taskId}` },
-      ],
-      refresh,
-      { maxErrors: 3 },
-    );
-    return () => {
-      stopActivity();
-      stopRows();
-      unwatch();
-    };
-  }, [taskId]);
+  useEffect(() => watchTaskPane(taskId), [taskId]);
+  useLiveTopic(
+    taskTopic(taskId),
+    (message) => {
+      if (applyLivePane(taskId, message).reviews) reviewsChanged(taskId);
+    },
+    (status, rejoined) => {
+      if (status === "live" && rejoined) refreshTaskPane(taskId);
+    },
+  );
 }
 
 function PaneFallback({ taskId }: { taskId: string }) {

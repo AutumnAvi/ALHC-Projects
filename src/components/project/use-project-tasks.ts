@@ -21,7 +21,10 @@ export type TaskChange =
   | { type: "due"; taskId: string; dueOn: string | null }
   | { type: "dates"; taskId: string; startOn: string | null; dueOn: string | null }
   | { type: "tags"; taskId: string; tagIds: string[] }
-  | { type: "title"; taskId: string; title: string };
+  | { type: "title"; taskId: string; title: string }
+  // Nov 4 notes, batch 26: a live update took the task out of this project (trashed, removed) — or put
+  // it back, which cancels an earlier "gone" until the server's copy arrives.
+  | { type: "presence"; taskId: string; present: boolean };
 
 type TaggedChange = { token: number; change: TaskChange };
 
@@ -57,6 +60,8 @@ function apply(tasks: ProjectTask[], change: TaskChange): ProjectTask[] {
       return update((task) => ({ ...task, tagIds: change.tagIds }));
     case "title":
       return update((task) => ({ ...task, title: change.title }));
+    case "presence":
+      return change.present ? tasks : tasks.filter((task) => task.id !== change.taskId);
   }
 }
 
@@ -79,6 +84,7 @@ function sectionIndex(tasks: ProjectTask[], sectionId: string | null, taskId: st
 // task sits at the same place in its section).
 export function changeAbsorbed(tasks: ProjectTask[], change: TaskChange) {
   const task = tasks.find((item) => item.id === change.taskId);
+  if (change.type === "presence") return change.present || !task;
   if (!task) return true;
   switch (change.type) {
     case "complete":
@@ -148,6 +154,21 @@ function scheduleFlush() {
   });
 }
 
+// Nov 4 notes, batch 26 (M3): live updates from other people land in the same overlay as the person's own
+// changes (token 0: never "failed"), kept until the server's copy agrees. The mounted list publishes what
+// it shows so a live message is compared with that.
+let shownTasks: ProjectTask[] = [];
+
+export function shownProjectTasks(): ProjectTask[] {
+  return shownTasks;
+}
+
+export function applyLiveTaskChanges(changes: TaskChange[]) {
+  if (changes.length === 0) return;
+  for (const change of changes) queued.push({ token: 0, change });
+  scheduleFlush();
+}
+
 export function useProjectTasks(tasks: ProjectTask[]) {
   const [changes, setChanges] = useState<TaggedChange[]>([]);
   const revision = useSyncExternalStore(subscribeMutationFailures, mutationFailureVersion, () => 0);
@@ -169,7 +190,11 @@ export function useProjectTasks(tasks: ProjectTask[]) {
   // Nov 2 notes (batch 15, 111): a task blocked only by tasks just completed here is unblocked at once.
   const completions = useSyncExternalStore(subscribeCompletions, completionsVersion, () => 0);
 
-  return [unblockCompleted(overlayProjectTasks(tasks, pending.map((item) => item.change)), completions), applyChange] as const;
+  const shown = unblockCompleted(overlayProjectTasks(tasks, pending.map((item) => item.change)), completions);
+  useEffect(() => {
+    shownTasks = shown;
+  });
+  return [shown, applyChange] as const;
 }
 
 // Fractional ordering: place a task before `beforeId` within `column`, or at the end.
