@@ -197,6 +197,8 @@ npm run build
 npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01 … zz06)
 ```
 
+Pull requests and pushes to `main` run the same checks in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Node 22: lint, typecheck, test, and build. `npm run db:test` is a separate job and runs only when files under `supabase/` change (PostgreSQL from the runner image; the script's own throwaway cluster).
+
 ## What's here (integration depth)
 
 - **Slack task cards.** A **Send Slack message** action can use **Message style → Block Kit (task card)**: your message, then the task title linked to it, project, assignee, due date, status, and an **Open task** button (the plain message is still sent for notifications). Any Slack message can include `{task_link}` — the task's title linked to it in the app. The link is the normal signed-in task link: people still sign in to open it, and nothing public or token-based is ever sent. Task details stay escaped, so a title can't ping `@channel` or add a link.
