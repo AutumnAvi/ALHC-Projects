@@ -21,6 +21,7 @@ import {
   asanaTokenProblem,
 } from "@/lib/imports-shared";
 import { createClient } from "@/lib/supabase/client";
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 
 type Phase =
   | { kind: "pick" }
@@ -388,6 +389,7 @@ function PreviewCard({
   onStartOver: () => void;
 }) {
   const c = preview.counts;
+  const tagsOn = useTagsEnabled();
   const newTasks = c.tasks.total - c.tasks.existing;
   const rows: [string, number, number | null][] = [
     ["Tasks", c.tasks.total, c.tasks.existing],
@@ -396,7 +398,8 @@ function PreviewCard({
     ["Attachment links", c.attachments.total, c.attachments.existing],
     ["Sections", c.sections.total, c.sections.existing],
     ["Custom fields", c.fields.total, c.fields.existing],
-    ["Tags (workspace tags, matched by name)", c.tags, null],
+    // Note 154: tags still import (the data is kept), but the preview doesn't name them while they're off.
+    ...(tagsOn ? [["Tags (workspace tags, matched by name)", c.tags, null] as [string, number, null]] : []),
     ["Dependencies", c.dependencies, null],
   ];
   if (c.rules > 0) rows.push(["Automations (added turned off)", c.rules, null]);

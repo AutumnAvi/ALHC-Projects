@@ -480,7 +480,7 @@ function TaskCard({
         </div>
       ) : null}
 
-      {task.tagIds.length ? (
+      {tagsById.size > 0 && task.tagIds.length ? (
         <div className="mt-2 flex flex-wrap gap-1">
           <TagChips ids={task.tagIds} byId={tagsById} max={4} />
         </div>

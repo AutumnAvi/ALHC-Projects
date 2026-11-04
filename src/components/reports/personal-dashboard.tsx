@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import {
   ChartColumn,
   ChevronDown,
@@ -227,7 +228,7 @@ function WidgetCard({
   const [, run] = useServerAction();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
-  const chips = describeReportFilters(widget.filters, projects, people, tags);
+  const chips = describeReportFilters(widget.filters, projects, people, tags, useTagsEnabled());
 
   return (
     <li

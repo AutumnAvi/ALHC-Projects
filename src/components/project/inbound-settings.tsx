@@ -69,6 +69,7 @@ export function InboundSettings({
 }) {
   const [revealed, setRevealed] = useState<RevealedInboundCredentials | null>(null);
   const names = new Map(endpoints.map((e) => [e.id, e.name]));
+  const tagsOn = useTagsEnabled();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-gutter py-5">
@@ -80,7 +81,7 @@ export function InboundSettings({
           <p className="mt-1 text-sm text-zinc-600">
             Let another tool (Zapier, a website form, a script) create tasks in this project by POSTing JSON to a
             private URL. Tasks are created as the person who made the endpoint, land in its section with its default
-            assignee and tags, and fire this project’s automations (use the{" "}
+            assignee{tagsOn ? " and tags" : ""}, and fire this project’s automations (use the{" "}
             <span className="font-medium text-zinc-900">Created by inbound webhook</span> trigger). The URL contains
             a secret token that is shown once; anyone with it can create tasks here, so treat it like a password.
           </p>
@@ -153,6 +154,7 @@ function RevealPanel({
   onDone: () => void;
 }) {
   const url = revealed.token ? inboundUrl(origin, revealed.token) : null;
+  const tagsOn = useTagsEnabled();
   return (
     <div role="status" className="space-y-3 border-b border-amber-200 bg-amber-50 px-5 py-4">
       <p className="text-sm font-medium text-amber-900">
@@ -185,7 +187,7 @@ function RevealPanel({
       {url ? (
         <details className="text-xs text-zinc-700">
           <summary className="cursor-pointer">Example request</summary>
-          <pre className="mt-2 overflow-x-auto rounded bg-white p-2 font-mono text-xs text-zinc-800">{inboundCurlExample(url)}</pre>
+          <pre className="mt-2 overflow-x-auto rounded bg-white p-2 font-mono text-xs text-zinc-800">{inboundCurlExample(url, tagsOn)}</pre>
         </details>
       ) : null}
       <button type="button" onClick={onDone} className={buttonClass}>
@@ -621,6 +623,8 @@ function CallLog({ projectId, calls, names }: { projectId: string; calls: Inboun
 }
 
 function PayloadReference() {
+  // Note 154: no `tags` key while the workspace's tags are switched off.
+  const tagsOn = useTagsEnabled();
   return (
     <section className="rounded-lg border border-zinc-200 p-5 text-sm text-zinc-600" aria-labelledby="inbound-format-heading">
       <h2 id="inbound-format-heading" className="text-sm font-semibold text-zinc-900">
@@ -639,10 +643,12 @@ function PayloadReference() {
           <code className="font-mono text-xs">assignee_email</code> — a member of this project; otherwise the default
           assignee
         </li>
-        <li>
-          <code className="font-mono text-xs">tags</code> — tag names, added to the default tags (unknown names are
-          skipped)
-        </li>
+        {tagsOn ? (
+          <li>
+            <code className="font-mono text-xs">tags</code> — tag names, added to the default tags (unknown names are
+            skipped)
+          </li>
+        ) : null}
         <li>
           <code className="font-mono text-xs">fields</code> — custom field values by field name: text, number, date,
           true/false, an option name (or a list for multi-select), member emails for people fields, a section name for

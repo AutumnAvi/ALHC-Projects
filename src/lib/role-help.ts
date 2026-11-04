@@ -107,3 +107,12 @@ export const ROLE_TABLES: RoleTable[] = [
 // Project roles from batch 14 (Approver, Designer, …) are names for "who does what", not permissions.
 export const NAMED_ROLES_NOTE =
   "Named project roles (Approver, Designer, Lead, …, on a project's Overview) say who does what — they fill in assignees, approvers, and followers. They don't change what anyone can do: that's always the person's project role above.";
+
+// Note 154: the tables without tags, while the workspace's tags are switched off.
+export function roleTablesFor(tagsOn: boolean): RoleTable[] {
+  if (tagsOn) return ROLE_TABLES;
+  return ROLE_TABLES.map((table) => ({
+    ...table,
+    rows: table.rows.map((r) => ({ ...r, label: r.label.replace(/\btags, /g, "") })),
+  }));
+}

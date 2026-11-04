@@ -66,12 +66,12 @@ export function inboundUrl(origin: string | null, token: string) {
 }
 
 // The example the settings page shows (curl with an unsigned request).
-export function inboundCurlExample(url: string) {
+export function inboundCurlExample(url: string, tags = true) {
   return [
     `curl -X POST '${url}' \\`,
     `  -H 'Content-Type: application/json' \\`,
     `  -H 'Idempotency-Key: order-1042' \\`,
     `  -d '{"title": "New flyer request", "notes": "From the website", "due_on": "2026-11-02",`,
-    `       "assignee_email": "someone@example.com", "tags": ["Web"], "fields": {"Priority": "High"}}'`,
+    `       "assignee_email": "someone@example.com", ${tags ? '"tags": ["Web"], ' : ""}"fields": {"Priority": "High"}}'`,
   ].join("\n");
 }
