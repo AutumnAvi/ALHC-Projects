@@ -2,6 +2,7 @@
 // the browser included).
 import type { Goal } from "@/lib/goals";
 import type { ProjectRole } from "@/lib/roles";
+import type { StatusTemplateSection } from "@/lib/status-templates";
 import type { Tables } from "@/lib/supabase/database.types";
 
 // Every read in the app goes through this module, and every query here filters deleted_at IS NULL —
@@ -129,4 +130,16 @@ export type ProjectFile = {
   createdAt: string;
   taskId: string;
   taskTitle: string;
+};
+
+// Teams a new project can go in (the New project dialog's team picker): the viewer's teams plus the
+// default team, default first.
+export type ProjectTeamChoice = { id: string; name: string; isDefault: boolean };
+
+// Customize → Status templates: what the template editor saves (checked by the layer before writing).
+export type StatusTemplateInput = {
+  name: string;
+  status: string | null;
+  title: string | null;
+  sections: StatusTemplateSection[];
 };
