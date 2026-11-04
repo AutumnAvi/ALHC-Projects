@@ -11,6 +11,7 @@ import { KeyboardShortcuts } from "@/components/shortcuts/keyboard-shortcuts";
 import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { SetupRequired } from "@/components/setup-required";
 import { ToastProvider } from "@/components/toast";
+import { QueryProvider } from "@/components/query-provider";
 import { requireMember } from "@/lib/auth";
 import { loadAppShell } from "@/lib/screen-loaders";
 import { isSupabaseConfigured } from "@/lib/env";
@@ -34,34 +35,37 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const people = shell.profiles.map((p) => ({ id: p.id, name: p.full_name?.trim() || p.email, email: p.email }));
   const { workspace, projects, starIds: starredIds, unreadCount, isWorkspaceAdmin: admin, avatars, tagsEnabled: tagsOn, folders, subtaskPrefs, goalsEnabled: goalsOn } = shell;
 
+  // Nov 4 notes, batch 28 (M4): the client data cache, this person's own (src/lib/query/).
   return (
-    <ToastProvider>
-      <AvatarDirectoryProvider avatars={avatars}>
-        <ShellProvider
-          member={{ id: member.id, name: member.name, email: member.email }}
-          isWorkspaceAdmin={admin}
-          workspace={{ name: workspace?.name ?? "ALHC Projects", logoUrl: shell.logoUrl }}
-          goalsEnabled={goalsOn}
-          initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
-        >
-          <TagsEnabledProvider enabled={tagsOn}>
-            <SubtaskPrefsProvider initial={subtaskPrefs}>
-              <PeopleDirectoryProvider people={people}>
-              <TimeZoneCookie />
-              <KeyboardShortcuts />
-              <AppShell
-                projects={projects.map(({ id, name }) => ({ id, name }))}
-                starredIds={starredIds}
-                folders={folders}
-                unreadCount={unreadCount}
-              >
-                {children}
-              </AppShell>
-              </PeopleDirectoryProvider>
-            </SubtaskPrefsProvider>
-          </TagsEnabledProvider>
-        </ShellProvider>
-      </AvatarDirectoryProvider>
-    </ToastProvider>
+    <QueryProvider memberId={member.id}>
+      <ToastProvider>
+        <AvatarDirectoryProvider avatars={avatars}>
+          <ShellProvider
+            member={{ id: member.id, name: member.name, email: member.email }}
+            isWorkspaceAdmin={admin}
+            workspace={{ name: workspace?.name ?? "ALHC Projects", logoUrl: shell.logoUrl }}
+            goalsEnabled={goalsOn}
+            initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
+          >
+            <TagsEnabledProvider enabled={tagsOn}>
+              <SubtaskPrefsProvider initial={subtaskPrefs}>
+                <PeopleDirectoryProvider people={people}>
+                <TimeZoneCookie />
+                <KeyboardShortcuts />
+                <AppShell
+                  projects={projects.map(({ id, name }) => ({ id, name }))}
+                  starredIds={starredIds}
+                  folders={folders}
+                  unreadCount={unreadCount}
+                >
+                  {children}
+                </AppShell>
+                </PeopleDirectoryProvider>
+              </SubtaskPrefsProvider>
+            </TagsEnabledProvider>
+          </ShellProvider>
+        </AvatarDirectoryProvider>
+      </ToastProvider>
+    </QueryProvider>
   );
 }

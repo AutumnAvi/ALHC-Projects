@@ -26,6 +26,12 @@ export function setMutationQuietHandler(handler: (() => void) | null) {
 
 // When each open write began (Nov 3 notes, batch 18, 138 / 139): ending one asks which automations it ran.
 const startedAt = new Map<number, number>();
+// When each write ended (Nov 4 notes, batch 28: edits shown on other screens last a moment past it).
+const endedAt = new Map<number, number>();
+
+export function mutationEndedAt(token: number): number | undefined {
+  return endedAt.get(token);
+}
 
 // Nov 3 notes (batch 19, 141): who wants to hear when a write starts or ends — the task pane refetches the
 // open task after one (39.x: the pane updates live), and the running indicator shows a slow write.
@@ -78,6 +84,11 @@ export function endLocalMutation(token: number) {
   const began = startedAt.get(token) ?? Date.now();
   requestRuleFeedback(began);
   startedAt.delete(token);
+  endedAt.set(token, Date.now());
+  if (endedAt.size > 200) {
+    const oldest = endedAt.keys().next().value;
+    if (oldest !== undefined) endedAt.delete(oldest);
+  }
   if (activeToken === token) activeToken = 0;
   for (const listener of openListeners) listener();
   for (const listener of endListeners) listener(began);

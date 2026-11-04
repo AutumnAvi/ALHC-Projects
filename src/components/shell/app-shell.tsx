@@ -5,6 +5,7 @@ import { Suspense, useEffect, useRef, type CSSProperties, type ReactNode } from 
 import { X } from "lucide-react";
 import { TooltipLayer } from "@/components/tooltip-layer";
 import { SettingsFromUrl } from "@/components/shell/settings-from-url";
+import { RouteFreshness } from "@/components/shell/route-freshness";
 import { ShellDialogs } from "@/components/shell/shell-dialogs";
 import { RightPanelProvider } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
@@ -63,6 +64,9 @@ export function AppShell({
         {/* ?settings=<tab> on any page opens the Settings modal (links from emails, /settings/profile). */}
         <Suspense fallback={null}>
           <SettingsFromUrl />
+        </Suspense>
+        <Suspense fallback={null}>
+          <RouteFreshness />
         </Suspense>
         <TooltipLayer />
         {/* Batch 10: "Automation X ran on N tasks" and loop-protection warnings after the person's changes. */}

@@ -32,7 +32,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
     // Nov 4 notes (batch 22, M1): everything else in one call (my_tasks_screen), with the app shell the
     // layout already read.
     const [{ sections }, screen, shell] = await Promise.all([listMyTaskLayout(), loadMyTasksScreen(), loadAppShell()]);
-    const { open, completed, awaiting, rules } = screen;
+    const { open, completed, awaiting, rules, loadedAt } = screen;
     const { myTasksChecked: checked, workWeek, projects, myRoles: roles, profiles } = shell;
     const ruleCtx = myTaskRuleContextFrom(sections, shell, screen);
     // #project in the quick add: active projects where the person can add tasks.
@@ -63,6 +63,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
               awaiting={awaiting}
               today={todayIn(timeZone)}
               timeZone={timeZone}
+              loadedAt={loadedAt}
             />
           </div>
         </div>
@@ -78,7 +79,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
   // Nov 4 notes (batch 22, M1): one call (my_tasks_screen) plus the app shell the layout already read; the
   // rows this person opened (Oct 27 notes, batch 6) are in the shell's preferences.
   const [screen, shell] = await Promise.all([loadMyTasksScreen(), loadAppShell()]);
-  const { open, completed, awaiting, rules } = screen;
+  const { open, completed, awaiting, rules, loadedAt } = screen;
   const bulk = bulkContextFrom(shell, null, null, member.id);
   const { expandedTaskIds, profiles } = shell;
   const ruleCtx = myTaskRuleContextFrom(sections, shell, screen);
@@ -120,6 +121,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
             subtasks={subtasks}
             awaiting={awaiting}
             profiles={profiles}
+            loadedAt={loadedAt}
           />
         </div>
       </div>

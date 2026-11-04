@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { PrefetchLink } from "@/components/shell/route-freshness";
 import { useOptimistic, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import {
   ArrowDown,
@@ -276,7 +276,7 @@ export function SidebarProjects({
         onDragLeave={inFolder ? (e) => leave(e, key) : undefined}
         onDrop={inFolder ? (e) => drop(e, () => draggedProject && fileMany(draggedProject.ids, folderId, project.id)) : undefined}
       >
-        <Link
+        <PrefetchLink
           href={`/projects/${project.id}`}
           aria-current={isCurrent(project.id) ? "page" : undefined}
           aria-selected={selected.includes(project.id) || undefined}
@@ -290,7 +290,7 @@ export function SidebarProjects({
           {/* Asana's project icon: a small colored rounded square. */}
           <span aria-hidden className={`ml-0.5 size-3 shrink-0 rounded-[3px] ${projectColorClass(project.id)}`} />
           <span className="truncate">{project.name}</span>
-        </Link>
+        </PrefetchLink>
         <Popover
           label={`Options for ${project.name}`}
           panelClassName="w-60 p-1.5"

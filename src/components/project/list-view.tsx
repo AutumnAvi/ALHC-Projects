@@ -195,7 +195,7 @@ export function ListView({
   // The page's (optimistic) config: column menus apply instantly as an unsaved draft.
   const config = viewConfig?.current ?? configProp;
   const tagsOn = useTagsEnabled();
-  const [optimisticTasks, applyChange] = useProjectTasks(tasks);
+  const [optimisticTasks, applyChange] = useProjectTasks(projectId, tasks);
   // Nov 2 notes (batch 14, 92): sections being added show at once (pending-sections.ts).
   const optimisticSections = useSectionsWithPending(projectId, sections);
   const [, run] = useServerAction();

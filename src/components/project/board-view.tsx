@@ -73,7 +73,7 @@ export function BoardView({
   const tagsOn = useTagsEnabled();
   const openTaskId = useOpenTaskId();
   const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
-  const [optimisticTasks, applyChange] = useProjectTasks(tasks);
+  const [optimisticTasks, applyChange] = useProjectTasks(projectId, tasks);
   const pages = useGroupPages();
   const showMorePage = usePagedShowMore();
   const viewConfig = useViewConfig();

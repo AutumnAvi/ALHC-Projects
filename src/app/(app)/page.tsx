@@ -28,7 +28,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const timeZone = await getViewerTimeZone();
   const today = todayIn(timeZone);
   // Nov 4 notes (batch 22, M1): one call (home_screen) plus the app shell the layout already read.
-  const [{ open, completed, dashboard, awaiting, inbox }, shell] = await Promise.all([loadHomeScreen(timeZone), loadAppShell()]);
+  const [{ open, completed, dashboard, awaiting, inbox, loadedAt }, shell] = await Promise.all([loadHomeScreen(timeZone), loadAppShell()]);
   const { myTasksChecked: checked, workWeek, projects, myRoles: roles, archivedProjects: archived, profiles, unreadCount: unread } = shell;
 
   const groupOf = (dueOn: string | null) => checklistGroupOf(dueOn, today);
@@ -76,6 +76,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
             </div>
             <div className="grid gap-4 @4xl:grid-cols-2">
               <TodayCard
+                loadedAt={loadedAt}
                 open={open}
                 completed={completed}
                 checked={checked}

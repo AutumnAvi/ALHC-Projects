@@ -30,7 +30,10 @@ export function MyTasksChecklist({
   awaiting,
   today: serverToday,
   timeZone,
+  loadedAt,
 }: {
+  // When the server's reads started (Nov 4 notes, batch 28: the newest copy of the person's tasks wins).
+  loadedAt?: number;
   today: string;
   timeZone: string;
   open: MyTask[];
@@ -41,7 +44,7 @@ export function MyTasksChecklist({
   people: QuickAddPerson[];
   awaiting: AwaitingApproval[];
 }) {
-  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted);
+  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted, loadedAt);
   const [mode, setMode] = useState<CheckedMode>(checked);
   const list = useChecklist(open, completed, mode, { today: serverToday, timeZone });
   const today = list.today;
