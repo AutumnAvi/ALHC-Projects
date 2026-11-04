@@ -94,6 +94,7 @@ import {
 import { ruleProblems, type RuleStep, type RuleSystem } from "@/lib/rule-params";
 import { MY_TASK_TRIGGERS, myTaskTriggerToDb, needsMyTaskV2 } from "@/lib/my-task-rules";
 import { branchProblem, isTriggerType, runReason, splitBranches, type RuleAction, type RuleCondition } from "@/lib/rules";
+import { partialOf, type PartialRun } from "@/lib/run-outcome";
 import { parseRuleTestResult, type RuleTestResult } from "@/lib/rule-steps";
 import { isPortfolioTrigger } from "@/lib/portfolio-rules";
 import { isUuid } from "@/lib/ids";
@@ -5488,11 +5489,12 @@ const MANUAL_RULE_STATUSES: readonly ManualRuleStatus[] = ["succeeded", "schedul
 export async function runManualRule(
   ruleId: string,
   taskId: string,
-): Promise<ActionResult & { status?: ManualRuleStatus; summary: string[]; reason?: string }> {
+): Promise<ActionResult & { status?: ManualRuleStatus; summary: string[]; reason?: string; partial?: PartialRun }> {
   let status: ManualRuleStatus | undefined;
   let summary: string[] = [];
   let failure: string | undefined;
   let reason: string | undefined;
+  let partial: PartialRun | null = null;
   // Nov 3 notes (batch 19, 141): no refresh here; RunRuleDialog refreshes the page in the background.
   const result = await runWithoutRefresh(async () => {
     const supabase = await createClient();
@@ -5503,6 +5505,8 @@ export async function runManualRule(
     status = MANUAL_RULE_STATUSES.find((s) => s === data.status) ?? "failed";
     // Why it was skipped (loop, chain too deep, throttled, rate limited), in words.
     if (status === "skipped") reason = runReason(data.detail ?? null) ?? undefined;
+    // Nov 4 notes, batch 24 (157): a run where a step didn't do its job (no recipient, approval task, …).
+    if (status === "succeeded" || status === "scheduled") partial = partialOf(status, data.detail ?? null);
     const detail = data.detail && typeof data.detail === "object" && !Array.isArray(data.detail) ? data.detail : null;
     const actions = detail?.actions;
     if (Array.isArray(actions)) {
@@ -5517,7 +5521,7 @@ export async function runManualRule(
     }
   });
   if (result.error) return { error: result.error, summary: [] };
-  return { status, summary, ...(failure ? { error: failure } : {}), ...(reason ? { reason } : {}) };
+  return { status, summary, ...(failure ? { error: failure } : {}), ...(reason ? { reason } : {}), ...(partial ? { partial } : {}) };
 }
 
 // Nov 2 notes (batch 17, 127): the bulk bar's "Run automation". The "Run manually" automations of the
@@ -5607,9 +5611,15 @@ export async function runManualRuleOnTasks(ruleId: string, taskIds: string[]): P
       const data = (ran.data ?? {}) as { status?: unknown; detail?: Json | null };
       switch (data.status) {
         case "succeeded":
-        case "scheduled":
-          summary.ran += 1;
+        case "scheduled": {
+          // Nov 4 notes, batch 24 (157): a run where a step was skipped counts as partly ran.
+          const partial = partialOf(data.status, data.detail ?? null);
+          if (partial) {
+            summary.partial = (summary.partial ?? 0) + 1;
+            summary.firstSkipped ??= partial.reason ?? undefined;
+          } else summary.ran += 1;
           break;
+        }
         case "conditions":
           summary.conditions += 1;
           break;
@@ -7157,10 +7167,14 @@ export async function deletePortfolioRule(ruleId: string): Promise<ActionResult>
 }
 
 // Run a "Run manually" portfolio rule on one of its projects (Editors+ of the portfolio).
-export async function runPortfolioRule(ruleId: string, projectId: string): Promise<ActionResult & { status?: string; summary: string[] }> {
+export async function runPortfolioRule(
+  ruleId: string,
+  projectId: string,
+): Promise<ActionResult & { status?: string; summary: string[]; partial?: PartialRun }> {
   let status: string | undefined;
   let summary: string[] = [];
   let failure: string | undefined;
+  let partial: PartialRun | null = null;
   const result = await run(async () => {
     const supabase = await createClient();
     const ran = await supabase.rpc("run_portfolio_rule", { target_rule: id(ruleId, "rule"), target_project: id(projectId, "project") });
@@ -7168,6 +7182,7 @@ export async function runPortfolioRule(ruleId: string, projectId: string): Promi
     check(ran);
     const data = (ran.data ?? {}) as { status?: unknown; detail?: Json | null };
     status = typeof data.status === "string" ? data.status : "failed";
+    if (status === "succeeded") partial = partialOf(status, data.detail ?? null);
     const detail = data.detail && typeof data.detail === "object" && !Array.isArray(data.detail) ? data.detail : null;
     if (Array.isArray(detail?.actions)) {
       summary = detail.actions.flatMap((step) =>
@@ -7178,7 +7193,7 @@ export async function runPortfolioRule(ruleId: string, projectId: string): Promi
     }
   });
   if (result.error) return { ...result, summary };
-  return failure ? { status, summary, error: failure } : { status, summary };
+  return failure ? { status, summary, error: failure } : { status, summary, ...(partial ? { partial } : {}) };
 }
 
 // ---------------------------------------------------------------------------------------------

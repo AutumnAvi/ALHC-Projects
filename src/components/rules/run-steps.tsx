@@ -14,6 +14,7 @@ const TONE: Record<StepTone, { icon: LucideIcon; dot: string; badge: string }> =
   ok: { icon: Check, dot: "bg-green-50 text-green-700 ring-green-200", badge: "bg-green-50 text-green-800" },
   unchanged: { icon: Minus, dot: "bg-zinc-100 text-zinc-500 ring-zinc-200", badge: "bg-zinc-100 text-zinc-600" },
   wait: { icon: Clock, dot: "bg-amber-50 text-amber-700 ring-amber-200", badge: "bg-amber-50 text-amber-800" },
+  attention: { icon: Minus, dot: "bg-amber-50 text-amber-700 ring-amber-200", badge: "bg-amber-50 text-amber-800" },
   send: { icon: Send, dot: "bg-accent-50 text-accent-700 ring-accent-200", badge: "bg-accent-50 text-accent-700" },
   error: { icon: X, dot: "bg-red-50 text-red-700 ring-red-200", badge: "bg-red-50 text-red-700" },
 };

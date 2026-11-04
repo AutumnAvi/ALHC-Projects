@@ -9,7 +9,9 @@
 // and lists each entry with "Running…" until it's done, then "Ran" (or "Failed"). Pure rules here; the store
 // below is a tiny external store for useSyncExternalStore.
 
-export type RunningStatus = "running" | "ran" | "failed";
+// "partial": it finished but an action was skipped; "skipped": it didn't run at all (loop protection, a
+// limit). Nov 4 notes, batch 24 (157).
+export type RunningStatus = "running" | "ran" | "partial" | "skipped" | "failed";
 
 export type RunningTask = { id: string; title: string | null };
 
@@ -73,8 +75,11 @@ export function indicatorLabel(entries: readonly RunningEntry[]): string {
   if (automations.length) return `Running ${plural(automations.length, "automation")}…`;
   if (running.length) return "Saving… automations may be running";
   const failed = entries.some((e) => e.status === "failed");
+  const partial = entries.filter((e) => e.kind === "automation" && e.status === "partial").length;
   const ran = entries.filter((e) => e.kind === "automation" && e.status === "ran").length;
   if (failed) return "An automation failed";
+  if (partial) return partial === 1 ? "An automation partly ran" : `${plural(partial, "automation")} partly ran`;
+  if (entries.some((e) => e.kind === "automation" && e.status === "skipped")) return "An automation was skipped";
   return ran ? `Ran ${plural(ran, "automation")}` : "Saved";
 }
 
@@ -94,7 +99,14 @@ export function entryTarget(entry: RunningEntry): string | null {
 export function entryStatus(entry: RunningEntry): string {
   if (entry.status === "running") return entry.kind === "write" ? "Saving…" : "Running…";
   if (entry.status === "failed") return "Failed";
+  if (entry.status === "partial") return "Partly ran";
+  if (entry.status === "skipped") return "Skipped";
   return entry.kind === "write" ? "Saved" : "Ran";
+}
+
+// Whether an entry needs a look (the pill and its row go amber).
+export function entryNeedsAttention(entry: RunningEntry): boolean {
+  return entry.status === "failed" || entry.status === "partial" || entry.status === "skipped";
 }
 
 // Keeps running entries and the newest HISTORY finished ones, newest first.
@@ -177,6 +189,7 @@ export type FinishedRun = {
   tasks: RunningTask[];
   taskCount: number;
   failed: boolean;
+  partial?: boolean;
   detail: string | null;
 };
 
@@ -194,7 +207,7 @@ export function noteFinishedRuns(runs: readonly FinishedRun[], now = Date.now())
     projectId: r.projectId,
     tasks: r.tasks,
     taskCount: r.taskCount,
-    status: r.failed ? "failed" : "ran",
+    status: r.failed ? "failed" : r.partial ? "partial" : "ran",
     startedAt: now,
     endedAt: now,
     detail: r.detail,

@@ -1006,7 +1006,8 @@ function RunMarker({ run }: { run: TaskRuleRun }) {
   return (
     <li
       className={`flex items-center gap-2 text-2xs ${problem ? "text-amber-700" : "text-zinc-400"}`}
-      data-automation-run={run.status}
+      data-automation-run={run.partial ? "partial" : run.status}
+      title={run.partial?.reason ?? undefined}
     >
       <span aria-hidden className={`h-px flex-1 ${problem ? "bg-amber-200" : "bg-zinc-200"}`} />
       <span className="inline-flex min-w-0 max-w-[85%] items-center gap-1">
@@ -1018,7 +1019,8 @@ function RunMarker({ run }: { run: TaskRuleRun }) {
             {run.ruleName}
           </Link>
           ” {runVerb(run)}
-          {run.status === "failed" && run.reason ? <>: {run.reason}</> : null} · <Timestamp iso={run.createdAt} />
+          {run.status === "failed" && run.reason ? <>: {run.reason}</> : null}
+          {run.partial?.reason ? <> ({run.partial.reason})</> : null} · <Timestamp iso={run.createdAt} />
         </span>
       </span>
       <span aria-hidden className={`h-px flex-1 ${problem ? "bg-amber-200" : "bg-zinc-200"}`} />

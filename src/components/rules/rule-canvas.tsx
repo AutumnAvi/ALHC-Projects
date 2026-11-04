@@ -30,6 +30,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { createRule, setRuleEnabled, updateRule, type RevealedSigningSecret } from "@/lib/actions";
 import { runSteps } from "@/lib/rule-steps";
+import { RUN_TONE_CLASS, filterRuns, runFilterLabel, runOutcome, runOutcomeText, type RunFilter } from "@/lib/run-outcome";
 import { autoRuleName, withTarget } from "@/lib/rule-autoname";
 import {
   ACTIONS,
@@ -75,20 +76,6 @@ import { useAutoName } from "./use-auto-name";
 import { branchLabel, ruleSentence, vocabDisabled, type RuleContext } from "./rule-shared";
 import { RuleTestPanel, type RuleTestDraft, type RuleTestTask } from "./rule-test-panel";
 import { RunSteps } from "./run-steps";
-
-const RUN_STATUS: Record<RuleRun["status"], string> = {
-  succeeded: "bg-green-50 text-green-800",
-  scheduled: "bg-accent-50 text-accent-700",
-  skipped: "bg-zinc-100 text-zinc-600",
-  failed: "bg-red-50 text-red-700",
-};
-
-const RUN_LABEL: Record<RuleRun["status"], string> = {
-  succeeded: "Ran",
-  scheduled: "Waiting",
-  skipped: "Skipped",
-  failed: "Failed",
-};
 
 const NEW_CONDITION: RuleCondition = { type: "is_incomplete" };
 
@@ -1072,7 +1059,8 @@ function BlockActionFields(props: Parameters<typeof ActionFields>[0]) {
 }
 
 // The Activity tab: this rule's latest runs (the run log), with the branch each one took. A row opens
-// to the run's steps (what each action did, or the error that stopped it); "Failed only" narrows it.
+// to the run's steps (what each action did, or the error that stopped it); "Needs attention" narrows it
+// to runs that failed, were skipped, or only partly ran (Nov 4 notes, batch 24, 157).
 function Activity({
   projectId,
   rule,
@@ -1084,10 +1072,10 @@ function Activity({
   runs: RuleRun[];
   branches: RuleBranch[];
 }) {
-  const [failedOnly, setFailedOnly] = useState(false);
+  const [filter, setFilter] = useState<RunFilter>("all");
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
-  const failedCount = runs.filter((r) => r.status === "failed").length;
-  const shown = failedOnly ? runs.filter((r) => r.status === "failed") : runs;
+  const attentionCount = filterRuns(runs, "attention").length;
+  const shown = filterRuns(runs, filter);
 
   function toggle(runId: string) {
     setOpen((current) => {
@@ -1113,15 +1101,12 @@ function Activity({
           <>
             <div className="mb-3 flex items-center gap-2">
               <div role="group" aria-label="Show" className="inline-flex h-7 items-center rounded-md bg-zinc-100 p-0.5">
-                {[
-                  { value: false, label: "All" },
-                  { value: true, label: `Failed only${failedCount ? ` (${failedCount})` : ""}` },
-                ].map((option) => (
+                {(["all", "attention"] as const).map((value) => ({ value, label: runFilterLabel(value, value === "all" ? 0 : attentionCount) })).map((option) => (
                   <button
-                    key={String(option.value)}
+                    key={option.value}
                     type="button"
-                    aria-pressed={failedOnly === option.value}
-                    onClick={() => setFailedOnly(option.value)}
+                    aria-pressed={filter === option.value}
+                    onClick={() => setFilter(option.value)}
                     className="h-6 rounded px-2 text-sm text-zinc-600 hover:text-zinc-900 aria-pressed:bg-white aria-pressed:font-medium aria-pressed:text-zinc-900 aria-pressed:shadow-xs"
                   >
                     {option.label}
@@ -1131,12 +1116,13 @@ function Activity({
             </div>
             {shown.length === 0 ? (
               <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-8 text-center text-sm text-zinc-500">
-                No failed runs among the latest {runs.length}.
+                Nothing needs attention among the latest {runs.length}.
               </p>
             ) : (
               <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
                 {shown.map((r) => {
-                  const reason = runReason(r.detail);
+                  const outcome = runOutcome(r.status, r.detail);
+                  const reason = runReason(r.detail) ?? outcome.reason;
                   const detail = r.detail && typeof r.detail === "object" && !Array.isArray(r.detail) ? r.detail : {};
                   const branch = typeof detail.branch === "number" ? detail.branch : null;
                   const branchName =
@@ -1156,12 +1142,14 @@ function Activity({
                           onClick={() => toggle(r.id)}
                           aria-expanded={expanded}
                           aria-controls={expanded ? stepsId : undefined}
-                          aria-label={`Steps of this run (${RUN_LABEL[r.status]})`}
+                          aria-label={`Steps of this run (${runOutcomeText(outcome)})`}
                           data-tooltip={expanded ? "Hide steps" : "Show steps"}
                           className="-ml-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-zinc-100"
                         >
                           <ChevronRight className={`size-3.5 text-zinc-400 transition-transform ${expanded ? "rotate-90" : ""}`} aria-hidden />
-                          <span className={`rounded-full px-2 py-0.5 text-2xs font-medium ${RUN_STATUS[r.status]}`}>{RUN_LABEL[r.status]}</span>
+                          <span data-run-outcome={outcome.tone} className={`rounded-full px-2 py-0.5 text-2xs font-medium ${RUN_TONE_CLASS[outcome.tone]}`}>
+                            {runOutcomeText(outcome)}
+                          </span>
                         </button>
                         {r.taskId ? (
                           <Link href={`/projects/${projectId}/list?task=${r.taskId}`} className="min-w-0 truncate text-sm text-zinc-800 hover:underline">

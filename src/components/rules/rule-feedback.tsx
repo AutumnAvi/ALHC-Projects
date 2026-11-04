@@ -9,6 +9,7 @@ import { useRichToast, useToastDock } from "@/components/toast";
 import { onLocalMutationEnd, openMutationStarts, subscribeOpenMutations } from "@/lib/optimistic-session";
 import {
   LONG_MS,
+  entryNeedsAttention,
   entryStatus,
   entryTarget,
   entryTitle,
@@ -32,6 +33,7 @@ import {
   feedbackSince,
   feedbackTaskHref,
   finishedRunsFromNotes,
+  partialNoteSummary,
   ranText,
   stopText,
   type FeedbackResponse,
@@ -95,7 +97,13 @@ export function RuleFeedbackLayer() {
         noteFinishedRuns(finishedRunsFromNotes(notes));
         for (const note of notes) {
           if (note.kind === "ran") {
-            show({ variant: "quiet", message: ranText(note), body: <RanBody note={note} />, durationMs: 5000 });
+            // Nov 4 notes, batch 24 (157): a run with a skipped action is a warning, never a quiet "ran".
+            show({
+              variant: note.partial ? "warning" : "quiet",
+              message: ranText(note),
+              body: <RanBody note={note} />,
+              durationMs: note.partial ? 12000 : 5000,
+            });
           } else {
             show({
               variant: "warning",
@@ -200,7 +208,7 @@ function RunningIndicator() {
   const running = longRunning.length > 0;
   const shown = all.filter((e) => e.status !== "running" || now - e.startedAt >= LONG_MS);
   const label = indicatorLabel(running ? longRunning : shown);
-  const failed = !running && shown.some((e) => e.status === "failed");
+  const failed = !running && shown.some(entryNeedsAttention);
 
   return createPortal(
     <div className="pointer-events-auto w-fit max-w-full" data-running-indicator>
@@ -255,6 +263,8 @@ function RunningRow({ entry }: { entry: RunningEntry }) {
         <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-zinc-400" aria-hidden />
       ) : entry.status === "failed" ? (
         <XCircle className="mt-0.5 size-3.5 shrink-0 text-amber-600" aria-hidden />
+      ) : entry.status === "partial" || entry.status === "skipped" ? (
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" aria-hidden />
       ) : (
         <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-green-600" aria-hidden />
       )}
@@ -288,12 +298,38 @@ function RunningRow({ entry }: { entry: RunningEntry }) {
           </p>
         ) : null}
       </div>
-      <span className={`shrink-0 text-2xs ${entry.status === "failed" ? "text-amber-700" : "text-zinc-500"}`}>{status}</span>
+      <span className={`shrink-0 text-2xs ${entryNeedsAttention(entry) ? "text-amber-700" : "text-zinc-500"}`}>{status}</span>
     </li>
   );
 }
 
 function RanBody({ note }: { note: RanNote }) {
+  if (note.partial) {
+    return (
+      <div className="flex items-start gap-2.5">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+        <div className="min-w-0">
+          <p className="font-medium">
+            Partly ran · {partialNoteSummary(note)}
+          </p>
+          <p className="mt-0.5">
+            <Link href={automationHref(note.projectId, note.ruleId)} className="font-medium underline underline-offset-2 hover:text-amber-800">
+              {note.ruleName}
+            </Link>
+            {note.taskId && note.taskTitle ? (
+              <>
+                {" on "}
+                <Link href={feedbackTaskHref(note.projectId, note.taskId)} className="underline underline-offset-2 hover:text-amber-800">
+                  {note.taskTitle}
+                </Link>
+              </>
+            ) : null}
+          </p>
+          {note.partial.reason ? <p className="mt-1 text-xs text-amber-900">{note.partial.reason}</p> : null}
+        </div>
+      </div>
+    );
+  }
   return (
     <p className="flex items-center gap-1.5">
       <Zap className="size-3.5 shrink-0 text-amber-300" aria-hidden />

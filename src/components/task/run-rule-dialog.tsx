@@ -8,6 +8,7 @@ import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { listManualRules, runManualRule, type ManualRule, type ManualRuleStatus } from "@/lib/actions";
+import { partialSummary, type PartialRun } from "@/lib/run-outcome";
 import { finishRunning, startRunning } from "@/lib/rule-running";
 
 type Loaded = { rules: ManualRule[] } | { error: string } | "loading";
@@ -15,7 +16,12 @@ type Loaded = { rules: ManualRule[] } | { error: string } | "loading";
 // The toast lists at most this many steps, then "and N more".
 const SUMMARY_STEPS = 4;
 
-function ranMessage(name: string, summary: string[]) {
+function ranMessage(name: string, summary: string[], partial?: PartialRun) {
+  // Nov 4 notes, batch 24 (157): an action was skipped, so it says so first (with why).
+  if (partial) {
+    const why = partial.reason ? `: ${partial.reason.replace(/[.\s]+$/, "")}` : "";
+    return `“${name}” partly ran · ${partialSummary(partial.missed, partial.total)}${why}.`;
+  }
   if (summary.length === 0) return `Ran “${name}”.`;
   const shown = summary.slice(0, SUMMARY_STEPS);
   const more = summary.length - shown.length;
@@ -105,15 +111,17 @@ export function RunRuleDialog({ taskId, taskTitle, onClose }: { taskId: string; 
     });
     run(async () => {
       const result = await runManualRule(chosen.id, taskId);
-      if (result.status === "succeeded" || result.status === "scheduled") finishRunning(key, "ran", result.summary[0] ?? null);
+      if ((result.status === "succeeded" || result.status === "scheduled") && result.partial) {
+        finishRunning(key, "partial", ranMessage(chosen.name, result.summary, result.partial));
+      } else if (result.status === "succeeded" || result.status === "scheduled") finishRunning(key, "ran", result.summary[0] ?? null);
       else if (result.status === "conditions") finishRunning(key, "ran", "Its conditions don’t match this task");
-      else if (result.status === "skipped" || result.status === "duplicate") finishRunning(key, "ran", "Skipped");
+      else if (result.status === "skipped" || result.status === "duplicate") finishRunning(key, "skipped", result.reason ? `Skipped: ${result.reason}` : "Skipped: nothing ran");
       else finishRunning(key, "failed", result.error ?? null);
       if (result.status) startRefresh(() => router.refresh());
       // Refused before it ran (the rule was turned off, your role, …): the toast says why.
       if (!result.status) return result;
       if (result.status === "succeeded" || result.status === "scheduled") {
-        notify(ranMessage(chosen.name, result.summary));
+        notify(ranMessage(chosen.name, result.summary, result.partial));
         onClose();
       } else {
         setOutcome(outcomeMessage(result.status, chosen.name, result.error, result.reason));

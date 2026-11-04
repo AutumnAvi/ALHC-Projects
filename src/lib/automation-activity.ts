@@ -4,14 +4,20 @@
 // draws them in components/task/task-activity.tsx.
 
 import type { Json } from "@/lib/supabase/database.types";
+import { partialSummary, type PartialRun } from "@/lib/run-outcome";
 
 export type RunMarker = {
   status: "succeeded" | "scheduled" | "skipped" | "failed";
   reason: string | null;
+  // Nov 4 notes, batch 24 (157): it finished, but an action was skipped.
+  partial?: PartialRun | null;
 };
 
 // What the marker says after the automation's name.
 export function runVerb(run: RunMarker): string {
+  if (run.partial && (run.status === "succeeded" || run.status === "scheduled")) {
+    return `partly ran · ${partialSummary(run.partial.missed, run.partial.total)}`;
+  }
   switch (run.status) {
     case "succeeded":
       return "ran";
@@ -35,7 +41,7 @@ export function runVerb(run: RunMarker): string {
 
 // Whether the marker is a warning (amber) rather than a quiet line.
 export function runIsProblem(run: RunMarker): boolean {
-  return run.status === "failed" || run.status === "skipped";
+  return run.status === "failed" || run.status === "skipped" || Boolean(run.partial);
 }
 
 // The older "created this task by forwarding an email" story says less than the email line that

@@ -87,12 +87,29 @@ export type BulkRuleRun = {
   // Selected tasks that aren't in the automation's project (it can't run on them).
   notInProject: number;
   firstError?: string;
+  // Nov 4 notes, batch 24 (157): runs that finished with a step skipped (no recipient, approval task, …),
+  // and the first skipped step's reason. Not counted in `ran`.
+  partial?: number;
+  firstSkipped?: string;
 };
+
+// Whether the bulk run needs a look (the notice goes amber): anything failed or partly ran.
+export function bulkRuleRunTone(run: BulkRuleRun): "ran" | "partial" | "failed" {
+  if (run.failed > 0 && run.ran === 0 && !run.partial) return "failed";
+  if (run.failed > 0 || (run.partial ?? 0) > 0) return "partial";
+  return "ran";
+}
 
 // The toast after a bulk run: what ran, and what didn't and why.
 export function bulkRuleRunMessage(name: string, run: BulkRuleRun): string {
   const parts = [
-    run.ran ? `Ran “${name}” on ${taskCount(run.ran)}` : `“${name}” didn’t change any task`,
+    run.ran ? `Ran “${name}” on ${taskCount(run.ran)}` : null,
+    run.partial
+      ? `${run.ran ? "partly ran" : `“${name}” partly ran`} on ${taskCount(run.partial)} (an action was skipped${
+          run.firstSkipped ? `: ${run.firstSkipped.replace(/[.\s]+$/, "")}` : ""
+        })`
+      : null,
+    !run.ran && !run.partial ? `“${name}” didn’t change any task` : null,
     run.conditions ? `${taskCount(run.conditions)} didn’t match its conditions` : null,
     run.skipped ? `${taskCount(run.skipped)} skipped (ran too often or would loop)` : null,
     run.notInProject ? `${taskCount(run.notInProject)} not in its project` : null,

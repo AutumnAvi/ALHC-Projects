@@ -612,7 +612,8 @@ test("rules: Mark complete waits for the approval, and the run log says Skipped"
 
   // The engine logs outcome "skipped" ("Approval tasks are completed by their approvers") until approved.
   assert.equal(stepOutcomeLabel("skipped"), "Skipped", "a label, not the raw key");
-  assert.equal(stepTone("skipped"), "unchanged");
+  // Nov 4 notes, batch 24 (156): a skipped step is drawn as needing attention, not as "nothing to change".
+  assert.equal(stepTone("skipped"), "attention");
   const result: RuleTestResult = {
     taskId: "t1",
     taskTitle: "Logo",
@@ -626,5 +627,5 @@ test("rules: Mark complete waits for the approval, and the run log says Skipped"
     error: null,
     invalid: false,
   };
-  assert.equal(testHeadline(result), "1 step would run", "a skipped step isn't a step that would run");
+  assert.equal(testHeadline(result), "1 step would run · 1 would be skipped", "a skipped step isn't a step that would run");
 });

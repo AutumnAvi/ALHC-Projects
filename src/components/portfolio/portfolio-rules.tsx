@@ -67,15 +67,10 @@ import { numberPrefixOf } from "@/lib/fields";
 import { runReason } from "@/lib/rules";
 import { missingParams, ruleProblems, saveBlockedReason, stepProblems, type StepScope } from "@/lib/rule-params";
 import { runSteps } from "@/lib/rule-steps";
+import { RUN_TONE_CLASS, partialSummary, runOutcome, runOutcomeText } from "@/lib/run-outcome";
 import type { Json } from "@/lib/supabase/database.types";
 
 const INPUT = "control h-auto min-h-7 py-0.5";
-
-const RUN_STATUS: Record<PortfolioRuleRun["status"], { label: string; className: string }> = {
-  succeeded: { label: "Ran", className: "bg-green-50 text-green-800" },
-  failed: { label: "Failed", className: "bg-red-50 text-red-700" },
-  skipped: { label: "Skipped", className: "bg-zinc-100 text-zinc-600" },
-};
 
 function vocab(list: readonly { value: string; label: string; group?: string; description?: string; keywords?: readonly string[] }[]): SmartOption[] {
   return list.map((x) => ({ value: x.value, label: x.label, icon: <RuleIcon value={x.value} />, group: x.group, description: x.description, keywords: x.keywords }));
@@ -220,7 +215,9 @@ export function PortfolioRulesView({
                           notify(
                             result.status === "conditions"
                               ? "Nothing ran: the conditions don’t match that project"
-                              : result.summary.length
+                              : result.partial
+                                ? `Partly ran · ${partialSummary(result.partial.missed, result.partial.total)}${result.partial.reason ? `: ${result.partial.reason}` : ""}`
+                                : result.summary.length
                                 ? result.summary.join(" · ")
                                 : `Automation ${result.status === "skipped" ? "skipped" : "ran"}`,
                           );
@@ -316,7 +313,8 @@ function RunLog({ runs, ruleName }: { runs: PortfolioRuleRun[]; ruleName?: (id: 
     <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200 bg-white">
       {runs.map((r) => {
         const expanded = open.has(r.id);
-        const reason = runReason(r.detail);
+        const outcome = runOutcome(r.status, r.detail);
+        const reason = runReason(r.detail) ?? outcome.reason;
         const logged = runSteps(r.detail);
         return (
           <li key={r.id}>
@@ -324,7 +322,7 @@ function RunLog({ runs, ruleName }: { runs: PortfolioRuleRun[]; ruleName?: (id: 
               <button
                 type="button"
                 aria-expanded={expanded}
-                aria-label={`Steps of this run (${RUN_STATUS[r.status].label})`}
+                aria-label={`Steps of this run (${runOutcomeText(outcome)})`}
                 onClick={() =>
                   setOpen((current) => {
                     const next = new Set(current);
@@ -336,7 +334,9 @@ function RunLog({ runs, ruleName }: { runs: PortfolioRuleRun[]; ruleName?: (id: 
                 className="-ml-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-zinc-100"
               >
                 <ChevronRight className={`size-3.5 text-zinc-400 transition-transform ${expanded ? "rotate-90" : ""}`} aria-hidden />
-                <span className={`rounded-full px-2 py-0.5 text-2xs font-medium ${RUN_STATUS[r.status].className}`}>{RUN_STATUS[r.status].label}</span>
+                <span data-run-outcome={outcome.tone} className={`rounded-full px-2 py-0.5 text-2xs font-medium ${RUN_TONE_CLASS[outcome.tone]}`}>
+                  {runOutcomeText(outcome)}
+                </span>
               </button>
               {ruleName ? <span className="text-sm text-zinc-800">{ruleName(r.ruleId)}</span> : null}
               {r.projectId ? (
