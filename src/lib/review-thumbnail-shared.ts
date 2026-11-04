@@ -10,6 +10,12 @@ export const THUMBNAIL_BUDGET_MS = 4000;
 // A stored thumbnail and its size in pixels (the email draws it at min(its width, EMAIL_IMAGE_WIDTH)).
 export type ReviewThumbnail = { url: string; width: number | null; height: number | null };
 
+// Where a file's thumbnail is stored, next to it in the private task-attachments bucket. The approval
+// request email (Nov 4 notes, batch 25, 160) signs the ones already drawn.
+export function thumbnailPath(taskId: string, attachmentId: string) {
+  return `${taskId}/thumb-${attachmentId}.jpg`;
+}
+
 // The route that draws them (src/app/api/review-thumbnails/route.ts).
 export const REVIEW_THUMBNAILS_PATH = "/api/review-thumbnails";
 

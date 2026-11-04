@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { reviewMediaKind } from "@/lib/review-checks";
-import { THUMBNAIL_BUDGET_MS, type ReviewThumbnail } from "@/lib/review-thumbnail-shared";
+import { THUMBNAIL_BUDGET_MS, thumbnailPath, type ReviewThumbnail } from "@/lib/review-thumbnail-shared";
 import type { createClient } from "@/lib/supabase/server";
 
 // Oct 27 notes (batch 5): thumbnails for the review check email — an image, or a PDF's first page, drawn
@@ -46,9 +46,7 @@ export type ThumbnailSource = {
   size: number | null;
 };
 
-export function thumbnailPath(taskId: string, attachmentId: string) {
-  return `${taskId}/thumb-${attachmentId}.jpg`;
-}
+export { thumbnailPath };
 
 // Which files get a thumbnail: images and PDFs (never SVG or HTML: previewKind decides), at most
 // MAX_THUMBNAILS of them, each no bigger than an attachment may be.

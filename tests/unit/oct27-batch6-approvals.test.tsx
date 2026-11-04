@@ -586,13 +586,12 @@ const card = (item: InboxItem) =>
         onRead={() => {}}
         onArchive={() => {}}
         onBookmark={() => {}}
-        onDecide={() => {}}
       />
     </ul>,
     "/inbox",
   );
 
-test("Inbox reminders read 'Reminder: approval due tomorrow / overdue', and approvers decide from them", () => {
+test("Inbox reminders read 'Reminder: approval due tomorrow / overdue', and approvers open the review from them (note 159)", () => {
   assert.equal(approvalReminderOf(inboxItem()), "overdue");
   assert.equal(approvalReminderOf(inboxItem({ data: { approval_id: "x", reminder: "due_soon" } })), "due_soon");
   assert.equal(approvalReminderOf(inboxItem({ data: { approval_id: "x" } })), null);
@@ -604,15 +603,17 @@ test("Inbox reminders read 'Reminder: approval due tomorrow / overdue', and appr
   assert.match(overdue, /Reminder: approval overdue/);
   assert.match(overdue, /Approval due Oct 25/);
   assert.ok(!/Someone/.test(overdue), "a reminder has no actor");
-  assert.ok(button(overdue, "Approve") && button(overdue, "Request changes"), "the approver can decide right there");
+  // Nov 4 notes (batch 25, 159): no deciding in the Inbox — the approver opens the review page.
+  assert.ok(!button(overdue, "Approve") && !button(overdue, "Request changes") && !button(overdue, "Reject"), "no decision buttons");
+  assert.match(overdue, /href="\/approve\/t1"[^>]*>.*Open review/, "Open review goes to the review page");
 
   const soon = card(inboxItem({ data: { approval_id: "req-me", reminder: "due_soon", due_on: "2026-10-28" } }));
   assert.match(soon, /Reminder: approval due tomorrow/);
 
   const notMine = card(inboxItem({ approval: { id: "req-sam", status: "pending", approverId: "sam" } }));
-  assert.ok(!button(notMine, "Approve"), "only the request's approver decides");
+  assert.ok(!/Open review/.test(notMine), "only the request's approver is asked to review");
   const decided = card(inboxItem({ data: { approval_id: "req-me" }, approval: { id: "req-me", status: "approved", approverId: "me" } }));
-  assert.ok(!button(decided, "Approve"), "only while it's pending");
+  assert.ok(!/Open review/.test(decided), "only while it's pending");
   assert.match(decided, /You approved this/);
 });
 

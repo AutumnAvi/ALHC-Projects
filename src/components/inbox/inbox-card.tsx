@@ -6,6 +6,7 @@ import {
   Archive,
   ArchiveRestore,
   AtSign,
+  Eye,
   Bookmark,
   BookmarkMinus,
   CheckCircle2,
@@ -20,7 +21,6 @@ import {
   Workflow,
 } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
-import { ApprovalDecisionForm, type Decision } from "@/components/task/task-approval-banner";
 import { TaskLink } from "@/components/task/task-link";
 import { MoreTaskNumbers } from "@/components/task/task-number";
 import { Timestamp } from "@/components/timestamp";
@@ -31,10 +31,12 @@ import { AccessRequestDecision } from "@/components/inbox/access-request-decisio
 import { isFieldChange, type InboxDensity } from "@/lib/inbox";
 import { seedFromTitle } from "@/lib/task-seed";
 import { formatDueDate } from "@/lib/dates";
+import { approverReviewHref } from "@/lib/approver-review";
 
 // One notification card in the Inbox (Asana parity, batch 5): unread dot, actor, "Actor verb Task",
-// where it happened, the comment or message (Detailed density), an approver's decision buttons, the
-// time, and hover actions (always shown on touch screens).
+// where it happened, the comment or message (Detailed density), an approver's "Open review" button, the
+// time, and hover actions (always shown on touch screens). Nov 4 notes (batch 25, 159): an approver
+// never decides from the Inbox — only on the review page, where the files are.
 
 export const INBOX_KIND = {
   assigned: { icon: UserPlus, verb: "assigned you" },
@@ -69,8 +71,6 @@ const DECISION_VERB: Record<string, string> = {
   changes_requested: "requested changes on",
   rejected: "rejected",
 };
-
-export type { Decision };
 
 // An approval reminder (Oct 27 notes, batch 6): approval_reminders_tick nudges each approver still
 // deciding the day before the approval due date (due_soon) and once it's overdue.
@@ -182,7 +182,6 @@ export function InboxCard({
   onRead,
   onArchive,
   onBookmark,
-  onDecide,
 }: {
   item: InboxItem;
   actor: Profile | undefined;
@@ -198,7 +197,6 @@ export function InboxCard({
   onRead: (read: boolean) => void;
   onArchive: (archived: boolean) => void;
   onBookmark: (bookmarked: boolean) => void;
-  onDecide: (decision: Decision, note: string) => void;
 }) {
   const { read, archived, bookmarked } = state;
   const compact = density === "compact";
@@ -315,11 +313,24 @@ export function InboxCard({
               compact row the hover / focus actions would cover it. */}
           {openRule ? <p className="mt-1">{openRule}</p> : null}
           {accessRequest ? <AccessRequestDecision request={accessRequest} compact={compact} /> : null}
-          {decides && item.approval?.status === "pending" ? (
-            // Request changes needs a note (the form won't send without one); Approve and Reject ask for one.
-            <div className="relative z-10 mt-2" role="group" aria-label={`Decide on “${item.taskTitle}”`}>
-              <ApprovalDecisionForm idPrefix={`inbox-${item.id}`} pending={false} compact onDecide={onDecide} />
-            </div>
+          {decides && item.approval?.status === "pending" && item.taskId ? (
+            // Note 159: no Approve / Request changes / Reject here — the approver decides on the review
+            // page after seeing the files (an older request without a round opens the task instead).
+            <p className="relative z-10 mt-2">
+              <Link
+                href={approverReviewHref(item.taskId)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpen();
+                }}
+                aria-label={`Open review of “${item.taskTitle}”`}
+                data-inbox-open-review=""
+                className={`btn-primary ${compact ? "h-6 px-2 text-xs" : ""}`}
+              >
+                <Eye className="size-3.5" aria-hidden />
+                Open review
+              </Link>
+            </p>
           ) : decides && item.kind === "approval_requested" && !compact && item.approval ? (
             <p className="mt-1 text-xs text-zinc-500">{APPROVAL_STATE[item.approval.status]}</p>
           ) : null}

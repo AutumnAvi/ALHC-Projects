@@ -7,6 +7,7 @@ import { normalizeDomainInput } from "@/lib/verified-domains";
 import { redirect } from "next/navigation";
 import { parseSubtaskPrefs, type SubtaskPrefs } from "@/lib/subtask-view";
 import { after } from "next/server";
+import { requestReviewThumbnails } from "@/lib/review-thumbnail-request";
 import {
   getProjectRole,
   getWorkspace,
@@ -223,8 +224,10 @@ function optionalText(value: unknown, max = 20000): string | null {
 
 // Any write can make rules queue email, Slack messages, or webhooks, so deliver the outboxes once the
 // response is sent (a small integration batch keeps rule fires snappy between cron runs).
-function deliverQueuedEmail() {
+function deliverQueuedEmail(before?: () => Promise<unknown>) {
   after(async () => {
+    // Work the emails wait on (an approval round's thumbnails, Nov 4 notes batch 25, 160); best effort.
+    if (before) await before().catch(() => undefined);
     try {
       await drainOutbox();
     } catch (error) {
@@ -238,7 +241,7 @@ function deliverQueuedEmail() {
   });
 }
 
-async function run(fn: () => Promise<void>): Promise<ActionResult> {
+async function run(fn: () => Promise<void>, beforeEmail?: () => Promise<unknown>): Promise<ActionResult> {
   try {
     await fn();
   } catch (error) {
@@ -246,7 +249,7 @@ async function run(fn: () => Promise<void>): Promise<ActionResult> {
     if (error instanceof DbError) return { error: error.message };
     throw error;
   }
-  deliverQueuedEmail();
+  deliverQueuedEmail(beforeEmail);
   refresh();
   return {};
 }
@@ -7545,6 +7548,7 @@ export async function sendForApproval(
   },
 ): Promise<ActionResult & { roundId?: string }> {
   let roundId: string | undefined;
+  let sentFiles: string[] = [];
   const result = await run(async () => {
     const finalText = typeof input?.finalText === "string" ? input.finalText.trim() : "";
     if (finalText.length > 10000) throw new InputError("The final text is limited to 10,000 characters");
@@ -7564,7 +7568,20 @@ export async function sendForApproval(
     });
     check(response);
     roundId = typeof response.data === "string" ? response.data : undefined;
-  });
+    sentFiles = files;
+  }, () =>
+    // Nov 4 notes (batch 25, 160): the approvers' email shows the files. Their thumbnails (images, PDFs'
+    // first pages) are drawn as the sender, through the same route as review checks (their own client;
+    // reused when already drawn), before the email drain runs after the answer; a file that can't be
+    // drawn in time gets a file card.
+    sentFiles.length
+      ? requestReviewThumbnails({
+          taskId,
+          expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+          assets: sentFiles.map((attachmentId) => ({ assetId: attachmentId, attachmentId })),
+        })
+      : Promise.resolve(),
+  );
   return result.error ? result : { roundId };
 }
 

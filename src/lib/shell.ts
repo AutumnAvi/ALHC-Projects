@@ -1,3 +1,4 @@
+import { isUuid } from "@/lib/ids";
 import type { RequestLabel, TaskNumber } from "@/lib/request-numbers";
 // The app shell's shared vocabulary (Asana parity, batch 1): search palette results, recents, the
 // Settings modal's tabs and links, and the Create menu's dialogs. Browser + server.
@@ -37,6 +38,25 @@ export const EMPTY_RESULTS: QuickResults = { tasks: [], projects: [], people: []
 export type RecentRef = { kind: "task" | "project"; id: string };
 export type RecentItem = ({ kind: "task" } & QuickTask) | ({ kind: "project" } & QuickProject);
 export const MAX_RECENTS = 20;
+
+// Nov 4 notes (batch 25, 158): recents sent to GET /api/link-search as `recent=task:<id>,project:<id>`.
+export function recentRefsParam(refs: RecentRef[]): string {
+  return refs
+    .slice(0, MAX_RECENTS)
+    .map((r) => `${r.kind}:${r.id}`)
+    .join(",");
+}
+
+export function parseRecentRefs(raw: string | null): RecentRef[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .flatMap((part): RecentRef[] => {
+      const [kind, id] = part.split(":");
+      return (kind === "task" || kind === "project") && isUuid(id) ? [{ kind, id }] : [];
+    })
+    .slice(0, MAX_RECENTS);
+}
 
 export const quickProjectHref = (project: Pick<QuickProject, "id">) => `/projects/${project.id}`;
 // A person opens their profile page (Real features 2), which links on to their work in Reports.

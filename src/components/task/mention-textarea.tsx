@@ -5,6 +5,8 @@ import { FolderKanban, SquareCheck } from "lucide-react";
 import { Avatar, displayName } from "@/components/avatar";
 import { knownLinkName, rememberLinkName } from "@/components/task/comment-parts";
 import { extendsDeadQuery, linkSearchText, projectLinkUrl, taskLinkUrl } from "@/lib/app-links";
+import { readRecents, useShellMemberId } from "@/components/shell/shell-context";
+import { recentRefsParam } from "@/lib/shell";
 import {
   NO_CHIP_LINKS,
   addChipLink,
@@ -130,26 +132,33 @@ export function MentionTextarea({
   const hashDead = hashQuery !== null && hashQuery !== "" && extendsDeadQuery(hashQuery, deadHere);
   const hashStart = live?.kind === "#" ? live.start : null;
 
+  // Nov 4 notes (batch 25, 158): "#" alone suggests at once (recent and relevant tasks and projects), like
+  // "@" lists people before a letter is typed; a "#" query that matched nothing never goes dead for "".
+  const memberId = useShellMemberId();
   useEffect(() => {
-    if (hashQuery === null || hashQuery === "" || hashDead || hashStart === null) return;
+    if (hashQuery === null || hashDead || hashStart === null) return;
     const controller = new AbortController();
+    const url =
+      hashQuery === ""
+        ? `/api/link-search?recent=${encodeURIComponent(recentRefsParam(memberId ? readRecents(memberId) : []))}`
+        : `/api/link-search?q=${encodeURIComponent(hashQuery)}`;
     const timer = window.setTimeout(() => {
-      fetch(`/api/link-search?q=${encodeURIComponent(hashQuery)}`, { signal: controller.signal, cache: "no-store" })
+      fetch(url, { signal: controller.signal, cache: "no-store" })
         .then((response) => (response.ok ? response.json() : null))
         .then((body: { tasks?: QuickTask[]; projects?: QuickProject[] } | null) => {
           if (!body) return;
           const tasks = body.tasks ?? [];
           const projects = body.projects ?? [];
           setFound({ start: hashStart, query: hashQuery, tasks, projects });
-          if (tasks.length + projects.length === 0) setDead({ start: hashStart, query: hashQuery });
+          if (hashQuery !== "" && tasks.length + projects.length === 0) setDead({ start: hashStart, query: hashQuery });
         })
         .catch(() => {});
-    }, 120);
+    }, hashQuery === "" ? 0 : 120);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [hashQuery, hashDead, hashStart]);
+  }, [hashQuery, hashDead, hashStart, memberId]);
 
   const people: Suggestion[] =
     live?.kind === "@"
@@ -159,18 +168,19 @@ export function MentionTextarea({
           .map((profile) => ({ kind: "person", key: `person-${profile.id}`, profile }))
       : [];
   // While a newer query is on its way, the last results at this "#" stay (no flicker between keys).
-  const shown = hashQuery && !hashDead && found && found.start === hashStart ? found : null;
-  const searching = Boolean(hashQuery) && !hashDead && (!found || found.start !== hashStart || found.query !== hashQuery);
+  const shown = hashQuery !== null && !hashDead && found && found.start === hashStart ? found : null;
+  const searching = hashQuery !== null && !hashDead && (!found || found.start !== hashStart || found.query !== hashQuery);
   const suggestions: Suggestion[] = [
     ...people,
     ...(shown?.tasks ?? []).map((task) => ({ kind: "task" as const, key: `task-${task.id}`, task })),
     ...(shown?.projects ?? []).map((project) => ({ kind: "project" as const, key: `project-${project.id}`, project })),
   ];
-  // "#" alone: a hint row; "#Name" on its way with nothing yet: "Searching…".
+  // "#" alone: the suggestions with a hint row under them (the hint alone while they load or when there are
+  // none); "#Name" on its way with nothing yet: "Searching…".
   const hashNote =
-    live?.kind === "#" && suggestions.length === 0 && !hashDead
+    live?.kind === "#" && !hashDead
       ? hashQuery
-        ? searching
+        ? suggestions.length === 0 && searching
           ? "Searching…"
           : null
         : "Type a task or project name, or a task number"
@@ -335,7 +345,7 @@ export function MentionTextarea({
               <li key={item.key} role="presentation">
                 {heading ? (
                   <p role="presentation" className="px-2.5 pb-0.5 pt-1.5 text-2xs font-semibold uppercase tracking-wide text-zinc-400">
-                    {GROUP_LABELS[item.kind]}
+                    {shown?.query === "" ? `Suggested ${GROUP_LABELS[item.kind].toLowerCase()}` : GROUP_LABELS[item.kind]}
                   </p>
                 ) : null}
                 <div

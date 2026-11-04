@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useOptimistic, useState } from "react";
 import { Archive, AtSign, Bookmark, Inbox, ListFilter } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
-import { InboxCard, inboxItemHref, type CardState, type Decision } from "@/components/inbox/inbox-card";
+import { InboxCard, inboxItemHref, type CardState } from "@/components/inbox/inbox-card";
 import { useInboxDensity } from "@/components/inbox/inbox-density";
 import { InboxToolbar } from "@/components/inbox/inbox-toolbar";
 import { useTaskHref } from "@/components/project/shared";
@@ -14,7 +14,6 @@ import { useServerAction } from "@/components/toast";
 import { EmptyState, HEADER_TAB } from "@/components/ui";
 import {
   archiveInboxItems,
-  decideApproval,
   markInboxRead,
   markInboxUnread,
   setInboxBookmark,
@@ -147,15 +146,6 @@ export function InboxView({
   const setRead = (item: InboxItem, read: boolean) =>
     change([item.id], { read }, () => (read ? markInboxRead([item.id]) : markInboxUnread(item.id)));
 
-  // The approver decides a pending request right here (decide_approval: approver only, Commenter+). The
-  // card's form asks for the note first: required for Request changes, recommended for the others.
-  function decide(item: InboxItem, decision: Decision, note: string) {
-    if (!item.approval) return;
-    if (decision === "changes_requested" && !note.trim()) return;
-    const approvalId = item.approval.id;
-    change([item.id], { read: true }, () => decideApproval(approvalId, decision, note.trim() || undefined));
-  }
-
   // "Mark all as read" on Activity covers every unread notification, older ones past the newest
   // INBOX_LIMIT included; on the other tabs, the unread ones in that tab. They turn read at once.
   const unreadIds = tabItems.filter((item) => !isRead(item)).map((item) => item.id);
@@ -276,7 +266,6 @@ export function InboxView({
                               onBookmark={(bookmarked) =>
                                 change([item.id], { bookmarked }, () => setInboxBookmark(item.id, bookmarked))
                               }
-                              onDecide={(decision, note) => decide(item, decision, note)}
                             />
                           ))}
                           {group.items.length > pages.limit(pageKey) ? (
