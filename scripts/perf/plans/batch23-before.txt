@@ -1,0 +1,79 @@
+-- comments of task 1 (5,005 rows)
+                                             QUERY PLAN                                             
+----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on comments (actual time=6.223..2579.892 rows=5005 loops=1)
+   Recheck Cond: (task_id = 'c1000000-0000-4000-8000-000000000001'::uuid)
+   Filter: (SubPlan 1)
+   Heap Blocks: exact=72
+   Buffers: shared hit=201691
+   ->  Bitmap Index Scan on comments_task_timeline_idx (actual time=0.814..0.814 rows=5005 loops=1)
+         Index Cond: (task_id = 'c1000000-0000-4000-8000-000000000001'::uuid)
+         Buffers: shared hit=66
+   SubPlan 1
+     ->  Result (actual time=0.514..0.514 rows=1 loops=5005)
+           Buffers: shared hit=201553
+ Planning:
+   Buffers: shared hit=199
+ Planning Time: 0.791 ms
+ Execution Time: 2580.607 ms
+(15 rows)
+
+-- every readable inbox item (2,000)
+                                                                                                                                                    QUERY PLAN                                                                                                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual time=981.187..981.192 rows=1 loops=1)
+   Buffers: shared hit=86303
+   InitPlan 1
+     ->  Result (actual time=0.004..0.004 rows=1 loops=1)
+   ->  Seq Scan on inbox_items (actual time=0.884..980.534 rows=2000 loops=1)
+         Filter: ((recipient_id = (InitPlan 1).col1) AND (((task_id IS NOT NULL) AND (SubPlan 2)) OR ((task_id IS NULL) AND EXISTS(SubPlan 5)) OR ((task_id IS NULL) AND EXISTS(SubPlan 11)) OR ((task_id IS NULL) AND EXISTS(SubPlan 17)) OR ((task_id IS NULL) AND (project_id IS NOT NULL) AND (SubPlan 21))))
+         Buffers: shared hit=86303
+         SubPlan 2
+           ->  Result (actual time=0.489..0.489 rows=1 loops=2000)
+                 Buffers: shared hit=86270
+         SubPlan 5
+           ->  Seq Scan on project_messages m (never executed)
+                 Filter: ((id = inbox_items.message_id) AND (SubPlan 4) AND (SubPlan 3))
+                 SubPlan 4
+                   ->  Result (never executed)
+                 SubPlan 3
+                   ->  Result (never executed)
+         SubPlan 11
+           ->  Seq Scan on team_messages m_1 (never executed)
+                 Filter: ((id = inbox_items.team_message_id) AND (SubPlan 10) AND (SubPlan 9))
+                 SubPlan 10
+                   ->  Result (never executed)
+                 SubPlan 9
+                   ->  Result (never executed)
+         SubPlan 17
+           ->  Seq Scan on project_status_updates u (never executed)
+                 Filter: ((id = inbox_items.status_update_id) AND (SubPlan 16) AND (SubPlan 15))
+                 SubPlan 16
+                   ->  Result (never executed)
+                 SubPlan 15
+                   ->  Result (never executed)
+         SubPlan 21
+           ->  Result (never executed)
+ Planning:
+   Buffers: shared hit=415
+ Planning Time: 1.068 ms
+ Execution Time: 981.260 ms
+(37 rows)
+
+-- task field values
+                                    QUERY PLAN                                    
+----------------------------------------------------------------------------------
+ Aggregate (actual time=48.613..48.613 rows=1 loops=1)
+   Buffers: shared hit=1173
+   ->  Seq Scan on task_field_values (actual time=0.752..48.582 rows=200 loops=1)
+         Filter: (SubPlan 1)
+         Buffers: shared hit=1173
+         SubPlan 1
+           ->  Result (actual time=0.242..0.242 rows=1 loops=200)
+                 Buffers: shared hit=1170
+ Planning:
+   Buffers: shared hit=43
+ Planning Time: 0.167 ms
+ Execution Time: 48.633 ms
+(12 rows)
+
