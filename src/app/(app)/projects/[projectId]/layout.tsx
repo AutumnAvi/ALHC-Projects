@@ -10,8 +10,6 @@ import {
   getProjectAccessStatus,
   getProjectSectionsLocked,
   getProjectRole,
-  hasBatch4Schema,
-  hasReal4Schema,
   listOwnProjectRoles,
   listProjectFields,
   listProjectFieldSharing,
@@ -23,7 +21,6 @@ import {
   listStarredProjectIds,
   getRequestSequence,
   getProjectViewSettings,
-  hasOct26Batch4Schema,
   listStatusTemplates,
   listTaskTemplates,
 } from "@/lib/data";
@@ -53,12 +50,9 @@ export default async function ProjectLayout({
     starredIds,
     members,
     sections,
-    batch4,
-    real4,
     statusTemplates,
     numbering,
     viewSettings,
-    batch4Schema,
     sectionsLocked,
     fieldSharing,
   ] = await Promise.all([
@@ -73,12 +67,9 @@ export default async function ProjectLayout({
       listStarredProjectIds(),
       listProjectMembers(projectId),
       listSections(projectId),
-      hasBatch4Schema(),
-      hasReal4Schema(),
       listStatusTemplates(projectId),
       getRequestSequence(projectId),
       getProjectViewSettings(projectId),
-      hasOct26Batch4Schema(),
       getProjectSectionsLocked(projectId),
       // Oct 29 notes (batch 7): shared library fields (the Fields list's "Shared" marker, Edit field's
       // read-only definition). Booleans and counts only. Never worth failing the project page over: the
@@ -110,15 +101,13 @@ export default async function ProjectLayout({
     })),
     taskTemplates: taskTemplates.map(({ id, name, title }) => ({ id, name, title })),
     statusTemplates,
-    statusTemplatesAvailable: real4,
+    statusTemplatesAvailable: true,
     numbering,
     sections: sections.map((section) => ({ id: section.id, name: section.name })),
     // Oct 27 notes (batch 5): Owner settings (Owners only).
     owner: permissionsFor(role).isOwner ? { sectionsLocked } : null,
     // Nov 2 notes (batch 15, 117): every tab, to hide or show (Editors+; batch 4's settings table).
-    tabs: batch4Schema
-      ? projectTabList(views, viewSettings)
-      : null,
+    tabs: projectTabList(views, viewSettings),
   };
   // The header's avatars (owners first, then by role and name); Share lists everyone.
   const headerMembers = members.map(({ profileId, name, role }) => ({ profileId, name, role })).sort(compareMembers);
@@ -128,7 +117,7 @@ export default async function ProjectLayout({
       <TaskTemplatesProvider templates={taskTemplates.map(({ id, name, title }) => ({ id, name, title }))}>
         <ProjectPageProvider
           project={{ id: project.id, name: project.name }}
-          batch4={batch4}
+          batch4
           archived={project.archived_at !== null}
           statusTemplates={statusTemplates}
           fieldSharing={fieldSharing}
@@ -145,7 +134,7 @@ export default async function ProjectLayout({
               hiddenTabs={viewSettings.hiddenTabs}
               hiddenViewIds={viewSettings.hiddenViewIds ?? []}
               defaultViewId={viewSettings.defaultViewId}
-              personalViews={batch4Schema}
+              personalViews
             />
             <ArchivedProjectBanner canUnarchive={canArchive} />
             {children}

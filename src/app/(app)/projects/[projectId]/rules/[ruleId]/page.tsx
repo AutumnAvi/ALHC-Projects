@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { RuleCanvas } from "@/components/rules/rule-canvas";
-import { getProject, getProjectRole, hasBatch4Schema, listProjectRules, listRecentRuleRuns, listRuleTestTasks } from "@/lib/data";
+import { getProject, getProjectRole, listProjectRules, listRecentRuleRuns, listRuleTestTasks } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
 import { hasRole } from "@/lib/roles";
 import { loadRuleContext, ruleBackHref } from "../context";
@@ -17,13 +17,12 @@ export async function generateMetadata({ params }: PageProps<"/projects/[project
 export default async function RulePage({ params, searchParams }: PageProps<"/projects/[projectId]/rules/[ruleId]">) {
   const [{ projectId, ruleId }, { back }] = await Promise.all([params, searchParams]);
   if (!isUuid(ruleId)) notFound();
-  const [project, role, rules, ctx, runs, batch4, testTasks] = await Promise.all([
+  const [project, role, rules, ctx, runs, testTasks] = await Promise.all([
     getProject(projectId),
     getProjectRole(projectId),
     listProjectRules(projectId),
     loadRuleContext(projectId),
     listRecentRuleRuns([ruleId]),
-    hasBatch4Schema(),
     listRuleTestTasks(projectId),
   ]);
   const rule = rules.find((r) => r.id === ruleId);
@@ -37,7 +36,7 @@ export default async function RulePage({ params, searchParams }: PageProps<"/pro
       runs={runs}
       testTasks={testTasks}
       ctx={ctx}
-      batch4={batch4}
+      batch4
       canEdit={hasRole(role, "admin")}
       backHref={ruleBackHref(projectId, back)}
     />

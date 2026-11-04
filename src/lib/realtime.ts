@@ -14,7 +14,11 @@ type Subscription = { table: string; filter?: string };
 // Nov 3 notes (batch 19): a channel on a table the hosted database may not publish yet (tasks and
 // task_projects join supabase_realtime in this batch's migration) gives up after a few errors instead of
 // retrying forever; the page keeps its server-rendered data.
-export type ChannelOptions = { maxErrors?: number };
+// Nov 4 notes (batch 21, QW4): onStatus says whether the channel is live ("live" once subscribed, again
+// after every rejoin; "down" while it reconnects; "off" when it gave up or there is no session), so a
+// caller can fall back to polling only while it isn't.
+export type ChannelStatus = "live" | "down" | "off";
+export type ChannelOptions = { maxErrors?: number; onStatus?: (status: ChannelStatus) => void };
 
 const REFRESH_MS = 400;
 const RECONNECT_BASE_MS = 800;
@@ -81,13 +85,34 @@ export function openRealtimeChannel(
   let reconnectTimer: number | undefined;
   let active: ReturnType<typeof supabase.channel> | null = null;
 
-  const connect = () => {
+  // Nov 4 notes (batch 21, QW4): a channel joins with whatever token the Realtime socket holds at that
+  // moment. The browser client reads the session asynchronously after it's created, so a channel opened on
+  // a page's first render (the inbox badge, automation feedback) used to join with only the anon key: the
+  // server then checks the filter column as role anon, which holds no privilege on any ALHC table
+  // (Review hardening), and refuses with "invalid column for filter". Every join now waits for the
+  // signed-in token first, and nothing joins without a session.
+  const authorize = async (): Promise<boolean> => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return false;
+    if (supabase.realtime.accessTokenValue !== token) await supabase.realtime.setAuth();
+    return supabase.realtime.accessTokenValue === token;
+  };
+
+  const connect = async () => {
     if (stopped) return;
     const gen = ++generation;
     if (active) {
       const previous = active;
       active = null;
       void supabase.removeChannel(previous);
+    }
+    const authorized = await authorize().catch(() => false);
+    if (stopped || gen !== generation) return;
+    if (!authorized) {
+      stopped = true;
+      options.onStatus?.("off");
+      return;
     }
     let channel = supabase.channel(`${name}:${gen}`);
     for (const { table, filter } of subs) {
@@ -104,6 +129,11 @@ export function openRealtimeChannel(
       if (stopped || gen !== generation) return;
       if (status === "SUBSCRIBED") {
         attempt = 0;
+        options.onStatus?.("live");
+        return;
+      }
+      if (status === "CLOSED") {
+        options.onStatus?.("down");
         return;
       }
       if (status !== "CHANNEL_ERROR" && status !== "TIMED_OUT") return;
@@ -112,17 +142,19 @@ export function openRealtimeChannel(
         stopped = true;
         if (active) void supabase.removeChannel(active);
         active = null;
+        options.onStatus?.("off");
         return;
       }
+      options.onStatus?.("down");
       const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
       attempt += 1;
       reconnectTimer = window.setTimeout(() => {
-        if (!stopped && gen === generation) connect();
+        if (!stopped && gen === generation) void connect();
       }, wait);
     });
   };
 
-  connect();
+  void connect();
   return () => {
     stopped = true;
     generation += 1;

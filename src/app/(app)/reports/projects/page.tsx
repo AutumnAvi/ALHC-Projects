@@ -9,7 +9,6 @@ import { requireMember } from "@/lib/auth";
 import {
   allProjectsReport,
   countHiddenWorkspaceProjects,
-  hasReal3Schema,
   listActivePeople,
   listLatestStatusUpdates,
   workspaceTotals,
@@ -45,12 +44,11 @@ function ProgressCell({ completed, total }: { completed: number; total: number }
 // counts in each of its projects; the total row counts it once.
 export default async function AllProjectsReportPage() {
   const timeZone = await getViewerTimeZone();
-  const [projects, hidden, totals, member, real3, people] = await Promise.all([
+  const [projects, hidden, totals, member, people] = await Promise.all([
     allProjectsReport(timeZone),
     countHiddenWorkspaceProjects(),
     workspaceTotals({}, timeZone),
     requireMember(),
-    hasReal3Schema(),
     listActivePeople(),
   ]);
   const latest = await listLatestStatusUpdates(projects.map((p) => p.id));
@@ -64,7 +62,7 @@ export default async function AllProjectsReportPage() {
         </p>
         <div className="flex items-center gap-2">
           <ScheduleEmailButton
-            available={real3}
+            available
             report="projects"
             filters={{}}
             filterSummary={[]}

@@ -932,6 +932,7 @@ function CommentItem({
               onSubmit={save}
               onCancel={() => setDraft(null)}
               links
+              linkRefs={refs}
               autoFocus
               rows={2}
               className={COMMENT_INPUT}

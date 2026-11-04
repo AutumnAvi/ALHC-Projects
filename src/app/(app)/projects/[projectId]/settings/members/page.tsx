@@ -7,8 +7,6 @@ import {
   commenterRoleAllowed,
   getProject,
   getProjectRole,
-  hasOct25Schema,
-  hasReal1Schema,
   listPendingInvites,
   listProjectMembers,
   listTeams,
@@ -28,15 +26,13 @@ export default async function ProjectMembersPage({
   params,
 }: PageProps<"/projects/[projectId]/settings/members">) {
   const { projectId } = await params;
-  const [viewer, project, role, members, invites, resendable, allowCommenter, defaultRoles] = await Promise.all([
+  const [viewer, project, role, members, invites, allowCommenter] = await Promise.all([
     requireMember(),
     getProject(projectId),
     getProjectRole(projectId),
     listProjectMembers(projectId),
     listPendingInvites("project", projectId),
-    hasReal1Schema(),
     commenterRoleAllowed(),
-    hasOct25Schema(),
   ]);
   if (!project || !role) notFound();
   // Group invite (Admin+): only teams the viewer can see inside (their own; every team for a workspace
@@ -57,9 +53,9 @@ export default async function ProjectMembersPage({
         .filter((t) => viewable.has(t.id))
         .map((t) => ({ id: t.id, name: t.name, memberCount: t.members.length }))}
       invites={invites}
-      resendable={resendable && isEmailConfigured()}
+      resendable={isEmailConfigured()}
       allowCommenter={allowCommenter}
-      defaultRoles={defaultRoles}
+      defaultRoles
     />
   );
 }

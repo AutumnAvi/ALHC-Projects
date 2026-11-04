@@ -1,6 +1,7 @@
 "use server";
 
 import { refresh, revalidatePath } from "next/cache";
+import { getSignedInUser } from "@/lib/auth";
 import { starterDashboardWidgets } from "@/lib/personal-dashboards";
 import { normalizeDomainInput } from "@/lib/verified-domains";
 import { redirect } from "next/navigation";
@@ -9,7 +10,6 @@ import { after } from "next/server";
 import {
   getProjectRole,
   getWorkspace,
-  hasBatch4Schema,
   hasMyTaskRulesV2,
   listFieldLibrary,
   listMyProjectRoles,
@@ -1677,9 +1677,7 @@ export async function quickAddTask(input: {
       : null;
     const mentionId = input.mentionId ? id(input.mentionId, "person") : null;
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in to add tasks");
     const created = input.projectId
       ? await supabase.rpc("create_task", { target_project: id(input.projectId, "project"), target_section: null, task_title: title })
@@ -2823,9 +2821,7 @@ export async function toggleReaction(commentId: string, emoji: string): Promise<
   return run(async () => {
     if (!isReactionKey(emoji)) throw new InputError("Unknown reaction");
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in again to react");
     const existing = await supabase
       .from("comment_reactions")
@@ -3083,9 +3079,7 @@ export async function toggleMessageReaction(messageId: string, emoji: string): P
   return run(async () => {
     if (!isReactionKey(emoji)) throw new InputError("Unknown reaction");
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in again to react");
     const existing = await supabase
       .from("project_message_reactions")
@@ -3201,9 +3195,7 @@ export async function toggleTeamMessageReaction(messageId: string, emoji: string
   return run(async () => {
     if (!isReactionKey(emoji)) throw new InputError("Unknown reaction");
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in again to react");
     const existing = await supabase
       .from("team_message_reactions")
@@ -3234,9 +3226,7 @@ export async function toggleTeamMessageReaction(messageId: string, emoji: string
 export async function setTeamThreadFollowing(threadId: string, following: boolean): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in again to follow this thread");
     const existing = await supabase
       .from("team_message_followers")
@@ -4600,9 +4590,7 @@ export async function retryEmailDelivery(emailId: string): Promise<ActionResult>
 export async function setEmailComments(enabled: boolean): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in again to change this");
     checkUpdated(
       await supabase.from("profiles").update({ email_comments: enabled === true }).eq("id", user.id).select("id"),
@@ -4619,9 +4607,7 @@ export async function updateMyProfile({ fullName }: { fullName: string }): Promi
     const problem = profileNameProblem(name);
     if (problem) throw new InputError(problem);
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in again to change this");
     checkUpdated(
       await supabase.from("profiles").update({ full_name: name }).eq("id", user.id).select("id"),
@@ -4653,9 +4639,7 @@ export async function uploadMyAvatar(formData: FormData): Promise<ActionResult &
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (!looksLikeImage(bytes, file.type)) throw new InputError("That file isn’t a PNG, JPEG, WebP, or GIF image");
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in again to change this");
     const previous = await supabase.from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
     check(previous);
@@ -4687,9 +4671,7 @@ export async function uploadMyAvatar(formData: FormData): Promise<ActionResult &
 export async function removeMyAvatar(): Promise<ActionResult> {
   return run(async () => {
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) throw new InputError("Sign in again to change this");
     const previous = await supabase.from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
     check(previous);
@@ -5272,15 +5254,11 @@ function prepareSigningSecret(action: RuleAction, index: number, revealed: Revea
   return { ...rest, signing_secret: secret };
 }
 
-// Else if / Otherwise branches (Asana parity, batch 4) need the database that runs them: a database
-// without 20261011040000_asana_parity_4.sql would AND every condition and run every action.
+// Else if / Otherwise branches (Asana parity, batch 4): the branch layout must make sense.
 async function checkBranches(input: RuleInput) {
   const conditions = input.conditions ?? [];
   const actions = input.actions ?? [];
   if (![...conditions, ...actions].some((item) => item && typeof item === "object" && "branch" in item)) return;
-  if (!(await hasBatch4Schema())) {
-    throw new InputError("Else if branches need this release’s database update, which isn’t applied yet");
-  }
   const problem = branchProblem(splitBranches({ conditions, actions }));
   if (problem) throw new InputError(problem);
 }
@@ -5733,7 +5711,7 @@ export async function createView(
     const fallback = VIEW_LAYOUTS.find((l) => l.value === input.layout)!.label;
     const supabase = await createClient();
     // Oct 26 notes (batch 4): a personal view is only the creator's (RLS: Viewer+ of the project).
-    const ownerId = input.personal ? ((await supabase.auth.getUser()).data.user?.id ?? null) : null;
+    const ownerId = input.personal ? ((await getSignedInUser())?.id ?? null) : null;
     if (input.personal && !ownerId) throw new InputError("Sign in to save a view");
     const inserted = await supabase
       .from("project_views")
@@ -6157,9 +6135,7 @@ const IMPORT_TIME_BUDGET_MS = 20_000;
 
 async function loadImportPlan(projectId: string, paths: unknown) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSignedInUser();
   if (!user) throw new InputError("Sign in again to import");
   if (!Array.isArray(paths) || paths.length === 0) throw new InputError("Choose at least one export file");
   if (paths.length > MAX_IMPORT_FILES) throw new InputError(`Import up to ${MAX_IMPORT_FILES} files at a time`);
@@ -6690,9 +6666,7 @@ export async function discardImportUploads(projectId: string, paths: string[]): 
   try {
     const project = id(projectId, "project");
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSignedInUser();
     if (!user) return {};
     const own = (Array.isArray(paths) ? paths : []).filter(
       (p) => typeof p === "string" && p.startsWith(`${project}/${user.id}/`) && !p.includes(".."),

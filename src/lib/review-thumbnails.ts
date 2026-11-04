@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { reviewMediaKind } from "@/lib/review-checks";
+import { THUMBNAIL_BUDGET_MS, type ReviewThumbnail } from "@/lib/review-thumbnail-shared";
 import type { createClient } from "@/lib/supabase/server";
 
 // Oct 27 notes (batch 5): thumbnails for the review check email — an image, or a PDF's first page, drawn
@@ -12,6 +13,11 @@ import type { createClient } from "@/lib/supabase/server";
 // signed-in Editor's own Supabase client, never the service role; the email gets a signed link that lasts
 // as long as the review link. Best effort: a file that can't be drawn (too big, a broken file, no renderer
 // on this server) gets a file tile instead, and the email still goes out.
+//
+// Nov 4 notes (batch 21, QW3): this module loads @napi-rs/canvas (Skia, ~32 MB native) and pdf.js (~6 MB
+// traced), so only the route that draws thumbnails imports it (src/app/api/review-thumbnails/route.ts).
+// Everything else — the review Server Actions included — asks that route (review-thumbnail-request.ts),
+// so the libraries ship with one server function instead of every page that has a task pane.
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -26,10 +32,10 @@ export const THUMB_QUALITIES = [82, 72, 62, 52] as const;
 export const MAX_THUMBNAILS = 6;
 const RENDER_TIMEOUT_MS = 12000;
 const CONCURRENCY = 3;
-// Nov 2 notes (batch 16, 122): the review email waits at most this long for thumbnails, so it goes out in
-// seconds; files whose thumbnail isn't ready by then get a file tile (their thumbnails still finish and
-// are stored, so the next round reuses them).
-export const THUMBNAIL_BUDGET_MS = 4000;
+// Nov 2 notes (batch 16, 122): the review email waits at most THUMBNAIL_BUDGET_MS for thumbnails (defined
+// with the request side in review-thumbnail-request.ts, which can't import this module).
+export { THUMBNAIL_BUDGET_MS };
+export type { ReviewThumbnail };
 
 export type ThumbnailSource = {
   assetId: string;
@@ -62,9 +68,6 @@ export function thumbnailSize(width: number, height: number) {
   const h = Math.max(1, Math.min(THUMB_MAX_HEIGHT, Math.round(height * scale)));
   return { width: w, height: h, scale };
 }
-
-// A stored thumbnail and its size in pixels (the email draws it at min(its width, EMAIL_IMAGE_WIDTH)).
-export type ReviewThumbnail = { url: string; width: number | null; height: number | null };
 
 // The pixel size of a JPEG (its first start-of-frame marker), or null when the bytes aren't one. Used for
 // thumbnails already stored (an earlier round's, or one drawn before batch 8 at 480 px).

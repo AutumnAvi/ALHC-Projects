@@ -190,6 +190,13 @@ export function rememberLinkName(id: string, name: string) {
   linkNames.set(id, name);
 }
 
+// The name of a linked task or project as this reader knows it: the page's lookup (their own access),
+// else a name picked in this browser. Null = unknown ("Private link" in a posted comment).
+export function knownLinkName(link: AppLink, refs?: CommentRefs | null): string | null {
+  if (link.kind === "task") return refs?.tasks[link.taskId]?.title ?? linkNames.get(link.taskId) ?? null;
+  return refs?.projects[link.projectId]?.name ?? linkNames.get(link.projectId) ?? null;
+}
+
 // Nov 1 notes, batch 9a (10.3): a link to a task (opens it in the pane) or a project (opens it), named
 // from the reader's own lookup; one they can't open reads "Private link".
 export function AppLinkChip({ link, refs, raw }: { link: AppLink; refs: CommentRefs; raw: string }) {

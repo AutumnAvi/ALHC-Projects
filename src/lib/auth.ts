@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
+import type { UserAppMetadata, UserMetadata } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
 export type Member = {
@@ -26,13 +27,40 @@ export function safeNextPath(value: string | null | undefined): string {
   }
 }
 
-export const getViewer = cache(async () => {
+// The signed-in person, from the session's access token. Nov 4 notes (batch 21, QW2): getClaims() checks
+// the token's signature locally against the project's published signing keys (asymmetric, cached for the
+// process) and its expiry, instead of asking Supabase Auth over the network on every request the way
+// getUser() does. Access is unchanged: every database read still sends the same token, which PostgREST
+// verifies the same way before RLS runs, and getViewer() still asks the database whether the person is
+// allowlisted (is_allowlisted() reads auth.users), so someone removed or deleted is turned away at once.
+// The only thing getUser() adds is noticing a signed-out session before its token expires (at most an
+// hour) — and the database accepts that token for the same hour either way. Where a fresh check matters
+// (changing a password) the code still calls getUser() itself.
+export type SignedInUser = {
+  id: string;
+  email: string | undefined;
+  user_metadata: UserMetadata;
+  app_metadata: UserAppMetadata;
+};
+
+export const getSignedInUser = cache(async (): Promise<SignedInUser | null> => {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data, error } = await supabase.auth.getClaims();
+  const claims = data?.claims;
+  if (error || !claims || typeof claims.sub !== "string" || !claims.sub || claims.role !== "authenticated") return null;
+  return {
+    id: claims.sub,
+    email: typeof claims.email === "string" ? claims.email : undefined,
+    user_metadata: claims.user_metadata ?? {},
+    app_metadata: claims.app_metadata ?? {},
+  };
+});
+
+export const getViewer = cache(async () => {
+  const user = await getSignedInUser();
   if (!user) return { user: null, allowlisted: false } as const;
 
+  const supabase = await createClient();
   const { data: allowlisted, error } = await supabase.rpc("is_allowlisted");
   if (error) throw new Error(`Allowlist check failed: ${error.message}`);
   return { user, allowlisted: allowlisted === true } as const;

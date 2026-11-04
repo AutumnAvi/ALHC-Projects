@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 const POLL_MS = 60_000;
 
 // Server-rendered count (re-sent whenever a server action refreshes the layout), kept fresh between
-// refreshes by Realtime when available and by polling/focus otherwise.
+// refreshes by Realtime when it's live, and by polling / focus only while it isn't.
 export function useUnreadCount(initial: number, memberId: string, scope: string) {
   const [state, setState] = useState({ initial, count: initial });
   if (state.initial !== initial) setState({ initial, count: initial });
@@ -34,8 +34,12 @@ export function useUnreadCount(initial: number, memberId: string, scope: string)
     if (!error && count !== null && ticket === request.current) setState((current) => ({ ...current, count }));
   }, []);
 
+  // Nov 4 notes (batch 21, QW4): one mechanism at a time. While the Realtime channel is live it alone
+  // keeps the count fresh (plus one recount each time it (re)joins, for anything missed while it was
+  // down); only while it's down or unavailable does the count poll every minute and recount on focus.
   useEffect(() => {
     let timer: number | undefined;
+    let interval: number | undefined;
     let stopped = false;
     const refetchSoon = () => {
       window.clearTimeout(timer);
@@ -43,21 +47,42 @@ export function useUnreadCount(initial: number, memberId: string, scope: string)
         if (!stopped) void refetch();
       }, 300);
     };
+    const onFocus = () => {
+      if (document.visibilityState === "visible") refetchSoon();
+    };
+    const startPolling = () => {
+      if (interval !== undefined) return;
+      interval = window.setInterval(refetchSoon, POLL_MS);
+      window.addEventListener("focus", onFocus);
+    };
+    const stopPolling = () => {
+      if (interval === undefined) return;
+      window.clearInterval(interval);
+      interval = undefined;
+      window.removeEventListener("focus", onFocus);
+    };
     const stopChannel = openRealtimeChannel(
       `inbox-count-${scope}-${memberId}`,
       [{ table: "inbox_items", filter: `recipient_id=eq.${memberId}` }],
       refetchSoon,
+      {
+        onStatus: (status) => {
+          if (stopped) return;
+          if (status === "live") {
+            stopPolling();
+            refetchSoon();
+          } else {
+            startPolling();
+          }
+        },
+      },
     );
-    const interval = window.setInterval(refetchSoon, POLL_MS);
-    const onFocus = () => {
-      if (document.visibilityState === "visible") refetchSoon();
-    };
-    window.addEventListener("focus", onFocus);
+    // Until the channel says it's live (a second or so), poll as the fallback.
+    startPolling();
     return () => {
       stopped = true;
       window.clearTimeout(timer);
-      window.clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
+      stopPolling();
       stopChannel();
     };
   }, [memberId, scope, refetch]);

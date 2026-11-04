@@ -6,7 +6,6 @@ import {
   canManageTeam,
   getTeam,
   getWorkspace,
-  hasReal1Schema,
   listActivePeople,
   listUnjoinedAddresses,
   listPendingInvites,
@@ -27,13 +26,12 @@ export async function generateMetadata({ params }: PageProps<"/teams/[teamId]/me
 export default async function TeamMembersPage({ params }: PageProps<"/teams/[teamId]/members">) {
   const { teamId } = await params;
   await requireTeamView(teamId);
-  const [member, team, canManage, invites, workspace, resendable, people, requests, waiting] = await Promise.all([
+  const [member, team, canManage, invites, workspace, people, requests, waiting] = await Promise.all([
     requireMember(),
     getTeam(teamId),
     canManageTeam(teamId),
     listPendingInvites("team", teamId),
     getWorkspace(),
-    hasReal1Schema(),
     listActivePeople(),
     listTeamJoinRequests(teamId),
     listUnjoinedAddresses(),
@@ -51,7 +49,7 @@ export default async function TeamMembersPage({ params }: PageProps<"/teams/[tea
         canManage={canManage}
         isDefault={workspace?.defaultTeamId === team.id}
         invites={invites}
-        resendable={resendable && isEmailConfigured()}
+        resendable={isEmailConfigured()}
         candidates={
           canManage
             ? teamMemberCandidates(

@@ -22,7 +22,6 @@ import { SeriesChart } from "@/components/reports/series-chart";
 import { requireMember } from "@/lib/auth";
 import {
   countHiddenWorkspaceProjects,
-  hasReal3Schema,
   listActivePeople,
   reportCompletedSeries,
   reportOverdueTasks,
@@ -63,7 +62,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
   // Nov 3 notes (batch 19, 144): one wave of reads (the overdue list no longer waits for the rest), and the
   // side reads (hidden count, schedule-email people) never take the page down.
-  const [context, totals, byProject, byAssignee, bySection, series, hidden, member, real3, people, overdueTasks] =
+  const [context, totals, byProject, byAssignee, bySection, series, hidden, member, people, overdueTasks] =
     await Promise.all([
       loadReportContext(timeZone),
       workspaceReport(filters, "none", timeZone),
@@ -73,7 +72,6 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       reportCompletedSeries(filters, interval, timeZone),
       softRead("reports hidden count", countHiddenWorkspaceProjects(), 0),
       requireMember(),
-      softRead("reports schema", hasReal3Schema(), false),
       softRead("reports people", listActivePeople(), []),
       reportOverdueTasks(filters, timeZone),
     ]);
@@ -102,7 +100,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         />
         <div className="flex items-center gap-2">
           <ScheduleEmailButton
-            available={real3}
+            available
             report="overview"
             filters={urlFilters}
             filterSummary={describeReportFilters(urlFilters, context.projects, context.people, context.tags)}

@@ -2183,7 +2183,7 @@ async function storyEmailStatuses(stories: { kind: string; data: Json }[]): Prom
 // What Resend reported for these emails (Real features 3), read through email_outbox's RLS like the rest
 // of the row. Empty on a database without the migration (the column doesn't exist there).
 async function deliveryStatuses(ids: string[]): Promise<Map<string, DeliveryStatus>> {
-  if (ids.length === 0 || !(await hasReal3Schema())) return new Map();
+  if (ids.length === 0) return new Map();
   const supabase = await createClient();
   const result = await supabase.from("email_outbox").select("id, delivery_status").in("id", ids).not("delivery_status", "is", null);
   if (result.error) return new Map();
@@ -2238,16 +2238,6 @@ function toFieldDef(row: Tables<"custom_fields">): FieldDef {
     lockedAt: row.locked_at ?? null,
   };
 }
-
-// Asana parity, batch 4 (20261011040000_asana_parity_4.sql): field descriptions, the field library,
-// field notifications, rule branches, and Heading / Email form questions. A preview deployed before the
-// migration is applied hides them. The migration adds custom_fields.description last, so its presence
-// means the whole batch is there.
-export const hasBatch4Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const result = await supabase.from("custom_fields").select("description").limit(1);
-  return !isMissingColumn(result.error);
-});
 
 // The workspace field library (list_field_library: name, type, description, and options of library
 // fields, never their projects). Null without the migration.
@@ -2609,8 +2599,7 @@ export type InboxItem = {
   actorId: string | null;
   readAt: string | null;
   archivedAt: string | null;
-  // Asana parity, batch 5: the Bookmarks tab. Always null on a database without
-  // 20261012050000_asana_parity_5.sql (hasBatch5Schema()).
+  // Asana parity, batch 5: the Bookmarks tab.
   bookmarkedAt: string | null;
   createdAt: string;
   // Task items: the task. Message items (Messages tab): null, and `message` (project) or `teamMessage`
@@ -2639,55 +2628,9 @@ export type InboxItem = {
 
 export type { InboxTab } from "@/lib/inbox";
 
-// Asana parity, batch 5 (20261012050000_asana_parity_5.sql): Inbox bookmarks, team curated work, and
-// the Admin console's last activity. A preview deployed before the migration is applied hides them. The
-// migration adds inbox_items.bookmarked_at last, so its presence means the whole batch is there.
-export const hasBatch5Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const result = await supabase.from("inbox_items").select("bookmarked_at").limit(1);
-  return !isMissingColumn(result.error);
-});
-
-// Is 20261013010000_real_1.sql applied? Its last statement makes email_forwarding_addresses readable, so
-// a preview without it hides Resend on pending invites, form file questions, and email forwarding.
-export const hasReal1Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const result = await supabase.from("email_forwarding_addresses").select("id").limit(1);
-  return !result.error;
-});
-
-// Is 20261013020000_real_2.sql applied? Its last statement before the tail makes notification_settings
-// readable, so a preview without it keeps the old Notifications tab, says team messages need the update,
-// and shows last sign-ins only. (Its tail, applied by hand, only lets team message and status update
-// notifications into the Inbox.)
-export const hasReal2Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const result = await supabase.from("notification_settings").select("kind").limit(1);
-  return !result.error;
-});
-
-// Is 20261014010000_real_3.sql applied? Its last statement makes email_preferences readable, so a
-// preview without it hides the digest and report-email settings, Schedule email on Reports, and the Admin
-// console's delivery tracking and suppression list (each says it needs the database update).
-export const hasReal3Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const result = await supabase.from("email_preferences").select("profile_id").limit(1);
-  return !result.error;
-});
-
-// Is 20261014020000_real_4.sql applied? Its last statement makes project_status_templates readable, so a
-// preview without it hides Status templates and calendar links (each says it needs the database update).
-// The calendar drag and the streamed CSV export need nothing new from the database.
-export const hasReal4Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const result = await supabase.from("project_status_templates").select("id").limit(1);
-  return !result.error;
-});
-
 // A project's status templates (Customize → Status templates, and the status update panel's picker):
 // RLS shows them to the project's Viewers+. Empty on a database without Real features 4.
 export const listStatusTemplates = cache(async (projectId: string): Promise<StatusTemplate[]> => {
-  if (!(await hasReal4Schema())) return [];
   const supabase = await createClient();
   const result = await supabase
     .from("project_status_templates")
@@ -2703,7 +2646,6 @@ export const listStatusTemplates = cache(async (projectId: string): Promise<Stat
 // too: a project or team they can no longer open reads as null. Null on a database without Real
 // features 4.
 export const listMyCalendarFeeds = cache(async (): Promise<CalendarFeed[] | null> => {
-  if (!(await hasReal4Schema())) return null;
   const supabase = await createClient();
   const result = await supabase
     .from("calendar_feeds")
@@ -2898,12 +2840,8 @@ async function labelInbox(items: InboxItem[]): Promise<InboxItem[]> {
 
 //   activity = not archived, archive = archived, bookmarks = bookmarked (archived or not),
 //   mentioned = @mentions (archived or not).
-// Without this release's migration there are no bookmarks: that tab is empty and every item's
-// bookmarkedAt is null.
 async function listInboxFromRows(tab: InboxTab = "activity"): Promise<InboxItem[]> {
   const supabase = await createClient();
-  const [bookmarks, real2] = await Promise.all([hasBatch5Schema(), hasReal2Schema()]);
-  if (tab === "bookmarks" && !bookmarks) return [];
 
   // The tab as a PostgREST filter: [column, operator, value].
   const [column, operator, value]: [string, string, string | null] =
@@ -2915,15 +2853,9 @@ async function listInboxFromRows(tab: InboxTab = "activity"): Promise<InboxItem[
           ? ["kind", "eq", "mention"]
           : ["archived_at", "is", null];
 
-  const taskColumns = bookmarks
-    ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(id, body, deleted_at)"
-    : "id, kind, data, actor_id, read_at, archived_at, created_at, task:tasks!inner(id, title, parent_task_id), comment:comments(id, body, deleted_at)";
-  const messageColumns = bookmarks
-    ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))"
-    : "id, kind, data, actor_id, read_at, archived_at, created_at, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))";
-  const base = bookmarks
-    ? "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at"
-    : "id, kind, data, actor_id, read_at, archived_at, created_at";
+  const base = "id, kind, data, actor_id, read_at, archived_at, bookmarked_at, created_at";
+  const taskColumns = `${base}, task:tasks!inner(id, title, parent_task_id), comment:comments(id, body, deleted_at)`;
+  const messageColumns = `${base}, message:project_messages!inner(id, project_id, thread_id, title, body, deleted_at, project:projects!inner(name))`;
   const [taskResult, messageResult, teamResult, statusResult] = await Promise.all([
     supabase
       .from("inbox_items")
@@ -2943,34 +2875,30 @@ async function listInboxFromRows(tab: InboxTab = "activity"): Promise<InboxItem[
       .order("created_at", { ascending: false })
       .limit(INBOX_LIMIT)
       .overrideTypes<InboxMessageRow[], { merge: false }>(),
-    // Real features 2: team messages and status updates (none on a database without its migration).
-    real2
-      ? supabase
-          .from("inbox_items")
-          .select(
-            `${base}, team_message:team_messages!inner(id, team_id, thread_id, title, body, deleted_at, team:teams!inner(name, deleted_at))`,
-          )
-          .is("task_id", null)
-          .is("team_message.deleted_at", null)
-          .is("team_message.team.deleted_at", null)
-          .filter(column, operator, value)
-          .order("created_at", { ascending: false })
-          .limit(INBOX_LIMIT)
-          .overrideTypes<InboxTeamMessageRow[], { merge: false }>()
-      : Promise.resolve({ data: [] as InboxTeamMessageRow[], error: null }),
-    real2
-      ? supabase
-          .from("inbox_items")
-          .select(
-            `${base}, status_update:project_status_updates!inner(id, project_id, status, title, note, project:projects!inner(name, deleted_at))`,
-          )
-          .is("task_id", null)
-          .is("status_update.project.deleted_at", null)
-          .filter(column, operator, value)
-          .order("created_at", { ascending: false })
-          .limit(INBOX_LIMIT)
-          .overrideTypes<InboxStatusRow[], { merge: false }>()
-      : Promise.resolve({ data: [] as InboxStatusRow[], error: null }),
+    // Real features 2: team messages and status updates.
+    supabase
+      .from("inbox_items")
+      .select(
+        `${base}, team_message:team_messages!inner(id, team_id, thread_id, title, body, deleted_at, team:teams!inner(name, deleted_at))`,
+      )
+      .is("task_id", null)
+      .is("team_message.deleted_at", null)
+      .is("team_message.team.deleted_at", null)
+      .filter(column, operator, value)
+      .order("created_at", { ascending: false })
+      .limit(INBOX_LIMIT)
+      .overrideTypes<InboxTeamMessageRow[], { merge: false }>(),
+    supabase
+      .from("inbox_items")
+      .select(
+        `${base}, status_update:project_status_updates!inner(id, project_id, status, title, note, project:projects!inner(name, deleted_at))`,
+      )
+      .is("task_id", null)
+      .is("status_update.project.deleted_at", null)
+      .filter(column, operator, value)
+      .order("created_at", { ascending: false })
+      .limit(INBOX_LIMIT)
+      .overrideTypes<InboxStatusRow[], { merge: false }>(),
   ]);
   const items = rows(taskResult, "inbox");
   const messageItems = rows(messageResult, "inbox messages");
@@ -3324,7 +3252,6 @@ const toTeamMessage = (row: TeamMessageRow) => toMessage(row, row.team_message_m
 // A team's threads, most recently active first, with whether the viewer follows each. Null on a
 // database without 20261013020000_real_2.sql.
 export const listTeamMessageThreads = cache(async (teamId: string): Promise<TeamThreadSummary[] | null> => {
-  if (!(await hasReal2Schema())) return null;
   const { user } = await getViewer();
   const supabase = await createClient();
   const threads = rows(
@@ -3371,7 +3298,6 @@ export const listTeamMessageThreads = cache(async (teamId: string): Promise<Team
 // One team thread with its replies (oldest first) and followers; null when missing, removed,
 // unreadable, or on a database without this release's migration.
 export const getTeamMessageThread = cache(async (threadId: string): Promise<TeamMessageThread | null> => {
-  if (!(await hasReal2Schema())) return null;
   const supabase = await createClient();
   const thread = maybe(
     await supabase
@@ -3412,7 +3338,6 @@ export const getTeamMessageThread = cache(async (threadId: string): Promise<Team
 
 // Can the viewer post in this team's Messages (its members, leads, and workspace admins)?
 export const canPostTeamMessage = cache(async (teamId: string): Promise<boolean> => {
-  if (!(await hasReal2Schema())) return false;
   const supabase = await createClient();
   const result = await supabase.rpc("can_post_team_message", { target_team: teamId });
   return !result.error && result.data === true;
@@ -3662,22 +3587,6 @@ export const getPublicForm = cache(async (formId: string): Promise<PublicForm | 
   };
 });
 
-// Automations V2's database update (20261020010000_automations_v2.sql) is applied when rules have
-// next_run_at; without it the builder offers only the old vocabulary.
-export const hasAutomationsV2Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const result = await supabase.from("rules").select("next_run_at").limit(1);
-  return !result.error;
-});
-
-// Automations V3's database update (20261021010000_automations_v3_a.sql): its probe function exists.
-// Without it the builder lists V3's vocabulary disabled. (New triggers also need the V3 tail.)
-export const hasAutomationsV3Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const result = await supabase.rpc("automations_v3_ready");
-  return !result.error && result.data === true;
-});
-
 // The workspace's workweek for business days (Sunday–Thursday until an admin changes it).
 export const getWorkWeek = cache(async (): Promise<number[]> => {
   const supabase = await createClient();
@@ -3720,36 +3629,12 @@ export const listEditableProjectsWithSections = cache(
 );
 
 export const listProjectRules = cache(async (projectId: string): Promise<RuleDef[]> => {
-  const [supabase, v2, v3] = await Promise.all([createClient(), hasAutomationsV2Schema(), hasAutomationsV3Schema()]);
-  const base = "id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key";
-  if (v3) {
-    // Automations V3 adds paused_until (a pause for a while).
-    const result = await supabase
-      .from("rules")
-      .select(
-        "id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key, owner_id, next_run_at, last_edited_by, last_edited_at, run_on_rule_changes, paused_at, pause_reason, consecutive_failures, paused_until",
-      )
-      .eq("project_id", projectId)
-      .is("deleted_at", null)
-      .order("sort_order")
-      .order("created_at");
-    return rows(result, "rules").map(toRuleDef);
-  }
-  if (v2) {
-    const result = await supabase
-      .from("rules")
-      .select(
-        `${base}, owner_id, next_run_at, last_edited_by, last_edited_at, run_on_rule_changes, paused_at, pause_reason, consecutive_failures`,
-      )
-      .eq("project_id", projectId)
-      .is("deleted_at", null)
-      .order("sort_order")
-      .order("created_at");
-    return rows(result, "rules").map(toRuleDef);
-  }
+  const supabase = await createClient();
   const result = await supabase
     .from("rules")
-    .select(base)
+    .select(
+      "id, project_id, name, enabled, trigger_type, trigger_config, conditions, actions, preset_key, owner_id, next_run_at, last_edited_by, last_edited_at, run_on_rule_changes, paused_at, pause_reason, consecutive_failures, paused_until",
+    )
     .eq("project_id", projectId)
     .is("deleted_at", null)
     .order("sort_order")
@@ -3784,7 +3669,7 @@ export const listRuleTestTasks = cache(
 // decides; empty without Automations V2's database update.
 export const listRuleRunStats = cache(async (ruleIds: string[]): Promise<Map<string, RuleRunStats>> => {
   const out = new Map<string, RuleRunStats>();
-  if (ruleIds.length === 0 || !(await hasAutomationsV2Schema())) return out;
+  if (ruleIds.length === 0) return out;
   const supabase = await createClient();
   const result = await supabase.rpc("rule_run_stats", { rule_ids: ruleIds.slice(0, 200) });
   if (result.error) {
@@ -4423,17 +4308,8 @@ export const getProjectView = cache(async (viewId: string): Promise<ProjectView 
   return row ? toProjectView(row) : null;
 });
 
-// Oct 26 notes (batch 4): this release's database (profile_preferences is readable; its grant is the
-// migration's last statement). Without it there are no personal views, hidden tabs, or default view.
-export const hasOct26Batch4Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const { error } = await supabase.from("profile_preferences").select("profile_id").limit(1);
-  return !error;
-});
-
 // The project's hidden tabs and default view (project Viewers+ read it; nothing set = everything shown).
 export const getProjectViewSettings = cache(async (projectId: string): Promise<ProjectViewSettings> => {
-  if (!(await hasOct26Batch4Schema())) return NO_VIEW_SETTINGS;
   const supabase = await createClient();
   // Nov 2 notes (batch 15, 117): hidden view tabs; a database without the update has no such column.
   const withViews = await supabase
@@ -4464,7 +4340,6 @@ export const getProjectViewSettings = cache(async (projectId: string): Promise<P
 
 // The signed-in person's own app preferences.
 export const getProfilePreferences = cache(async (): Promise<{ openPersonalView: boolean; available: boolean }> => {
-  if (!(await hasOct26Batch4Schema())) return { openPersonalView: false, available: false };
   const supabase = await createClient();
   const { user } = await getViewer();
   if (!user) return { openPersonalView: false, available: true };
@@ -5135,14 +5010,6 @@ export const listProjectAccessRequests = cache(async (projectId: string): Promis
       requestedAt: r.created_at,
     };
   });
-});
-
-// The Oct 25 notes' database update (default project roles) is applied: allowed_emails.default_project_role
-// is readable.
-export const hasOct25Schema = cache(async (): Promise<boolean> => {
-  const supabase = await createClient();
-  const { error } = await supabase.from("allowed_emails").select("default_project_role").limit(1);
-  return !error;
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -6314,7 +6181,7 @@ export const listProjectFiles = cache(async (projectId: string): Promise<Project
     source?: string;
   };
   type TaskRow = { id: string; title: string; deleted_at: string | null; task_attachments: FileRow[] };
-  const columns = (await hasReal1Schema()) ? `${FILE_COLUMNS}, source` : FILE_COLUMNS;
+  const columns = `${FILE_COLUMNS}, source`;
   const files: ProjectFile[] = [];
   const add = (task: TaskRow) => {
     if (task.deleted_at) return;
@@ -6651,7 +6518,6 @@ export const listInviteDeliveries = cache(async (limit = 50): Promise<InviteDeli
 
 // Null on a database without the migration; the defaults when the person never changed anything.
 export const getMyEmailPreferences = cache(async (): Promise<EmailPreferences | null> => {
-  if (!(await hasReal3Schema())) return null;
   const supabase = await createClient();
   const result = await supabase
     .from("email_preferences")
@@ -6674,7 +6540,6 @@ export const getMyEmailPreferences = cache(async (): Promise<EmailPreferences | 
 // The viewer's own scheduled report emails (owner-only RLS), newest first; removed ones left out. Null on
 // a database without the migration.
 export const listReportSchedules = cache(async (): Promise<ReportSchedule[] | null> => {
-  if (!(await hasReal3Schema())) return null;
   const supabase = await createClient();
   const result = await supabase
     .from("report_schedules")
@@ -6723,7 +6588,6 @@ export type WorkspaceEmailDelivery = {
 // Admin console → Email: the latest emails of every kind (workspace admins; null for anyone else or on a
 // database without the migration).
 export const listWorkspaceEmailDeliveries = cache(async (limit = 100): Promise<WorkspaceEmailDelivery[] | null> => {
-  if (!(await hasReal3Schema())) return null;
   const supabase = await createClient();
   const result = await supabase.rpc("list_workspace_email_deliveries", { max_results: limit });
   if (result.error) return null;
@@ -6757,7 +6621,6 @@ export type WorkspaceEmailSummary = {
 };
 
 export const workspaceEmailSummary = cache(async (days = 30): Promise<WorkspaceEmailSummary | null> => {
-  if (!(await hasReal3Schema())) return null;
   const supabase = await createClient();
   const result = await supabase.rpc("workspace_email_summary", { window_days: days });
   const r = result.error ? null : result.data?.[0];
@@ -6787,7 +6650,6 @@ export type EmailSuppression = {
 // The active suppression list (workspace admins only, through list_email_suppressions: addresses outside
 // the workspace masked). Null for anyone else or on a database without the migration.
 export const listEmailSuppressions = cache(async (): Promise<EmailSuppression[] | null> => {
-  if (!(await hasReal3Schema())) return null;
   const supabase = await createClient();
   const result = await supabase.rpc("list_email_suppressions");
   if (result.error) return null;

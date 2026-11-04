@@ -57,7 +57,7 @@ export function InboxView({
   items: InboxItem[];
   profiles: Profile[];
   memberId: string;
-  // This release's migration is applied (hasBatch5Schema()): bookmarks work.
+  // Bookmarks work (always, since every migration is applied).
   bookmarks: boolean;
   // The viewer's zone and local day, from the server, so day headings match on both sides.
   timeZone: string;

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { RuleCanvas } from "@/components/rules/rule-canvas";
-import { getProject, getProjectRole, hasBatch4Schema, listRuleTestTasks } from "@/lib/data";
+import { getProject, getProjectRole, listRuleTestTasks } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
 import { findRuleTemplate } from "@/lib/rule-templates";
 import { loadRuleContext, ruleBackHref } from "../context";
@@ -10,11 +10,10 @@ export const metadata: Metadata = { title: "New automation" };
 
 export default async function NewRulePage({ params, searchParams }: PageProps<"/projects/[projectId]/rules/new">) {
   const [{ projectId }, { back, template }] = await Promise.all([params, searchParams]);
-  const [project, role, ctx, batch4, testTasks] = await Promise.all([
+  const [project, role, ctx, testTasks] = await Promise.all([
     getProject(projectId),
     getProjectRole(projectId),
     loadRuleContext(projectId),
-    hasBatch4Schema(),
     listRuleTestTasks(projectId),
   ]);
   if (!project) notFound();
@@ -43,7 +42,7 @@ export default async function NewRulePage({ params, searchParams }: PageProps<"/
       runs={[]}
       testTasks={testTasks}
       ctx={ctx}
-      batch4={batch4}
+      batch4
       canEdit={hasRole(role, "admin")}
       backHref={ruleBackHref(projectId, back)}
     />

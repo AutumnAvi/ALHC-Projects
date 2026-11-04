@@ -192,7 +192,7 @@ export function InboxCard({
   active: boolean;
   href: string;
   memberId: string;
-  // Bookmarks need this release's migration (hasBatch5Schema()); without it there's no button.
+  // Whether the bookmark button shows (always, since every migration is applied).
   bookmarks: boolean;
   onOpen: () => void;
   onRead: (read: boolean) => void;

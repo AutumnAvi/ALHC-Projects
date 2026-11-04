@@ -80,8 +80,10 @@ export function TaskDescription({ task, canEdit }: { task: TaskDetail; canEdit: 
       links
       autoFocus={editing}
       onFocus={() => setEditing(true)}
-      onBlur={(e) => {
-        const notes = e.currentTarget.value;
+      linkRefs={refs}
+      onBlur={() => {
+        // The draft (the body with its links), not the box's own text, which shows links as chips.
+        const notes = draft;
         setEditing(false);
         if (notes.trim() !== saved.trim()) run(() => updateTask(task.id, { notes }));
       }}

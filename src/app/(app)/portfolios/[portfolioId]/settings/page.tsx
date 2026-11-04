@@ -7,7 +7,6 @@ import { isEmailConfigured } from "@/lib/email";
 import {
   getPortfolio,
   getPortfolioRole,
-  hasReal1Schema,
   listPendingInvites,
   listPortfolioFields,
   listPortfolioMembers,
@@ -22,14 +21,13 @@ export async function generateMetadata({ params }: PageProps<"/portfolios/[portf
 
 export default async function PortfolioSettingsPage({ params }: PageProps<"/portfolios/[portfolioId]/settings">) {
   const { portfolioId } = await params;
-  const [viewer, portfolio, role, members, fields, invites, resendable] = await Promise.all([
+  const [viewer, portfolio, role, members, fields, invites] = await Promise.all([
     requireMember(),
     getPortfolio(portfolioId),
     getPortfolioRole(portfolioId),
     listPortfolioMembers(portfolioId),
     listPortfolioFields(portfolioId),
     listPendingInvites("portfolio", portfolioId),
-    hasReal1Schema(),
   ]);
   if (!portfolio || !role) notFound();
 
@@ -42,7 +40,7 @@ export default async function PortfolioSettingsPage({ params }: PageProps<"/port
         viewerId={viewer.id}
         viewerRole={role}
         invites={invites}
-        resendable={resendable && isEmailConfigured()}
+        resendable={isEmailConfigured()}
       />
     </>
   );

@@ -5,8 +5,6 @@ import { FormsList } from "@/components/forms/forms-list";
 import {
   getForm,
   getProjectRole,
-  hasBatch4Schema,
-  hasReal1Schema,
   listProjectFields,
   listProjectForms,
   listSections,
@@ -28,15 +26,13 @@ export async function generateMetadata({
 export default async function FormEditorPage({ params }: PageProps<"/projects/[projectId]/forms/[formId]">) {
   const { projectId, formId } = await params;
   if (!isUuid(formId)) notFound();
-  const [form, forms, sections, fields, origin, role, batch4, real1] = await Promise.all([
+  const [form, forms, sections, fields, origin, role] = await Promise.all([
     getForm(formId),
     listProjectForms(projectId),
     listSections(projectId),
     listProjectFields(projectId),
     requestOrigin(),
     getProjectRole(projectId),
-    hasBatch4Schema(),
-    hasReal1Schema(),
   ]);
   if (!form || form.projectId !== projectId) notFound();
 
@@ -49,8 +45,8 @@ export default async function FormEditorPage({ params }: PageProps<"/projects/[p
         sections={sections.map((s) => ({ id: s.id, name: s.name }))}
         fields={fields}
         origin={origin}
-        batch4={batch4}
-        real1={real1}
+        batch4
+        real1
         canEdit={hasRole(role, "admin")}
         closeHref={`/projects/${projectId}/forms`}
       />
