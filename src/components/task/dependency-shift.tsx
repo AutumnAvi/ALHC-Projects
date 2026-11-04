@@ -44,6 +44,11 @@ type Options = {
   // Nov 3 notes (batch 19, 148): moveWith's own plan of the dependents the page can see for each choice
   // (drawn at once; the database's answer wins).
   planFor?: (moves: ShiftMove[], how: TimelineDragHow) => ShiftPlanRow[];
+  // Nov 4 notes (batch 20, 152): the tasks the dragged one depends on (upstream) that move with it for this
+  // choice — sent with the change (the database plans the dependents of all of them) and drawn at once.
+  upstreamFor?: (moves: ShiftMove[], how: TimelineDragHow) => ShiftPlanRow[];
+  // Set by moveWith for the toast: which of the moved tasks were upstream ones.
+  upstreamIds?: ReadonlySet<string>;
 };
 
 export type ShiftChoice = { confirmed: string[]; pull: boolean } | "only" | "cancel";
@@ -148,14 +153,28 @@ export function shiftToastText({
   given,
   changes,
   skipped,
+  upstream,
 }: {
   subject: string;
   given: string[];
   changes: ShiftChange[];
   skipped: ShiftSkip[];
+  // Nov 4 notes (batch 20, 152): moved tasks the subject depends on (named apart from its dependents).
+  upstream?: ReadonlySet<string>;
 }): string | null {
   const givenSet = new Set(given);
   const many = given.length > 1;
+  const before = upstream ? changes.filter((c) => upstream.has(c.task_id) && !givenSet.has(c.task_id)).length : 0;
+  if (before > 0) {
+    const after = changes.filter((c) => !givenSet.has(c.task_id) && !upstream!.has(c.task_id)).length;
+    const parts = [
+      plural(before, "1 task it depends on", `${before} tasks it depends on`),
+      ...(after ? [plural(after, "1 dependent task", `${after} dependent tasks`)] : []),
+    ];
+    const notMoved = skipped.filter((s) => !givenSet.has(s.taskId)).length;
+    const text = `Moved ${subject} and ${parts.join(" and ")}`;
+    return notMoved ? `${text}; ${plural(notMoved, "1 linked task was", `${notMoved} linked tasks were`)} left as ${plural(notMoved, "it was", "they were")}` : text;
+  }
   const dependents = changes.filter((c) => !givenSet.has(c.task_id));
   const leftAlone = skipped.filter((s) => !givenSet.has(s.taskId));
   const movedGiven = changes.filter((c) => givenSet.has(c.task_id)).length;
@@ -275,7 +294,7 @@ export function useDependencyShift(): {
         moved: changes.filter((c) => givenSet.has(c.task_id)).map((c) => c.task_id),
         skipped: skipped.filter((s) => givenSet.has(s.taskId)),
       });
-      const text = shiftToastText({ subject, given, changes, skipped });
+      const text = shiftToastText({ subject, given, changes, skipped, upstream: options.upstreamIds });
       if (text) notify(text, dependents.length ? { label: "Undo", onClick: () => undo(changes) } : undefined);
       invalidateTaskPanes();
     },
@@ -420,6 +439,19 @@ export function useDependencyShift(): {
         let ok = false;
         try {
           const moves: ShiftMove[] = [{ taskId: task.id, ...dates }];
+          // Nov 4 notes (batch 20, 152): with Shift / Alt the tasks it depends on can move too; they go to the
+          // server as part of the change (the person could move each of them; the database checks each).
+          let upstream: ShiftMove[] = [];
+          if (how !== "only" && options.upstreamFor) {
+            try {
+              upstream = movesOf(options.upstreamFor(moves, how))
+                .filter((r) => r.taskId !== task.id)
+                .map((r) => ({ taskId: r.taskId, startOn: r.newStart, dueOn: r.newDue }));
+            } catch {
+              upstream = [];
+            }
+          }
+          const upstreamIds = new Set(upstream.map((m) => m.taskId));
           let predicted: MovedTask[] = [];
           if (how !== "only" && options.planFor) {
             try {
@@ -431,7 +463,7 @@ export function useDependencyShift(): {
             }
           }
           options.onOptimistic?.([{ taskId: task.id, ...dates }, ...predicted]);
-          const answer = await moveTaskDatesWith(moves, how);
+          const answer = await moveTaskDatesWith([...moves, ...upstream], how);
           if (answer.error || !answer.result) {
             notify(answer.error ?? "Couldn’t change the dates");
             options.onRevert?.();
@@ -443,7 +475,7 @@ export function useDependencyShift(): {
             options.onRevert?.();
             return;
           }
-          report(moves, `“${task.title}”`, answer.result, options);
+          report(moves, `“${task.title}”`, answer.result, { ...options, upstreamIds });
           ok = true;
           dropUnconfirmed(token, predicted, new Set(answer.result.changes.map((c) => c.task_id)));
         } finally {

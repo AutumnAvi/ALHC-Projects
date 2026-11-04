@@ -715,6 +715,7 @@ export function ActionSettings({ a, ctx, onChange }: { a: PortfolioRuleItem; ctx
                   step={a}
                   scope="portfolio"
                   orgWorkWeek={ctx.workWeek ?? DEFAULT_WORK_WEEK}
+                  ownWorkWeek={ctx.personalWorkWeek ?? null}
                   onChange={(next) => onChange(next as typeof a)}
                 />
               ) : null}

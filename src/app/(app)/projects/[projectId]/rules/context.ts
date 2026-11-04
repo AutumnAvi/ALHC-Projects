@@ -4,6 +4,7 @@ import { requireMember } from "@/lib/auth";
 import {
   getProject,
   getProjectIntegrations,
+  getMyPersonalWorkWeek,
   getWorkWeek,
   hasAutomationsV2Schema,
   hasAutomationsV3Schema,
@@ -28,7 +29,7 @@ import { loadSlackSettings } from "@/lib/slack-actions";
 // webhooks (the Rules page and the rule canvas). Read with the viewer's client: below Admin the
 // integration defaults and inbound webhooks come back empty.
 export async function loadRuleContext(projectId: string): Promise<RuleContext> {
-  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members, v3, projectTemplates, portfolios, tagsOn, roles, slack, viewer, readable] = await Promise.all([
+  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members, v3, projectTemplates, portfolios, tagsOn, roles, slack, viewer, readable, ownWeek] = await Promise.all([
     getProject(projectId),
     listSections(projectId),
     listProjectFields(projectId),
@@ -50,6 +51,7 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     loadSlackSettings(),
     requireMember(),
     listProjects(),
+    getMyPersonalWorkWeek(),
   ]);
   const nameOf = (profileId: string | null) => {
     const p = profileId ? profiles.find((x) => x.id === profileId) : null;
@@ -84,6 +86,8 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     slackDestinations: slack.destinations,
     // Nov 3 notes (batch 19): "Task assigned to me" (37.1) and "Is in project" (39.3).
     viewerId: viewer.id,
+    personalWorkWeek: ownWeek ?? null,
+    personalProject: members.length > 0 && members.every((m) => m.profileId === viewer.id),
     readableProjects: readable.filter((p) => p.id !== projectId).map((p) => ({ id: p.id, name: p.name })),
   };
 }

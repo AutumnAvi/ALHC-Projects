@@ -39,8 +39,8 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
       note: "Hold the key when you let go of the bar. Elsewhere, date changes follow the project’s Settings → Dependencies.",
       items: [
         { keys: ["drag"], label: "Move or resize only this task" },
-        { keys: ["Shift", "drag"], label: "Move the tasks that depend on it along by the same amount" },
-        { keys: [mod === "⌘" ? "Option" : "Alt", "drag"], label: "Push the tasks that depend on it only as far as their links need" },
+        { keys: ["Shift", "drag"], label: "Move its linked tasks along by the same amount (the ones it depends on and the ones that depend on it)" },
+        { keys: [mod === "⌘" ? "Option" : "Alt", "drag"], label: "Move its linked tasks only as far as their links need (dependents later, the ones it depends on earlier)" },
         { keys: ["Esc"], label: "Cancel the drag" },
       ],
     },

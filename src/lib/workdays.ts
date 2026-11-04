@@ -67,3 +67,12 @@ export function describeWorkWeek(workWeek: readonly number[]): string {
   if (contiguous && days.length > 2) return `${WEEKDAYS[days[0]].label}–${WEEKDAYS[days[days.length - 1]].label}`;
   return days.map((d) => WEEKDAYS[d].short).join(", ");
 }
+
+// Nov 4 notes (batch 20, 150): the short form for menus — "Sun–Thu", "Mon–Fri", "Sun, Tue, Thu", "Every day".
+export function shortWorkWeek(workWeek: readonly number[]): string {
+  const days = normalizeWorkWeek([...workWeek]);
+  if (days.length === 7) return "Every day";
+  const contiguous = days.every((d, i) => i === 0 || d === days[i - 1] + 1);
+  if (contiguous && days.length > 2) return `${WEEKDAYS[days[0]].short}–${WEEKDAYS[days[days.length - 1]].short}`;
+  return days.map((d) => WEEKDAYS[d].short).join(", ");
+}

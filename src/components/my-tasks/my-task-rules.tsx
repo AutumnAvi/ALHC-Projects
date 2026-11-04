@@ -1,11 +1,13 @@
 "use client";
 
-// My Tasks rules (Automations V3, batch E): an Automations button (batch 10) on My tasks opens the person’s own rules —
-// when a task is assigned to me / is due soon / is overdue, (if …), move it to one of my sections, set
-// its due date, or complete it — built as a sentence with the searchable pickers.
+// My Tasks rules (Automations V3, batch E): an Automations button (batch 10) on My tasks opens the person’s own rules,
+// built as a sentence with the searchable pickers. Nov 4 notes (batch 20, 149): the project automations’ triggers,
+// conditions, and actions wherever they make sense for personal tasks (someone comments, a task of mine is
+// completed, its dates change, …; add a comment, rename, tag, follow, hand it off, add subtasks, add to a project, …).
+// Until the database takes them they're listed greyed out ("Needs this release’s database update").
 
 import { useState } from "react";
-import { FolderClosed, Pencil, Plus, Trash2, X, Zap } from "lucide-react";
+import { FolderClosed, Pencil, Plus, Tag as TagIcon, Trash2, User, X, Zap } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useConfirm } from "@/components/confirm";
 import { ParamSlot, StepParams, StepPrompt, useParamSlot } from "@/components/param-slot";
@@ -16,7 +18,8 @@ import { VocabPicker } from "@/components/rules/vocab-picker";
 import { useAutoName } from "@/components/rules/use-auto-name";
 import { autoRuleName, withTarget } from "@/lib/rule-autoname";
 import { RuleIcon } from "@/components/rules/rule-icons";
-import { MISSING_INPUT } from "@/components/rules/rule-shared";
+import { MISSING_INPUT, TAGS_OFF, type RuleContext } from "@/components/rules/rule-shared";
+import { PlaceholderInput } from "@/components/rules/placeholder-input";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteMyTaskRule, saveMyTaskRule, setMyTaskRuleEnabled } from "@/lib/actions";
 import {
@@ -24,6 +27,7 @@ import {
   MY_TASK_CONDITIONS,
   MY_TASK_TRIGGERS,
   myTaskRuleSentence,
+  needsMyTaskV2,
   type MyTaskAction,
   type MyTaskCondition,
   type MyTaskRule,
@@ -45,22 +49,88 @@ function missingKeys(step: MyTaskRuleItem, scope: StepScope) {
 
 const INPUT = "control h-auto min-h-7 py-0.5";
 
-const vocab = (list: readonly { value: string; label: string; description?: string; keywords?: readonly string[] }[]): SmartOption[] =>
-  list.map((x) => ({ value: x.value, label: x.label, icon: <RuleIcon value={x.value} />, description: x.description, keywords: x.keywords }));
+const DATE_TRIGGERS: ReadonlySet<string> = new Set(["due_approaching", "start_approaching", "task_overdue"]);
+const TAG_STEPS = new Set(["tag_added", "has_tag", "lacks_tag", "add_tag", "remove_tag"]);
+const NEEDS_UPDATE = "Needs this release’s database update";
+
+// Nov 4 notes (batch 20, 149): the vocabulary in groups; steps the database doesn't take yet (or tag steps
+// while tags are off) stay listed, greyed out with the reason. A step the automation already uses stays usable.
+const vocab = (
+  list: readonly { value: string; label: string; group?: string; description?: string; keywords?: readonly string[] }[],
+  kind: "trigger" | "condition" | "action" = "action",
+  ctx?: MyTaskRuleContext,
+  keep: readonly string[] = [],
+): SmartOption[] =>
+  list.map((x) => {
+    const reason =
+      keep.includes(x.value) || !ctx
+        ? null
+        : ctx.v2 === false && needsMyTaskV2(kind, x.value)
+          ? NEEDS_UPDATE
+          : ctx.tagsEnabled === false && TAG_STEPS.has(x.value)
+            ? TAGS_OFF
+            : null;
+    return {
+      value: x.value,
+      label: x.label,
+      group: x.group,
+      icon: <RuleIcon value={x.value} />,
+      description: x.description,
+      keywords: x.keywords,
+      ...(reason ? { disabled: true, disabledReason: reason } : {}),
+    };
+  });
+
+// The rules builder's text box (with the "{ }" placeholder picker) wants a project context; My Tasks has none.
+function placeholderCtx(ctx: MyTaskRuleContext): RuleContext {
+  return { sections: [], fields: [], people: ctx.people ?? [], forms: [], integrations: null, inboundEndpoints: [] };
+}
+
+function TagPicker({ value, ctx, onChange, anyTag = false }: { value: Json | undefined; ctx: MyTaskRuleContext; onChange: (v: string) => void; anyTag?: boolean }) {
+  const options: SmartOption[] = [
+    ...(anyTag ? [{ value: "", label: "any tag" }] : []),
+    ...(ctx.tags ?? []).filter((t) => !t.archived || t.id === value).map((t) => ({ value: t.id, label: t.name, icon: <TagIcon className="size-4" /> })),
+  ];
+  return (
+    <SmartPicker
+      label="Tag"
+      value={typeof value === "string" ? value : anyTag ? "" : null}
+      options={options}
+      onChange={onChange}
+      variant="chip"
+      placeholder="choose a tag"
+      searchable
+    />
+  );
+}
+
+function personOptions(ctx: MyTaskRuleContext): SmartOption[] {
+  return (ctx.people ?? []).map((p) => ({ value: p.id, label: p.name, icon: <User className="size-4" /> }));
+}
 
 const whole = (v: Json | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null);
 const strings = (v: Json | undefined) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 function conditionDefaults(type: MyTaskCondition): MyTaskRuleItem {
   if (type === "in_project" || type === "not_in_project") return { type, project_ids: [] };
-  if (type === "due_within") return { type, days: 3 };
-  if (type === "task_type_is") return { type, kind: "task" };
+  if (type === "due_within" || type === "start_within") return { type, days: 3 };
+  if (type === "task_type_is" || type === "task_type_is_not") return { type, kind: "task" };
+  if (type === "has_tag" || type === "lacks_tag") return { type, tag_id: "" };
+  if (type === "title_contains") return { type, text: "" };
   return { type };
 }
 
 function actionDefaults(type: MyTaskAction, ctx: MyTaskRuleContext): MyTaskRuleItem {
   if (type === "move_to_section") return { type, section_id: ctx.sections[0]?.id ?? "" };
-  if (type === "set_due_date") return { type, days: 1, business_days: true };
+  if (type === "set_due_date" || type === "set_start_date") return { type, days: 1, business_days: true };
+  if (type === "add_comment") return { type, body: "" };
+  if (type === "set_title") return { type, title: "{{task.name}}" };
+  if (type === "set_task_type") return { type, kind: "milestone" };
+  if (type === "add_tag" || type === "remove_tag") return { type, tag_id: "" };
+  if (type === "add_followers" || type === "remove_followers") return { type, people: [] };
+  if (type === "set_assignee") return { type, assignee: "" };
+  if (type === "create_subtasks") return { type, titles: [""] };
+  if (type === "add_to_project") return { type, project_id: "" };
   return { type };
 }
 
@@ -178,7 +248,13 @@ export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[]
   );
 }
 
-// A condition's settings (which projects, how many days, which task type).
+const KIND_OPTIONS = [
+  { value: "task", label: "Task" },
+  { value: "milestone", label: "Milestone" },
+  { value: "approval", label: "Approval" },
+];
+
+// A condition's settings (which projects, how many days, which task type, which tag, what text).
 export function MyTaskConditionFields({ c, ctx, onChange }: { c: MyTaskRuleItem; ctx: MyTaskRuleContext; onChange: (next: MyTaskRuleItem) => void }) {
   const projectOptions = ctx.projects.map((p) => ({ value: p.id, label: p.name, icon: <FolderClosed className="size-4" /> }));
   return (
@@ -197,7 +273,7 @@ export function MyTaskConditionFields({ c, ctx, onChange }: { c: MyTaskRuleItem;
           />
         </ParamSlot>
       ) : null}
-      {c.type === "due_within" ? (
+      {c.type === "due_within" || c.type === "start_within" ? (
         <>
           <ParamSlot param="days">
             <DaysInput label="Days" value={whole(c.days)} min={0} max={365} onChange={(n) => onChange({ ...c, days: n })} />
@@ -205,29 +281,71 @@ export function MyTaskConditionFields({ c, ctx, onChange }: { c: MyTaskRuleItem;
           days
         </>
       ) : null}
-      {c.type === "task_type_is" ? (
+      {c.type === "task_type_is" || c.type === "task_type_is_not" ? (
         <ParamSlot param="kind">
           <SmartPicker
             label="Task type"
             value={typeof c.kind === "string" && c.kind ? c.kind : null}
-            options={[
-              { value: "task", label: "Task" },
-              { value: "milestone", label: "Milestone" },
-              { value: "approval", label: "Approval" },
-            ]}
+            options={KIND_OPTIONS}
             onChange={(v) => onChange({ ...c, kind: v })}
             variant="chip"
             placeholder="choose a task type"
           />
         </ParamSlot>
       ) : null}
+      {c.type === "has_tag" || c.type === "lacks_tag" ? (
+        <ParamSlot param="tag_id">
+          <TagPicker value={c.tag_id} ctx={ctx} onChange={(v) => onChange({ ...c, tag_id: v })} />
+        </ParamSlot>
+      ) : null}
+      {c.type === "title_contains" ? (
+        <ParamSlot param="text">
+          <TextBox label="Text in the name" value={typeof c.text === "string" ? c.text : ""} max={200} onChange={(v) => onChange({ ...c, text: v })} />
+        </ParamSlot>
+      ) : null}
     </>
   );
 }
 
-// An action's settings (which of my sections, how many days).
+function TextBox({ label, value, max, onChange }: { label: string; value: string; max: number; onChange: (v: string) => void }) {
+  const slot = useParamSlot<string>(onChange);
+  const missing = slot.missing && value.trim() === "";
+  return (
+    <input
+      aria-label={label}
+      aria-invalid={missing || undefined}
+      placeholder={label}
+      value={value}
+      maxLength={max}
+      onChange={(e) => onChange(e.currentTarget.value)}
+      className={`${INPUT} w-44 ${missing ? MISSING_INPUT : ""}`}
+    />
+  );
+}
+
+// Create subtasks: one name per line.
+function TitlesBox({ value, onChange }: { value: Json | undefined; onChange: (titles: string[]) => void }) {
+  const slot = useParamSlot<string[]>(onChange);
+  const titles = strings(value);
+  const missing = slot.missing && !titles.some((t) => t.trim());
+  return (
+    <textarea
+      aria-label="Subtask names, one per line"
+      aria-invalid={missing || undefined}
+      placeholder="One subtask per line"
+      rows={Math.min(Math.max(titles.length, 2), 6)}
+      value={titles.join("\n")}
+      onChange={(e) => onChange(e.currentTarget.value.split("\n").slice(0, 20))}
+      className={`${INPUT} w-64 py-1 ${missing ? MISSING_INPUT : ""}`}
+    />
+  );
+}
+
+// An action's settings (which of my sections, how many days, the text, which tag / people / project).
 export function MyTaskActionFields({ a, ctx, onChange }: { a: MyTaskRuleItem; ctx: MyTaskRuleContext; onChange: (next: MyTaskRuleItem) => void }) {
   const sectionOptions = ctx.sections.map((s) => ({ value: s.id, label: s.name }));
+  const editable = ctx.editableProjects ?? [];
+  const chosenProject = typeof a.project_id === "string" ? editable.find((p) => p.id === a.project_id) : undefined;
   return (
     <>
       {a.type === "move_to_section" ? (
@@ -242,7 +360,7 @@ export function MyTaskActionFields({ a, ctx, onChange }: { a: MyTaskRuleItem; ct
           />
         </ParamSlot>
       ) : null}
-      {a.type === "set_due_date" ? (
+      {a.type === "set_due_date" || a.type === "set_start_date" ? (
         <>
           <ParamSlot param="days">
             <DaysInput label="Days from today" value={whole(a.days)} min={0} max={365} onChange={(n) => onChange({ ...a, days: n })} />
@@ -259,12 +377,124 @@ export function MyTaskActionFields({ a, ctx, onChange }: { a: MyTaskRuleItem; ct
           />
           {a.business_days === true ? (
             <WorkdaysPicker
-              id="my-task-rule-workdays"
+              id={`my-task-rule-workdays-${a.type}`}
               step={a}
               scope="my_tasks"
               orgWorkWeek={ctx.workWeek ?? DEFAULT_WORK_WEEK}
+              ownWorkWeek={ctx.personalWorkWeek ?? null}
               onChange={(next) => onChange(next as MyTaskRuleItem)}
             />
+          ) : null}
+        </>
+      ) : null}
+      {a.type === "add_comment" ? (
+        <ParamSlot param="body">
+          <PlaceholderInput
+            id="my-task-rule-comment"
+            label="Comment"
+            value={typeof a.body === "string" ? a.body : ""}
+            onChange={(v) => onChange({ ...a, body: v })}
+            ctx={placeholderCtx(ctx)}
+            multiline
+            maxLength={10000}
+            className="w-full"
+          />
+        </ParamSlot>
+      ) : null}
+      {a.type === "set_title" ? (
+        <ParamSlot param="title">
+          <PlaceholderInput
+            id="my-task-rule-title"
+            label="New name"
+            value={typeof a.title === "string" ? a.title : ""}
+            onChange={(v) => onChange({ ...a, title: v })}
+            ctx={placeholderCtx(ctx)}
+            maxLength={500}
+            className="w-full"
+          />
+        </ParamSlot>
+      ) : null}
+      {a.type === "set_task_type" ? (
+        <ParamSlot param="kind">
+          <SmartPicker
+            label="Task type"
+            value={typeof a.kind === "string" && a.kind ? a.kind : null}
+            options={KIND_OPTIONS.filter((o) => o.value !== "approval")}
+            onChange={(v) => onChange({ ...a, kind: v })}
+            variant="chip"
+            placeholder="choose a task type"
+          />
+        </ParamSlot>
+      ) : null}
+      {a.type === "add_tag" || a.type === "remove_tag" ? (
+        <ParamSlot param="tag_id">
+          <TagPicker value={a.tag_id} ctx={ctx} onChange={(v) => onChange({ ...a, tag_id: v })} />
+        </ParamSlot>
+      ) : null}
+      {a.type === "add_followers" || a.type === "remove_followers" ? (
+        <ParamSlot param="people">
+          <SmartPicker
+            multiple
+            label={a.type === "add_followers" ? "Followers to add" : "Followers to remove"}
+            value={strings(a.people)}
+            options={personOptions(ctx)}
+            onChange={(v) => onChange({ ...a, people: v })}
+            variant="chip"
+            placeholder="choose people"
+            searchable
+          />
+        </ParamSlot>
+      ) : null}
+      {a.type === "set_assignee" ? (
+        <ParamSlot param="assignee">
+          <SmartPicker
+            label="Hand it to"
+            value={typeof a.assignee === "string" && a.assignee ? a.assignee : null}
+            options={personOptions(ctx)}
+            onChange={(v) => onChange({ ...a, assignee: v })}
+            variant="chip"
+            placeholder="choose a person"
+            searchable
+          />
+        </ParamSlot>
+      ) : null}
+      {a.type === "create_subtasks" ? (
+        <ParamSlot param="titles">
+          <TitlesBox value={a.titles} onChange={(titles) => onChange({ ...a, titles })} />
+        </ParamSlot>
+      ) : null}
+      {a.type === "add_to_project" ? (
+        <>
+          <ParamSlot param="project_id">
+            <SmartPicker
+              label="Project"
+              value={typeof a.project_id === "string" && a.project_id ? a.project_id : null}
+              options={editable.map((p) => ({ value: p.id, label: p.name, icon: <FolderClosed className="size-4" /> }))}
+              onChange={(v) => {
+                const next: MyTaskRuleItem = { ...a, project_id: v };
+                delete next.section_id;
+                onChange(next);
+              }}
+              variant="chip"
+              placeholder="choose a project"
+              searchable
+            />
+          </ParamSlot>
+          {chosenProject && chosenProject.sections.length ? (
+            <ParamSlot param="section_id">
+              <SmartPicker
+                label="Section"
+                value={typeof a.section_id === "string" ? a.section_id : ""}
+                options={[{ value: "", label: "its first section" }, ...chosenProject.sections.map((x) => ({ value: x.id, label: x.name }))]}
+                onChange={(v) => {
+                  const next: MyTaskRuleItem = { ...a };
+                  if (v) next.section_id = v;
+                  else delete next.section_id;
+                  onChange(next);
+                }}
+                variant="chip"
+              />
+            </ParamSlot>
           ) : null}
         </>
       ) : null}
@@ -351,15 +581,15 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
             kind="trigger"
             label="Trigger"
             value={triggerType}
-            options={vocab(MY_TASK_TRIGGERS)}
+            options={vocab(MY_TASK_TRIGGERS, "trigger", ctx, rule ? [rule.triggerType] : [])}
             onChange={(v) => {
               setTriggerType(v as MyTaskTrigger);
-              setTriggerConfig(v === "assigned" ? {} : { days: 1 });
+              setTriggerConfig(DATE_TRIGGERS.has(v) ? { days: 1 } : {});
             }}
             variant="chip"
           />
           <StepParams missing={missingKeys({ type: triggerType, ...triggerConfig }, TRIGGER_SCOPE)}>
-          {triggerType !== "assigned" ? (
+          {DATE_TRIGGERS.has(triggerType) ? (
             <>
               <ParamSlot param="days">
                 <DaysInput
@@ -370,8 +600,23 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
                   onChange={(n) => setTriggerConfig({ ...triggerConfig, days: n })}
                 />
               </ParamSlot>
-              {triggerType === "due_approaching" ? "days before it’s due" : "days after it’s due"}
+              {triggerType === "due_approaching" ? "days before it’s due" : triggerType === "start_approaching" ? "days before it starts" : "days after it’s due"}
             </>
+          ) : null}
+          {triggerType === "tag_added" ? (
+            <ParamSlot param="tag_id">
+              <TagPicker
+                anyTag
+                value={triggerConfig.tag_id}
+                ctx={ctx}
+                onChange={(v) => {
+                  const next = { ...triggerConfig };
+                  if (v) next.tag_id = v;
+                  else delete next.tag_id;
+                  setTriggerConfig(next);
+                }}
+              />
+            </ParamSlot>
           ) : null}
           </StepParams>
           <StepPrompt problems={stepProblems({ type: triggerType, ...triggerConfig }, TRIGGER_SCOPE)} />
@@ -384,7 +629,7 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
                 kind="condition"
                 label={`Condition ${i + 1}`}
                 value={c.type}
-                options={vocab(MY_TASK_CONDITIONS)}
+                options={vocab(MY_TASK_CONDITIONS, "condition", ctx, [c.type])}
                 onChange={(v) => setConditions(conditions.map((x, j) => (j === i ? conditionDefaults(v as MyTaskCondition) : x)))}
                 variant="chip"
               />
@@ -402,7 +647,7 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
               kind="condition"
               label="Add condition"
               value={null}
-              options={vocab(MY_TASK_CONDITIONS)}
+              options={vocab(MY_TASK_CONDITIONS, "condition", ctx)}
               onChange={(v) => setConditions([...conditions, conditionDefaults(v as MyTaskCondition)])}
               variant="ghost"
               className="h-6 self-start px-1.5 text-xs"
@@ -423,7 +668,7 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
                 kind="action"
                 label={`Action ${i + 1}`}
                 value={a.type}
-                options={vocab(MY_TASK_ACTIONS)}
+                options={vocab(MY_TASK_ACTIONS, "action", ctx, [a.type])}
                 onChange={(v) => setActions(actions.map((x, j) => (j === i ? actionDefaults(v as MyTaskAction, ctx) : x)))}
                 variant="chip"
               />
@@ -443,12 +688,12 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
               </button>
             </div>
           ))}
-          {actions.length < 5 ? (
+          {actions.length < 10 ? (
             <VocabPicker
               kind="action"
               label="Add action"
               value={null}
-              options={vocab(MY_TASK_ACTIONS)}
+              options={vocab(MY_TASK_ACTIONS, "action", ctx)}
               onChange={(v) => setActions([...actions, actionDefaults(v as MyTaskAction, ctx)])}
               variant="ghost"
               className="h-6 self-start px-1.5 text-xs"

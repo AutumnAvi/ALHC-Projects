@@ -10,8 +10,8 @@ import { useDependencyShift } from "@/components/task/dependency-shift";
 import {
   TIMELINE_DRAG_KEYS,
   dependentCount,
-  planDependencyShifts,
-  planMoveAlong,
+  planTimelineDrag,
+  prerequisiteCount,
   timelineDragHint,
   timelineDragHow,
   type TimelineDragHow,
@@ -247,12 +247,20 @@ export function TimelineView({
     );
   }
 
-  function planFor(moves: ShiftMove[], how: TimelineDragHow) {
-    if (how === "only") return [];
+  // Nov 4 notes (batch 20, 152): both directions — the tasks it depends on (upstream) and the ones that
+  // depend on it (and on every upstream task that moves).
+  function dragPlan(moves: ShiftMove[], how: TimelineDragHow) {
     const live = dependencies.filter((d) => !removedDeps.has(d.id));
-    return how === "along"
-      ? planMoveAlong({ tasks: planTasks(), links: live, moves, workWeek })
-      : planDependencyShifts({ tasks: planTasks(), links: live, moves, pullEarlier: false, workWeek });
+    return planTimelineDrag({ tasks: planTasks(), links: live, moves, how, workWeek });
+  }
+
+  function planFor(moves: ShiftMove[], how: TimelineDragHow) {
+    const { upstream, downstream } = dragPlan(moves, how);
+    return [...upstream, ...downstream];
+  }
+
+  function upstreamFor(moves: ShiftMove[], how: TimelineDragHow) {
+    return dragPlan(moves, how).upstream;
   }
 
   // Nov 3 notes (batch 19, 148): on the Timeline the keys held when the bar is dropped decide what the tasks
@@ -265,6 +273,7 @@ export function TimelineView({
       onOptimistic: (moves) => moves.forEach((m) => applyChange({ type: "dates", ...m })),
       projectId,
       planFor,
+      upstreamFor,
     });
   }
 
@@ -327,16 +336,30 @@ export function TimelineView({
   const dragged = dragState ? tasksById.get(dragState.taskId) : undefined;
   const dragDates = dragged && dragState && dragState.delta !== 0 ? draggedDates(dragged, dragState.mode, dragState.delta) : null;
   const previews = new Map<string, Dates>();
+  const movingUpstream: string[] = [];
+  const movingDownstream: string[] = [];
   if (dragged && dragState && dragDates) {
     try {
-      for (const row of planFor([{ taskId: dragged.id, ...dragDates }], dragState.how)) {
-        if (row.status === "move") previews.set(row.taskId, { startOn: row.newStart, dueOn: row.newDue });
+      const plan = dragPlan([{ taskId: dragged.id, ...dragDates }], dragState.how);
+      for (const [rows, names] of [
+        [plan.upstream, movingUpstream],
+        [plan.downstream, movingDownstream],
+      ] as const) {
+        for (const row of rows) {
+          if (row.status !== "move") continue;
+          previews.set(row.taskId, { startOn: row.newStart, dueOn: row.newDue });
+          names.push(row.title);
+        }
       }
     } catch {
       previews.clear();
+      movingUpstream.length = 0;
+      movingDownstream.length = 0;
     }
   }
-  const dependents = dragged ? dependentCount(dragged.id, dependencies.filter((d) => !removedDeps.has(d.id))) : 0;
+  const liveLinks = dependencies.filter((d) => !removedDeps.has(d.id));
+  const dependents = dragged ? dependentCount(dragged.id, liveLinks) : 0;
+  const prerequisites = dragged ? prerequisiteCount(dragged.id, liveLinks) : 0;
   const placed = (task: ProjectTask): ProjectTask => {
     if (dragDates && task.id === dragged?.id) return { ...task, ...dragDates };
     const preview = previews.get(task.id);
@@ -519,7 +542,7 @@ export function TimelineView({
                 aria-pressed={showKeys}
                 aria-label="Drag keys"
                 onClick={() => setShowKeys(!showKeys)}
-                data-tooltip="Drag: only this task · Shift+drag: its dependents move along · Alt+drag: they're pushed only as needed · Esc: cancel"
+                data-tooltip="Drag: only this task · Shift+drag: linked tasks (before and after it) move along · Alt+drag: they move only as needed · Esc: cancel"
                 className={`btn-icon ${showKeys ? "bg-zinc-100 text-zinc-900" : ""}`}
               >
                 <Keyboard className="size-4" aria-hidden />
@@ -765,14 +788,15 @@ export function TimelineView({
             aria-live="polite"
             className="pointer-events-none absolute bottom-12 left-1/2 z-40 w-max max-w-[min(90%,40rem)] -translate-x-1/2 rounded-md bg-zinc-900/90 px-3 py-1.5 text-center text-xs text-white shadow-lg"
           >
-            {timelineDragHint(dragState.how, dependents, previews.size)}
+            {timelineDragHint(dragState.how, { prerequisites, dependents, movingUpstream, movingDownstream })}
           </p>
         ) : null}
         <p className={VIEW_HINT}>
           Bars run from start to due date; diamonds are milestones on their due day. Drag a bar or diamond to move
           it, drag either end of a bar to change its start or due date, or drag an unscheduled task onto a day to
-          give it a due date. A drag moves only that task: hold Shift to move the tasks that depend on it along by
-          the same amount, or Alt (Option) to push them only as far as their links need; Esc cancels. Arrows link a
+          give it a due date. A drag moves only that task: hold Shift to move its linked tasks along by the same
+          amount — the tasks it depends on and the ones that depend on it — or Alt (Option) to move them only as far as
+          their links need (dependents later, the tasks it depends on earlier); Esc cancels. Arrows link a
           task to the one waiting on it (red when the waiting task starts before the first one is due).
           {canEdit ? " Draw dependencies lets you drag from one task to another to link them." : ""}
         </p>

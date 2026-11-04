@@ -88,6 +88,7 @@ export function workdaySteps(from: string, to: string, workWeek: readonly number
 const startOf = (t: PlanTask) => (t.kind === "milestone" ? t.dueOn : (t.startOn ?? t.dueOn));
 const dueOf = (t: PlanTask) => t.dueOn ?? t.startOn;
 const maxDate = (a: string | null, b: string) => (a === null || b > a ? b : a);
+const minDate = (a: string | null, b: string) => (a === null || b < a ? b : a);
 const usesStart = (kind: DependencyKind) => kind === "start_to_start" || kind === "start_to_finish";
 const constrainsDue = (kind: DependencyKind) => kind === "finish_to_finish" || kind === "start_to_finish";
 
@@ -294,16 +295,134 @@ export function planMoveAlong({
   return rows;
 }
 
+// Nov 4 notes (batch 20, 152): the other direction — the tasks the moved one depends on (its prerequisites,
+// "upstream"), so moving any task of a chain can move the rest:
+//   along (Shift)  every prerequisite moves by the same number of workdays as the part of the task its link
+//                  waits on (the start for *_to_start links, the due date for *_to_finish), chained up the
+//                  chain; with several moved successors the smallest change wins (no link is broken);
+//   push (Alt)     a prerequisite moves earlier only when the moved task now starts (or ends) before its link
+//                  allows, just far enough; it never moves later.
+// Prerequisites keep their length in workdays; completed tasks and tasks the person can't edit stay (listed),
+// and nothing is followed through them. The moved tasks' dependents are planned afterwards from all of them
+// (planMoveAlong / planDependencyShifts with the upstream rows added to the moves).
+export function planUpstream({
+  tasks,
+  links,
+  moves,
+  how,
+  workWeek,
+}: {
+  tasks: ReadonlyMap<string, PlanTask>;
+  links: readonly PlanLink[];
+  moves: readonly ShiftMove[];
+  how: "along" | "push";
+  workWeek: readonly number[];
+}): ShiftPlanRow[] {
+  const moved = movedRoots(tasks, moves);
+  if (moved.size === 0) return [];
+  const { into, out } = linkMaps(links);
+  const order = longestDistanceOrderBy(new Set(moved.keys()), (id) => (into.get(id) ?? []).map((l) => l.predecessorId));
+
+  const rows: ShiftPlanRow[] = [];
+  for (const id of order) {
+    const t = tasks.get(id);
+    if (!t) continue;
+    const cur = startOf(t);
+    if (!cur) continue;
+    const end = dueOf(t) ?? cur;
+    const length = workdaySteps(cur, end, workWeek);
+
+    let shift: number | null = null;
+    let latestStart: string | null = null;
+    for (const link of out.get(id) ?? []) {
+      const m = moved.get(link.successorId);
+      if (!m) continue;
+      // What the successor offers this link: its start (…_to_start) or its due date (…_to_finish).
+      const oldSide = constrainsDue(link.kind) ? m.od : m.os;
+      const newSide = constrainsDue(link.kind) ? m.nd : m.ns;
+      if (!oldSide || !newSide) continue;
+      if (how === "along") {
+        const delta = signedWorkdaySteps(oldSide, newSide, workWeek);
+        shift = shift === null ? delta : Math.min(shift, delta);
+      } else {
+        // The latest this task's anchor (its start for start_* links, else its due date) may be: the successor's
+        // side less the lag, and the start that gives.
+        const anchorMax = addDays(newSide, -link.lagDays, workWeek);
+        const startMax = usesStart(link.kind) ? anchorMax : addDays(anchorMax, -length, workWeek);
+        latestStart = minDate(latestStart, startMax);
+      }
+    }
+
+    let newStart: string;
+    if (how === "along") {
+      if (shift === null || shift === 0) continue;
+      newStart = addDays(cur, shift, workWeek);
+    } else {
+      if (latestStart === null || latestStart >= cur) continue;
+      newStart = latestStart;
+    }
+    if (newStart === cur) continue;
+
+    const newDue = t.dueOn === null ? null : t.kind === "milestone" ? newStart : addDays(newStart, length, workWeek);
+    const shiftDays = daysBetween(cur, newStart);
+    const base = { taskId: id, title: t.title, startOn: t.startOn, dueOn: t.dueOn, shiftDays };
+    if (t.completed) {
+      rows.push({ ...base, newStart: t.startOn, newDue: t.dueOn, status: "skipped", reason: "Completed" });
+      continue;
+    }
+    if (t.canEdit === false) {
+      rows.push({ ...base, newStart: t.startOn, newDue: t.dueOn, status: "skipped", reason: "You can’t edit this task" });
+      continue;
+    }
+    const nextStart = t.startOn === null || t.kind === "milestone" ? null : newStart;
+    rows.push({ ...base, newStart: nextStart, newDue, status: "move", reason: null });
+    moved.set(id, { os: cur, od: end, ns: newStart, nd: newDue ?? newStart });
+  }
+  return rows;
+}
+
+// A Timeline drag with keys: the prerequisites that move (planUpstream), then the dependents of the dragged
+// task and of every moved prerequisite (Shift: along by the same amount; Alt: pushed only as far as needed).
+export function planTimelineDrag({
+  tasks,
+  links,
+  moves,
+  how,
+  workWeek,
+}: {
+  tasks: ReadonlyMap<string, PlanTask>;
+  links: readonly PlanLink[];
+  moves: readonly ShiftMove[];
+  how: TimelineDragHow;
+  workWeek: readonly number[];
+}): { upstream: ShiftPlanRow[]; downstream: ShiftPlanRow[] } {
+  if (how === "only") return { upstream: [], downstream: [] };
+  const upstream = planUpstream({ tasks, links, moves, how, workWeek });
+  const all: ShiftMove[] = [
+    ...moves,
+    ...upstream.filter((r) => r.status === "move").map((r) => ({ taskId: r.taskId, startOn: r.newStart, dueOn: r.newDue })),
+  ];
+  const downstream =
+    how === "along"
+      ? planMoveAlong({ tasks, links, moves: all, workWeek })
+      : planDependencyShifts({ tasks, links, moves: all, pullEarlier: false, workWeek });
+  const up = new Set(upstream.map((r) => r.taskId));
+  return { upstream, downstream: downstream.filter((r) => !up.has(r.taskId)) };
+}
+
 // Every task reachable from the roots through the links, by its longest distance from them (then id), so
 // a task is planned after everything that can move it.
 function longestDistanceOrder(roots: ReadonlySet<string>, out: ReadonlyMap<string, PlanLink[]>): string[] {
+  return longestDistanceOrderBy(roots, (id) => (out.get(id) ?? []).map((l) => l.successorId));
+}
+
+function longestDistanceOrderBy(roots: ReadonlySet<string>, nextOf: (id: string) => string[]): string[] {
   const depth = new Map<string, number>();
   let frontier = [...roots].map((id) => ({ id, d: 0 }));
   while (frontier.length) {
     const next: { id: string; d: number }[] = [];
     for (const { id, d } of frontier) {
-      for (const link of out.get(id) ?? []) {
-        const s = link.successorId;
+      for (const s of nextOf(id)) {
         if (d + 1 > 200) continue;
         if ((depth.get(s) ?? 0) < d + 1) {
           depth.set(s, d + 1);
@@ -322,6 +441,12 @@ function longestDistanceOrder(roots: ReadonlySet<string>, out: ReadonlyMap<strin
 // How many tasks wait on this one, directly or down a chain (for the Timeline's drag hint).
 export function dependentCount(taskId: string, links: readonly PlanLink[]): number {
   return longestDistanceOrder(new Set([taskId]), linkMaps(links).out).length;
+}
+
+// Nov 4 notes (batch 20, 152): how many tasks this one waits on, directly or up a chain.
+export function prerequisiteCount(taskId: string, links: readonly PlanLink[]): number {
+  const { into } = linkMaps(links);
+  return longestDistanceOrderBy(new Set([taskId]), (id) => (into.get(id) ?? []).map((l) => l.predecessorId)).length;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -344,24 +469,60 @@ export function timelineDragHow(keys: { shiftKey: boolean; altKey: boolean }): T
 
 export const TIMELINE_DRAG_KEYS: { keys: string; what: string }[] = [
   { keys: "Drag", what: "Move or resize only this task" },
-  { keys: "Shift + drag", what: "Move its dependent tasks along by the same amount (keeps every gap)" },
-  { keys: "Alt + drag", what: "Push its dependent tasks only as far as their links need (Option on a Mac)" },
+  {
+    keys: "Shift + drag",
+    what: "Move the linked tasks along by the same amount — the ones it depends on and the ones that depend on it (keeps every gap)",
+  },
+  {
+    keys: "Alt + drag",
+    what: "Move linked tasks only as far as their links need: dependents pushed later, tasks it depends on pulled earlier (Option on a Mac)",
+  },
   { keys: "Esc", what: "Cancel the drag" },
 ];
 
-// The line shown while a bar is being dragged.
-export function timelineDragHint(how: TimelineDragHow, dependents: number, moving: number): string {
-  if (dependents === 0) return "Only this task moves (nothing depends on it). Esc cancels.";
-  const all = dependents === 1 ? "its 1 dependent task" : `its ${dependents} dependent tasks`;
-  if (how === "along") {
-    return moving === 0
-      ? `Shift: ${all} move along by the same amount — none needs to move for this change. Esc cancels.`
-      : `Shift: ${moving === 1 ? "1 dependent task moves" : `${moving} dependent tasks move`} along by the same amount. Esc cancels.`;
+// Nov 4 notes (batch 20, 152): what the drag hint knows — how many tasks this one is linked to each way, and
+// the tasks that would move for the keys held (names, so the hint says which).
+export type DragHintFacts = {
+  // Tasks it depends on (directly or up a chain) and tasks that depend on it.
+  prerequisites: number;
+  dependents: number;
+  // The tasks that would move with the keys held.
+  movingUpstream: readonly string[];
+  movingDownstream: readonly string[];
+};
+
+const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
+
+// “Brief”, “Copy”, and 2 more.
+function namesOf(titles: readonly string[], max = 2): string {
+  const shown = titles.slice(0, max).map((t) => `“${t.length > 40 ? `${t.slice(0, 40)}…` : t}”`);
+  const rest = titles.length - shown.length;
+  if (rest > 0) return `${shown.join(", ")} and ${rest} more`;
+  return shown.length === 2 ? `${shown[0]} and ${shown[1]}` : shown.join("");
+}
+
+// The line shown while a bar is being dragged: which tasks move with the keys held, in both directions.
+export function timelineDragHint(how: TimelineDragHow, facts: DragHintFacts): string {
+  const { prerequisites, dependents, movingUpstream, movingDownstream } = facts;
+  if (prerequisites === 0 && dependents === 0) return "Only this task moves (it isn’t linked to other tasks). Esc cancels.";
+  const linked = [
+    ...(prerequisites ? [count(prerequisites, "task it depends on", "tasks it depends on")] : []),
+    ...(dependents ? [count(dependents, "task that depends on it", "tasks that depend on it")] : []),
+  ].join(" and ");
+  if (how === "only") {
+    return `Only this task moves. Hold Shift to move the ${linked} along, or Alt (Option) to move ${prerequisites + dependents === 1 ? "it" : "them"} only as far as needed. Esc cancels.`;
   }
-  if (how === "push") {
-    return moving === 0
-      ? `Alt: ${all} still fit — none needs to move. Esc cancels.`
-      : `Alt: ${moving === 1 ? "1 dependent task is" : `${moving} dependent tasks are`} pushed just far enough. Esc cancels.`;
+  const parts = [
+    ...(movingUpstream.length ? [`${count(movingUpstream.length, "task it depends on", "tasks it depends on")} (${namesOf(movingUpstream)})`] : []),
+    ...(movingDownstream.length ? [`${count(movingDownstream.length, "task that depends on it", "tasks that depend on it")} (${namesOf(movingDownstream)})`] : []),
+  ];
+  const key = how === "along" ? "Shift" : "Alt";
+  if (parts.length === 0) {
+    return how === "along"
+      ? `Shift: the ${linked} would move along by the same amount — none needs to move for this change. Esc cancels.`
+      : `Alt: the ${linked} still fit — none needs to move. Esc cancels.`;
   }
-  return `Only this task moves. Hold Shift to move ${all} along, or Alt (Option) to push ${dependents === 1 ? "it" : "them"} only as far as needed. Esc cancels.`;
+  const verb = how === "along" ? "also moves by the same amount" : "also moves just far enough";
+  const plural = movingUpstream.length + movingDownstream.length > 1;
+  return `${key}: ${parts.join(" and ")} ${plural ? verb.replace("moves", "move") : verb}. Esc cancels.`;
 }

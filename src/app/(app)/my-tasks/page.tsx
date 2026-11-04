@@ -17,6 +17,7 @@ import {
   listMyProjectRoles,
   listMyTaskLayout,
   listMyTaskRules,
+  loadMyTaskRuleContext,
   listMyTasks,
   listProfiles,
   listProjects,
@@ -52,6 +53,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
       listProfiles(),
       listAwaitingMyApproval(),
     ]);
+    const ruleCtx = await loadMyTaskRuleContext(sections);
     // #project in the quick add: active projects where the person can add tasks.
     const addable = projects.filter((p) => permissionsFor(roles.get(p.id) ?? null).canEdit).map((p) => ({ id: p.id, name: p.name }));
     const people = profiles.map((p) => ({ id: p.id, name: p.full_name?.trim() || p.email, email: p.email }));
@@ -63,11 +65,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
           description="Everything assigned to you, as one checklist"
           actions={
             <div className="flex items-center gap-1">
-              <MyTaskRulesButton
-                className="btn-ghost"
-                rules={rules}
-                ctx={{ sections: sections.map((s) => ({ id: s.id, name: s.name })), projects: projects.map((p) => ({ id: p.id, name: p.name })), workWeek }}
-              />
+              <MyTaskRulesButton className="btn-ghost" rules={rules} ctx={ruleCtx} />
               <SyncCalendarButton scope="my_tasks" className="btn-ghost" />
             </div>
           }
@@ -96,16 +94,15 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
   // The layout call seeds the viewer's sections and places newly assigned tasks first, so it runs
   // before the task lists are read.
   const { sections, placements } = await listMyTaskLayout();
-  const [{ open, completed }, bulk, rules, projects, expandedTaskIds, awaiting, profiles, classicWorkWeek] = await Promise.all([
+  const [{ open, completed }, bulk, rules, expandedTaskIds, awaiting, profiles, ruleCtx] = await Promise.all([
     listMyTasks(member.id),
     listBulkContext(null),
     listMyTaskRules(),
-    listProjects(),
     // Oct 27 notes (batch 6): rows this person opened, and approvals waiting on them.
     getExpandedTaskIds(),
     listAwaitingMyApproval(),
     listProfiles(),
-    getWorkWeek(),
+    loadMyTaskRuleContext(sections),
   ]);
   // The subtask trees of the open rows (trees load by their top-level task: a row that is itself a
   // subtask needs its root, when the data says which).
@@ -127,10 +124,7 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
         description="Everything assigned to you, across every project, in your own sections or by due date"
         actions={
           <div className="flex items-center gap-2">
-            <MyTaskRulesButton
-              rules={rules}
-              ctx={{ sections: sections.map((s) => ({ id: s.id, name: s.name })), projects: projects.map((p) => ({ id: p.id, name: p.name })), workWeek: classicWorkWeek }}
-            />
+            <MyTaskRulesButton rules={rules} ctx={ruleCtx} />
             <SyncCalendarButton scope="my_tasks" className="btn-secondary" />
           </div>
         }

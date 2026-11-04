@@ -6638,6 +6638,10 @@ export type Database = {
         Args: Record<string, never>;
         Returns: boolean;
       };
+      my_task_rules_batch20_ready: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
       rule_run_stats: {
         Args: { rule_ids: string[] };
         Returns: { rule_id: string; last_run_at: string | null; last_status: string | null; runs_7d: number; failures_7d: number }[];

@@ -104,7 +104,7 @@ import {
   type TeamRole,
 } from "@/lib/teams";
 import { INBOX_LIMIT, withoutTeamMessages, type InboxTab } from "@/lib/inbox";
-import { toMyTaskRule, type MyTaskRule } from "@/lib/my-task-rules";
+import { toMyTaskRule, type MyTaskRule, type MyTaskRuleContext } from "@/lib/my-task-rules";
 import { toPortfolioRuleDef, type PortfolioRuleDef, type PortfolioRuleRun } from "@/lib/portfolio-rules";
 import { resolveNotificationSettings, type NotificationSettings } from "@/lib/notifications";
 import {
@@ -7136,6 +7136,40 @@ export async function listEditablePortfolios(exceptId: string): Promise<{ id: st
 
 // My Tasks rules (Automations V3, batch E): the viewer's own rules (RLS: own rows only). Null = this
 // release's database update isn't applied.
+// Nov 4 notes (batch 20): what the My Tasks automations builder names — the person's sections, the projects
+// they can open, people, tags, projects they can add tasks to (with sections), the workweeks (150), and
+// whether the database takes the wider vocabulary (149). Read with the viewer's own client.
+export async function loadMyTaskRuleContext(sections: { id: string; name: string }[]): Promise<MyTaskRuleContext> {
+  const [projects, workWeek, ownWeek, profiles, tags, tagsOn, editableProjects, v2] = await Promise.all([
+    listProjects(),
+    getWorkWeek(),
+    getMyPersonalWorkWeek(),
+    listProfiles(),
+    listTags(),
+    tagsEnabled(),
+    listEditableProjectsWithSections(""),
+    hasMyTaskRulesV2(),
+  ]);
+  return {
+    sections: sections.map((s) => ({ id: s.id, name: s.name })),
+    projects: projects.map((p) => ({ id: p.id, name: p.name })),
+    workWeek,
+    personalWorkWeek: ownWeek ?? null,
+    people: profiles.map((p) => ({ id: p.id, name: p.full_name?.trim() || p.email })),
+    tags: tags.map((t) => ({ id: t.id, name: t.name, color: t.color, archived: t.archivedAt !== null })),
+    tagsEnabled: tagsOn,
+    editableProjects,
+    v2,
+  };
+}
+
+// Nov 4 notes (batch 20, 149): My Tasks automations take the wider vocabulary (the database update is applied).
+export const hasMyTaskRulesV2 = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const result = await supabase.rpc("my_task_rules_batch20_ready");
+  return !result.error && result.data === true;
+});
+
 export const listMyTaskRules = cache(async (): Promise<MyTaskRule[] | null> => {
   const supabase = await createClient();
   const result = await supabase

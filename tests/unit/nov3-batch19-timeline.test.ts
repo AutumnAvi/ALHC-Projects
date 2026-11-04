@@ -139,11 +139,16 @@ test("148: nothing is followed through a task that can't move, and other links s
 });
 
 test("148: the drag hint says what will happen", () => {
-  assert.match(timelineDragHint("only", 0, 0), /nothing depends on it/);
-  assert.match(timelineDragHint("only", 3, 0), /Hold Shift to move its 3 dependent tasks along, or Alt/);
-  assert.match(timelineDragHint("along", 3, 2), /^Shift: 2 dependent tasks move along/);
-  assert.match(timelineDragHint("push", 1, 1), /^Alt: 1 dependent task is pushed/);
-  assert.match(timelineDragHint("push", 2, 0), /none needs to move/);
+  // Nov 4 notes (batch 20, 152): the hint names both directions and the tasks that move.
+  const none = { movingUpstream: [], movingDownstream: [] };
+  assert.match(timelineDragHint("only", { prerequisites: 0, dependents: 0, ...none }), /isn’t linked to other tasks/);
+  assert.match(timelineDragHint("only", { prerequisites: 0, dependents: 3, ...none }), /Hold Shift to move the 3 tasks that depend on it along, or Alt/);
+  assert.match(
+    timelineDragHint("along", { prerequisites: 0, dependents: 3, movingUpstream: [], movingDownstream: ["B", "C"] }),
+    /^Shift: 2 tasks that depend on it \(“B” and “C”\) also move by the same amount/,
+  );
+  assert.match(timelineDragHint("push", { prerequisites: 0, dependents: 1, movingUpstream: [], movingDownstream: ["B"] }), /^Alt: 1 task that depends on it \(“B”\) also moves just far enough/);
+  assert.match(timelineDragHint("push", { prerequisites: 0, dependents: 2, ...none }), /none needs to move/);
 });
 
 test("148: the database plan is the same rule, and the Timeline uses the keys", () => {

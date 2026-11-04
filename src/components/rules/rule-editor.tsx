@@ -21,6 +21,7 @@ import { destinationLabel } from "@/lib/slack";
 import { ParamSlot, useParamSlot } from "@/components/param-slot";
 import { SmartPicker } from "@/components/smart-picker";
 import { WorkdaysPicker } from "@/components/rules/workdays-picker";
+import { workdaysFor } from "@/lib/rule-workdays";
 import { VocabPicker } from "@/components/rules/vocab-picker";
 import {
   AFTER_APPROVAL,
@@ -403,6 +404,8 @@ function ApprovalSetupFields({
             step={action}
             scope="project"
             orgWorkWeek={normalizeWorkWeek(ctx.workWeek ?? DEFAULT_WORK_WEEK)}
+            ownWorkWeek={ctx.personalWorkWeek ?? null}
+            personalProject={ctx.personalProject ?? false}
             onChange={(next) => onChange(next as RuleAction)}
           />
         ) : null}
@@ -2057,6 +2060,8 @@ function CreateTaskFields({
                 step={action}
                 scope="project"
                 orgWorkWeek={normalizeWorkWeek(ctx.workWeek ?? DEFAULT_WORK_WEEK)}
+                ownWorkWeek={ctx.personalWorkWeek ?? null}
+                personalProject={ctx.personalProject ?? false}
                 onChange={(next) => onChange(next as RuleAction)}
               />
             ) : null}
@@ -2166,7 +2171,13 @@ function SetDateFields({
 
   let example: string | null = null;
   if (mode === "relative" && unit !== "hours" && today && days !== null && Math.abs(days) <= 365) {
-    const result = unit === "weeks" ? addWorkdays(today, days * 7, false, workWeek) : addWorkdays(today, days, business, workWeek);
+    // Nov 4 notes (batch 20, 150): the example counts the workdays the step counts (the organization's or mine).
+    const countWeek = workdaysFor(action.workdays, "project", {
+      personalProject: ctx.personalProject ?? false,
+      orgWeek: workWeek,
+      ownWeek: ctx.personalWorkWeek ?? null,
+    });
+    const result = unit === "weeks" ? addWorkdays(today, days * 7, false, workWeek) : addWorkdays(today, days, business, countWeek);
     const year = Number(today.slice(0, 4));
     const day = (d: string) => `${WEEKDAYS[weekdayOf(d)].short}, ${dayLabel(d, year)}`;
     const start = from === "today" ? "today" : `${from === "due_date" ? "due" : "starting"} ${day(today)}`;
@@ -2251,6 +2262,8 @@ function SetDateFields({
               step={action}
               scope="project"
               orgWorkWeek={workWeek}
+              ownWorkWeek={ctx.personalWorkWeek ?? null}
+              personalProject={ctx.personalProject ?? false}
               onChange={(next) => onChange(next as RuleAction)}
             />
           ) : null}

@@ -101,6 +101,11 @@ const pctx: PortfolioRuleContext = {
 const mctx: MyTaskRuleContext = {
   sections: [{ id: "ms-1", name: "Do today" }],
   projects: [{ id: "mp-1", name: "Website" }],
+  // Nov 4 notes (batch 20, 149): the wider vocabulary's people, tags, and projects to add tasks to.
+  people: [{ id: "p-dana", name: "Dana" }],
+  tags: [{ id: "tag-1", name: "Urgent", color: "red", archived: false }],
+  editableProjects: [{ id: "mp-1", name: "Website", sections: [{ id: "mps-1", name: "Launch" }] }],
+  v2: true,
 };
 
 const router = { push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch() {} };
@@ -123,6 +128,7 @@ function sample(system: RuleSystem, step: RuleStep, p: RuleParam): Sample {
   const last = p.options?.[p.options.length - 1];
   switch (p.editor) {
     case "section":
+      if (system === "my_tasks" && step.type === "add_to_project") return { value: "mps-1", shows: "Launch" };
       if (system === "my_tasks") return { value: "ms-1", shows: "Do today" };
       return step.project_id === "proj-2" ? { value: "s2", shows: "Queue" } : { value: "s-intake", shows: "Intake" };
     case "sections":
@@ -149,7 +155,7 @@ function sample(system: RuleSystem, step: RuleStep, p: RuleParam): Sample {
     case "endpoint":
       return { value: "ep-1", shows: "Zapier" };
     case "project":
-      if (system === "my_tasks") return { value: ["mp-1"], shows: "Website" };
+      if (system === "my_tasks") return p.key === "project_ids" ? { value: ["mp-1"], shows: "Website" } : { value: "mp-1", shows: "Website" };
       // "Is in project" (batch 19) takes a list.
       return p.key === "project_ids" ? { value: ["proj-2"], shows: "Production" } : { value: "proj-2", shows: "Production" };
     case "task_template":
@@ -202,6 +208,7 @@ const BEFORE: Record<string, Record<string, Json>> = {
   "project.action.set_task_type.after_section_id": { kind: "approval", after_approval: "move_section" },
   "project.action.set_task_type.assignee": { kind: "approval" },
   "portfolio.condition.date_compare.to": { op: "between" },
+  "my_tasks.action.add_to_project.section_id": { project_id: "mp-1" },
   "portfolio.action.set_due_date.date": { mode: "date" },
 };
 
@@ -238,7 +245,7 @@ function describe(system: RuleSystem, kind: StepKind, step: RuleStep): string {
     if (kind === "trigger") return describePortfolioTrigger({ triggerType: type as never, triggerConfig: cfg }, pctx);
     return kind === "condition" ? describePortfolioCondition(step, pctx) : describePortfolioAction(step, pctx);
   }
-  if (kind === "trigger") return describeMyTaskTrigger({ triggerType: type as never, triggerConfig: cfg });
+  if (kind === "trigger") return describeMyTaskTrigger({ triggerType: type as never, triggerConfig: cfg }, mctx);
   return kind === "condition" ? describeMyTaskCondition(step, mctx) : describeMyTaskAction(step, mctx);
 }
 
