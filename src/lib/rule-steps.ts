@@ -5,6 +5,7 @@
 
 import type { Json } from "@/lib/supabase/database.types";
 import type { RuleCondition } from "@/lib/rules";
+import { stepWasMissed } from "@/lib/run-outcome";
 
 export type RuleStep = {
   step: number;
@@ -29,7 +30,8 @@ export type RuleTestResult = {
   invalid: boolean;
 };
 
-export type StepTone = "ok" | "unchanged" | "wait" | "send" | "error";
+// "attention": the step didn't do its job (skipped, no recipient, field locked, …; Nov 4 notes, batch 24).
+export type StepTone = "ok" | "unchanged" | "wait" | "send" | "attention" | "error";
 
 function record(value: Json | undefined): Record<string, Json> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, Json>) : null;
@@ -119,6 +121,9 @@ const LABELS: Record<string, string> = {
   locked: "Field locked",
   // Oct 29 notes, batch 7: Mark complete on an approval task that isn't approved yet (its result says why).
   skipped: "Skipped",
+  // Nov 4 notes, batch 24 (155): Mark complete on a task still blocked by open tasks.
+  blocked: "Blocked",
+  only_project: "Kept in project",
   error: "Failed",
 };
 
@@ -134,6 +139,7 @@ export function stepTone(outcome: string): StepTone {
   if (outcome === "would_wait" || outcome === "scheduled") return "wait";
   if (outcome === "would_send" || outcome === "queued") return "send";
   if (outcome === "done") return "ok";
+  if (stepWasMissed(outcome)) return "attention";
   return "unchanged";
 }
 
@@ -142,6 +148,11 @@ export function testHeadline(result: RuleTestResult): string {
   if (result.invalid) return "The automation can’t be saved like this yet";
   if (result.chosenBranch === null) return "Nothing would run: the conditions don’t match this task";
   if (result.error) return "This automation would fail on this task";
-  const changes = result.steps.filter((s) => !NO_CHANGE_OUTCOMES.has(s.outcome)).length;
-  return changes === 0 ? "It would run, but nothing on this task would change" : `${changes} step${changes === 1 ? "" : "s"} would run`;
+  const changes = result.steps.filter((s) => !NO_CHANGE_OUTCOMES.has(s.outcome) && !stepWasMissed(s.outcome)).length;
+  // Nov 4 notes, batch 24 (157): steps that would be skipped (no recipient, approval task, …) are said too.
+  const missed = result.steps.filter((s) => stepWasMissed(s.outcome)).length;
+  const skippedNote = missed ? ` · ${missed} would be skipped` : "";
+  return changes === 0
+    ? `It would run, but nothing on this task would change${skippedNote}`
+    : `${changes} step${changes === 1 ? "" : "s"} would run${skippedNote}`;
 }

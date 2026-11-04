@@ -34,6 +34,7 @@ import {
 import { DEFAULT_WORK_WEEK, normalizeWorkWeek } from "@/lib/workdays";
 import { parseRecurrence, type Recurrence } from "@/lib/recurrence";
 import { firstChangingAction, type FeedbackRun } from "@/lib/rule-feedback";
+import { partialOf, type PartialRun } from "@/lib/run-outcome";
 import {
   bareTaskTitle,
   displayTaskTitle,
@@ -512,6 +513,8 @@ export type TaskRuleRun = {
   // skipped: loop | depth_limit | throttled | rate_limited; failed: the error.
   reason: string | null;
   createdAt: string;
+  // Nov 4 notes, batch 24 (157): it finished, but an action was skipped (run-outcome.ts).
+  partial?: PartialRun | null;
 };
 
 // Nov 1 notes, batch 12 (83): the task was created by email, or a comment came in by email
@@ -3840,6 +3843,7 @@ export async function listMyRecentRuleRuns(from: Date): Promise<FeedbackRun[]> {
         reason,
         createdAt: r.created_at,
         action: firstChangingAction(r.detail),
+        partial: partialOf(r.status, r.detail),
       },
     ];
   });
@@ -7497,6 +7501,7 @@ async function loadTaskAutomationAndEmail(
           status: r.status as TaskRuleRun["status"],
           reason,
           createdAt: r.created_at,
+          partial: partialOf(r.status, r.detail),
         },
       ];
     })

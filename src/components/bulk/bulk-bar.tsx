@@ -33,7 +33,7 @@ import {
   type BulkManualRule,
 } from "@/lib/actions";
 import { Dialog } from "@/components/dialog";
-import { MAX_BULK_TASKS, bulkRuleRunMessage, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
+import { MAX_BULK_TASKS, bulkRuleRunMessage, bulkRuleRunTone, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import type { Section } from "@/lib/data";
 import { NumberInput } from "@/components/number-input";
 import { LOCKED_FIELD_NOTE, OPTION_COLOR_CLASSES, fieldLockedFor, numberPrefixOf, type FieldDef } from "@/lib/fields";
@@ -172,7 +172,8 @@ export function BulkBar({
       const result = await runManualRuleOnTasks(rule.id, ids);
       if (result.run) {
         notify(bulkRuleRunMessage(rule.name, result.run));
-        finishRunning(key, result.run.failed > 0 && result.run.ran === 0 ? "failed" : "ran", bulkRuleRunMessage(rule.name, result.run));
+        // Nov 4 notes, batch 24 (157): "Partly ran" when any task had an action skipped or failed.
+        finishRunning(key, bulkRuleRunTone(result.run), bulkRuleRunMessage(rule.name, result.run));
       } else {
         finishRunning(key, "failed", result.error ?? null);
       }

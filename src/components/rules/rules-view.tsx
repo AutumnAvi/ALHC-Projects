@@ -13,6 +13,7 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { deleteRule, duplicateRule, installRulePreset, setRuleEnabled, setRulePausedUntil } from "@/lib/actions";
 import { RulePauseControls, isPausedNow } from "./rule-pause";
 import { runSteps } from "@/lib/rule-steps";
+import { RUN_TONE_CLASS, filterRuns, runFilterLabel, runOutcome, runOutcomeText, type RunFilter } from "@/lib/run-outcome";
 import { HISTORY_LIMIT, rulesPageHref, type RulesPageView } from "@/lib/rules-page";
 import { runReason, type RuleDef, type RulePreset, type RuleRun, type RuleRunStats } from "@/lib/rules";
 import type { Json } from "@/lib/supabase/database.types";
@@ -31,13 +32,6 @@ import { EmptyState } from "@/components/ui";
 import { RuleTemplatesGallery } from "./rule-templates-gallery";
 import { RunSteps } from "./run-steps";
 
-const RUN_STATUS: Record<RuleRun["status"], string> = {
-  succeeded: "bg-green-100 text-green-800",
-  scheduled: "bg-blue-100 text-blue-800",
-  skipped: "bg-zinc-100 text-zinc-600",
-  failed: "bg-red-100 text-red-800",
-};
-
 type RuleFilter = "all" | "on" | "off" | "paused" | "failing";
 
 const RULE_FILTERS: readonly { value: RuleFilter; label: string }[] = [
@@ -46,13 +40,6 @@ const RULE_FILTERS: readonly { value: RuleFilter; label: string }[] = [
   { value: "off", label: "Off" },
   { value: "paused", label: "Paused" },
   { value: "failing", label: "Failing" },
-];
-
-type RunFilter = "all" | "failed";
-
-const RUN_FILTERS: readonly { value: RunFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "failed", label: "Failed only" },
 ];
 
 // "Task moves into Review" → "task moves into Review" (names, "AM" / "PM" keep their case).
@@ -142,7 +129,12 @@ export function RulesView({
     return { rule, trigger, flow, text, stat: stats?.[rule.id] };
   });
   const shown = rows.filter((row) => matchesFilter(row.rule, filter, row.stat) && (!needle || row.text.includes(needle)));
-  const shownRuns = runFilter === "failed" ? runs.filter((r) => r.status === "failed") : runs;
+  // Nov 4 notes, batch 24 (157): "Needs attention" = failed, skipped, or partly ran.
+  const shownRuns = filterRuns(runs, runFilter);
+  const runFilters = (["all", "attention"] as const).map((value) => ({
+    value,
+    label: runFilterLabel(value, value === "all" ? 0 : filterRuns(runs, "attention").length),
+  }));
 
   const setEnabled = (rule: RuleDef, enabled: boolean) =>
     run(() => setRuleEnabled(rule.id, enabled), () => setOptimistic({ id: rule.id, enabled }));
@@ -474,7 +466,7 @@ export function RulesView({
               className="w-56"
             />
           ) : null}
-          {runs.length ? <Segmented label="Show runs" options={RUN_FILTERS} value={runFilter} onChange={setRunFilter} /> : null}
+          {runs.length ? <Segmented label="Show runs" options={runFilters} value={runFilter} onChange={setRunFilter} /> : null}
         </div>
         <p className="mt-1 text-xs text-zinc-500">
           The newest {HISTORY_LIMIT} runs: what ran, on which task, and each step. Open a run to see its steps.
@@ -482,7 +474,7 @@ export function RulesView({
         {runs.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-500">Nothing has run yet.</p>
         ) : shownRuns.length === 0 ? (
-          <p className="mt-2 text-sm text-zinc-500">No failed runs among the latest {runs.length}.</p>
+          <p className="mt-2 text-sm text-zinc-500">Nothing needs attention among the latest {runs.length}.</p>
         ) : (
           <ul className="mt-2 divide-y divide-zinc-100 rounded-lg border border-zinc-200 text-sm">
             {shownRuns.map((r) => (
@@ -500,7 +492,8 @@ export function RulesView({
 function RunRow({ run: r, ruleName, projectId }: { run: RuleRun; ruleName: string | null; projectId: string }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
-  const reason = runReason(r.detail);
+  const outcome = runOutcome(r.status, r.detail);
+  const reason = runReason(r.detail) ?? outcome.reason;
   const { steps, error } = runSteps(r.detail);
   const expandable = steps.length > 0 || error !== null;
   const name = ruleName ?? "Deleted automation";
@@ -523,7 +516,9 @@ function RunRow({ run: r, ruleName, projectId }: { run: RuleRun; ruleName: strin
         ) : (
           <span className="size-6 shrink-0" aria-hidden />
         )}
-        <span className={`rounded px-1.5 py-0.5 text-2xs font-medium ${RUN_STATUS[r.status]}`}>{r.status}</span>
+        <span data-run-outcome={outcome.tone} className={`rounded px-1.5 py-0.5 text-2xs font-medium ${RUN_TONE_CLASS[outcome.tone]}`}>
+          {runOutcomeText(outcome)}
+        </span>
         <span className="font-medium text-zinc-800">{name}</span>
         {r.taskId ? (
           <Link href={`/projects/${projectId}/list?task=${r.taskId}`} className="min-w-0 truncate text-zinc-600 hover:underline">

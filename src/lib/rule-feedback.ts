@@ -3,6 +3,8 @@
 // automation, and a warning for each run loop protection (or a limit, or an error) stopped. Pure, so it
 // is unit-tested; the route is app/api/rule-feedback and the toasts are components/rules/rule-feedback.tsx.
 
+import { partialSummary, type PartialRun } from "@/lib/run-outcome";
+
 export type FeedbackRun = {
   id: string;
   ruleId: string;
@@ -18,6 +20,8 @@ export type FeedbackRun = {
   // Nov 3 notes (batch 18, 138): the type of the first step that changed something (move_section,
   // add_comment, …), so the note can say what it did: "Automation X moved 3 tasks". Null = unknown.
   action?: string | null;
+  // Nov 4 notes, batch 24 (157): the run finished but a step didn't do its job (run-outcome.ts).
+  partial?: PartialRun | null;
 };
 
 export type FeedbackResponse = { cursor: string; runs: FeedbackRun[] };
@@ -33,6 +37,9 @@ export type RanNote = {
   taskTitle: string | null;
   // What it did (the first changing step of its runs), when every run did the same.
   action?: string | null;
+  // Nov 4 notes, batch 24 (157): some of its runs had a step skipped — how many runs, and the first one's
+  // count and reason. Null = every run did everything.
+  partial?: { runs: number; missed: number; total: number; reason: string | null } | null;
 };
 
 export type StopKind = "loop" | "depth_limit" | "throttled" | "rate_limited" | "failed";
@@ -62,15 +69,35 @@ export const FEEDBACK_OVERLAP_SECONDS = 30;
 export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
   const ran = new Map<
     string,
-    { run: FeedbackRun; tasks: Set<string>; readable: FeedbackRun | null; nullTasks: number; actions: Set<string> }
+    {
+      run: FeedbackRun;
+      tasks: Set<string>;
+      readable: FeedbackRun | null;
+      nullTasks: number;
+      actions: Set<string>;
+      partialRuns: number;
+      firstPartial: PartialRun | null;
+    }
   >();
   const stops: StopNote[] = [];
   const seenStop = new Set<string>();
   const ordered = [...runs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   for (const run of ordered) {
     if (run.status === "succeeded" || run.status === "scheduled") {
-      const entry = ran.get(run.ruleId) ?? { run, tasks: new Set<string>(), readable: null, nullTasks: 0, actions: new Set<string>() };
+      const entry = ran.get(run.ruleId) ?? {
+        run,
+        tasks: new Set<string>(),
+        readable: null,
+        nullTasks: 0,
+        actions: new Set<string>(),
+        partialRuns: 0,
+        firstPartial: null,
+      };
       entry.actions.add(run.action ?? "");
+      if (run.partial) {
+        entry.partialRuns += 1;
+        entry.firstPartial ??= run.partial;
+      }
       if (run.taskId) entry.tasks.add(run.taskId);
       else entry.nullTasks += 1;
       if (run.taskId && run.taskTitle && !entry.readable) entry.readable = run;
@@ -95,11 +122,12 @@ export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
       detail: stop === "failed" ? run.reason : null,
     });
   }
-  const notes: FeedbackNote[] = [...ran.values()].map(({ run, tasks, readable, nullTasks, actions }) => {
+  const notes: FeedbackNote[] = [...ran.values()].map(({ run, tasks, readable, nullTasks, actions, partialRuns, firstPartial }) => {
     const taskCount = tasks.size + nullTasks;
     const only = actions.size === 1 ? [...actions][0] : "";
     return {
       action: only || null,
+      partial: firstPartial ? { runs: partialRuns, ...firstPartial } : null,
       kind: "ran",
       ruleId: run.ruleId,
       ruleName: run.ruleName,
@@ -149,11 +177,22 @@ const ACTION_VERBS: Record<string, [string, string]> = {
   convert_to_project: ["converted", "to a project"],
 };
 
-// The quiet note's text: "Automation “Triage” moved 3 tasks", else "… ran on 3 tasks".
+// The quiet note's text: "Automation “Triage” moved 3 tasks", else "… ran on 3 tasks". Nov 4 notes,
+// batch 24 (157): a run with a skipped step reads "Automation “Triage” partly ran on “Flyer” · 1 of 4
+// actions skipped", never like a clean run.
 export function ranText(note: RanNote): string {
-  const [verb, after] = (note.action && ACTION_VERBS[note.action]) || ["ran on", ""];
   const what = note.taskTitle ? `“${note.taskTitle}”` : plural(note.taskCount, "task");
+  if (note.partial) return `Automation “${note.ruleName}” partly ran on ${what} · ${partialNoteSummary(note)}`;
+  const [verb, after] = (note.action && ACTION_VERBS[note.action]) || ["ran on", ""];
   return `Automation “${note.ruleName}” ${verb} ${what}${after ? ` ${after}` : ""}`;
+}
+
+// "1 of 4 actions skipped" (one run), else "an action was skipped on 2 of 3 tasks".
+export function partialNoteSummary(note: RanNote): string {
+  const p = note.partial;
+  if (!p) return "";
+  if (note.taskCount <= 1 && p.runs <= 1) return partialSummary(p.missed, p.total);
+  return `an action was skipped on ${p.runs} of ${plural(note.taskCount, "task")}`;
 }
 
 // The first step of a run's log that changed something (done / queued / scheduled), else null.
@@ -217,13 +256,23 @@ export function finishedRunsFromNotes(notes: readonly FeedbackNote[]): {
   tasks: { id: string; title: string | null }[];
   taskCount: number;
   failed: boolean;
+  partial?: boolean;
   detail: string | null;
 }[] {
   const out: ReturnType<typeof finishedRunsFromNotes> = [];
   for (const note of notes) {
     const tasks = note.taskId ? [{ id: note.taskId, title: note.taskTitle }] : [];
     if (note.kind === "ran") {
-      out.push({ ruleId: note.ruleId, ruleName: note.ruleName, projectId: note.projectId, tasks, taskCount: note.taskCount, failed: false, detail: ranText(note) });
+      out.push({
+        ruleId: note.ruleId,
+        ruleName: note.ruleName,
+        projectId: note.projectId,
+        tasks,
+        taskCount: note.taskCount,
+        failed: false,
+        partial: Boolean(note.partial),
+        detail: note.partial?.reason ? `${ranText(note)}: ${note.partial.reason}` : ranText(note),
+      });
     } else if (note.stop === "failed") {
       out.push({ ruleId: note.ruleId, ruleName: note.ruleName, projectId: note.projectId, tasks, taskCount: tasks.length, failed: true, detail: note.detail });
     }
