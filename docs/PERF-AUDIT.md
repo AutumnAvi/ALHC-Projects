@@ -187,6 +187,28 @@ Avi's note: moving between projects and pages is slow, worse with lots of data. 
 
 **What changed.** `viewer_project_ids()` / `viewer_rule_ids()` (the caller's readable projects / automations, once per statement) in the three hot read policies — same rows, pinned by `zz48`; `task_project_labels` reads memberships by task and checks each project once; `readInChunks` runs chunked reads in parallel; `/projects/<id>` renders its view and fixes the URL on the client (`CanonicalUrl`). Not changed: `open_blocker_counts` (1.2 s for 3,650 tasks; it counts blockers the caller can't open, so a cheaper prefilter needs its own definer) and the client bundle.
 
+## Nov 4 notes (batch 22, M1): screen loaders — one database call per screen
+
+The infra review: opening a project started ~30 separate Supabase calls (the app frame, the project frame, then the page), several waiting on each other. Each screen now reads through one invoker RPC (or a very few), `20261104030000_nov4_batch22_a.sql`; shapes in `src/lib/screen-shapes.ts`, loaders in `src/lib/screen-loaders.ts`.
+
+**How it was measured.** Local Postgres 17 with every migration plus `scripts/perf/seed.sql` + `seed-pane.sql` (1 project, 10,000 tasks, 1,700 open tasks assigned to the seed person), PostgREST 12.2.3 behind `scripts/perf/local-api.mjs` (JWKS for `getClaims()`, ES256 session cookie for `perf-seed@example.com`), `next dev` with `ALHC_DB_TRACE` set (`src/lib/supabase/db-trace.ts` logs every Supabase request the server makes: start, end, method, path). `scripts/perf/screen-calls.mjs` fetches each screen once to warm up, then 5 times, and reports medians: **calls** = Supabase requests in that render, **steps** = the longest chain of calls each starting after the previous one ended (round trips in a row), **DB wall** = first call's start → last call's end, **DB sum** = the calls' durations added up (the load on PostgREST / Postgres), **response** = the whole page. Before = `main` at 95ce4a0; after = this branch.
+
+| Screen | Calls | Steps | DB wall (ms) | DB sum (ms) | Response (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| App shell (`/help/roles`: the frame + 2 reads of the page) | 14 → **4** | 3 → **2** | 212 → **45** | 974 → **94** | 296 → **202** |
+| Project List view | 38 → **4** | 6 → **2** | 331 → **108** | 2,644 → **147** | 586 → **279** |
+| Project Board view | 35 → **4** | 5 → **2** | 297 → **104** | 2,184 → **146** | 507 → **243** |
+| Project frame (`/overview`: frame + its own 8 reads) | 34 → **10** | 3 → **2** | 196 → **100** | 2,027 → **375** | 327 → **171** |
+| My tasks (checklist) | 64 → **5** | 9 → **3** | 1,172 → **1,040** | 5,348 → **1,130** | 1,802 → **1,608** |
+| Home | 60 → **3** | 8 → **2** | 1,157 → **1,070** | 5,570 → **1,095** | 1,549 → **1,531** |
+| Task pane (`GET /api/task-pane/<id>`) | 35 → **8** | 5 → **4** | 157 → **84** | 1,040 → **150** | 175 → **105** |
+
+My tasks and Home stay near a second on this seed because one read inside them, `open_blocker_counts` over 1,700 open tasks, takes ~850 ms by itself (it was 1.2 s in batch 18 and is unchanged here: making it cheaper is a permission-check rewrite, M2). Everything else on those screens now costs ~150 ms of database time instead of ~4.5 s.
+
+**Same data.** Each loader returns the rows the separate reads returned (same columns, same order) and the app maps them with the same code. Checked on two databases: the perf seed, and one with every smoke suite's data — 14 people × (shell, the frames of up to 6 of their projects plus one they're not in, List pages grouped three ways, My tasks, Home, the My Tasks automation context) = 444 comparisons of loader vs. old reads, all equal; and 720 task pane payloads (6 people × 120 tasks) with the loader vs. without, equal except 3 where followers share one `created_at` (their order is arbitrary either way). `zz52_nov4_batch22_smoke.sql` pins the loaders against the functions and tables they read, and that a non-member gets nothing.
+
+**Left as separate calls.** `my_tasks_layout()` and the sections read after it (it writes — seeds sections, places new tasks — and a STABLE loader can't call it); the List's subtask trees (they depend on which rows are open); in the pane, `listTeams` (mention teams), `listMyProjectRoles`, and the third wave that depends on the comments (names of linked tasks / projects, automation projects, subtask labels); each project tab's own reads (Overview's status updates, stories, roles, goals). The `/api/task-pane` route asks `viewer_member` twice because React's per-request cache doesn't apply in route handlers (it asked `is_allowlisted` twice before too).
+
 ## Deferred
 
 Deferred: none.

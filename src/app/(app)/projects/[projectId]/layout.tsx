@@ -5,25 +5,8 @@ import { ProjectHeader } from "@/components/project/project-header";
 import { ProjectPageProvider } from "@/components/project/project-page-context";
 import { RecordRecent } from "@/components/shell/shell-context";
 import { TaskTemplatesProvider } from "@/components/project/task-templates-context";
-import {
-  getProject,
-  getProjectAccessStatus,
-  getProjectSectionsLocked,
-  getProjectRole,
-  listOwnProjectRoles,
-  listProjectFields,
-  listProjectFieldSharing,
-  listProjectForms,
-  listProjectMembers,
-  listProjectRules,
-  listProjectViews,
-  listSections,
-  listStarredProjectIds,
-  getRequestSequence,
-  getProjectViewSettings,
-  listStatusTemplates,
-  listTaskTemplates,
-} from "@/lib/data";
+import { getProjectAccessStatus } from "@/lib/data";
+import { loadAppShell, loadProjectFrame } from "@/lib/screen-loaders";
 import { isUuid } from "@/lib/ids";
 import { projectTabList } from "@/lib/views";
 import { permissionsFor } from "@/lib/permissions";
@@ -38,16 +21,17 @@ export default async function ProjectLayout({
 }: LayoutProps<"/projects/[projectId]">) {
   const { projectId } = await params;
   if (!isUuid(projectId)) notFound();
-  const [
+  // Nov 4 notes (batch 22, M1): the whole project frame in one call (project_frame), next to the app
+  // shell the app layout reads anyway (stars, the person's own roles).
+  const [frame, shell] = await Promise.all([loadProjectFrame(projectId), loadAppShell()]);
+  const {
     project,
     views,
     role,
     taskTemplates,
-    ownRoles,
     fields,
     forms,
     rules,
-    starredIds,
     members,
     sections,
     statusTemplates,
@@ -55,30 +39,12 @@ export default async function ProjectLayout({
     viewSettings,
     sectionsLocked,
     fieldSharing,
-  ] = await Promise.all([
-      getProject(projectId),
-      listProjectViews(projectId),
-      getProjectRole(projectId),
-      listTaskTemplates(projectId),
-      listOwnProjectRoles(),
-      listProjectFields(projectId),
-      listProjectForms(projectId),
-      listProjectRules(projectId),
-      listStarredProjectIds(),
-      listProjectMembers(projectId),
-      listSections(projectId),
-      listStatusTemplates(projectId),
-      getRequestSequence(projectId),
-      getProjectViewSettings(projectId),
-      getProjectSectionsLocked(projectId),
-      // Oct 29 notes (batch 7): shared library fields (the Fields list's "Shared" marker, Edit field's
-      // read-only definition). Booleans and counts only. Never worth failing the project page over: the
-      // database still decides every change.
-      listProjectFieldSharing(projectId).catch(() => null),
-    ]);
+  } = frame;
+  const ownRoles = shell.ownRoles;
+  const starredIds = shell.starIds;
   if (!project || !role) {
     // A layout doesn't stop its pages from rendering, so the request page is a route of its own.
-    const access = await getProjectAccessStatus(projectId);
+    const access = frame.accessStatus ?? (await getProjectAccessStatus(projectId));
     if (access === "missing" || access === "member") notFound();
     redirect(`/project-access/${projectId}`);
   }

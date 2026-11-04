@@ -3,6 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { requireSupabaseEnv } from "@/lib/env";
 import type { Database } from "./database.types";
+import { tracedFetch } from "./db-trace";
 import { retryingFetch } from "./retry-fetch";
 
 export async function createClient() {
@@ -11,7 +12,7 @@ export async function createClient() {
 
   return createServerClient<Database>(url, anonKey, {
     // Nov 3 notes (batch 19): one more try when the database refused for a passing reason (retry-fetch.ts).
-    global: { fetch: retryingFetch() },
+    global: { fetch: retryingFetch(tracedFetch(fetch)) },
     cookies: {
       getAll() {
         return cookieStore.getAll();

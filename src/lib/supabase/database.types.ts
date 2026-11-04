@@ -6957,6 +6957,47 @@ export type Database = {
         Args: { target_task: string };
         Returns: undefined;
       };
+      // Nov 4 notes (batch 22): screen loaders (src/lib/screen-shapes.ts has the JSON shapes).
+      viewer_member: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
+      app_shell: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
+      project_frame: {
+        Args: { target_project: string };
+        Returns: Json;
+      };
+      project_view_page: {
+        Args: {
+          target_project: string;
+          filters: Json;
+          tz: string;
+          group_by: string;
+          sorts: Json;
+          page_size: number;
+          limits: Json;
+        };
+        Returns: Json;
+      };
+      my_task_bundle: {
+        Args: { extra_label_ids?: string[] };
+        Returns: Json;
+      };
+      my_tasks_screen: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
+      home_screen: {
+        Args: { tz: string };
+        Returns: Json;
+      };
+      task_pane_rows: {
+        Args: { target_task: string; comment_page_size?: number; run_limit?: number };
+        Returns: Json;
+      };
       home_dashboard: {
         Args: { tz?: string | null };
         Returns: Json;
