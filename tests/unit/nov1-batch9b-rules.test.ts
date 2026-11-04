@@ -91,7 +91,8 @@ test("due labels and the summary line", () => {
 
 test("quick add: dates, #project, @person, and the name that's left", () => {
   const p = parseQuickAdd("Draft flu-shot email fri #Fall Campaign @Dana", ctx);
-  assert.equal(p.title, "Draft flu-shot email");
+  // Nov 4 notes (batch 27, 162): the @person stays in the name, under their full name.
+  assert.equal(p.title, "Draft flu-shot email @Dana Diaz");
   assert.equal(p.dueOn, "2026-11-06", "fri = the next Friday");
   assert.equal(p.project?.id, "p1", "the longest project name wins");
   assert.equal(p.person?.id, "u1", "first names work");
@@ -115,7 +116,7 @@ test("quick add: dates, #project, @person, and the name that's left", () => {
   assert.equal(friday.project?.id, "p3");
   assert.equal(friday.dueOn, null);
   // Unknown names stay in the title; emails' local parts match people.
-  assert.equal(parseQuickAdd("Ping #nowhere @sam.lee", ctx).title, "Ping #nowhere");
+  assert.equal(parseQuickAdd("Ping #nowhere @sam.lee", ctx).title, "Ping #nowhere @Sam Lee");
   assert.equal(parseQuickAdd("Ping #nowhere @sam.lee", ctx).person?.id, "u2");
   // A word glued to # isn't a tag.
   assert.equal(parseQuickAdd("Issue#Fall", ctx).project, null);

@@ -69,6 +69,7 @@ import {
 import { ApprovalStatusBadge, DueDate, EmptyCellHint } from "@/components/project/task-meta";
 import type { AwaitingApproval, MyTask, Profile, SubtaskItem } from "@/lib/data";
 import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
+import { TaskTitleText } from "@/components/task/title-text";
 import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@/lib/task-seed";
 import { trackCompletion } from "@/lib/completion-store";
 import { useLiveMyTasks } from "./use-live-my-tasks";
@@ -1049,7 +1050,7 @@ function RowTitle({
         className={`min-w-0 truncate text-sm hover:underline ${tone} ${after ? "" : "flex-1"}`}
       >
         {prefix}
-        {title}
+        <TaskTitleText title={title} nested />
       </TaskLink>
     );
     return after ? (
@@ -1096,7 +1097,7 @@ function RowTitle({
           className={`-mx-1 min-w-0 truncate rounded px-1 text-left text-sm ring-zinc-200 group-hover:ring-1 hover:ring-zinc-300 ${tone}`}
         >
           {prefix}
-          {title}
+          <TaskTitleText title={title} nested />
         </button>
       )}
       {editing ? null : after}

@@ -342,6 +342,7 @@ test("126: the decision note folds to one line after a few seconds (and opens ag
   assert.ok(decisionSummary("Ana", "changes_requested", "x".repeat(200)).endsWith("…"));
   const banner = fs.readFileSync("src/components/task/task-approval-banner.tsx", "utf8");
   assert.match(banner, /useOptimistic\(serverInfo, applyApprovalChange\)/, "the card draws the optimistic approval");
-  assert.match(banner, /setTimeout\(\(\) => setOpen\(false\), DECISION_NOTE_OPEN_MS\)/);
-  assert.match(banner, /aria-expanded=\{open\}/, "the folded line opens again");
+  // Nov 4 notes (batch 27, 161): the note itself became pills next to the files (ApprovalFeedback), each
+  // opening the whole note; nothing folds on a timer any more.
+  assert.match(banner, /export function ApprovalFeedback/);
 });

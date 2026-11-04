@@ -1,9 +1,9 @@
 "use client";
 
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
-import { useOptimistic, useState, useSyncExternalStore } from "react";
+import { useOptimistic, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
-import { Check, ChevronRight, Clock, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, Send, ThumbsUp, UserRound, X } from "lucide-react";
+import { Check, ChevronRight, Clock, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, Pencil, Send, ThumbsUp, UserRound, X } from "lucide-react";
 import { usePaneExpanded, usePaneWide } from "./pane-size";
 import { CloseButton, ExpandButton, PANE_HEADER, PaneShell, useClosePane, WideViewToggle } from "./task-pane-frame";
 import { RecordRecent } from "@/components/shell/shell-context";
@@ -16,7 +16,7 @@ import type { Tag } from "@/lib/tags";
 import { completeModeLabel, completeModeOf } from "@/lib/approval-complete";
 import { requestApprovalAction } from "./approval-action";
 import { ApprovalSetupDialog } from "./approval-setup-dialog";
-import { ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
+import { ApprovalFeedback, ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
 import { BlockersHover } from "./blockers-popover";
 import { TaskActivity, TaskPaneFooter } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
@@ -38,6 +38,9 @@ import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
 import { completionsVersion, recentCompletion, subscribeCompletions, trackCompletion } from "@/lib/completion-store";
 import { SCROLL_AREA } from "@/components/shell/shell-frame";
+import { MentionTextarea } from "./mention-textarea";
+import { TaskTitleText, usePeopleDirectory } from "./title-text";
+import { titleHasMentions } from "@/lib/title-mentions";
 
 export function TaskDetailPanel({
   task,
@@ -185,7 +188,8 @@ export function TaskDetailPanel({
             <ThumbsUp className="size-4" strokeWidth={2.5} aria-hidden />
             Approved · the approver completes it
           </button>
-        ) : completeMode === "ready" && canActOnApproval(task, memberId) ? (
+        ) : completeMode === "ready" && canActOnApproval(task, memberId) && !task.approval?.paused ? (
+          // Nov 4 notes (batch 27, 161): not while paused — the Approval row's "Feedback received" comes first.
           <button
             type="button"
             data-complete-mode="ready"
@@ -327,45 +331,11 @@ export function TaskDetailPanel({
       <div className={`min-h-0 flex-1 ${SCROLL_AREA}`}>
         <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
-          {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
           {approvalSetup ? (
             <ApprovalSetupDialog task={task} profiles={profiles} ready={approvalSetup} onClose={() => setApprovalSetup(null)} />
           ) : null}
           <TaskNumberChips numbers={numbers} currentProjectId={pathProjectId} className="mb-1.5" />
-          {canEdit ? (
-            <label htmlFor="task-title" className="sr-only">
-              Task name
-            </label>
-          ) : null}
-          {!canEdit ? (
-            // Read-only (Viewer / Commenter): the name as text, not a box that looks editable.
-            <h2
-              id="task-title"
-              className={`break-words py-1 text-2xl font-semibold leading-tight tracking-tight ${completed ? "text-zinc-500" : "text-zinc-900"}`}
-            >
-              {task.title}
-            </h2>
-          ) : (
-          <textarea
-            id="task-title"
-            defaultValue={task.title}
-            rows={1}
-            onBlur={(e) => {
-              const title = e.currentTarget.value.trim();
-              if (!title) e.currentTarget.value = task.title;
-              else if (title !== task.title) run(() => updateTask(task.id, { title }));
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.currentTarget.blur();
-              }
-            }}
-            className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent bg-transparent px-2 py-1 text-2xl font-semibold leading-tight tracking-tight hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${
-              completed ? "text-zinc-500" : "text-zinc-900"
-            }`}
-          />
-          )}
+          <PaneTitle task={task} canEdit={canEdit} completed={completed} profiles={profiles} />
 
           <RequestBadges task={task} />
 
@@ -444,6 +414,9 @@ export function TaskDetailPanel({
             ) : null}
           </dl>
 
+          {/* Nov 4 notes (batch 27, 161): the approval as one compact row with the fields (Details in a dialog). */}
+          {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
+
           <TaskFields task={task} profiles={profiles} canEdit={canEdit} />
 
           <section className="mt-6" aria-labelledby="task-notes-heading">
@@ -464,6 +437,8 @@ export function TaskDetailPanel({
             onRequestingChange={setRequestingApproval}
           />
 
+          {task.kind === "approval" ? <ApprovalFeedback task={task} profiles={profiles} memberId={memberId} /> : null}
+
           <TaskAttachments attachments={task.attachments} links={task.attachmentLinks} upload={upload} canEdit={canEdit} />
 
           <TaskActivity task={task} profiles={profiles} memberId={memberId} />
@@ -472,6 +447,95 @@ export function TaskDetailPanel({
 
       <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
     </PaneShell>
+  );
+}
+
+// The task's name. Nov 4 notes (batch 27, 162): "@" suggests people, and a mention stays in the name as
+// typed ("@Dana Lee"); while the name isn't being edited, mentions are chips linking to the person. A name
+// without mentions is the edit box itself, as before. Mentions never assign the task.
+function PaneTitle({ task, canEdit, completed, profiles }: { task: TaskDetail; canEdit: boolean; completed: boolean; profiles: Profile[] }) {
+  const [, run] = useServerAction();
+  const [title, setOptimisticTitle] = useOptimistic(task.title);
+  const [draft, setDraft] = useState<string | null>(null);
+  const cancelled = useRef(false);
+  const directory = usePeopleDirectory();
+  const people = directory.length ? directory : profiles.map((p) => ({ id: p.id, name: displayName(p), email: p.email }));
+  const tone = completed ? "text-zinc-500" : "text-zinc-900";
+  const text = "text-2xl font-semibold leading-tight tracking-tight";
+  if (!canEdit) {
+    // Read-only (Viewer / Commenter): the name as text, not a box that looks editable.
+    return (
+      <h2 id="task-title" className={`break-words py-1 ${text} ${tone}`}>
+        <TaskTitleText title={title} people={people} />
+      </h2>
+    );
+  }
+  function save(value: string) {
+    const next = value.trim();
+    setDraft(null);
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
+    if (!next || next === task.title) return;
+    run(
+      () => updateTask(task.id, { title: next }),
+      () => setOptimisticTitle(next),
+    );
+  }
+  if (draft === null && titleHasMentions(title, people)) {
+    return (
+      <div className="group/title -mx-2 flex items-start gap-1">
+        <h2
+          id="task-title"
+          data-title-display=""
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("a")) return;
+            setDraft(title);
+          }}
+          className={`min-w-0 flex-1 cursor-text break-words rounded-md border border-transparent px-2 py-1 hover:border-zinc-200 ${text} ${tone}`}
+        >
+          <TaskTitleText title={title} people={people} />
+        </h2>
+        <button
+          type="button"
+          onClick={() => setDraft(title)}
+          aria-label="Rename the task"
+          data-tooltip="Rename"
+          className="btn-icon mt-1.5 shrink-0 opacity-0 focus-visible:opacity-100 group-hover/title:opacity-100 [@media(hover:none)]:opacity-100"
+        >
+          <Pencil className="size-4" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <>
+      <label htmlFor="task-title" className="sr-only">
+        Task name
+      </label>
+      <MentionTextarea
+        id="task-title"
+        value={draft ?? title}
+        onValueChange={setDraft}
+        candidates={profiles}
+        listBelow
+        rows={1}
+        autoFocus={draft !== null}
+        onBlur={(e) => save(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancelled.current = true;
+            e.currentTarget.blur();
+          }
+        }}
+        className={`-mx-2 field-sizing-content w-[calc(100%+1rem)] resize-none rounded-md border border-transparent bg-transparent px-2 py-1 ${text} hover:border-zinc-200 focus:border-zinc-300 focus:outline-none ${tone}`}
+      />
+    </>
   );
 }
 
