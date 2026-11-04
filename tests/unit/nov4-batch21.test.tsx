@@ -153,7 +153,8 @@ test("QW3: thumbnail answers are read defensively", () => {
 // ---- QW4 ----------------------------------------------------------------------------------------
 
 test("QW4: channels join with the session token; the badge polls only while Realtime isn't live", () => {
-  const realtime = fs.readFileSync("src/lib/realtime.ts", "utf8");
+  // Since Nov 4 notes (batch 26) the channels live in src/lib/live.ts (Broadcast); the join rule stays.
+  const realtime = fs.readFileSync("src/lib/live.ts", "utf8");
   assert.match(realtime, /auth\.getSession\(\)/);
   assert.match(realtime, /realtime\.setAuth\(\)/);
   const unread = fs.readFileSync("src/components/shell/unread-count.tsx", "utf8");

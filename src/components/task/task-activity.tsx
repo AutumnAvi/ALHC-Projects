@@ -47,7 +47,6 @@ import { emailActivityText } from "@/lib/project-page";
 import { automationHref } from "@/lib/rule-feedback";
 import { fieldChips } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
-import { useRealtimeRefresh } from "@/lib/realtime";
 import { describeRecurrence, parseRecurrence } from "@/lib/recurrence";
 import { TASK_KIND_LABELS, parseTaskKind } from "@/lib/task-kinds";
 import { dependencyLabel, parseDependencyKind } from "@/lib/dependencies";
@@ -161,13 +160,6 @@ export function TaskActivity({
   profiles: Profile[];
   memberId: string;
 }) {
-  useRealtimeRefresh(`task-${task.id}`, [
-    { table: "comments", filter: `task_id=eq.${task.id}` },
-    { table: "comment_reactions", filter: `task_id=eq.${task.id}` },
-    { table: "task_stories", filter: `task_id=eq.${task.id}` },
-    { table: "email_outbox", filter: `task_id=eq.${task.id}` },
-  ]);
-
   const tab = useActivityTab();
   const tagsOn = useTagsEnabled();
   const profilesById = new Map(profiles.map((p) => [p.id, p]));

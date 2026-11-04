@@ -5632,6 +5632,11 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      // Nov 4 notes, batch 26: used by the realtime.messages policies (who may join a live-update topic).
+      alhc_live_topic_allowed: {
+        Args: { topic: string };
+        Returns: boolean;
+      };
       // Nov 1 notes, batch 9a.
       complete_approval_as_approver: {
         Args: { target_task: string };

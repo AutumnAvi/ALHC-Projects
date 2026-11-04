@@ -23,7 +23,8 @@ import {
   type RunningEntry,
 } from "@/lib/rule-running";
 import { onRuleFeedbackRequest, requestRuleFeedback } from "@/lib/rule-feedback-bus";
-import { openRealtimeChannel } from "@/lib/realtime";
+import { subscribeLive } from "@/lib/live";
+import { userTopic } from "@/lib/live-patch";
 import { useShell } from "@/components/shell/shell-context";
 import {
   STOP_EXPLAIN,
@@ -132,12 +133,15 @@ export function RuleFeedbackLayer() {
     };
   }, [show]);
 
-  // Realtime: the person's own runs (rule_runs RLS: Viewers+ of the automation's project).
+  // Nov 4 notes, batch 26 (M3): the person's own runs arrive on their Broadcast topic (rule_runs by
+  // actor_id); the feedback check then reads them with the person's own client.
   useEffect(() => {
     if (!memberId) return;
-    return openRealtimeChannel(`rule-runs-${memberId}`, [{ table: "rule_runs", filter: `actor_id=eq.${memberId}` }], () =>
-      requestRuleFeedback(Date.now() - REALTIME_LOOKBACK_MS),
-    );
+    return subscribeLive(userTopic(memberId), {
+      message: (message) => {
+        if (message.table === "rule_runs") requestRuleFeedback(Date.now() - REALTIME_LOOKBACK_MS);
+      },
+    });
   }, [memberId]);
 
   return <RunningIndicator />;

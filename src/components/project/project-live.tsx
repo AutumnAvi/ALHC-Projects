@@ -1,22 +1,28 @@
 "use client";
 
-import { useRealtimeRefresh } from "@/lib/realtime";
+import { applyLiveTaskChanges, shownProjectTasks } from "@/components/project/use-project-tasks";
+import { requestLiveRefresh, useLiveRefresher, useLiveTopic } from "@/lib/live";
+import { projectLiveChanges, projectTopic } from "@/lib/live-patch";
 
-// Nov 3 notes (batch 19, video bug 23.5): a project's List / Board / Calendar / Timeline update when
-// someone else (or another tab) renames, adds, moves, or completes a task — Realtime on the project's
-// tasks (those whose internal pointer is this project, subtasks included) and its task memberships
-// (sections, order, tasks added from other projects). Realtime applies each table's read policy, so only
-// readers hear anything. The person's own edits are covered by their write's refresh ("skip"), so an edit
-// doesn't render the List twice. A database without this batch's migration doesn't publish these tables:
-// the channel gives up after a few errors and the page works as before.
+// Nov 4 notes, batch 26 (M3): a project's List / Board / Calendar / Timeline follow other people's changes
+// through the project's Broadcast topic (only the project's readers can join it). Renames, completions,
+// dates, assignees, section moves, field values, tags, trashed and removed tasks are patched in place
+// (use-project-tasks' overlay); only a task the view doesn't show yet (added, restored, newly matching the
+// view) or a subtask's count asks the server for the page again. The person's own edits are covered by
+// their write's refresh ("skip"). After a lost connection the page refreshes once (changes may have been
+// missed meanwhile).
 export function ProjectLiveUpdates({ projectId }: { projectId: string }) {
-  useRealtimeRefresh(
-    `project-${projectId}`,
-    [
-      { table: "tasks", filter: `home_project_id=eq.${projectId}` },
-      { table: "task_projects", filter: `project_id=eq.${projectId}` },
-    ],
-    { duringWrites: "skip", maxErrors: 3 },
+  useLiveRefresher();
+  useLiveTopic(
+    projectTopic(projectId),
+    (message) => {
+      const { changes, refresh } = projectLiveChanges(message, projectId, shownProjectTasks());
+      applyLiveTaskChanges(changes);
+      if (refresh) requestLiveRefresh("skip");
+    },
+    (status, rejoined) => {
+      if (status === "live" && rejoined) requestLiveRefresh("skip");
+    },
   );
   return null;
 }

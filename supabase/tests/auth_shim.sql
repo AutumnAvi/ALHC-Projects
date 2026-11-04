@@ -78,3 +78,41 @@ as $$
   on conflict (jobname) do update set schedule = excluded.schedule, command = excluded.command
   returning jobid
 $$;
+
+-- Realtime stand-in (Nov 4 notes, batch 26): realtime.messages with RLS on (Realtime checks a private
+-- channel's join by reading it as the joining person with realtime.topic set), realtime.topic(), and
+-- realtime.send() as Supabase defines them (a failure is a warning, never an error). Nothing delivers.
+create schema realtime;
+grant usage on schema realtime to anon, authenticated, service_role;
+
+create table realtime.messages (
+  id uuid primary key default gen_random_uuid(),
+  topic text not null,
+  extension text not null,
+  payload jsonb,
+  event text,
+  private boolean default false,
+  updated_at timestamp not null default now(),
+  inserted_at timestamp not null default now()
+);
+alter table realtime.messages enable row level security;
+grant select, insert, update on realtime.messages to anon, authenticated;
+
+create function realtime.topic() returns text
+language sql stable
+as $$ select nullif(current_setting('realtime.topic', true), '')::text $$;
+grant execute on function realtime.topic() to anon, authenticated, service_role;
+
+create function realtime.send(payload jsonb, event text, topic text, private boolean default true) returns void
+language plpgsql
+as $$
+begin
+  begin
+    perform set_config('realtime.topic', topic, true);
+    insert into realtime.messages (payload, event, topic, private, extension)
+    values (payload, event, topic, private, 'broadcast');
+  exception when others then
+    raise warning 'ErrorSendingBroadcastMessage: %', sqlerrm;
+  end;
+end;
+$$;
