@@ -2,8 +2,12 @@
 // message people read>), so a Server Action, a route, or a desktop app calling the layer gets the same
 // answer for the same input.
 import { isUuid } from "@/lib/ids";
+import { PERSON_DEFAULT_ROLE, isProjectRole } from "@/lib/roles";
 import { isIsoDate } from "@/lib/views";
+import { isProjectVisibility, type ProjectVisibility } from "@/lib/workspace";
 import { invalid } from "./errors";
+
+export const START_AFTER_DUE = "The start date must be on or before the due date";
 
 export function id(value: unknown, label = "id"): string {
   if (!isUuid(value)) throw invalid(`Invalid ${label}`);
@@ -65,4 +69,20 @@ export function email(value: unknown): string {
   const address = text(value, "Email", { max: 320 }).toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw invalid("Enter a valid email address");
   return address;
+}
+
+// A project role (owner, admin, editor, commenter, viewer).
+export function projectRole(value: unknown): string {
+  if (!isProjectRole(value)) throw invalid("Choose a role");
+  return value;
+}
+
+// A role to add someone with: a project role, or "default" (each person's default project role).
+export function addRole(value: unknown): string {
+  return value === PERSON_DEFAULT_ROLE ? PERSON_DEFAULT_ROLE : projectRole(value);
+}
+
+export function projectVisibility(value: unknown): ProjectVisibility {
+  if (!isProjectVisibility(value)) throw invalid("Choose who can find the project");
+  return value;
 }

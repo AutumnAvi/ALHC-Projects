@@ -119,3 +119,11 @@ export function writeError(error: DbErrorDetail, notAllowed = NOT_ALLOWED): ApiE
 export function readError(error: DbErrorDetail, what: string): ApiError {
   return new ApiError(codeOf(error), `Failed to load ${what}: ${error.message ?? "unknown error"}`, error);
 }
+
+// What a write says when the database doesn't have this release's update yet.
+export const NEEDS_DATABASE_UPDATE = "This needs this release’s database update, which isn’t applied yet";
+
+// A function or table this release uses isn't in the database (yet).
+export function schemaMissing(code: string | undefined): boolean {
+  return code === "PGRST202" || code === "PGRST205" || code === "42P01" || code === "42883";
+}
