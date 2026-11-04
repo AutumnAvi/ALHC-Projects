@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ThumbsUp } from "lucide-react";
 import { ApproverReviewPage } from "@/components/task/approver-review-page";
+import { TaskLiveRefresh } from "@/components/task/task-live-refresh";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
 import { getTaskDetail } from "@/lib/data";
@@ -31,6 +32,7 @@ export default async function ApproveTaskPage({ params }: PageProps<"/approve/[t
   }
   return (
     <main className="flex min-h-0 flex-1 flex-col">
+      <TaskLiveRefresh taskId={task.id} />
       <PageHeader
         icon={ThumbsUp}
         title={task.title}

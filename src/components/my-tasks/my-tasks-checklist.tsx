@@ -14,14 +14,15 @@ import { saveMyTasksLayout, type MyTasksLayout } from "@/lib/my-tasks";
 import type { QuickAddPerson, QuickAddProject } from "@/lib/quick-add";
 import { ChecklistView, useChecklist } from "./checklist";
 import { AwaitingRow } from "./my-tasks-view";
+import { useLiveMyTasks } from "./use-live-my-tasks";
 import { QuickAddBar } from "./quick-add";
 
 // My tasks (Nov 1 notes, batch 9b, item 64): the quick add, approvals waiting on you (when there are
 // any), and the checklist. The options menu holds "Checked items" (saved on the account) and the
 // classic views (your sections, due-date buckets), which still work as before.
 export function MyTasksChecklist({
-  open,
-  completed,
+  open: serverOpen,
+  completed: serverCompleted,
   checked,
   workWeek,
   projects,
@@ -40,6 +41,7 @@ export function MyTasksChecklist({
   people: QuickAddPerson[];
   awaiting: AwaitingApproval[];
 }) {
+  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted);
   const [mode, setMode] = useState<CheckedMode>(checked);
   const list = useChecklist(open, completed, mode, { today: serverToday, timeZone });
   const today = list.today;

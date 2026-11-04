@@ -2,6 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import type { TaskDetail, TaskExtras, TaskPaneContext, TaskPanePayload } from "@/lib/data";
+import { patchTaskDetail, type LiveMessage } from "@/lib/live-patch";
 import { mutationInFlight } from "@/lib/optimistic-session";
 import { onRuleFeedbackRequest } from "@/lib/rule-feedback-bus";
 import { createLimiter, PaneCache, type PaneEntry } from "@/lib/task-pane-cache";
@@ -198,6 +199,22 @@ export function refreshTaskPane(id: string) {
   queuedRefresh.add(id);
   if (refreshTimer !== null) clearTimeout(refreshTimer);
   refreshTimer = setTimeout(flushPaneRefresh, PANE_REFRESH_MS);
+}
+
+// Nov 4 notes, batch 26 (M3): a live message on the task's topic patches the cached copy in place (its
+// row, subtasks, comments, reactions, followers, tags, removed files); what it can't patch refetches just
+// this task. The patched copy counts as read when the database sent the message, so a fetch that read
+// before the change can't put the old values back. Returns whether the Reviews tab should reload.
+export function applyLivePane(id: string, message: LiveMessage): { reviews: boolean } {
+  const entry = details.get(id);
+  if (!entry || !entry.value) {
+    refreshTaskPane(id);
+    return { reviews: message.table === "review_checks" };
+  }
+  const patch = patchTaskDetail(entry.value, message);
+  if (patch.changed && details.put(id, patch.detail, Math.max(entry.loadedAt, message.at), Date.now())) detailEvents.emit();
+  if (patch.refetch) refreshTaskPane(id);
+  return { reviews: patch.reviews };
 }
 
 export function refreshOpenTaskPanes() {

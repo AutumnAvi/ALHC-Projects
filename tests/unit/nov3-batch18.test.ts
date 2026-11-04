@@ -64,5 +64,5 @@ test("138 / 139: every local write and every date change asks for automation fee
   const shift = fs.readFileSync("src/components/task/dependency-shift.tsx", "utf8");
   assert.ok(shift.includes("requestRuleFeedback(startedAt)"), "date changes ask");
   const layer = fs.readFileSync("src/components/rules/rule-feedback.tsx", "utf8");
-  assert.ok(layer.includes('table: "rule_runs"'), "Realtime nudges a check");
+  assert.ok(layer.includes('message.table === "rule_runs"'), "a live update of the person's runs nudges a check");
 });

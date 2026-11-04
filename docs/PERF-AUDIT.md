@@ -234,6 +234,12 @@ The infra review: RLS policies called `has_project_role` / `has_task_role` / `ha
 
 **Tried and left out.** A second check for subtasks (the top-level task's membership, read through `tasks`' own policy) took subtask stories / followers from 27 to 4.5 ms, but it put the whole `tasks` policy into every child policy: the task pane's SQL function (re-planned on every call) went from 9 to 16 ms. Not worth it while subtasks are few; a cheaper subtask check needs either a plan-cached pane function or a stored root on child rows.
 
+## Nov 4 notes (batch 26, M3): live updates through Broadcast
+
+The infra review: Realtime Postgres Changes on 16 tables took about 47% of the database's time — Realtime reads every change of a published table from the WAL (`realtime.list_changes`) and checks it against each subscriber's RLS — and most screens then re-rendered the whole route (`router.refresh`) on any change. `20261104050000_nov4_batch26_a.sql` moves live updates to Broadcast: one statement-level trigger per table and write sends a few small messages to private topics (`realtime.send`), joining a topic is checked once by the `realtime.messages` policies, and the screens patch what they show instead of re-rendering. The cost moves to the writer: one extra statement per write statement on those tables (rows as JSON, a membership lookup for task rows) and one `realtime.messages` insert per topic and 50 rows; reading the WAL for these tables stops once the tail takes them out of the publication.
+
+**To measure after the tail is applied:** the hosted project's Query Performance report — `realtime.list_changes` should fall to the other app's share — and `pg_stat_statements` for `alhc_live_capture` / `realtime.send` (expected: well under a millisecond a statement).
+
 ## Deferred
 
 Deferred: none.

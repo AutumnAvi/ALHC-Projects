@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight, CircleCheck } from "lucide-react";
 import { ChecklistView, useChecklist } from "@/components/my-tasks/checklist";
 import { QuickAddBar } from "@/components/my-tasks/quick-add";
+import { useLiveMyTasks } from "@/components/my-tasks/use-live-my-tasks";
 import type { CheckedMode } from "@/lib/checklist";
 import type { MyTask } from "@/lib/data";
 import type { QuickAddPerson, QuickAddProject } from "@/lib/quick-add";
@@ -12,8 +13,8 @@ import { Widget, WIDGET_FOOTER_LINK, WidgetTitle } from "./widget";
 // Home's Today (Nov 1 notes, batch 9b, item 65): the My tasks checklist limited to Overdue and Today,
 // checked off in place (the same rows, setting, and Undo as My tasks), with the quick add on top.
 export function TodayCard({
-  open,
-  completed,
+  open: serverOpen,
+  completed: serverCompleted,
   checked,
   workWeek,
   projects,
@@ -33,6 +34,7 @@ export function TodayCard({
   // Open tasks due after today or with no date (what My tasks shows beyond this card).
   laterCount: number;
 }) {
+  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted);
   const list = useChecklist(open, completed, checked, { today, timeZone });
   return (
     <Widget
