@@ -543,29 +543,33 @@ test("the pane (batch 9a): after an approval with More steps, an Editor who isn'
   assert.ok(!/>Mark complete<\/button>/.test(viewer), "a Viewer still can't");
 });
 
-test("the compact approval banner: one row of approvers (locked in), status, and actions; the rest behind Details", () => {
+test("the approval summary (Nov 4 notes, batch 27, 161): one row — status and round, approvers, due, the next step; the rest in a Details dialog", () => {
   const html = render(<ApprovalTaskBanner task={approvalTask("editor", info({ approverIds: ["sam", "lee"] }))} profiles={people} memberId="me" />);
-  const row = html.slice(html.indexOf('data-approval-row=""'), html.indexOf('data-approval-details=""'));
-  assert.match(row, />Approvers</, "the label");
-  assert.match(row, /Sam Approver/);
-  assert.match(row, /Lee Second/);
-  assert.equal(row.match(/data-approver-lock=""/g)?.length, 2, "each approver locked in");
-  assert.match(row, /Not sent/, "the status pill");
-  assert.match(row, /data-approval-headline-sr="">Not sent yet\./, "screen readers get the pill's tooltip while Details is closed");
-  assert.match(row, />Ready for approval<\/button>/, "the viewer's primary action");
-  assert.match(row, /aria-expanded="false"[^>]*>Details/, "Details is closed by default");
-  assert.ok(!/Who decides/.test(row), "how they decide is in Details");
-  assert.match(html, /data-approval-details="" hidden=""|hidden=""[^>]*data-approval-details=""/, "Details starts hidden");
-  assert.match(html, /Who decides/);
-  assert.match(html, /Approval due/);
+  const row = html.slice(html.indexOf('data-approval-row=""'));
+  assert.match(row, /data-approval-pill=""/, "the status pill");
+  assert.match(row, /Not sent/);
+  assert.equal(row.match(/data-approver="/g)?.length, 2, "each approver's face");
+  assert.match(row, /aria-label="Approvers: Sam Approver and Lee Second"|aria-label="Approvers: Sam Approver, Lee Second"/);
+  assert.match(row, /aria-haspopup="dialog"/, "the summary opens Details");
+  assert.match(html, /data-approval-headline="">Not sent yet\./, "screen readers get the headline");
+  assert.match(row, />Ready for approval<\/button>/, "the viewer's next step");
+  assert.ok(!/Who decides/.test(html), "how they decide is in Details");
+  assert.ok(!/data-approval-details=""/.test(html), "Details is closed by default");
+  assert.ok(!/History ·/.test(html), "and so is the history");
 
-  const one = render(<ApprovalTaskBanner task={approvalTask("editor", info())} profiles={people} memberId="me" />);
+  const open = render(<ApprovalTaskBanner task={approvalTask("editor", info({ approverIds: ["sam", "lee"] }))} profiles={people} memberId="me" initialDetailsOpen />);
+  assert.match(open, /role="dialog"/);
+  assert.match(open, /data-approval-details=""/);
+  assert.match(open, /Who decides/);
+  assert.match(open, /Approval due/);
+  assert.match(open, />Change</, "Change approvers");
+
+  const one = render(<ApprovalTaskBanner task={approvalTask("editor", info())} profiles={people} memberId="me" initialDetailsOpen />);
   assert.match(one, />Approver</, "one approver: singular");
 
   const none = render(<ApprovalTaskBanner task={approvalTask("editor", info({ approverIds: [] }))} profiles={people} memberId="me" />);
-  const noneRow = none.slice(none.indexOf('data-approval-row=""'), none.indexOf('data-approval-details=""'));
-  assert.match(noneRow, /No approver yet/);
-  assert.match(noneRow, /Add approver/, "with nobody approving yet, Add approver is right in the row");
+  assert.match(none, /No approver yet/);
+  assert.match(none, /data-approval-finish-setup=""/, "with nobody approving yet, Finish setup is the row's step");
 
   const deciding = render(
     <ApprovalTaskBanner
@@ -574,12 +578,12 @@ test("the compact approval banner: one row of approvers (locked in), status, and
       memberId="me"
     />,
   );
-  const decidingRow = deciding.slice(deciding.indexOf('data-approval-row=""'), deciding.indexOf('data-approval-details=""'));
-  assert.match(decidingRow, /role="group" aria-label="Your decision"/);
-  assert.match(decidingRow, />Approve<\/button>/);
-  assert.match(decidingRow, />Request changes<\/button>/);
-  assert.match(decidingRow, />Reject<\/button>/);
-  assert.match(decidingRow, /aria-label="Waiting"/, "their own request shows as waiting");
+  assert.match(deciding, /role="group" aria-label="Your decision"/);
+  assert.match(deciding, />Approve<\/button>/);
+  assert.match(deciding, />Request changes<\/button>/);
+  assert.match(deciding, />Reject<\/button>/);
+  assert.match(deciding, /aria-label="Waiting"/, "their own request shows as waiting");
+  assert.match(deciding, /Pending approval · Round 1/);
 });
 
 test("seeds and the instant preview know the button too", () => {

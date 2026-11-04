@@ -1,12 +1,14 @@
 // My tasks quick add (Nov 1 notes, batch 9b, item 64): one line, typed like a sentence —
 //   "Draft flu-shot email fri #Fall Campaign @Dana"   "Monthly report every month"   "Water plants every! 3 days"
-// parseQuickAdd() finds a date, a #project, an @person, and a repeat, and returns the name without them
-// plus the parts it understood (shown as chips; a chip's × puts that text back into the name through
+// parseQuickAdd() finds a date, a #project, an @person, and a repeat, and returns the name without the date,
+// project, and repeat (Nov 4 notes, batch 27, 162: an @person stays in the name, written "@<their name>",
+// and is drawn as a chip linking to them; it never assigns the task) plus the parts it understood (shown as chips; a chip's × puts that text back into the name through
 // `ignored`). Pure and dependency-free so the unit tests can pin it. Dates are local days (YYYY-MM-DD).
 
 import { isoDate, parseDateInput, shiftDays, weekdayOf } from "@/lib/date-input";
 import { dateChips } from "@/lib/checklist";
 import type { Frequency } from "@/lib/recurrence";
+import { titleMentionHandle } from "@/lib/title-mentions";
 
 export type QuickAddProject = { id: string; name: string };
 export type QuickAddPerson = { id: string; name: string; email?: string | null };
@@ -231,6 +233,8 @@ export function parseQuickAdd(text: string, ctx: Context): QuickAddParse {
   let at = 0;
   for (const part of out.parts) {
     title += text.slice(at, part.start);
+    // The mention stays, under the person's own name ("@dana" → "@Dana Lee") so it reads the same everywhere.
+    if (part.kind === "person" && out.person) title += `@${titleMentionHandle(out.person)}`;
     at = part.end;
   }
   title += text.slice(at);

@@ -95,6 +95,7 @@ export function MentionTextarea({
   links = false,
   linkRefs,
   people: peopleOn = true,
+  listBelow = false,
   ...props
 }: {
   value: string;
@@ -108,6 +109,8 @@ export function MentionTextarea({
   // Names of the tasks and projects the text already links to (the page's lookup), so they open as chips.
   linkRefs?: CommentRefs | null;
   people?: boolean;
+  // The suggestions open under the box (a box near the top of a scroll area, like the task name).
+  listBelow?: boolean;
 } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "onSubmit">) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
@@ -328,7 +331,10 @@ export function MentionTextarea({
           if (e.key === "Escape" && onCancel) {
             e.preventDefault();
             onCancel();
+            return;
           }
+          // Keys the suggestions didn't take (the task name's Enter saves; Nov 4 notes, batch 27).
+          props.onKeyDown?.(e);
         }}
       />
       {chips ? <LinkChipLayer display={display} textarea={ref} /> : null}
@@ -337,7 +343,7 @@ export function MentionTextarea({
           id={listId}
           role="listbox"
           aria-label={live?.kind === "#" ? "Tasks and projects to link" : "People to mention"}
-          className="absolute bottom-full left-0 z-40 mb-1 max-h-80 w-72 overflow-y-auto rounded-md border border-zinc-200 bg-white py-1 shadow-lg shadow-zinc-900/10"
+          className={`absolute left-0 z-40 max-h-80 ${listBelow ? "top-full mt-1" : "bottom-full mb-1"} w-72 overflow-y-auto rounded-md border border-zinc-200 bg-white py-1 shadow-lg shadow-zinc-900/10`}
         >
           {suggestions.map((item, index) => {
             const heading = item.kind !== "person" && (index === 0 || suggestions[index - 1].kind !== item.kind);

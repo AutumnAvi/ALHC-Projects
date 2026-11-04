@@ -57,6 +57,7 @@ import {
 } from "@/lib/column-widths";
 import type { Profile, ProjectTask, ProjectTaskGroupPage, Section, SubtaskItem } from "@/lib/data";
 import { displayTaskTitle, type RequestLabel } from "@/lib/request-numbers";
+import { TaskTitleText } from "@/components/task/title-text";
 import { OPTION_COLOR_CLASSES, fieldLockManageable, fieldLockedFor, type FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";
 import {
@@ -1282,7 +1283,7 @@ function TaskTitle({
         className={`min-w-0 truncate text-sm hover:underline ${tone}`}
       >
         {prefix}
-        {displayTaskTitle(task.title, task.requestLabel)}
+        <TaskTitleText title={displayTaskTitle(task.title, task.requestLabel)} nested />
       </TaskLink>
     );
   }
@@ -1321,7 +1322,7 @@ function TaskTitle({
       className={`-mx-1 min-w-0 truncate rounded px-1 text-left text-sm ring-zinc-200 group-hover:ring-1 hover:ring-zinc-300 ${tone}`}
     >
       {prefix}
-      {displayTaskTitle(task.title, task.requestLabel)}
+      <TaskTitleText title={displayTaskTitle(task.title, task.requestLabel)} nested />
     </button>
   );
 }

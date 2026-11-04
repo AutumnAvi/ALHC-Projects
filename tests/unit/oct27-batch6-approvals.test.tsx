@@ -21,6 +21,7 @@ import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
 import {
   ApprovalDecisionForm,
+  ApprovalFeedback,
   ApprovalTaskBanner,
   approvedOutcome,
   canActOnApproval,
@@ -173,7 +174,9 @@ function approvalTask(viewerRole: ProjectRole, approval: TaskApprovalInfo | null
   };
 }
 
-const banner = (task: TaskDetail) => render(<ApprovalTaskBanner task={task} profiles={people} memberId="me" />);
+// Nov 4 notes (batch 27, 161): the row plus its Details dialog (open), and the feedback pills.
+const banner = (task: TaskDetail) => render(<ApprovalTaskBanner task={task} profiles={people} memberId="me" initialDetailsOpen />);
+const feedback = (task: TaskDetail) => render(<ApprovalFeedback task={task} profiles={people} memberId="me" />);
 const button = (html: string, label: string) => new RegExp(`<button[^>]*>(?:<svg[^>]*>.*?</svg>)?${label}</button>`).test(html);
 
 // ---------------------------------------------------------------------------------------------
@@ -202,7 +205,7 @@ test("not sent: the assignee (or an Editor) gets Ready for approval; Viewers onl
 
   const noApprover = banner(approvalTask("editor", info({ approverIds: [] })));
   assert.match(noApprover, /Choose who approves this, then send it with Ready for approval\./);
-  assert.match(noApprover, /data-tooltip="Choose an approver first"/);
+  assert.match(noApprover, /data-approval-finish-setup=""/, "the next step is the guided setup");
   assert.match(noApprover, /Add approver/);
 });
 
@@ -214,17 +217,12 @@ test("pending: an approver sees Approve / Request changes / Reject and Hand off;
   assert.match(approver, /data-approval-status="pending"/);
   assert.match(approver, /Waiting on you to approve\./);
   assert.match(approver, /Your decision/);
-  // Nov 2 notes (batch 15, 114): a round with files is decided file by file in the task (Approve / feedback
-  // on each, Submit once all are reviewed); Reject stays in the row.
+  // Nov 2 notes (batch 15, 114): a round with files is decided file by file; since Nov 4 notes (batch 27,
+  // 161) the row's next step is Open review (the full-screen review in the app); Reject stays in the row.
   assert.ok(button(approver, "Reject"));
   assert.ok(!button(approver, "Approve"), "files are approved one by one, not with one button");
-  assert.match(approver, /data-approver-review="compact"/);
-  assert.match(approver, /Review the files/);
-  assert.match(approver, /0 of 1 reviewed/);
-  assert.match(approver, /Open review page/);
-  assert.match(approver, /href="\/approve\/t1"/);
-  assert.match(approver, /Approve or add feedback to 1 more file to submit\./, "Submit waits for every file");
-  assert.match(approver, /<button[^>]*disabled=""[^>]*>Submit review<\/button>/);
+  assert.match(approver, /data-approval-open-review=""/);
+  assert.match(approver, />Open review<\/button>/);
   const textOnly = banner(
     approvalTask("commenter", info({ approverIds: ["me"], status: "pending", waitingOnMe: true, rounds: [round({ attachmentIds: [], requests: [request({ id: "req-me", approverId: "me" })] })] })),
   );
@@ -267,8 +265,11 @@ test("changes requested / rejected: paused until the assignee marks it received,
   assert.match(paused, /data-approval-paused="true"/);
   assert.match(paused, /Paused/);
   assert.match(paused, /Sam Approver requested changes\. Paused until you mark the feedback received\./);
-  assert.match(paused, /data-approval-decision-note=""/);
-  assert.match(paused, /Make the logo bigger/);
+  // Nov 4 notes (batch 27, 161): the note is a pill next to the files, amber for changes requested.
+  const pausedFeedback = feedback(approvalTask("commenter", info({ status: "changes_requested", paused: true, rounds: [changes] }), { assigneeId: "me" }));
+  assert.match(pausedFeedback, /data-feedback-pill="changes_requested"/);
+  assert.match(pausedFeedback, /Make the logo bigger/);
+  assert.match(paused, /1 note ↓/, "the row points to it");
   assert.ok(button(paused, "Feedback received"));
   assert.ok(!button(paused, "Ready for approval"), "not until the feedback is marked received");
 
@@ -289,6 +290,11 @@ test("changes requested / rejected: paused until the assignee marks it received,
   assert.ok(button(rejected, "Rejection received"));
   assert.match(rejected, /Sam Approver rejected this\./);
   assert.match(rejected, /Off brand/);
+  assert.match(
+    feedback(approvalTask("editor", info({ status: "rejected", paused: true, rounds: [round({ status: "rejected", decidedBy: "sam", requests: [request({ status: "rejected", decisionNote: "Off brand" })] })] }))),
+    /data-feedback-pill="rejected"/,
+    "rejected: a red pill",
+  );
 
   const acknowledged = banner(
     approvalTask("commenter", info({ status: "changes_requested", paused: false, rounds: [{ ...changes, acknowledgedAt: "2026-10-22T00:00:00Z" }] }), {

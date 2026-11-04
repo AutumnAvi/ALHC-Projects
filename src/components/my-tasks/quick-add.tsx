@@ -26,6 +26,7 @@ const MAX_SUGGESTIONS = 6;
 // can add tasks) or people; the parts it understood show as chips under the box (× keeps that text in
 // the name). Enter adds it; the list refreshes with the new task in its date group. Tab then Q focuses it.
 // Nov 3 notes (batch 18, 134): the task is always yours; an @person is added as a follower, not the assignee.
+// Nov 4 notes (batch 27, 162): and the @person stays in the name as a mention (a chip linking to them).
 // Nov 3 notes (batch 19, video 34.12 / 34.13): the box never locks while an earlier add is saving (it did,
 // so a second task typed straight after the first was lost while the first one's toast still showed), each
 // Enter saves on its own, and the new task shows in its group at once as a pending row (with its date,
@@ -197,7 +198,7 @@ export function QuickAddBar({
         ) : null}
       </div>
       <p id={`${id}-hint`} className="sr-only">
-        Type a date like tomorrow or fri, # and a project, @ and a person to add as a follower, or every week. Enter adds the task, assigned to you.
+        Type a date like tomorrow or fri, # and a project, @ and a person to mention them in the name (and add them as a follower on a project task), or every week. Enter adds the task, assigned to you.
       </p>
 
       {listOpen ? (
@@ -252,7 +253,7 @@ export function QuickAddBar({
 function chipLabel(part: QuickAddPart, parsed: NonNullable<ReturnType<typeof parseQuickAdd>>, today: string | null): string {
   if (part.kind === "date") return parsed.dueOn && today ? `Due ${checklistDueLabel(parsed.dueOn, today)}` : part.text;
   if (part.kind === "project") return parsed.project?.name ?? part.text;
-  if (part.kind === "person") return `Follower: ${parsed.person?.name ?? part.text}`;
+  if (part.kind === "person") return `Mentions ${parsed.person?.name ?? part.text}`;
   return parsed.repeat ? describeRepeat(parsed.repeat) : part.text;
 }
 
@@ -267,8 +268,8 @@ function PartChip({ part, label, onIgnore }: { part: QuickAddPart; label: string
       <button
         type="button"
         onClick={onIgnore}
-        aria-label={`Keep “${part.text}” in the task name instead`}
-        data-tooltip="Keep this text in the name"
+        aria-label={part.kind === "person" ? `Keep “${part.text}” as plain text, not a mention` : `Keep “${part.text}” in the task name instead`}
+        data-tooltip={part.kind === "person" ? "Plain text, not a mention" : "Keep this text in the name"}
         className="inline-flex size-5 items-center justify-center rounded-full text-accent-600 hover:bg-accent-100"
       >
         <X className="size-3" aria-hidden />
