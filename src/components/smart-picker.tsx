@@ -52,6 +52,8 @@ type CommonProps = {
   emptyText?: string;
   // Width of the list (at least the button's width).
   panelWidth?: number;
+  // Option labels wrap onto more lines instead of being cut off with "…" (short lists of long names).
+  wrapLabels?: boolean;
   // Shown under the options (a note or a link, e.g. where to turn a greyed-out option on).
   footer?: ReactNode;
   // Submitted with a surrounding <form> under this name (a hidden input; several values for multiple).
@@ -110,6 +112,7 @@ export function SmartPicker(props: SingleProps | MultiProps) {
     className = "",
     emptyText = "Nothing matches",
     panelWidth = 300,
+    wrapLabels = false,
     footer,
     name,
   } = props;
@@ -436,7 +439,7 @@ export function SmartPicker(props: SingleProps | MultiProps) {
                             </span>
                           ) : null}
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate font-medium text-zinc-900">{option.label}</span>
+                            <span className={`block font-medium text-zinc-900 ${wrapLabels ? "whitespace-normal break-words" : "truncate"}`}>{option.label}</span>
                             {note ? <span className="block text-xs leading-snug text-zinc-500">{note}</span> : null}
                           </span>
                           {isSelected ? <Check className="mt-0.5 size-4 shrink-0 text-accent-600" aria-hidden /> : null}

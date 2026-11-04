@@ -10,6 +10,7 @@ import {
   getProjectRole,
   getWorkspace,
   hasBatch4Schema,
+  hasMyTaskRulesV2,
   listFieldLibrary,
   listMyProjectRoles,
   listProjectFieldSharing,
@@ -91,6 +92,7 @@ import {
   type FormQuestion,
 } from "@/lib/forms";
 import { ruleProblems, type RuleStep, type RuleSystem } from "@/lib/rule-params";
+import { MY_TASK_TRIGGERS, myTaskTriggerToDb, needsMyTaskV2 } from "@/lib/my-task-rules";
 import { branchProblem, isTriggerType, runReason, splitBranches, type RuleAction, type RuleCondition } from "@/lib/rules";
 import { parseRuleTestResult, type RuleTestResult } from "@/lib/rule-steps";
 import { isPortfolioTrigger } from "@/lib/portfolio-rules";
@@ -7307,16 +7309,24 @@ export type MyTaskRuleInput = {
   timeZone?: string;
 };
 
-function myTaskRuleRow(input: MyTaskRuleInput) {
-  if (!["assigned", "due_approaching", "task_overdue"].includes(input.triggerType)) throw new InputError("Choose a trigger");
+async function myTaskRuleRow(input: MyTaskRuleInput) {
+  if (!MY_TASK_TRIGGERS.some((t) => t.value === input.triggerType)) throw new InputError("Choose a trigger");
   if (!Array.isArray(input.actions) || input.actions.length === 0) throw new InputError("Add at least one action");
   checkRuleSteps(input, "my_tasks");
-  const triggerConfig: Record<string, Json> = { ...(input.triggerConfig ?? {}) };
+  // Nov 4 notes (batch 20, 149): the wider vocabulary only once the database takes it (an older database would
+  // run an event trigger as "a task is assigned to me").
+  const usesV2 =
+    needsMyTaskV2("trigger", input.triggerType) ||
+    (input.conditions ?? []).some((c) => typeof c.type === "string" && needsMyTaskV2("condition", c.type)) ||
+    input.actions.some((a) => typeof a.type === "string" && needsMyTaskV2("action", a.type));
+  if (usesV2 && !(await hasMyTaskRulesV2())) throw new InputError("That step needs this release’s database update");
+  const stored = myTaskTriggerToDb(input.triggerType, input.triggerConfig ?? {});
+  const triggerConfig: Record<string, Json> = { ...stored.triggerConfig };
   if (input.timeZone && input.timeZone.length <= 64) triggerConfig.timezone = input.timeZone;
   return {
     name: text(input.name, "Automation name", { max: 200 }),
     enabled: Boolean(input.enabled),
-    trigger_type: input.triggerType,
+    trigger_type: stored.triggerType,
     trigger_config: triggerConfig,
     conditions: Array.isArray(input.conditions) ? input.conditions : [],
     actions: Array.isArray(input.actions) ? input.actions : [],
@@ -7332,11 +7342,11 @@ export async function saveMyTaskRule(ruleId: string | null, input: MyTaskRuleInp
   return run(async () => {
     const supabase = await createClient();
     if (ruleId) {
-      const updated = await supabase.from("my_task_rules").update(myTaskRuleRow(input)).eq("id", id(ruleId, "rule")).select("id");
+      const updated = await supabase.from("my_task_rules").update(await myTaskRuleRow(input)).eq("id", id(ruleId, "rule")).select("id");
       myTaskRuleError(updated);
       checkUpdated(updated, "That isn’t one of your automations");
     } else {
-      myTaskRuleError(await supabase.from("my_task_rules").insert(myTaskRuleRow(input)));
+      myTaskRuleError(await supabase.from("my_task_rules").insert(await myTaskRuleRow(input)));
     }
   });
 }

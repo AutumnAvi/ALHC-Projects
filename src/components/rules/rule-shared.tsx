@@ -92,6 +92,10 @@ export type RuleContext = {
   // projects they can open ("Is in project"; falls back to otherProjects).
   viewerId?: string | null;
   readableProjects?: { id: string; name: string }[];
+  // Nov 4 notes (batch 20, 150): the viewer's own workdays (null = not set) and whether the project has no
+  // member but its owner (business-day steps then count "my workdays" by default).
+  personalWorkWeek?: number[] | null;
+  personalProject?: boolean;
 };
 
 // The tag vocabulary, hidden from the pickers while tags are switched off (Admin console → Tags). A

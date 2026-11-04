@@ -5,6 +5,10 @@
 //               organization's when they haven't set any;
 //   left out    personal on My Tasks automations and on a project only its owner is in, the organization's
 //               on shared projects and portfolios.
+// Nov 4 notes (batch 20, 150): the picker offers just the two choices, each with its actual days; a step that
+// leaves it out shows the default for where the automation lives as the chosen one.
+
+import { normalizeWorkWeek, shortWorkWeek } from "@/lib/workdays";
 
 export type WorkdaysChoice = "org" | "personal";
 export type WorkdaysScope = "project" | "portfolio" | "my_tasks";
@@ -12,18 +16,37 @@ export type WorkdaysScope = "project" | "portfolio" | "my_tasks";
 export const workdaysChoiceOf = (value: unknown): WorkdaysChoice | null =>
   value === "org" || value === "personal" ? value : null;
 
-export function WORKDAYS_CHOICES(scope: WorkdaysScope): { value: "" | WorkdaysChoice; label: string; description: string }[] {
-  const own = scope === "my_tasks" ? "My own workdays" : "The owner’s own workdays";
-  const fallback =
-    scope === "my_tasks"
-      ? "Your own workdays (Settings → Profile), or the organization’s if you haven’t set any."
-      : scope === "portfolio"
-        ? "The organization’s workdays."
-        : "The owner’s own on a project only they're in, the organization’s on a shared project.";
+// Where the automation lives decides the default: mine on My Tasks and on a project only its owner is in,
+// the organization's on shared projects and portfolios.
+export function defaultWorkdaysChoice(scope: WorkdaysScope, personalProject = false): WorkdaysChoice {
+  return scope === "my_tasks" || (scope === "project" && personalProject) ? "personal" : "org";
+}
+
+// The choice a step counts: its own, else the default.
+export function effectiveWorkdaysChoice(value: unknown, scope: WorkdaysScope, personalProject = false): WorkdaysChoice {
+  return workdaysChoiceOf(value) ?? defaultWorkdaysChoice(scope, personalProject);
+}
+
+export function WORKDAYS_CHOICES(
+  scope: WorkdaysScope,
+  { orgWeek, ownWeek }: { orgWeek: readonly number[]; ownWeek?: readonly number[] | null },
+): { value: WorkdaysChoice; label: string; description: string }[] {
+  const org = shortWorkWeek(normalizeWorkWeek([...orgWeek]));
+  const own = ownWeek && ownWeek.length ? shortWorkWeek(normalizeWorkWeek([...ownWeek])) : null;
+  const whose = scope === "my_tasks" ? "Yours" : "The automation owner’s";
   return [
-    { value: "", label: "Default workdays", description: fallback },
-    { value: "org", label: "The organization’s workdays", description: "Set by workspace admins in Admin console → Organization." },
-    { value: "personal", label: own, description: "Set in Settings → Profile → My workdays (the organization’s if none are set)." },
+    {
+      value: "org",
+      label: `Organization workdays (${org})`,
+      description: "Set by workspace admins in Admin console → Organization.",
+    },
+    {
+      value: "personal",
+      label: `My workdays (${own ?? org})`,
+      description: own
+        ? `${whose}, from Settings → Profile → My workdays.`
+        : `You haven’t set your own yet, so this is the organization’s (Settings → Profile → My workdays).`,
+    },
   ];
 }
 
@@ -34,6 +57,6 @@ export function workdaysFor(
   scope: WorkdaysScope,
   { personalProject, orgWeek, ownWeek }: { personalProject: boolean; orgWeek: readonly number[]; ownWeek: readonly number[] | null },
 ): readonly number[] {
-  const picked = workdaysChoiceOf(choice) ?? (scope === "my_tasks" || (scope === "project" && personalProject) ? "personal" : "org");
+  const picked = effectiveWorkdaysChoice(choice, scope, personalProject);
   return picked === "personal" ? (ownWeek ?? orgWeek) : orgWeek;
 }

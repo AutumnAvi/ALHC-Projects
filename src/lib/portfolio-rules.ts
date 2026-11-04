@@ -118,6 +118,8 @@ export type PortfolioRuleContext = {
   // The portfolio's projects the viewer can open (manual runs).
   projects: { id: string; name: string }[];
   workWeek?: number[];
+  // Nov 4 notes (batch 20, 150): the viewer's own workdays (null = not set).
+  personalWorkWeek?: number[] | null;
 };
 
 function record(value: Json | undefined): Record<string, Json> {

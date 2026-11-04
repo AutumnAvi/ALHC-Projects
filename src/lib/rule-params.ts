@@ -438,22 +438,72 @@ export const MY_TASK_TRIGGER_PARAMS: Record<MyTaskTrigger, RuleParam[]> = {
   assigned: [],
   due_approaching: [DAYS_BEFORE],
   task_overdue: [DAYS_AFTER],
+  // Nov 4 notes (batch 20, 149).
+  start_approaching: [DAYS_BEFORE],
+  comment_added: [],
+  attachment_added: [],
+  task_completed: [],
+  task_reopened: [],
+  subtasks_completed: [],
+  tag_added: [{ ...TAG, ask: "Choose a tag (or any tag)", required: false }],
+  due_date_changed: [],
+  start_date_changed: [],
 };
 
+const MY_PROJECTS: RuleParam = { key: "project_ids", editor: "project", ask: "Choose projects", required: true };
+
 export const MY_TASK_CONDITION_PARAMS: Record<MyTaskCondition, RuleParam[]> = {
-  in_project: [{ key: "project_ids", editor: "project", ask: "Choose projects", required: true }],
-  not_in_project: [{ key: "project_ids", editor: "project", ask: "Choose projects", required: true }],
+  in_project: [MY_PROJECTS],
+  not_in_project: [MY_PROJECTS],
   has_due_date: [],
   no_due_date: [],
   due_within: [DAYS],
   task_type_is: [KIND],
   is_private: [],
+  // Nov 4 notes (batch 20, 149).
+  is_not_private: [],
+  task_type_is_not: [KIND],
+  title_contains: [{ key: "text", editor: "text", ask: "Enter some text", required: true }],
+  has_open_subtasks: [],
+  all_subtasks_done: [],
+  has_attachment: [],
+  no_attachment: [],
+  is_blocked: [],
+  is_not_blocked: [],
+  has_tag: [TAG],
+  lacks_tag: [TAG],
+  created_by_me: [],
+  not_created_by_me: [],
+  has_comment: [],
+  no_comment: [],
+  is_overdue: [],
+  has_start_date: [],
+  no_start_date: [],
+  start_within: [DAYS],
 };
 
 export const MY_TASK_ACTION_PARAMS: Record<MyTaskAction, RuleParam[]> = {
   move_to_section: [{ ...SECTION, ask: "Choose one of your sections" }],
   set_due_date: [DAYS],
   complete_task: [],
+  // Nov 4 notes (batch 20, 149).
+  set_start_date: [DAYS],
+  reopen_task: [],
+  add_comment: [{ key: "body", editor: "text", ask: "Write the comment", required: true }],
+  set_title: [{ key: "title", editor: "text", ask: "Write the new name", required: true }],
+  set_task_type: [{ key: "kind", editor: "choice", ask: "Choose a task type", required: true, options: TASK_KIND_OPTIONS.filter((o) => o.value !== "approval") }],
+  add_tag: [TAG],
+  remove_tag: [TAG],
+  add_followers: [{ ...PEOPLE, ask: "Choose followers" }],
+  remove_followers: [{ ...PEOPLE, ask: "Choose who stops following" }],
+  set_assignee: [{ key: "assignee", editor: "person", ask: "Choose who to hand it to", required: true }],
+  create_subtasks: [
+    { key: "titles", editor: "titles", ask: "Name at least one subtask", required: true, check: (v) => (Array.isArray(v) && v.length > 20 ? "Up to 20 subtasks" : null) },
+  ],
+  add_to_project: [
+    { key: "project_id", editor: "project", ask: "Choose a project", required: true },
+    { key: "section_id", editor: "section", ask: "Choose a section", when: (s) => Boolean(s.project_id) },
+  ],
 };
 
 // ---------------------------------------------------------------------------------------------
