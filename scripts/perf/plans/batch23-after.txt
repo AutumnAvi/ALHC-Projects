@@ -1,0 +1,104 @@
+-- comments of task 1 (5,005 rows)
+                                                           QUERY PLAN                                                           
+--------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on comments (actual time=6.526..7.647 rows=5005 loops=1)
+   Recheck Cond: (task_id = 'c1000000-0000-4000-8000-000000000001'::uuid)
+   Filter: ((ANY (task_id = (hashed SubPlan 6).col1)) OR (SubPlan 7))
+   Heap Blocks: exact=72
+   Buffers: shared hit=925
+   ->  Bitmap Index Scan on comments_task_timeline_idx (actual time=0.356..0.356 rows=5005 loops=1)
+         Index Cond: (task_id = 'c1000000-0000-4000-8000-000000000001'::uuid)
+         Buffers: shared hit=66
+   SubPlan 6
+     ->  Seq Scan on task_projects tp_rls (actual time=2.031..4.478 rows=10000 loops=1)
+           Filter: ((deleted_at IS NULL) AND (project_id = ANY ((InitPlan 5).col1)) AND (project_id = ANY ((InitPlan 4).col1)))
+           Buffers: shared hit=787
+           InitPlan 4
+             ->  Result (actual time=0.806..0.806 rows=1 loops=1)
+                   Buffers: shared hit=201
+           InitPlan 5
+             ->  Result (actual time=1.201..1.202 rows=1 loops=1)
+                   Buffers: shared hit=462
+   SubPlan 7
+     ->  Result (never executed)
+ Planning:
+   Buffers: shared hit=396
+ Planning Time: 0.957 ms
+ Execution Time: 7.950 ms
+(24 rows)
+
+-- every readable inbox item (2,000)
+                                                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual time=4.786..4.791 rows=1 loops=1)
+   Buffers: shared hit=164
+   InitPlan 1
+     ->  Result (actual time=0.003..0.004 rows=1 loops=1)
+   InitPlan 27
+     ->  Result (never executed)
+   ->  Seq Scan on inbox_items (actual time=4.147..4.697 rows=2000 loops=1)
+         Filter: ((recipient_id = (InitPlan 1).col1) AND (((task_id IS NOT NULL) AND ((ANY (task_id = (hashed SubPlan 7).col1)) OR (SubPlan 8))) OR ((task_id IS NULL) AND (ANY (message_id = (hashed SubPlan 14).col1))) OR ((task_id IS NULL) AND EXISTS(SubPlan 17)) OR ((task_id IS NULL) AND (ANY (status_update_id = (hashed SubPlan 26).col1))) OR ((task_id IS NULL) AND (project_id IS NOT NULL) AND (project_id = ANY ((InitPlan 27).col1)))))
+         Buffers: shared hit=164
+         SubPlan 7
+           ->  Seq Scan on task_projects tp_rls (actual time=0.771..2.581 rows=10000 loops=1)
+                 Filter: ((deleted_at IS NULL) AND (project_id = ANY ((InitPlan 6).col1)) AND (project_id = ANY ((InitPlan 5).col1)))
+                 Buffers: shared hit=131
+                 InitPlan 5
+                   ->  Result (actual time=0.403..0.404 rows=1 loops=1)
+                         Buffers: shared hit=4
+                 InitPlan 6
+                   ->  Result (actual time=0.361..0.362 rows=1 loops=1)
+                         Buffers: shared hit=3
+         SubPlan 8
+           ->  Result (never executed)
+         SubPlan 14
+           ->  Seq Scan on project_messages m (never executed)
+                 Filter: ((project_id = ANY ((InitPlan 13).col1)) AND (project_id = ANY ((InitPlan 12).col1)))
+                 InitPlan 12
+                   ->  Result (never executed)
+                 InitPlan 13
+                   ->  Result (never executed)
+         SubPlan 17
+           ->  Seq Scan on team_messages m_1 (never executed)
+                 Filter: ((id = inbox_items.team_message_id) AND (SubPlan 16) AND (SubPlan 15))
+                 SubPlan 16
+                   ->  Result (never executed)
+                 SubPlan 15
+                   ->  Result (never executed)
+         SubPlan 26
+           ->  Seq Scan on project_status_updates u (never executed)
+                 Filter: ((project_id = ANY ((InitPlan 25).col1)) AND (project_id = ANY ((InitPlan 24).col1)))
+                 InitPlan 24
+                   ->  Result (never executed)
+                 InitPlan 25
+                   ->  Result (never executed)
+ Planning:
+   Buffers: shared hit=416
+ Planning Time: 0.930 ms
+ Execution Time: 4.859 ms
+(46 rows)
+
+-- task field values
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Aggregate (actual time=1.021..1.022 rows=1 loops=1)
+   Buffers: shared hit=12
+   ->  Seq Scan on task_field_values (actual time=0.953..1.007 rows=200 loops=1)
+         Filter: (ANY (field_id = (hashed SubPlan 6).col1))
+         Buffers: shared hit=12
+         SubPlan 6
+           ->  Seq Scan on custom_fields cf_rls (actual time=0.942..0.943 rows=1 loops=1)
+                 Filter: ((project_id = ANY ((InitPlan 5).col1)) AND (project_id = ANY ((InitPlan 4).col1)))
+                 Buffers: shared hit=9
+                 InitPlan 4
+                   ->  Result (actual time=0.434..0.435 rows=1 loops=1)
+                         Buffers: shared hit=4
+                 InitPlan 5
+                   ->  Result (actual time=0.494..0.495 rows=1 loops=1)
+                         Buffers: shared hit=4
+ Planning:
+   Buffers: shared hit=144
+ Planning Time: 0.321 ms
+ Execution Time: 1.049 ms
+(19 rows)
+

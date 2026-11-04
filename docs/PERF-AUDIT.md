@@ -209,6 +209,31 @@ My tasks and Home stay near a second on this seed because one read inside them, 
 
 **Left as separate calls.** `my_tasks_layout()` and the sections read after it (it writes — seeds sections, places new tasks — and a STABLE loader can't call it); the List's subtask trees (they depend on which rows are open); in the pane, `listTeams` (mention teams), `listMyProjectRoles`, and the third wave that depends on the comments (names of linked tasks / projects, automation projects, subtask labels); each project tab's own reads (Overview's status updates, stories, roles, goals). The `/api/task-pane` route asks `viewer_member` twice because React's per-request cache doesn't apply in route handlers (it asked `is_allowlisted` twice before too).
 
+## Nov 4 notes (batch 23, M2): per-query permission checks
+
+The infra review: RLS policies called `has_project_role` / `has_task_role` / `has_portfolio_role` / `custom_field_has_role` for each row they looked at — nested SECURITY DEFINER functions with their own `search_path`, ~0.2–0.5 ms a row — so any read of thousands of rows waited seconds. Batch 18 fixed `tasks`, `task_projects`, and `rule_runs`; `20261104040000_nov4_batch23_a.sql` does the same for the other 152 policies that called them (every table with project, task, or portfolio data).
+
+**How it was measured.** Local Postgres 17 with every migration plus `scripts/perf/seed.sql` + `seed-pane.sql` (1 project, 10,000 tasks, 50,000 comments with 5,005 on task 1, 1,700 open tasks assigned to the seed person, 2,000 inbox items, 60 subtasks), `vacuum analyze`, then each query as `perf-seed@example.com` (`set role authenticated`, RLS on): the median of 3 warm runs. DB time only. Before = this database without the migration; after = with it. Plans: `scripts/perf/plans/batch23-before.txt` / `batch23-after.txt`.
+
+| Query (where the app reads it) | Before (ms) | After (ms) |
+| --- | ---: | ---: |
+| Comments of a task with 5,005 comments (the pane's comment page and counts) | 2,295 | **4.1** |
+| Every readable comment (50,000; comment counts, search) | 22,204 | **9.5** |
+| Every readable inbox item (2,000; the Inbox, the unread badge) | 881 | **3.1** |
+| Task field values (List cells, CSV, the pane) | 31.6 | **0.5** |
+| Tasks (10,060) | 27.5 | **2.8** |
+| Subtasks (60) | 25.4 | **0.8** |
+| Bulk update of 1,730 tasks (`tasks_update_editor`, rolled back) | 1,752 | **296** |
+| Task stories / followers on the 60 subtasks | 26.9 / 27.7 | 26.7 / 26.5 (subtasks still use `has_task_role`) |
+| `open_blocker_counts`, 1,700 tasks (My tasks, Home) | 708 | 727 (its own query, not a policy; unchanged) |
+| `task_pane_rows` (the pane in one call) | 7.8 / 9.2 | 9.9 / 9.8 (a re-planned SQL function: larger policies cost ~2 ms of planning) |
+
+**What changed.** `project_ids_with_role(role)` / `portfolio_ids_with_role(role)` (the caller's projects / portfolios at a role, an InitPlan computed once per statement) replace the per-row helpers wherever a policy used them; `has_task_role` stays as the last word behind an indexed check of the task's own active membership (index-only on the new `task_projects_task_project_active_idx`), which answers for every top-level task in a project the caller can read. In the plans the per-row `SubPlan 1` (0.5 ms × 5,005 loops, 201,553 buffers) becomes one hashed set of the caller's memberships (925 buffers).
+
+**Same rows.** `zz53` evaluates every rewritten policy's old and new expression (USING and WITH CHECK) on every row of its table for 16 people with different kinds of access, and checks the sets against the helpers; on a database with every smoke suite's data, what each of 228 people (and someone signed out) reads from each of the 108 policy tables — row count and an md5 of the rows — was identical before and after.
+
+**Tried and left out.** A second check for subtasks (the top-level task's membership, read through `tasks`' own policy) took subtask stories / followers from 27 to 4.5 ms, but it put the whole `tasks` policy into every child policy: the task pane's SQL function (re-planned on every call) went from 9 to 16 ms. Not worth it while subtasks are few; a cheaper subtask check needs either a plan-cached pane function or a stored root on child rows.
+
 ## Deferred
 
 Deferred: none.

@@ -605,6 +605,8 @@ begin
   -- Nov 3 notes (batch 18) added viewer_project_ids and viewer_rule_ids (used inside the tasks,
   -- task_projects, and rule_runs read policies: the caller's own readable projects / automations, once
   -- per statement instead of a role check per row).
+  -- Nov 4 notes (batch 23) added project_ids_with_role and portfolio_ids_with_role (the same for every
+  -- other policy: the caller's projects / portfolios at a role, once per statement).
   assert exposed =
     'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
     'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
@@ -613,7 +615,7 @@ begin
     'has_project_role,has_task_role,home_dashboard,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,'
     'is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,'
     'list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,locked_field_value_writable,manage_slack_workspace,move_portfolio_project,my_task_cards,my_tasks_layout,open_blocker_count,'
-    'portfolio_hidden_project_count,portfolio_role,profile_can_read_task,project_access_status,project_field_sharing,project_role,project_schedule_cards,project_section_task_counts,'
+    'portfolio_hidden_project_count,portfolio_ids_with_role,portfolio_role,profile_can_read_task,project_access_status,project_field_sharing,project_ids_with_role,project_role,project_schedule_cards,project_section_task_counts,'
     'project_task_card_page,project_task_cards,receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,'
     'remove_workspace_admin,remove_workspace_member,request_approval,request_project_access,request_team_join,resend_workspace_invite,restore_task,resubmit_approval,'
     'retry_email_delivery,retry_integration_delivery,rotate_review_check_token,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,send_for_approval,'

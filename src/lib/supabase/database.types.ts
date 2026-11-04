@@ -6553,6 +6553,10 @@ export type Database = {
         Args: { target_portfolio: string };
         Returns: number;
       };
+      portfolio_ids_with_role: {
+        Args: { min_role: string };
+        Returns: string[];
+      };
       portfolio_report: {
         Args: { target_portfolio: string; group_by?: string; tz?: string };
         Returns: {
@@ -6571,6 +6575,10 @@ export type Database = {
       project_metrics: {
         Args: { target_project: string; filters?: Json; group_by?: string; tz?: string };
         Returns: { bucket: string | null; task_count: number }[];
+      };
+      project_ids_with_role: {
+        Args: { min_role: string };
+        Returns: string[];
       };
       project_role: {
         Args: { target_project: string };
