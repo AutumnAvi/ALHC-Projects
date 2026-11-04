@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { SmartPicker } from "@/components/smart-picker";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile, Section } from "@/lib/data";

@@ -5,7 +5,7 @@
 // own Supabase client (cookies), never the service role, so RLS decides what comes back: no task or
 // project the person can't open is ever returned, workspace admins included.
 
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { bareTaskTitle, numbersOf } from "@/lib/request-numbers";
 import { getViewer } from "@/lib/auth";
 import {

@@ -22,7 +22,8 @@ import {
 import { Dialog } from "@/components/dialog";
 import { APPROVAL_STATUS_LABELS } from "@/lib/task-kinds";
 import { feedbackSnippet, feedbackSubtaskText, roundFeedback, shortFileName, type FeedbackTone } from "@/lib/approval-feedback";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";

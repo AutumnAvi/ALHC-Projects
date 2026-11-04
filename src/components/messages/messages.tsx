@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Bell, BellOff, ChevronLeft, MessagesSquare, Pencil, Trash2 } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { MentionTextarea } from "@/components/task/mention-textarea";

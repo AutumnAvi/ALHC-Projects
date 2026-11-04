@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Compass, Plus } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { BrowseProjectsTable } from "@/components/projects/browse-projects-table";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { PageHeader } from "@/components/ui";

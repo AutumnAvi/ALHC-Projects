@@ -4,7 +4,7 @@ import type { Tag } from "@/lib/tags";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useRef, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
 import { Inbox, Keyboard, Route, Spline } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import {

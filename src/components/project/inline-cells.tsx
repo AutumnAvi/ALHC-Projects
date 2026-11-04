@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useOptimistic, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronRight, X } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { MenuItem, Popover } from "@/components/popover";
 import { PILL } from "@/components/project/field-chips";
 import { Assignee, EmptyCellHint } from "@/components/project/task-meta";

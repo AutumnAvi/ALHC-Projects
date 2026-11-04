@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";

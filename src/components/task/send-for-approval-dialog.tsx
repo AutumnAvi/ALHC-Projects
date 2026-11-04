@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import { AlertCircle, Copy, Loader2, Upload, X } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { Dialog } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { ImageLightbox } from "@/components/task/task-attachments";

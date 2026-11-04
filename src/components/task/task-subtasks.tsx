@@ -2,7 +2,8 @@
 
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, Lock, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { RowCompleteControl } from "./row-complete-control";

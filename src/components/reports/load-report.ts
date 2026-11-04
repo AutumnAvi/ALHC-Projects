@@ -1,5 +1,5 @@
 import "server-only";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import type { BarDatum } from "@/components/dashboard/bar-chart";
 import type { OverdueRow } from "@/components/reports/report-blocks";
 import { allProjectsReport, listProfiles, listSectionLabels, listVisibleTags, reportOverdueTasks, type OverdueTask, type ReportRow } from "@/lib/data";

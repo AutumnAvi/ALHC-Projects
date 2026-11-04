@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { ArrowRight, CalendarClock, ShieldCheck } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { describeInboxItem, inboxItemHref } from "@/components/inbox/inbox-card";
 import { useTaskHref } from "@/components/project/shared";
 import { TaskLink } from "@/components/task/task-link";

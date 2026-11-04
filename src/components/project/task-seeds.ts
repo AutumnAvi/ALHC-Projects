@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useProjectPermissions } from "@/components/project/project-access";
 import type { Profile, ProjectTask, Section, SubtaskItem } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";

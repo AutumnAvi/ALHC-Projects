@@ -1,5 +1,5 @@
 import "server-only";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import type { Profile } from "@/lib/data";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { isIsoDay, isWorkloadZoom, todayIn, workloadWindow, type WorkloadTask, type WorkloadZoom } from "@/lib/workload";

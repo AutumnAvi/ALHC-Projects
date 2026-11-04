@@ -3,7 +3,7 @@ import { softRead } from "@/lib/soft-read";
 import { appLinkIds } from "@/lib/app-links";
 import { cache } from "react";
 import { cookies } from "next/headers";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { getViewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/ids";

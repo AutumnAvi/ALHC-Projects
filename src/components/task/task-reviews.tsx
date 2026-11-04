@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState, useTransition } from "react";
 import { Ban, ChevronRight, FileText, Image as ImageIcon, Paperclip, Send, Video } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { PinList } from "@/components/review/pin-list";

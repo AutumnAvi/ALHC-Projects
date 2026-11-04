@@ -1,5 +1,5 @@
 import "server-only";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { displayTaskTitle } from "@/lib/request-numbers";
 import { groupTasks } from "@/components/project/view-groups";
 import type { CsvCell, CsvRows } from "@/lib/csv";

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { GoalDetail } from "@/components/goals/goal-detail";
 import { GoalsTurnedOff } from "@/components/goals/goals-off";
 import {

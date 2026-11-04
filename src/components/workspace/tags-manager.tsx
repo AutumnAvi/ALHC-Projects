@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Archive, ArchiveRestore, Pencil, Tag as TagIcon } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { TagChip } from "@/components/tags/tag-chip";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";

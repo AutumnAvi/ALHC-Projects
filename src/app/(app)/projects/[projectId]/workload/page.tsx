@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { TaskPaneSlot } from "@/components/task/task-pane";
 import { summaryPeople, workloadParams, workloadPeople } from "@/components/workload/workload-params";
 import { WorkloadModeSwitch, WorkloadPeopleView } from "@/components/workload/workload-people-view";

@@ -1,4 +1,4 @@
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { OPTION_COLOR_CLASSES, fieldChips, type FieldDef } from "@/lib/fields";
 import type { Profile, ProjectTask } from "@/lib/data";
 import { TEXT_TOOLTIP_LENGTH, textPreview } from "@/lib/long-text";

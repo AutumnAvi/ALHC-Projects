@@ -2,7 +2,7 @@
 
 import { useOptimistic } from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";

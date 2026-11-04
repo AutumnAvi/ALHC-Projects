@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { ArrowRight, ChartColumn, ChevronDown, ChevronUp, Hash, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";

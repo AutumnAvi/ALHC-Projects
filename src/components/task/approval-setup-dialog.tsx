@@ -2,7 +2,8 @@
 
 import { useId, useState } from "react";
 import { CalendarDays, ChevronDown, ChevronRight, X } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { Dialog } from "@/components/dialog";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";

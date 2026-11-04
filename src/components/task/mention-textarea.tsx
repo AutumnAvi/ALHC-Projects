@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
 import { FolderKanban, SquareCheck } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { knownLinkName, rememberLinkName } from "@/components/task/comment-parts";
 import { extendsDeadQuery, linkSearchText, projectLinkUrl, taskLinkUrl } from "@/lib/app-links";
 import { readRecents, useShellMemberId } from "@/components/shell/shell-context";

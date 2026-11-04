@@ -2,7 +2,8 @@
 
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { Check, Search, UserRound, X } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { Popover } from "@/components/popover";
 import type { Profile } from "@/lib/data";
 

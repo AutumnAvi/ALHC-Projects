@@ -2,7 +2,7 @@
 
 import { useOptimistic, useState } from "react";
 import { CalendarDays, Check, ChevronDown, Plus, X } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useNotify, useServerAction } from "@/components/toast";
 import { moveTask, setFieldValue, type ActionResult } from "@/lib/actions";
 import type { Profile, TaskDetail } from "@/lib/data";

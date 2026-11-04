@@ -19,7 +19,7 @@ import {
   ThumbsUp,
   Trash2,
 } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { useConfirm } from "@/components/confirm";

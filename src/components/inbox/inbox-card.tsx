@@ -20,7 +20,8 @@ import {
   UserPlus,
   Workflow,
 } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { TaskLink } from "@/components/task/task-link";
 import { MoreTaskNumbers } from "@/components/task/task-number";
 import { Timestamp } from "@/components/timestamp";

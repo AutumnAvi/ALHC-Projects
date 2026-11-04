@@ -1,4 +1,4 @@
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import type { OptionColor, FieldDef } from "@/lib/fields";
 import type { Profile, ProjectTask, Section } from "@/lib/data";
 import { groupOf, refFieldId, sortOf, type ViewConfig, type ViewSort } from "@/lib/views";
