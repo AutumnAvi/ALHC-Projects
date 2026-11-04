@@ -51,18 +51,20 @@ function child(node: MemoNode, arg: unknown): MemoNode {
 export type Read<A extends unknown[], R> = (ctx: ApiContext, ...args: A) => Promise<R>;
 
 // A read whose answer is shared within the context (see ApiContext.memo). A rejected read stays rejected
-// for that context, as with React's cache(). Writes are never defined with read().
-export function read<A extends unknown[], R>(fn: Read<A, R>): Read<A, R> {
-  const memoized: Read<A, R> = (ctx, ...args) => {
-    if (!ctx.memo) return fn(ctx, ...args);
+// for that context, as with React's cache(). Writes are never defined with read(). Keeps the function's
+// own type (optional parameters, defaults) like React's cache() did.
+export function read<F extends (ctx: ApiContext, ...args: never[]) => Promise<unknown>>(fn: F): F {
+  const call = fn as unknown as (ctx: ApiContext, ...args: unknown[]) => Promise<unknown>;
+  const memoized = (ctx: ApiContext, ...args: unknown[]): Promise<unknown> => {
+    if (!ctx.memo) return call(ctx, ...args);
     let node = ctx.memo.get(memoized);
     if (!node) ctx.memo.set(memoized, (node = newNode()));
     for (const arg of args) node = child(node, arg);
     if (!node.settled) {
-      node.value = fn(ctx, ...args);
+      node.value = call(ctx, ...args);
       node.settled = true;
     }
-    return node.value as Promise<R>;
+    return node.value as Promise<unknown>;
   };
-  return memoized;
+  return memoized as unknown as F;
 }
