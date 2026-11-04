@@ -17,7 +17,8 @@ import {
   parseStoredReview,
 } from "@/lib/approver-review";
 import { forgetCompletion, noteCompletion, openBlockerCount, recentCompletion, resetCompletionsForTests, COMPLETION_TTL_MS } from "@/lib/completion-store";
-import type { ProjectTask, TaskAttachment } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
+import type { TaskAttachment } from "@/lib/api/task-pane/model";
 import { NAMED_ROLES_NOTE, ROLE_TABLES, ROLES_HELP_HREF } from "@/lib/role-help";
 import { assignableRoles } from "@/lib/roles";
 import { draggedProjectIds, pruneStarOverrides, withStarOverrides } from "@/lib/sidebar-folders";

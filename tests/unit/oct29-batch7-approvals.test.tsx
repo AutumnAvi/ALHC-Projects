@@ -34,7 +34,11 @@ import {
   rowCompleteMode,
   shortcutApprovalAction,
 } from "@/lib/approval-complete";
-import type { ApprovalRound, MyTask, Profile, ProjectTask, Section, SubtaskItem, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/data";
+import type { ApprovalRound, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/api/task-pane/model";
+import type { MyTask } from "@/lib/api/my-tasks/model";
+import type { Profile } from "@/lib/api/people/model";
+import type { ProjectTask, SubtaskItem } from "@/lib/api/tasks/model";
+import type { Section } from "@/lib/api/projects/model";
 import { MY_TASK_ACTIONS } from "@/lib/my-task-rules";
 import type { ProjectRole } from "@/lib/roles";
 import { stepOutcomeLabel, stepTone, testHeadline, type RuleTestResult } from "@/lib/rule-steps";

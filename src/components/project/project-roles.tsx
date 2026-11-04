@@ -15,7 +15,7 @@ import {
   renameProjectRole,
   setProjectRolePerson,
 } from "@/lib/actions";
-import type { RoleUsage } from "@/lib/data";
+import type { RoleUsage } from "@/lib/api/projects/model";
 import { describeRoleUpdate, roleSlotsLabel } from "@/lib/project-roles";
 
 export type RoleRow = { id: string; name: string; profileId: string | null };

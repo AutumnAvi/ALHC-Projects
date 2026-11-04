@@ -55,7 +55,9 @@ import {
   type ColumnWidthKey,
   type ColumnWidths,
 } from "@/lib/column-widths";
-import type { Profile, ProjectTask, ProjectTaskGroupPage, Section, SubtaskItem } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { ProjectTask, ProjectTaskGroupPage, SubtaskItem } from "@/lib/api/tasks/model";
+import type { Section } from "@/lib/api/projects/model";
 import { displayTaskTitle, type RequestLabel } from "@/lib/request-numbers";
 import { TaskTitleText } from "@/components/task/title-text";
 import { OPTION_COLOR_CLASSES, fieldLockManageable, fieldLockedFor, type FieldDef } from "@/lib/fields";

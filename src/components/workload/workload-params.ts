@@ -1,10 +1,10 @@
 import "server-only";
 import { displayName } from "@/lib/people";
-import type { Profile } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { isIsoDay, isWorkloadZoom, todayIn, workloadWindow, type WorkloadTask, type WorkloadZoom } from "@/lib/workload";
 import { peopleWindow, type PersonSummary } from "@/lib/workload-people";
-import type { WorkloadSummaryRow } from "@/lib/data";
+import type { WorkloadSummaryRow } from "@/lib/api/workload/model";
 import type { WorkloadPerson } from "./workload-view";
 
 // URL state shared by the project and portfolio Workload pages: ?d=YYYY-MM-DD (anchor, default the

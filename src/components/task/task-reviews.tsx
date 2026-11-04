@@ -10,7 +10,8 @@ import { ReviewViewer, type ViewerPin } from "@/components/review/review-viewer"
 import { Timestamp } from "@/components/timestamp";
 import { useNotify } from "@/components/toast";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
-import type { Profile, TaskDetail } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { taskPermissions } from "@/lib/permissions";
 import {
   REVIEW_STATUS_LABELS,

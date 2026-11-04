@@ -15,7 +15,9 @@ import { moveTask, moveTaskTag, placeTask, setFieldValue, setTaskCompleted, upda
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@/lib/tags";
 import type { TaskSeed } from "@/lib/task-seed";
-import type { Profile, ProjectTask, ProjectTaskGroupPage, Section } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { ProjectTask, ProjectTaskGroupPage } from "@/lib/api/tasks/model";
+import type { Section } from "@/lib/api/projects/model";
 import { displayTaskTitle } from "@/lib/request-numbers";
 import { TaskTitleText } from "@/components/task/title-text";
 import { fieldLockedFor, type FieldDef } from "@/lib/fields";

@@ -16,7 +16,7 @@ import {
   approverReviewStorageKey,
   parseStoredReview,
 } from "@/lib/approver-review";
-import type { ApprovalRound, TaskAttachment } from "@/lib/data";
+import type { ApprovalRound, TaskAttachment } from "@/lib/api/task-pane/model";
 import { answerProblem, approveFile, confirmQuestion, nextUnreviewedIndex, reviewTally, reviewedLabel, setFileNote, submitLabel, unapproveFile, type FileReviews } from "@/lib/review-portal";
 import { reviewMediaKind, type ReviewFile } from "@/lib/review-checks";
 

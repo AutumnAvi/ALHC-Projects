@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { changeAbsorbed, overlayProjectTasks, type TaskChange } from "@/components/project/use-project-tasks";
-import type { ProjectTask } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
 
 function task(id: string, sectionId: string | null, sortOrder: number, extra: Partial<ProjectTask> = {}): ProjectTask {
   return {

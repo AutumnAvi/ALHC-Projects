@@ -6,7 +6,7 @@ import { FileText, FolderKanban, Lock, Mail, Paperclip, SquareCheck, UsersRound 
 import Link from "next/link";
 import { TaskLink } from "./task-link";
 import { appLinkSegments, type AppLink } from "@/lib/app-links";
-import type { CommentRefs } from "@/lib/data";
+import type { CommentRefs } from "@/lib/api/comments/model";
 import { seedFromTitle } from "@/lib/task-seed";
 import { Avatar } from "@/components/avatar";
 import { displayName } from "@/lib/people";

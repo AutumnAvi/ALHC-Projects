@@ -29,11 +29,11 @@ import {
 import type {
   MessageThread,
   MessageThreadSummary,
-  Profile,
   ProjectMessage,
   TeamMessageThread,
   TeamThreadSummary,
-} from "@/lib/data";
+} from "@/lib/api/messages/model";
+import type { Profile } from "@/lib/api/people/model";
 import { personHref } from "@/lib/people";
 import { useLiveRefresh } from "@/lib/live";
 import { projectTopic } from "@/lib/live-patch";

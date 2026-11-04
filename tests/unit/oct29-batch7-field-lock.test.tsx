@@ -15,7 +15,9 @@ import { fieldOptions } from "@/components/rules/rule-shared";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { TaskFields } from "@/components/task/task-fields";
 import { ToastProvider } from "@/components/toast";
-import type { ProjectTask, Section, TaskDetail } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
+import type { Section } from "@/lib/api/projects/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { FieldLockIcon } from "@/components/project/field-lock";
 import {
   LOCKED_FIELD_NOTE,

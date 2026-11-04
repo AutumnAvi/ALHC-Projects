@@ -8,7 +8,7 @@ import { EmptyState } from "@/components/ui";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { createPortfolioField, deletePortfolioField, updatePortfolioField } from "@/lib/actions";
-import type { PortfolioField } from "@/lib/data";
+import type { PortfolioField } from "@/lib/api/portfolios/model";
 import {
   OPTION_COLORS,
   OPTION_COLOR_CLASSES,

@@ -10,7 +10,7 @@ import { PeopleDirectoryProvider, TaskTitleText } from "@/components/task/title-
 import { approvalPillText } from "@/components/task/task-approval-banner";
 import { feedbackSnippet, feedbackSubtaskText, parseDecisionNote, roundFeedback, shortFileName } from "@/lib/approval-feedback";
 import { approverDecisionNote } from "@/lib/approver-review";
-import type { ApprovalRound, TaskApproval } from "@/lib/data";
+import type { ApprovalRound, TaskApproval } from "@/lib/api/task-pane/model";
 import { parseQuickAdd } from "@/lib/quick-add";
 import { titleHasMentions, titleMentionHandle, titleMentionSegments } from "@/lib/title-mentions";
 

@@ -7,7 +7,7 @@ import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { previewKind } from "@/lib/attachment-preview";
 import { formatBytes } from "@/lib/attachments";
-import type { ProjectFile } from "@/lib/data";
+import type { ProjectFile } from "@/lib/api/projects/model";
 
 const FILTERS = [
   { value: "all", label: "All files" },

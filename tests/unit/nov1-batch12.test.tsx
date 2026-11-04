@@ -126,7 +126,8 @@ test("84: the pane draws automation comments, run markers, and email-in lines di
 });
 
 test("84: comments carry their automation for the link", () => {
-  const data = fs.readFileSync("src/lib/data.ts", "utf8");
+  // Big move 1: the task pane's reads live in the data-access layer.
+  const data = ["src/lib/api/task-pane/model.ts", "src/lib/api/task-pane/queries.ts"].map((f) => fs.readFileSync(f, "utf8")).join("\n");
   assert.match(data, /ruleProjectId\?: string \| null/);
   assert.match(data, /withRuleProjects/);
   assert.match(data, /\.from\("rule_runs"\)[\s\S]{0,200}\.eq\("task_id", taskId\)/);

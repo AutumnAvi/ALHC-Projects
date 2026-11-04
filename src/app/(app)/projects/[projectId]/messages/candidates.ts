@@ -1,4 +1,5 @@
-import type { Profile, ProjectMember } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { ProjectMember } from "@/lib/api/projects/model";
 
 // People an @mention can reach in a project message: its members (the database only notifies people who
 // can read the project), without the viewer, by name.

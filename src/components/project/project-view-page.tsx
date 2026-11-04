@@ -18,12 +18,11 @@ import {
   listProjectSchedule,
   projectCriticalPath,
   listProjectTasks,
-  type ProjectTask,
   listSectionTaskCounts,
   listSubtaskTrees,
   getDependencyShiftMode,
-  type SubtaskItem,
 } from "@/lib/data";
+import { type ProjectTask, type SubtaskItem } from "@/lib/api/tasks/model";
 import { todayIn } from "@/lib/workload";
 import { EMPTY_CRITICAL_PATH } from "@/lib/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";

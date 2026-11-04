@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useTaskEdits, recordTaskEdits } from "@/components/task/task-edits";
 import { completionsVersion, recentCompletion, subscribeCompletions } from "@/lib/completion-store";
-import type { ProjectTask } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
 import {
   currentMutationToken,
   mutationFailed,

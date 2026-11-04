@@ -17,8 +17,8 @@ import {
   listProjects,
   listWorkspaceEmailDeliveries,
   workspaceEmailSummary,
-  type InviteDelivery,
 } from "@/lib/data";
+import { type InviteDelivery } from "@/lib/api/workspace/model";
 import { emailStatusBadge } from "@/lib/email-schedules";
 import { projectColorClass } from "@/lib/project-colors";
 import { hasRole } from "@/lib/roles";

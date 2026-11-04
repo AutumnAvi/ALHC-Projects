@@ -23,16 +23,14 @@ import {
   loadSubmitterConversation,
   countOpenRoleTasks,
   loadRoleUsage,
-  type RoleUsage,
   listTaskRoleLinks,
   visibleRequestLabelsIn,
   listSubtaskParents,
   numbersWithTheirProjects,
-  type ParentCandidate,
-  type SubmitterConversation,
-  type SubtaskItem,
-  type TaskComment,
 } from "@/lib/data";
+import { type RoleUsage } from "@/lib/api/projects/model";
+import { type ParentCandidate, type SubtaskItem } from "@/lib/api/tasks/model";
+import { type SubmitterConversation, type TaskComment } from "@/lib/api/task-pane/model";
 import type { RequestLabel } from "@/lib/request-numbers";
 import type { TemplateCustomization } from "@/lib/project-roles";
 import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/attachments";
@@ -7482,7 +7480,6 @@ export async function loadTaskBlockers(taskId: string): Promise<{ error?: string
     const list = Array.isArray(value.blockers) ? value.blockers : [];
     const rowsOf = list.filter((b): b is Record<string, Json> => Boolean(b) && typeof b === "object" && !Array.isArray(b));
     const named = await numbersWithTheirProjects(
-      supabase,
       rowsOf.map((b) => ({ id: String(b.id), projectId: typeof b.home_project_id === "string" ? b.home_project_id : null })),
     );
     const blockers = rowsOf.map((b) => ({
@@ -7499,7 +7496,7 @@ export async function loadTaskBlockers(taskId: string): Promise<{ error?: string
 // 42. "Make a subtask of…": tasks the viewer edits that this task can go under (searchable). Since Nov 2
 // notes (batch 16, 124) the picker reads GET /api/task-pane/<id>/parents (a route, so searches never queue
 // behind other actions); this action stays for callers that want it.
-export type { ParentCandidate } from "@/lib/data";
+export type { ParentCandidate } from "@/lib/api/tasks/model";
 
 export async function searchSubtaskParents(taskId: string, query: string): Promise<{ error?: string; data?: ParentCandidate[] }> {
   return read(async () => {

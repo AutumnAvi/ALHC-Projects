@@ -25,7 +25,7 @@ import { withPendingSection } from "./pending-sections";
 import { usePendingCreates, withPendingCreate } from "@/lib/pending-creates";
 import { createSection, createTask, createTaskFromTemplate, deleteSection, renameSection } from "@/lib/actions";
 import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, type TaskKind } from "@/lib/task-kinds";
-import type { Section } from "@/lib/data";
+import type { Section } from "@/lib/api/projects/model";
 
 // Opens/closes the task pane via ?task=, preserving other query params (e.g. search terms).
 export function useTaskHref() {

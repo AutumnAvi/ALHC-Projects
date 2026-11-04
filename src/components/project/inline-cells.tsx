@@ -10,7 +10,8 @@ import { DateRangePicker, SingleDatePicker } from "@/components/task/date-picker
 import { PeopleList, PersonPicker } from "@/components/task/person-picker";
 import { useNotify } from "@/components/toast";
 import { loadSubtaskRows, setTaskRowExpanded, type ActionResult } from "@/lib/actions";
-import type { Profile, SubtaskItem } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { SubtaskItem } from "@/lib/api/tasks/model";
 import { dayLabel } from "@/lib/date-input";
 import { LongTextEditor } from "@/components/long-text-editor";
 import { NumberInput } from "@/components/number-input";

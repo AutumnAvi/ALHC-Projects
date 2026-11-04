@@ -14,7 +14,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { addTeamMember, changeTeamMemberRole, decideTeamJoinRequest, removeTeamMember } from "@/lib/actions";
-import type { TeamPerson } from "@/lib/data";
+import type { TeamPerson } from "@/lib/api/teams/model";
 import { personHref } from "@/lib/people";
 import { ADD_TEAM_MEMBER_ID, TEAM_ROLE_LABELS, isTeamRole, type TeamJoinRequest, type TeamRole } from "@/lib/teams";
 import { describePendingInvite, type PendingInvite } from "@/lib/workspace";

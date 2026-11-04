@@ -30,7 +30,7 @@ import {
   nextActiveIndex,
 } from "@/components/task/task-convert";
 import { TaskProjects } from "@/components/task/task-projects";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 import type { ShiftChange, ShiftPlanRow } from "@/lib/dependencies";
 import type { ProjectRole } from "@/lib/roles";

@@ -2,13 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { FormEditor } from "@/components/forms/form-editor";
 import { FormsList } from "@/components/forms/forms-list";
-import {
-  getForm,
-  getProjectRole,
-  listProjectFields,
-  listProjectForms,
-  listSections,
-} from "@/lib/data";
+import { getForm, getProjectRole, listProjectFields, listProjectForms, listSections } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
 import { requestOrigin } from "@/lib/origin";
 import { hasRole } from "@/lib/roles";

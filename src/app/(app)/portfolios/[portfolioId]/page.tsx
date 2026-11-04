@@ -16,8 +16,8 @@ import {
   listProjects,
   listTeams,
   portfolioReport,
-  type ProjectStatusUpdate,
 } from "@/lib/data";
+import { type ProjectStatusUpdate } from "@/lib/api/projects/model";
 import { nestedPortfolioProjects } from "@/lib/portfolio-picker";
 import { EMPTY_COUNTS } from "@/lib/portfolios";
 import { softRead } from "@/lib/soft-read";

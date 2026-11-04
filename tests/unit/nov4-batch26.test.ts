@@ -5,7 +5,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { test } from "node:test";
 import { overlayProjectTasks } from "@/components/project/use-project-tasks";
-import type { InboxItem, MyTask, ProjectTask, TaskComment, TaskDetail } from "@/lib/data";
+import type { InboxItem } from "@/lib/api/inbox/model";
+import type { MyTask } from "@/lib/api/my-tasks/model";
+import type { ProjectTask } from "@/lib/api/tasks/model";
+import type { TaskComment, TaskDetail } from "@/lib/api/task-pane/model";
 import {
   LIVE_TABLES,
   applyInboxPatches,

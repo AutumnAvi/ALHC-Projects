@@ -19,7 +19,7 @@ import { setPaneExpanded, usePaneExpanded } from "@/components/task/pane-size";
 import { useNotify, useServerAction } from "@/components/toast";
 import { Skeleton } from "@/components/ui";
 import { removeMyAvatar, setMyTasksChecked, setOpenPersonalView, updateMyProfile, uploadMyAvatar } from "@/lib/actions";
-import type { MySettings } from "@/lib/data";
+import type { MySettings } from "@/lib/api/me/model";
 import { saveMyTasksLayout, type MyTasksLayout } from "@/lib/my-tasks";
 import { CHECKED_MODE_OPTIONS, type CheckedMode } from "@/lib/checklist";
 import { AVATAR_ACCEPT, MAX_PROFILE_NAME, avatarFileProblem, profileNameProblem } from "@/lib/profile";

@@ -23,8 +23,8 @@ import {
   listReadableProjects,
   listMyCalendarFeeds,
   listTeams,
-  type MySettings,
 } from "@/lib/data";
+import { type MySettings } from "@/lib/api/me/model";
 import { isCalendarFeedScope, type CalendarFeed } from "@/lib/calendar-feeds";
 import { isEmailConfigured } from "@/lib/email";
 import { forwardingAddress, isInboundEmailConfigured } from "@/lib/email-reply";

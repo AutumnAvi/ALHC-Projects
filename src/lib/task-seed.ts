@@ -2,7 +2,8 @@
 // instant). The pane draws these at once, read-only, while the full detail loads; nothing here is ever
 // written back. Every field is optional except the id and the name.
 import { rowCompleteMode, type CompleteMode } from "@/lib/approval-complete";
-import type { MyTask, ProjectTask, SubtaskItem } from "@/lib/data";
+import type { MyTask } from "@/lib/api/my-tasks/model";
+import type { ProjectTask, SubtaskItem } from "@/lib/api/tasks/model";
 import { fieldChips, type FieldDef, type OptionColor } from "@/lib/fields";
 import type { RequestLabel } from "@/lib/request-numbers";
 import type { Json } from "@/lib/supabase/database.types";

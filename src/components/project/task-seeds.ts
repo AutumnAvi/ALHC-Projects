@@ -3,7 +3,9 @@
 import { useMemo } from "react";
 import { displayName } from "@/lib/people";
 import { useProjectPermissions } from "@/components/project/project-access";
-import type { Profile, ProjectTask, Section, SubtaskItem } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { ProjectTask, SubtaskItem } from "@/lib/api/tasks/model";
+import type { Section } from "@/lib/api/projects/model";
 import type { FieldDef } from "@/lib/fields";
 import type { Tag } from "@/lib/tags";
 import { seedFromProjectTask, seedFromSubtask, type SeedLookups, type TaskSeed } from "@/lib/task-seed";

@@ -15,7 +15,7 @@ import {
   attachmentPath,
   formatBytes,
 } from "@/lib/attachments";
-import type { TaskAttachment, TaskAttachmentLink } from "@/lib/data";
+import type { TaskAttachment, TaskAttachmentLink } from "@/lib/api/task-pane/model";
 import { createClient } from "@/lib/supabase/client";
 
 // Uploading files to a task: one hidden file input, opened by the pane header's paperclip and the

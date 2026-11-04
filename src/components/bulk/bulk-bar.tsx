@@ -34,7 +34,7 @@ import {
 } from "@/lib/actions";
 import { Dialog } from "@/components/dialog";
 import { MAX_BULK_TASKS, bulkRuleRunMessage, bulkRuleRunTone, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
-import type { Section } from "@/lib/data";
+import type { Section } from "@/lib/api/projects/model";
 import { NumberInput } from "@/components/number-input";
 import { LOCKED_FIELD_NOTE, OPTION_COLOR_CLASSES, fieldLockedFor, numberPrefixOf, type FieldDef } from "@/lib/fields";
 import type { Json } from "@/lib/supabase/database.types";

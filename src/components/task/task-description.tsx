@@ -7,7 +7,7 @@ import { MentionTextarea } from "@/components/task/mention-textarea";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions";
 import { appLinkSegments } from "@/lib/app-links";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 
 const EMPTY_REFS = { tasks: {}, projects: {} };
 

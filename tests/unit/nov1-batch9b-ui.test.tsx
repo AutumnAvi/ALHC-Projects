@@ -15,7 +15,7 @@ import { QuickAddBar } from "@/components/my-tasks/quick-add";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
 import type { CheckedMode } from "@/lib/checklist";
-import type { MyTask } from "@/lib/data";
+import type { MyTask } from "@/lib/api/my-tasks/model";
 import { parseHomeDashboard, progressOf } from "@/lib/home";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 import { myTasksLayoutOf } from "@/lib/my-tasks";

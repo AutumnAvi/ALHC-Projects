@@ -4,7 +4,8 @@ import { PortfolioFieldDisplay } from "@/components/portfolio/portfolio-field-va
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { ExportLink, PrintButton } from "@/components/reports/report-chrome";
 import { Timestamp } from "@/components/timestamp";
-import type { PortfolioField, ProjectStatusUpdate } from "@/lib/data";
+import type { PortfolioField } from "@/lib/api/portfolios/model";
+import type { ProjectStatusUpdate } from "@/lib/api/projects/model";
 import { RECENT_DAYS, formatProgress, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
 import type { Json } from "@/lib/supabase/database.types";
 

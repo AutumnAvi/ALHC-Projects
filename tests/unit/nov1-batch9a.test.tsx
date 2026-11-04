@@ -19,7 +19,7 @@ import { ToastProvider } from "@/components/toast";
 import { appLinkIds, appLinkSegments, parseAppLink, projectLinkUrl, taskLinkUrl } from "@/lib/app-links";
 import { approvalSetupProblem, approvalSetupSummary, defaultApprovalSetup } from "@/lib/approval-setup";
 import { canRespondToSubmitter } from "@/lib/comment-email";
-import type { TaskAttachment } from "@/lib/data";
+import type { TaskAttachment } from "@/lib/api/task-pane/model";
 import {
   EMAIL_QUESTION_NOTE,
   branchUnavailableReason,

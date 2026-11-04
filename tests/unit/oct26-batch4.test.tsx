@@ -16,7 +16,8 @@ import { BrowseProjectsTable, type BrowseRow } from "@/components/projects/brows
 import { ShellProvider } from "@/components/shell/shell-context";
 import { TaskNumberBadge } from "@/components/task/task-number";
 import { ToastProvider } from "@/components/toast";
-import type { ProjectTask, Section } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
+import type { Section } from "@/lib/api/projects/model";
 import { bareTaskTitle, matchesRequestLabel } from "@/lib/request-numbers";
 import type { ProjectRole } from "@/lib/roles";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";

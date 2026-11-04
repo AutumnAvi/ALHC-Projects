@@ -67,7 +67,7 @@ import {
   updateProject,
   updateView,
 } from "@/lib/actions";
-import type { Project } from "@/lib/data";
+import type { Project } from "@/lib/api/projects/model";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
 import {
   FIXED_TABS,

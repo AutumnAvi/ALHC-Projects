@@ -14,7 +14,7 @@ import { ProjectAccessProvider } from "@/components/project/project-access";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
 import { TaskDetailPanel } from "@/components/task/task-detail-panel";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { followerChange, permissionsFor } from "@/lib/permissions";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 import type { ProjectRole } from "@/lib/roles";

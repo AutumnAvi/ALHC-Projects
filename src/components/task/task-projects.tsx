@@ -7,7 +7,7 @@ import { MenuItem, Popover } from "@/components/popover";
 import { useConfirm } from "@/components/confirm";
 import { useNotify, useServerAction } from "@/components/toast";
 import { addTaskToProject, deleteTask, moveTask, removeTaskFromProject, restoreTask } from "@/lib/actions";
-import type { TaskDetail, TaskMembership } from "@/lib/data";
+import type { TaskDetail, TaskMembership } from "@/lib/api/task-pane/model";
 import type { RequestLabel } from "@/lib/request-numbers";
 import { projectColorClass } from "@/lib/project-colors";
 import { TaskLink } from "@/components/task/task-link";

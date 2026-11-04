@@ -5,7 +5,7 @@
 // hand_off_approval: Any one — the first approval decides; Everyone — every approver; Request changes /
 // Reject end the round and pause it until the feedback is marked received).
 
-import type { TaskApproval, TaskApprovalInfo } from "@/lib/data";
+import type { TaskApproval, TaskApprovalInfo } from "@/lib/api/task-pane/model";
 
 export type ApprovalDecision = "approved" | "changes_requested" | "rejected";
 

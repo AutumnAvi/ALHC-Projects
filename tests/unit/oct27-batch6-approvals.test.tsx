@@ -39,7 +39,9 @@ import {
   joinNames,
   sendForApprovalProblem,
 } from "@/components/task/send-for-approval-dialog";
-import type { ApprovalRound, InboxItem, Profile, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/data";
+import type { ApprovalRound, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/api/task-pane/model";
+import type { InboxItem } from "@/lib/api/inbox/model";
+import type { Profile } from "@/lib/api/people/model";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 import type { ProjectRole } from "@/lib/roles";
 

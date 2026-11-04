@@ -22,7 +22,8 @@ import {
   snapCaret,
   type ChipLinks,
 } from "@/lib/link-chips";
-import type { CommentRefs, Profile } from "@/lib/data";
+import type { CommentRefs } from "@/lib/api/comments/model";
+import type { Profile } from "@/lib/api/people/model";
 import { mentionToken } from "@/lib/reactions";
 import { formatRequestLabel } from "@/lib/request-numbers";
 import type { QuickProject, QuickTask } from "@/lib/shell";

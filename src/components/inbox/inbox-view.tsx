@@ -19,7 +19,8 @@ import {
   setInboxBookmark,
   type ActionResult,
 } from "@/lib/actions";
-import type { InboxItem, Profile } from "@/lib/data";
+import type { InboxItem } from "@/lib/api/inbox/model";
+import type { Profile } from "@/lib/api/people/model";
 import {
   INBOX_LIMIT,
   INBOX_TABS,

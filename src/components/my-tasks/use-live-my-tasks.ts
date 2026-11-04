@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { useShellMemberId } from "@/components/shell/shell-context";
 import { useTaskEdits } from "@/components/task/task-edits";
-import type { MyTask } from "@/lib/data";
+import type { MyTask } from "@/lib/api/my-tasks/model";
 import { requestLiveRefresh, useLiveRefresher, useLiveTopic } from "@/lib/live";
 import {
   applyMyTaskPatches,

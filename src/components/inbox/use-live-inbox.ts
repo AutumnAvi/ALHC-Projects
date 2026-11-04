@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import type { InboxItem } from "@/lib/data";
+import type { InboxItem } from "@/lib/api/inbox/model";
 import { requestLiveRefresh, useLiveRefresher, useLiveTopic } from "@/lib/live";
 import { applyInboxPatches, inboxLivePatches, mergePatches, pruneInboxPatches, userTopic, type InboxPatch } from "@/lib/live-patch";
 import { getQueryClient } from "@/lib/query/browser-client";

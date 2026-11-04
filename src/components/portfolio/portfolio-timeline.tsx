@@ -20,7 +20,7 @@ import {
 } from "@/components/project/timeline-scale";
 import { PeriodNav, Segmented, TRAY_EMPTY, TRAY_HEADING, VIEW_BODY, VIEW_HINT, ViewLoading, trayClass } from "@/components/project/view-chrome";
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
-import type { PortfolioMilestone, PortfolioTimelineRow } from "@/lib/data";
+import type { PortfolioMilestone, PortfolioTimelineRow } from "@/lib/api/portfolios/model";
 import { OWN_PROJECTS_LABEL, PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
 
 const LABEL_WIDTH = 256;

@@ -17,7 +17,8 @@ import {
   type ApprovalFollowUp,
   type ApprovalSetupDraft,
 } from "@/lib/approval-setup";
-import type { Profile, TaskDetail } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { formatDueDate } from "@/lib/dates";
 import { hasRole } from "@/lib/roles";
 import { SingleDatePicker } from "./date-picker";

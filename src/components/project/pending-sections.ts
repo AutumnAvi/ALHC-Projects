@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import type { Section } from "@/lib/data";
+import type { Section } from "@/lib/api/projects/model";
 
 // Nov 2 notes (batch 14, 92): a new section shows at once. Adding one puts a pending section into this
 // store (drawn by List and Board like any section, without menus or an add row until it's real); the

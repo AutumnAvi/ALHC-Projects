@@ -67,7 +67,9 @@ import {
   type SubtaskTrees,
 } from "@/components/project/inline-cells";
 import { ApprovalStatusBadge, DueDate, EmptyCellHint } from "@/components/project/task-meta";
-import type { AwaitingApproval, MyTask, Profile, SubtaskItem } from "@/lib/data";
+import type { AwaitingApproval, MyTask } from "@/lib/api/my-tasks/model";
+import type { Profile } from "@/lib/api/people/model";
+import type { SubtaskItem } from "@/lib/api/tasks/model";
 import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
 import { TaskTitleText } from "@/components/task/title-text";
 import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@/lib/task-seed";

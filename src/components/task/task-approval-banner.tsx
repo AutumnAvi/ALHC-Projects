@@ -38,7 +38,8 @@ import {
   withdrawApproval,
 } from "@/lib/actions";
 import { cantDecideMessage, cantSendMessage } from "@/lib/approval-complete";
-import type { ApprovalRound, Profile, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/data";
+import type { ApprovalRound, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/api/task-pane/model";
+import type { Profile } from "@/lib/api/people/model";
 import { formatDueDate, useToday } from "@/lib/dates";
 import { taskPermissions } from "@/lib/permissions";
 import { hasRole } from "@/lib/roles";

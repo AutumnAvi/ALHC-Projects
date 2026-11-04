@@ -28,7 +28,7 @@ import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { linkGoal, unlinkGoal, updateProject } from "@/lib/actions";
-import type { ProjectStatusUpdate } from "@/lib/data";
+import type { ProjectStatusUpdate } from "@/lib/api/projects/model";
 import { formatDueDate, useToday } from "@/lib/dates";
 import type { GoalStatus } from "@/lib/goals";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";

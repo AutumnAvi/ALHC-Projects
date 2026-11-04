@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useConfirm } from "@/components/confirm";
 import { useServerAction } from "@/components/toast";
 import { convertCommenterMember, setCommenterRoleAllowed } from "@/lib/actions";
-import type { CommenterMember } from "@/lib/data";
+import type { CommenterMember } from "@/lib/api/workspace/model";
 import { personHref } from "@/lib/people";
 
 // Admin console → Security → Project roles: whether the Commenter role is offered in Share and invite

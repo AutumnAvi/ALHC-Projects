@@ -2,7 +2,7 @@
 
 import { Suspense, lazy, use, useEffect, useMemo } from "react";
 import { useTaskPane } from "@/components/shell/right-panel";
-import type { TaskDetail, TaskPanePayload } from "@/lib/data";
+import type { TaskDetail, TaskPanePayload } from "@/lib/api/task-pane/model";
 import { isUuid } from "@/lib/ids";
 import { useLiveTopic } from "@/lib/live";
 import { taskTopic } from "@/lib/live-patch";

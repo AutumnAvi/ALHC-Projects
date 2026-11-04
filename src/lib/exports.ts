@@ -19,12 +19,12 @@ import {
   portfolioReport,
   projectMetrics,
   reportCompletedSeries,
-  requestLabelsInWith,
   searchTasks,
-  type OverdueTask,
-  type Profile,
-  type ProjectTask,
 } from "@/lib/data";
+import { requestLabelsInWith } from "@/lib/api/numbers/queries";
+import { type OverdueTask } from "@/lib/api/reports/model";
+import { type Profile } from "@/lib/api/people/model";
+import { type ProjectTask } from "@/lib/api/tasks/model";
 import { fieldChips, fieldNameWithSymbol, type FieldDef } from "@/lib/fields";
 import { PROJECT_STATUS_LABELS, isProjectStatus, progressPercent, type PortfolioCounts } from "@/lib/portfolios";
 import { isSeriesInterval, reportFiltersJson, seriesLabel, type ReportFilters } from "@/lib/reports";

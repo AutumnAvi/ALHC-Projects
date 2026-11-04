@@ -4,7 +4,7 @@ import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
 import { CheckCircle2, CircleDot, FlaskConical, Loader2, X } from "lucide-react";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { PILL } from "@/components/project/field-chips";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { dayLabel } from "@/lib/date-input";
 import { OPTION_COLOR_CLASSES, fieldChips } from "@/lib/fields";
 import { formatRequestLabel } from "@/lib/request-numbers";

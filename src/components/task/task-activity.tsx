@@ -42,7 +42,9 @@ import {
 } from "./pending-comments-store";
 import { REACTIONS, reactionOf, type ReactionKey } from "@/lib/reactions";
 import { formatDueDate } from "@/lib/dates";
-import type { CommentRefs, Profile, TaskComment, TaskDetail, TaskEmailActivity, TaskRuleRun, TaskStory } from "@/lib/data";
+import type { CommentRefs } from "@/lib/api/comments/model";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskComment, TaskDetail, TaskEmailActivity, TaskRuleRun, TaskStory } from "@/lib/api/task-pane/model";
 import { ACTIVITY_RANK, compareActivity, isEmailCreatedStory, runIsProblem, runVerb } from "@/lib/automation-activity";
 import { emailActivityText } from "@/lib/project-page";
 import { automationHref } from "@/lib/rule-feedback";

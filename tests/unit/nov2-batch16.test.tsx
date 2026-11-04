@@ -16,7 +16,8 @@ import {
 } from "@/components/task/review-events";
 import { blockParentLabel, convertedToast } from "@/components/task/task-convert";
 import { applyApprovalChange, decisionSummary, type ApprovalChange } from "@/lib/approval-optimistic";
-import type { ApprovalRound, SubtaskItem, TaskApproval, TaskApprovalInfo } from "@/lib/data";
+import type { ApprovalRound, TaskApproval, TaskApprovalInfo } from "@/lib/api/task-pane/model";
+import type { SubtaskItem } from "@/lib/api/tasks/model";
 import { planDependencyShifts, rollToWorkday, workdaySteps, type PlanLink, type PlanTask } from "@/lib/dependency-plan";
 import { pendingCreateResolved, unresolvedPendingCreates, type PendingCreate } from "@/lib/pending-creates";
 

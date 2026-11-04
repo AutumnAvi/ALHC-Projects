@@ -29,7 +29,7 @@ import {
   type ChecklistGroupKey,
 } from "@/lib/checklist";
 import { useToday } from "@/lib/dates";
-import type { MyTask } from "@/lib/data";
+import type { MyTask } from "@/lib/api/my-tasks/model";
 import { bareTaskTitle, formatRequestLabel } from "@/lib/request-numbers";
 import { TaskTitleText } from "@/components/task/title-text";
 import { seedFromMyTask } from "@/lib/task-seed";

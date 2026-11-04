@@ -13,7 +13,7 @@ import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { ExportLink, PrintButton } from "@/components/reports/report-chrome";
 import { createWidget, deleteWidget, installStarterWidgets, moveWidget, updateWidget } from "@/lib/actions";
-import type { MetricBucket } from "@/lib/data";
+import type { MetricBucket } from "@/lib/api/views/model";
 import {
   WIDGET_KINDS,
   encodeConfig,

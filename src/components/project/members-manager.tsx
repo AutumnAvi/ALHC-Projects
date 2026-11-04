@@ -20,7 +20,7 @@ import {
   removeProjectMember,
   transferProjectOwnership,
 } from "@/lib/actions";
-import type { ProjectMember } from "@/lib/data";
+import type { ProjectMember } from "@/lib/api/projects/model";
 import {
   PERSON_DEFAULT_ROLE,
   OFFERED_PROJECT_ROLES,

@@ -6,7 +6,7 @@ import { FileUp, History } from "lucide-react";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { discardImportUploads, previewAsanaImport, runAsanaImport } from "@/lib/actions";
-import type { ImportRun } from "@/lib/data";
+import type { ImportRun } from "@/lib/api/imports/model";
 import {
   IMPORTS_BUCKET,
   describeAttachmentFiles,

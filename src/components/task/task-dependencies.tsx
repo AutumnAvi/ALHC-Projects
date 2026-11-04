@@ -9,7 +9,7 @@ import { useServerAction } from "@/components/toast";
 import { removeTaskDependency, setTaskDependency } from "@/lib/actions";
 import { slackLabel } from "@/lib/critical-path";
 import { DEPENDENCY_KINDS, MAX_LAG_DAYS, dependencyLabel, isDependencyKind, type DependencyKind } from "@/lib/dependencies";
-import type { TaskDependency, TaskDetail } from "@/lib/data";
+import type { TaskDependency, TaskDetail } from "@/lib/api/task-pane/model";
 import { useTaskExtras } from "./task-pane-store";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";

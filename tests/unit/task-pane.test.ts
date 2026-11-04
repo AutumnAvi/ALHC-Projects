@@ -3,10 +3,11 @@
 // pane a seed it can draw at once; the open task is pinned until the URL catches up.
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
-import type { MyTask, ProjectTask, SubtaskItem } from "@/lib/data";
+import type { MyTask } from "@/lib/api/my-tasks/model";
+import type { ProjectTask, SubtaskItem } from "@/lib/api/tasks/model";
 import type { FieldDef } from "@/lib/fields";
 import { QueryObserver } from "@tanstack/query-core";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { openTaskOf, pinCaughtUp } from "@/lib/right-panel";
 import { CACHE_LIMITS, createAlhcQueryClient, enforceCacheLimits } from "@/lib/query/client";
 import { queryKeys } from "@/lib/query/keys";

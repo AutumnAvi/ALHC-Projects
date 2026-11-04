@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
-import type { TaskDetail, TaskExtras, TaskPaneContext, TaskPanePayload } from "@/lib/data";
+import type { TaskDetail, TaskExtras, TaskPaneContext, TaskPanePayload } from "@/lib/api/task-pane/model";
 import { patchTaskDetail, type LiveMessage } from "@/lib/live-patch";
 import { mutationInFlight } from "@/lib/optimistic-session";
 import { getQueryClient } from "@/lib/query/browser-client";

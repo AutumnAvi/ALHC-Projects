@@ -6,9 +6,9 @@ import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { convertToSubtask, convertToTask } from "@/lib/actions";
-import type { ParentCandidate } from "@/lib/data";
+import type { ParentCandidate } from "@/lib/api/tasks/model";
 import { forgetParents, searchParents } from "./parent-search";
-import type { TaskDetail, TaskMembership } from "@/lib/data";
+import type { TaskDetail, TaskMembership } from "@/lib/api/task-pane/model";
 import { taskPermissions } from "@/lib/permissions";
 import { TaskNumberBadge, taskNumberText } from "./task-number";
 

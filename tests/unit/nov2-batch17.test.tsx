@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { RequestConversationNotice } from "@/components/task/request-conversation";
 import { settledPinOverrides, type PinOverride } from "@/components/task/pinned-comments-store";
 import { bulkRuleRunMessage } from "@/lib/bulk";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { FEEDBACK_TITLE_MAX, feedbackSubtaskNotes, feedbackSubtaskTitle } from "@/lib/feedback-subtask";
 
 test("127: the bulk run toast says what ran and what didn't", () => {
