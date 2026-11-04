@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { CircleCheck } from "lucide-react";
-import { listBulkContext } from "@/components/bulk/bulk-context";
+import { bulkContextFrom } from "@/components/bulk/bulk-context";
 import { MyTasksView } from "@/components/my-tasks/my-tasks-view";
 import { MyTasksChecklist } from "@/components/my-tasks/my-tasks-checklist";
 import { TaskPaneSlot } from "@/components/task/task-pane";
@@ -9,21 +9,8 @@ import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
 import { MyTaskRulesButton } from "@/components/my-tasks/my-task-rules";
-import {
-  getExpandedTaskIds,
-  getMyTasksChecked,
-  getWorkWeek,
-  listAwaitingMyApproval,
-  listMyProjectRoles,
-  listMyTaskLayout,
-  listMyTaskRules,
-  loadMyTaskRuleContext,
-  listMyTasks,
-  listProfiles,
-  listProjects,
-  listSubtaskTrees,
-  type MyTask,
-} from "@/lib/data";
+import { listMyTaskLayout, listSubtaskTrees, type MyTask } from "@/lib/data";
+import { loadAppShell, loadMyTasksScreen, myTaskRuleContextFrom } from "@/lib/screen-loaders";
 import { MY_TASKS_LAYOUT_COOKIE, myTasksLayoutOf } from "@/lib/my-tasks";
 import { permissionsFor } from "@/lib/permissions";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -42,18 +29,12 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
     // Nov 1 notes (batch 9b, item 64): the checklist. The sections call still runs (it seeds the
     // person's sections and keeps placements current for the classic view and My Tasks rules), side by
     // side with the rest since the checklist doesn't order by it.
-    const [{ sections }, { open, completed }, checked, workWeek, rules, projects, roles, profiles, awaiting] = await Promise.all([
-      listMyTaskLayout(),
-      listMyTasks(member.id),
-      getMyTasksChecked(),
-      getWorkWeek(),
-      listMyTaskRules(),
-      listProjects(),
-      listMyProjectRoles(),
-      listProfiles(),
-      listAwaitingMyApproval(),
-    ]);
-    const ruleCtx = await loadMyTaskRuleContext(sections);
+    // Nov 4 notes (batch 22, M1): everything else in one call (my_tasks_screen), with the app shell the
+    // layout already read.
+    const [{ sections }, screen, shell] = await Promise.all([listMyTaskLayout(), loadMyTasksScreen(), loadAppShell()]);
+    const { open, completed, awaiting, rules } = screen;
+    const { myTasksChecked: checked, workWeek, projects, myRoles: roles, profiles } = shell;
+    const ruleCtx = myTaskRuleContextFrom(sections, shell, screen);
     // #project in the quick add: active projects where the person can add tasks.
     const addable = projects.filter((p) => permissionsFor(roles.get(p.id) ?? null).canEdit).map((p) => ({ id: p.id, name: p.name }));
     const people = profiles.map((p) => ({ id: p.id, name: p.full_name?.trim() || p.email, email: p.email }));
@@ -94,16 +75,13 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
   // The layout call seeds the viewer's sections and places newly assigned tasks first, so it runs
   // before the task lists are read.
   const { sections, placements } = await listMyTaskLayout();
-  const [{ open, completed }, bulk, rules, expandedTaskIds, awaiting, profiles, ruleCtx] = await Promise.all([
-    listMyTasks(member.id),
-    listBulkContext(null),
-    listMyTaskRules(),
-    // Oct 27 notes (batch 6): rows this person opened, and approvals waiting on them.
-    getExpandedTaskIds(),
-    listAwaitingMyApproval(),
-    listProfiles(),
-    loadMyTaskRuleContext(sections),
-  ]);
+  // Nov 4 notes (batch 22, M1): one call (my_tasks_screen) plus the app shell the layout already read; the
+  // rows this person opened (Oct 27 notes, batch 6) are in the shell's preferences.
+  const [screen, shell] = await Promise.all([loadMyTasksScreen(), loadAppShell()]);
+  const { open, completed, awaiting, rules } = screen;
+  const bulk = bulkContextFrom(shell, null, null, member.id);
+  const { expandedTaskIds, profiles } = shell;
+  const ruleCtx = myTaskRuleContextFrom(sections, shell, screen);
   // The subtask trees of the open rows (trees load by their top-level task: a row that is itself a
   // subtask needs its root, when the data says which).
   const opened = new Set(expandedTaskIds);

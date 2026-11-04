@@ -3,12 +3,9 @@ import { notFound } from "next/navigation";
 import { ProjectOverview } from "@/components/project/project-overview";
 import {
   getGoalViewer,
-  goalsEnabled,
-  getProject,
   getProjectOverviewInfo,
   listGoals,
   listProjectGoalLinks,
-  listProjectMembers,
   listProjectEmailActivity,
   listProjectStatusUpdates,
   listProjectStories,
@@ -17,10 +14,11 @@ import {
 import { goalEditable, periodLabel } from "@/lib/goals";
 import { sortActivity, type ProjectActivityItem } from "@/lib/project-page";
 import { compareMembers } from "@/lib/roles";
+import { loadAppShell, loadProjectFrame } from "@/lib/screen-loaders";
 
 export async function generateMetadata({ params }: PageProps<"/projects/[projectId]/overview">): Promise<Metadata> {
   const { projectId } = await params;
-  const project = await getProject(projectId);
+  const { project } = await loadProjectFrame(projectId);
   return { title: project ? `${project.name} · Overview` : "Overview" };
 }
 
@@ -29,11 +27,13 @@ export async function generateMetadata({ params }: PageProps<"/projects/[project
 // viewer's client (project Viewers+; goal links only for projects they can read).
 export default async function ProjectOverviewPage({ params }: PageProps<"/projects/[projectId]/overview">) {
   const { projectId } = await params;
-  const goalsOn = await goalsEnabled();
-  const [project, info, members, updates, stories, links, goals, viewer, emailIn, roles] = await Promise.all([
-    getProject(projectId),
+  // Nov 4 notes (batch 22, M1): the project, its members, and the Goals switch come from the frame and the
+  // shell the layouts read (one call each, shared).
+  const [frame, shell] = await Promise.all([loadProjectFrame(projectId), loadAppShell()]);
+  const { project, members } = frame;
+  const goalsOn = shell.goalsEnabled;
+  const [info, updates, stories, links, goals, viewer, emailIn, roles] = await Promise.all([
     getProjectOverviewInfo(projectId),
-    listProjectMembers(projectId),
     listProjectStatusUpdates(projectId),
     listProjectStories(projectId),
     goalsOn ? listProjectGoalLinks(projectId) : Promise.resolve([]),

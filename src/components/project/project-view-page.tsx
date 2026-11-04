@@ -7,33 +7,21 @@ import { ViewToolbar } from "@/components/project/view-toolbar";
 import { ViewConfigProvider } from "@/components/project/view-config";
 import { ProjectLiveUpdates } from "@/components/project/project-live";
 import { TaskPaneSlot } from "@/components/task/task-pane";
-import { listBulkContext } from "@/components/bulk/bulk-context";
+import { bulkContextFrom } from "@/components/bulk/bulk-context";
+import { requireMember } from "@/lib/auth";
+import { loadAppShell, loadProjectFrame, loadProjectViewPage } from "@/lib/screen-loaders";
 import { calendarVisibleDays, timelineWindow, type TimelineZoom } from "@/lib/date-input";
 import {
   filterProjectTaskIds,
-  getProject,
   listCalendarEvents,
-  listProfiles,
   listProjectDependencies,
-  listProjectFields,
   listProjectSchedule,
   projectCriticalPath,
-  listProjectTaskPage,
   listProjectTasks,
   type ProjectTask,
-  listProjectViews,
   listSectionTaskCounts,
-  listSections,
   listSubtaskTrees,
-  listVisibleTags,
-  tagsEnabled,
-  getExpandedTaskIds,
-  getListCollapsedGroups,
-  getListColumnWidths,
-  getProjectShowCompleted,
-  getViewPersonalConfig,
   getDependencyShiftMode,
-  getWorkWeek,
   type SubtaskItem,
 } from "@/lib/data";
 import { todayIn } from "@/lib/workload";
@@ -78,7 +66,7 @@ export async function LayoutRoute({
   searchParams: SearchParams;
 }) {
   // A shared tab first; the viewer's own view of that layout only when no shared one exists.
-  const views = await listProjectViews(projectId);
+  const { views } = await loadProjectFrame(projectId);
   const view = views.find((v) => v.layout === layout && v.ownerId === null) ?? views.find((v) => v.layout === layout);
   if (view) redirect(`/projects/${projectId}/views/${view.id}${queryString(searchParams)}`);
   return <ProjectViewPage projectId={projectId} view={null} layout={layout} searchParams={searchParams} />;
@@ -102,42 +90,35 @@ export async function ProjectViewPage({
   // Calendar and Timeline load the visible date window instead of every card.
   const scheduling = layout === "calendar" || layout === "timeline";
 
-  // The List groups this person collapsed here (Oct 26 notes, batch 4), read alongside the rest.
-  const collapsedGroupsLoad = layout === "list" ? getListCollapsedGroups(projectId) : Promise.resolve([]);
-  // Oct 27 notes (batch 5): the viewer's own Show / Hide completed for this project's List and Board.
-  const showCompletedLoad = paging ? getProjectShowCompleted(projectId) : Promise.resolve(null);
-  // Oct 27 notes (batch 6): the List rows this person opened to show their subtasks.
-  const expandedLoad = layout === "list" ? getExpandedTaskIds() : Promise.resolve([] as string[]);
-  // Nov 2 notes (batch 14, 94): the viewer's own version of this shared view ("Save for me").
-  const personalLoad = view && view.ownerId === null ? getViewPersonalConfig(view.id) : Promise.resolve(null);
-  const [sections, fullTasks, profiles, fields, timeZone, dependencies, criticalPath, bulk, tags, tagsOn, columnWidths, sectionCounts, project] =
-    await Promise.all([
-    listSections(projectId),
-    paging || scheduling ? Promise.resolve(null) : listProjectTasks(projectId),
-    listProfiles(),
-    listProjectFields(projectId),
+  // Nov 4 notes (batch 22, M1): the project's sections, fields, and the person's own settings here come
+  // from the project frame, people / tags / preferences from the app shell — both already read by the
+  // layouts in this request (one call each, shared). The page itself reads its cards (List / Board: one
+  // project_view_page call with their labels and the section counts).
+  const [member, frame, shell, timeZone, fullTasks, dependencies, criticalPath, shiftSettings] = await Promise.all([
+    requireMember(),
+    loadProjectFrame(projectId),
+    loadAppShell(),
     getViewerTimeZone(),
+    paging || scheduling ? Promise.resolve(null) : listProjectTasks(projectId),
     layout === "timeline" ? listProjectDependencies(projectId) : Promise.resolve([]),
     layout === "timeline" ? projectCriticalPath(projectId) : Promise.resolve(EMPTY_CRITICAL_PATH),
-    layout === "list" ? listBulkContext(projectId) : Promise.resolve(undefined),
-    listVisibleTags(),
-    tagsEnabled(),
-    layout === "list" ? getListColumnWidths(projectId) : Promise.resolve({}),
-    listSectionTaskCounts(projectId),
-    // Already read by the project layout (React-cached): the name the task pane's preview shows.
-    getProject(projectId),
+    // Nov 2 notes (batch 16, 125): Timeline moves dependents at once with Auto-shift.
+    layout === "timeline" ? getDependencyShiftMode(projectId) : Promise.resolve(null),
   ]);
-
-  // Nov 2 notes (batch 16, 125): Timeline moves dependents at once with Auto-shift.
-  const shiftLoad =
-    layout === "timeline" ? Promise.all([getDependencyShiftMode(projectId), getWorkWeek()]) : Promise.resolve(null);
-  const [collapsedGroups, showCompleted, expandedTaskIds, personalConfig, shiftSettings] = await Promise.all([
-    collapsedGroupsLoad,
-    showCompletedLoad,
-    expandedLoad,
-    personalLoad,
-    shiftLoad,
-  ]);
+  const { sections, fields, project } = frame;
+  const profiles = shell.profiles;
+  const tags = shell.visibleTags;
+  const tagsOn = shell.tagsEnabled;
+  const columnWidths = layout === "list" ? frame.columnWidths : {};
+  // The List groups this person collapsed here (Oct 26 notes, batch 4).
+  const collapsedGroups = layout === "list" ? frame.collapsedGroups : [];
+  // Oct 27 notes (batch 5): the viewer's own Show / Hide completed for this project's List and Board.
+  const showCompleted = paging ? frame.showCompleted : null;
+  // Oct 27 notes (batch 6): the List rows this person opened to show their subtasks.
+  const expandedTaskIds = layout === "list" ? shell.expandedTaskIds : [];
+  // Nov 2 notes (batch 14, 94): the viewer's own version of this shared view ("Save for me").
+  const personalConfig = view && view.ownerId === null ? (frame.personalConfigs.get(view.id) ?? null) : null;
+  const bulk = layout === "list" ? bulkContextFrom(shell, frame.members, projectId, member.id) : undefined;
   const context = {
     sectionIds: new Set(sections.map((s) => s.id)),
     fields,
@@ -169,9 +150,9 @@ export async function ProjectViewPage({
       : null;
   // List and Board paint one page per group. Calendar and Timeline load the visible dates (and the
   // undated tray). A missing function falls back to the full card list.
-  const [taskPageResult, scheduleTasks, calendarEvents] = await Promise.all([
+  const [viewPage, scheduleTasks, calendarEvents, scheduleSectionCounts] = await Promise.all([
     paging
-      ? listProjectTaskPage(
+      ? loadProjectViewPage(
           projectId,
           config.filters ?? {},
           timeZone,
@@ -194,7 +175,11 @@ export async function ProjectViewPage({
     calendarDays
       ? listCalendarEvents({ projectId }, calendarDays[0], calendarDays[calendarDays.length - 1])
       : Promise.resolve(null),
+    // List / Board get the section counts with their cards.
+    paging ? Promise.resolve(null) : listSectionTaskCounts(projectId),
   ]);
+  const taskPageResult = viewPage?.pages ?? null;
+  const sectionCounts = paging ? (viewPage?.sectionCounts ?? null) : scheduleSectionCounts;
   // Events are loaded for the server's window only, so a calendar that pages in the browser (a database
   // without project_schedule_cards, which has no calendar_events either) shows none.
   const windowedEvents = scheduleTasks !== null ? calendarEvents : null;
@@ -298,8 +283,8 @@ export async function ProjectViewPage({
             {...props}
             dependencies={dependencies}
             criticalPath={criticalPath}
-            shiftMode={shiftSettings?.[0] ?? null}
-            workWeek={shiftSettings?.[1]}
+            shiftMode={shiftSettings}
+            workWeek={layout === "timeline" ? shell.workWeek : undefined}
             windowed={scheduleTasks !== null}
             today={today}
             anchor={requestedDay}

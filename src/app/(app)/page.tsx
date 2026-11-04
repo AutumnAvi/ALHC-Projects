@@ -8,19 +8,7 @@ import { TaskPaneSlot } from "@/components/task/task-pane";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
 import { checklistGroupOf, summaryLine } from "@/lib/checklist";
-import {
-  countUnreadInbox,
-  getHomeDashboard,
-  getMyTasksChecked,
-  getWorkWeek,
-  listArchivedProjects,
-  listAwaitingMyApproval,
-  listInbox,
-  listMyProjectRoles,
-  listMyTasks,
-  listProfiles,
-  listProjects,
-} from "@/lib/data";
+import { loadAppShell, loadHomeScreen } from "@/lib/screen-loaders";
 import { firstName, greetingFor, hourIn, longDateIn } from "@/lib/home";
 import { permissionsFor } from "@/lib/permissions";
 import { getViewerTimeZone } from "@/lib/timezone";
@@ -39,20 +27,9 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const member = await requireMember();
   const timeZone = await getViewerTimeZone();
   const today = todayIn(timeZone);
-  const [{ open, completed }, checked, workWeek, dashboard, projects, roles, archived, profiles, awaiting, inbox, unread] =
-    await Promise.all([
-      listMyTasks(member.id),
-      getMyTasksChecked(),
-      getWorkWeek(),
-      getHomeDashboard(timeZone),
-      listProjects(),
-      listMyProjectRoles(),
-      listArchivedProjects(),
-      listProfiles(),
-      listAwaitingMyApproval(),
-      listInbox("activity"),
-      countUnreadInbox(),
-    ]);
+  // Nov 4 notes (batch 22, M1): one call (home_screen) plus the app shell the layout already read.
+  const [{ open, completed, dashboard, awaiting, inbox }, shell] = await Promise.all([loadHomeScreen(timeZone), loadAppShell()]);
+  const { myTasksChecked: checked, workWeek, projects, myRoles: roles, archivedProjects: archived, profiles, unreadCount: unread } = shell;
 
   const groupOf = (dueOn: string | null) => checklistGroupOf(dueOn, today);
   const counts = {

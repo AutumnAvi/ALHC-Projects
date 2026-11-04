@@ -19,7 +19,6 @@ import {
   type FieldDef,
   type FieldOption,
   type FieldSharing,
-  type FieldType,
   type LibraryField,
 } from "@/lib/fields";
 import { parseQuestions, submissionRequesterName, type FormDef, type PublicForm } from "@/lib/forms";
@@ -43,7 +42,6 @@ import {
   numberWithItsProject,
   requestLabelFrom,
   taskPlacesFrom,
-  templateFromPrefix,
   type RequestLabel,
   type TaskNumber,
   type TaskNumbering,
@@ -75,7 +73,7 @@ import {
   type DependencyKind,
   type DependencyShiftMode,
 } from "@/lib/dependencies";
-import { parseSubtaskTitles, parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
+import { parseTemplateSummary, type TemplateSummary } from "@/lib/templates";
 import {
   MY_TASKS_LAYOUT_COOKIE,
   isMyTaskSectionKind,
@@ -139,6 +137,16 @@ import {
 } from "@/lib/calendar-events";
 import { toStatusTemplate, type StatusTemplate } from "@/lib/status-templates";
 import type { Json, Tables } from "@/lib/supabase/database.types";
+import {
+  numberingFromRow,
+  toFieldDef,
+  toFormDef,
+  toProjectView,
+  toTaskTemplate,
+  type TaskTemplate,
+} from "@/lib/row-mappers";
+export type { TaskTemplate } from "@/lib/row-mappers";
+import type { AccessTaskRow } from "@/lib/screen-shapes";
 import { parseCompletedDays } from "@/lib/workload-people";
 import { isInboundCallStatus, type InboundCall, type InboundEndpoint } from "@/lib/inbound-shared";
 import {
@@ -162,7 +170,6 @@ import {
 import {
   NO_VIEW_SETTINGS,
   isFixedTab,
-  isViewLayout,
   isWidgetKind,
   parseFilters,
   parseViewConfig,
@@ -889,29 +896,60 @@ export const listProjectTaskPage = cache(
     });
     if (rpcMissing(result.error)) return null;
     if (result.error) throw new Error(`Failed to load tasks: ${result.error.message}`);
-    if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) return [];
-    const groups = (result.data as { groups?: Json }).groups;
-    if (!Array.isArray(groups)) return [];
-    const pages: ProjectTaskGroupPage[] = [];
-    for (const item of groups) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-      const group = item as Record<string, Json | undefined>;
-      if (typeof group.key !== "string") continue;
-      pages.push({
-        key: group.key,
-        total: typeof group.total === "number" ? group.total : 0,
-        nextId: typeof group.next_id === "string" ? group.next_id : null,
-        nextSortOrder: typeof group.next_sort_order === "number" ? group.next_sort_order : null,
-        tasks: projectTasksFromCards(group.cards ?? []),
-      });
-    }
+    const pages = taskGroupPagesFrom(result.data);
     const labels = await visibleRequestLabelsIn(projectId, pages.flatMap((page) => page.tasks.map((task) => task.id)));
-    return pages.map((page) => ({
-      ...page,
-      tasks: page.tasks.map((task) => ({ ...task, requestLabel: labels.get(task.id) ?? null })),
-    }));
+    return withPageLabels(pages, labels);
   },
 );
+
+// project_task_card_page()'s groups (shared with the batch 22 project_view_page loader).
+export function taskGroupPagesFrom(data: Json | null | undefined): ProjectTaskGroupPage[] {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  const groups = (data as { groups?: Json }).groups;
+  if (!Array.isArray(groups)) return [];
+  const pages: ProjectTaskGroupPage[] = [];
+  for (const item of groups) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const group = item as Record<string, Json | undefined>;
+    if (typeof group.key !== "string") continue;
+    pages.push({
+      key: group.key,
+      total: typeof group.total === "number" ? group.total : 0,
+      nextId: typeof group.next_id === "string" ? group.next_id : null,
+      nextSortOrder: typeof group.next_sort_order === "number" ? group.next_sort_order : null,
+      tasks: projectTasksFromCards(group.cards ?? []),
+    });
+  }
+  return pages;
+}
+
+export function withPageLabels(pages: ProjectTaskGroupPage[], labels: Map<string, RequestLabel>): ProjectTaskGroupPage[] {
+  return pages.map((page) => ({
+    ...page,
+    tasks: page.tasks.map((task) => ({ ...task, requestLabel: labels.get(task.id) ?? null })),
+  }));
+}
+
+// task_request_labels / task_request_labels_in answers ({ task id: label }) as a map.
+export function requestLabelMap(data: Json | null | undefined): Map<string, RequestLabel> {
+  const labels = new Map<string, RequestLabel>();
+  const map = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  for (const [taskId, value] of Object.entries(map)) {
+    const label = requestLabelFrom(value);
+    if (label) labels.set(taskId, label);
+  }
+  return labels;
+}
+
+// project_section_task_counts()'s answer as a record.
+export function sectionCountsFrom(data: Json | null | undefined): Record<string, number> {
+  const counts: Record<string, number> = {};
+  if (!data || typeof data !== "object" || Array.isArray(data)) return counts;
+  for (const [sectionId, count] of Object.entries(data)) {
+    if (typeof count === "number") counts[sectionId] = count;
+  }
+  return counts;
+}
 
 // Active tasks per section, including ones the current view hides (delete-section checks).
 // Null when the function is not there yet; the page then counts the tasks it already loaded.
@@ -1274,8 +1312,12 @@ async function withReplyFiles(supabase: Supabase, page: CommentPage): Promise<Co
 
 // The task's reply thread state (submitter_thread_status: Viewer+, never the token). Null without one or
 // without the database update.
-async function loadReplyThread(supabase: Supabase, taskId: string): Promise<TaskDetail["replyThread"]> {
-  const { data, error } = await supabase.rpc("submitter_thread_status", { target_task: taskId });
+async function loadReplyThread(
+  supabase: Supabase,
+  taskId: string,
+  preRead?: { data: Json | null; error: unknown },
+): Promise<TaskDetail["replyThread"]> {
+  const { data, error } = preRead ?? (await supabase.rpc("submitter_thread_status", { target_task: taskId }));
   if (error || !data || typeof data !== "object" || Array.isArray(data)) return null;
   const o = data as Record<string, Json | undefined>;
   if (typeof o.submitter_email !== "string") return null;
@@ -1369,6 +1411,22 @@ export async function listTaskTagIds(taskIds: string[]): Promise<Map<string, str
     out.set(r.task_id, list);
   }
   return out;
+}
+
+// Nov 4 notes (batch 22, M1): task_pane_rows() (one call for the pane's reads), or null on a database
+// without it (or for an id that isn't a uuid), so getTaskDetail reads them one by one as before.
+type TaskPaneRows = Record<string, Json | undefined>;
+
+async function loadTaskPaneRows(supabase: ServerClient, taskId: string): Promise<TaskPaneRows | null> {
+  if (!isUuid(taskId)) return null;
+  const result = await supabase.rpc("task_pane_rows", {
+    target_task: taskId,
+    comment_page_size: COMMENT_PAGE_SIZE,
+    run_limit: TASK_RUN_LIMIT,
+  });
+  if (rpcMissing(result.error)) return null;
+  if (result.error) throw new Error(`Failed to load task: ${result.error.message}`);
+  return result.data && typeof result.data === "object" && !Array.isArray(result.data) ? (result.data as TaskPaneRows) : null;
 }
 
 // A subtask as listed under its parent (the pane, List with “Show subtasks”).
@@ -1489,15 +1547,20 @@ export const listProjectDependencies = cache(async (projectId: string): Promise<
 
 export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | null> => {
   const supabase = await createClient();
+  // Nov 4 notes (batch 22, M1): the pane's reads come back in one call (task_pane_rows) when the database
+  // has it; each read below then takes its rows from there (same columns), else runs as before.
+  const pane = await loadTaskPaneRows(supabase, taskId);
+  const fromPane = <T,>(key: string, read: () => PromiseLike<T>): Promise<T> =>
+    pane ? Promise.resolve({ data: pane[key] ?? null, error: null } as T) : Promise.resolve(read());
   const task = maybe(
-    await supabase
+    await fromPane("task", () => supabase
       .from("tasks")
       .select(
         "id, title, kind, notes, completed_at, start_on, due_on, start_at, due_at, time_zone, recurrence, recurrence_seq, recurrence_next_id, assignee_id, home_project_id, created_at, updated_at, source, req_project_id, req_number, parent_task_id, root_task_id",
       )
       .eq("id", taskId)
       .is("deleted_at", null)
-      .maybeSingle(),
+      .maybeSingle()),
     "task",
   );
   if (!task) return null;
@@ -1505,49 +1568,60 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
   // A subtask lives in its root task's projects.
   const scopeTaskId = task.root_task_id ?? taskId;
   const isPrivate = task.home_project_id === null;
+  // A subtask of a form task answers the request's submitter (its top-level task's submission).
+  const readSubmission = () =>
+    supabase
+      .from("form_submissions")
+      .select("form_id, submitter_email, created_at, answers")
+      .eq("task_id", scopeTaskId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1);
   // Reads that need only the task row start now and are awaited at the end, so they add no round trip.
   const early = Promise.all([
     listMyProjectRoles(),
-    listTaskTagIds([taskId]),
-    supabase.rpc("open_blocker_count", { target_task: taskId }),
+    pane
+      ? Promise.resolve(new Map([[taskId, Array.isArray(pane.tag_ids) ? (pane.tag_ids as string[]) : []]]))
+      : listTaskTagIds([taskId]),
+    fromPane("blocker_count", () => supabase.rpc("open_blocker_count", { target_task: taskId })),
     isPrivate
-      ? supabase
+      ? fromPane("private_root", () => supabase
           .from("tasks")
           .select("created_by, assignee_id")
           .eq("id", scopeTaskId)
-          .maybeSingle()
+          .maybeSingle())
           .then((r) => maybe(r, "private task"))
       : Promise.resolve(null),
     listTeams(),
-    visibleTaskNumbers([taskId]),
-    loadTaskNumbers(supabase, taskId),
+    pane ? Promise.resolve(numbersFromPlaces(placesFromLabels(pane.labels))) : visibleTaskNumbers([taskId]),
+    pane ? Promise.resolve(taskNumbersFrom(pane.task_numbers)) : loadTaskNumbers(supabase, taskId),
     task.kind === "approval" ? loadApprovalInfo(supabase, taskId) : Promise.resolve(null),
   ]);
   // Marked handled now; awaiting it below still throws its error.
   early.catch(() => {});
   const [subtasks, memberships, tree] = await Promise.all([
-    supabase
+    fromPane("subtasks", () => supabase
       .from("tasks")
       .select(SUBTASK_COLUMNS)
       .eq("parent_task_id", taskId)
       .is("deleted_at", null)
       .order("subtask_order")
-      .order("created_at"),
-    supabase
+      .order("created_at")),
+    fromPane("memberships", () => supabase
       .from("task_projects")
       .select("project_id, section_id, project:projects!inner(id, name, sections(id, name, sort_order, deleted_at))")
       .eq("task_id", scopeTaskId)
       .is("deleted_at", null)
       .is("project.deleted_at", null)
       .order("created_at")
-      .order("project_id"),
+      .order("project_id")),
     // The whole task tree (root first): the breadcrumb, subtask counts, and Convert's candidates.
-    supabase
+    fromPane("tree", () => supabase
       .from("tasks")
       .select("id, title, completed_at, parent_task_id, deleted_at")
       .or(`id.eq.${scopeTaskId},root_task_id.eq.${scopeTaskId}`)
       .order("created_at")
-      .limit(500),
+      .limit(500)),
   ]);
   const subtaskRows = rows(subtasks, "subtasks");
   const treeRows = rows(tree, "parent tasks");
@@ -1602,64 +1676,61 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     commentEmails,
     responseEmails,
   ] = await Promise.all([
-    projectIds.length ? listFieldsForProjects(projectIds) : Promise.resolve([]),
-    supabase.from("task_field_values").select("field_id, value").eq("task_id", taskId),
-    supabase
+    pane
+      ? Promise.resolve((Array.isArray(pane.fields) ? (pane.fields as Tables<"custom_fields">[]) : []).map(toFieldDef))
+      : projectIds.length ? listFieldsForProjects(projectIds) : Promise.resolve([]),
+    fromPane("values", () => supabase.from("task_field_values").select("field_id, value").eq("task_id", taskId)),
+    fromPane("followers", () => supabase
       .from("task_followers")
       .select("profile_id")
       .eq("task_id", taskId)
       .is("deleted_at", null)
-      .order("created_at"),
-    supabase
+      .order("created_at")),
+    fromPane("attachments", () => supabase
       .from("task_attachments")
       .select("id, file_name, content_type, size_bytes, uploaded_by, created_at, source")
       .eq("task_id", taskId)
       .is("deleted_at", null)
-      .order("created_at"),
-    supabase.rpc("task_comment_page", { target_task: taskId, max_results: COMMENT_PAGE_SIZE }),
-    supabase
+      .order("created_at")),
+    fromPane("comment_page", () => supabase.rpc("task_comment_page", { target_task: taskId, max_results: COMMENT_PAGE_SIZE })),
+    fromPane("stories", () => supabase
       .from("task_stories")
       .select("id, actor_id, kind, data, created_at")
       .eq("task_id", taskId)
-      .order("created_at"),
-    supabase
+      .order("created_at")),
+    fromPane("approvals", () => supabase
       .from("approval_requests")
       .select("*")
       .eq("task_id", taskId)
       .is("deleted_at", null)
-      .order("created_at"),
-    // A subtask of a form task answers the request's submitter (its top-level task's submission).
-    supabase
-      .from("form_submissions")
-      .select("form_id, submitter_email, created_at, answers")
-      .eq("task_id", scopeTaskId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(1),
+      .order("created_at")),
+    pane
+      ? Promise.resolve({ data: pane.submission ? [pane.submission] : [], error: null } as unknown as Awaited<ReturnType<typeof readSubmission>>)
+      : readSubmission(),
     task.req_number
-      ? supabase.rpc("format_request_label", {
+      ? fromPane("request_label", () => supabase.rpc("format_request_label", {
           target_project: task.req_project_id!,
-          number: task.req_number,
-        })
+          number: task.req_number!,
+        }))
       : Promise.resolve({ data: null, error: null }),
     task.home_project_id
-      ? supabase
+      ? fromPane("numbering", () => supabase
           .from("request_sequences")
           .select("*")
-          .eq("project_id", task.home_project_id)
+          .eq("project_id", task.home_project_id!)
           .eq("enabled", true)
           .is("deleted_at", null)
-          .maybeSingle()
+          .maybeSingle())
       : Promise.resolve({ data: null, error: null }),
-    supabase.rpc("task_role", { target_task: taskId }),
+    fromPane("task_role", () => supabase.rpc("task_role", { target_task: taskId })),
     projectIds.length
-      ? supabase
+      ? fromPane("project_members", () => supabase
           .from("project_members")
           .select("profile_id, role")
           .in("project_id", projectIds)
-          .is("deleted_at", null)
+          .is("deleted_at", null))
       : Promise.resolve({ data: [], error: null }),
-    supabase
+    fromPane("dependencies", () => supabase
       .from("task_dependencies")
       .select(
         "id, predecessor_id, successor_id, kind, lag_days, predecessor:tasks!task_dependencies_predecessor_id_fkey!inner(id, title, completed_at, parent_task_id), successor:tasks!task_dependencies_successor_id_fkey!inner(id, title, completed_at, parent_task_id)",
@@ -1668,30 +1739,30 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
       .is("deleted_at", null)
       .is("predecessor.deleted_at", null)
       .is("successor.deleted_at", null)
-      .order("created_at"),
+      .order("created_at")),
     task.recurrence_next_id
-      ? supabase.from("tasks").select("id").eq("id", task.recurrence_next_id).is("deleted_at", null).maybeSingle()
+      ? fromPane("next_occurrence", () => supabase.from("tasks").select("id").eq("id", task.recurrence_next_id!).is("deleted_at", null).maybeSingle())
       : Promise.resolve({ data: null, error: null }),
-    supabase
+    fromPane("attachment_links", () => supabase
       .from("task_attachment_links")
       .select("id, source, name, url, attachment_id")
       .eq("task_id", taskId)
       .is("deleted_at", null)
-      .order("created_at"),
+      .order("created_at")),
     // Comments and reply by email (20261014030000): which comments were emailed to the form's submitter or
     // came back from them. A database without that update has no such columns (42703 → none, and no
     // "Send response to submitter").
-    supabase
+    fromPane("comment_emails", () => supabase
       .from("comments")
       .select("id, email_direction, email_address, email_subject")
       .eq("task_id", taskId)
-      .not("email_direction", "is", null),
-    supabase
+      .not("email_direction", "is", null)),
+    fromPane("response_emails", () => supabase
       .from("email_outbox")
       .select("status, delivery_status, last_error, comment_id:payload->>comment_id")
       .eq("task_id", taskId)
       .eq("payload->>kind", "submitter_response")
-      .order("created_at"),
+      .order("created_at")),
   ]);
 
   let submitterResponses = !commentEmails.error;
@@ -1749,7 +1820,7 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     pins,
     automationActivity,
   ] = await Promise.all([
-    loadReplyThread(supabase, taskId),
+    loadReplyThread(supabase, taskId, pane ? { data: pane.reply_thread ?? null, error: null } : undefined),
     withDependencyTitles(storyList),
     storyEmailStatuses(storyList),
     comments.error ? Promise.resolve(null) : withReplyFiles(supabase, parseCommentPage(comments.data, responseStatus)).then((page) => withReviewChecks(supabase, page)),
@@ -1762,8 +1833,8 @@ export const getTaskDetail = cache(async (taskId: string): Promise<TaskDetail | 
     early,
     withSubtaskApprovals(supabase, toSubtaskItems(subtaskRows, grandchildren)).then((items) => withRequestLabels(items)),
     submission ? loadSubmitterConversation(taskId) : Promise.resolve(null),
-    loadCommentPins(supabase, taskId, responseStatus),
-    loadTaskAutomationAndEmail(supabase, taskId),
+    loadCommentPins(supabase, taskId, responseStatus, pane ? { pinned: pane.pinned_comments, events: pane.pin_events } : undefined),
+    loadTaskAutomationAndEmail(supabase, taskId, pane ? { runs: pane.rule_runs, email: pane.email_activity } : undefined),
   ]);
   const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
 
@@ -2218,26 +2289,6 @@ async function withDependencyTitles<T extends { kind: string; data: Json }>(stor
   });
 }
 
-function toFieldDef(row: Tables<"custom_fields">): FieldDef {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    name: row.name,
-    fieldType: row.field_type as FieldType,
-    options: parseOptions(row.options),
-    boundToSections: row.bound_to_sections,
-    showInViews: row.show_in_views,
-    sortOrder: row.sort_order,
-    description: row.description ?? null,
-    notifyOnChange: row.notify_on_change ?? false,
-    inLibrary: row.in_library ?? false,
-    numberPrefix: row.number_prefix ?? null,
-    libraryFieldId: row.library_field_id ?? null,
-    locked: row.locked ?? false,
-    lockedBy: row.locked_by ?? null,
-    lockedAt: row.locked_at ?? null,
-  };
-}
 
 // The workspace field library (list_field_library: name, type, description, and options of library
 // fields, never their projects). Null without the migration.
@@ -2345,7 +2396,7 @@ export type MyTask = {
   datePrompt?: boolean;
 };
 
-function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
+export function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
   const empty = { open: [] as MyTask[], completed: [] as MyTask[] };
   if (!data || typeof data !== "object" || Array.isArray(data)) return empty;
   const page = data as { open?: Json; completed?: Json };
@@ -2380,6 +2431,17 @@ function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTask[] } {
 async function labelMyTasks(page: { open: MyTask[]; completed: MyTask[] }) {
   const ids = [...page.open, ...page.completed].map((task) => task.id);
   const [numbers, access, extras] = await Promise.all([visibleTaskNumbers(ids), taskAccessSets(ids), myTaskExtras(page.open)]);
+  return assembleMyTasks(page, numbers, access, extras);
+}
+
+// My tasks' rows with their numbers, rights, and extras (shared by labelMyTasks and the batch 22 screen
+// loaders, which read the same pieces in one call).
+export function assembleMyTasks(
+  page: { open: MyTask[]; completed: MyTask[] },
+  numbers: Map<string, TaskNumber[]>,
+  access: { editable: Set<string>; commentable: Set<string> },
+  extras: Map<string, Partial<MyTask>>,
+) {
   const apply = (task: MyTask): MyTask => {
     const taskNumbers = numbers.get(task.id) ?? [];
     const label = taskNumbers[0]?.label ?? null;
@@ -2534,7 +2596,7 @@ export async function taskAccessSets(taskIds: string[]): Promise<{ editable: Set
   const byId = new Map(tasks.map((t) => [t.id, t] as const));
   const rootOf = (t: Row) => t.root_task_id ?? t.id;
   const missingRoots = [...new Set(tasks.map(rootOf))].filter((id) => !byId.has(id));
-  for (const root of await read(missingRoots)) byId.set(root.id, root);
+  const roots = await read(missingRoots);
   const rootIds = [...new Set(tasks.map(rootOf))];
   const [roles, memberships] = await Promise.all([
     listMyProjectRoles(),
@@ -2542,13 +2604,33 @@ export async function taskAccessSets(taskIds: string[]): Promise<{ editable: Set
       rows(await supabase.from("task_projects").select("task_id, project_id").in("task_id", chunk).is("deleted_at", null), "task projects"),
     ),
   ]);
+  return accessFromRows(ids, [...tasks, ...roots], memberships, roles, user.id);
+}
+
+// The rights part of taskAccessSets, from rows already read: the tasks (and their top-level tasks), the
+// top-level tasks' live projects, and the viewer's effective roles. Pure, so the batch 22 screen loaders
+// (my_task_bundle) and the chunked reads above decide the same way.
+export function accessFromRows(
+  taskIds: readonly string[],
+  taskRows: readonly AccessTaskRow[],
+  memberships: readonly { task_id: string; project_id: string }[],
+  roles: Map<string, ProjectRole>,
+  userId: string,
+): { editable: Set<string>; commentable: Set<string> } {
+  const editable = new Set<string>();
+  const commentable = new Set<string>();
+  type Row = AccessTaskRow;
+  const wanted = new Set(taskIds);
+  const byId = new Map(taskRows.map((t) => [t.id, t] as const));
+  const tasks = [...byId.values()].filter((t) => wanted.has(t.id));
+  const rootOf = (t: Row) => t.root_task_id ?? t.id;
   const projectsOf = new Map<string, string[]>();
   for (const m of memberships) projectsOf.set(m.task_id, [...(projectsOf.get(m.task_id) ?? []), m.project_id]);
   for (const task of tasks) {
     const root = byId.get(rootOf(task));
     if (!root) continue;
     if (root.home_project_id === null) {
-      if (root.created_by === user.id || root.assignee_id === user.id) {
+      if (root.created_by === userId || root.assignee_id === userId) {
         editable.add(task.id);
         commentable.add(task.id);
       }
@@ -2559,7 +2641,7 @@ export async function taskAccessSets(taskIds: string[]): Promise<{ editable: Set
     if (permissions.canEdit) editable.add(task.id);
     if (permissions.canComment) commentable.add(task.id);
   }
-  return access;
+  return { editable, commentable };
 }
 
 // The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()
@@ -2738,7 +2820,7 @@ function inboxString(value: Json | undefined): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function inboxItemsFromPage(data: Json): InboxItem[] {
+export function inboxItemsFromPage(data: Json): InboxItem[] {
   if (!Array.isArray(data)) return [];
   const items: InboxItem[] = [];
   for (const entry of data) {
@@ -2829,6 +2911,10 @@ export const listInbox = cache(async (tab: InboxTab = "activity"): Promise<Inbox
 
 async function labelInbox(items: InboxItem[]): Promise<InboxItem[]> {
   const numbers = await visibleTaskNumbers(items.map((item) => item.taskId).filter((id): id is string => Boolean(id)));
+  return labelInboxWith(items, numbers);
+}
+
+export function labelInboxWith(items: InboxItem[], numbers: Map<string, TaskNumber[]>): InboxItem[] {
   if (numbers.size === 0) return items;
   return items.map((item) => {
     const taskNumbers = item.taskId ? numbers.get(item.taskId) : undefined;
@@ -3509,20 +3595,6 @@ export const listTrashedTasks = cache(async (projectId: string): Promise<Trashed
 // Workflows: forms, rules, request numbers
 // ---------------------------------------------------------------------------------------------
 
-function toFormDef(row: Tables<"forms">): FormDef {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    title: row.title,
-    description: row.description,
-    questions: parseQuestions(row.questions),
-    destinationSectionId: row.destination_section_id,
-    acceptingResponses: row.accepting_responses,
-    sendConfirmation: row.send_confirmation,
-    confirmationMessage: row.confirmation_message,
-    verifiedDomainsOnly: row.verified_domains_only ?? false,
-  };
-}
 
 export type FormSummary = FormDef & { submissionCount: number; lastSubmittedAt: string | null };
 
@@ -3792,61 +3864,6 @@ export const listRulePresets = cache(async (): Promise<RulePreset[]> => {
 const NUMBERING_COLUMNS =
   "enabled, prefix, pad_width, add_to_title, assign_to, last_number, template, wrap_brackets, number_subtasks, subtask_separator, number_scope, section_ids, task_kinds, reuse_deleted, fill_gaps, reset_period, counter_field_id, project_code, renumber_on_move, time_zone, start_number";
 
-function numberingFromRow(row: {
-  enabled: boolean;
-  prefix: string;
-  pad_width: number;
-  add_to_title: boolean;
-  assign_to: string;
-  last_number: number;
-  template?: string;
-  wrap_brackets?: boolean;
-  number_subtasks?: boolean;
-  subtask_separator?: string;
-  number_scope?: string;
-  section_ids?: string[] | null;
-  task_kinds?: string[] | null;
-  reuse_deleted?: boolean;
-  fill_gaps?: boolean;
-  reset_period?: string;
-  counter_field_id?: string | null;
-  project_code?: string | null;
-  renumber_on_move?: boolean;
-  time_zone?: string;
-  start_number?: number;
-  advanced: boolean;
-}): TaskNumbering {
-  const scope = row.number_scope === "sections" || row.number_scope === "kinds" || row.number_scope === "form_submissions" || row.number_scope === "all_tasks"
-    ? row.number_scope
-    : row.assign_to === "form_submissions"
-      ? "form_submissions"
-      : "all_tasks";
-  const separator = row.subtask_separator === "-" || row.subtask_separator === "/" ? row.subtask_separator : ".";
-  const reset = row.reset_period === "yearly" || row.reset_period === "monthly" ? row.reset_period : "never";
-  const kinds = (row.task_kinds ?? []).filter((k): k is "task" | "milestone" | "approval" => k === "task" || k === "milestone" || k === "approval");
-  return {
-    enabled: row.enabled,
-    template: row.template || templateFromPrefix(row.prefix, row.pad_width),
-    wrapBrackets: row.wrap_brackets !== false,
-    addToTitle: row.add_to_title,
-    numberScope: scope,
-    sectionIds: row.section_ids ?? [],
-    taskKinds: kinds.length ? kinds : ["task", "milestone", "approval"],
-    numberSubtasks: row.number_subtasks !== false,
-    subtaskSeparator: separator,
-    reuseDeleted: row.reuse_deleted === true,
-    fillGaps: row.fill_gaps === true,
-    resetPeriod: reset,
-    counterFieldId: row.counter_field_id ?? null,
-    projectCode: row.project_code ?? "",
-    renumberOnMove: row.renumber_on_move === true,
-    timeZone: row.time_zone || "UTC",
-    nextNumber: row.last_number + 1,
-    lastNumber: row.last_number,
-    startNumber: Math.max(1, Number(row.start_number ?? 1) || 1),
-    advanced: row.advanced,
-  };
-}
 
 export const getRequestSequence = cache(async (projectId: string): Promise<TaskNumbering | null> => {
   const supabase = await createClient();
@@ -3941,13 +3958,30 @@ async function taskPlacesWith(supabase: ServerClient, ids: string[]): Promise<Ma
     const result = await supabase.rpc("task_project_labels", { task_ids: unique.slice(i, i + 2000) });
     if (rpcMissing(result.error)) return null;
     if (result.error) return places;
-    const map = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {};
-    for (const [taskId, value] of Object.entries(map)) {
-      const list = taskPlacesFrom(value);
-      if (list.length) places.set(taskId, list);
-    }
+    for (const [taskId, list] of placesFromLabels(result.data)) places.set(taskId, list);
   }
   return places;
+}
+
+// task_project_labels()'s answer as places (only tasks with at least one place).
+export function placesFromLabels(data: Json | null | undefined): Map<string, TaskPlace[]> {
+  const places = new Map<string, TaskPlace[]>();
+  const map = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  for (const [taskId, value] of Object.entries(map)) {
+    const list = taskPlacesFrom(value);
+    if (list.length) places.set(taskId, list);
+  }
+  return places;
+}
+
+// The numbers of each task from its places (visibleTaskNumbers' rule: only tasks with a number).
+export function numbersFromPlaces(places: Map<string, TaskPlace[]>): Map<string, TaskNumber[]> {
+  const numbers = new Map<string, TaskNumber[]>();
+  for (const [taskId, list] of places) {
+    const found = numbersOf(list);
+    if (found.length) numbers.set(taskId, found);
+  }
+  return numbers;
 }
 
 // The one helper behind every list outside a project (My tasks, Home, search, the palette, the Inbox, the
@@ -3967,14 +4001,7 @@ export async function visibleTaskPlacesOrNull(ids: string[]): Promise<Map<string
 export async function visibleTaskNumbers(ids: string[]): Promise<Map<string, TaskNumber[]>> {
   const supabase = await createClient();
   const places = await taskPlacesWith(supabase, ids);
-  if (places) {
-    const numbers = new Map<string, TaskNumber[]>();
-    for (const [taskId, list] of places) {
-      const found = numbersOf(list);
-      if (found.length) numbers.set(taskId, found);
-    }
-    return numbers;
-  }
+  if (places) return numbersFromPlaces(places);
   const labels = await requestLabelsWith(supabase, ids);
   return new Map([...labels].map(([taskId, label]) => [taskId, [{ projectId: null, projectName: null, label }]] as const));
 }
@@ -4275,17 +4302,6 @@ export const listInboundCalls = cache(async (projectId: string): Promise<Inbound
 // Views & Insights: saved views, filtering, dashboard widgets + metrics
 // ---------------------------------------------------------------------------------------------
 
-function toProjectView(row: Tables<"project_views">): ProjectView {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    name: row.name,
-    layout: isViewLayout(row.layout) ? row.layout : "list",
-    config: parseViewConfig(row.config),
-    sortOrder: row.sort_order,
-    ownerId: row.owner_id ?? null,
-  };
-}
 
 export const listProjectViews = cache(async (projectId: string): Promise<ProjectView[]> => {
   const supabase = await createClient();
@@ -5108,37 +5124,6 @@ export const listProjectTemplates = cache(async (): Promise<ProjectTemplate[]> =
     canManage: manage[index] === true,
   }));
 });
-
-export type TaskTemplate = {
-  id: string;
-  projectId: string;
-  name: string;
-  title: string;
-  notes: string | null;
-  subtasks: string[];
-  fieldValueCount: number;
-  assigneeId: string | null;
-  updatedAt: string;
-};
-
-type TaskTemplateRow = Pick<
-  Tables<"task_templates">,
-  "id" | "project_id" | "name" | "title" | "notes" | "subtasks" | "field_values" | "assignee_id" | "updated_at"
->;
-
-function toTaskTemplate(t: TaskTemplateRow): TaskTemplate {
-  return {
-    id: t.id,
-    projectId: t.project_id,
-    name: t.name,
-    title: t.title,
-    notes: t.notes,
-    subtasks: parseSubtaskTitles(t.subtasks),
-    fieldValueCount: Array.isArray(t.field_values) ? t.field_values.length : 0,
-    assigneeId: t.assignee_id,
-    updatedAt: t.updated_at,
-  };
-}
 
 const TASK_TEMPLATE_COLUMNS = "id, project_id, name, title, notes, subtasks, field_values, assignee_id, updated_at";
 
@@ -7082,9 +7067,14 @@ export async function requestLabelsInWith(
 // Every number a task has in the projects the viewer reads (the pane's Projects row).
 async function loadTaskNumbers(supabase: ServerClient, taskId: string): Promise<Record<string, RequestLabel>> {
   const result = await supabase.rpc("task_numbers", { target_task: taskId });
+  return result.error ? {} : taskNumbersFrom(result.data);
+}
+
+// task_numbers()'s answer ({ project id: label }).
+function taskNumbersFrom(data: Json | null | undefined): Record<string, RequestLabel> {
   const numbers: Record<string, RequestLabel> = {};
-  if (result.error || !result.data || typeof result.data !== "object" || Array.isArray(result.data)) return numbers;
-  for (const [projectId, value] of Object.entries(result.data)) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return numbers;
+  for (const [projectId, value] of Object.entries(data)) {
     const label = requestLabelFrom(value);
     if (label) numbers[projectId] = label;
   }
@@ -7194,6 +7184,17 @@ async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask
       (await supabase.from("tasks").select("id, root_task_id").in("id", chunk).not("root_task_id", "is", null)).data ?? [],
     ),
   ]);
+  return myTaskExtrasFrom(blocked, children, states, roots);
+}
+
+// The extras of My tasks' open rows from rows already read (blockers, subtasks, approval states, roots).
+export function myTaskExtrasFrom(
+  blocked: Map<string, number>,
+  children: readonly { parent_task_id: string | null; completed_at: string | null }[],
+  states: Map<string, ApprovalRowState>,
+  roots: readonly { id: string; root_task_id: string | null }[],
+): Map<string, Partial<MyTask>> {
+  const extras = new Map<string, Partial<MyTask>>();
   for (const [taskId, count] of blocked) extras.set(taskId, { ...extras.get(taskId), blockedBy: count });
   for (const r of roots) extras.set(r.id, { ...extras.get(r.id), rootTaskId: r.root_task_id });
   for (const c of children) {
@@ -7213,9 +7214,9 @@ async function myTaskExtras(tasks: MyTask[]): Promise<Map<string, Partial<MyTask
 // round's status, paused, whether it waits on the viewer, and whether the viewer approves it. One call
 // (task_approval_states); a database without it asks task_approval_state per task (at most 200), and an
 // older one leaves the viewer's part unknown.
-type ApprovalRowState = Pick<SubtaskItem, "approvalStatus" | "approvalPaused" | "approvalWaitingOnMe" | "approvalIsApprover">;
+export type ApprovalRowState = Pick<SubtaskItem, "approvalStatus" | "approvalPaused" | "approvalWaitingOnMe" | "approvalIsApprover">;
 
-function approvalRowState(value: Json | undefined): ApprovalRowState {
+export function approvalRowState(value: Json | undefined): ApprovalRowState {
   const state = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, Json>) : {};
   return {
     approvalStatus: parseApprovalTaskStatus(state.status) ?? "not_sent",
@@ -7314,11 +7315,22 @@ export const listAwaitingMyApproval = cache(async (): Promise<AwaitingApproval[]
     // decide_approval needs Commenter+: an approver lowered to Viewer isn't waited on (Oct 29 notes, batch 7).
     taskAccessSets(taskIds),
   ]);
-  const taskById = new Map((tasks.data ?? []).map((t) => [t.id, t] as const));
-  const roundById = new Map((rounds.data ?? []).map((r) => [r.id, r] as const));
+  return awaitingFrom(requests.data, tasks.data ?? [], rounds.data ?? [], places, access);
+});
+
+// Waiting on me to approve, from rows already read (shared with the batch 22 screen loaders).
+export function awaitingFrom(
+  requests: readonly { id: string; task_id: string; round_id: string | null; created_at: string }[],
+  tasks: readonly { id: string; title: string; kind: string; due_on: string | null; completed_at: string | null }[],
+  rounds: readonly { id: string; status: string; due_on: string | null; round_number: number }[],
+  places: Map<string, TaskPlace[]>,
+  access: { editable: Set<string>; commentable: Set<string> },
+): AwaitingApproval[] {
+  const taskById = new Map(tasks.map((t) => [t.id, t] as const));
+  const roundById = new Map(rounds.map((r) => [r.id, r] as const));
   const seen = new Set<string>();
   const out: AwaitingApproval[] = [];
-  for (const r of requests.data) {
+  for (const r of requests) {
     const task = taskById.get(r.task_id);
     if (!task || seen.has(task.id) || !access.commentable.has(task.id)) continue;
     const round = r.round_id ? roundById.get(r.round_id) : null;
@@ -7341,7 +7353,7 @@ export const listAwaitingMyApproval = cache(async (): Promise<AwaitingApproval[]
     });
   }
   return out;
-});
+}
 
 // Open-blocker counts (open_blocker_counts: the completion check's count, hidden blockers included as a
 // number). Empty on a database without the function.
@@ -7440,8 +7452,16 @@ const RUN_STATUSES = ["succeeded", "scheduled", "skipped", "failed"] as const;
 async function loadTaskAutomationAndEmail(
   supabase: Supabase,
   taskId: string,
+  preRead?: { runs: Json | undefined; email: Json | undefined },
 ): Promise<{ runs: TaskRuleRun[]; email: TaskEmailActivity[]; ruleProjects: Map<string, string> }> {
-  const [runs, email] = await Promise.all([
+  type RunRow = { id: string; rule_id: string; status: string; detail: Json; created_at: string; rule: { name: string; project_id: string } | null };
+  type EmailRow = { id: string; kind: string; sender_email: string; sender_profile_id: string | null; subject: string | null; comment_id: string | null; created_at: string };
+  const [runs, email] = preRead
+    ? [
+        { data: (Array.isArray(preRead.runs) ? preRead.runs : []) as unknown as RunRow[], error: null },
+        { data: (Array.isArray(preRead.email) ? preRead.email : []) as unknown as EmailRow[], error: null },
+      ]
+    : await Promise.all([
     supabase
       .from("rule_runs")
       .select("id, rule_id, status, detail, created_at, rule:rules(name, project_id)")
@@ -7524,11 +7544,18 @@ async function loadCommentPins(
   supabase: Supabase,
   taskId: string,
   outbox: Map<string, { status: CommentEmail["status"]; error: string | null }>,
+  preRead?: { pinned: Json | undefined; events: Json | undefined },
 ): Promise<{ pinned: TaskComment[]; events: TaskStory[] }> {
-  const [pinned, events] = await Promise.all([
-    supabase.rpc("task_pinned_comments", { target_task: taskId }),
-    supabase.from("comment_pin_events").select("id, comment_id, actor_id, pinned, created_at").eq("task_id", taskId).order("created_at"),
-  ]);
+  type PinEvent = { id: string; comment_id: string; actor_id: string | null; pinned: boolean; created_at: string };
+  const [pinned, events] = preRead
+    ? [
+        { data: (preRead.pinned ?? []) as Json, error: null },
+        { data: (Array.isArray(preRead.events) ? preRead.events : []) as unknown as PinEvent[], error: null },
+      ]
+    : await Promise.all([
+        supabase.rpc("task_pinned_comments", { target_task: taskId }),
+        supabase.from("comment_pin_events").select("id, comment_id, actor_id, pinned, created_at").eq("task_id", taskId).order("created_at"),
+      ]);
   const rowsOf = !pinned.error && Array.isArray(pinned.data) ? pinned.data : [];
   return {
     pinned: rowsOf.flatMap((item) => {

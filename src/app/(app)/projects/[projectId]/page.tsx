@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { ProjectViewPage, queryString } from "@/components/project/project-view-page";
 import { CanonicalUrl } from "@/components/shell/canonical-url";
-import { getProfilePreferences, getProjectViewSettings, listProjectViews } from "@/lib/data";
+import { loadAppShell, loadProjectFrame } from "@/lib/screen-loaders";
 import { openingView } from "@/lib/views";
 
 // Opens the project on its default view (Owners pick it; else the first tab), or on the viewer's own
@@ -11,13 +11,9 @@ import { openingView } from "@/lib/views";
 // server renders in a row.
 export default async function ProjectIndex({ params, searchParams }: PageProps<"/projects/[projectId]">) {
   const { projectId } = await params;
-  const [views, settings, preferences, query] = await Promise.all([
-    listProjectViews(projectId),
-    getProjectViewSettings(projectId),
-    getProfilePreferences(),
-    searchParams,
-  ]);
-  const view = openingView(views, settings, preferences.openPersonalView);
+  // Nov 4 notes (batch 22, M1): the frame and the shell (already read by the layouts) have all of it.
+  const [frame, shell, query] = await Promise.all([loadProjectFrame(projectId), loadAppShell(), searchParams]);
+  const view = openingView(frame.views, frame.viewSettings, shell.openPersonalView);
   if (!view) redirect(`/projects/${projectId}/list${queryString(query)}`);
   return (
     <>
