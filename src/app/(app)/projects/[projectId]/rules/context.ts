@@ -6,8 +6,6 @@ import {
   getProjectIntegrations,
   getMyPersonalWorkWeek,
   getWorkWeek,
-  hasAutomationsV2Schema,
-  hasAutomationsV3Schema,
   listEditablePortfolios,
   listEditableProjectsWithSections,
   listInboundEndpoints,
@@ -29,7 +27,7 @@ import { loadSlackSettings } from "@/lib/slack-actions";
 // webhooks (the Rules page and the rule canvas). Read with the viewer's client: below Admin the
 // integration defaults and inbound webhooks come back empty.
 export async function loadRuleContext(projectId: string): Promise<RuleContext> {
-  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, v2, members, v3, projectTemplates, portfolios, tagsOn, roles, slack, viewer, readable, ownWeek] = await Promise.all([
+  const [project, sections, fields, profiles, forms, integrations, inbound, tags, templates, otherProjects, workWeek, members, projectTemplates, portfolios, tagsOn, roles, slack, viewer, readable, ownWeek] = await Promise.all([
     getProject(projectId),
     listSections(projectId),
     listProjectFields(projectId),
@@ -41,9 +39,7 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     listTaskTemplates(projectId),
     listEditableProjectsWithSections(projectId),
     getWorkWeek(),
-    hasAutomationsV2Schema(),
     listProjectMembers(projectId),
-    hasAutomationsV3Schema(),
     listProjectTemplates(),
     listEditablePortfolios(""),
     tagsEnabled(),
@@ -72,8 +68,8 @@ export async function loadRuleContext(projectId: string): Promise<RuleContext> {
     taskTemplates: templates.map((t) => ({ id: t.id, name: t.name })),
     otherProjects,
     workWeek,
-    v2,
-    v3,
+    v2: true,
+    v3: true,
     projectName: project?.name,
     members: members.map((m) => ({ id: m.profileId, name: m.name })),
     projectTemplates: projectTemplates.map((t) => ({ id: t.id, name: t.name })),

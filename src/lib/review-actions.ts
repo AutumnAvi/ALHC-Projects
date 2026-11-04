@@ -23,7 +23,8 @@ import {
   type TaskReviewRound,
 } from "@/lib/review-checks";
 import { reviewUrls, renderReviewEmail } from "@/lib/review-email";
-import { reviewThumbnails, type ReviewThumbnail } from "@/lib/review-thumbnails";
+import type { ReviewThumbnail } from "@/lib/review-thumbnail-shared";
+import { requestReviewThumbnails } from "@/lib/review-thumbnail-request";
 import { createClient } from "@/lib/supabase/server";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -74,6 +75,14 @@ async function emailRound(
   const urls = reviewUrls(origin, review.token);
   try {
     const { user } = await getViewer();
+    // Oct 27 notes (batch 5): thumbnails of the images and PDFs (first page), drawn on the server and
+    // stored with the Editor's own client, signed until the link expires. Only when an email can go out;
+    // any file that can't be drawn gets a file tile instead. Nov 4 notes (batch 21, QW3): drawn by
+    // /api/review-thumbnails (the one server function that ships pdf.js and Skia) as this same person,
+    // started first so it runs alongside the reads below (it reads the files through RLS itself).
+    const thumbnailsPending = isEmailConfigured()
+      ? requestReviewThumbnails({ taskId, expiresAt: review.expiresAt.toISOString(), assets: assetIds })
+      : Promise.resolve(new Map<string, ReviewThumbnail>());
     const [task, sender, attachments] = await Promise.all([
       supabase.from("tasks").select("title, root_task_id").eq("id", taskId).maybeSingle(),
       supabase.from("profiles").select("full_name, email").eq("id", user?.id ?? "").maybeSingle(),
@@ -85,22 +94,7 @@ async function emailRound(
     // The request's project (Oct 29 notes, 55b: no home project) is the one the database chose for this
     // round with the sender's access, so the email and the review page name the same project.
     const byId = new Map((attachments.data ?? []).map((a) => [a.id, a] as const));
-    // Oct 27 notes (batch 5): thumbnails of the images and PDFs (first page), drawn on the server and
-    // stored with the Editor's own client, signed until the link expires. Only when an email can go out;
-    // any file that can't be drawn gets a file tile instead.
-    const thumbnails = isEmailConfigured()
-      ? await reviewThumbnails(
-          supabase,
-          taskId,
-          assetIds.flatMap(({ assetId, attachmentId }) => {
-            const a = byId.get(attachmentId);
-            return a
-              ? [{ assetId, attachmentId, name: a.file_name, contentType: a.content_type, storagePath: a.storage_path, size: a.size_bytes }]
-              : [];
-          }),
-          review.expiresAt,
-        ).catch(() => new Map<string, ReviewThumbnail>())
-      : new Map<string, ReviewThumbnail>();
+    const thumbnails = await thumbnailsPending;
     const email = renderReviewEmail({
       origin,
       token: review.token,

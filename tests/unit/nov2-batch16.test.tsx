@@ -117,7 +117,9 @@ test("122: a review being sent shows on the Reviews tab at once, and the tab rel
   assert.equal(pendingReviewsFor("t1").length, 0, "a refused send goes at once");
   assert.equal(typeof useReviewEvents, "function");
   const thumbs = fs.readFileSync("src/lib/review-thumbnails.ts", "utf8");
-  assert.match(thumbs, /THUMBNAIL_BUDGET_MS = 4000/, "the email waits at most a few seconds for thumbnails");
+  // Nov 4 notes (batch 21, QW3): the budget is shared with the request side (review-thumbnail-shared.ts).
+  const shared = fs.readFileSync("src/lib/review-thumbnail-shared.ts", "utf8");
+  assert.match(shared, /THUMBNAIL_BUDGET_MS = 4000/, "the email waits at most a few seconds for thumbnails");
   assert.match(thumbs, /Promise\.race\(\[done, budget\]\)/);
 });
 

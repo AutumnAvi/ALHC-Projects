@@ -12,7 +12,6 @@ import {
   getGoalViewer,
   getMyForwarding,
   getMySettings,
-  hasReal1Schema,
   listActivePeople,
   listGoals,
   listMyProjectRoles,
@@ -217,7 +216,6 @@ async function loadForwarding(
   if (!isInboundEmailConfigured() || !process.env.RESEND_API_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return { state: "not_configured" };
   }
-  if (!(await hasReal1Schema())) return { state: "needs_update" };
   const forwarding = await getMyForwarding();
   if (!forwarding) return { state: "needs_update" };
   const names = new Map(projects.map((p) => [p.id, p.name] as const));

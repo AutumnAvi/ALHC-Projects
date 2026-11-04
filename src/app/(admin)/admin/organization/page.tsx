@@ -6,7 +6,7 @@ import { WorkWeekSettings } from "@/components/admin/work-week-settings";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { GeneralSettings } from "@/components/workspace/workspace-settings";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
-import { getWorkWeek, getWorkspace, goalsEnabled, hasAutomationsV2Schema, listTeams, listWorkspaceImportRuns } from "@/lib/data";
+import { getWorkWeek, getWorkspace, goalsEnabled, listTeams, listWorkspaceImportRuns } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Organization · Admin console" };
 
@@ -15,12 +15,11 @@ export const metadata: Metadata = { title: "Organization · Admin console" };
 // count business days on (Automations V2), and (Nov 2 notes, batch 13) whether the workspace uses Goals.
 export default async function AdminOrganizationPage() {
   await requireWorkspaceAdmin();
-  const [workspace, teams, runs, workWeek, automationsV2, goalsOn] = await Promise.all([
+  const [workspace, teams, runs, workWeek, goalsOn] = await Promise.all([
     getWorkspace(),
     listTeams(),
     listWorkspaceImportRuns(),
     getWorkWeek(),
-    hasAutomationsV2Schema(),
     goalsEnabled(),
   ]);
   if (!workspace) notFound();
@@ -34,7 +33,7 @@ export default async function AdminOrganizationPage() {
         description="The days your workspace works. Automations that count business days use them."
         isAdmin
       >
-        <WorkWeekSettings key={workWeek.join(",")} workWeek={workWeek} available={automationsV2} />
+        <WorkWeekSettings key={workWeek.join(",")} workWeek={workWeek} available />
       </SettingsCard>
       <SettingsCard
         id="admin-goals"

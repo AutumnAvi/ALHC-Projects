@@ -7,7 +7,7 @@
 // (changeProjectMemberRole, inviteProjectMember), which the database checks again.
 
 import { getViewer } from "@/lib/auth";
-import { commenterRoleAllowed, hasOct25Schema, listMyProjectRoles, listProjects } from "@/lib/data";
+import { commenterRoleAllowed, listMyProjectRoles, listProjects } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
 import { assignableRoles, hasRole, isProjectRole, type ProjectRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
@@ -45,7 +45,7 @@ export async function loadPersonProjectAccess(person: {
   const profileId = person.profileId && isUuid(person.profileId) ? person.profileId : null;
 
   const supabase = await createClient();
-  const [memberships, invites, myRoles, projects, allowCommenter, defaultRoles] = await Promise.all([
+  const [memberships, invites, myRoles, projects, allowCommenter] = await Promise.all([
     profileId
       ? supabase
           .from("project_members")
@@ -63,7 +63,6 @@ export async function loadPersonProjectAccess(person: {
     listMyProjectRoles(),
     listProjects(),
     commenterRoleAllowed(),
-    hasOct25Schema(),
   ]);
   if (memberships.error || invites.error) return null;
 
@@ -106,5 +105,5 @@ export async function loadPersonProjectAccess(person: {
     .map((p) => ({ id: p.id, name: p.name, grantable: assignableRoles(myRoles.get(p.id), allowCommenter) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return { rows, addable, allowCommenter, defaultRoles };
+  return { rows, addable, allowCommenter, defaultRoles: true };
 }
