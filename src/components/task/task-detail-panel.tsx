@@ -37,6 +37,7 @@ import { TaskNumberChips } from "./task-number";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromTitle } from "@/lib/task-seed";
 import { completionsVersion, recentCompletion, subscribeCompletions, trackCompletion } from "@/lib/completion-store";
+import { recordTaskEdits } from "./task-edits";
 import { SCROLL_AREA } from "@/components/shell/shell-frame";
 import { MentionTextarea } from "./mention-textarea";
 import { TaskTitleText, usePeopleDirectory } from "./title-text";
@@ -124,7 +125,11 @@ export function TaskDetailPanel({
   function assign(profileId: string | null) {
     run(
       () => updateTask(task.id, { assigneeId: profileId }),
-      () => setOptimisticAssignee(profileId),
+      () => {
+        setOptimisticAssignee(profileId);
+        // Nov 4 notes, batch 28 (M4): every other screen showing the task (the List beside the pane) too.
+        recordTaskEdits([{ type: "assign", taskId: task.id, assigneeId: profileId }]);
+      },
     );
   }
 
@@ -231,7 +236,10 @@ export function TaskDetailPanel({
             onClick={() =>
               run(
                 () => completeApprovalAsApprover(task.id),
-                () => setOptimisticCompleted(new Date().toISOString()),
+                () => {
+                  setOptimisticCompleted(new Date().toISOString());
+                  recordTaskEdits([{ type: "complete", taskId: task.id, completed: true }]);
+                },
               )
             }
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 text-sm font-medium text-zinc-700 transition hover:border-green-600 hover:bg-green-50 hover:text-green-700"
@@ -246,7 +254,10 @@ export function TaskDetailPanel({
             onClick={() =>
               run(
                 trackCompletion(task.id, !completed, () => setTaskCompleted(task.id, !completed)),
-                () => setOptimisticCompleted(completed ? null : new Date().toISOString()),
+                () => {
+                  setOptimisticCompleted(completed ? null : new Date().toISOString());
+                  recordTaskEdits([{ type: "complete", taskId: task.id, completed: !completed }]);
+                },
               )
             }
             className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition ${
@@ -480,7 +491,10 @@ function PaneTitle({ task, canEdit, completed, profiles }: { task: TaskDetail; c
     if (!next || next === task.title) return;
     run(
       () => updateTask(task.id, { title: next }),
-      () => setOptimisticTitle(next),
+      () => {
+        setOptimisticTitle(next);
+        recordTaskEdits([{ type: "title", taskId: task.id, title: next }]);
+      },
     );
   }
   if (draft === null && titleHasMentions(title, people)) {

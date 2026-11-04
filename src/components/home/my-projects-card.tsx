@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Archive, Compass, Plus, Star } from "lucide-react";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
+import { PrefetchLink } from "@/components/shell/route-freshness";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { plural, progressOf, type HomeProject } from "@/lib/home";
 import { projectColorClass } from "@/lib/project-colors";
@@ -64,7 +65,7 @@ export function MyProjectsCard({ projects, archivedCount }: { projects: HomeProj
         <ul className="grid gap-x-4 px-3 pb-3 @3xl:grid-cols-2">
           {projects.map((p) => (
             <li key={p.id}>
-              <Link href={`/projects/${p.id}`} className="flex flex-col gap-1.5 rounded-lg px-2 py-2 hover:bg-zinc-50">
+              <PrefetchLink href={`/projects/${p.id}`} className="flex flex-col gap-1.5 rounded-lg px-2 py-2 hover:bg-zinc-50">
                 <span className="flex min-w-0 items-center gap-2">
                   <span aria-hidden className={`size-3 shrink-0 rounded ${projectColorClass(p.id)}`} />
                   <span className="min-w-0 truncate text-sm font-medium text-zinc-900">{p.name}</span>
@@ -79,7 +80,7 @@ export function MyProjectsCard({ projects, archivedCount }: { projects: HomeProj
                   {p.myOpen > 0 ? `${plural(p.myOpen, "task")} for you · ` : ""}
                   {p.completed} of {plural(p.total, "task")} done
                 </span>
-              </Link>
+              </PrefetchLink>
             </li>
           ))}
         </ul>

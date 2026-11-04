@@ -59,3 +59,12 @@ node scripts/perf/local-api.mjs cookie /tmp/alhc-api a1000000-0000-4000-8000-000
 # ALHC_DB_TRACE=/tmp/alhc-db-trace.jsonl; then npx next dev -p 3122
 COOKIE=/tmp/alhc-api/cookie ALHC_DB_TRACE=/tmp/alhc-db-trace.jsonl node scripts/perf/screen-calls.mjs after 5
 ```
+
+## Navigation timings (Nov 4 notes, batch 28)
+
+`nav-timing.mjs` moves between screens in headless Chrome against a production build (`next build && next start`; Next prefetches only in production) on the seed database plus two more projects named "Second project 1" / "Second project 2" with tasks "Task 1-1" … (any 60-task projects the seed person owns). It signs in with a session cookie instead of a password:
+
+```bash
+PLAYWRIGHT_CORE=/path/to/playwright-core COOKIE=/tmp/alhc-api/cookie LIST_VIEW=<seed List view id> BOARD_VIEW=<seed Board view id> \
+  node scripts/perf/nav-timing.mjs http://localhost:3000 after 6 > nav-after.json
+```

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { flushSync } from "react-dom";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import { useTaskEdits, recordTaskEdits } from "@/components/task/task-edits";
 import { completionsVersion, recentCompletion, subscribeCompletions } from "@/lib/completion-store";
 import type { ProjectTask } from "@/lib/data";
 import {
@@ -11,6 +11,10 @@ import {
   subscribeMutationFailures,
   tokenTaskDropped,
 } from "@/lib/optimistic-session";
+import { getQueryClient } from "@/lib/query/browser-client";
+import { queryKeys } from "@/lib/query/keys";
+import { isTaskEdit, type TaggedEdit } from "@/lib/query/task-edits";
+import { useCacheEntry } from "@/lib/query/use-cache-entry";
 import type { Json } from "@/lib/supabase/database.types";
 
 export type TaskChange =
@@ -136,65 +140,116 @@ export function overlayProjectTasks(tasks: ProjectTask[], changes: TaskChange[])
   return live.reduce(apply, tasks);
 }
 
-// One turn's changes flush together, after the event, so a bulk edit doesn't re-render once
-// per task and the new position paints before the server answers.
-let queued: TaggedChange[] = [];
-let flushScheduled = false;
-let commitBatch: ((batch: TaggedChange[]) => void) | null = null;
+// Nov 4 notes, batch 28 (M4): the overlay lives in the client data cache, one entry per project
+// (queryKeys.projectChanges), shared by the project's List, Board, Calendar, and Timeline and kept across
+// navigations: a change still saving, or one heard live, shows on the next view too (and on a revisit drawn
+// from the router's cache), until the server's copy agrees. The person's own changes made elsewhere (the
+// pane's rename, completion, dates, assignee: task-edits.ts) apply here too.
+//
+// One turn's changes flush together, after the event, so a bulk edit doesn't re-render once per task. The
+// cache's notifications aren't transitions, so the new position paints before the server answers.
+type StampedChange = TaggedChange & { at: number };
 
-function scheduleFlush() {
+const queued = new Map<string, StampedChange[]>();
+let flushScheduled = false;
+
+function flushQueued() {
+  flushScheduled = false;
+  const client = getQueryClient();
+  for (const [projectId, batch] of queued) {
+    client.setQueryData<StampedChange[]>(queryKeys.projectChanges(projectId), (current) =>
+      [...(current ?? []), ...batch].slice(-MAX_CHANGES),
+    );
+  }
+  queued.clear();
+}
+
+function enqueue(projectId: string, items: StampedChange[]) {
+  if (typeof window === "undefined" || items.length === 0) return;
+  const list = queued.get(projectId);
+  if (list) list.push(...items);
+  else queued.set(projectId, [...items]);
   if (flushScheduled) return;
   flushScheduled = true;
-  queueMicrotask(() => {
-    flushScheduled = false;
-    const batch = queued;
-    queued = [];
-    if (batch.length === 0 || !commitBatch) return;
-    flushSync(() => commitBatch?.(batch));
-  });
+  queueMicrotask(flushQueued);
 }
+
+const MAX_CHANGES = 500;
 
 // Nov 4 notes, batch 26 (M3): live updates from other people land in the same overlay as the person's own
 // changes (token 0: never "failed"), kept until the server's copy agrees. The mounted list publishes what
 // it shows so a live message is compared with that.
-let shownTasks: ProjectTask[] = [];
+const shownTasks = new Map<string, ProjectTask[]>();
 
-export function shownProjectTasks(): ProjectTask[] {
-  return shownTasks;
+export function shownProjectTasks(projectId: string): ProjectTask[] {
+  return shownTasks.get(projectId) ?? [];
 }
 
-export function applyLiveTaskChanges(changes: TaskChange[]) {
-  if (changes.length === 0) return;
-  for (const change of changes) queued.push({ token: 0, change });
-  scheduleFlush();
+export function applyLiveTaskChanges(projectId: string, changes: TaskChange[]) {
+  const at = Date.now();
+  enqueue(
+    projectId,
+    changes.map((change) => ({ token: 0, change, at })),
+  );
 }
 
-export function useProjectTasks(tasks: ProjectTask[]) {
-  const [changes, setChanges] = useState<TaggedChange[]>([]);
+const NO_CHANGES: StampedChange[] = [];
+
+export function useProjectTasks(projectId: string, tasks: ProjectTask[]) {
+  const entry = useMemo(() => ({ queryKey: queryKeys.projectChanges(projectId) }), [projectId]);
+  const stored = useCacheEntry<StampedChange[]>(entry) ?? NO_CHANGES;
   const revision = useSyncExternalStore(subscribeMutationFailures, mutationFailureVersion, () => 0);
-  useEffect(() => {
-    commitBatch = (batch) => setChanges((current) => [...current, ...batch]);
-    return () => {
-      commitBatch = null;
-    };
-  }, []);
+  const edits = useTaskEdits();
 
-  const applyChange = useCallback((change: TaskChange) => {
-    queued.push({ token: currentMutationToken(), change });
-    scheduleFlush();
-  }, []);
+  const applyChange = useCallback(
+    (change: TaskChange) => {
+      const token = currentMutationToken();
+      enqueue(projectId, [{ token, change, at: Date.now() }]);
+      // The pane beside the List (and any other screen showing the task) draws it at once too.
+      if (isTaskEdit(change)) recordTaskEdits([change], token);
+    },
+    [projectId],
+  );
 
   // `revision` re-renders this list when a write fails or a bulk skip drops rows.
-  const pending = pendingChanges(changes, tasks, revision);
-  if (pending.length !== changes.length) setChanges(pending);
+  const pending = pendingChanges(stored, tasks, revision);
+  useEffect(() => {
+    if (pending.length === stored.length) return;
+    // What the server's copy already shows (or a failed write) leaves the shared entry; anything added
+    // since this render stays.
+    const keep = new Set<StampedChange>(pending);
+    const seen = new Set<StampedChange>(stored);
+    getQueryClient().setQueryData<StampedChange[]>(queryKeys.projectChanges(projectId), (current) =>
+      (current ?? []).filter((item) => keep.has(item) || !seen.has(item)),
+    );
+  }, [projectId, pending, stored]);
   // Nov 2 notes (batch 15, 111): a task blocked only by tasks just completed here is unblocked at once.
   const completions = useSyncExternalStore(subscribeCompletions, completionsVersion, () => 0);
 
-  const shown = unblockCompleted(overlayProjectTasks(tasks, pending.map((item) => item.change)), completions);
+  const shown = unblockCompleted(overlayWithEdits(tasks, pending, edits), completions);
   useEffect(() => {
-    shownTasks = shown;
+    shownTasks.set(projectId, shown);
   });
+  useEffect(
+    () => () => {
+      shownTasks.delete(projectId);
+    },
+    [projectId],
+  );
   return [shown, applyChange] as const;
+}
+
+// The project's own changes and the edits made on other screens, oldest first: the latest per task and
+// kind of change wins, and what the server's copy already shows is left out.
+export function overlayWithEdits(
+  tasks: ProjectTask[],
+  changes: readonly { change: TaskChange; at: number }[],
+  edits: readonly TaggedEdit[],
+): ProjectTask[] {
+  const all = edits.length
+    ? [...changes, ...edits.map((item) => ({ change: item.edit as TaskChange, at: item.at }))].sort((x, y) => x.at - y.at)
+    : changes;
+  return overlayProjectTasks(tasks, all.map((item) => item.change));
 }
 
 // Fractional ordering: place a task before `beforeId` within `column`, or at the end.
@@ -220,7 +275,7 @@ export function sortOrderFor(
   return (prev + nextOrder) / 2;
 }
 
-function pendingChanges(changes: TaggedChange[], tasks: ProjectTask[], revision: number) {
+function pendingChanges<C extends TaggedChange>(changes: C[], tasks: ProjectTask[], revision: number): C[] {
   void revision;
   const live = changes.filter((item) => !mutationFailed(item.token) && !tokenTaskDropped(item.token, item.change.taskId));
   const latestAt = new Map<string, number>();

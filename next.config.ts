@@ -2,6 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   experimental: {
+    // Nov 4 notes, batch 28 (M4): going back to a screen within 30 seconds draws the router's copy at once,
+    // and a screen rendered ahead on hover is kept 60 seconds; either way the screen is rendered again in
+    // the background (src/lib/route-freshness.ts: keep these in step with ROUTER_CACHE_SECONDS /
+    // HOVER_PREFETCH_SECONDS). Every write's refresh() / revalidatePath() still empties the router's cache.
+    staleTimes: { dynamic: 30, static: 60 },
     serverActions: {
       // Profile pictures are uploaded through a Server Action (uploadMyAvatar): 2 MB plus room for the
       // multipart overhead. Everything else stays well under the 1 MB default.

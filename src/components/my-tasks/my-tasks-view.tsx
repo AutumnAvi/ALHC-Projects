@@ -168,7 +168,10 @@ export function MyTasksView({
   subtasks = null,
   awaiting = NO_AWAITING,
   profiles = [],
+  loadedAt,
 }: {
+  // When the server's reads started (Nov 4 notes, batch 28: the newest copy of the person's tasks wins).
+  loadedAt?: number;
   open: MyTask[];
   completed: MyTask[];
   bulk: Omit<BulkContext, "project">;
@@ -182,7 +185,7 @@ export function MyTasksView({
   awaiting?: AwaitingApproval[];
   profiles?: Profile[];
 }) {
-  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted);
+  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted, loadedAt);
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
   const openTask = useOpenTask();

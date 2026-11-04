@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
+import { SkeletonShown } from "@/components/shell/route-freshness";
 
 // Shared page chrome, empty states, and loading skeletons. Server-safe (no hooks), so pages,
 // loading.tsx files, and client components can all use them.
@@ -113,6 +114,7 @@ export function LoadingRegion({ label, children }: { label: string; children: Re
   return (
     <div role="status" aria-live="polite" className="flex min-h-0 flex-1 flex-col">
       <span className="sr-only">{label}</span>
+      <SkeletonShown />
       {children}
     </div>
   );

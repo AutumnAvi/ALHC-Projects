@@ -334,6 +334,9 @@ export function myTaskListsFromBundle(bundle: MyTaskBundle, roles: Map<string, P
 }
 
 export type MyTasksScreen = MyTaskLists & {
+  // Nov 4 notes, batch 28 (M4): when the reads started (server clock): the client data cache keeps the
+  // newest copy of the person's tasks between My tasks and Home.
+  loadedAt: number;
   rules: MyTaskRule[] | null;
   rulesV2: boolean;
   editableSections: MyTasksScreenPayload["editable_sections"];
@@ -342,21 +345,23 @@ export type MyTasksScreen = MyTaskLists & {
 export const loadMyTasksScreen = cache(async (): Promise<MyTasksScreen> => {
   const { user } = await getViewer();
   const supabase = await createClient();
+  const loadedAt = Date.now();
   const [result, shell] = await Promise.all([supabase.rpc("my_tasks_screen"), loadAppShell()]);
-  if (rpcMissing(result.error) || !user) return legacyMyTasksScreen(user?.id ?? "");
+  if (rpcMissing(result.error) || !user) return { ...(await legacyMyTasksScreen(user?.id ?? "")), loadedAt };
   if (result.error) throw new Error(`Failed to load my tasks: ${result.error.message}`);
   const data = (result.data ?? {}) as Partial<MyTasksScreenPayload>;
   const { numbers: _numbers, ...lists } = myTaskListsFromBundle(parseMyTaskBundle(data.tasks), shell.myRoles, user.id);
   void _numbers;
   return {
     ...lists,
+    loadedAt,
     rules: Array.isArray(data.rules) ? data.rules.map(toMyTaskRule) : null,
     rulesV2: data.rules_v2 === true,
     editableSections: Array.isArray(data.editable_sections) ? data.editable_sections : [],
   };
 });
 
-async function legacyMyTasksScreen(userId: string): Promise<MyTasksScreen> {
+async function legacyMyTasksScreen(userId: string): Promise<Omit<MyTasksScreen, "loadedAt">> {
   const [{ open, completed }, awaiting, rules, rulesV2, editable] = await Promise.all([
     listMyTasks(userId),
     listAwaitingMyApproval(),
@@ -401,24 +406,26 @@ export function myTaskRuleContextFrom(
   };
 }
 
-export type HomeScreen = MyTaskLists & { dashboard: HomeDashboard; inbox: InboxItem[] };
+export type HomeScreen = MyTaskLists & { dashboard: HomeDashboard; inbox: InboxItem[]; loadedAt: number };
 
 export const loadHomeScreen = cache(async (timeZone: string): Promise<HomeScreen> => {
   const { user } = await getViewer();
   const supabase = await createClient();
+  const loadedAt = Date.now();
   const [result, shell] = await Promise.all([supabase.rpc("home_screen", { tz: timeZone }), loadAppShell()]);
-  if (rpcMissing(result.error) || !user) return legacyHomeScreen(user?.id ?? "", timeZone);
+  if (rpcMissing(result.error) || !user) return { ...(await legacyHomeScreen(user?.id ?? "", timeZone)), loadedAt };
   if (result.error) throw new Error(`Failed to load Home: ${result.error.message}`);
   const data = (result.data ?? {}) as { tasks?: Json; dashboard?: Json; inbox?: Json };
   const { numbers, ...lists } = myTaskListsFromBundle(parseMyTaskBundle(data.tasks), shell.myRoles, user.id);
   return {
     ...lists,
+    loadedAt,
     dashboard: parseHomeDashboard(data.dashboard),
     inbox: labelInboxWith(withoutTeamMessages(inboxItemsFromPage(data.inbox ?? [])), numbers),
   };
 });
 
-async function legacyHomeScreen(userId: string, timeZone: string): Promise<HomeScreen> {
+async function legacyHomeScreen(userId: string, timeZone: string): Promise<Omit<HomeScreen, "loadedAt">> {
   const [{ open, completed }, awaiting, dashboard, inbox] = await Promise.all([
     listMyTasks(userId),
     listAwaitingMyApproval(),

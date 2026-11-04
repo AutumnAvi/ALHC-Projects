@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { PrefetchLink } from "@/components/shell/route-freshness";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Archive, ArrowDown, ArrowUp, Check, ChevronDown, FolderKanban, Globe, Lock, Search, X } from "lucide-react";
@@ -259,9 +259,9 @@ function ProjectTable({
                     <div className="min-w-0">
                       <p className="flex min-w-0 items-center gap-1.5">
                         {member ? (
-                          <Link href={`/projects/${p.projectId}`} className="truncate font-medium text-zinc-900 hover:underline">
+                          <PrefetchLink href={`/projects/${p.projectId}`} className="truncate font-medium text-zinc-900 hover:underline">
                             {p.name}
-                          </Link>
+                          </PrefetchLink>
                         ) : (
                           <span className="truncate font-medium text-zinc-900">{p.name}</span>
                         )}

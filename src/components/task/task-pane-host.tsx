@@ -1,14 +1,16 @@
 "use client";
 
-import { Suspense, lazy, use, useEffect } from "react";
+import { Suspense, lazy, use, useEffect, useMemo } from "react";
 import { useTaskPane } from "@/components/shell/right-panel";
 import type { TaskDetail, TaskPanePayload } from "@/lib/data";
 import { isUuid } from "@/lib/ids";
 import { useLiveTopic } from "@/lib/live";
 import { taskTopic } from "@/lib/live-patch";
+import { applyEditsToDetail } from "@/lib/query/task-edits";
 import { reviewsChanged } from "./review-events";
 import { TaskNotFoundPanel, TaskPaneLoading } from "./task-pane-frame";
 import { TaskPanePreview } from "./task-pane-preview";
+import { useTaskEdits } from "./task-edits";
 import {
   applyLivePane,
   ensureTaskPane,
@@ -93,6 +95,9 @@ function PaneForTask({ taskId, serverPane }: { taskId: string; serverPane: Promi
   const fromServer = serverPane ? use(serverPane) : null;
   const entry = useTaskPaneDetail(taskId);
   const cachedContext = useTaskPaneContext();
+  // Nov 4 notes, batch 28 (M4): edits made on another screen (a List row's completion, rename, dates,
+  // assignee) show here at once, until the pane's own copy catches up.
+  const edits = useTaskEdits();
 
   // The server's copy goes into the cache too (newest wins there), then a stale or missing copy is
   // fetched in the background (after a write, Back to an old task, a link from elsewhere).
@@ -104,8 +109,9 @@ function PaneForTask({ taskId, serverPane }: { taskId: string; serverPane: Promi
   }, [taskId]);
   useLivePane(taskId);
 
-  let detail: TaskDetail | null | undefined = entry?.value;
-  if (fromServer && (!entry || fromServer.loadedAt >= entry.loadedAt)) detail = fromServer.task;
+  let held: TaskDetail | null | undefined = entry?.value;
+  if (fromServer && (!entry || fromServer.loadedAt >= entry.loadedAt)) held = fromServer.task;
+  const detail = useMemo(() => (held && edits.length ? applyEditsToDetail(held, edits) : held), [held, edits]);
   const context = cachedContext ?? fromServer?.context ?? null;
 
   if (detail === null) return <TaskNotFoundPanel taskId={taskId} />;

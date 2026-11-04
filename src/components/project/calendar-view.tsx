@@ -94,7 +94,7 @@ export function CalendarView({
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
   const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
-  const [optimisticTasks, applyChange] = useProjectTasks(tasks);
+  const [optimisticTasks, applyChange] = useProjectTasks(projectId, tasks);
   const shift = useDependencyShift();
   const canEdit = useProjectPermissions().canEdit;
   const [drag, setDrag] = useState<CalendarDrag | null>(null);

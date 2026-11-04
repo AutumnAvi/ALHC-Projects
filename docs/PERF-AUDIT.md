@@ -240,6 +240,26 @@ The infra review: Realtime Postgres Changes on 16 tables took about 47% of the d
 
 **To measure after the tail is applied:** the hosted project's Query Performance report — `realtime.list_changes` should fall to the other app's share — and `pg_stat_statements` for `alhc_live_capture` / `realtime.send` (expected: well under a millisecond a statement).
 
+## Nov 4 notes (batch 28, M4): client data cache
+
+The infra review: every move between screens waited for a full server render (a skeleton first, even for a screen left seconds ago), and an edit on one screen reached the screen beside it only with the write's refresh. Now: a client data cache (TanStack Query, `src/lib/query/`) holds the task pane's copies, each project's overlay of optimistic and live changes, the person's own tasks, and the Inbox's live patches; Next's router keeps screens 30 s (`staleTimes`) and the shell renders a kept copy again in the background (`RouteFreshness`); project links render their screen ahead on hover (`PrefetchLink`).
+
+**How it was measured.** Local Postgres 17 with every migration plus `scripts/perf/seed.sql` + `seed-pane.sql` (the perf project with 10,000 tasks, 1,700 open tasks assigned to the seed person) and two 60-task projects, PostgREST 12 behind the local gateway, `next build && next start` of `main` (d99c29b) and of this branch side by side, headless Chrome 1440 × 900 signed in as `perf-seed@example.com`. `scripts/perf/nav-timing.mjs` clicks sidebar / tab links and measures in the page from the click event to the first animation frame where the new screen's content is drawn with no skeleton; "blocking" = server renders (RSC requests that aren't prefetches) between the click and that frame, "background" = in the 1.5 s after. Median / p95 of 6 rounds after a warm-up (12 for the view switch).
+
+| Move (median / p95 ms) | Before | After | Blocking server renders (before → after) |
+| --- | ---: | ---: | ---: |
+| Back to My tasks (My tasks → Home → My tasks) | 1,255 / 1,294 | **497 / 590** | 1 → **0** (1 in the background) |
+| Back to Home right after that | 1,172 / 1,206 | 1,209 / 1,439 | 1 → 1 (the revalidation above emptied the router's cache) |
+| Back to a project (List → My tasks → List) | 408 / 413 | **134 / 147** | 1 → **0** (1 in the background) |
+| Another project, pointer resting 300 ms on its sidebar link | 405 / 413 | **153 / 199** | 1 → **0** (rendered ahead on hover) |
+| List ↔ Board tab, pointer resting 300 ms | 271 / 346 | **67 / 89** | 1 → **0** |
+| Rename in the pane → the List row beside it shows it | 333 | **69** | (the write's refresh → the shared edit) |
+| Complete a List row → the open pane shows it | 283 | **106** | |
+
+The 497 ms back to My tasks is the browser drawing 1,700 open tasks, not waiting on the server. `router.refresh()` empties Next's whole router cache, so a revalidation (or any write) means the next screen is fetched as before — never slower than before, and a screen fetched that way is not revalidated twice (a loading skeleton marks a fresh fetch).
+
+**Checks on the same stack (after build, scripted):** pane rename → List row at once; List completion → open pane at once and back; a rename whose write fails (the request is held 1.5 s, then cut) shows at once in the List and the pane, then both go back to the old name; a revisit draws without a blocking render and revalidates once in the background; no page errors. Cache bounds, newest-wins, edit rollback, and route freshness rules: `tests/unit/nov4-batch28.test.ts`.
+
 ## Deferred
 
 Deferred: none.

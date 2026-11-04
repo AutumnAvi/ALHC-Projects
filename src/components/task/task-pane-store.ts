@@ -1,21 +1,41 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useSyncExternalStore } from "react";
 import type { TaskDetail, TaskExtras, TaskPaneContext, TaskPanePayload } from "@/lib/data";
 import { patchTaskDetail, type LiveMessage } from "@/lib/live-patch";
 import { mutationInFlight } from "@/lib/optimistic-session";
+import { getQueryClient } from "@/lib/query/browser-client";
+import { noteQueryUse } from "@/lib/query/client";
+import { queryKeys } from "@/lib/query/keys";
+import { patchStamped, readStamped, type Stamped } from "@/lib/query/stamped";
+import {
+  isPaneFresh,
+  markPanesStale,
+  NO_EXTRAS,
+  PREFETCH_TTL_MS,
+  REVALIDATE_MS,
+  storePanePayload,
+  taskExtrasQuery,
+  taskPaneQuery,
+  type ExtrasPart,
+  type PaneDetail,
+} from "@/lib/query/task-pane";
+import { SignedOutError } from "@/lib/query/transport";
 import { onRuleFeedbackRequest } from "@/lib/rule-feedback-bus";
-import { createLimiter, PaneCache, type PaneEntry } from "@/lib/task-pane-cache";
+import { createLimiter } from "@/lib/task-pane-cache";
 import type { TaskSeed } from "@/lib/task-seed";
+import { useCacheEntry, type EntryOptions } from "@/lib/query/use-cache-entry";
 
 // The task pane's client side (Oct 19 notes: opening a task must feel instant).
 // - The open task: a pin set the moment a row is clicked (an urgent store update, never a transition, so
 //   it doesn't wait behind a pending server action), then the URL catches up with history.pushState
 //   (no server render). right-panel.tsx owns the URL side.
 // - Seeds: what the clicked row already knew, drawn at once while the detail loads.
-// - Details: GET /api/task-pane/<id> (the person's own session; RLS decides), cached newest-wins, fetched
-//   on hover / focus (a few at a time) and revalidated on open. A page's server render of the open task
-//   (after a write's refresh) lands here too. Any write marks everything stale.
+// - Details: GET /api/task-pane/<id> (the person's own session; RLS decides), cached newest-wins in the
+//   client data cache (Nov 4 notes, batch 28), fetched on hover / focus (a few at a time) and revalidated
+//   on open. A page's server render of the open task (after a write's refresh) lands here too. Any write
+//   marks everything stale.
 // - Extras: the Dependencies picker's / Convert's tasks and the slack, only when the pane needs them.
 
 type Listener = () => void;
@@ -74,86 +94,60 @@ export function taskSeed(id: string): TaskSeed | undefined {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Details and the pane context
+// Details and the pane context: entries of the client data cache (Nov 4 notes, batch 28: TanStack Query,
+// src/lib/query/task-pane.ts), keyed per task, the newest copy winning.
 
-const details = new PaneCache<TaskDetail | null>(50);
-const detailEvents = emitter();
-let context: { value: TaskPaneContext; loadedAt: number; receivedAt: number } | null = null;
-const inflight = new Map<string, Promise<void>>();
 const limitPrefetch = createLimiter(3);
-
-// A detail fetched less than this long ago isn't fetched again on hover; on open, anything older than
-// REVALIDATE_MS is refetched in the background (the cached copy shows at once).
-const PREFETCH_TTL_MS = 30_000;
-const REVALIDATE_MS = 10_000;
-const CONTEXT_TTL_MS = 120_000;
-
-function storePayload(id: string, payload: TaskPanePayload) {
-  const now = Date.now();
-  let changed = details.put(id, payload.task, payload.loadedAt, now);
-  if (payload.context && (!context || context.loadedAt <= payload.loadedAt)) {
-    context = { value: payload.context, loadedAt: payload.loadedAt, receivedAt: now };
-    changed = true;
-  }
-  if (changed) detailEvents.emit();
-}
 
 // A page's server render of the open task (cold link, or the refresh after a write).
 export function primeTaskPane(id: string, payload: TaskPanePayload) {
-  storePayload(id, payload);
-}
-
-async function fetchPane(id: string): Promise<void> {
-  const needContext = !context || Date.now() - context.receivedAt > CONTEXT_TTL_MS;
-  const response = await fetch(`/api/task-pane/${encodeURIComponent(id)}${needContext ? "?context=1" : ""}`, {
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: { Accept: "application/json" },
-  });
-  // Signed out (the proxy redirects to the sign-in page): go there.
-  if (response.redirected && !response.url.includes("/api/task-pane/")) {
-    window.location.assign(response.url);
-    return;
-  }
-  if (response.status === 404) {
-    storePayload(id, { task: null, context: null, loadedAt: Date.now() });
-    return;
-  }
-  if (!response.ok) throw new Error(`Task pane responded ${response.status}`);
-  storePayload(id, (await response.json()) as TaskPanePayload);
+  storePanePayload(getQueryClient(), id, payload);
 }
 
 function load(id: string, viaQueue: boolean): Promise<void> {
-  const running = inflight.get(id);
-  if (running) return running;
-  const promise = (viaQueue ? limitPrefetch(() => fetchPane(id)) : fetchPane(id))
-    .catch((error) => {
-      console.error("[task pane] couldn't load the task", error instanceof Error ? error.message : error);
+  const client = getQueryClient();
+  return client
+    .fetchQuery({
+      ...taskPaneQuery(client, id, viaQueue ? limitPrefetch : undefined),
+      // Opens and refreshes always ask (the freshness rules are checked by the callers).
+      staleTime: 0,
     })
-    .finally(() => inflight.delete(id));
-  inflight.set(id, promise);
-  return promise;
+    .then(
+      () => undefined,
+      (error: unknown) => {
+        if (error instanceof SignedOutError) {
+          window.location.assign(error.location);
+          return;
+        }
+        console.error("[task pane] couldn't load the task", error instanceof Error ? error.message : error);
+      },
+    );
+}
+
+// A fetch already on its way (it may have read before a change), or undefined.
+function running(id: string): Promise<unknown> | undefined {
+  const query = getQueryClient().getQueryCache().find({ queryKey: queryKeys.task(id), exact: true });
+  return query?.state.fetchStatus === "fetching" ? query.promise : undefined;
 }
 
 // Hover / focus: load the detail unless a recent copy is already here.
 export function prefetchTaskPane(id: string) {
-  if (!id || details.isFresh(id, Date.now(), PREFETCH_TTL_MS)) return;
+  if (!id || isPaneFresh(getQueryClient(), id, PREFETCH_TTL_MS)) return;
   void load(id, true);
 }
 
 // Open: show whatever is cached, and refetch (not queued behind prefetches) when missing or old.
 export function ensureTaskPane(id: string) {
-  details.touch(id);
-  if (details.isFresh(id, Date.now(), REVALIDATE_MS)) return;
+  const client = getQueryClient();
+  noteQueryUse(client.getQueryCache().find({ queryKey: queryKeys.task(id), exact: true }));
+  if (isPaneFresh(client, id, REVALIDATE_MS)) return;
   void load(id, false);
 }
 
 // After any write (useServerAction): everything cached may be out of date. The open task's fresh copy
 // comes with the refresh's server render; others are refetched when next opened or hovered.
 export function invalidateTaskPanes() {
-  details.markAllStale();
-  extras.clear();
-  extrasEvents.emit();
+  void markPanesStale(getQueryClient());
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -186,9 +180,12 @@ function flushPaneRefresh() {
   queuedRefresh.clear();
   for (const id of ids) {
     if (!watched.has(id)) continue;
-    const running = inflight.get(id);
+    const pending = running(id);
     // A fetch already on its way may have read before the change: fetch once more after it.
-    if (running) void running.then(() => load(id, false));
+    if (pending) void pending.then(
+      () => load(id, false),
+      () => load(id, false),
+    );
     else void load(id, false);
   }
 }
@@ -206,13 +203,14 @@ export function refreshTaskPane(id: string) {
 // this task. The patched copy counts as read when the database sent the message, so a fetch that read
 // before the change can't put the old values back. Returns whether the Reviews tab should reload.
 export function applyLivePane(id: string, message: LiveMessage): { reviews: boolean } {
-  const entry = details.get(id);
+  const client = getQueryClient();
+  const entry = readStamped<TaskDetail | null>(client, queryKeys.task(id));
   if (!entry || !entry.value) {
     refreshTaskPane(id);
     return { reviews: message.table === "review_checks" };
   }
   const patch = patchTaskDetail(entry.value, message);
-  if (patch.changed && details.put(id, patch.detail, Math.max(entry.loadedAt, message.at), Date.now())) detailEvents.emit();
+  if (patch.changed) patchStamped<TaskDetail | null>(client, queryKeys.task(id), () => patch.detail, message.at);
   if (patch.refetch) refreshTaskPane(id);
   return { reviews: patch.reviews };
 }
@@ -228,58 +226,27 @@ if (typeof window !== "undefined") {
   onRuleFeedbackRequest(() => refreshOpenTaskPanes());
 }
 
-export function useTaskPaneDetail(id: string | null): PaneEntry<TaskDetail | null> | undefined {
-  return useSyncExternalStore(
-    detailEvents.subscribe,
-    () => (id ? details.get(id) : undefined),
-    () => undefined,
-  );
+export function useTaskPaneDetail(id: string | null): PaneDetail | undefined {
+  return useCacheEntry<PaneDetail>(id ? ({ ...taskPaneQuery(getQueryClient(), id), staleTime: REVALIDATE_MS } as EntryOptions) : null);
 }
 
 export function useTaskPaneContext(): TaskPaneContext | null {
-  return useSyncExternalStore(
-    detailEvents.subscribe,
-    () => context?.value ?? null,
-    () => null,
-  );
+  return useCacheEntry<Stamped<TaskPaneContext>>(CONTEXT_ENTRY)?.value ?? null;
 }
+
+const CONTEXT_ENTRY = { queryKey: queryKeys.taskContext() };
 
 // ---------------------------------------------------------------------------------------------------
 // Extras: the slack ("schedule") for a dated task, and the Dependencies picker's / Convert's tasks
-// ("candidates") once one of them opens. Loaded on demand, cached until the next write.
+// ("candidates") once one of them opens. Loaded on demand, cached until the next write (which loads the
+// shown ones again).
 
-export type ExtrasPart = "schedule" | "candidates";
-const extras = new Map<string, TaskExtras | "loading" | "failed">();
-const extrasEvents = emitter();
-
-function loadExtras(id: string, part: ExtrasPart) {
-  const key = `${id}:${part}`;
-  if (extras.has(key)) return;
-  extras.set(key, "loading");
-  extrasEvents.emit();
-  fetch(`/api/task-pane/${encodeURIComponent(id)}?part=${part}`, { cache: "no-store", credentials: "same-origin" })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`Task extras responded ${response.status}`);
-      extras.set(key, (await response.json()) as TaskExtras);
-    })
-    .catch(() => extras.set(key, "failed"))
-    .finally(() => extrasEvents.emit());
-}
-
-const NO_EXTRAS: TaskExtras = { dependencyCandidates: [], schedule: [] };
+export type { ExtrasPart };
 
 // `enabled` false: nothing is loaded and null comes back. Null while loading; a failure reads as empty.
 export function useTaskExtras(id: string, part: ExtrasPart, enabled: boolean): TaskExtras | null {
-  const key = `${id}:${part}`;
-  const value = useSyncExternalStore(
-    extrasEvents.subscribe,
-    () => extras.get(key),
-    () => undefined,
-  );
-  useEffect(() => {
-    if (enabled && value === undefined) loadExtras(id, part);
-  }, [id, part, enabled, value]);
+  const result = useQuery({ ...taskExtrasQuery(id, part), enabled }, getQueryClient());
   if (!enabled) return null;
-  if (value === "failed") return NO_EXTRAS;
-  return value === undefined || value === "loading" ? null : value;
+  if (result.isError) return NO_EXTRAS;
+  return result.data ?? null;
 }

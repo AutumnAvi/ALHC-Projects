@@ -12,6 +12,7 @@ import { describeRecurrence } from "@/lib/recurrence";
 import { useDependencyShift } from "./dependency-shift";
 import { DateRangePicker, TimeInput, type DateRange } from "./date-picker";
 import { TaskRecurrence } from "./task-recurrence";
+import { recordTaskEdits } from "./task-edits";
 
 const subscribe = () => () => {};
 
@@ -91,6 +92,8 @@ export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: bool
         onOptimistic: (moves) => {
           const self = moves.find((m) => m.taskId === task.id);
           if (self) setDates({ start: self.startOn, due: self.dueOn });
+          // Nov 4 notes, batch 28 (M4): the List / Board / Timeline beside the pane move too.
+          recordTaskEdits(moves.map((m) => ({ type: "dates" as const, taskId: m.taskId, startOn: m.startOn, dueOn: m.dueOn })));
         },
         onPrompt: close,
         projectId: task.memberships[0]?.projectId ?? null,

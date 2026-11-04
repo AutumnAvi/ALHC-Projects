@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { PrefetchLink } from "@/components/shell/route-freshness";
 import { usePathname, useRouter } from "next/navigation";
 import { useOptimistic, useState } from "react";
 import {
@@ -336,11 +337,11 @@ function FixedTabLink({
   const Icon = tab.icon;
   return (
     <span className="group inline-flex shrink-0 items-center">
-      <Link href={tab.href} aria-current={active ? "page" : undefined} className={`${TAB_CLASS} ${isHidden ? "opacity-60" : ""}`}>
+      <PrefetchLink href={tab.href} aria-current={active ? "page" : undefined} className={`${TAB_CLASS} ${isHidden ? "opacity-60" : ""}`}>
         <Icon className="size-3.5" />
         {tab.label}
         {isHidden ? <span className="sr-only"> (hidden tab)</span> : null}
-      </Link>
+      </PrefetchLink>
       {active && canHide ? (
         <Popover
           label={`Tab options for ${tab.label}`}
@@ -886,7 +887,7 @@ function ViewTab({
 
   return (
     <span className="group inline-flex shrink-0 items-center">
-      <Link
+      <PrefetchLink
         href={href}
         aria-current={active ? "page" : undefined}
         data-tooltip={mine ? "Your own view. Only you see it." : isDefault ? "The project opens on this view" : undefined}
@@ -907,7 +908,7 @@ function ViewTab({
             <span className="sr-only"> (default view)</span>
           </>
         ) : null}
-      </Link>
+      </PrefetchLink>
       {hasMenu ? (
         <Popover
           label={`View options for ${view.name}`}

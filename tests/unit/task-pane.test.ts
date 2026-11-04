@@ -2,44 +2,66 @@
 // least recently used, marks everything stale after a write, and prefetches a few at a time; rows hand the
 // pane a seed it can draw at once; the open task is pinned until the URL catches up.
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import type { MyTask, ProjectTask, SubtaskItem } from "@/lib/data";
 import type { FieldDef } from "@/lib/fields";
+import { QueryObserver } from "@tanstack/query-core";
+import type { TaskDetail } from "@/lib/data";
 import { openTaskOf, pinCaughtUp } from "@/lib/right-panel";
-import { createLimiter, PaneCache } from "@/lib/task-pane-cache";
+import { CACHE_LIMITS, createAlhcQueryClient, enforceCacheLimits } from "@/lib/query/client";
+import { queryKeys } from "@/lib/query/keys";
+import { readStamped } from "@/lib/query/stamped";
+import { isPaneFresh, markPanesStale, storePanePayload } from "@/lib/query/task-pane";
+import { createLimiter } from "@/lib/task-pane-cache";
 import { seedFromMyTask, seedFromProjectTask, seedFromSubtask, seedFromTitle } from "@/lib/task-seed";
 
-test("the newest copy of a task wins, whichever arrives last", () => {
-  const cache = new PaneCache<string>(10);
-  assert.equal(cache.put("t1", "prefetched", 100, 1_000), true);
-  assert.equal(cache.put("t1", "older server render", 90, 1_100), false);
-  assert.equal(cache.get("t1")?.value, "prefetched");
-  assert.equal(cache.put("t1", "after a write", 200, 1_200), true);
-  assert.equal(cache.get("t1")?.value, "after a write");
+// Since Nov 4 notes (batch 28) the pane's copies are entries of the client data cache (TanStack Query),
+// with the same rules.
+const pane = (task: string, loadedAt: number) => ({ task: task as unknown as TaskDetail, context: null, loadedAt });
+// A cache whose timers are let go when the test ends (garbage collection keeps Node alive otherwise).
+function testClient(t: TestContext) {
+  const client = createAlhcQueryClient();
+  t.after(() => client.clear());
+  return client;
+}
+
+test("the newest copy of a task wins, whichever arrives last", (t) => {
+  const client = testClient(t);
+  assert.equal(storePanePayload(client, "t1", pane("prefetched", 100)), true);
+  assert.equal(storePanePayload(client, "t1", pane("older server render", 90)), false);
+  assert.equal(readStamped(client, queryKeys.task("t1"))?.value, "prefetched");
+  assert.equal(storePanePayload(client, "t1", pane("after a write", 200)), true);
+  assert.equal(readStamped(client, queryKeys.task("t1"))?.value, "after a write");
 });
 
-test("least recently used entries go first; opening a task keeps it", () => {
-  const cache = new PaneCache<string>(2);
-  cache.put("a", "a", 1, 1);
-  cache.put("b", "b", 1, 1);
-  cache.touch("a");
-  cache.put("c", "c", 1, 1);
-  assert.equal(cache.get("b"), undefined);
-  assert.ok(cache.get("a") && cache.get("c"));
-  assert.equal(cache.size, 2);
+test("least recently used entries go first; the open task stays", (t) => {
+  const client = testClient(t);
+  const cache = client.getQueryCache();
+  for (let n = 0; n < CACHE_LIMITS.task + 5; n += 1) storePanePayload(client, `t${n}`, pane(`t${n}`, n));
+  // The first one is open (observed), so it stays whatever its age.
+  const open = cache.find({ queryKey: queryKeys.task("t0"), exact: true });
+  const unsubscribe = new QueryObserver(client, { queryKey: queryKeys.task("t0"), enabled: false }).subscribe(() => {});
+  assert.ok(open);
+  enforceCacheLimits(cache);
+  const left = cache.findAll({ queryKey: queryKeys.tasks() }).map((q) => q.queryKey[2]);
+  assert.equal(left.length, CACHE_LIMITS.task);
+  assert.ok(left.includes("t0"), "the open task is kept");
+  assert.ok(!left.includes("t1") && !left.includes("t5"), "the oldest unopened ones went");
+  assert.ok(left.includes(`t${CACHE_LIMITS.task + 4}`));
+  unsubscribe();
 });
 
-test("a write marks everything stale; stale or old copies are refetched", () => {
-  const cache = new PaneCache<string>(5);
-  cache.put("a", "a", 1, 1_000);
-  assert.equal(cache.isFresh("a", 5_000, 10_000), true);
-  assert.equal(cache.isFresh("a", 20_000, 10_000), false);
-  assert.deepEqual(cache.markAllStale(), ["a"]);
-  assert.equal(cache.get("a")?.stale, true);
-  assert.equal(cache.get("a")?.value, "a", "a stale copy still shows");
-  assert.equal(cache.isFresh("a", 1_001, 10_000), false);
-  cache.put("a", "fresh", 2, 2_000);
-  assert.equal(cache.isFresh("a", 2_001, 10_000), true);
+test("a write marks everything stale; stale or old copies are refetched", async (t) => {
+  const client = testClient(t);
+  storePanePayload(client, "a", pane("a", 1));
+  const now = Date.now();
+  assert.equal(isPaneFresh(client, "a", 10_000, now), true);
+  assert.equal(isPaneFresh(client, "a", 10_000, now + 20_000), false);
+  await markPanesStale(client);
+  assert.equal(readStamped(client, queryKeys.task("a"))?.value, "a", "a stale copy still shows");
+  assert.equal(isPaneFresh(client, "a", 10_000, now), false);
+  storePanePayload(client, "a", pane("fresh", 2));
+  assert.equal(isPaneFresh(client, "a", 10_000, Date.now()), true);
 });
 
 test("prefetches run a few at a time, in order", async () => {
