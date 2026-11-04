@@ -1,15 +1,32 @@
 "use client";
 
-import { useEffect, useId, useOptimistic, useRef, useState, type ReactNode } from "react";
-import { DECISION_NOTE_OPEN_MS, applyApprovalChange, decisionSummary } from "@/lib/approval-optimistic";
-import { CalendarDays, Check, ChevronDown, ChevronRight, Clock, History, Lock, Paperclip, Send, ThumbsUp, UserRound, Users } from "lucide-react";
+import { useId, useOptimistic, useRef, useState, type ReactNode } from "react";
+import { applyApprovalChange } from "@/lib/approval-optimistic";
+import {
+  AlertCircle,
+  CalendarDays,
+  Check,
+  ChevronRight,
+  Clock,
+  Eye,
+  History,
+  MessageSquareText,
+  Paperclip,
+  Pause,
+  Send,
+  ThumbsUp,
+  UserRound,
+  Users,
+  X,
+} from "lucide-react";
+import { Dialog } from "@/components/dialog";
+import { APPROVAL_STATUS_LABELS } from "@/lib/task-kinds";
+import { feedbackSnippet, feedbackSubtaskText, roundFeedback, shortFileName, type FeedbackTone } from "@/lib/approval-feedback";
 import { Avatar, displayName } from "@/components/avatar";
 import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
-import { ApprovalStatusBadge } from "@/components/project/task-meta";
 import { SmartPicker } from "@/components/smart-picker";
 import { useApprovalActionListener } from "./approval-action";
-import { setApprovalDetailsOpen, useApprovalDetailsOpen } from "./pane-size";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import {
@@ -29,12 +46,13 @@ import { PeopleList } from "./person-picker";
 import { PANE_FIELDS, PANE_LABEL } from "./pane-styles";
 import { SendForApprovalDialog, joinNames } from "./send-for-approval-dialog";
 import { ApprovalSetupDialog } from "./approval-setup-dialog";
-import { ApproverReview, ApproverReviewDialog } from "./approver-review";
+import { ApproverReviewDialog } from "./approver-review";
 import { approverReviewFiles } from "@/lib/approver-review";
 import { FeedbackSubtaskButton } from "./feedback-subtask";
 import { canAddSubtask } from "./task-subtasks";
 
-// Oct 27 notes (batch 6, items 45 / 45b): the approval panel at the top of an approval task's pane.
+// Oct 27 notes (batch 6, items 45 / 45b): the approval panel of an approval task's pane (since Nov 4
+// notes, batch 27, 161: a compact row with the field rows, Details in a dialog, feedback as pills).
 // The assignee does the work and sends it with "Ready for approval"; the task's approvers (separate
 // from the assignee) Approve / Request changes / Reject. Request changes and Reject send it back to the
 // assignee, paused until they mark the feedback (or rejection) received. Only Approve without "More
@@ -116,37 +134,44 @@ export function canActOnApproval(task: Pick<TaskDetail, "viewerRole" | "assignee
 
 type Settings = Pick<TaskApprovalInfo, "approverIds" | "mode" | "dueOn">;
 
-// Nov 2 notes (batch 15, 115): the card's left edge and icon follow the status.
-const APPROVAL_EDGE: Record<string, string> = {
-  not_sent: "border-l-zinc-400",
-  pending: "border-l-amber-500",
-  changes_requested: "border-l-orange-500",
-  rejected: "border-l-red-500",
-  approved: "border-l-green-600",
-  paused: "border-l-orange-500",
+// Nov 4 notes (batch 27, 161): the status pill's colors and the approval icon's.
+const APPROVAL_PILL: Record<string, string> = {
+  not_sent: "bg-zinc-100 text-zinc-700 ring-zinc-200",
+  pending: "bg-amber-50 text-amber-800 ring-amber-200",
+  changes_requested: "bg-amber-50 text-amber-900 ring-amber-300",
+  rejected: "bg-red-50 text-red-800 ring-red-200",
+  approved: "bg-green-50 text-green-800 ring-green-200",
 };
 const APPROVAL_ICON: Record<string, string> = {
-  not_sent: "bg-zinc-100 text-zinc-600",
-  pending: "bg-amber-100 text-amber-700",
-  changes_requested: "bg-orange-100 text-orange-700",
-  rejected: "bg-red-100 text-red-700",
-  approved: "bg-green-100 text-green-700",
-  paused: "bg-orange-100 text-orange-700",
+  not_sent: "text-zinc-500",
+  pending: "text-amber-600",
+  changes_requested: "text-amber-600",
+  rejected: "text-red-600",
+  approved: "text-green-600",
 };
+
+// "Changes requested · Round 3" (the summary's pill).
+export function approvalPillText(status: TaskApprovalInfo["status"], round: number | null): string {
+  const label = APPROVAL_STATUS_LABELS[status];
+  return round !== null && status !== "not_sent" ? `${label} · Round ${round}` : label;
+}
 
 export function ApprovalTaskBanner({
   task,
   profiles,
   memberId,
+  initialDetailsOpen = false,
 }: {
   task: TaskDetail;
   profiles: Profile[];
   memberId: string;
+  // The Details dialog open from the start (the unit tests read it this way).
+  initialDetailsOpen?: boolean;
 }) {
   const info = task.approval;
   if (!info) {
     return (
-      <section aria-label="Approval" className="mb-3 rounded-md border border-zinc-200 bg-zinc-50/70 px-3 py-2.5">
+      <section aria-label="Approval" className="mt-3 rounded-md border border-zinc-200 bg-zinc-50/70 px-3 py-2.5">
         <p className="flex items-center gap-2 text-sm text-zinc-700">
           <ThumbsUp className="size-4 shrink-0 text-zinc-500" aria-hidden />
           Approvals need this release’s database update.
@@ -154,22 +179,26 @@ export function ApprovalTaskBanner({
       </section>
     );
   }
-  return <ApprovalPanel task={task} info={info} profiles={profiles} memberId={memberId} />;
+  return <ApprovalPanel task={task} info={info} profiles={profiles} memberId={memberId} initialDetailsOpen={initialDetailsOpen} />;
 }
 
-// Oct 29 notes (batch 7, item 52): one slim row — the approvers (each locked in), the status, and what the
-// viewer can do now — with everything else (how they decide, the approval due date, what's being
-// approved, history, changing approvers) behind Details, open or closed as this browser last left it.
+// Nov 4 notes (batch 27, 161): one compact row with the field rows — the status pill with its round, the
+// approvers' faces, the approval due date, and the one thing the viewer can do next. Clicking the summary
+// opens Details (approvers and Change, who decides, approval due, what's being approved, Withdraw /
+// Hand off, round history). The feedback itself shows as pills next to the files (ApprovalFeedback). An
+// approver's in-progress decision (the note step, or the file review) opens under the row / full screen.
 function ApprovalPanel({
   task,
   info: serverInfo,
   profiles,
   memberId,
+  initialDetailsOpen,
 }: {
   task: TaskDetail;
   info: TaskApprovalInfo;
   profiles: Profile[];
   memberId: string;
+  initialDetailsOpen: boolean;
 }) {
   const [pending, run] = useServerAction();
   // Nov 2 notes (batch 16, 126): every approval action changes the card at once (approval-optimistic.ts);
@@ -179,7 +208,7 @@ function ApprovalPanel({
   const notify = useNotify();
   const confirm = useConfirm();
   const today = useToday();
-  const detailsId = useId();
+  const headlineId = useId();
   const sectionRef = useRef<HTMLElement>(null);
   const [sending, setSending] = useState(false);
   // Nov 1 notes, batch 9a: the guided setup (choose approvers, then what happens after approval).
@@ -188,7 +217,7 @@ function ApprovalPanel({
   const [decision, setDecision] = useState<{ choice: Decision; nonce: number } | null>(null);
   // Nov 2 notes (batch 15, 114): the approver's per-file review, full screen in the app.
   const [reviewExpanded, setReviewExpanded] = useState(false);
-  const detailsOpen = useApprovalDetailsOpen();
+  const [detailsOpen, setDetailsOpen] = useState(initialDetailsOpen);
   const [settings, patchSettings] = useOptimistic<Settings, Partial<Settings>>(
     { approverIds: info.approverIds, mode: info.mode, dueOn: info.dueOn },
     (current, patch) => ({ ...current, ...patch }),
@@ -237,10 +266,6 @@ function ApprovalPanel({
     !completed &&
     (status === "not_sent" || ((status === "changes_requested" || status === "rejected") && !paused) || status === "approved");
 
-  function setDetails(open: boolean) {
-    setApprovalDetailsOpen(open);
-  }
-
   // A row's (or the pane header's) "Ready for approval" / "Approve" lands here (approval-action.ts).
   useApprovalActionListener(task.id, (action) => {
     sectionRef.current?.scrollIntoView?.({ block: "nearest" });
@@ -249,7 +274,7 @@ function ApprovalPanel({
       return;
     }
     if (action === "decide") {
-      if (canDecide && reviewsFiles) sectionRef.current?.querySelector<HTMLElement>("[data-approver-review] button")?.focus();
+      if (canDecide && reviewsFiles) setReviewExpanded(true);
       else if (canDecide) setDecision((current) => ({ choice: "approved", nonce: (current?.nonce ?? 0) + 1 }));
       else notify(decideRefusal);
       return;
@@ -259,8 +284,8 @@ function ApprovalPanel({
     } else if (paused) {
       notify(`Mark the ${status === "rejected" ? "rejection" : "feedback"} received first, then send it again`);
     } else if (settings.approverIds.length === 0) {
-      setDetails(true);
-      notify(canChangeApprovers ? "Choose who approves this first" : "Nobody approves this yet. Ask an Editor to choose the approvers.");
+      if (canChangeApprovers && !completed) setSettingUp(true);
+      else notify("Nobody approves this yet. Ask an Editor to choose the approvers.");
     } else if (roundOpen) {
       notify("It’s already waiting for approval");
     } else if (!canAct) {
@@ -287,7 +312,7 @@ function ApprovalPanel({
     save({ approverIds: next });
   }
 
-  // The headline in plain words (the status pill's tooltip, and the first line of Details).
+  // The headline in plain words (the summary's tooltip, read by screen readers, and the top of Details).
   let headline: string;
   const decider = latest?.decidedBy ?? null;
   if (status === "not_sent") {
@@ -315,15 +340,13 @@ function ApprovalPanel({
     headline = `Approved by ${approvedBy.length ? joinNames(approvedBy) : nameOf(decider)}. ${latest ? approvedOutcome(latest) : ""}`.trim();
   }
 
-  const decisionRequest =
-    latest && (latest.status === "changes_requested" || latest.status === "rejected")
-      ? (latest.requests.find((r) => r.status === latest.status) ?? null)
-      : null;
-  const approvalNotes = latest?.status === "approved" ? latest.requests.filter((r) => r.status === "approved" && r.decisionNote) : [];
   const dueOverdue = Boolean(roundOpen && settings.dueOn && today && settings.dueOn < today);
   const decide = (choice: Decision) => setDecision({ choice, nonce: Date.now() });
-  // Choosing approvers (Editors+; Owners / Admins while a round is pending): in Details, or right in the
-  // row while nobody approves it yet.
+  const feedbackCount = roundFeedback(latest, task.attachments).filter((f) => f.tone !== "approved").length;
+  const small = "h-7 px-2 text-xs";
+  const pillTone = APPROVAL_PILL[status];
+
+  // Choosing approvers (Editors+; Owners / Admins while a round is pending), in Details.
   const approverPicker = canChangeApprovers ? (
     <Popover
       label={roundOpen ? "Reassign approvers" : "Choose approvers"}
@@ -353,205 +376,145 @@ function ApprovalPanel({
       )}
     </Popover>
   ) : null;
-  const small = "h-7 px-2 text-xs";
 
-  // Nov 2 notes (batch 15, 115): a white card with a status-colored edge; the status and what you can do
-  // now lead, the plain-words headline under them, approvers and dates muted below, the rest in Details.
+  // The one next step (two for an approver: their decision, and Reject).
+  let action: ReactNode = null;
+  if (canDecide && myRequest && !decision) {
+    action = (
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Your decision">
+        {reviewsFiles ? (
+          <button type="button" disabled={pending} onClick={() => setReviewExpanded(true)} className={`btn-primary ${small}`} data-approval-open-review="">
+            <Eye className="size-3.5" aria-hidden />
+            Open review
+          </button>
+        ) : (
+          <>
+            <button type="button" disabled={pending} onClick={() => decide("approved")} className={`btn-primary bg-green-700 hover:bg-green-800 ${small}`}>
+              Approve
+            </button>
+            <button type="button" disabled={pending} onClick={() => decide("changes_requested")} className={`btn-secondary ${small}`}>
+              Request changes
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => decide("rejected")}
+          className={`btn-secondary border-red-200 text-red-700 hover:bg-red-50 ${small}`}
+        >
+          Reject
+        </button>
+      </div>
+    );
+  } else if (paused && canAct) {
+    action = (
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => run(() => acknowledgeApproval(task.id), () => applyInfo({ type: "acknowledge", at: nowIso() }))}
+        className={`btn-primary ${small}`}
+      >
+        <Check className="size-3.5" aria-hidden />
+        {status === "rejected" ? "Rejection received" : "Feedback received"}
+      </button>
+    );
+  } else if (approvers.length === 0 && canChangeApprovers && !completed) {
+    action = (
+      <button type="button" data-approval-finish-setup="" onClick={() => setSettingUp(true)} className={`btn-primary ${small}`}>
+        Finish setup
+      </button>
+    );
+  } else if (canSend) {
+    action = (
+      <button
+        type="button"
+        disabled={pending || settings.approverIds.length === 0}
+        data-tooltip={settings.approverIds.length === 0 ? "Choose an approver first" : undefined}
+        onClick={() => setSending(true)}
+        className={`${status === "approved" ? "btn-secondary" : "btn-primary"} ${small}`}
+      >
+        <Send className="size-3.5" aria-hidden />
+        {status === "approved" ? "Send for approval again" : "Ready for approval"}
+      </button>
+    );
+  }
+
+  const shown = approvers.slice(0, 3);
   return (
     <section
       ref={sectionRef}
       aria-label="Approval"
-      className={`mb-3 overflow-hidden rounded-lg border border-zinc-300 border-l-4 bg-white shadow-sm ${APPROVAL_EDGE[paused ? "paused" : status]}`}
+      className="mt-1"
       data-approval-status={status}
       data-approval-paused={paused ? "true" : undefined}
     >
-      <div className="flex flex-col gap-1.5 px-3 py-2.5" data-approval-row="">
-        <div className="flex flex-wrap items-center gap-2">
-          <span aria-hidden className={`flex size-6 shrink-0 items-center justify-center rounded-full ${APPROVAL_ICON[paused ? "paused" : status]}`}>
-            <ThumbsUp className="size-3.5" />
-          </span>
-          <span className="text-sm font-semibold text-zinc-900">Approval</span>
-          <span data-tooltip={headline} className="inline-flex">
-            <ApprovalStatusBadge status={status} paused={paused} />
-          </span>
-          {latest && status !== "not_sent" ? <span className="text-xs text-zinc-500">Round {latest.number}</span> : null}
-
-          <div className="ml-auto flex flex-wrap items-center gap-1.5">
-            {canDecide && myRequest && !decision ? (
-              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Your decision">
-                {reviewsFiles ? null : (
-                  <>
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() => decide("approved")}
-                      className={`btn-primary bg-green-700 hover:bg-green-800 ${small}`}
-                    >
-                      Approve
-                    </button>
-                    <button type="button" disabled={pending} onClick={() => decide("changes_requested")} className={`btn-secondary ${small}`}>
-                      Request changes
-                    </button>
-                  </>
-                )}
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() => decide("rejected")}
-                  className={`btn-secondary border-red-200 text-red-700 hover:bg-red-50 ${small}`}
-                >
-                  Reject
-                </button>
-              </div>
-            ) : null}
-            {canSend ? (
-              <button
-                type="button"
-                disabled={pending || settings.approverIds.length === 0}
-                data-tooltip={settings.approverIds.length === 0 ? "Choose an approver first" : undefined}
-                onClick={() => setSending(true)}
-                className={`${status === "approved" ? "btn-secondary" : "btn-primary"} ${small}`}
-              >
-                <Send className="size-3.5" aria-hidden />
-                {status === "approved" ? "Send for approval again" : "Ready for approval"}
-              </button>
-            ) : null}
-            {paused && canAct ? (
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => run(() => acknowledgeApproval(task.id), () => applyInfo({ type: "acknowledge", at: nowIso() }))}
-                className={`btn-primary ${small}`}
-              >
-                <Check className="size-3.5" aria-hidden />
-                {status === "rejected" ? "Rejection received" : "Feedback received"}
-              </button>
-            ) : null}
-            {canWithdraw ? (
-              <button
-                type="button"
-                disabled={pending}
-                onClick={async () => {
-                  const ok = await confirm({
-                    title: "Withdraw the approval request?",
-                    message: "The approvers can’t decide on it anymore. You can send it again later.",
-                    confirmLabel: "Withdraw",
-                    cancelLabel: "Keep it",
-                    tone: "danger",
-                  });
-                  if (ok) run(() => withdrawApproval(task.id), () => applyInfo({ type: "withdraw", at: nowIso() }));
-                }}
-                className={`btn-ghost text-zinc-600 ${small}`}
-              >
-                Withdraw
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        <p className="text-sm text-zinc-800" data-approval-headline="" data-approval-headline-sr={detailsOpen ? undefined : ""}>
-          {headline}
-        </p>
-
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-xs text-zinc-500">{approvers.length === 1 ? "Approver" : "Approvers"}</span>
-          {approvers.length === 0 ? <span className="text-xs text-zinc-500">No approver yet</span> : null}
-          {approvers.length === 0 ? approverPicker : null}
-          {approvers.length === 0 && canChangeApprovers && !completed ? (
-            <button
-              type="button"
-              data-approval-finish-setup=""
-              onClick={() => setSettingUp(true)}
-              className="inline-flex h-6 items-center gap-1 rounded-full bg-accent-600 px-2.5 text-xs font-medium text-white hover:bg-accent-700"
-            >
-              Finish setup
-            </button>
-          ) : null}
-          {approvers.map(({ id, profile }) => {
-            const request = roundOpen ? latest?.requests.find((r) => r.approverId === id && r.status !== "cancelled") : undefined;
-            const name = profile ? displayName(profile) : "Someone";
-            return (
-              <span
-                key={id}
-                data-approver={id}
-                data-tooltip={`Approver (locked in): ${name}`}
-                className="inline-flex max-w-full items-center gap-1 rounded-full bg-zinc-100 py-0.5 pr-2 pl-0.5 text-xs text-zinc-700"
-              >
-                <Avatar name={name} src={profile?.avatar_url} profileId={id} />
-                <span className="truncate">{id === memberId ? `${name} (you)` : name}</span>
-                {request?.status === "approved" ? (
-                  <Check className="size-3.5 text-green-600" aria-label="Approved" />
-                ) : request?.status === "pending" ? (
-                  <Clock className="size-3.5 text-amber-600" aria-label="Waiting" />
-                ) : null}
-                <Lock className="size-3 text-zinc-400" aria-label="Locked in as an approver" data-approver-lock="" />
-              </span>
-            );
-          })}
-          {settings.dueOn ? (
-            <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
-              <DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />
-            </span>
-          ) : null}
+      <div className={PANE_FIELDS}>
+        <span className={`${PANE_LABEL} self-start`}>Approval</span>
+        <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-x-2 gap-y-1" data-approval-row="">
           <button
             type="button"
-            aria-expanded={detailsOpen}
-            aria-controls={detailsId}
-            onClick={() => setDetails(!detailsOpen)}
-            data-approval-details-toggle=""
-            className="ml-auto inline-flex h-6 items-center gap-1 rounded px-1.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+            onClick={() => setDetailsOpen(true)}
+            aria-haspopup="dialog"
+            aria-describedby={headlineId}
+            data-approval-summary=""
+            data-tooltip={headline}
+            className="-ml-1 inline-flex min-w-0 max-w-full items-center gap-2 rounded-md px-1 py-0.5 text-left hover:bg-zinc-100"
           >
-            Details
-            <ChevronDown className={`size-3.5 transition-transform ${detailsOpen ? "rotate-180" : ""}`} aria-hidden />
+            <span
+              className={`inline-flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ring-1 ring-inset ${pillTone}`}
+              data-approval-pill=""
+            >
+              {paused ? <Pause className="size-3 shrink-0" aria-hidden /> : <ThumbsUp className={`size-3 shrink-0 ${APPROVAL_ICON[status]}`} aria-hidden />}
+              <span className="truncate">{approvalPillText(status, latest?.number ?? null)}</span>
+              {paused ? <span className="sr-only"> (paused)</span> : null}
+            </span>
+            {shown.length ? (
+              <span className="flex shrink-0 -space-x-1" aria-label={`${approvers.length === 1 ? "Approver" : "Approvers"}: ${joinNames(approverNames)}`}>
+                {shown.map(({ id, profile }) => {
+                  const name = profile ? displayName(profile) : "Someone";
+                  const request = roundOpen ? latest?.requests.find((r) => r.approverId === id && r.status !== "cancelled") : undefined;
+                  return (
+                    <span key={id} data-approver={id} className="relative inline-flex rounded-full ring-2 ring-white">
+                      <Avatar name={name} src={profile?.avatar_url} profileId={id} />
+                      {request?.status === "approved" ? (
+                        <Check className="absolute -right-1 -bottom-1 size-3 rounded-full bg-white text-green-600" aria-label="Approved" />
+                      ) : request?.status === "pending" ? (
+                        <Clock className="absolute -right-1 -bottom-1 size-3 rounded-full bg-white text-amber-600" aria-label="Waiting" />
+                      ) : null}
+                    </span>
+                  );
+                })}
+                {approvers.length > shown.length ? (
+                  <span className="inline-flex size-6 items-center justify-center rounded-full bg-zinc-100 text-2xs font-medium text-zinc-600 ring-2 ring-white">
+                    +{approvers.length - shown.length}
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-xs text-zinc-500">No approver yet</span>
+            )}
+            {settings.dueOn ? (
+              <span className={`inline-flex shrink-0 items-center gap-1 text-xs ${dueOverdue ? "text-red-700" : "text-zinc-600"}`}>
+                <CalendarDays className="size-3.5" aria-hidden />
+                {formatDueDate(settings.dueOn)}
+                {dueOverdue ? " · overdue" : ""}
+              </span>
+            ) : null}
+            <ChevronRight className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+            <span className="sr-only">Details</span>
           </button>
+          {feedbackCount > 0 ? (
+            <a href={`#approval-feedback-${task.id}`} className="text-xs text-amber-800 hover:underline" data-approval-feedback-link="">
+              {feedbackCount === 1 ? "1 note" : `${feedbackCount} notes`} ↓
+            </a>
+          ) : null}
+          {action ? <div className="ml-auto flex flex-wrap items-center gap-1.5">{action}</div> : null}
         </div>
       </div>
-      <div className="px-3 pb-2.5 empty:hidden">
-      {decisionRequest && (status === "changes_requested" || status === "rejected") ? (
-        <DecisionNote
-          key={decisionRequest.id}
-          request={decisionRequest}
-          decision={status}
-          name={nameOf(decisionRequest.approverId, true)}
-          paused={paused}
-          action={
-            // Nov 2 notes (batch 17, 131): next to Feedback received, turn the note into a subtask.
-            decisionRequest.decisionNote && canAddSubtask(task) ? (
-              <FeedbackSubtaskButton
-                task={task}
-                feedback={decisionRequest.decisionNote}
-                from={nameOf(decisionRequest.approverId)}
-                className="-ml-1.5 mt-1"
-              />
-            ) : null
-          }
-        />
-      ) : null}
-
-      {reviewsFiles && myRequest && latest && !decision ? (
-        <ApproverReview
-          taskId={task.id}
-          requestId={myRequest.id}
-          round={latest}
-          attachments={task.attachments}
-          onExpand={() => setReviewExpanded(true)}
-          onDecide={(choice, note) =>
-            applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() })
-          }
-        />
-      ) : null}
-      {reviewExpanded && reviewsFiles && myRequest && latest ? (
-        <ApproverReviewDialog
-          taskId={task.id}
-          requestId={myRequest.id}
-          round={latest}
-          attachments={task.attachments}
-          onDecide={(choice, note) =>
-            applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() })
-          }
-          onClose={() => setReviewExpanded(false)}
-        />
-      ) : null}
+      <p id={headlineId} className="sr-only" data-approval-headline="">
+        {headline}
+      </p>
 
       {canDecide && myRequest && decision ? (
         <div className="mt-2 space-y-2" data-approval-deciding="">
@@ -575,183 +538,243 @@ function ApprovalPanel({
         </div>
       ) : null}
 
-      <div id={detailsId} hidden={!detailsOpen} className="mt-2 border-t border-zinc-200 pt-2" data-approval-details="">
-        {paused && !canAct ? (
-          <p className="mt-1 text-xs text-zinc-500">
-            Waiting on {assigneeName} to mark the {status === "rejected" ? "rejection" : "feedback"} received.
-          </p>
-        ) : null}
+      {reviewExpanded && reviewsFiles && myRequest && latest ? (
+        <ApproverReviewDialog
+          taskId={task.id}
+          requestId={myRequest.id}
+          round={latest}
+          attachments={task.attachments}
+          onDecide={(choice, note) =>
+            applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() })
+          }
+          onClose={() => setReviewExpanded(false)}
+        />
+      ) : null}
 
-        {approvalNotes.length ? (
-          <ul className="mt-2 space-y-1.5">
-            {approvalNotes.map((r) => (
-              <li key={r.id} className="rounded-md border border-green-200 bg-green-50 px-2.5 py-2 text-sm text-green-900">
-                <span className="text-xs font-medium">{nameOf(r.approverId, true)}:</span>{" "}
-                <span className="whitespace-pre-wrap">{r.decisionNote}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        {roundOpen && latest ? <RoundContent round={latest} task={task} nameOf={nameOf} label="What’s being approved" /> : null}
-
-        <dl className={`mt-2 ${PANE_FIELDS}`}>
-          <dt className={`${PANE_LABEL} self-start`}>Approvers</dt>
-          <dd className="min-w-0">
-            <div className="flex min-h-8 flex-wrap items-center gap-1.5 py-0.5">
-              <span className="text-zinc-800">
-                {approvers.length ? joinNames(approvers.map((a) => (a.profile ? displayName(a.profile) : "Someone"))) : "No approver yet"}
+      {detailsOpen ? (
+        <Dialog title="Approval" onClose={() => setDetailsOpen(false)} width="max-w-lg">
+          <div data-approval-details="">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${pillTone}`}>
+                {approvalPillText(status, latest?.number ?? null)}
               </span>
-              {approvers.length ? approverPicker : null}
+              {paused ? <span className="text-2xs font-medium tracking-wide text-amber-800 uppercase">Paused</span> : null}
             </div>
-          </dd>
+            <p className="mt-2 text-sm text-zinc-800">{headline}</p>
+            {paused && !canAct ? (
+              <p className="mt-1 text-xs text-zinc-500">
+                Waiting on {assigneeName} to mark the {status === "rejected" ? "rejection" : "feedback"} received.
+              </p>
+            ) : null}
 
-          {settings.approverIds.length > 1 || canChangeMode ? (
-            <>
-              <dt className={PANE_LABEL}>Who decides</dt>
+            {roundOpen && latest ? <RoundContent round={latest} task={task} nameOf={nameOf} label="What’s being approved" /> : null}
+
+            <dl className={`mt-3 ${PANE_FIELDS}`}>
+              <dt className={`${PANE_LABEL} self-start`}>{approvers.length === 1 ? "Approver" : "Approvers"}</dt>
               <dd className="min-w-0">
-                {canChangeMode ? (
-                  <SmartPicker
-                    label="Who decides"
-                    value={settings.mode}
-                    onChange={(value) => save({ mode: value === "all" ? "all" : "any" })}
-                    searchable={false}
-                    className="h-7 w-auto"
-                    panelWidth={260}
-                    options={[
-                      { value: "any", label: APPROVAL_MODE_LABELS.any, description: "The first approval is enough" },
-                      { value: "all", label: APPROVAL_MODE_LABELS.all, description: "Every approver has to approve" },
-                    ]}
-                  />
+                <div className="flex min-h-8 flex-wrap items-center gap-1.5 py-0.5">
+                  {approvers.length ? (
+                    approvers.map(({ id, profile }) => {
+                      const name = profile ? displayName(profile) : "Someone";
+                      return (
+                        <span key={id} className="inline-flex max-w-full items-center gap-1 rounded-full bg-zinc-100 py-0.5 pr-2 pl-0.5 text-xs text-zinc-700">
+                          <Avatar name={name} src={profile?.avatar_url} profileId={id} />
+                          <span className="truncate">{id === memberId ? `${name} (you)` : name}</span>
+                        </span>
+                      );
+                    })
+                  ) : (
+                    <span className="text-zinc-500">No approver yet</span>
+                  )}
+                  {approverPicker}
+                </div>
+              </dd>
+
+              {settings.approverIds.length > 1 || canChangeMode ? (
+                <>
+                  <dt className={PANE_LABEL}>Who decides</dt>
+                  <dd className="min-w-0">
+                    {canChangeMode ? (
+                      <SmartPicker
+                        label="Who decides"
+                        value={settings.mode}
+                        onChange={(value) => save({ mode: value === "all" ? "all" : "any" })}
+                        searchable={false}
+                        className="h-7 w-auto"
+                        panelWidth={260}
+                        options={[
+                          { value: "any", label: APPROVAL_MODE_LABELS.any, description: "The first approval is enough" },
+                          { value: "all", label: APPROVAL_MODE_LABELS.all, description: "Every approver has to approve" },
+                        ]}
+                      />
+                    ) : (
+                      <span className="flex min-h-8 items-center px-1 text-zinc-800">{APPROVAL_MODE_LABELS[settings.mode]}</span>
+                    )}
+                  </dd>
+                </>
+              ) : null}
+
+              <dt className={PANE_LABEL}>Approval due</dt>
+              <dd className="min-w-0">
+                {canChangeDue ? (
+                  <Popover
+                    label={`Approval due: ${settings.dueOn ? formatDueDate(settings.dueOn) : "no date"}. Change`}
+                    panelClassName="w-[19rem] p-0"
+                    buttonClassName="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
+                    button={<DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />}
+                  >
+                    {(close) => (
+                      <SingleDatePicker
+                        label="Approval due"
+                        value={settings.dueOn}
+                        onChange={(next) => {
+                          close();
+                          if (next !== settings.dueOn) save({ dueOn: next });
+                        }}
+                      />
+                    )}
+                  </Popover>
                 ) : (
-                  <span className="flex min-h-8 items-center px-1 text-zinc-800">{APPROVAL_MODE_LABELS[settings.mode]}</span>
+                  <span className="inline-flex h-8 items-center px-1">
+                    <DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />
+                  </span>
                 )}
               </dd>
-            </>
-          ) : null}
+            </dl>
+            {settings.dueOn && roundOpen ? (
+              <p className="mt-0.5 text-2xs text-zinc-500">Approvers get a reminder the day before, and again once it’s overdue.</p>
+            ) : null}
 
-          <dt className={PANE_LABEL}>Approval due</dt>
-          <dd className="min-w-0">
-            {canChangeDue ? (
-              <Popover
-                label={`Approval due: ${settings.dueOn ? formatDueDate(settings.dueOn) : "no date"}. Change`}
-                panelClassName="w-[19rem] p-0"
-                buttonClassName="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
-                button={<DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />}
-              >
-                {(close) => (
-                  <SingleDatePicker
-                    label="Approval due"
-                    value={settings.dueOn}
-                    onChange={(next) => {
-                      close();
-                      if (next !== settings.dueOn) save({ dueOn: next });
-                    }}
+            {canDecide || canWithdraw ? (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {canDecide ? (
+                  <HandOffButton
+                    candidates={eligible.filter((p) => p.id !== memberId && !settings.approverIds.includes(p.id))}
+                    onHandOff={(personId, note) =>
+                      run(
+                        () => handOffApproval(task.id, personId, note),
+                        () =>
+                          myRequest &&
+                          applyInfo({ type: "hand_off", requestId: myRequest.id, from: memberId, to: personId, note: note || null, at: nowIso() }),
+                      )
+                    }
                   />
-                )}
-              </Popover>
-            ) : (
-              <span className="inline-flex h-8 items-center px-1">
-                <DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />
-              </span>
-            )}
-          </dd>
-        </dl>
-        {settings.dueOn && roundOpen ? (
-          <p className="mt-0.5 text-2xs text-zinc-500">Approvers get a reminder the day before, and again once it’s overdue.</p>
-        ) : null}
+                ) : null}
+                {canWithdraw ? (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={async () => {
+                      const ok = await confirm({
+                        title: "Withdraw the approval request?",
+                        message: "The approvers can’t decide on it anymore. You can send it again later.",
+                        confirmLabel: "Withdraw",
+                        cancelLabel: "Keep it",
+                        tone: "danger",
+                      });
+                      if (ok) run(() => withdrawApproval(task.id), () => applyInfo({ type: "withdraw", at: nowIso() }));
+                    }}
+                    className="btn-ghost text-zinc-600"
+                  >
+                    Withdraw
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
 
-        {canDecide ? (
-          <div className="mt-2">
-            <HandOffButton
-              candidates={eligible.filter((p) => p.id !== memberId && !settings.approverIds.includes(p.id))}
-              onHandOff={(personId, note) =>
-                run(
-                  () => handOffApproval(task.id, personId, note),
-                  () =>
-                    myRequest &&
-                    applyInfo({ type: "hand_off", requestId: myRequest.id, from: memberId, to: personId, note: note || null, at: nowIso() }),
-                )
-              }
-            />
+            {info.rounds.length ? <ApprovalHistory rounds={info.rounds} task={task} nameOf={nameOf} /> : null}
           </div>
-        ) : null}
-
-        {info.rounds.length ? <ApprovalHistory rounds={info.rounds} task={task} nameOf={nameOf} /> : null}
-      </div>
-
-      </div>
+        </Dialog>
+      ) : null}
       {sending ? <SendForApprovalDialog task={task} profiles={profiles} onClose={() => setSending(false)} /> : null}
       {settingUp ? <ApprovalSetupDialog task={task} profiles={profiles} onClose={() => setSettingUp(false)} /> : null}
     </section>
   );
 }
 
-// Nov 2 notes (batch 16, 126): the approver's "requested changes" / "rejected" note shows in full when it
-// appears, then folds to one line after a few seconds (unless the pointer or focus is on it); a click on
-// the line opens it again, and it stays open then.
-function DecisionNote({
-  request,
-  decision,
-  name,
-  paused,
-  action = null,
-}: {
-  request: TaskApproval;
-  decision: "changes_requested" | "rejected";
-  name: string;
-  paused: boolean;
-  // Nov 2 notes (batch 17, 131): "Create subtask" under the note.
-  action?: ReactNode;
-}) {
-  const [open, setOpen] = useState(true);
-  const [pinned, setPinned] = useState(false);
-  const [holding, setHolding] = useState(false);
-  const bodyId = useId();
-  useEffect(() => {
-    if (!open || pinned || holding) return;
-    const timer = window.setTimeout(() => setOpen(false), DECISION_NOTE_OPEN_MS);
-    return () => window.clearTimeout(timer);
-  }, [open, pinned, holding]);
-  const tone = decision === "rejected" ? "border-red-200 bg-red-50 text-red-900" : "border-amber-200 bg-amber-50 text-amber-900";
-  const toggle = () => {
-    setOpen((value) => !value);
-    setPinned(true);
-  };
+const FEEDBACK_PILL: Record<FeedbackTone, string> = {
+  changes_requested: "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100",
+  rejected: "border-red-300 bg-red-50 text-red-800 hover:bg-red-100",
+  approved: "border-green-300 bg-green-50 text-green-800 hover:bg-green-100",
+};
+const FEEDBACK_WORD: Record<FeedbackTone, string> = {
+  changes_requested: "Changes requested",
+  rejected: "Rejected",
+  approved: "Approved",
+};
+
+// Nov 4 notes (batch 27, 161): the latest round's feedback as small pills next to the task's files: a
+// file's short name and the start of its note, colored by its outcome (changes requested amber, rejected
+// red, approved green). A pill opens the whole note, who wrote it and when, and "Create subtask".
+export function ApprovalFeedback({ task, profiles, memberId }: { task: TaskDetail; profiles: Profile[]; memberId: string }) {
+  const latest = task.approval?.rounds[0] ?? null;
+  const items = roundFeedback(latest, task.attachments);
+  if (!latest || items.length === 0) return null;
+  const profilesById = new Map(profiles.map((p) => [p.id, p]));
+  const nameOf = (id: string) => (id === memberId ? "You" : profilesById.get(id) ? displayName(profilesById.get(id)!) : "Someone");
+  const canSubtask = canAddSubtask(task);
   return (
-    <div
-      className={`mt-2 rounded-md border text-sm ${tone} ${paused && open ? "shadow-sm" : ""}`}
-      data-approval-decision-note=""
-      data-collapsed={open ? undefined : ""}
-      onPointerEnter={() => setHolding(true)}
-      onPointerLeave={() => setHolding(false)}
-      onFocus={() => setHolding(true)}
-      onBlur={() => setHolding(false)}
-    >
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={bodyId}
-        onClick={toggle}
-        className="flex w-full min-w-0 items-center gap-1.5 px-2.5 py-1.5 text-left text-xs font-medium"
-      >
-        <Avatar name={name} profileId={request.approverId} />
-        <span className="min-w-0 flex-1 truncate">
-          {open ? `${name} ${decision === "rejected" ? "rejected this" : "requested changes"}` : decisionSummary(name, decision, request.decisionNote)}
-          {request.decidedAt ? (
-            <span className="font-normal opacity-75">
-              {" "}
-              · <Timestamp iso={request.decidedAt} />
-            </span>
-          ) : null}
-        </span>
-        <ChevronDown className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
-      </button>
-      <div id={bodyId} hidden={!open} className="px-2.5 pb-1.5">
-        {request.decisionNote ? <p className="whitespace-pre-wrap">{request.decisionNote}</p> : <p className="italic opacity-75">No note.</p>}
-        {action}
-      </div>
-    </div>
+    <section id={`approval-feedback-${task.id}`} className="mt-6 scroll-mt-4" aria-labelledby={`approval-feedback-heading-${task.id}`} data-approval-feedback="">
+      <h3 id={`approval-feedback-heading-${task.id}`} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900">
+        <MessageSquareText className="size-4 text-zinc-500" aria-hidden />
+        Approval feedback
+        <span className="font-normal text-zinc-500">· Round {latest.number}</span>
+      </h3>
+      <ul className="mt-2 flex flex-wrap gap-1.5">
+        {items.map((item) => {
+          const title = item.fileName ? shortFileName(item.fileName) : "Note";
+          const snippet = item.text ? feedbackSnippet(item.text) : FEEDBACK_WORD[item.tone];
+          const Icon = item.tone === "approved" ? Check : item.tone === "rejected" ? X : AlertCircle;
+          return (
+            <li key={item.key} className="max-w-full">
+              <Popover
+                label={`${FEEDBACK_WORD[item.tone]}: ${item.fileName ?? "note"}${item.text ? ` — ${item.text}` : ""}`}
+                panelClassName="w-80 p-3"
+                buttonClassName={`inline-flex h-7 max-w-full items-center gap-1 rounded-full border px-2 text-xs ${FEEDBACK_PILL[item.tone]}`}
+                button={
+                  <span className="flex min-w-0 items-center gap-1" data-feedback-pill={item.tone}>
+                    <Icon className="size-3.5 shrink-0" aria-hidden />
+                    <span className="shrink-0 font-medium">{title}</span>
+                    <span className="min-w-0 truncate opacity-80">· {snippet}</span>
+                  </span>
+                }
+              >
+                {() => (
+                  <div className="space-y-2 text-sm" data-feedback-detail="">
+                    <p className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-2xs font-medium ${FEEDBACK_PILL[item.tone]}`}>
+                      {FEEDBACK_WORD[item.tone]}
+                    </p>
+                    {item.fileName ? (
+                      item.fileId ? (
+                        <a href={`/attachments/${item.fileId}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 break-all text-xs font-medium text-zinc-800 hover:underline">
+                          <Paperclip className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+                          {item.fileName}
+                        </a>
+                      ) : (
+                        <p className="break-all text-xs font-medium text-zinc-800">{item.fileName}</p>
+                      )
+                    ) : null}
+                    <p className="whitespace-pre-wrap text-zinc-800">{item.text || "Approved, no note."}</p>
+                    <p className="text-2xs text-zinc-500">
+                      {nameOf(item.approverId)}
+                      {item.decidedAt ? (
+                        <>
+                          {" · "}
+                          <Timestamp iso={item.decidedAt} />
+                        </>
+                      ) : null}
+                    </p>
+                    {item.tone !== "approved" && item.text && canSubtask ? (
+                      <FeedbackSubtaskButton task={task} feedback={feedbackSubtaskText(item)} from={nameOf(item.approverId)} className="-ml-1.5" />
+                    ) : null}
+                  </div>
+                )}
+              </Popover>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 

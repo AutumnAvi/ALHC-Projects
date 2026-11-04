@@ -6,6 +6,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { TagsEnabledProvider } from "@/components/tags/tags-enabled";
 import { SubtaskPrefsProvider } from "@/components/task/subtask-prefs";
+import { PeopleDirectoryProvider } from "@/components/task/title-text";
 import { KeyboardShortcuts } from "@/components/shortcuts/keyboard-shortcuts";
 import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { SetupRequired } from "@/components/setup-required";
@@ -29,6 +30,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   ]);
   if (shellOrError instanceof Error) throw shellOrError;
   const shell = shellOrError;
+  // Nov 4 notes (batch 27, 162): names for "@person" chips in task names.
+  const people = shell.profiles.map((p) => ({ id: p.id, name: p.full_name?.trim() || p.email, email: p.email }));
   const { workspace, projects, starIds: starredIds, unreadCount, isWorkspaceAdmin: admin, avatars, tagsEnabled: tagsOn, folders, subtaskPrefs, goalsEnabled: goalsOn } = shell;
 
   return (
@@ -43,6 +46,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         >
           <TagsEnabledProvider enabled={tagsOn}>
             <SubtaskPrefsProvider initial={subtaskPrefs}>
+              <PeopleDirectoryProvider people={people}>
               <TimeZoneCookie />
               <KeyboardShortcuts />
               <AppShell
@@ -53,6 +57,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               >
                 {children}
               </AppShell>
+              </PeopleDirectoryProvider>
             </SubtaskPrefsProvider>
           </TagsEnabledProvider>
         </ShellProvider>

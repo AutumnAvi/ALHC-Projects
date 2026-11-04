@@ -17,6 +17,7 @@ import type { Tag } from "@/lib/tags";
 import type { TaskSeed } from "@/lib/task-seed";
 import type { Profile, ProjectTask, ProjectTaskGroupPage, Section } from "@/lib/data";
 import { displayTaskTitle } from "@/lib/request-numbers";
+import { TaskTitleText } from "@/components/task/title-text";
 import { fieldLockedFor, type FieldDef } from "@/lib/fields";
 import { LockedFieldValue } from "./field-lock";
 import { columnsOf, groupOf, orderSections, refFieldId, sameConfig, sortOf, type ViewConfig } from "@/lib/views";
@@ -461,7 +462,7 @@ function TaskCard({
             completed ? "text-zinc-400 line-through" : "text-zinc-900"
           }`}
         >
-          {displayTaskTitle(task.title, task.requestLabel)}
+          <TaskTitleText title={displayTaskTitle(task.title, task.requestLabel)} nested />
         </TaskLink>
       </div>
 

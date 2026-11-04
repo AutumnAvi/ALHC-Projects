@@ -31,6 +31,7 @@ import {
 import { useToday } from "@/lib/dates";
 import type { MyTask } from "@/lib/data";
 import { bareTaskTitle, formatRequestLabel } from "@/lib/request-numbers";
+import { TaskTitleText } from "@/components/task/title-text";
 import { seedFromMyTask } from "@/lib/task-seed";
 import { trackCompletion } from "@/lib/completion-store";
 import { isPendingCreateId, usePendingCreates, type PendingCreate } from "@/lib/pending-creates";
@@ -396,7 +397,7 @@ function ChecklistRow({
               done ? "text-zinc-400 line-through" : "text-zinc-900"
             }`}
           >
-            {title}
+            <TaskTitleText title={title} nested />
           </TaskLink>
           {label ? <span className="shrink-0 text-2xs text-zinc-400">{label}</span> : null}
           <MoreTaskNumbers numbers={task.taskNumbers} />
