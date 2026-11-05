@@ -7,9 +7,9 @@
     "apps/web"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace @alhc/web",
-    "build": "npm run build --workspace @alhc/web",
-    "start": "npm run start --workspace @alhc/web",
+    "dev": "npm run dev --workspace @alhc/web --",
+    "build": "npm run build --workspace @alhc/web --",
+    "start": "npm run start --workspace @alhc/web --",
     "lint": "npm run lint --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm test --workspaces",
