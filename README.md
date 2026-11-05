@@ -182,7 +182,7 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 ## Local development
 
-The repository is an npm workspace (see [docs/design/monorepo.md](docs/design/monorepo.md)): the Next.js app is `apps/web` and the framework-free core it shares with a future desktop app (the typed API layer, the domain rules, the client data cache's keys and transport) is `packages/core` (`@alhc/core`). Run everything from the repository root.
+The repository is an npm workspace (see [docs/design/monorepo.md](docs/design/monorepo.md)): the Next.js app is `apps/web`, the framework-free core (the typed API layer, the domain rules, the client data cache's keys and transport) is `packages/core` (`@alhc/core`), and the desktop app for Mac and Windows is `apps/desktop` (see [Desktop app](#desktop-app-mac-and-windows) below). Run everything from the repository root.
 
 ```bash
 npm install
@@ -193,14 +193,25 @@ npm run dev                                          # http://localhost:3000
 Checks:
 
 ```bash
-npm run lint        # both packages
-npm run typecheck   # both packages
-npm test            # both packages' unit tests
-npm run build       # the app
+npm run lint        # every workspace (core, web, desktop)
+npm run typecheck   # every workspace
+npm test            # every workspace's unit tests
+npm run build       # the web app
 npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01 … zz06)
 ```
 
 Pull requests and pushes to `main` run the same checks in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Node 22: lint, typecheck, test, and build. `npm run db:test` is a separate job and runs only when files under `supabase/` change (PostgreSQL from the runner image; the script's own throwaway cluster).
+
+### Desktop app (Mac and Windows)
+
+`apps/desktop` is ALHC Projects for Mac and Windows: a [Tauri](https://v2.tauri.app) window around the hosted web app (online-only; the same sign-in, pages, and permissions), with `alhc://` links, native downloads, and menus. Why it's built that way: [docs/design/desktop.md](docs/design/desktop.md). It needs Rust 1.90+ and the platform's webview tools ([apps/desktop/README.md](apps/desktop/README.md)), then:
+
+```bash
+npm run desktop:dev     # the app against https://alhc-projects.vercel.app (ALHC_APP_URL=http://localhost:3000 for `npm run dev`)
+npm run desktop:build   # an unsigned installer for this computer
+```
+
+CI checks it on every pull request (the `desktop` job in `ci.yml`: the launcher page and the Rust shell on Linux), and [`.github/workflows/desktop.yml`](.github/workflows/desktop.yml) builds unsigned macOS and Windows installers as artifacts when the desktop app changes (or by hand). Signing, notarization, and handing it out: [docs/desktop-release.md](docs/desktop-release.md).
 
 ## What's here (integration depth)
 

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- The ALHC Projects tile from apps/web/src/components/auth-card.tsx ("A", Geist SemiBold, outlined), on Apple's icon grid. -->
+  <rect x="100" y="100" width="824" height="824" rx="206" fill="#18181b"/>
+  <path fill="#ffffff" d="M399.72 630.84 485.42 393.16H538.58L624.28 630.84H578.61L559 574.6H464.87L445.25 630.84ZM477.66 537.37H546.34L512.07 437.15Z"/>
+</svg>
