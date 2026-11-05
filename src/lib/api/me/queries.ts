@@ -66,7 +66,7 @@ export const getMyForwarding = read(
 );
 
 // `myTasksLayout`: the my_tasks_view cookie's value (the adapter reads cookies).
-export const getMySettings = read(async (ctx: ApiContext, myTasksLayout?: string): Promise<MySettings | null> => {
+export const getMySettings = read(async (ctx: ApiContext, myTasksLayout: string | undefined): Promise<MySettings | null> => {
   const { user, allowlisted } = await getViewer(ctx);
   if (!user || !allowlisted) return null;
   const supabase = ctx.db;

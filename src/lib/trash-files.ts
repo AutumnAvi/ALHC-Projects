@@ -1,10 +1,7 @@
 import "server-only";
-import { createApiContext, type ApiContext } from "@/lib/api/core/context";
+import type { ApiContext } from "@/lib/api/core/context";
 import { claimTrashStoragePurges, finishTrashStoragePurge, removeStorageObjects } from "@/lib/api/system/mutations";
 import { listStorageFolderPage } from "@/lib/api/system/queries";
-import type { createAdminClient } from "@/lib/supabase/admin";
-
-type Admin = NonNullable<ReturnType<typeof createAdminClient>>;
 
 const PAGE = 100;
 
@@ -15,10 +12,9 @@ const PAGE = 100;
 // out a folder whose task still exists or a path a live attachment still uses. Before the database
 // update the function is missing and this does nothing.
 export async function removePurgedFiles(
-  admin: Admin,
+  ctx: ApiContext,
   max = 50,
 ): Promise<{ removed: number; folders: number; files: number } | { skipped: string }> {
-  const ctx = createApiContext(admin);
   const claimed = await claimTrashStoragePurges(ctx, max);
   if (claimed.error) return { skipped: claimed.error.code === "PGRST202" ? "no database support yet" : "claim failed" };
   let removed = 0;

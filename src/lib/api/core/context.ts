@@ -48,7 +48,6 @@ function child(node: MemoNode, arg: unknown): MemoNode {
   return next;
 }
 
-export type Read<A extends unknown[], R> = (ctx: ApiContext, ...args: A) => Promise<R>;
 
 // A read whose answer is shared within the context (see ApiContext.memo). A rejected read stays rejected
 // for that context, as with React's cache(). Writes are never defined with read(). Keeps the function's

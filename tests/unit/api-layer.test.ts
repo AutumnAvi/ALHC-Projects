@@ -360,3 +360,62 @@ test("client components import only browser-safe parts of the layer", () => {
     }
   }
 });
+
+test("every database, storage, and auth call goes through the layer", () => {
+  // Two transports aren't data access and stay outside it: the session refresh before every request (the
+  // proxy) and the session token Realtime joins with (live.ts, M3).
+  const allowed = new Set(["src/lib/supabase/proxy.ts", "src/lib/live.ts"]);
+  const call = /\.rpc\(|\.from\(\s*"[a-z_]+"\s*\)|\.storage\b|\bauth\.(get|sign|exchange|update|reset|set|admin|verify|refresh)/;
+  for (const file of SRC) {
+    const name = rel(file);
+    if (name.startsWith("src/lib/api/") || allowed.has(name)) continue;
+    const text = fs.readFileSync(file, "utf8");
+    text.split("\n").forEach((line, i) => assert.ok(!call.test(line), `${name}:${i + 1} calls Supabase directly: ${line.trim()}`));
+  }
+});
+
+test("only the Next.js adapters make server clients; browser clients only in the browser", () => {
+  for (const file of SRC) {
+    const name = rel(file);
+    const text = fs.readFileSync(file, "utf8");
+    for (const spec of importsOf(file)) {
+      if (/^@\/lib\/supabase\/(server|admin|anon-server)$/.test(spec)) {
+        assert.equal(name, "src/lib/server/context.ts", `${name} imports ${spec}: make a context in src/lib/server/context.ts instead`);
+      }
+      if (/^@\/lib\/supabase\/(client|anon-browser)$/.test(spec)) {
+        assert.ok(/^["']use client["']/.test(text) || name === "src/lib/live.ts", `${name} imports ${spec} outside the browser`);
+      }
+    }
+  }
+});
+
+// Like suite 60's list of SECURITY DEFINER functions: the places that use the service role or the anon
+// key are pinned, so a new one is added here on purpose. The layer never picks a client itself.
+test("the service role and the anon key are used only where they always were", () => {
+  const users = (fn: string) =>
+    SRC.filter((f) => new RegExp(`\\b${fn}\\(`).test(fs.readFileSync(f, "utf8")))
+      .map(rel)
+      .filter((f) => f !== "src/lib/server/context.ts")
+      .sort();
+  assert.deepEqual(users("adminContext"), [
+    "src/app/api/cron/workflows/route.ts", // the scheduler: outbox drains, trash and form-upload cleanup
+    "src/app/api/inbound/email/route.ts", // the verified Resend webhook
+    "src/app/review/[token]/file/[fileId]/route.ts", // signs a link to the one path the database returned for a token
+    "src/lib/actions/review-public.ts", // removes a refused review upload
+    "src/lib/actions/slack.ts", // the bot token, after the database confirmed a workspace admin
+    "src/lib/email.ts", // the email outbox drain
+    "src/lib/integrations.ts", // the Slack / webhook outbox drain
+  ]);
+  assert.deepEqual(users("anonContext"), [
+    "src/app/api/calendar/[token]/route.ts",
+    "src/app/api/email/unsubscribe/route.ts",
+    "src/app/api/inbound/[token]/route.ts",
+    "src/app/review/[token]/file/[fileId]/route.ts",
+    "src/app/review/[token]/page.tsx",
+    "src/lib/actions/review-public.ts",
+  ]);
+  for (const file of LAYER) {
+    const text = fs.readFileSync(file, "utf8");
+    assert.ok(!/\b(adminContext|anonContext|createAdminClient|createAnonServerClient|SUPABASE_SERVICE_ROLE_KEY)\b/.test(text), `${rel(file)} picks a client`);
+  }
+});

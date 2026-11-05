@@ -29,7 +29,6 @@ export function safeNextPath(value: string | null | undefined): string {
 
 // Big move 1: who the caller is lives in the data-access layer (src/lib/api/auth/queries.ts); these bind
 // it to the render's context (one memo per render, as cache() did).
-export const getSignedInUser = bind(authApi.getSignedInUser);
 export const getViewer = bind(authApi.getViewer);
 
 export const requireMember = cache(async (): Promise<Member> => {

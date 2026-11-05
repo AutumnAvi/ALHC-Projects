@@ -36,7 +36,7 @@ export async function GET(request: Request) {
   if (queued.error && queued.error.code !== "PGRST202") console.error("Queueing digests and reports failed", queued.error.code);
   const email = await drainOutbox({ max: 50 });
   const integrations = await drainIntegrationOutbox({ max: 50 });
-  const formUploads = await removeStaleFormUploads(ctx.db);
-  const trashFiles = await removePurgedFiles(ctx.db);
+  const formUploads = await removeStaleFormUploads(ctx);
+  const trashFiles = await removePurgedFiles(ctx);
   return Response.json({ tick: tick.data, scheduled: queued.data ?? null, email, integrations, formUploads, trashFiles });
 }

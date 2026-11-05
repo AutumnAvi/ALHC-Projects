@@ -5,9 +5,8 @@ import type { ApiContext } from "@/lib/api/core/context";
 import { check, checkUpdated, nowIso } from "@/lib/api/core/db";
 import { invalid, type DbErrorDetail } from "@/lib/api/core/errors";
 import { id, text } from "@/lib/api/core/validate";
-import { pauseUntil } from "@/lib/api/automations/shared";
+import { checkRuleSteps, pauseUntil } from "@/lib/api/automations/shared";
 import { isPortfolioTrigger } from "@/lib/portfolio-rules";
-import { ruleProblems, type RuleStep, type RuleSystem } from "@/lib/rule-params";
 import { partialOf, type PartialRun } from "@/lib/run-outcome";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -35,21 +34,6 @@ export type PortfolioRuleRun = {
 
 const PORTFOLIO_RULES_MISSING = "Portfolio automations need this release’s database update";
 const PORTFOLIO_RULES_ADMINS = "Only portfolio admins and owners change its automations";
-
-// Every step's required settings (src/lib/rule-params.ts, the builders' own check): the first
-// problem, said where it is ("Action 2: Choose a task type"), instead of the database's raw refusal.
-// (Project automations make the same check; My Tasks automations import this one.)
-export function checkRuleSteps(
-  input: { triggerType: string; triggerConfig?: Record<string, Json>; conditions?: unknown; actions?: unknown },
-  system: RuleSystem,
-) {
-  const steps = (value: unknown) => (Array.isArray(value) ? value.filter((x): x is RuleStep => Boolean(x) && typeof x === "object" && typeof x.type === "string") : []);
-  const problems = ruleProblems(
-    { triggerType: input.triggerType, triggerConfig: input.triggerConfig ?? {}, conditions: steps(input.conditions), actions: steps(input.actions) },
-    system,
-  );
-  if (problems.length) throw invalid(problems[0]);
-}
 
 function portfolioRuleRow(input: PortfolioRuleInput) {
   if (!isPortfolioTrigger(input.triggerType)) throw invalid("Choose a trigger");

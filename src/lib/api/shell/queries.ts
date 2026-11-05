@@ -225,12 +225,18 @@ function toQuickTask(item: QuickTask & { kind: "task" }): QuickTask {
 // What the Settings modal loads when it opens (since Asana parity, batch 5), in one round trip: the
 // person's own settings and what email can do in this workspace (configuration, plus the active projects
 // they administer by their own role, where inbound webhooks are set up).
+// `myTasksLayout`: the my_tasks_view cookie's value (the adapter reads cookies).
 export async function loadSettings(
   ctx: ApiContext,
   config: SettingsEmailConfig,
+  myTasksLayout: string | undefined,
 ): Promise<{ me: MySettings; email: EmailSetup } | null> {
   if (!(await signedIn(ctx))) return null;
-  const [me, projects, roles] = await Promise.all([getMySettings(ctx), listProjects(ctx), listMyProjectRoles(ctx)]);
+  const [me, projects, roles] = await Promise.all([
+    getMySettings(ctx, myTasksLayout),
+    listProjects(ctx),
+    listMyProjectRoles(ctx),
+  ]);
   if (!me) return null;
   const sending = config.sending;
   return {

@@ -228,7 +228,7 @@ export async function POST(request: Request) {
   after(async () => {
     if (saving && commentId && replyTaskId) {
       try {
-        const copied = await copyReplyAttachments(ctx.db, source, { emailId, commentId, taskId: replyTaskId, plan, listed });
+        const copied = await copyReplyAttachments(ctx, source, { emailId, commentId, taskId: replyTaskId, plan, listed });
         console.info(`Reply by email: ${copied.added} attachment(s) added, ${copied.skipped} skipped, ${plan.ignored.length} left out`);
       } catch (e) {
         console.error("Reply by email: attachments failed", e instanceof Error ? e.name : "error");
@@ -290,7 +290,7 @@ async function forwardedEmail(
   after(async () => {
     if (plan.copy.length || plan.skipped.length) {
       try {
-        const copied = await copyForwardedAttachments(ctx.db, resendFileSource(apiKey), {
+        const copied = await copyForwardedAttachments(ctx, resendFileSource(apiKey), {
           emailId: input.emailId,
           forwardId,
           taskId,

@@ -1,7 +1,7 @@
 // Big move 1: My Tasks automations' writes (Automations V3, batch E; Nov 4 notes, batch 20, 149). Every
 // function takes the caller's ApiContext first, validates its own input, writes only through ctx.db (own
 // rows only, through RLS), and throws ApiError on any refusal.
-import { checkRuleSteps } from "@/lib/api/automations/portfolio-rules";
+import { checkRuleSteps } from "@/lib/api/automations/shared";
 import { hasMyTaskRulesV2 } from "@/lib/api/automations/queries";
 import type { ApiContext } from "@/lib/api/core/context";
 import { check, checkUpdated, nowIso } from "@/lib/api/core/db";

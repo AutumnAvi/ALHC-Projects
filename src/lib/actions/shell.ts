@@ -3,9 +3,11 @@
 // menu's dialogs), thin wrappers around src/lib/api/shell/queries.ts. Each runs with the signed-in person's
 // own context (never the service role); only what Next.js knows (the email switches, the reply domain, the
 // time zone cookie) is read here and handed to the layer.
+import { cookies } from "next/headers";
 import type { MySettings } from "@/lib/api/me/model";
 import * as shellApi from "@/lib/api/shell/queries";
 import type { CalendarFeed } from "@/lib/calendar-feeds";
+import { MY_TASKS_LAYOUT_COOKIE } from "@/lib/my-tasks";
 import { isEmailConfigured } from "@/lib/email";
 import { forwardingAddress, isInboundEmailConfigured } from "@/lib/email-reply";
 import type { TemplateOutline } from "@/lib/project-roles";
@@ -28,12 +30,16 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
 // /api/inbound/email needs to read the message and write the task (RESEND_API_KEY, the service-role key).
 export async function loadSettings(): Promise<{ me: MySettings; email: EmailSetup } | null> {
   const inbound = isInboundEmailConfigured();
-  return shellApi.loadSettings(await actionContext(), {
-    sending: isEmailConfigured(),
-    inbound,
-    forwarding: inbound && Boolean(process.env.RESEND_API_KEY) && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-    forwardingAddress,
-  });
+  return shellApi.loadSettings(
+    await actionContext(),
+    {
+      sending: isEmailConfigured(),
+      inbound,
+      forwarding: inbound && Boolean(process.env.RESEND_API_KEY) && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+      forwardingAddress,
+    },
+    (await cookies()).get(MY_TASKS_LAYOUT_COOKIE)?.value,
+  );
 }
 
 // Projects the person can post a message in, for Create → Message.
