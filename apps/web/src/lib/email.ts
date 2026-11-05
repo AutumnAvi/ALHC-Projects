@@ -1,0 +1,942 @@
+import "server-only";
+import {
+  applyDesign,
+  defaultAppliedDesign,
+  DESIGN_DEFAULTS,
+  formatDesignDate,
+  DESIGN_SAMPLES,
+  isEmailDesignKind,
+  renderSubjectTemplate,
+  RESPONSE_HEADING,
+  SAMPLE_VALUES,
+  type AppliedDesign,
+  type DesignSample,
+  type EmailDesignKind,
+  type FillInValues,
+  type ResolvedDesign,
+} from "@/lib/email-design";
+import { submitterResponseSubject } from "@alhc/core/comment-email";
+import { layout, payloadOf, str, type OutboxRow, type Rendered } from "@/lib/email-layout";
+import { isInboundEmailConfigured, replyAddress, SUBMITTER_REPLY_MARKER } from "@/lib/email-reply";
+import { renderDigestEmail, renderReportEmail, unsubscribeLinks } from "@/lib/email-scheduled";
+import { backgroundOrigin } from "@/lib/origin";
+import { resolveTaskLinkMarkers } from "@alhc/core/rule-placeholders";
+import { settingsHref } from "@alhc/core/shell";
+import type { ApiContext } from "@alhc/core/api/core/context";
+import {
+  claimEmailDeliveries,
+  claimNotificationEmails,
+  claimScheduledEmails,
+  completeEmailOutbox,
+} from "@alhc/core/api/system/mutations";
+import {
+  approvalRoundFiles,
+  digestEmailContents,
+  emailDesignContext,
+  emailSenderName,
+  submitterReplyToken,
+} from "@alhc/core/api/system/queries";
+import { adminContext } from "@/lib/server/context";
+import { EMAIL_GRID_FILES, emailFileList, type ReviewEmailAsset } from "@/lib/review-email";
+import { approverReviewHref } from "@alhc/core/approver-review";
+import { isUuid } from "@alhc/core/ids";
+import { WORKSPACE_ASSETS_BUCKET } from "@alhc/core/workspace";
+
+// Email delivery for the outbox the database fills (form confirmations, rule emails, comment emails to
+// followers, responses to form submitters (the only emails with a Reply-To), invites, since Real features 2 the notification emails people turn on per kind in
+// Settings → Notifications, and since Real features 3 Inbox digests and scheduled reports —
+// email-scheduled.ts renders those). Uses Resend's HTTP API when RESEND_API_KEY and EMAIL_FROM are set; otherwise rows are
+// marked "mocked" and logged (id and template only — never an address, subject, or body).
+
+// The signed-in task link (never public or tokenized): the recipient's project, else My Tasks for a
+// private task. Null without a known app origin.
+function taskLink(row: OutboxRow, projectId: string | null): string | null {
+  const origin = backgroundOrigin();
+  if (!origin || !row.task_id) return null;
+  return projectId ? `${origin}/projects/${projectId}?task=${row.task_id}` : `${origin}/my-tasks?task=${row.task_id}`;
+}
+
+// The request number in front of a task name, with the issuing project's "Wrap the label in brackets"
+// setting (email_design_context's request_wrap, read at send time): "[Task #3] Logo" or "Task #3 · Logo".
+// The label stays bare inside sentences ("We received your request (Task #3)").
+export function labelPrefix(label: string | null, wrap: boolean): string {
+  if (!label) return "";
+  return wrap ? `[${label}] ` : `${label} · `;
+}
+
+// Oct 29 notes (batch 7, 55b): a task has a number in each project that numbers it, and there's no home
+// project. email_design_context (read at send time) gives the numbers the email may show, in the stable
+// order: the ones its recipient can read, or the request's own number (its form's project) in an email
+// to a form's submitter. The email shows the first and how many more ("[Req #1 +2] Logo"). Null = the
+// database said nothing (an address outside the workspace, or an older database): the label the email
+// was queued with and the issuing project's bracket setting, as before.
+export type EmailNumber = { label: string; wrap: boolean };
+
+export function emailNumbersFrom(value: unknown): EmailNumber[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.flatMap((entry): EmailNumber[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const e = entry as { label?: unknown; wrap?: unknown };
+    return typeof e.label === "string" && e.label.trim() ? [{ label: e.label, wrap: e.wrap !== false }] : [];
+  });
+}
+
+/**
+ * The number an email shows for its task and its bracket setting: `label` for sentences ("We received
+ * your request (Req #1)"), `prefix` in front of the task's name with the count of the others ("Req #1
+ * +2"). Without numbers from the database, the label the email was queued with.
+ */
+export function emailTaskLabel(
+  queued: string | null,
+  wrap: boolean,
+  numbers: EmailNumber[] | null | undefined,
+): { label: string | null; prefix: string | null; wrap: boolean } {
+  if (!numbers) return { label: queued, prefix: queued, wrap };
+  const [first, ...rest] = numbers;
+  if (!first) return { label: null, prefix: null, wrap };
+  return { label: first.label, prefix: rest.length ? `${first.label} +${rest.length}` : first.label, wrap: first.wrap };
+}
+
+// A follower's comment email: task, project, who commented, the comment, and an Open task link. No-reply
+// (Comments and reply by email): workspace people answer in the app; only a form submitter's response
+// email can be answered by email (renderSubmitterResponseEmail).
+function renderCommentEmail(
+  row: OutboxRow,
+  design?: AppliedDesign | null,
+  queuedWrap = true,
+  numbers: EmailNumber[] | null = null,
+): Rendered {
+  const p = payloadOf(row);
+  const taskTitle = str(p.task_title) ?? "a task";
+  const author = str(p.author_name) ?? "Someone";
+  const project = str(p.project_name);
+  const { prefix: label, wrap: requestWrap } = emailTaskLabel(str(p.request_label), queuedWrap, numbers);
+  const link = taskLink(row, str(p.project_id));
+  const origin = backgroundOrigin();
+  // Real features 2: a follower who is @mentioned in the comment (and wants mention emails).
+  const verb = p.mentioned === true ? "mentioned you on" : "commented on";
+  return layout(
+    `${author} ${verb} “${taskTitle}”`,
+    [str(p.comment_body) ?? ""],
+    [
+      { label: "Task", value: `${labelPrefix(label, requestWrap)}${taskTitle}` },
+      { label: "Project", value: project ?? "Private task (My tasks)" },
+    ],
+    {
+      subject: row.subject ?? `${author} ${verb} “${taskTitle}”`,
+      action: link ? { label: "Open task", href: link } : null,
+      // Nov 1 notes (batch 8): the no-reply footnote says where to answer instead ("Do not reply to this
+      // email. Open the task to answer."); replies to comment emails never reach the task.
+      noReplyHint: "Open the task to answer.",
+      footer: [
+        p.mentioned === true
+          ? `You were @mentioned. Choose which emails you get in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`
+          : `You follow this task. Turn off comment emails in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}.`,
+      ],
+      design,
+    },
+  );
+}
+
+export function isSubmitterResponse(row: OutboxRow): boolean {
+  return Boolean(row.task_id) && !row.comment_id && payloadOf(row).kind === "submitter_response";
+}
+
+// A response to a form's submitter ("Send response to submitter" under the comment box): the subject the
+// database stored (Asana's Re: "<form>" submission received, or the requester design's subject template,
+// kept for the whole conversation so replies stay together), a heading that doesn't repeat it, the
+// comment as written (always, whatever the design hides), and — when replies by email are on — a line to
+// reply above. Someone outside the workspace reads it, so no app links, no names of other people.
+export function renderSubmitterResponseEmail(
+  row: OutboxRow,
+  canReply: boolean,
+  design?: AppliedDesign | null,
+  queuedWrap = true,
+  numbers: EmailNumber[] | null = null,
+): Rendered {
+  const p = payloadOf(row);
+  const author = str(p.author_name) ?? "The team";
+  const { prefix: label, wrap: requestWrap } = emailTaskLabel(str(p.request_label), queuedWrap, numbers);
+  const taskTitle = str(p.task_title);
+  return layout(
+    RESPONSE_HEADING,
+    [str(p.message) ?? ""],
+    [
+      { label: "From", value: author },
+      ...(taskTitle ? [{ label: "Request", value: `${labelPrefix(label, requestWrap)}${taskTitle}` }] : []),
+    ],
+    {
+      subject: row.subject ?? "Re: your request",
+      subjectFixed: true,
+      alwaysBody: true,
+      preface: canReply ? SUBMITTER_REPLY_MARKER : null,
+      // Nov 1 notes (batch 8): "You can reply to this email to respond." at the top when replies come
+      // back; otherwise the "Do not reply to this email." footnote like every other email.
+      replyable: canReply,
+      footer: canReply ? ["Your reply is added to your request; only the text above the quoted message is kept."] : [],
+      design,
+    },
+  );
+}
+
+const INVITE_TARGET_PATH = /^\/(projects|portfolios|teams)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const INVITE_KINDS = { project: "project", portfolio: "portfolio", team: "team" } as const;
+
+// "with Editor access" / "as a team lead" for the role a pending invite carries.
+function inviteRolePhrase(kind: keyof typeof INVITE_KINDS, role: string | null): string {
+  if (!role) return "";
+  if (kind === "team") return role === "lead" ? " as a team lead" : " as a member";
+  return ` with ${role.charAt(0).toUpperCase()}${role.slice(1)} access`;
+}
+
+// A project, portfolio, or team invite for someone who hasn't signed in yet (Real features 1): who
+// invited them (a name), to what, and a sign-up link for their own address that lands on it once they've
+// confirmed their email (the invite becomes a membership on that first sign-in).
+function renderTargetInviteEmail(
+  row: OutboxRow,
+  kind: keyof typeof INVITE_KINDS,
+  path: string,
+  design?: AppliedDesign | null,
+): Rendered {
+  const p = payloadOf(row);
+  const inviter = str(p.inviter_name) ?? "A teammate";
+  const workspace = str(p.workspace_name) ?? "ALHC Projects";
+  const target = str(p.target_name) ?? `a ${kind}`;
+  const origin = backgroundOrigin();
+  const next = encodeURIComponent(path);
+  const signUp = origin ? `${origin}/signup?email=${encodeURIComponent(row.to_email)}&next=${next}` : null;
+  return layout(
+    `${inviter} invited you to ${target}`,
+    [
+      `${inviter} added you to the ${INVITE_KINDS[kind]} “${target}”${inviteRolePhrase(kind, str(p.role))} in ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
+      `Create your account with this email address. Once you confirm it, you’ll land on the ${INVITE_KINDS[kind]}.`,
+    ],
+    [],
+    {
+      subject: row.subject ?? `${inviter} invited you to ${target}`,
+      action: signUp ? { label: "Sign up", href: signUp } : null,
+      footer: [
+        // The path is /projects|portfolios|teams/<uuid> (checked above), fine unencoded in a query string.
+        origin ? `Already have an account? Sign in at ${origin}/login?next=${path}` : "Already have an account? Sign in with this address.",
+        "If you weren’t expecting this, you can ignore this email.",
+      ],
+      design,
+    },
+  );
+}
+
+// A workspace invite (Settings → Workspace → Members): who invited them (a name, never an address) and a
+// sign-up link for the recipient's own address. A project / portfolio / team invite carries its target.
+function renderInviteEmail(row: OutboxRow, design?: AppliedDesign | null): Rendered {
+  const p = payloadOf(row);
+  const kind = str(p.target_kind);
+  const path = str(p.target_path);
+  if (kind && kind in INVITE_KINDS && path && INVITE_TARGET_PATH.test(path)) {
+    return renderTargetInviteEmail(row, kind as keyof typeof INVITE_KINDS, path, design);
+  }
+  const inviter = str(p.inviter_name) ?? "A workspace admin";
+  const workspace = str(p.workspace_name) ?? "ALHC Projects";
+  const origin = backgroundOrigin();
+  const signUp = origin ? `${origin}/signup?email=${encodeURIComponent(row.to_email)}` : null;
+  return layout(
+    "You’ve been invited to ALHC Projects",
+    [
+      `${inviter} invited you to ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
+      "Create your account with this email address. Projects and teams you were added to are waiting for you after you confirm your email.",
+    ],
+    [],
+    {
+      subject: row.subject ?? "You’ve been invited to ALHC Projects",
+      action: signUp ? { label: "Sign up", href: signUp } : null,
+      footer: [
+        origin ? `Already have an account? Sign in at ${origin}/login` : "Already have an account? Sign in with this address.",
+        "If you weren’t expecting this, you can ignore this email.",
+      ],
+      design,
+    },
+  );
+}
+
+function isInvite(row: OutboxRow) {
+  return !row.task_id && payloadOf(row).kind === "invite";
+}
+
+function isNotification(row: OutboxRow) {
+  return !row.task_id && payloadOf(row).kind === "notification";
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  on_track: "On track",
+  at_risk: "At risk",
+  off_track: "Off track",
+  on_hold: "On hold",
+  complete: "Complete",
+};
+
+const DECISIONS: Record<string, string> = {
+  approved: "approved",
+  changes_requested: "requested changes on",
+  rejected: "rejected",
+};
+
+// An Inbox notification the recipient asked to get by email too (Settings → Notifications, Real
+// features 2): who did what where, the comment / message / note, and a link to it. The database stored
+// the parts (payload) and checks again at send time that the recipient still wants it and can open it.
+// Nov 4 notes (batch 25, 160): the files of the round an approval request is about, for its email — a
+// stored thumbnail (an image, or a PDF's first page, drawn when the round was sent) through a signed
+// link, else a file card; each opens the review page (sign-in required).
+export type ApprovalEmailFile = Pick<ReviewEmailAsset, "assetId" | "name" | "contentType" | "thumbnailUrl" | "thumbnailWidth">;
+
+// Approval requests and their reminders: decided only on the review page (note 159), never from the email.
+export function approvalNotificationParts(
+  data: Record<string, unknown>,
+  actor: string,
+  quoted: string,
+): { heading: string; action: string } {
+  const reminder = data.reminder === "overdue" ? "Reminder: approval overdue" : data.reminder === "due_soon" ? "Reminder: approval due tomorrow" : null;
+  const heading = reminder
+    ? `${reminder} · ${quoted}`
+    : data.resubmitted
+      ? `${actor} resubmitted ${quoted} for your approval`
+      : `${actor} asked for your approval on ${quoted}`;
+  return { heading, action: "Open review" };
+}
+
+function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null, approvalFiles: ApprovalEmailFile[] = []): Rendered {
+  const p = payloadOf(row);
+  const data = p.data && typeof p.data === "object" && !Array.isArray(p.data) ? p.data : {};
+  const actor = str(p.actor_name) ?? "Someone";
+  const title = str(p.title) ?? "a task";
+  const context = str(p.context);
+  const detail = str(p.detail);
+  const quoted = `“${title}”`;
+  const rows: { label: string; value: string }[] = [];
+  let heading: string;
+  let action = "Open task";
+  switch (str(p.item_kind)) {
+    case "assigned":
+      heading = `${actor} assigned you ${quoted}`;
+      rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
+      break;
+    case "completed":
+      heading = `${actor} completed ${quoted}`;
+      rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
+      break;
+    case "approval_requested":
+      ({ heading, action } = approvalNotificationParts(data, actor, quoted));
+      rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
+      break;
+    case "approval_decided":
+      heading = `${actor} ${DECISIONS[str(data.status) ?? ""] ?? "decided an approval on"} ${quoted}`;
+      rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
+      break;
+    case "mention":
+      heading = `${actor} mentioned you in ${quoted}`;
+      action = "Open message";
+      if (context) rows.push({ label: p.team_message_id ? "Team" : "Project", value: context });
+      break;
+    case "message":
+      heading = data.new_thread === true ? `${actor} posted ${quoted}${context ? ` in ${context}` : ""}` : `${actor} replied in ${quoted}`;
+      action = "Open message";
+      if (context && data.new_thread !== true) rows.push({ label: p.team_message_id ? "Team" : "Project", value: context });
+      break;
+    case "status_update": {
+      heading = `${actor} posted a status update on ${title}`;
+      action = "Open project";
+      const status = STATUS_LABELS[str(data.status) ?? ""];
+      if (status) rows.push({ label: "Status", value: status });
+      if (context) rows.push({ label: "Update", value: context });
+      break;
+    }
+    default: {
+      const field = str(data.field_name);
+      heading = field ? `${actor} changed ${field} on ${quoted}` : `${actor} notified you about ${quoted}`;
+      if (context) rows.push({ label: "Project", value: context });
+      break;
+    }
+  }
+  const origin = backgroundOrigin();
+  const path = str(p.path);
+  // An approval request opens its review page (note 159); everything else the item's own link.
+  const taskId = str(p.task_id);
+  const review = str(p.item_kind) === "approval_requested" && taskId && isUuid(taskId) ? approverReviewHref(taskId) : null;
+  const href = origin ? (review ? `${origin}${review}` : path && path.startsWith("/") ? `${origin}${path}` : null) : null;
+  const field = str(data.field_name);
+  const body =
+    str(p.item_kind) === "rule" && field ? (detail ? `${field}: ${detail}` : `${field} was cleared`) : detail;
+  const files = review && href ? approvalFiles : [];
+  const blocks = files.length
+    ? [
+        {
+          html: emailFileList(files, () => href!, "to review"),
+          text: ["Files to review:", ...files.map((f) => `- ${f.name}`)].join("\n"),
+        },
+      ]
+    : [];
+  return layout(heading, body ? [body] : [], rows, {
+    subject: (row.subject ?? heading).slice(0, 300),
+    action: href ? { label: action, href } : null,
+    blocks,
+    footer: [
+      `You get this email because it’s on in Settings → Notifications${origin ? ` (${origin}${settingsHref("notifications")})` : ""}. Your Inbox has it too unless you turned that off.`,
+    ],
+    design,
+  });
+}
+
+export function renderEmail(
+  row: OutboxRow,
+  options: {
+    canReply?: boolean;
+    design?: AppliedDesign | null;
+    requestWrap?: boolean;
+    taskNumbers?: EmailNumber[] | null;
+    approvalFiles?: ApprovalEmailFile[];
+  } = {},
+): Rendered {
+  const design = options.design ?? defaultAppliedDesign(guessDesignKind(row));
+  const numbers = options.taskNumbers ?? null;
+  if (row.comment_id) return renderCommentEmail(row, design, options.requestWrap !== false, numbers);
+  if (isSubmitterResponse(row)) {
+    return renderSubmitterResponseEmail(row, Boolean(options.canReply), design, options.requestWrap !== false, numbers);
+  }
+  if (isInvite(row)) return renderInviteEmail(row, design);
+  if (isNotification(row)) return renderNotificationEmail(row, design, options.approvalFiles);
+  const p = payloadOf(row);
+  const { label, prefix, wrap } = emailTaskLabel(str(p.request_label), options.requestWrap !== false, numbers);
+  const taskTitle = str(p.task_title) ?? "your request";
+  // Rule emails: {{task.url}} arrives as an alhc-link: marker (Automations V2).
+  const origin = backgroundOrigin();
+  const message = str(p.message) === null ? null : resolveTaskLinkMarkers(str(p.message)!, origin);
+  row = row.subject ? { ...row, subject: resolveTaskLinkMarkers(row.subject, origin) } : row;
+  const reference = labelPrefix(prefix, wrap);
+
+  switch (row.template) {
+    case "form_confirmation": {
+      const formTitle = str(p.form_title) ?? "request";
+      const answers = Array.isArray(p.answers)
+        ? p.answers.flatMap((a) => {
+            const r = a && typeof a === "object" && !Array.isArray(a) ? a : {};
+            return typeof r.label === "string" && typeof r.value === "string" ? [{ label: r.label, value: r.value }] : [];
+          })
+        : [];
+      // submit_form stores "<label> · We received your <form>"; the issuing project's bracket setting
+      // decides how the label reads, at send time like every other email.
+      return layout(
+        label ? `We received your request (${label})` : "We received your request",
+        [message ?? "Thanks for your submission. We'll follow up by email as it moves along.", `Request: ${taskTitle}`],
+        answers,
+        {
+          subject: str(p.form_title) ? `${reference}We received your ${formTitle}` : (row.subject ?? `${reference}We received your request`),
+          design,
+        },
+      );
+    }
+    case "due_tomorrow":
+      return layout(
+        "Due tomorrow",
+        [message ?? `“${taskTitle}” is due tomorrow.`],
+        [
+          ...(str(p.project_name) ? [{ label: "Project", value: str(p.project_name)! }] : []),
+          ...(str(p.due_on) ? [{ label: "Due", value: str(p.due_on)! }] : []),
+        ],
+        { subject: row.subject ?? `${reference}Due tomorrow: ${taskTitle}`, design },
+      );
+    case "requester_update":
+    case "custom":
+    default: {
+      const field = p.field && typeof p.field === "object" && !Array.isArray(p.field) ? p.field : null;
+      const rows = [
+        ...(str(p.section_name) && row.template === "requester_update" ? [{ label: "Status", value: str(p.section_name)! }] : []),
+        ...(field && str(field.name) && str(field.value) ? [{ label: str(field.name)!, value: str(field.value)! }] : []),
+      ];
+      return layout(label ? `Update on ${label}` : "Update on your request", [message ?? `There's an update on “${taskTitle}”.`], rows, {
+        subject: row.subject ?? `${reference}Update on ${taskTitle}`,
+        design,
+      });
+    }
+  }
+}
+
+export function isEmailConfigured() {
+  return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+}
+
+// Nov 1 notes (batch 8): the configured sender of an email. Replyable emails (a response to a form's
+// submitter while replies by email are on: it carries the thread's Reply-To) come from EMAIL_FROM; every
+// other email from EMAIL_FROM_NOREPLY (e.g. "no-reply@<sending domain>"), else EMAIL_FROM when that isn't
+// set. Null without EMAIL_FROM (nothing is sent then).
+export function configuredSender(replyable: boolean): string | null {
+  const main = process.env.EMAIL_FROM?.trim() || null;
+  if (!main) return null;
+  if (replyable) return main;
+  return process.env.EMAIL_FROM_NOREPLY?.trim() || main;
+}
+
+// The address part of a configured sender ("Name <a@b>" or "a@b"); shown in settings and previews.
+export function senderAddress(configured: string | null): string | null {
+  if (!configured?.trim()) return null;
+  return configured.match(/<([^<>]+)>\s*$/)?.[1]?.trim() ?? configured.trim();
+}
+
+// The From header an email gets: its sender (configuredSender) with the workspace's sender name in front.
+export function fromFor(replyable: boolean, senderName: string | null): string | null {
+  const configured = configuredSender(replyable);
+  return configured ? fromHeader(configured, senderName) : null;
+}
+
+// The From header: EMAIL_FROM, with the workspace's sender name (Settings → Workspace → Email) in front
+// of its address when one is set. The name can't carry quotes or brackets (database CHECK).
+export function fromHeader(configured: string, senderName: string | null): string {
+  if (!senderName) return configured;
+  const address = configured.match(/<([^<>]+)>\s*$/)?.[1]?.trim() ?? configured.trim();
+  return `"${senderName}" <${address}>`;
+}
+
+// Reply-To (Comments and reply by email): only a response to a form's submitter gets one — its thread's
+// r-<token>@<reply domain> address, while inbound replies are configured (RESEND_WEBHOOK_SECRET). Every
+// other email is no-reply. `token` is the database lookup (submitter_reply_token, service role).
+export async function replyToFor(
+  row: OutboxRow,
+  token: (emailId: string) => Promise<string | null>,
+): Promise<string | null> {
+  if (!isSubmitterResponse(row) || !isInboundEmailConfigured()) return null;
+  const found = await token(row.id);
+  return found && /^[0-9a-f]{40}$/.test(found) ? replyAddress(found) : null;
+}
+
+async function replyTo(row: OutboxRow, ctx: ApiContext): Promise<string | null> {
+  return replyToFor(row, (emailId) => submitterReplyToken(ctx, emailId));
+}
+
+function scheduledKind(row: OutboxRow): "digest" | "report" | null {
+  const kind = row.task_id ? null : payloadOf(row).kind;
+  return kind === "digest" || kind === "report" ? kind : null;
+}
+
+// Digests and reports (Real features 3): a digest's items are read now, with the recipient's own access
+// (digest_email_items); a report's numbers were built as the recipient when it was queued. Both carry
+// List-Unsubscribe headers, so mail apps offer their own one-click "Unsubscribe" (it posts to the same
+// narrow endpoint as the email's "Turn off" link).
+async function renderScheduled(
+  row: OutboxRow,
+  kind: "digest" | "report",
+  ctx: ApiContext,
+  design: AppliedDesign,
+): Promise<{ email: Rendered; headers: Record<string, string> } | { error: string }> {
+  let email: Rendered;
+  if (kind === "digest") {
+    const contents = await digestEmailContents(ctx, row.id);
+    if ("failed" in contents) {
+      return { error: contents.failed === "items" ? "Couldn’t read the digest’s items" : "Couldn’t read the digest’s tasks" };
+    }
+    const dueTasks = contents.tasks;
+    if (!contents.items.length && !dueTasks.length) {
+      return { error: "Not sent: everything in it was read, archived, finished, or can no longer be opened" };
+    }
+    email = renderDigestEmail(row, contents.items, design, dueTasks);
+  } else {
+    email = renderReportEmail(row, design);
+  }
+  const links = unsubscribeLinks(row, kind === "digest" ? "digest" : "reports");
+  return {
+    email,
+    headers: links
+      ? { "List-Unsubscribe": `<${links.oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
+      : {},
+  };
+}
+
+// Which design an email uses when the database can't say (a database without the email designs
+// update): emails to a form's submitter are requester emails, everything else internal.
+export function guessDesignKind(row: OutboxRow): EmailDesignKind {
+  if (isSubmitterResponse(row) || row.template === "form_confirmation") return "requester";
+  if (row.template === "requester_update" && !row.to_profile_id) return "requester";
+  return "internal";
+}
+
+// A logo in the public workspace-assets bucket, as a plain URL email clients can load.
+export function emailLogoUrl(path: string): string | null {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/+$/, "");
+  if (!base || !/^[0-9a-f-]{36}\/[A-Za-z0-9._/-]+$/.test(path) || path.includes("..")) return null;
+  return `${base}/storage/v1/object/public/${WORKSPACE_ASSETS_BUCKET}/${path}`;
+}
+
+// The email's design (Email designs): email_design_context (service role) says whether it's an internal
+// or a requester email, which project and form it belongs to, the resolved design (form → project →
+// workspace), and the fill-in values. Without the database update, the built-in look of the guessed kind.
+async function designFor(
+  row: OutboxRow,
+  ctx: ApiContext,
+): Promise<{ design: AppliedDesign; requestWrap: boolean; taskNumbers: EmailNumber[] | null }> {
+  const fallback = guessDesignKind(row);
+  const context = await emailDesignContext(ctx, row.id);
+  if (!context) {
+    return { design: defaultAppliedDesign(fallback), requestWrap: true, taskNumbers: null };
+  }
+  const kind = isEmailDesignKind(context.kind) ? context.kind : fallback;
+  const v = context.values && typeof context.values === "object" && !Array.isArray(context.values) ? (context.values as Record<string, unknown>) : {};
+  const s = (key: string) => (typeof v[key] === "string" && (v[key] as string).trim() ? (v[key] as string) : null);
+  const origin = backgroundOrigin();
+  const taskId = s("task_id");
+  const projectId = s("task_project_id");
+  const formId = typeof context.form_id === "string" ? context.form_id : null;
+  // Nov 1 notes (batch 11): emails are hard-coded in these templates; a stored design (email_designs,
+  // no longer editable in the app) is never applied — only the built-in look of the kind.
+  const design = applyDesign(
+    kind,
+    DESIGN_DEFAULTS[kind],
+    {
+      requester_name: s("requester_name"),
+      request_number: s("request_number"),
+      task_name: s("task_name"),
+      project_name: s("project_name"),
+      form_name: s("form_name"),
+      commenter_name: s("commenter_name"),
+      due_date: formatDesignDate(s("due_date")),
+      task_link:
+        kind === "internal" && origin && taskId
+          ? projectId
+            ? `${origin}/projects/${projectId}?task=${taskId}`
+            : `${origin}/my-tasks?task=${taskId}`
+          : null,
+    },
+    {
+      logoUrl: emailLogoUrl,
+      buttonHref: kind === "requester" && origin && formId ? `${origin}/forms/${formId}` : null,
+    },
+  );
+  // The issuing project's bracket setting (absent before Oct 19's migration: brackets, as before), and the
+  // numbers the email may show (Oct 29 notes, 55b; absent = the label it was queued with).
+  return { design, requestWrap: v.request_wrap !== false, taskNumbers: emailNumbersFrom(v.task_numbers) };
+}
+
+// A sample email of a kind with a design, for the editor's live preview and "Send me a test", rendered
+// by renderEmail exactly as the drain renders that kind of email: a response to a submitter, a form
+// confirmation, or a rule email for requester designs; a comment, an assignment, or an invite for internal
+// ones. `values` are the scope's real names where it has them (the project, the form); `canReply` is
+// whether replies by email are on here (the drain's Reply-To rule), so the reply line shows only when a
+// real response would carry it.
+export function renderDesignSample(
+  kind: EmailDesignKind,
+  design: ResolvedDesign,
+  options: {
+    sample?: DesignSample | null;
+    values?: FillInValues;
+    canReply?: boolean;
+    buttonHref?: string | null;
+    requestWrap?: boolean;
+  } = {},
+): Rendered {
+  const origin = backgroundOrigin() ?? "https://example.com";
+  const values: Required<Record<keyof typeof SAMPLE_VALUES, string>> = { ...SAMPLE_VALUES };
+  for (const [key, value] of Object.entries(options.values ?? {})) {
+    if (typeof value === "string" && value.trim()) values[key as keyof typeof SAMPLE_VALUES] = value;
+  }
+  const applied = applyDesign(kind, design, kind === "internal" ? values : { ...values, task_link: null }, {
+    logoUrl: emailLogoUrl,
+    buttonHref: kind === "requester" ? (options.buttonHref ?? `${origin}/forms/example`) : null,
+  });
+  const samples = DESIGN_SAMPLES[kind].map((x) => x.key);
+  const sample = options.sample && samples.includes(options.sample) ? options.sample : samples[0];
+  const now = new Date().toISOString();
+  const base: OutboxRow = {
+    id: "00000000-0000-4000-8000-000000000000",
+    task_id: "00000000-0000-4000-8000-000000000001",
+    rule_id: null,
+    to_email: "you@example.com",
+    template: "custom",
+    subject: null,
+    payload: {},
+    status: "pending",
+    attempts: 0,
+    last_error: null,
+    provider_message_id: null,
+    send_after: now,
+    sent_at: null,
+    created_at: now,
+    updated_at: now,
+    deleted_at: null,
+    to_profile_id: null,
+    comment_id: null,
+    max_attempts: 5,
+    delivery_status: null,
+    delivery_event_at: null,
+    delivery_detail: null,
+  };
+  let row: OutboxRow;
+  switch (sample) {
+    case "confirmation":
+      // As submit_form queues it.
+      row = {
+        ...base,
+        template: "form_confirmation",
+        subject: `${values.request_number} · We received your ${values.form_name}`,
+        payload: {
+          form_title: values.form_name,
+          request_label: values.request_number,
+          task_title: values.task_name,
+          message: "Thanks! We’ll get started and keep you posted by email.",
+          answers: [
+            { label: "What do you need?", value: "A flyer for the spring open house" },
+            { label: "When do you need it?", value: values.due_date },
+          ],
+        },
+      };
+      break;
+    case "update":
+      // A rule's "Send email" to the submitter (no subject of its own).
+      row = {
+        ...base,
+        template: "requester_update",
+        payload: {
+          request_label: values.request_number,
+          task_title: values.task_name,
+          section_name: "In progress",
+          message: `Your request “${values.task_name}” is now in progress.`,
+        },
+      };
+      break;
+    case "comment":
+      row = {
+        ...base,
+        comment_id: "00000000-0000-4000-8000-000000000002",
+        to_profile_id: "00000000-0000-4000-8000-000000000003",
+        payload: {
+          kind: "comment",
+          task_title: values.task_name,
+          author_name: values.commenter_name,
+          comment_body: "The first draft is ready for review. Could you take a look before Friday?",
+          project_name: values.project_name,
+          request_label: values.request_number,
+        },
+      };
+      break;
+    case "assigned":
+      row = {
+        ...base,
+        task_id: null,
+        to_profile_id: "00000000-0000-4000-8000-000000000003",
+        payload: {
+          kind: "notification",
+          item_kind: "assigned",
+          actor_name: values.commenter_name,
+          title: values.task_name,
+          context: values.project_name,
+          path: "/my-tasks",
+        },
+      };
+      break;
+    case "invite":
+      row = {
+        ...base,
+        task_id: null,
+        payload: {
+          kind: "invite",
+          inviter_name: values.commenter_name,
+          workspace_name: "ALHC",
+          target_kind: "project",
+          target_name: values.project_name,
+          target_path: "/projects/00000000-0000-4000-8000-000000000004",
+          role: "editor",
+        },
+      };
+      break;
+    case "response":
+    default:
+      // The subject the database gives a new conversation (submitter_response_subject()).
+      row = {
+        ...base,
+        subject: renderSubjectTemplate(applied.subjectTemplate, applied.values, "requester", submitterResponseSubject(values.form_name)),
+        payload: {
+          kind: "submitter_response",
+          author_name: values.commenter_name,
+          task_title: values.task_name,
+          request_label: values.request_number,
+          message: `Hi ${values.requester_name},\n\nThanks for the details. We’ll have a first draft for you by ${values.due_date}.`,
+        },
+      };
+  }
+  return renderEmail(row, { design: applied, canReply: Boolean(options.canReply), requestWrap: options.requestWrap !== false });
+}
+
+// One email sent right away (not through the outbox): a review check's email (Oct 26
+// notes, batch 3), whose link carries a token the database keeps only as a hash, so it can't wait in the
+// outbox. Mocked without an email provider. Logs only `what`, never an address or a link.
+export async function sendEmailNow(
+  to: string,
+  email: Rendered,
+  what: string,
+  idempotencyKey?: string,
+): Promise<"sent" | "mocked"> {
+  if (!isEmailConfigured()) {
+    console.info(`[email:mocked] ${what}`);
+    return "mocked";
+  }
+  const ctx = adminContext();
+  const senderName = ctx ? await emailSenderName(ctx) : null;
+  // No Reply-To here: a review check's email and every test are no-reply; a test of a replyable email
+  // (a response to a submitter) comes from the same sender as the real one would.
+  const from = fromFor(email.replyable === true, senderName)!;
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      subject: email.subject.slice(0, 300),
+      text: email.text,
+      html: email.html,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`Resend responded ${response.status}`);
+  return "sent";
+}
+
+// Signed thumbnail links in an approval request email last this long (the email's own life; after that
+// the cards still open the review page, which needs a sign-in).
+export const APPROVAL_PREVIEW_DAYS = 7;
+const EMAIL_FILES_SIGNED = EMAIL_GRID_FILES;
+
+// Nov 4 notes (batch 25, 160): the files of the round an approval request email is about. Read with the
+// service role only for a row the database just cleared to send (claim_notification_emails re-checks the
+// recipient can open the task): the approval named in the item's own data, its round's files on that
+// task, and for each only an already-drawn thumbnail (never the file itself) signed for a week. Anything
+// missing = a file card. Best effort: a failure leaves the email without previews.
+async function approvalEmailFiles(row: OutboxRow, ctx: ApiContext): Promise<ApprovalEmailFile[]> {
+  const p = payloadOf(row);
+  if (!isNotification(row) || str(p.item_kind) !== "approval_requested") return [];
+  const data = p.data && typeof p.data === "object" && !Array.isArray(p.data) ? p.data : {};
+  const approvalId = data.approval_id;
+  if (!isUuid(approvalId)) return [];
+  try {
+    const seconds = APPROVAL_PREVIEW_DAYS * 86400;
+    const files = await approvalRoundFiles(ctx, approvalId, { signFirst: EMAIL_FILES_SIGNED, expiresIn: seconds });
+    return files.map((f) => {
+      const url = f.signedUrl;
+      return {
+        assetId: f.id,
+        name: f.fileName,
+        contentType: f.contentType,
+        thumbnailUrl: url && url.startsWith("https://") ? url : null,
+        thumbnailWidth: null,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function deliver(
+  row: OutboxRow,
+  ctx: ApiContext,
+  senderName: string | null,
+): Promise<{ outcome: "sent" | "mocked" | "error"; id?: string; error?: string }> {
+  const scheduled = scheduledKind(row);
+  let email: Rendered;
+  let headers: Record<string, string> = {};
+  let reply: string | null = null;
+  const { design, requestWrap, taskNumbers } = await designFor(row, ctx);
+  if (scheduled) {
+    const rendered = await renderScheduled(row, scheduled, ctx, design);
+    if ("error" in rendered) return { outcome: "error", error: rendered.error };
+    email = rendered.email;
+    headers = rendered.headers;
+  } else {
+    reply = await replyTo(row, ctx);
+    const approvalFiles = await approvalEmailFiles(row, ctx);
+    email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap, taskNumbers, approvalFiles });
+  }
+  if (!isEmailConfigured()) {
+    const template =
+      scheduled ??
+      (row.comment_id
+        ? "comment"
+        : isSubmitterResponse(row)
+          ? "submitter_response"
+          : isInvite(row)
+            ? "invite"
+            : isNotification(row)
+              ? "notification"
+              : row.template);
+    console.info(`[email:mocked] id=${row.id} template=${template}`);
+    return { outcome: "mocked" };
+  }
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": `outbox-${row.id}`,
+    },
+    body: JSON.stringify({
+      // Only an email with a Reply-To the app reads comes from EMAIL_FROM; the rest from the no-reply sender.
+      from: fromFor(Boolean(reply), senderName)!,
+      to: [row.to_email],
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+      ...(reply ? { reply_to: reply } : {}),
+      ...(Object.keys(headers).length ? { headers } : {}),
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
+  if (!response.ok) {
+    const reason = typeof body.message === "string" ? body.message.slice(0, 300) : "";
+    return { outcome: "error", error: `Resend responded ${response.status}${reason ? `: ${reason}` : ""}` };
+  }
+  return { outcome: "sent", id: body.id };
+}
+
+// Claims queued emails with the service role and delivers them. Without SUPABASE_SERVICE_ROLE_KEY
+// nothing is claimed and rows stay pending for a later run.
+export async function drainOutbox(options: { onlyId?: string | null; max?: number } = {}) {
+  const ctx = adminContext();
+  if (!ctx) return { claimed: 0, sent: 0, mocked: 0, failed: 0, skipped: "no service role key" as const };
+  const claim = { max: options.max ?? 20, onlyId: options.onlyId ?? null };
+  const { data, error } = await claimEmailDeliveries(ctx, claim);
+  if (error) throw new Error(`Failed to claim emails: ${error.message}`);
+  // Notification emails (Real features 2) have their own claim, so the release before them never takes
+  // one; a database without the migration doesn't have it yet (PGRST202 → none). Digests and scheduled
+  // reports (Real features 3) likewise. These two only log a failure: the rows the claims before them
+  // already marked "sending" must still go out now, not wait out the 10-minute reclaim.
+  const notifications = await claimNotificationEmails(ctx, claim);
+  if (notifications.error && notifications.error.code !== "PGRST202") {
+    console.error("Failed to claim notification emails", notifications.error.code);
+  }
+  const scheduled = await claimScheduledEmails(ctx, claim);
+  if (scheduled.error && scheduled.error.code !== "PGRST202") {
+    console.error("Failed to claim digest and report emails", scheduled.error.code);
+  }
+  const claimed = [
+    ...(data ?? []),
+    ...(notifications.error ? [] : (notifications.data ?? [])),
+    ...(scheduled.error ? [] : (scheduled.data ?? [])),
+  ];
+  const counts = { claimed: claimed.length, sent: 0, mocked: 0, failed: 0 };
+  const senderName = claimed.length ? await emailSenderName(ctx) : null;
+  for (const row of claimed) {
+    let result: Awaited<ReturnType<typeof deliver>>;
+    try {
+      result = await deliver(row, ctx, senderName);
+    } catch (e) {
+      // Network errors keep only their kind (a message could carry request details).
+      result = { outcome: "error", error: e instanceof Error && e.name === "TimeoutError" ? "Resend timed out" : "Couldn’t reach Resend" };
+    }
+    if (result.outcome === "error") counts.failed += 1;
+    else counts[result.outcome] += 1;
+    await completeEmailOutbox(ctx, {
+      emailId: row.id,
+      outcome: result.outcome === "error" ? "error" : result.outcome,
+      messageId: result.id ?? null,
+      errorMessage: result.error ?? null,
+    });
+  }
+  return counts;
+}

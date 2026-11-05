@@ -1,0 +1,257 @@
+"use client";
+
+import { useState } from "react";
+import { SmartPicker, type SmartOption } from "@/components/smart-picker";
+import {
+  PERSON_DEFAULT_ROLE,
+  PORTFOLIO_ROLES,
+  PORTFOLIO_ROLE_DESCRIPTIONS,
+  PORTFOLIO_ROLE_LABELS,
+  OFFERED_PROJECT_ROLES,
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
+  TEAM_ROLE_DESCRIPTIONS,
+  type PortfolioRole,
+  type ProjectRole,
+} from "@alhc/core/roles";
+
+// The four project roles (Owner, Editor, Commenter, Viewer), highest first, each with its one-line hint.
+// Nov 1 notes (batch 11): roles the viewer's own role can't give aren't listed at all; Owner while adding
+// people (made from the list afterwards) stays greyed out with the reason. Nov 2 notes (batch 15, 107):
+// Commenter while the workspace has it off isn't listed either (no greyed option, no "Turn on" link). The member's current role is always
+// selectable — an older Admin membership shows as Admin until someone picks another. With includeDefault,
+// "Their default role" comes first.
+export function projectRoleOptions({
+  grantable,
+  allowCommenter,
+  current,
+  includeDefault = false,
+  defaultDescription = "Each person’s default project role (Editor unless a workspace admin chose another)",
+  inviting = false,
+}: {
+  grantable: readonly ProjectRole[];
+  allowCommenter: boolean;
+  current?: string | null;
+  includeDefault?: boolean;
+  defaultDescription?: string;
+  // Adding people: owners are made from the member list afterwards.
+  inviting?: boolean;
+}): SmartOption[] {
+  const listed: ProjectRole[] = current === "admin" ? ["owner", "admin", "editor", "commenter", "viewer"] : [...OFFERED_PROJECT_ROLES];
+  const roles: SmartOption[] = listed.flatMap((role): SmartOption[] => {
+    const base = { value: role, label: ROLE_LABELS[role], description: ROLE_DESCRIPTIONS[role] };
+    if (role === current) return [base];
+    // Nov 2 notes (batch 15, 107): Commenter while the workspace has it off isn't listed at all (a person
+    // who already is a Commenter still sees it as their current role).
+    if (role === "commenter" && !allowCommenter) return [];
+    if (!grantable.includes(role)) return [];
+    if (role === "owner" && inviting) {
+      return [{ ...base, disabled: true, disabledReason: "Add them first, then make them an owner from the list" }];
+    }
+    return [base];
+  });
+  return includeDefault
+    ? [{ value: PERSON_DEFAULT_ROLE, label: "Their default role", description: defaultDescription }, ...roles]
+    : roles;
+}
+
+export function portfolioRoleOptions({ grantable, current }: { grantable: readonly PortfolioRole[]; current?: string | null }): SmartOption[] {
+  // Nov 1 notes (batch 11): roles the viewer can't give aren't listed.
+  return PORTFOLIO_ROLES.filter((role) => role === current || grantable.includes(role)).map((role) => ({
+    value: role,
+    label: PORTFOLIO_ROLE_LABELS[role],
+    description: PORTFOLIO_ROLE_DESCRIPTIONS[role],
+  }));
+}
+
+export function teamRoleOptions(): SmartOption[] {
+  return [
+    { value: "lead", label: "Lead", description: TEAM_ROLE_DESCRIPTIONS.lead },
+    { value: "member", label: "Member", description: TEAM_ROLE_DESCRIPTIONS.member },
+  ];
+}
+
+// The one role picker (Share, project / portfolio / team members, the Admin console): searchable, every
+// role with what it can do.
+export function RolePicker({
+  label,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  id,
+  name,
+  className = "",
+  compact = false,
+  title,
+}: {
+  label: string;
+  value: string | null;
+  options: readonly SmartOption[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  id?: string;
+  name?: string;
+  className?: string;
+  compact?: boolean;
+  title?: string;
+}) {
+  return (
+    <span title={title} className="inline-flex shrink-0">
+      <SmartPicker
+        id={id}
+        name={name}
+        label={label}
+        value={value}
+        options={options}
+        onChange={onChange}
+        disabled={disabled}
+        searchable
+        panelWidth={320}
+        className={`${compact ? "h-7 w-32 text-xs" : "h-9 w-40"} ${className}`}
+        renderValue={(chosen) => (chosen[0] ? <span className="truncate">{chosen[0].label}</span> : null)}
+      />
+    </span>
+  );
+}
+
+type Run = (action: () => Promise<{ error?: string } | void>) => void;
+
+// A member's project role, changed in place: shows the new role at once and puts the old one back when
+// the database refuses (the caller's run() shows why). Remount it with key={role} to follow a refresh.
+export function MemberRolePicker({
+  id,
+  label,
+  role,
+  grantable,
+  allowCommenter,
+  disabled,
+  title,
+  run,
+  save,
+}: {
+  id?: string;
+  label: string;
+  role: ProjectRole;
+  grantable: readonly ProjectRole[];
+  allowCommenter: boolean;
+  disabled?: boolean;
+  title?: string;
+  run: Run;
+  save: (role: string) => Promise<{ error?: string }>;
+}) {
+  const [shown, setShown] = useState<string>(role);
+  return (
+    <RolePicker
+      id={id}
+      label={label}
+      value={shown}
+      compact
+      title={title}
+      disabled={disabled}
+      options={projectRoleOptions({ grantable, allowCommenter, current: role })}
+      onChange={(next) => {
+        if (next === shown) return;
+        setShown(next);
+        run(async () => {
+          const result = await save(next);
+          if (result.error) setShown(role);
+          return result;
+        });
+      }}
+    />
+  );
+}
+
+// A team's role on a project (a group invite run again): one role for everyone on the team who isn't in
+// the project yet, or each person's default. People already in keep their own role.
+export function TeamRolePicker({
+  team,
+  grantable,
+  allowCommenter,
+  defaultRoles,
+  disabled,
+  run,
+  save,
+}: {
+  team: { id: string; name: string; role: string; usesDefaultRoles: boolean };
+  grantable: readonly ProjectRole[];
+  allowCommenter: boolean;
+  defaultRoles: boolean;
+  disabled?: boolean;
+  run: Run;
+  save: (role: string) => Promise<{ error?: string }>;
+}) {
+  const current = team.usesDefaultRoles ? PERSON_DEFAULT_ROLE : team.role;
+  const [shown, setShown] = useState<string>(current);
+  const options = projectRoleOptions({
+    grantable,
+    allowCommenter,
+    current: team.role,
+    includeDefault: defaultRoles,
+    defaultDescription: "Each team member joins with their own default project role",
+    inviting: true,
+  });
+  return (
+    <RolePicker
+      label={`Role for people added from ${team.name}`}
+      value={shown}
+      compact
+      disabled={disabled}
+      title="Adds anyone on the team who isn’t here yet with this role. People already here keep their own role."
+      options={options}
+      onChange={(next) => {
+        if (next === shown) return;
+        setShown(next);
+        run(async () => {
+          const result = await save(next);
+          if (result.error) setShown(current);
+          return result;
+        });
+      }}
+    />
+  );
+}
+
+// The same in-place change for any role list (portfolio and team members).
+export function RoleChangePicker({
+  id,
+  label,
+  role,
+  options,
+  disabled,
+  title,
+  run,
+  save,
+}: {
+  id?: string;
+  label: string;
+  role: string;
+  options: readonly SmartOption[];
+  disabled?: boolean;
+  title?: string;
+  run: Run;
+  save: (role: string) => Promise<{ error?: string }>;
+}) {
+  const [shown, setShown] = useState(role);
+  return (
+    <RolePicker
+      id={id}
+      label={label}
+      value={shown}
+      compact
+      title={title}
+      disabled={disabled}
+      options={options}
+      onChange={(next) => {
+        if (next === shown) return;
+        setShown(next);
+        run(async () => {
+          const result = await save(next);
+          if (result.error) setShown(role);
+          return result;
+        });
+      }}
+    />
+  );
+}

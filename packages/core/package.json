@@ -1,0 +1,25 @@
+{
+  "name": "@alhc/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ALHC Projects' framework-free core: the typed API layer (src/api), the domain vocabulary and rules, and the client data cache's keys and transport. No Next.js, React, DOM, Node built-ins, server-only, or process.env.",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests",
+    "test": "node --import ./tests/register.mjs --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
+    "@tanstack/query-core": "5.105.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "eslint": "^9",
+    "typescript": "^5",
+    "typescript-eslint": "^8.71.0"
+  }
+}

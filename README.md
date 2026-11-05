@@ -182,18 +182,21 @@ Architecture, data-model rules, and conventions are documented in [`AGENTS.md`](
 
 ## Local development
 
+The repository is an npm workspace (see [docs/design/monorepo.md](docs/design/monorepo.md)): the Next.js app is `apps/web` and the framework-free core it shares with a future desktop app (the typed API layer, the domain rules, the client data cache's keys and transport) is `packages/core` (`@alhc/core`). Run everything from the repository root.
+
 ```bash
 npm install
-cp .env.local.example .env.local   # fill in Supabase URL + anon key
-npm run dev                        # http://localhost:3000
+cp apps/web/.env.local.example apps/web/.env.local   # fill in Supabase URL + anon key (Next.js reads env files from the app's folder)
+npm run dev                                          # http://localhost:3000
 ```
 
 Checks:
 
 ```bash
-npm run lint
-npm run typecheck
-npm run build
+npm run lint        # both packages
+npm run typecheck   # both packages
+npm test            # both packages' unit tests
+npm run build       # the app
 npm run db:test   # applies migrations to a throwaway local Postgres and runs the RLS smoke tests (10–99, then zz01 … zz06)
 ```
 
@@ -426,7 +429,7 @@ To sign Avi in, his addresses must be in `public.allowed_emails` (see the Supaba
 
 ## Setup: Google OAuth (later)
 
-Google is the long-term sign-in method. The Google button code is still in the app (`src/app/login/google-sign-in-button.tsx`), but it's hidden until `AUTH_GOOGLE_ENABLED=true` is set (on Vercel, then redeploy). To turn it back on:
+Google is the long-term sign-in method. The Google button code is still in the app (`apps/web/src/app/login/google-sign-in-button.tsx`), but it's hidden until `AUTH_GOOGLE_ENABLED=true` is set (on Vercel, then redeploy). To turn it back on:
 
 1. Complete the steps below in Google Cloud and Supabase.
 2. Set `AUTH_GOOGLE_ENABLED=true`. The login page then shows **Continue with Google** below the password form.
@@ -450,7 +453,7 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
 
 ## Setup: Vercel
 
-1. Import `AutumnAvi/ALHC-Projects` in Vercel. The framework preset (Next.js) and build command (`npm run build`) are detected automatically; `vercel.json` only declares the workflows cron.
+1. Import `AutumnAvi/ALHC-Projects` in Vercel and leave the Root Directory at the repository root. The root `vercel.json` sets the framework (Next.js), the build command (`npm run build`, which builds `apps/web`), the output directory (`apps/web/.next`), and the workflows cron; the install is Vercel's default `npm install`, which installs both workspaces.
 2. Under Settings → Environment Variables, set these for **Production** and **Preview**:
 
    | Name | Value |
@@ -474,8 +477,9 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
 
 | Script | What it does |
 | --- | --- |
-| `dev` / `build` / `start` | Next.js |
-| `lint` | ESLint (`eslint-config-next`) |
-| `typecheck` | `tsc --noEmit` |
+| `dev` / `build` / `start` | Next.js (`apps/web`) |
+| `lint` | ESLint in both packages (`apps/web`: `eslint-config-next`; `packages/core`: typescript-eslint plus the core's import and global restrictions) |
+| `typecheck` | `tsc --noEmit` in both packages (`apps/web` after `next typegen`; `packages/core` without the DOM or Node types) |
+| `test` | Unit tests of both packages on Node's built-in runner |
 | `db:test` | Local migration + RLS smoke tests (`supabase/tests/*_smoke.sql`, in filename order; after `99_` new suites are named `zz01_`, `zz02_`, …, never `100_` or `991_`). Optional `supabase/tests/fixtures/before_<migration>.sql` files load old-model rows just before that migration |
-| `db:types` | Regenerate `src/lib/supabase/database.types.ts` from the linked project (`npx supabase link` first) |
+| `db:types` | Regenerate `packages/core/src/supabase/database.types.ts` from the linked project (`npx supabase link` first) |

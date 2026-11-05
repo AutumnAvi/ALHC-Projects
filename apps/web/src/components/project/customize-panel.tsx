@@ -1,0 +1,872 @@
+"use client";
+
+import { useClosesPopovers } from "@/components/overlay-registry";
+import { FormStatusBadge } from "@/components/forms/form-status";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useOptimistic, useRef, useState, type ReactNode } from "react";
+import {
+  ArrowLeft,
+  Blocks,
+  ChevronRight,
+  Copy,
+  Crown,
+  Diamond,
+  FileInput,
+  FileText,
+  GitBranch,
+  Hash,
+  LayoutTemplate,
+  ListChecks,
+  Lock,
+  Mail,
+  PanelsTopLeft,
+  Plus,
+  SlidersHorizontal,
+  ThumbsUp,
+  Workflow,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import { FieldEditorDialog, FieldList } from "@/components/project/field-editor";
+import { StatusTemplatesView } from "@/components/project/status-templates";
+import { TaskNumberingForm } from "@/components/project/task-numbering";
+import { useProjectPermissions } from "@/components/project/project-access";
+import { useProjectPage } from "@/components/project/project-page-context";
+import { useRightPanel } from "@/components/shell/right-panel";
+import { useNotify, useServerAction } from "@/components/toast";
+import { createForm } from "@/lib/actions/forms";
+import { duplicateRule, setRuleEnabled } from "@/lib/actions/automations";
+import { setProjectTabHidden, setProjectViewHidden } from "@/lib/actions/views";
+import { setSectionsLocked } from "@/lib/actions/projects";
+import type { ProjectTabEntry } from "@alhc/core/views";
+import type { FieldDef } from "@alhc/core/fields";
+import type { CustomizeDetails } from "@alhc/core/project-page";
+import type { StatusTemplate } from "@alhc/core/status-templates";
+import type { TaskNumbering } from "@alhc/core/request-numbers";
+import { loadCustomizeDetails } from "@/lib/actions/project-page";
+import { SCROLL_AREA } from "@/components/shell/shell-frame";
+
+export type CustomizeRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: string;
+  // Action types across all branches (send_email, send_slack, …).
+  actionTypes: string[];
+  branches: number;
+};
+
+export type CustomizeSummary = {
+  fields: FieldDef[];
+  sectionNames: string[];
+  forms: { id: string; title: string; open: boolean; sendsConfirmation: boolean }[];
+  rules: CustomizeRule[];
+  taskTemplates: { id: string; name: string; title: string }[];
+  // Real features 4: the project's status templates (false = the database update isn't applied yet).
+  statusTemplates: StatusTemplate[];
+  statusTemplatesAvailable: boolean;
+  numbering: TaskNumbering | null;
+  sections: { id: string; name: string }[];
+  // Oct 27 notes (batch 5): Owner settings, sent only to the project's Owners (null for everyone else).
+  owner?: { sectionsLocked: boolean } | null;
+  // Nov 2 notes (batch 15, 117): every tab and whether it's hidden (null without the database support).
+  tabs?: ProjectTabEntry[] | null;
+};
+
+type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "types" | "status" | "numbers" | "owner" | "tabs";
+
+const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
+  rules: "Automations",
+  fields: "Fields",
+  forms: "Forms",
+  emails: "Emails",
+  apps: "Apps",
+  types: "Task types and templates",
+  status: "Status templates",
+  numbers: "Task numbering",
+  owner: "Owner settings",
+  tabs: "Tabs",
+};
+
+// Asana's Customize panel (Asana parity, batch 4): a ~320px panel on the right with a card row per
+// thing that shapes the project — Automations, Fields, Forms, Emails, Apps, Task types and templates,
+// and (Real features 4) Status templates —
+// each opening its own view in the panel (back arrow to return). It sits next to the page, so new
+// fields show up in the List while it's open. The pages it links to keep their own role checks.
+export function CustomizePanel({
+  projectId,
+  summary,
+  buttonClassName = "",
+}: {
+  projectId: string;
+  summary: CustomizeSummary;
+  // Extra classes for the toolbar button (the header hides it on narrow widths; Nov 2 notes, batch 14).
+  buttonClassName?: string;
+}) {
+  // The app's one right-panel slot: opening Customize closes the task pane (and the status sheet), and
+  // opening a task closes Customize.
+  const { open, setOpen } = useRightPanel(`customize:${projectId}`);
+  useClosesPopovers(open);
+  const [view, setView] = useState<View>("home");
+  // Closed for any reason (a task opened too): the next open starts on the card list.
+  if (!open && view !== "home") setView("home");
+  const pathname = usePathname();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef(view);
+  const base = `/projects/${projectId}`;
+  const customizing = ["fields", "forms", "rules"].some(
+    (part) => pathname === `${base}/${part}` || pathname.startsWith(`${base}/${part}/`),
+  );
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  // Focus the panel's first control whenever it opens or changes view.
+  useEffect(() => {
+    if (!open) return;
+    const panel = panelRef.current;
+    (panel?.querySelector<HTMLElement>("[data-panel-focus]") ?? panel?.querySelector<HTMLElement>("a, button"))?.focus();
+  }, [open, view]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // A dialog opened from the panel (Edit field) handles its own Escape.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      e.preventDefault();
+      if (viewRef.current !== "home") {
+        setView("home");
+      } else {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, setOpen]);
+
+  const close = () => setOpen(false);
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => (open ? close() : setOpen(true))}
+        aria-expanded={open}
+        aria-controls={open ? "customize-panel" : undefined}
+        className={`btn-secondary h-7 gap-1.5 px-2.5 ${customizing || open ? "border-accent-300 text-accent-700" : ""} ${buttonClassName}`}
+      >
+        <SlidersHorizontal className="size-3.5" aria-hidden />
+        Customize
+      </button>
+      {open ? (
+        <div
+          id="customize-panel"
+          ref={panelRef}
+          role="dialog"
+          aria-label={view === "home" ? "Customize this project" : VIEW_TITLES[view]}
+          className="fixed bottom-0 right-0 top-topbar z-40 flex w-full max-w-80 flex-col border-l border-zinc-200 bg-white text-sm shadow-xl print:hidden"
+        >
+          <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-zinc-200 px-3">
+            {view === "home" ? null : (
+              <button
+                type="button"
+                onClick={() => setView("home")}
+                aria-label="Back to Customize"
+                data-tooltip="Back"
+                className="btn-icon"
+              >
+                <ArrowLeft className="size-4" />
+              </button>
+            )}
+            <h2 className="min-w-0 flex-1 truncate pl-1 text-sm font-semibold text-zinc-900">
+              {view === "home" ? "Customize" : VIEW_TITLES[view]}
+            </h2>
+            <button type="button" onClick={close} aria-label="Close Customize" data-tooltip="Close" className="btn-icon">
+              <X className="size-4" />
+            </button>
+          </div>
+          <div className={`min-h-0 flex-1 px-3 py-3 ${SCROLL_AREA}`}>
+            {view === "home" ? (
+              <Home summary={summary} onOpen={setView} />
+            ) : view === "rules" ? (
+              <RulesView base={base} back={pathname} rules={summary.rules} />
+            ) : view === "fields" ? (
+              <FieldsView projectId={projectId} base={base} summary={summary} />
+            ) : view === "forms" ? (
+              <FormsView projectId={projectId} base={base} forms={summary.forms} />
+            ) : view === "emails" ? (
+              <EmailsView projectId={projectId} base={base} back={pathname} summary={summary} />
+            ) : view === "apps" ? (
+              <AppsView projectId={projectId} base={base} />
+            ) : view === "numbers" ? (
+              <TaskNumberingForm
+                projectId={projectId}
+                sequence={summary.numbering}
+                sections={summary.sections}
+                fields={summary.fields}
+              />
+            ) : view === "tabs" && summary.tabs ? (
+              <TabsView projectId={projectId} tabs={summary.tabs} />
+            ) : view === "owner" && summary.owner ? (
+              <OwnerSettingsView projectId={projectId} settings={summary.owner} />
+            ) : view === "status" ? (
+              <StatusTemplatesView
+                projectId={projectId}
+                templates={summary.statusTemplates}
+                available={summary.statusTemplatesAvailable}
+              />
+            ) : (
+              <TypesView base={base} templates={summary.taskTemplates} />
+            )}
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function Home({ summary, onOpen }: { summary: CustomizeSummary; onOpen: (view: View) => void }) {
+  const activeRules = summary.rules.filter((r) => r.enabled).length;
+  const openForms = summary.forms.filter((f) => f.open).length;
+  const emailRules = summary.rules.filter((r) => r.actionTypes.includes("send_email")).length;
+  const appRules = summary.rules.filter((r) => r.actionTypes.some((t) => t === "send_slack" || t === "call_webhook")).length;
+  const canManage = useProjectPermissions().canManage;
+  return (
+    <ul className="flex flex-col gap-2">
+      <CardRow
+        icon={Workflow}
+        label="Automations"
+        count={summary.rules.length}
+        meta={summary.rules.length ? `${activeRules} on · automations that move, assign, and notify` : "Automations that move, assign, and notify"}
+        onClick={() => onOpen("rules")}
+        focus
+      />
+      <CardRow
+        icon={SlidersHorizontal}
+        label="Fields"
+        count={summary.fields.length}
+        meta={summary.fields.length ? summary.fields.slice(0, 3).map((f) => f.name).join(", ") : "Priority, status, and other details"}
+        onClick={() => onOpen("fields")}
+      />
+      <CardRow
+        icon={FileInput}
+        label="Forms"
+        count={summary.forms.length}
+        meta={summary.forms.length ? `${openForms} live` : "Turn requests into tasks"}
+        onClick={() => onOpen("forms")}
+      />
+      <CardRow
+        icon={Mail}
+        label="Emails"
+        count={emailRules + summary.forms.filter((f) => f.sendsConfirmation).length}
+        meta="Automation emails, form confirmations, comment emails"
+        onClick={() => onOpen("emails")}
+      />
+      {/* Nov 1 notes (batch 11): apps are Admin+ only, so below Admin the card isn't shown at all. */}
+      {canManage ? (
+        <CardRow
+          icon={Blocks}
+          label="Apps"
+          count={appRules || undefined}
+          meta="Slack, webhooks, inbound webhooks"
+          onClick={() => onOpen("apps")}
+        />
+      ) : null}
+      <CardRow
+        icon={ListChecks}
+        label="Task types and templates"
+        count={summary.taskTemplates.length}
+        meta="Milestones, approvals, and task templates"
+        onClick={() => onOpen("types")}
+      />
+      <CardRow
+        icon={Hash}
+        label="Task numbering"
+        meta={summary.numbering?.enabled ? "On · new tasks get the next number" : "Off · turn on to number tasks"}
+        onClick={() => onOpen("numbers")}
+      />
+      <CardRow
+        icon={FileText}
+        label="Status templates"
+        count={summary.statusTemplatesAvailable ? summary.statusTemplates.length : undefined}
+        meta={
+          summary.statusTemplates.length
+            ? summary.statusTemplates.slice(0, 3).map((t) => t.name).join(", ")
+            : "Saved layouts for status updates"
+        }
+        onClick={() => onOpen("status")}
+      />
+      {summary.tabs ? (
+        <CardRow
+          icon={PanelsTopLeft}
+          label="Tabs"
+          count={summary.tabs.length}
+          meta={
+            summary.tabs.some((t) => t.hidden)
+              ? `${summary.tabs.filter((t) => t.hidden).length} hidden · show or hide any tab`
+              : "Show or hide any tab, views included"
+          }
+          onClick={() => onOpen("tabs")}
+        />
+      ) : null}
+      {summary.owner ? (
+        <CardRow
+          icon={Crown}
+          label="Owner settings"
+          meta={summary.owner.sectionsLocked ? "Section order is locked" : "Only owners see this · lock section order"}
+          onClick={() => onOpen("owner")}
+        />
+      ) : null}
+    </ul>
+  );
+}
+
+// Nov 2 notes (batch 15, 117): every tab of the project — Overview, each shared view (List, Board,
+// Calendar, Timeline, …), Dashboard, Messages, Workload, Files — with a Shown / Hidden switch. Hidden tabs
+// are hidden for everyone; their pages still open from a link. One view tab always stays shown.
+function TabsView({ projectId, tabs }: { projectId: string; tabs: ProjectTabEntry[] }) {
+  const [, run] = useServerAction();
+  const [shown, apply] = useOptimistic(tabs, (current, change: { key: string; hidden: boolean }) =>
+    current.map((t) => (t.key === change.key ? { ...t, hidden: change.hidden } : t)),
+  );
+  const shownViews = shown.filter((t) => t.kind === "view" && !t.hidden).length;
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-zinc-500">
+        Hidden tabs disappear from the tab bar for everyone. Their pages still open from a link, and you can show them
+        again here or from the “+” at the end of the tabs.
+      </p>
+      <ul className="flex flex-col divide-y divide-zinc-100 rounded-lg border border-zinc-200 bg-white" aria-label="Tabs">
+        {shown.map((tab) => {
+          const lastView = tab.kind === "view" && !tab.hidden && shownViews <= 1;
+          return (
+            <li key={tab.key} className="flex items-center gap-2 px-3 py-2">
+              <span className={`min-w-0 flex-1 truncate text-sm ${tab.hidden ? "text-zinc-400" : "text-zinc-900"}`}>{tab.label}</span>
+              {tab.kind === "view" ? <span className="text-2xs text-zinc-400">View</span> : null}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!tab.hidden}
+                aria-label={`Show the ${tab.label} tab`}
+                disabled={lastView}
+                data-tooltip={lastView ? "Keep at least one view tab shown" : tab.hidden ? "Hidden for everyone" : "Shown"}
+                onClick={() =>
+                  run(
+                    () =>
+                      tab.kind === "view"
+                        ? setProjectViewHidden(projectId, tab.key, !tab.hidden)
+                        : setProjectTabHidden(projectId, tab.key, !tab.hidden),
+                    () => apply({ key: tab.key, hidden: !tab.hidden }),
+                  )
+                }
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                  tab.hidden ? "bg-zinc-300" : "bg-accent-600"
+                }`}
+              >
+                <span className={`size-4 rounded-full bg-white shadow transition-transform ${tab.hidden ? "translate-x-0.5" : "translate-x-4.5"}`} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+// Oct 27 notes (batch 5): settings only the project's Owners change (the database checks their own role).
+function OwnerSettingsView({ projectId, settings }: { projectId: string; settings: { sectionsLocked: boolean } }) {
+  const [pending, run] = useServerAction();
+  const [locked, setLocked] = useOptimistic(settings.sectionsLocked);
+  return (
+    <div>
+      <Intro>Only the project’s owners see these settings and can change them.</Intro>
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5">
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-zinc-900">
+            <Lock className="size-3.5 text-zinc-500" aria-hidden />
+            Lock section order
+          </span>
+          <span className="mt-0.5 block text-xs text-zinc-500">
+            When on, only owners can add, rename, reorder, or delete sections. Everyone who can edit still moves
+            tasks between them.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={locked}
+          disabled={pending}
+          data-panel-focus
+          onChange={(e) => {
+            const next = e.currentTarget.checked;
+            run(
+              () => setSectionsLocked(projectId, next),
+              () => setLocked(next),
+            );
+          }}
+          className="peer sr-only"
+          aria-describedby="sections-lock-state"
+        />
+        <span
+          aria-hidden
+          className="relative mt-0.5 h-4 w-7 shrink-0 rounded-full bg-zinc-300 transition-colors peer-checked:bg-accent-500 peer-focus-visible:shadow-[0_0_0_3px_var(--focus-ring)] after:absolute after:top-0.5 after:left-0.5 after:size-3 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-3"
+        />
+      </label>
+      <p id="sections-lock-state" className="mt-2 text-xs text-zinc-500">
+        {locked ? "Locked: sections show a lock for everyone else." : "Unlocked: Editors can change sections."}
+      </p>
+    </div>
+  );
+}
+
+function CardRow({
+  icon: Icon,
+  label,
+  count,
+  meta,
+  onClick,
+  focus = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  count?: number;
+  meta: string;
+  onClick: () => void;
+  // The card focused when the panel opens.
+  focus?: boolean;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        data-panel-focus={focus ? true : undefined}
+        onClick={onClick}
+        className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-left hover:border-zinc-300 hover:bg-zinc-50"
+      >
+        <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-600">
+          <Icon className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-zinc-900">
+            {label}
+            {count !== undefined ? <span className="ml-1.5 text-xs font-normal tabular-nums text-zinc-400">{count}</span> : null}
+          </span>
+          <span className="block truncate text-xs text-zinc-500">{meta}</span>
+        </span>
+        <ChevronRight className="size-4 shrink-0 text-zinc-400" aria-hidden />
+      </button>
+    </li>
+  );
+}
+
+function Intro({ children }: { children: ReactNode }) {
+  return <p className="mb-3 text-xs text-zinc-500">{children}</p>;
+}
+
+function PanelLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="mt-3 flex items-center justify-between rounded-md px-1 py-1 text-xs font-medium text-accent-700 hover:bg-accent-50"
+    >
+      {children}
+      <ChevronRight className="size-3.5" aria-hidden />
+    </Link>
+  );
+}
+
+function SubHeading({ children }: { children: ReactNode }) {
+  return <h3 className="mb-1.5 mt-4 text-xs font-semibold text-zinc-700 first:mt-0">{children}</h3>;
+}
+
+// Rule links come back here (?back=) after Save or Cancel on the canvas.
+function ruleHref(base: string, back: string, ruleId: string | "new") {
+  return `${base}/rules/${ruleId}?back=${encodeURIComponent(back)}`;
+}
+
+function RulesView({ base, back, rules }: { base: string; back: string; rules: CustomizeRule[] }) {
+  const canEdit = useProjectPermissions().canManage;
+  const [pending, run] = useServerAction();
+  const notify = useNotify();
+  const [shown, setEnabled] = useOptimistic(rules, (current, patch: { id: string; enabled: boolean }) =>
+    current.map((r) => (r.id === patch.id ? { ...r, enabled: patch.enabled } : r)),
+  );
+  return (
+    <div>
+      <Intro>When something happens in this project, an automation checks its conditions and runs the actions of the first branch that matches.</Intro>
+      {canEdit ? (
+        <Link href={ruleHref(base, back, "new")} data-panel-focus className="btn-primary mb-3 h-8 w-full">
+          <Plus className="size-4" aria-hidden />
+          Add automation
+        </Link>
+      ) : null}
+      {shown.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">
+          No automations yet. Start from a template or build one: move tasks, assign people, comment, email, or post to Slack.
+        </p>
+      ) : (
+        <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+          {shown.map((rule) => (
+            <li key={rule.id} className="flex items-center gap-2.5 px-3 py-2">
+              {/* Nov 1 notes (batch 11): below Admin the switch is hidden; the state reads as text. */}
+              {canEdit ? (
+                <label className="flex shrink-0 items-center" data-tooltip={rule.enabled ? "Turn off" : "Turn on"}>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label={`${rule.name} on`}
+                    checked={rule.enabled}
+                    disabled={pending}
+                    onChange={(e) => {
+                      const enabled = e.currentTarget.checked;
+                      run(() => setRuleEnabled(rule.id, enabled), () => setEnabled({ id: rule.id, enabled }));
+                    }}
+                    className="peer sr-only"
+                  />
+                  <span
+                    aria-hidden
+                    className="relative inline-block h-4 w-7 rounded-full bg-zinc-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-accent-500 peer-checked:after:translate-x-3 peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500"
+                  />
+                </label>
+              ) : (
+                <span className={`w-7 shrink-0 text-2xs ${rule.enabled ? "font-medium text-green-700" : "text-zinc-500"}`}>
+                  {rule.enabled ? "On" : "Off"}
+                </span>
+              )}
+              <Link href={ruleHref(base, back, rule.id)} className="min-w-0 flex-1 rounded hover:bg-zinc-50">
+                <span className="block truncate text-sm text-zinc-900">{rule.name}</span>
+                <span className="flex items-center gap-1 truncate text-xs text-zinc-500">
+                  {rule.branches > 1 ? <GitBranch className="size-3 shrink-0" aria-label="Branches" /> : null}
+                  {rule.trigger}
+                </span>
+              </Link>
+              {canEdit ? (
+                <button
+                  type="button"
+                  aria-label={`Duplicate ${rule.name}`}
+                  data-tooltip="Duplicate (the copy starts off)"
+                  disabled={pending}
+                  onClick={() =>
+                    run(async () => {
+                      const result = await duplicateRule(rule.id);
+                      if (!result.error) notify(`Created “Copy of ${rule.name}” (off until you turn it on)`);
+                      return result;
+                    })
+                  }
+                  className="btn-icon size-7 shrink-0"
+                >
+                  <Copy className="size-3.5" />
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* Nov 3 notes (batch 18, 137): the templates and every automation's run history. */}
+      <PanelLink href={`${base}/rules?view=templates`}>Automation templates</PanelLink>
+      <PanelLink href={`${base}/rules?view=history`}>Automation history (recent runs)</PanelLink>
+    </div>
+  );
+}
+
+function FieldsView({ projectId, base, summary }: { projectId: string; base: string; summary: CustomizeSummary }) {
+  const canEdit = useProjectPermissions().canEdit;
+  const { batch4, fieldSharing } = useProjectPage();
+  const [adding, setAdding] = useState(false);
+  return (
+    <div>
+      <Intro>Fields add the same detail to every task here. Fields shown in List and Board appear as columns and card pills.</Intro>
+      {canEdit ? (
+        <button type="button" data-panel-focus onClick={() => setAdding(true)} className="btn-primary mb-3 h-8 w-full">
+          <Plus className="size-4" aria-hidden />
+          Add field
+        </button>
+      ) : null}
+      {summary.fields.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">
+          No fields yet. Add one like Priority, Channel, or Reviewer, or add a shared one from the workspace field library.
+        </p>
+      ) : (
+        <FieldList
+          projectId={projectId}
+          fields={summary.fields}
+          sectionNames={summary.sectionNames}
+          canEdit={canEdit}
+          batch4={batch4}
+          sharing={fieldSharing}
+          dense
+        />
+      )}
+      <PanelLink href={`${base}/fields`}>Open the Fields page</PanelLink>
+      {adding ? (
+        <FieldEditorDialog
+          projectId={projectId}
+          field={null}
+          sectionNames={summary.sectionNames}
+          batch4={batch4}
+          existingFields={summary.fields}
+          onClose={() => setAdding(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function FormsView({ projectId, base, forms }: { projectId: string; base: string; forms: CustomizeSummary["forms"] }) {
+  const canEdit = useProjectPermissions().canManage;
+  const [pending, run] = useServerAction();
+  return (
+    <div>
+      <Intro>Forms turn requests from anyone with the link into tasks in this project.</Intro>
+      {canEdit ? (
+        <button
+          type="button"
+          data-panel-focus
+          disabled={pending}
+          onClick={() => run(() => createForm(projectId, "New request form"))}
+          className="btn-primary mb-3 h-8 w-full"
+        >
+          <Plus className="size-4" aria-hidden />
+          {pending ? "Creating…" : "Add form"}
+        </button>
+      ) : null}
+      {forms.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">
+          No forms yet. A form asks the questions you choose and files each answer set as a task.
+        </p>
+      ) : (
+        <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+          {forms.map((form) => (
+            <li key={form.id}>
+              <Link href={`${base}/forms/${form.id}`} className="flex items-center gap-2.5 px-3 py-2 hover:bg-zinc-50">
+                <FileInput className="size-4 shrink-0 text-zinc-500" aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-sm text-zinc-900">{form.title}</span>
+                <FormStatusBadge live={form.open} />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      <PanelLink href={`${base}/forms`}>All forms</PanelLink>
+    </div>
+  );
+}
+
+// Loads the Admin+ details (hints and counts) once a view that needs them opens.
+function useDetails(projectId: string) {
+  const [details, setDetails] = useState<CustomizeDetails | null | "loading">("loading");
+  useEffect(() => {
+    let live = true;
+    loadCustomizeDetails(projectId)
+      .then((loaded) => live && setDetails(loaded))
+      .catch(() => live && setDetails(null));
+    return () => {
+      live = false;
+    };
+  }, [projectId]);
+  return details;
+}
+
+function EmailsView({
+  projectId,
+  base,
+  back,
+  summary,
+}: {
+  projectId: string;
+  base: string;
+  back: string;
+  summary: CustomizeSummary;
+}) {
+  const details = useDetails(projectId);
+  // Delivery counts and the log are Admin+ (Nov 3 notes, batch 19, video 36.4: an Editor saw the heading).
+  const canManage = useProjectPermissions().canManage;
+  const emailRules = summary.rules.filter((r) => r.actionTypes.includes("send_email"));
+  const confirming = summary.forms.filter((f) => f.sendsConfirmation);
+  return (
+    <div>
+      <Intro>Everything this project emails: automation emails, form confirmations, and comment emails to followers.</Intro>
+      <SubHeading>Automation emails</SubHeading>
+      {emailRules.length ? (
+        <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+          {emailRules.map((rule) => (
+            <li key={rule.id}>
+              <Link href={ruleHref(base, back, rule.id)} className="flex items-center gap-2 px-3 py-2 hover:bg-zinc-50" data-panel-focus>
+                <Workflow className="size-4 shrink-0 text-zinc-500" aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-sm text-zinc-900">{rule.name}</span>
+                <span className="shrink-0 text-2xs text-zinc-500">{rule.enabled ? "On" : "Off"}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-zinc-500">No automation sends email yet. Add a “Send email” action to an automation (Automations).</p>
+      )}
+      <SubHeading>Form confirmations</SubHeading>
+      {confirming.length ? (
+        <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+          {confirming.map((form) => (
+            <li key={form.id}>
+              <Link href={`${base}/forms/${form.id}`} className="flex items-center gap-2 px-3 py-2 hover:bg-zinc-50">
+                <FileInput className="size-4 shrink-0 text-zinc-500" aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-sm text-zinc-900">{form.title}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-zinc-500">No form emails a confirmation. Turn it on in a form’s Settings.</p>
+      )}
+      <SubHeading>Comment emails</SubHeading>
+      <p className="text-xs text-zinc-500">
+        Followers get an email for each new comment unless they turned it off in Settings → Notifications. These
+        emails are no-reply; only a form’s submitter can answer a response by email.
+      </p>
+      {canManage ? <SubHeading>Deliveries</SubHeading> : null}
+      {!canManage ? null : details === "loading" ? (
+        <p role="status" className="text-xs text-zinc-500">
+          Loading…
+        </p>
+      ) : details && details.admin && details.deliveries ? (
+        <>
+          <p className="text-xs text-zinc-600">
+            {details.deliveries.emailsSent} sent recently · {details.deliveries.waiting} waiting ·{" "}
+            <span className={details.deliveries.failed ? "font-medium text-red-700" : undefined}>
+              {details.deliveries.failed} failed
+            </span>
+          </p>
+          <PanelLink href={`${base}/settings/deliveries`}>Open deliveries</PanelLink>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function AppsView({ projectId, base }: { projectId: string; base: string }) {
+  const details = useDetails(projectId);
+  if (details === "loading") {
+    return (
+      <p role="status" className="text-xs text-zinc-500">
+        Loading…
+      </p>
+    );
+  }
+  if (!details || !details.admin) {
+    return (
+      <div>
+        <Intro>Slack, webhooks, and inbound webhooks connect this project to other tools.</Intro>
+      </div>
+    );
+  }
+  const integrations = details.integrations;
+  const inbound = details.inbound ?? [];
+  return (
+    <div>
+      <Intro>Connect this project to other tools. Automations post to Slack or call webhooks; inbound webhooks add tasks.</Intro>
+      <ul className="flex flex-col gap-2">
+        <AppRow
+          href={`${base}/settings/integrations`}
+          title="Slack"
+          state={integrations?.slackWebhook ? `Webhook ${integrations.slackWebhook}` : "No project Slack webhook"}
+          on={Boolean(integrations?.slackWebhook)}
+        />
+        <AppRow
+          href={`${base}/settings/integrations`}
+          title="Outbound webhook"
+          state={
+            integrations?.webhook
+              ? `${integrations.webhook}${integrations.signingSecretSet ? " · signed" : ""}`
+              : "No project webhook"
+          }
+          on={Boolean(integrations?.webhook)}
+        />
+        <AppRow
+          href={`${base}/settings/inbound`}
+          title="Inbound webhooks"
+          state={
+            inbound.length
+              ? `${inbound.filter((e) => e.enabled).length} of ${inbound.length} on: ${inbound.map((e) => e.name).join(", ")}`
+              : "None yet"
+          }
+          on={inbound.some((e) => e.enabled)}
+        />
+        <AppRow
+          href={`${base}/settings/deliveries`}
+          title="Deliveries"
+          state={
+            details.deliveries
+              ? `${details.deliveries.waiting} waiting · ${details.deliveries.failed} failed`
+              : "Emails, Slack messages, and webhook calls"
+          }
+          on={false}
+        />
+      </ul>
+    </div>
+  );
+}
+
+function AppRow({ href, title, state, on }: { href: string; title: string; state: string; on: boolean }) {
+  return (
+    <li>
+      <Link href={href} className="flex items-center gap-2.5 rounded-lg border border-zinc-200 px-3 py-2.5 hover:border-zinc-300 hover:bg-zinc-50">
+        <span aria-hidden className={`size-2 shrink-0 rounded-full ${on ? "bg-green-500" : "bg-zinc-300"}`} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-zinc-900">{title}</span>
+          <span className="block truncate text-xs text-zinc-500">{state}</span>
+        </span>
+        <ChevronRight className="size-4 shrink-0 text-zinc-400" aria-hidden />
+      </Link>
+    </li>
+  );
+}
+
+function TypesView({ base, templates }: { base: string; templates: CustomizeSummary["taskTemplates"] }) {
+  const canSaveProject = useProjectPermissions().canManage;
+  const types: { icon: LucideIcon; name: string; body: string }[] = [
+    { icon: ListChecks, name: "Task", body: "Ordinary work with an assignee and dates." },
+    { icon: Diamond, name: "Milestone", body: "A checkpoint on its due date (a diamond on Timeline). Add task → Add milestone." },
+    { icon: ThumbsUp, name: "Approval", body: "The assignee approves, requests changes, or rejects." },
+  ];
+  return (
+    <div>
+      <Intro>Pick a task’s type from its “…” menu → Task type. Task templates prefill new tasks from Add task.</Intro>
+      <SubHeading>Task types</SubHeading>
+      <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+        {types.map(({ icon: Icon, name, body }) => (
+          <li key={name} className="flex items-start gap-2.5 px-3 py-2">
+            <Icon className="mt-0.5 size-4 shrink-0 text-zinc-500" aria-hidden />
+            <span className="min-w-0">
+              <span className="block text-sm text-zinc-900">{name}</span>
+              <span className="block text-xs text-zinc-500">{body}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <SubHeading>Task templates</SubHeading>
+      {templates.length ? (
+        <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+          {templates.map((t) => (
+            <li key={t.id} className="flex items-center gap-2.5 px-3 py-2">
+              <LayoutTemplate className="size-4 shrink-0 text-zinc-500" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-zinc-900">{t.name}</span>
+                <span className="block truncate text-xs text-zinc-500">{t.title}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-zinc-500">No task templates yet. Open a task, then “…” → Save as task template.</p>
+      )}
+      <PanelLink href={`${base}/settings/templates`}>
+        {canSaveProject ? "Manage templates (and save this project as one)" : "Manage task templates"}
+      </PanelLink>
+    </div>
+  );
+}

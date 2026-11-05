@@ -1,8 +1,10 @@
 # The typed data-access layer (big move 1)
 
-**Status: built.** Every screen, Server Action, and route reaches the database through `src/lib/api/`.
-This is the groundwork for the monorepo step: the layer and the domain vocabulary it uses move into a
-shared core package, and a desktop app (Tauri, online-only) calls the same functions.
+**Status: built.** Every screen, Server Action, and route reaches the database through the layer. Since
+big move 2 (`docs/design/monorepo.md`) the layer and the domain vocabulary it uses live in the shared core
+package: `packages/core/src/api/`, imported as `@alhc/core/api/…`; the Next.js adapters stay in
+`apps/web/src/lib/`. A desktop app (Tauri, online-only) calls the same functions. Paths below are as of
+big move 1 (`src/lib/api/` = `packages/core/src/api/`, `src/lib/server/` = `apps/web/src/lib/server/`).
 
 ## 1. What was there before
 
@@ -135,18 +137,24 @@ every binding only the old actions used.
 
 ## 5. Guards
 
-`tests/unit/api-layer.test.ts` checks the boundaries on every run: nothing under `src/lib/api/` imports
+`tests/unit/api-layer.test.ts` (since big move 2: `packages/core/tests/api-layer.test.ts` and
+`boundaries.test.ts`, plus `apps/web/tests/unit/api-layer.test.ts`) checks the boundaries on every run: nothing under `src/lib/api/` imports
 Next.js, React, `server-only`, the Supabase client factories, or the adapters; client components import only
 `model.ts` files from the layer; nothing outside the layer and the adapters calls `.from(` / `.rpc(` /
 `.storage` / `.auth.` on a Supabase client; and the error mapping, `read()`'s memo, and the action wrapper
 behave as described here.
 
-## 6. Left for the monorepo step
+## 6. The monorepo step (big move 2, done)
 
-- Move `src/lib/api/` and the pure domain modules it imports (`views.ts`, `fields.ts`, `rules.ts`, …) into
-  a `core` package; the Next.js app keeps `src/lib/server/`, `data.ts`, `screen-loaders.ts`, and
-  `src/lib/actions/`.
+- `src/lib/api/` and the pure domain modules it imports (`views.ts`, `fields.ts`, `rules.ts`, …) moved
+  into `packages/core` (`@alhc/core`); the Next.js app (`apps/web`) keeps `src/lib/server/`, `data.ts`,
+  `screen-loaders.ts`, and `src/lib/actions/`. The guards in section 5 were split: the layer's own rules
+  and the wall around the whole core package are in `packages/core/tests/`, the web app's side in
+  `apps/web/tests/unit/api-layer.test.ts`. See `docs/design/monorepo.md`.
+
+## 7. Left for the desktop step
+
 - The desktop app supplies its own `Db` (supabase-js with the person's session) and calls the layer
-  directly, or the JSON routes through `src/lib/query/transport.ts`.
+  directly, or the JSON routes through `@alhc/core/query/transport`.
 - The fallbacks for databases older than a release (`legacyAppShell` and friends, `PGRST202` branches)
   can go once the desktop app's minimum database version is fixed.

@@ -1,0 +1,38 @@
+{
+  "name": "@alhc/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "node --import ./tests/unit/register.mjs --test tests/unit/*.test.ts tests/unit/*.test.tsx"
+  },
+  "dependencies": {
+    "@alhc/core": "*",
+    "@napi-rs/canvas": "^0.1.100",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.2",
+    "@tanstack/query-core": "5.105.3",
+    "@tanstack/react-query": "5.105.3",
+    "@vercel/speed-insights": "^2.0.0",
+    "lucide-react": "^1.52.0",
+    "next": "16.3.8",
+    "pdfjs-dist": "^4.10.38",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

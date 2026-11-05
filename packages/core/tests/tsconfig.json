@@ -1,0 +1,9 @@
+{
+  // The core package's unit tests run on Node's test runner, so they get Node's types (src/ doesn't).
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts"]
+}

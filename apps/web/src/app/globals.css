@@ -1,0 +1,272 @@
+@import "tailwindcss";
+
+/* Big move 2: class names also live in the shared core package (field option colors, run outcomes, email
+   schedule badges). Tailwind only scans this app's folder by itself. */
+@source "../../../../packages/core/src";
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Accent = Asana blue (Asana parity, batch 1): primary buttons, links, the active tab underline, focus
+     rings, selection. Teal survives only as one of the project colors (src/lib/project-colors.ts). */
+  --color-accent-50: #f0f4fc;
+  --color-accent-100: #dfe8f8;
+  --color-accent-200: #c0d1f1;
+  --color-accent-300: #96b2e6;
+  --color-accent-400: #6b91dc;
+  --color-accent-500: #4573d2;
+  --color-accent-600: #3a63bb;
+  --color-accent-700: #31529b;
+  --color-accent-800: #2a457f;
+  --color-accent-900: #233a68;
+
+  /* The dark shell: the top bar and the sidebar (light grey text, a lighter active row). */
+  --color-shell: #1e1f21;
+  --color-shell-hover: #2b2c2f;
+  --color-shell-active: #3a3b3e;
+  --color-shell-line: #34353a;
+  --color-shell-text: #d4d5d8;
+  --color-shell-muted: #9b9ca1;
+  /* The "+ Create" pill (charcoal text on coral keeps the label readable). */
+  --color-coral: #f06a6a;
+  --color-coral-hover: #f38585;
+
+  /* Body text is 13px like Asana (text-sm); meta text stays 12px (text-xs) and 11px (text-2xs). */
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+
+  /* Small meta text (badges, avatar initials, tray labels): `text-2xs`. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  /* Shared chrome sizes so the shell, headers, toolbars, and rows line up across views. */
+  --spacing-topbar: 2.75rem; /* h-topbar: the dark top bar across the app */
+  --spacing-bar: 3rem; /* h-bar: page headers, task pane header */
+  --spacing-toolbar: 2.75rem; /* min-h-toolbar: view toolbars */
+  --spacing-row: 2.25rem; /* h-row / min-h-row: list rows (List, My Tasks, search) */
+  --spacing-gutter: 1.5rem; /* px-gutter: horizontal page padding */
+}
+
+:root {
+  /* The soft focus ring around inputs (accent at low opacity). */
+  --focus-ring: color-mix(in oklab, var(--color-accent-500) 18%, transparent);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-white text-sm text-zinc-900 antialiased;
+  }
+
+  /* Nov 1 notes, batch 8 (item 58): while the app or admin frame is on the page the document never
+     scrolls or bounces — every page scrolls inside its own area (src/components/shell/shell-frame.ts
+     says why). Screen only: public pages (sign in, forms, review links) have no frame and scroll as
+     usual, and print lets the page flow (below). */
+  @media screen {
+    html:has(body .app-shell),
+    html:has(body .admin-shell) {
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent-500;
+  }
+
+  /* Softer inputs (Asana feel, batch 2): every text input, textarea, select, and search box gets a light
+     border color, a muted placeholder, and a soft focus ring instead of the hard outline. Utilities
+     (control, field, or a component's own classes) still win over these. */
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  textarea,
+  select {
+    border-color: var(--color-zinc-200);
+  }
+
+  ::placeholder {
+    color: var(--color-zinc-400);
+    opacity: 1;
+  }
+
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--focus-ring);
+  }
+}
+
+/* Buttons and controls shared by chrome, toolbars, and page headers. Zinc neutrals, one accent (blue). */
+@utility btn-primary {
+  @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md bg-accent-500 px-2.5 text-sm font-medium text-white hover:bg-accent-600 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility btn-secondary {
+  @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 aria-expanded:border-zinc-400 aria-expanded:bg-zinc-50;
+}
+
+@utility btn-ghost {
+  @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 aria-expanded:bg-zinc-100;
+}
+
+@utility btn-icon {
+  @apply inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 aria-expanded:bg-zinc-100;
+}
+
+/* Inputs, selects, textareas. control = compact (toolbars, rows, popovers; 28 px like the buttons);
+   field = forms and dialogs (36 px, 8 px corners, roomier padding). Both: light border, muted placeholder,
+   and a soft accent ring on focus. For a textarea add h-auto (and py-*). */
+@utility control {
+  @apply h-7 rounded-md border border-zinc-200 bg-white px-2.5 text-sm text-zinc-800 transition-[border-color,box-shadow] duration-150 placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-500 disabled:hover:border-zinc-200;
+}
+
+@utility field {
+  @apply h-9 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 transition-[border-color,box-shadow] duration-150 placeholder:text-zinc-400 hover:border-zinc-300 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-500 disabled:hover:border-zinc-200 aria-[invalid=true]:border-red-300;
+}
+
+@utility chip {
+  @apply inline-flex max-w-full items-center gap-1 rounded bg-zinc-100 px-1.5 py-px text-xs text-zinc-600;
+}
+
+/* Skip layout and paint for off-screen rows. The elements stay in the document, so keyboard
+   navigation, drag-and-drop, and multi-select still find them. `auto` remembers the last
+   real size; the length is the fallback before a row has been on screen. */
+@utility cv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2.25rem;
+}
+
+@utility cv-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 5.5rem;
+}
+
+/* A row of underlined tabs (project and portfolio headers, Reports, Settings → Workspace, the Settings
+   modal). It scrolls sideways when the tabs don't fit but never vertically — a 1px overflow there made
+   Windows draw a stray stacked up/down scrollbar at the end of the row — and draws its hairline inside,
+   so the active tab's underline covers it. */
+@utility tab-strip {
+  @apply flex overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--color-zinc-200)];
+  scrollbar-width: thin;
+}
+
+/* The task pane (Asana parity, batch 3). On wide screens it sits next to the page at about 45% of the
+   content width, and the page narrows to fit: .app-main (position: relative, the pane's containing
+   block) gets the same width as right padding. Padding percentages count the whole row, so the sidebar
+   (--sidebar-w, set by AppShell) is taken out first. Narrower screens show the pane over the page. */
+@media (min-width: 64rem) {
+  .app-main:has([data-task-pane="side"]) {
+    padding-right: min(max(calc((100% - var(--sidebar-w, 0px)) * 0.45), 26rem), 56rem);
+  }
+
+  [data-task-pane="side"] {
+    width: min(max(45%, 26rem), 56rem);
+  }
+}
+
+/* The bulk action bar (Oct 27 notes, batch 5) sits above the task pane. With the side pane open on a wide
+   screen it centers on the part of the page left of the pane (and never runs under it); on narrower
+   screens, where the pane covers the page, it rises above the pane's comment box. */
+@media (min-width: 64rem) {
+  .app-shell:has([data-task-pane="side"]) [data-bulk-bar] {
+    --bulk-pane-w: min(max(calc((100vw - var(--sidebar-w, 0px)) * 0.45), 26rem), 56rem);
+    left: calc(var(--sidebar-w, 0px) + (100vw - var(--sidebar-w, 0px) - var(--bulk-pane-w)) / 2);
+    margin-left: 0;
+    max-width: calc(100vw - var(--sidebar-w, 0px) - var(--bulk-pane-w) - 2rem);
+  }
+}
+
+@media (max-width: 63.999rem) {
+  .app-shell:has([data-task-pane="side"]) [data-bulk-bar] {
+    bottom: 6.5rem;
+  }
+}
+
+/* The Customize panel (Asana parity, batch 4) sits on the right like the task pane: on wide screens the
+   page narrows by its width (20rem), so the header's Share and Customize stay in view. */
+@media (min-width: 64rem) {
+  .app-main:has(#customize-panel) {
+    padding-right: 20rem;
+  }
+}
+
+@utility skeleton {
+  @apply animate-pulse rounded bg-zinc-100;
+}
+
+/* Print (Reporting and export): reports, dashboards, and the portfolio Report print through the
+   browser's Print → Save as PDF. The app shell is a full-height flex layout with scrolling panes, so on
+   paper it becomes plain flowing blocks; chrome (sidebar, mobile bar, tabs, buttons) carries
+   print:hidden. No PDF library. */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html,
+  body,
+  .app-shell,
+  .admin-shell {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .app-shell,
+  .admin-shell {
+    display: block !important;
+  }
+
+  .app-main,
+  .app-main *,
+  .admin-shell main,
+  .admin-shell main * {
+    overflow: visible !important;
+  }
+
+  .app-main .min-h-0,
+  .admin-shell .min-h-0 {
+    min-height: auto !important;
+  }
+
+  .report-card,
+  .report-card tr {
+    break-inside: avoid;
+  }
+
+  /* Print from a task's "…" menu (html[data-print-task]): only the task pane, flowing on the page. */
+  html[data-print-task] body *:not(:has([data-task-pane])):not([data-task-pane]):not([data-task-pane] *) {
+    display: none !important;
+  }
+
+  html[data-print-task] .app-main {
+    padding: 0 !important;
+  }
+
+  html[data-print-task] [data-task-pane],
+  html[data-print-task] [data-task-pane-backdrop] {
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

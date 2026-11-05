@@ -1,4 +1,6 @@
-# Pull request and main checks. Scripts are the ones in package.json.
+# Pull request and main checks. Scripts are the root package.json's. Since big move 2 the repo is an npm
+# workspace (docs/design/monorepo.md): lint, typecheck, and test run in both packages (packages/core, then
+# apps/web), build builds the app. One lockfile at the root; `npm ci` installs both packages.
 # Node 22: the locked @supabase/* packages require Node >= 22.
 name: CI
 
@@ -29,10 +31,20 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+
+      - name: Lint (core, web)
+        run: npm run lint
+
+      # The core is checked without the DOM or Node types (packages/core/tsconfig.json).
+      - name: Typecheck (core, web)
+        run: npm run typecheck
+
+      # packages/core/tests includes the boundaries (no Next.js, React, DOM, Node, server-only, process.env).
+      - name: Unit tests (core, web)
+        run: npm test
+
+      - name: Build (web)
+        run: npm run build
 
   db:
     name: db:test
