@@ -35,13 +35,16 @@ import { useProjectPermissions } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useRightPanel } from "@/components/shell/right-panel";
 import { useNotify, useServerAction } from "@/components/toast";
-import { createForm, duplicateRule, setProjectTabHidden, setProjectViewHidden, setRuleEnabled, setSectionsLocked } from "@/lib/actions";
+import { createForm } from "@/lib/actions/forms";
+import { duplicateRule, setRuleEnabled } from "@/lib/actions/automations";
+import { setProjectTabHidden, setProjectViewHidden } from "@/lib/actions/views";
+import { setSectionsLocked } from "@/lib/actions/projects";
 import type { ProjectTabEntry } from "@/lib/views";
 import type { FieldDef } from "@/lib/fields";
 import type { CustomizeDetails } from "@/lib/project-page";
 import type { StatusTemplate } from "@/lib/status-templates";
 import type { TaskNumbering } from "@/lib/request-numbers";
-import { loadCustomizeDetails } from "@/lib/project-page-actions";
+import { loadCustomizeDetails } from "@/lib/actions/project-page";
 import { SCROLL_AREA } from "@/components/shell/shell-frame";
 
 export type CustomizeRule = {

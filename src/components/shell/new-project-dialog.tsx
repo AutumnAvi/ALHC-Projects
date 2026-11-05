@@ -25,9 +25,10 @@ import {
 import { UseTemplateForm } from "@/components/templates/use-template-dialog";
 import { EmptyState } from "@/components/ui";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
-import { createProject, type ActionResult } from "@/lib/actions";
+import { createProject } from "@/lib/actions/projects";
+import { type ActionResult } from "@/lib/api/core/result";
 import { projectColorClass } from "@/lib/project-colors";
-import { loadProjectGallery, loadTemplatePreview } from "@/lib/shell-actions";
+import { loadProjectGallery, loadTemplatePreview } from "@/lib/actions/shell";
 import {
   GALLERY_CATEGORIES,
   describeSummary,

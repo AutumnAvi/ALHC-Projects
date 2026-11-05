@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
-import { listProjectTeamChoices } from "@/lib/actions";
+import { listProjectTeamChoices } from "@/lib/actions/projects";
 import { PROJECT_VISIBILITIES, VISIBILITY_DESCRIPTIONS, VISIBILITY_LABELS, type ProjectVisibility } from "@/lib/workspace";
 
 export type TeamChoice = Awaited<ReturnType<typeof listProjectTeamChoices>>[number];

@@ -30,7 +30,7 @@ import {
   nextActiveIndex,
 } from "@/components/task/task-convert";
 import { TaskProjects } from "@/components/task/task-projects";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 import type { ShiftChange, ShiftPlanRow } from "@/lib/dependencies";
 import type { ProjectRole } from "@/lib/roles";
@@ -318,6 +318,7 @@ test("the pane's project chips show the task's number in each project", () => {
 });
 
 test("the List CSV labels tasks with that project's own numbers", () => {
-  const exports = readFileSync("src/lib/exports.ts", "utf8");
-  assert.match(exports, /requestLabelsInWith\(supabase, projectId, /);
+  // Big move 1: the export's reads live in the layer (src/lib/api/exports/queries.ts).
+  const exports = readFileSync("src/lib/api/exports/queries.ts", "utf8");
+  assert.match(exports, /visibleRequestLabelsIn\(ctx, projectId, /);
 });

@@ -12,7 +12,7 @@ import {
   deleteReportSchedule,
   setReportSchedulePaused,
   updateReportSchedule,
-} from "@/lib/actions";
+} from "@/lib/actions/me";
 import {
   HOURS,
   MAX_RECIPIENTS,

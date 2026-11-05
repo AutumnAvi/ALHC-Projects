@@ -1,5 +1,5 @@
 import "server-only";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { requireMember } from "@/lib/auth";
 import { listMyProjectRoles, listProfiles, listProjectMembers, listProjects, listVisibleTags } from "@/lib/data";
 import { hasRole } from "@/lib/roles";

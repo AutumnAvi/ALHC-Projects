@@ -14,8 +14,9 @@ import {
   deleteTaskTemplate,
   saveProjectAsTemplate,
   updateTaskTemplate,
-} from "@/lib/actions";
-import type { Profile, TaskTemplate } from "@/lib/data";
+} from "@/lib/actions/templates";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskTemplate } from "@/lib/row-mappers";
 import { MAX_TEMPLATE_SUBTASKS } from "@/lib/templates";
 
 const SECTION = "rounded-lg border border-zinc-200 bg-white p-4";

@@ -5,7 +5,7 @@ import { useOptimistic } from "react";
 import { Archive } from "lucide-react";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useServerAction } from "@/components/toast";
-import { setProjectArchived } from "@/lib/actions";
+import { setProjectArchived } from "@/lib/actions/projects";
 
 // Under the project header of an archived project: it's read-only for everyone (the database treats
 // every membership as Viewer), and Admins and owners can unarchive it. Since Oct 26 notes (batch 4) it

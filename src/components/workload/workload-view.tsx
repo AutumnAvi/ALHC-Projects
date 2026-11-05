@@ -10,7 +10,8 @@ import { PeriodNav, Segmented } from "@/components/project/view-chrome";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { useDependencyShift } from "@/components/task/dependency-shift";
-import { setWorkloadCapacity, updateTask } from "@/lib/actions";
+import { setWorkloadCapacity } from "@/lib/actions/workload";
+import { updateTask } from "@/lib/actions/tasks";
 import {
   WORKLOAD_ZOOMS,
   addDays,

@@ -2,15 +2,17 @@
 
 import { useEffect, useMemo, useOptimistic, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronRight, X } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { MenuItem, Popover } from "@/components/popover";
 import { PILL } from "@/components/project/field-chips";
 import { Assignee, EmptyCellHint } from "@/components/project/task-meta";
 import { DateRangePicker, SingleDatePicker } from "@/components/task/date-picker";
 import { PeopleList, PersonPicker } from "@/components/task/person-picker";
 import { useNotify } from "@/components/toast";
-import { loadSubtaskRows, setTaskRowExpanded, type ActionResult } from "@/lib/actions";
-import type { Profile, SubtaskItem } from "@/lib/data";
+import { loadSubtaskRows, setTaskRowExpanded } from "@/lib/actions/my-tasks";
+import { type ActionResult } from "@/lib/api/core/result";
+import type { Profile } from "@/lib/api/people/model";
+import type { SubtaskItem } from "@/lib/api/tasks/model";
 import { dayLabel } from "@/lib/date-input";
 import { LongTextEditor } from "@/components/long-text-editor";
 import { NumberInput } from "@/components/number-input";

@@ -6,7 +6,7 @@ import { Check, Copy, Forward, Mail, RefreshCw } from "lucide-react";
 import { Timestamp } from "@/components/timestamp";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { rotateForwardingAddress, setForwardingProject } from "@/lib/actions";
+import { rotateForwardingAddress, setForwardingProject } from "@/lib/actions/me";
 import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
 import { forwardRejectionLabel, type ForwardedEmail, type ForwardingSetup } from "@/lib/shell";
 

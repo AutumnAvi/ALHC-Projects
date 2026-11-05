@@ -21,7 +21,7 @@ import {
   listProjectRoles,
   listProjects,
 } from "@/lib/data";
-import { loadSlackSettings } from "@/lib/slack-actions";
+import { loadSlackSettings } from "@/lib/actions/slack";
 
 // What the rule builder needs to name sections, fields, people, forms, integrations, and inbound
 // webhooks (the Rules page and the rule canvas). Read with the viewer's client: below Admin the

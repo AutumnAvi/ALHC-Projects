@@ -21,7 +21,7 @@ import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { addLibraryField, createField, deleteField, loadFieldLibrary, updateField } from "@/lib/actions";
+import { addLibraryField, createField, deleteField, loadFieldLibrary, updateField } from "@/lib/actions/fields";
 import {
   FIELD_TYPES,
   LOCK_FIELD_HINT,

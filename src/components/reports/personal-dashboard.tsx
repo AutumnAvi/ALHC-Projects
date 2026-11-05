@@ -32,7 +32,7 @@ import {
   movePersonalWidget,
   renamePersonalDashboard,
   updatePersonalWidget,
-} from "@/lib/actions";
+} from "@/lib/actions/reports";
 import {
   PERSONAL_WIDGET_KINDS,
   describeReportFilters,

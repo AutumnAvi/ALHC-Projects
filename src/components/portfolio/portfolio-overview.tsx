@@ -18,8 +18,9 @@ import {
   removePortfolioChild,
   removePortfolioProject,
   updatePortfolio,
-} from "@/lib/actions";
-import type { Portfolio, PortfolioChild, PortfolioField, PortfolioProject, ProjectStatusUpdate } from "@/lib/data";
+} from "@/lib/actions/portfolios";
+import type { Portfolio, PortfolioChild, PortfolioField, PortfolioProject } from "@/lib/api/portfolios/model";
+import type { ProjectStatusUpdate } from "@/lib/api/projects/model";
 import type { Json } from "@/lib/supabase/database.types";
 import type { NestedProject, PickerProject } from "@/lib/portfolio-picker";
 import { RECENT_DAYS, formatProgress, progressPercent, type PortfolioCounts } from "@/lib/portfolios";

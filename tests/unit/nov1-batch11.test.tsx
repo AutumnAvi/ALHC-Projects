@@ -143,8 +143,9 @@ test("75: the digest setting is first in Settings → Notifications and the drai
   const digest = readFileSync("src/components/settings/email-digest-settings.tsx", "utf8");
   assert.match(digest, /Email digest/);
   assert.match(digest, /options=\{workdays\.map/, "the weekday picker lists workdays only");
-  const email = readFileSync("src/lib/email.ts", "utf8");
-  assert.match(email, /admin\.rpc\("digest_email_tasks"/);
+  // Big move 1: the drain's database reads live in the layer (src/lib/api/system/), with the service role.
+  const email = readFileSync("src/lib/api/system/queries.ts", "utf8");
+  assert.match(email, /ctx\.db\.rpc\("digest_email_tasks"/);
 });
 
 // 73 ---------------------------------------------------------------------------------------------------
@@ -159,7 +160,9 @@ test("73: no email design editor anywhere; emails use the built-in look", () => 
   const email = readFileSync("src/lib/email.ts", "utf8");
   assert.match(email, /DESIGN_DEFAULTS\[kind\]/, "the drain applies the built-in design");
   assert.ok(!email.includes("designFromJson(kind, ctx.design)"), "never the stored one");
-  assert.ok(!readFileSync("src/lib/review-actions.ts", "utf8").includes("resolve_email_design"));
+  for (const file of ["src/lib/actions/reviews.ts", "src/lib/api/reviews/mutations.ts", "src/lib/api/reviews/queries.ts"]) {
+    if (existsSync(file)) assert.ok(!readFileSync(file, "utf8").includes("resolve_email_design"), file);
+  }
 });
 
 // 74 ---------------------------------------------------------------------------------------------------

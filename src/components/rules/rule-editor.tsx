@@ -6,7 +6,7 @@
 import { FolderClosed, Lock, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useId, useState, useSyncExternalStore } from "react";
-import type { RevealedSigningSecret } from "@/lib/actions";
+import type { RevealedSigningSecret } from "@/lib/api/automations/model";
 import { dayLabel, isoDate, weekdayOf } from "@/lib/date-input";
 import { RULE_LOCKED_FIELD_NOTE, numberPrefixOf, type FieldDef } from "@/lib/fields";
 import {

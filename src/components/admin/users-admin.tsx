@@ -23,7 +23,7 @@ import {
   removeWorkspaceMember,
   resendWorkspaceInvite,
   setDefaultProjectRole,
-} from "@/lib/actions";
+} from "@/lib/actions/workspace";
 import {
   DEFAULT_PROJECT_ROLES,
   ROLE_DESCRIPTIONS,
@@ -32,7 +32,7 @@ import {
   isDefaultProjectRole,
 } from "@/lib/roles";
 import { MEMBER_STATUS_LABELS, USER_TABS, isUserTab, type UserTab } from "@/lib/admin";
-import type { MemberActivity } from "@/lib/data";
+import type { MemberActivity } from "@/lib/api/workspace/model";
 import { personHref } from "@/lib/people";
 import {
   WORKSPACE_ROLE_LABELS,

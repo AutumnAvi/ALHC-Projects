@@ -9,7 +9,8 @@ import Link from "next/link";
 import { Bell, BellOff, FileCheck, Mail, Pencil, Pin, PinOff, SmilePlus, Trash2, UserPlus, X, Zap } from "lucide-react";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
 import { RequestConversationNotice } from "@/components/task/request-conversation";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
 import { Timestamp } from "@/components/timestamp";
@@ -24,7 +25,7 @@ import {
   setCommentPinned,
   setFollowing,
   toggleReaction,
-} from "@/lib/actions";
+} from "@/lib/actions/comments";
 import { canRespondToSubmitter, submitterResponseSubject } from "@/lib/comment-email";
 import { mentionSegments } from "@/lib/mentions";
 import { mergePendingComments, type PendingComment } from "@/lib/pending-comments";
@@ -41,7 +42,9 @@ import {
 } from "./pending-comments-store";
 import { REACTIONS, reactionOf, type ReactionKey } from "@/lib/reactions";
 import { formatDueDate } from "@/lib/dates";
-import type { CommentRefs, Profile, TaskComment, TaskDetail, TaskEmailActivity, TaskRuleRun, TaskStory } from "@/lib/data";
+import type { CommentRefs } from "@/lib/api/comments/model";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskComment, TaskDetail, TaskEmailActivity, TaskRuleRun, TaskStory } from "@/lib/api/task-pane/model";
 import { ACTIVITY_RANK, compareActivity, isEmailCreatedStory, runIsProblem, runVerb } from "@/lib/automation-activity";
 import { emailActivityText } from "@/lib/project-page";
 import { automationHref } from "@/lib/rule-feedback";

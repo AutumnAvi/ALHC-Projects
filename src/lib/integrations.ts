@@ -3,7 +3,8 @@ import { isSlackWebApi, slackApiError } from "@/lib/slack";
 import { createHmac, randomBytes } from "node:crypto";
 import { backgroundOrigin } from "@/lib/origin";
 import { BlockedAddressError, safePost, type SafePostResult } from "@/lib/safe-fetch";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { claimIntegrationOutbox, completeIntegrationOutbox } from "@/lib/api/system/mutations";
+import { adminContext } from "@/lib/server/context";
 import type { Json, Tables } from "@/lib/supabase/database.types";
 import {
   SIGNATURE_HEADER,
@@ -157,12 +158,9 @@ async function deliver(row: OutboxRow): Promise<Result> {
 // exponential backoff (5, 10, 20, then 30 minutes) until the row's attempt limit (5, plus one per manual
 // retry), then they are marked failed. Retries send the same stored payload.
 export async function drainIntegrationOutbox(options: { onlyId?: string | null; max?: number } = {}) {
-  const admin = createAdminClient();
-  if (!admin) return { claimed: 0, sent: 0, mocked: 0, failed: 0, skipped: "no service role key" as const };
-  const { data, error } = await admin.rpc("claim_integration_outbox", {
-    max_items: options.max ?? 20,
-    only_id: options.onlyId ?? null,
-  });
+  const ctx = adminContext();
+  if (!ctx) return { claimed: 0, sent: 0, mocked: 0, failed: 0, skipped: "no service role key" as const };
+  const { data, error } = await claimIntegrationOutbox(ctx, { max: options.max ?? 20, onlyId: options.onlyId ?? null });
   if (error) throw new Error(`Failed to claim integration deliveries: ${error.message}`);
   const counts = { claimed: data?.length ?? 0, sent: 0, mocked: 0, failed: 0, gaveUp: 0 };
   // Rows go to independent receivers, so one slow endpoint doesn't hold up the rest of the batch.
@@ -179,11 +177,11 @@ export async function drainIntegrationOutbox(options: { onlyId?: string | null; 
         counts.failed += 1;
         if (row.attempts >= row.max_attempts) counts.gaveUp += 1;
       } else counts[result.outcome] += 1;
-      await admin.rpc("complete_integration_outbox", {
-        target_item: row.id,
+      await completeIntegrationOutbox(ctx, {
+        itemId: row.id,
         outcome: result.outcome,
         response: result.response ?? null,
-        error_message: result.error ?? null,
+        errorMessage: result.error ?? null,
       });
     }),
   );

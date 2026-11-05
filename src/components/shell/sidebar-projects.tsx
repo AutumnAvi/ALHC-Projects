@@ -29,7 +29,7 @@ import {
   fileSidebarProject,
   setProjectsStarred,
   updateSidebarFolder,
-} from "@/lib/actions";
+} from "@/lib/actions/sidebar";
 import { projectColorClass } from "@/lib/project-colors";
 import {
   FOLDER_STEP,

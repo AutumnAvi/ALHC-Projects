@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import * as authApi from "@/lib/api/auth/mutations";
+import { routeContext } from "@/lib/server/context";
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  await supabase.auth.signOut();
+  await authApi.signOut(await routeContext());
   return NextResponse.redirect(new URL("/login", request.nextUrl.origin), { status: 303 });
 }

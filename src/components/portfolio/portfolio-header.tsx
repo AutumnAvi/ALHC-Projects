@@ -5,9 +5,9 @@ import { usePathname } from "next/navigation";
 import { Briefcase, ChartColumn, Gauge, GanttChart, LayoutGrid, Settings, Zap } from "lucide-react";
 import { usePortfolioCan } from "@/components/portfolio/portfolio-access";
 import { useServerAction } from "@/components/toast";
-import { updatePortfolio } from "@/lib/actions";
+import { updatePortfolio } from "@/lib/actions/portfolios";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
-import type { Portfolio } from "@/lib/data";
+import type { Portfolio } from "@/lib/api/portfolios/model";
 
 export function PortfolioHeader({ portfolio }: { portfolio: Portfolio }) {
   const pathname = usePathname();

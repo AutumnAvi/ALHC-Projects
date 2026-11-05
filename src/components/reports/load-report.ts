@@ -1,8 +1,9 @@
 import "server-only";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import type { BarDatum } from "@/components/dashboard/bar-chart";
 import type { OverdueRow } from "@/components/reports/report-blocks";
-import { allProjectsReport, listProfiles, listSectionLabels, listVisibleTags, reportOverdueTasks, type OverdueTask, type ReportRow } from "@/lib/data";
+import { allProjectsReport, listProfiles, listSectionLabels, listVisibleTags, reportOverdueTasks } from "@/lib/data";
+import { type OverdueTask, type ReportRow } from "@/lib/api/reports/model";
 import type { ReportFilters } from "@/lib/reports";
 
 // Labels for report buckets. Project names only ever come from all_projects_report (readable projects),

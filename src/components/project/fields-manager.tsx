@@ -7,7 +7,7 @@ import { useProjectPermissions } from "@/components/project/project-access";
 import { useProjectPage } from "@/components/project/project-page-context";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { createField } from "@/lib/actions";
+import { createField } from "@/lib/actions/fields";
 import type { FieldDef } from "@/lib/fields";
 
 // The Fields page (Asana parity, batch 4): Asana's fields list — type icon, name, option preview — with

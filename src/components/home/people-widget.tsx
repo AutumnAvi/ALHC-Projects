@@ -4,7 +4,7 @@ import { Avatar } from "@/components/avatar";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState } from "@/components/ui";
 import { Widget, WidgetTitle } from "@/components/home/widget";
-import type { Collaborator } from "@/lib/data";
+import type { Collaborator } from "@/lib/api/people/model";
 import { plural } from "@/lib/home";
 import { quickPersonHref } from "@/lib/shell";
 

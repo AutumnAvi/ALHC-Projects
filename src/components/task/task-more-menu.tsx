@@ -26,9 +26,11 @@ import {
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
-import { deleteTask, restoreTask, setReplyThreadClosed, setTaskKind, type ActionResult } from "@/lib/actions";
+import { deleteTask, restoreTask, setTaskKind } from "@/lib/actions/tasks";
+import { setReplyThreadClosed } from "@/lib/actions/comments";
+import { type ActionResult } from "@/lib/api/core/result";
 import { requestApprovalAction } from "./approval-action";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { describeRecurrence } from "@/lib/recurrence";
 import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/task-kinds";
 import { DuplicateTaskDialog } from "./duplicate-task-dialog";

@@ -56,18 +56,17 @@ import { copyProjectLink, useProjectPage } from "@/components/project/project-pa
 import { useNotify, useServerAction } from "@/components/toast";
 import {
   createView,
-  deleteProject,
   deleteView,
   duplicateView,
   moveView,
   setDefaultView,
-  setProjectStarred,
   setProjectTabHidden,
   setProjectViewHidden,
-  updateProject,
   updateView,
-} from "@/lib/actions";
-import type { Project } from "@/lib/data";
+} from "@/lib/actions/views";
+import { deleteProject, updateProject } from "@/lib/actions/projects";
+import { setProjectStarred } from "@/lib/actions/sidebar";
+import type { Project } from "@/lib/api/projects/model";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
 import {
   FIXED_TABS,

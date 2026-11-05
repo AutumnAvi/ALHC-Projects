@@ -14,7 +14,7 @@ import { TeamHeader } from "@/components/teams/team-header";
 import { TeamMembers, addMemberHelp } from "@/components/teams/team-members";
 import { teamPickRows } from "@/components/teams/team-person-picker";
 import { ToastProvider } from "@/components/toast";
-import type { TeamPerson } from "@/lib/data";
+import type { TeamPerson } from "@/lib/api/teams/model";
 import { withoutTeamMessages } from "@/lib/inbox";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 import {

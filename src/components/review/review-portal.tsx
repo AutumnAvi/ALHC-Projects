@@ -25,7 +25,6 @@ import { useConfirm } from "@/components/confirm";
 import { PinList } from "@/components/review/pin-list";
 import { ReviewViewer, type PinPlace, type ViewerPin } from "@/components/review/review-viewer";
 import { ReviewWalkthrough } from "@/components/review/review-walkthrough";
-import { ATTACHMENTS_BUCKET } from "@/lib/attachments";
 import {
   MAX_PIN_TEXT,
   MAX_REVIEW_NOTE,
@@ -84,8 +83,10 @@ import {
   saveReviewProgress,
   startReviewUpload,
   submitReviewDecision,
-  type ReviewProgress,
-} from "@/lib/review-public-actions";
+} from "@/lib/actions/review-public";
+import { type ReviewProgress } from "@/lib/api/reviews/model";
+import { uploadReviewFile } from "@/lib/api/client/storage";
+import { createApiContext } from "@/lib/api/core/context";
 import { createAnonBrowserClient } from "@/lib/supabase/anon-browser";
 
 // Oct 26 notes (batch 3), reworked in Oct 27 notes (batch 5): the public review page (no sign-in; the
@@ -356,10 +357,13 @@ export function ReviewPortal({
         setUploading((current) => current.map((u) => (u === entry ? { ...u, error: started.error ?? "Couldn’t upload" } : u)));
         continue;
       }
-      const sentFile = await createAnonBrowserClient()
-        .storage.from(ATTACHMENTS_BUCKET)
-        .uploadToSignedUrl(started.path, started.uploadToken, file, { contentType: file.type || undefined });
-      if (sentFile.error) {
+      const sentFile = await uploadReviewFile(
+        createApiContext(createAnonBrowserClient()),
+        started.path,
+        started.uploadToken,
+        file,
+      );
+      if (sentFile.error !== null) {
         setUploading((current) => current.map((u) => (u === entry ? { ...u, error: "The upload didn’t finish. Try again." } : u)));
         continue;
       }

@@ -16,7 +16,8 @@ import {
 } from "@/components/task/review-events";
 import { blockParentLabel, convertedToast } from "@/components/task/task-convert";
 import { applyApprovalChange, decisionSummary, type ApprovalChange } from "@/lib/approval-optimistic";
-import type { ApprovalRound, SubtaskItem, TaskApproval, TaskApprovalInfo } from "@/lib/data";
+import type { ApprovalRound, TaskApproval, TaskApprovalInfo } from "@/lib/api/task-pane/model";
+import type { SubtaskItem } from "@/lib/api/tasks/model";
 import { planDependencyShifts, rollToWorkday, workdaySteps, type PlanLink, type PlanTask } from "@/lib/dependency-plan";
 import { pendingCreateResolved, unresolvedPendingCreates, type PendingCreate } from "@/lib/pending-creates";
 
@@ -93,7 +94,8 @@ test("121: new subtasks and tasks show at once in the pane, List, and Board", ()
     assert.match(source, /<PendingTaskRows[\s\S]*position="top"/, `${view} draws pending tasks at the top`);
     assert.match(source, /<PendingTaskRows[\s\S]*position="bottom"/, `${view} and at the end`);
   }
-  const actions = fs.readFileSync("src/lib/actions.ts", "utf8");
+  // Big move 1: the Server Action is src/lib/actions/tasks.ts, over the layer's write.
+  const actions = fs.readFileSync("src/lib/actions/tasks.ts", "utf8");
   assert.match(actions, /export async function createSubtask\([\s\S]*?Promise<ActionResult & \{ taskId\?: string \}>/, "createSubtask returns the new id");
 });
 
@@ -130,7 +132,7 @@ test("123: Convert to main task can make the new task block the task it came fro
   assert.equal(blockParentLabel(null), "Make this task block the task it came from");
   assert.equal(convertedToast("Logo", "Website", "Spring flyer"), "“Logo” is now a task in Website, and blocks “Spring flyer”");
   assert.equal(convertedToast("Logo", "Website", null), "“Logo” is now a task in Website");
-  const actions = fs.readFileSync("src/lib/actions.ts", "utf8");
+  const actions = fs.readFileSync("src/lib/api/tasks/mutations.ts", "utf8");
   assert.match(actions, /rpc\("convert_subtask_to_task", \{ \.\.\.args, block_parent: true \}\)/);
 });
 

@@ -5,7 +5,8 @@ import { Avatar } from "@/components/avatar";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { getWorkspace, listTeams, listViewableTeamIds, type Team } from "@/lib/data";
+import { getWorkspace, listTeams, listViewableTeamIds } from "@/lib/data";
+import { type Team } from "@/lib/api/teams/model";
 
 export const metadata: Metadata = { title: "Teams" };
 

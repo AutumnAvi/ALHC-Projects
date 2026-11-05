@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { CheckCircle2, Search, Sparkles } from "lucide-react";
 import { useNotify, useServerAction } from "@/components/toast";
-import { createRule } from "@/lib/actions";
+import { createRule } from "@/lib/actions/automations";
 import { RULE_TEMPLATES, TEMPLATE_CATEGORIES, type RuleTemplate, type TemplateCategory } from "@/lib/rule-templates";
 import { RuleIcon } from "./rule-icons";
 import { TAG_VOCABULARY, type RuleContext } from "./rule-shared";

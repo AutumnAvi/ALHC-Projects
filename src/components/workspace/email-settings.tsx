@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useServerAction } from "@/components/toast";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
-import { updateWorkspaceSettings } from "@/lib/actions";
+import { updateWorkspaceSettings } from "@/lib/actions/workspace";
 import { SENDER_NAME_MAX, senderNameProblem, senderPreview } from "@/lib/workspace";
 
 // Admin console → Email → Sender name (read-only on Settings → Workspace → Email for members). Shown in

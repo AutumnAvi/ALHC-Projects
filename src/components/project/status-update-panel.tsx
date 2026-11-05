@@ -7,7 +7,7 @@ import { useConfirm } from "@/components/confirm";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { setProjectStatus } from "@/lib/actions";
+import { setProjectStatus } from "@/lib/actions/projects";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, type ProjectStatus } from "@/lib/portfolios";
 import { STATUS_SUMMARY_MAX, STATUS_TITLE_MAX, defaultStatusTitle } from "@/lib/project-page";
 import { renderStatusTemplate, type StatusTemplate } from "@/lib/status-templates";

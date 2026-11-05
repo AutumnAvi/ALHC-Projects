@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as authApi from "@/lib/api/auth/mutations";
 import { safeNextPath } from "@/lib/auth";
 import { expiredResetPath, isResetNext } from "@/lib/password-reset";
-import { createClient } from "@/lib/supabase/server";
+import { routeContext } from "@/lib/server/context";
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl;
@@ -21,16 +22,14 @@ export async function GET(request: NextRequest) {
   if (providerError) return toLogin(providerError);
   if (!code) return toLogin("Sign-in was interrupted. Please try again.");
 
-  const supabase = await createClient();
-  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-  if (error || !data.user) return toLogin(error?.message ?? "Could not complete sign-in.");
+  const ctx = await routeContext();
+  const { error, user } = await authApi.exchangeCodeForSession(ctx, code);
+  if (error || !user) return toLogin(error?.message ?? "Could not complete sign-in.");
 
-  const { data: allowlisted, error: allowlistError } = await supabase.rpc("is_allowlisted");
-  if (allowlistError || allowlisted !== true) {
-    // Never leave a non-allowlisted user holding a session.
-    await supabase.auth.signOut();
+  // Never leave a non-allowlisted user holding a session (the gate signs them out).
+  if (!(await authApi.enforceAllowlist(ctx))) {
     const url = new URL("/denied", origin);
-    if (data.user.email) url.searchParams.set("email", data.user.email);
+    if (user.email) url.searchParams.set("email", user.email);
     return NextResponse.redirect(url);
   }
 

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Check, Lock, Users } from "lucide-react";
 import { useNotify, useServerAction } from "@/components/toast";
-import { requestTeamJoin } from "@/lib/actions";
+import { requestTeamJoin } from "@/lib/actions/teams";
 import type { TeamAccessStatus } from "@/lib/teams";
 
 // Oct 26 notes (batch 4): a team link someone isn't part of (/team-access/<id>, where the team layout

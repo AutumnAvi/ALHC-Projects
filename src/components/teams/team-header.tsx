@@ -18,7 +18,7 @@ import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { HEADER_TAB, HEADER_TITLE_INPUT, HeaderGlyph } from "@/components/ui";
-import { deleteTeam, updateTeam } from "@/lib/actions";
+import { deleteTeam, updateTeam } from "@/lib/actions/teams";
 import { ADD_TEAM_MEMBER_ID, TEAM_TABS, teamTabHref, type TeamTab } from "@/lib/teams";
 
 const TAB_ICONS: Record<TeamTab, LucideIcon> = {

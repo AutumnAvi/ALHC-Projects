@@ -19,7 +19,7 @@ import {
   ThumbsUp,
   Trash2,
 } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-bar";
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { useConfirm } from "@/components/confirm";
@@ -39,16 +39,13 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import {
   createMyTaskSection,
-  createPrivateTask,
   deleteMyTaskSection,
   placeMyTask,
   placeMyTaskSection,
   renameMyTaskSection,
-  setTaskCompleted,
-  updateSubtask,
-  updateTask,
-  type ActionResult,
-} from "@/lib/actions";
+} from "@/lib/actions/my-tasks";
+import { createPrivateTask, setTaskCompleted, updateSubtask, updateTask } from "@/lib/actions/tasks";
+import { type ActionResult } from "@/lib/api/core/result";
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
 import { dayLabel } from "@/lib/date-input";
 import {
@@ -67,7 +64,9 @@ import {
   type SubtaskTrees,
 } from "@/components/project/inline-cells";
 import { ApprovalStatusBadge, DueDate, EmptyCellHint } from "@/components/project/task-meta";
-import type { AwaitingApproval, MyTask, Profile, SubtaskItem } from "@/lib/data";
+import type { AwaitingApproval, MyTask } from "@/lib/api/my-tasks/model";
+import type { Profile } from "@/lib/api/people/model";
+import type { SubtaskItem } from "@/lib/api/tasks/model";
 import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
 import { TaskTitleText } from "@/components/task/title-text";
 import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@/lib/task-seed";

@@ -3,7 +3,7 @@
 // feedback (a note on that file), Submit waits until every file is reviewed, and the answer is derived
 // (all approved → Approve; any feedback → Request changes). The decision goes through decide_approval
 // (approver only, Commenter+, pending only), with each file's outcome written into its note.
-import type { ApprovalRound, TaskAttachment } from "@/lib/data";
+import type { ApprovalRound, TaskAttachment } from "@/lib/api/task-pane/model";
 import { derivedDecision, fileStatus, type FileReviews } from "@/lib/review-portal";
 import type { ReviewFile } from "@/lib/review-checks";
 

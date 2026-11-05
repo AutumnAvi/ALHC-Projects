@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import {
   NAME_QUESTION_ID,
   ensureNameQuestion,

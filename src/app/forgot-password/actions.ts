@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import * as authApi from "@/lib/api/auth/mutations";
 import { requestOrigin } from "@/lib/origin";
 import {
   RESET_RATE_LIMITED,
@@ -9,7 +10,7 @@ import {
   resetRedirectUrl,
   resetRequestOutcome,
 } from "@/lib/password-reset";
-import { createClient } from "@/lib/supabase/server";
+import { actionContext } from "@/lib/server/context";
 
 // email: what was typed, so the form shows it again after React resets it.
 export type ForgotPasswordState = { notice?: string; error?: string; sent?: boolean; email?: string };
@@ -26,9 +27,9 @@ export async function requestPasswordReset(
   const email = normalizeResetEmail(typed);
   if (!email) return { error: "Enter a valid email address.", email: typed };
 
-  const supabase = await createClient();
+  const ctx = await actionContext();
   const origin = (await headers()).get("origin") ?? (await requestOrigin());
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: resetRedirectUrl(origin) });
+  const { error } = await authApi.requestPasswordReset(ctx, email, resetRedirectUrl(origin));
   // The code only, never the address.
   if (error) console.warn(`[auth:reset] request failed code=${error.code ?? "unknown"} status=${error.status ?? "?"}`);
   if (resetRequestOutcome(error) === "rate_limited") return { error: RESET_RATE_LIMITED, email };

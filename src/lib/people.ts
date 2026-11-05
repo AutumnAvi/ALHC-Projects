@@ -1,5 +1,10 @@
 // Person profile pages (Real features 2): /people/<profile id>. Browser + server.
 
+// A person's name as the app shows it: their full name, else their email.
+export function displayName(profile: { full_name: string | null; email: string }) {
+  return profile.full_name?.trim() || profile.email;
+}
+
 export const personHref = (profileId: string) => `/people/${profileId}`;
 
 // The filtered Reports view a profile links to ("their work in Reports").

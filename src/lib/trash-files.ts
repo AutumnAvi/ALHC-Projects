@@ -1,7 +1,7 @@
 import "server-only";
-import type { createAdminClient } from "@/lib/supabase/admin";
-
-type Admin = NonNullable<ReturnType<typeof createAdminClient>>;
+import type { ApiContext } from "@/lib/api/core/context";
+import { claimTrashStoragePurges, finishTrashStoragePurge, removeStorageObjects } from "@/lib/api/system/mutations";
+import { listStorageFolderPage } from "@/lib/api/system/queries";
 
 const PAGE = 100;
 
@@ -12,33 +12,33 @@ const PAGE = 100;
 // out a folder whose task still exists or a path a live attachment still uses. Before the database
 // update the function is missing and this does nothing.
 export async function removePurgedFiles(
-  admin: Admin,
+  ctx: ApiContext,
   max = 50,
 ): Promise<{ removed: number; folders: number; files: number } | { skipped: string }> {
-  const claimed = await admin.rpc("claim_trash_storage_purges", { max_items: max });
+  const claimed = await claimTrashStoragePurges(ctx, max);
   if (claimed.error) return { skipped: claimed.error.code === "PGRST202" ? "no database support yet" : "claim failed" };
   let removed = 0;
   let folders = 0;
   let files = 0;
   for (const item of claimed.data ?? []) {
     try {
-      const paths = item.is_prefix ? await listFolder(admin, item.bucket, item.path.replace(/\/+$/, "")) : [item.path];
+      const paths = item.is_prefix ? await listFolder(ctx, item.bucket, item.path.replace(/\/+$/, "")) : [item.path];
       let count = 0;
       for (let i = 0; i < paths.length; i += PAGE) {
-        const result = await admin.storage.from(item.bucket).remove(paths.slice(i, i + PAGE));
-        if (result.error) throw new Error("remove failed");
-        count += result.data?.length ?? 0;
+        const result = await removeStorageObjects(ctx, item.bucket, paths.slice(i, i + PAGE));
+        if (result === null) throw new Error("remove failed");
+        count += result;
       }
       removed += count;
       if (item.is_prefix) folders += 1;
       else files += 1;
-      await admin.rpc("finish_trash_storage_purge", { target: item.id, removed_count: count, error_message: null });
+      await finishTrashStoragePurge(ctx, { target: item.id, removedCount: count, errorMessage: null });
     } catch (error) {
       // Never the path in the logs (a task id is fine to keep in the row itself).
-      await admin.rpc("finish_trash_storage_purge", {
+      await finishTrashStoragePurge(ctx, {
         target: item.id,
-        removed_count: 0,
-        error_message: error instanceof Error ? error.message.slice(0, 200) : "failed",
+        removedCount: 0,
+        errorMessage: error instanceof Error ? error.message.slice(0, 200) : "failed",
       });
     }
   }
@@ -46,16 +46,16 @@ export async function removePurgedFiles(
 }
 
 // Every object under a folder (two levels deep at most, a few thousand at most).
-async function listFolder(admin: Admin, bucket: string, folder: string, depth = 0): Promise<string[]> {
+async function listFolder(ctx: ApiContext, bucket: string, folder: string, depth = 0): Promise<string[]> {
   const out: string[] = [];
   for (let offset = 0; offset < 5000; offset += 1000) {
-    const { data, error } = await admin.storage.from(bucket).list(folder, { limit: 1000, offset });
-    if (error) throw new Error("list failed");
+    const data = await listStorageFolderPage(ctx, bucket, folder, { limit: 1000, offset });
+    if (data === null) throw new Error("list failed");
     for (const entry of data ?? []) {
       const path = `${folder}/${entry.name}`;
       // A folder has no id in Storage's listing.
       if (entry.id === null || entry.id === undefined) {
-        if (depth < 2) out.push(...(await listFolder(admin, bucket, path, depth + 1)));
+        if (depth < 2) out.push(...(await listFolder(ctx, bucket, path, depth + 1)));
       } else {
         out.push(path);
       }

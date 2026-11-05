@@ -13,7 +13,7 @@ import { FieldEditorDialog } from "@/components/project/field-editor";
 import { ProjectAccessProvider } from "@/components/project/project-access";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
-import type { PortfolioField } from "@/lib/data";
+import type { PortfolioField } from "@/lib/api/portfolios/model";
 import { SELECT_NEEDS_OPTION, selectOptionsProblem, type FieldDef, type FieldOption } from "@/lib/fields";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 

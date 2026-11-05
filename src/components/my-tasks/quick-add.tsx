@@ -4,7 +4,7 @@ import { useId, useRef, useState } from "react";
 import { AtSign, CalendarDays, FolderClosed, Plus, Repeat, X } from "lucide-react";
 import { useTabChord } from "@/components/shortcuts/keyboard";
 import { useNotify, useServerAction } from "@/components/toast";
-import { quickAddTask } from "@/lib/actions";
+import { quickAddTask } from "@/lib/actions/my-tasks";
 import { QUICK_ADD_PENDING_SCOPE, checklistDueLabel } from "@/lib/checklist";
 import { useToday } from "@/lib/dates";
 import { withPendingCreate } from "@/lib/pending-creates";

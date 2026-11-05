@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useState, useTransition, type ReactNode } from "react";
 import { X } from "lucide-react";
-import type { ActionResult } from "@/lib/actions";
+import type { ActionResult } from "@/lib/api/core/result";
 import { invalidateTaskPanes } from "@/components/task/task-pane-store";
 import { beginLocalMutation, endLocalMutation, failMutation } from "@/lib/optimistic-session";
 

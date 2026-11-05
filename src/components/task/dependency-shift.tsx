@@ -5,7 +5,12 @@ import { startTransition, useCallback, useEffect, useRef, useState, useTransitio
 import { ArrowRight, Settings2 } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
-import { applyDependencyShifts, changeTaskDates, moveTaskDatesWith, undoDependencyShift } from "@/lib/actions";
+import {
+  applyDependencyShifts,
+  changeTaskDates,
+  moveTaskDatesWith,
+  undoDependencyShift,
+} from "@/lib/actions/dependencies";
 import type { TimelineDragHow } from "@/lib/dependency-plan";
 import { requestRuleFeedback } from "@/lib/rule-feedback-bus";
 import { currentMutationToken, dropTokenTasks, holdTaskChanges } from "@/lib/optimistic-session";

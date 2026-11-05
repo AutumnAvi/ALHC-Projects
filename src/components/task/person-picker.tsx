@@ -2,9 +2,10 @@
 
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { Check, Search, UserRound, X } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { Popover } from "@/components/popover";
-import type { Profile } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
 
 // Asana's people picker (Asana parity, batch 3): a search box over a list of people, the current one
 // ticked, and a way to clear. Used for the task's assignee (field row and header avatar) and for adding

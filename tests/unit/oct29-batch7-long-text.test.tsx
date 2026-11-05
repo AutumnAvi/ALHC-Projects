@@ -14,7 +14,7 @@ import { InlineFieldCell } from "@/components/project/inline-cells";
 import { PaneTextValue } from "@/components/task/task-fields";
 import { isCutOff } from "@/components/tooltip-layer";
 import { FOCUSABLE_SELECTOR, trappedTabTarget } from "@/lib/focus-trap";
-import type { ProjectTask } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
 import type { FieldDef } from "@/lib/fields";
 import {
   MAX_TEXT_FIELD_LENGTH,

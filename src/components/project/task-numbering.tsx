@@ -6,7 +6,7 @@ import { Dialog } from "@/components/dialog";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { saveTaskNumbering } from "@/lib/actions";
+import { saveTaskNumbering } from "@/lib/actions/numbering";
 import type { FieldDef } from "@/lib/fields";
 import {
   emptyNumbering,

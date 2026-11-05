@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Dialog } from "@/components/dialog";
 import { SettingsPanel, type SettingsData } from "@/components/settings/settings-panel";
 import type { SettingsTab } from "@/lib/shell";
-import { loadSettings } from "@/lib/shell-actions";
+import { loadSettings } from "@/lib/actions/shell";
 
 // Settings as a modal (Asana's "My settings"): Profile, Notifications, Email forwarding, Account,
 // Display, with the tabs across the top. Opened from the avatar menu, the Inbox's Manage notifications,

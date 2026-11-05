@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { ArrowRight, CalendarClock, ShieldCheck } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { describeInboxItem, inboxItemHref } from "@/components/inbox/inbox-card";
 import { useTaskHref } from "@/components/project/shared";
 import { TaskLink } from "@/components/task/task-link";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { markInboxRead } from "@/lib/actions";
-import type { AwaitingApproval, InboxItem, Profile } from "@/lib/data";
+import { markInboxRead } from "@/lib/actions/inbox";
+import type { AwaitingApproval } from "@/lib/api/my-tasks/model";
+import type { InboxItem } from "@/lib/api/inbox/model";
+import type { Profile } from "@/lib/api/people/model";
 import { formatDueDate } from "@/lib/dates";
 import { displayTaskTitle } from "@/lib/request-numbers";
 import { seedFromTitle } from "@/lib/task-seed";

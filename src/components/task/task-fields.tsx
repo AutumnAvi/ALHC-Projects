@@ -2,10 +2,13 @@
 
 import { useOptimistic, useState } from "react";
 import { CalendarDays, Check, ChevronDown, Plus, X } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useNotify, useServerAction } from "@/components/toast";
-import { moveTask, setFieldValue, type ActionResult } from "@/lib/actions";
-import type { Profile, TaskDetail } from "@/lib/data";
+import { moveTask } from "@/lib/actions/tasks";
+import { setFieldValue } from "@/lib/actions/fields";
+import { type ActionResult } from "@/lib/api/core/result";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { MenuItem, Popover } from "@/components/popover";
 import { PILL, isChoiceField } from "@/components/project/field-chips";
 import { LongTextEditor } from "@/components/long-text-editor";

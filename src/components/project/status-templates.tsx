@@ -8,7 +8,7 @@ import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
-import { createStatusTemplate, deleteStatusTemplate, updateStatusTemplate } from "@/lib/actions";
+import { createStatusTemplate, deleteStatusTemplate, updateStatusTemplate } from "@/lib/actions/projects";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus, type ProjectStatus } from "@/lib/portfolios";
 import { STATUS_SUMMARY_MAX } from "@/lib/project-page";
 import {

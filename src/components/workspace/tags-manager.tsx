@@ -2,12 +2,12 @@
 
 import { useRef, useState } from "react";
 import { Archive, ArchiveRestore, Pencil, Tag as TagIcon } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { TagChip } from "@/components/tags/tag-chip";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { createTag, updateTag } from "@/lib/actions";
-import type { Profile } from "@/lib/data";
+import { createTag, updateTag } from "@/lib/actions/tags";
+import type { Profile } from "@/lib/api/people/model";
 import { MAX_TAG_NAME, canManageTag, type Tag } from "@/lib/tags";
 import { ColorPicker } from "@/components/color-picker";
 

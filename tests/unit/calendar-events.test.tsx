@@ -31,7 +31,7 @@ import {
   type CalendarEventInput,
 } from "@/lib/calendar-events";
 import { calendarVisibleDays } from "@/lib/date-input";
-import type { ProjectTask } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
 import type { ProjectRole } from "@/lib/roles";
 import type { TeamCalendarTask } from "@/lib/teams";

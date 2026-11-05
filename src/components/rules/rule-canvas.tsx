@@ -28,7 +28,8 @@ import { missingParams, ruleProblems, saveBlockedReason, stepProblems, type Step
 import type { BuiltRule } from "@/lib/rule-templates";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
-import { createRule, setRuleEnabled, updateRule, type RevealedSigningSecret } from "@/lib/actions";
+import { createRule, setRuleEnabled, updateRule } from "@/lib/actions/automations";
+import { type RevealedSigningSecret } from "@/lib/api/automations/model";
 import { runSteps } from "@/lib/rule-steps";
 import { RUN_TONE_CLASS, filterRuns, runFilterLabel, runOutcome, runOutcomeText, type RunFilter } from "@/lib/run-outcome";
 import { autoRuleName, withTarget } from "@/lib/rule-autoname";

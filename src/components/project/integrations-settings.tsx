@@ -4,11 +4,15 @@ import Link from "next/link";
 import { useState } from "react";
 import { useConfirm } from "@/components/confirm";
 import { useServerAction } from "@/components/toast";
-import { clearProjectSigningSecret, generateProjectSigningSecret, setProjectIntegration } from "@/lib/actions";
+import {
+  clearProjectSigningSecret,
+  generateProjectSigningSecret,
+  setProjectIntegration,
+} from "@/lib/actions/integrations";
 import { Hash, Link2 } from "lucide-react";
 import { SmartPicker } from "@/components/smart-picker";
 import { NO_SLACK, destinationLabel, type SlackSettings } from "@/lib/slack";
-import { setProjectSlackDestination } from "@/lib/slack-actions";
+import { setProjectSlackDestination } from "@/lib/actions/slack";
 import {
   DEFAULT_SECRET_HEADER,
   SIGNATURE_HEADER,

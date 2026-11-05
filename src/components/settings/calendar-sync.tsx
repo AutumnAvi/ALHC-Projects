@@ -6,9 +6,9 @@ import { SyncCalendarDialog } from "@/components/calendar/sync-calendar-dialog";
 import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify } from "@/components/toast";
-import { revokeCalendarFeed } from "@/lib/actions";
+import { revokeCalendarFeed } from "@/lib/actions/calendar";
 import { calendarFeedLabel, type CalendarFeed, type CalendarFeedScope } from "@/lib/calendar-feeds";
-import { loadCalendarFeeds } from "@/lib/shell-actions";
+import { loadCalendarFeeds } from "@/lib/actions/shell";
 
 const SCOPE_LABELS: Record<CalendarFeedScope, string> = { my_tasks: "My tasks", project: "Project", team: "Team" };
 

@@ -12,19 +12,18 @@ import { SmartPicker } from "@/components/smart-picker";
 import { copyProjectLink } from "@/components/project/project-page-context";
 import { useShell } from "@/components/shell/shell-context";
 import { useNotify } from "@/components/toast";
+import { addTeamToProject } from "@/lib/actions/teams";
 import {
-  addTeamToProject,
   cancelPendingInvite,
   changeProjectMemberRole,
-  decideAccessRequest,
   inviteProjectMember,
   leaveProject,
   removeProjectMember,
-  updateProjectTeam,
-} from "@/lib/actions";
+} from "@/lib/actions/members";
+import { decideAccessRequest, updateProjectTeam } from "@/lib/actions/projects";
 import type { ShareData, ShareMember, SharePerson, ShareTeam } from "@/lib/project-page";
 import { isAccessGrantRole } from "@/lib/access-requests";
-import { loadProjectShare } from "@/lib/project-page-actions";
+import { loadProjectShare } from "@/lib/actions/project-page";
 import { PERSON_DEFAULT_ROLE, ROLE_DESCRIPTIONS, ROLE_LABELS, assignableRoles, hasRole, isProjectRole, roleWithArticle } from "@/lib/roles";
 import { describeTeamInvite, isTeamProjectRole } from "@/lib/teams";
 import { ROLES_HELP_HREF } from "@/lib/role-help";

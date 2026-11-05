@@ -10,7 +10,7 @@
 
 import type { QueryClient } from "@tanstack/query-core";
 import type { MyTaskPatch } from "@/lib/live-patch";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { queryKeys } from "./keys";
 
 export type TaskEdit =

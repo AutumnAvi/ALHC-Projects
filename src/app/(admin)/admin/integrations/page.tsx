@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { AdminPage } from "@/components/admin/admin-chrome";
 import { SlackWorkspaceSettings } from "@/components/admin/slack-workspace-settings";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
-import { loadSlackSettings } from "@/lib/slack-actions";
+import { loadSlackSettings } from "@/lib/actions/slack";
 
 export const metadata: Metadata = { title: "Integrations · Admin console" };
 

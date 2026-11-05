@@ -20,7 +20,8 @@ import { ProjectAccessProvider } from "@/components/project/project-access";
 import { fieldValueLabel } from "@/components/rules/rule-shared";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
-import type { PortfolioField, ProjectTask } from "@/lib/data";
+import type { PortfolioField } from "@/lib/api/portfolios/model";
+import type { ProjectTask } from "@/lib/api/tasks/model";
 import {
   MAX_NUMBER_PREFIX,
   NUMBER_PREFIX_INVISIBLE,

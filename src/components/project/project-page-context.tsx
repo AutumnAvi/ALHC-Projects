@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useMemo, useOptimistic, useStat
 import { StatusUpdatePanel } from "@/components/project/status-update-panel";
 import { useRightPanel } from "@/components/shell/right-panel";
 import { useServerAction } from "@/components/toast";
-import { setProjectArchived } from "@/lib/actions";
+import { setProjectArchived } from "@/lib/actions/projects";
 
 // Share is a large dialog opened from the header. Leave it out of the project page chunk until then.
 const ShareDialog = dynamic(() => import("@/components/project/share-dialog").then((m) => m.ShareDialog));

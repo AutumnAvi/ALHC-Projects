@@ -5,10 +5,9 @@ import Link from "next/link";
 import { FileUp, History } from "lucide-react";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
-import { discardImportUploads, previewAsanaImport, runAsanaImport } from "@/lib/actions";
-import type { ImportRun } from "@/lib/data";
+import { discardImportUploads, previewAsanaImport, runAsanaImport } from "@/lib/actions/imports";
+import type { ImportRun } from "@/lib/api/imports/model";
 import {
-  IMPORTS_BUCKET,
   describeAttachmentFiles,
   describeImportCreated,
   MAX_IMPORT_FILES,
@@ -20,6 +19,8 @@ import {
   type ImportProgress,
   asanaTokenProblem,
 } from "@/lib/imports-shared";
+import { uploadImportFile } from "@/lib/api/client/storage";
+import { createApiContext } from "@/lib/api/core/context";
 import { createClient } from "@/lib/supabase/client";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 
@@ -52,17 +53,15 @@ export function ImportSettings({ projectId, userId, runs }: { projectId: string;
       if (file.size > MAX_IMPORT_FILE_BYTES) return setError(`${file.name} is larger than 50 MB.`);
     }
     setPhase({ kind: "uploading" });
-    const supabase = createClient();
+    const ctx = createApiContext(createClient());
     const paths: string[] = [];
     for (const file of files) {
       const path = importObjectPath(projectId, userId, file.name, crypto.randomUUID());
-      const { error: uploadError } = await supabase.storage
-        .from(IMPORTS_BUCKET)
-        .upload(path, file, { contentType: file.type || undefined, upsert: false });
-      if (uploadError) {
+      const { error: uploadError } = await uploadImportFile(ctx, path, file);
+      if (uploadError !== null) {
         await discardImportUploads(projectId, paths);
         setPhase({ kind: "pick" });
-        return setError(`Couldn’t upload ${file.name}: ${uploadError.message}`);
+        return setError(`Couldn’t upload ${file.name}: ${uploadError}`);
       }
       paths.push(path);
     }

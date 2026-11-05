@@ -1,6 +1,8 @@
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import type { OptionColor, FieldDef } from "@/lib/fields";
-import type { Profile, ProjectTask, Section } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { ProjectTask } from "@/lib/api/tasks/model";
+import type { Section } from "@/lib/api/projects/model";
 import { groupOf, refFieldId, sortOf, type ViewConfig, type ViewSort } from "@/lib/views";
 import type { Tag } from "@/lib/tags";
 

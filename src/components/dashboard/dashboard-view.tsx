@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { ArrowRight, ChartColumn, ChevronDown, ChevronUp, Hash, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
@@ -12,8 +12,8 @@ import { useProjectPermissions } from "@/components/project/project-access";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { ExportLink, PrintButton } from "@/components/reports/report-chrome";
-import { createWidget, deleteWidget, installStarterWidgets, moveWidget, updateWidget } from "@/lib/actions";
-import type { MetricBucket } from "@/lib/data";
+import { createWidget, deleteWidget, installStarterWidgets, moveWidget, updateWidget } from "@/lib/actions/views";
+import type { MetricBucket } from "@/lib/api/views/model";
 import {
   WIDGET_KINDS,
   encodeConfig,

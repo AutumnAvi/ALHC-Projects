@@ -1,9 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ATTACHMENTS_BUCKET } from "@/lib/attachments";
+import { reviewFileLink } from "@/lib/api/reviews/queries";
 import { isUuid } from "@/lib/ids";
-import { isReviewToken, reviewMediaKind } from "@/lib/review-checks";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { createAnonServerClient } from "@/lib/supabase/anon-server";
+import { isReviewToken } from "@/lib/review-checks";
+import { adminContext, anonContext } from "@/lib/server/context";
 
 // Oct 26 notes (batch 3): one file of a review round, for the public review page (and the email's
 // thumbnail). GET /review/<token>/file/<file id>[?download=1]. The anon-callable review_check_file checks
@@ -30,28 +29,17 @@ function withHeaders(response: NextResponse) {
 export async function GET(request: NextRequest, ctx: RouteContext<"/review/[token]/file/[fileId]">) {
   const { token, fileId } = await ctx.params;
   if (!isReviewToken(token) || !isUuid(fileId)) return plain(404, "Not found");
-  const anon = createAnonServerClient();
-  const admin = createAdminClient();
+  const anon = anonContext();
+  const admin = adminContext();
   if (!anon || !admin) return plain(503, "Reviews aren’t set up on this site yet");
-  const { data, error } = await anon.rpc("review_check_file", { review_token: token, target_file: fileId });
-  if (error) return plain(503, "Something went wrong");
-  const answer = (data ?? {}) as { status?: string; path?: string; name?: string; content_type?: string | null };
-  if (answer.status === "rate_limited") return plain(429, "Too many requests on this link just now");
-  if (answer.status === "expired") return plain(410, "This review link has expired");
-  if (answer.status !== "ok" || !answer.path || !answer.name) return plain(404, "Not found");
-
-  const bucket = admin.storage.from(ATTACHMENTS_BUCKET);
-  let inline = false;
-  if (!request.nextUrl.searchParams.has("download")) {
-    const kind = reviewMediaKind(answer.name, answer.content_type ?? null);
-    if (kind && reviewMediaKind(answer.path, answer.content_type ?? null) === kind) {
-      const { data: info } = await bucket.info(answer.path);
-      inline = Boolean(info?.contentType) && reviewMediaKind(answer.path, info!.contentType) === kind;
-    }
-  }
-  const { data: signed, error: signError } = await bucket.createSignedUrl(answer.path, TTL_SECONDS, {
-    download: inline ? undefined : answer.name,
+  const link = await reviewFileLink(anon, admin, token, fileId, {
+    download: request.nextUrl.searchParams.has("download"),
+    seconds: TTL_SECONDS,
   });
-  if (signError || !signed) return plain(502, "File unavailable");
-  return withHeaders(NextResponse.redirect(signed.signedUrl));
+  if (link.status === "error") return plain(503, "Something went wrong");
+  if (link.status === "rate_limited") return plain(429, "Too many requests on this link just now");
+  if (link.status === "expired") return plain(410, "This review link has expired");
+  if (link.status === "missing") return plain(404, "Not found");
+  if (link.status === "unsigned") return plain(502, "File unavailable");
+  return withHeaders(NextResponse.redirect(link.url));
 }

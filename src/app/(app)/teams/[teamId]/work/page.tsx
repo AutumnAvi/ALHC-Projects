@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { FolderKanban, Plus } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { BrowseProjectsTable } from "@/components/projects/browse-projects-table";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { AddTeamProject } from "@/components/teams/add-team-project";

@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { EmailFiles } from "@/components/task/comment-parts";
+import { createApiContext, type Db } from "@/lib/api/core/context";
 import { copyReceivedAttachments, copyReplyAttachments, resendFileSource, type ReceivedFileSource } from "@/lib/email-forward";
 import { htmlToText, keptHtml, stripQuotedReply } from "@/lib/email-reply";
 import {
@@ -111,7 +112,8 @@ function fakeAdmin(refuse: (name: string) => boolean = () => false) {
       return { error: fn === "attach_reply_file" && refuse(String(args.file_name)) ? { code: "P0001" } : null };
     },
   };
-  return { admin: admin as unknown as Parameters<typeof copyReceivedAttachments>[0], calls };
+  // Big move 1: the copiers take the service-role context the route makes.
+  return { admin: createApiContext(admin as unknown as Db), calls };
 }
 
 function fakeSource(options: { failFirst?: string[] } = {}): ReceivedFileSource & { downloads: string[] } {
@@ -307,7 +309,7 @@ test("copying reuses the list the route already read", async () => {
     download: async () => ({ ok: true, bytes: new Uint8Array([1, 2, 3]), contentType: "image/jpeg" }),
   };
   const files = normalizeReceivedFiles(sample.attachmentsList.data).slice(0, 1);
-  const result = await copyReceivedAttachments(admin as never, source, {
+  const result = await copyReceivedAttachments(createApiContext(admin as unknown as Db), source, {
     emailId: "e1",
     taskId: TASK,
     plan: { copy: files, skipped: [], ignored: [] },

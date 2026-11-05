@@ -7,7 +7,7 @@ import { Popover } from "@/components/popover";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { addTeamCuratedWork, moveTeamCuratedWork, removeTeamCuratedWork, updateTeam } from "@/lib/actions";
+import { addTeamCuratedWork, moveTeamCuratedWork, removeTeamCuratedWork, updateTeam } from "@/lib/actions/teams";
 import { PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
 import { projectColorClass } from "@/lib/project-colors";
 import { curatedMoveOrder, type CuratedWorkItem } from "@/lib/teams";

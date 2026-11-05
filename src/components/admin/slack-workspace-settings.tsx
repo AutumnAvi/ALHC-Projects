@@ -21,7 +21,7 @@ import {
   refreshSlackChannels,
   removeSlackDestination,
   renameSlackDestination,
-} from "@/lib/slack-actions";
+} from "@/lib/actions/slack";
 
 // Nov 2 notes (batch 14, 105): Admin console → Integrations → Slack. A workspace admin connects the
 // workspace's Slack app once (its bot token is checked with Slack and kept in the database, out of every

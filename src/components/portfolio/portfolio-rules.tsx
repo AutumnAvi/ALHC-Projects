@@ -42,7 +42,7 @@ import {
   setPortfolioRuleEnabled,
   setPortfolioRulePausedUntil,
   updatePortfolioRule,
-} from "@/lib/actions";
+} from "@/lib/actions/portfolio-rules";
 import {
   MEMBER_ROLES,
   PORTFOLIO_ACTIONS,

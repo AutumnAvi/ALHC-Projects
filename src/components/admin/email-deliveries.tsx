@@ -6,8 +6,8 @@ import { Dialog } from "@/components/dialog";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { clearEmailSuppression } from "@/lib/actions";
-import type { EmailSuppression, WorkspaceEmailDelivery } from "@/lib/data";
+import { clearEmailSuppression } from "@/lib/actions/me";
+import type { EmailSuppression, WorkspaceEmailDelivery } from "@/lib/api/email/model";
 import { EMAIL_KIND_LABELS, SUPPRESSION_REASONS, emailStatusBadge } from "@/lib/email-schedules";
 
 const TH = "px-3 py-2 font-medium";

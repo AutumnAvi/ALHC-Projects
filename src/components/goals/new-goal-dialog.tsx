@@ -4,7 +4,7 @@ import { useId, useState } from "react";
 import { DIALOG_HINT, DIALOG_LABEL, Dialog } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { createGoal } from "@/lib/actions";
+import { createGoal } from "@/lib/actions/goals";
 import {
   PROGRESS_MODES,
   PROGRESS_MODE_DESCRIPTIONS,

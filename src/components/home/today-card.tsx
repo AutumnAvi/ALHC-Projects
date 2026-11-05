@@ -6,7 +6,7 @@ import { ChecklistView, useChecklist } from "@/components/my-tasks/checklist";
 import { QuickAddBar } from "@/components/my-tasks/quick-add";
 import { useLiveMyTasks } from "@/components/my-tasks/use-live-my-tasks";
 import type { CheckedMode } from "@/lib/checklist";
-import type { MyTask } from "@/lib/data";
+import type { MyTask } from "@/lib/api/my-tasks/model";
 import type { QuickAddPerson, QuickAddProject } from "@/lib/quick-add";
 import { Widget, WIDGET_FOOTER_LINK, WidgetTitle } from "./widget";
 

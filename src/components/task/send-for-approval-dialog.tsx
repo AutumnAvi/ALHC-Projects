@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import { AlertCircle, Copy, Loader2, Upload, X } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { Dialog } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { ImageLightbox } from "@/components/task/task-attachments";
@@ -10,11 +10,12 @@ import { PickableFileCard, useTaskFileUploads, type PickableFile } from "@/compo
 import { reviewFileList } from "@/components/task/send-review-dialog";
 import { previewKind } from "@/lib/attachment-preview";
 import { useNotify, useServerAction } from "@/components/toast";
-import { sendForApproval } from "@/lib/actions";
-import type { Profile, TaskDetail } from "@/lib/data";
+import { sendForApproval } from "@/lib/actions/approvals";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { taskPermissions } from "@/lib/permissions";
 import { MAX_REVIEW_ASSETS } from "@/lib/review-checks";
-import { sendReviewCheck } from "@/lib/review-actions";
+import { sendReviewCheck } from "@/lib/actions/reviews";
 import type { AfterApproval } from "@/lib/task-kinds";
 
 // Oct 27 notes (batch 6, items 45 / 45b): "Ready for approval". The assignee (or an Editor) sends the

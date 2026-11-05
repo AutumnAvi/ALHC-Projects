@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useNotify, useServerAction } from "@/components/toast";
-import { setMyWorkWeek } from "@/lib/actions";
+import { setMyWorkWeek } from "@/lib/actions/me";
 import { WEEKDAYS, describeWorkWeek } from "@/lib/workdays";
 
 // Nov 3 notes (batch 19, 140): Settings → Profile → My workdays. The organization's workweek (Admin console →

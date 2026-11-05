@@ -5,7 +5,12 @@ import { CommenterRoleSettings } from "@/components/admin/commenter-role-setting
 import { VerifiedDomainsSettings } from "@/components/admin/verified-domains-settings";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { requireWorkspaceAdmin } from "@/lib/admin-guard";
-import { commenterRoleAllowed, getVerifiedDomainSettings, listCommenterMembers, listWorkspaceMembers } from "@/lib/data";
+import {
+  commenterRoleAllowed,
+  getVerifiedDomainSettings,
+  listCommenterMembers,
+  listWorkspaceMembers,
+} from "@/lib/data";
 import { isGoogleAuthEnabled } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Security · Admin console" };

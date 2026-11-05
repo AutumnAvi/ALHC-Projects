@@ -1,9 +1,4 @@
 import { AvatarFace } from "@/components/avatar-face";
-import type { Profile } from "@/lib/data";
-
-export function displayName(profile: Pick<Profile, "full_name" | "email">) {
-  return profile.full_name?.trim() || profile.email;
-}
 
 export function initials(name: string) {
   const parts = name.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);

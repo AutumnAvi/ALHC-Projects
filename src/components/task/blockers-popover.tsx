@@ -4,7 +4,8 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { createPortal } from "react-dom";
 import { Lock } from "lucide-react";
 import { toggleDimensions } from "@/components/complete-toggle";
-import { loadTaskBlockers, type TaskBlocker } from "@/lib/actions";
+import { loadTaskBlockers } from "@/lib/actions/dependencies";
+import { type TaskBlocker } from "@/lib/api/dependencies/model";
 import { bareTaskTitle } from "@/lib/request-numbers";
 import { TaskLink } from "./task-link";
 import { TaskNumberBadge } from "./task-number";

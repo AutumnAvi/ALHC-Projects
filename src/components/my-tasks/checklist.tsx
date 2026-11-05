@@ -15,7 +15,8 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { SkeletonRows } from "@/components/ui";
 import { blockedCount } from "@/components/project/inline-cells";
 import { ApprovalStatusBadge } from "@/components/project/task-meta";
-import { dismissDatePrompt, setTaskCompleted, undoTaskCompleted } from "@/lib/actions";
+import { dismissDatePrompt, undoTaskCompleted } from "@/lib/actions/my-tasks";
+import { setTaskCompleted } from "@/lib/actions/tasks";
 import {
   QUICK_ADD_PENDING_SCOPE,
   SETTLE_MS,
@@ -29,7 +30,7 @@ import {
   type ChecklistGroupKey,
 } from "@/lib/checklist";
 import { useToday } from "@/lib/dates";
-import type { MyTask } from "@/lib/data";
+import type { MyTask } from "@/lib/api/my-tasks/model";
 import { bareTaskTitle, formatRequestLabel } from "@/lib/request-numbers";
 import { TaskTitleText } from "@/components/task/title-text";
 import { seedFromMyTask } from "@/lib/task-seed";

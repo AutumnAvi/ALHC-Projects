@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { SmartPicker } from "@/components/smart-picker";
 import { formatDueDate } from "@/lib/dates";
-import type { Profile, Section } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { Section } from "@/lib/api/projects/model";
 import { NumberInput } from "@/components/number-input";
 import { formatNumberValue, numberPrefixOf, type FieldDef } from "@/lib/fields";
 import { TagChip } from "@/components/tags/tag-chip";

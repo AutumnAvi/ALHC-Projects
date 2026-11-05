@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { Check, ListPlus } from "lucide-react";
 import { useNotify, useServerAction } from "@/components/toast";
-import { createSubtaskFromFeedback } from "@/lib/actions";
-import type { TaskDetail } from "@/lib/data";
+import { createSubtaskFromFeedback } from "@/lib/actions/tasks";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { feedbackSubtaskNotes, feedbackSubtaskTitle } from "@/lib/feedback-subtask";
 import { withPendingCreate } from "@/lib/pending-creates";
 

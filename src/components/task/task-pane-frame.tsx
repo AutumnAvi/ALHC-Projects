@@ -7,8 +7,8 @@ import { ArrowRightToLine, Maximize2, Minimize2, MoveHorizontal, RotateCcw, Sear
 import { useTaskPane } from "@/components/shell/right-panel";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, Skeleton } from "@/components/ui";
-import { restoreTask } from "@/lib/actions";
-import { loadTrashedTask } from "@/lib/shell-actions";
+import { restoreTask } from "@/lib/actions/tasks";
+import { loadTrashedTask } from "@/lib/actions/shell";
 import { TRASH_RETENTION_DAYS, trashDeletesInLabel } from "@/lib/trash";
 import { ensureTaskPane, invalidateTaskPanes } from "./task-pane-store";
 import { setPaneExpanded, setPaneWide, usePaneExpanded, usePaneWide } from "./pane-size";

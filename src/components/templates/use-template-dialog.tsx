@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { ProjectPlacementFields, type Placement } from "@/components/projects/project-placement";
 import { useServerAction } from "@/components/toast";
-import { createProjectFromTemplate } from "@/lib/actions";
+import { createProjectFromTemplate } from "@/lib/actions/templates";
 import { describeSummary, localIsoDate, type TemplateSummary } from "@/lib/templates";
 import { TemplateCustomizer, TemplateRolesPicker } from "@/components/templates/template-customizer";
-import { loadTemplateOutline } from "@/lib/shell-actions";
+import { loadTemplateOutline } from "@/lib/actions/shell";
 import { EMPTY_CUSTOMIZATION, cleanCustomization, type TemplateCustomization, type TemplateOutline } from "@/lib/project-roles";
 
 type UsableTemplate = { id: string; name: string; summary: TemplateSummary };

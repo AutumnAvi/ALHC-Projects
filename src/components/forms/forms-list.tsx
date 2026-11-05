@@ -6,8 +6,8 @@ import { FormStatusBadge } from "@/components/forms/form-status";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { createForm } from "@/lib/actions";
-import type { FormSummary } from "@/lib/data";
+import { createForm } from "@/lib/actions/forms";
+import type { FormSummary } from "@/lib/api/forms/model";
 import { EmptyState } from "@/components/ui";
 
 // The project's forms. A row opens the form editor (a large modal over this list); Add form creates one

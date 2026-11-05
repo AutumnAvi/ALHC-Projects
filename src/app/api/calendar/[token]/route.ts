@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { isApiError } from "@/lib/api/core/errors";
+import type { CalendarFeedResult } from "@/lib/api/public/model";
+import { calendarFeed } from "@/lib/api/public/mutations";
 import { CALENDAR_FEED_TOKEN } from "@/lib/calendar-feeds";
-import { readSupabaseEnv } from "@/lib/env";
-import { buildCalendar, type FeedEvent } from "@/lib/ical";
-import type { Database } from "@/lib/supabase/database.types";
+import { buildCalendar } from "@/lib/ical";
+import { anonContext } from "@/lib/server/context";
 
 // The calendar subscribe links (Real features 4): GET /api/calendar/<token>.ics, no sign-in. The token is
 // the whole credential, so this route never logs it (errors log a code only). calendar_feed() — one
@@ -18,13 +19,6 @@ import type { Database } from "@/lib/supabase/database.types";
 //   otherwise                                           → 200 text/calendar, ETag / If-None-Match → 304
 
 export const dynamic = "force-dynamic";
-
-type FeedResult = {
-  ok?: boolean;
-  status?: string;
-  name?: string;
-  events?: FeedEvent[];
-};
 
 const PRIVATE_HEADERS = {
   "Cache-Control": "private, max-age=900",
@@ -52,24 +46,23 @@ function fileName(name: string) {
   return `alhc-${slug}.ics`;
 }
 
-export async function GET(request: Request, ctx: RouteContext<"/api/calendar/[token]">) {
-  const { token: raw } = await ctx.params;
+export async function GET(request: Request, { params }: RouteContext<"/api/calendar/[token]">) {
+  const { token: raw } = await params;
   // Tokens are plain ASCII; anything that isn't one (or isn't valid percent-encoding) is just not found.
   const token = raw.replace(/\.ics$/i, "").trim();
   if (!CALENDAR_FEED_TOKEN.test(token)) return plain(404, "Not found");
 
-  const env = readSupabaseEnv();
-  if (!env) return plain(503, "Calendar feeds aren't set up here");
-  const supabase = createClient<Database>(env.url, env.anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
-  const { data, error } = await supabase.rpc("calendar_feed", { feed_token: token });
-  if (error) {
+  const ctx = anonContext();
+  if (!ctx) return plain(503, "Calendar feeds aren't set up here");
+  let result: CalendarFeedResult;
+  try {
+    result = await calendarFeed(ctx, token);
+  } catch (error) {
+    if (!isApiError(error)) throw error;
     // Never the token or the URL.
-    console.error("Calendar feed failed", error.code);
+    console.error("Calendar feed failed", error.detail?.code);
     return plain(503, "Try again later", { "Retry-After": "300" });
   }
-  const result = (data ?? {}) as FeedResult;
   if (result.status === "unknown" || !result.status) return plain(404, "Not found");
   if (result.status === "rate_limited") {
     return plain(429, "Too many requests for this calendar link; try again in an hour", { "Retry-After": "3600" });

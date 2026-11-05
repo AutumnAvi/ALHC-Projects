@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState, useTransition } from "react";
 import { Ban, ChevronRight, FileText, Image as ImageIcon, Paperclip, Send, Video } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { PinList } from "@/components/review/pin-list";
@@ -10,7 +10,8 @@ import { ReviewViewer, type ViewerPin } from "@/components/review/review-viewer"
 import { Timestamp } from "@/components/timestamp";
 import { useNotify } from "@/components/toast";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
-import type { Profile, TaskDetail } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { taskPermissions } from "@/lib/permissions";
 import {
   REVIEW_STATUS_LABELS,
@@ -20,7 +21,7 @@ import {
   type ReviewStatus,
   type TaskReviewRound,
 } from "@/lib/review-checks";
-import { loadTaskReviews, resendReviewCheck, withdrawReviewCheck } from "@/lib/review-actions";
+import { loadTaskReviews, resendReviewCheck, withdrawReviewCheck } from "@/lib/actions/reviews";
 import { reviewsChanged, reviewsReloaded, useReviewEvents } from "./review-events";
 
 // Oct 26 notes (batch 3): the pane's Reviews tab. Every review check of the task, newest round first: who

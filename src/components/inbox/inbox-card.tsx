@@ -20,11 +20,13 @@ import {
   UserPlus,
   Workflow,
 } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { TaskLink } from "@/components/task/task-link";
 import { MoreTaskNumbers } from "@/components/task/task-number";
 import { Timestamp } from "@/components/timestamp";
-import type { InboxItem, Profile } from "@/lib/data";
+import type { InboxItem } from "@/lib/api/inbox/model";
+import type { Profile } from "@/lib/api/people/model";
 import { isUuid } from "@/lib/ids";
 import { accessRequestOf, isAccessGranted } from "@/lib/access-requests";
 import { AccessRequestDecision } from "@/components/inbox/access-request-decision";

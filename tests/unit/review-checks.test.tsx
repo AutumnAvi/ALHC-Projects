@@ -18,7 +18,7 @@ import {
   timeLabel,
   type PublicReview,
 } from "@/lib/review-checks";
-import { finishReviewUpload, startReviewUpload, submitReviewDecision } from "@/lib/review-public-actions";
+import { finishReviewUpload, startReviewUpload, submitReviewDecision } from "@/lib/actions/review-public";
 
 const TOKEN = `alhc_rev_${"a1".repeat(32)}`;
 

@@ -1,11 +1,10 @@
-import { createClient } from "@supabase/supabase-js";
-import { after } from "next/server";
-import { drainOutbox } from "@/lib/email";
+import { isApiError } from "@/lib/api/core/errors";
+import type { InboundWebhookAnswer } from "@/lib/api/public/model";
+import { receiveInboundWebhook } from "@/lib/api/public/mutations";
 import { INBOUND_MAX_BODY_BYTES, INBOUND_TOKEN_PATTERN } from "@/lib/inbound-shared";
-import { drainIntegrationOutbox } from "@/lib/integrations";
-import { readSupabaseEnv } from "@/lib/env";
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER } from "@/lib/integrations-shared";
-import type { Database } from "@/lib/supabase/database.types";
+import { deliverQueuedEmail } from "@/lib/server/action";
+import { anonContext } from "@/lib/server/context";
 
 // Inbound webhook: POST JSON here to create a task in the endpoint's project (Settings → Inbound). The
 // public form pattern: no session and never the service role for the write — a cookie-less anon client
@@ -55,60 +54,39 @@ async function readBody(request: Request): Promise<string | "too_large" | "not_u
   }
 }
 
-export async function POST(request: Request, ctx: RouteContext<"/api/inbound/[token]">) {
-  const { token } = await ctx.params;
+export async function POST(request: Request, { params }: RouteContext<"/api/inbound/[token]">) {
+  const { token } = await params;
   if (!INBOUND_TOKEN_PATTERN.test(token)) return json(UNAUTHORIZED, 401);
 
-  const env = readSupabaseEnv();
-  if (!env) return json({ ok: false, error: "Service unavailable" }, 503);
+  const ctx = anonContext();
+  if (!ctx) return json({ ok: false, error: "Service unavailable" }, 503);
 
   const body = await readBody(request);
   if (body === "too_large") return json({ ok: false, error: "The body is limited to 64 KB" }, 413);
   if (body === "not_utf8") return json({ ok: false, error: "The body must be UTF-8 JSON" }, 400);
 
-  const supabase = createClient<Database>(env.url, env.anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
-  const result = await supabase.rpc("receive_inbound_webhook", {
-    endpoint_token: token,
-    raw_body: body,
-    request_timestamp: request.headers.get(TIMESTAMP_HEADER),
-    request_signature: request.headers.get(SIGNATURE_HEADER),
-    idempotency_key: request.headers.get("idempotency-key"),
-  });
-  if (result.error) {
-    console.error("Inbound webhook failed", result.error.code);
+  let data: InboundWebhookAnswer;
+  try {
+    data = await receiveInboundWebhook(ctx, {
+      token,
+      body,
+      timestamp: request.headers.get(TIMESTAMP_HEADER),
+      signature: request.headers.get(SIGNATURE_HEADER),
+      idempotencyKey: request.headers.get("idempotency-key"),
+    });
+  } catch (error) {
+    if (!isApiError(error)) throw error;
+    console.error("Inbound webhook failed", error.detail?.code);
     return json({ ok: false, error: "Something went wrong" }, 500);
   }
 
-  const data = (result.data ?? {}) as {
-    ok?: boolean;
-    status?: number;
-    error?: string;
-    task_id?: string;
-    duplicate?: boolean;
-    request_label?: string | null;
-    warnings?: string[];
-  };
   const status = typeof data.status === "number" && data.status >= 200 && data.status <= 599 ? data.status : 500;
   if (!data.ok) {
     return json(status === 401 ? UNAUTHORIZED : { ok: false, error: data.error ?? "Something went wrong" }, status);
   }
 
-  if (status === 201) {
-    after(async () => {
-      try {
-        await drainOutbox();
-      } catch (error) {
-        console.error("Email delivery failed", error);
-      }
-      try {
-        await drainIntegrationOutbox({ max: 10 });
-      } catch (error) {
-        console.error("Integration delivery failed", error);
-      }
-    });
-  }
+  // Email first, then a batch of 10 integration deliveries, after the response (the Server Actions' drain).
+  if (status === 201) deliverQueuedEmail();
   return json(
     {
       ok: true,

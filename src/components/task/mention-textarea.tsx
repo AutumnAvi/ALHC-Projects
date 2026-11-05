@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
 import { FolderKanban, SquareCheck } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { knownLinkName, rememberLinkName } from "@/components/task/comment-parts";
 import { extendsDeadQuery, linkSearchText, projectLinkUrl, taskLinkUrl } from "@/lib/app-links";
 import { readRecents, useShellMemberId } from "@/components/shell/shell-context";
@@ -21,7 +22,8 @@ import {
   snapCaret,
   type ChipLinks,
 } from "@/lib/link-chips";
-import type { CommentRefs, Profile } from "@/lib/data";
+import type { CommentRefs } from "@/lib/api/comments/model";
+import type { Profile } from "@/lib/api/people/model";
 import { mentionToken } from "@/lib/reactions";
 import { formatRequestLabel } from "@/lib/request-numbers";
 import type { QuickProject, QuickTask } from "@/lib/shell";

@@ -7,7 +7,7 @@ import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { cancelIntegrationDelivery, retryEmailDelivery, retryIntegrationDelivery } from "@/lib/actions";
+import { cancelIntegrationDelivery, retryEmailDelivery, retryIntegrationDelivery } from "@/lib/actions/integrations";
 import { emailStatusBadge } from "@/lib/email-schedules";
 import {
   DELIVERY_STATUS_LABELS,

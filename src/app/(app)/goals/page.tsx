@@ -1,10 +1,18 @@
 import type { Metadata } from "next";
 import { Target } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { GoalsTurnedOff } from "@/components/goals/goals-off";
 import { GoalsView } from "@/components/goals/goals-view";
 import { PageHeader } from "@/components/ui";
-import { getGoalViewer, goalsEnabled, isWorkspaceAdmin, listGoalProgress, listGoals, listProfiles, listTeams } from "@/lib/data";
+import {
+  getGoalViewer,
+  goalsEnabled,
+  isWorkspaceAdmin,
+  listGoalProgress,
+  listGoals,
+  listProfiles,
+  listTeams,
+} from "@/lib/data";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@/lib/workload";
 

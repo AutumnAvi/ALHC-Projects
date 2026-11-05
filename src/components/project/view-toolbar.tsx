@@ -26,15 +26,15 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { useViewConfig } from "@/components/project/view-config";
+import { createSection } from "@/lib/actions/projects";
+import { createTask } from "@/lib/actions/tasks";
 import {
-  createSection,
-  createTask,
   createView,
   saveViewChanges,
   saveViewForEveryone,
   saveViewForMe,
   setProjectShowCompleted,
-} from "@/lib/actions";
+} from "@/lib/actions/views";
 import { requestAddTask } from "./shared";
 import { withPendingSection } from "./pending-sections";
 import {

@@ -24,8 +24,10 @@ import {
   plansInlineImage,
   stripAttachmentPlaceholders,
 } from "@/lib/reply-attachments";
+import type { ApiContext } from "@/lib/api/core/context";
+import { postEmailForward, postSubmitterReply, recordEmailEvent } from "@/lib/api/system/mutations";
 import { drainIntegrationOutbox } from "@/lib/integrations";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { adminContext } from "@/lib/server/context";
 
 // Reply by email — since Comments and reply by email, only for form submitters. A response someone sends
 // to a form task's submitter ("Send response to submitter") carries Reply-To r-<token>@<reply domain>;
@@ -128,9 +130,9 @@ export async function POST(request: Request) {
     return json({ ok: true, ignored: true }, 200);
   }
 
-  const admin = createAdminClient();
+  const ctx = adminContext();
   const apiKey = process.env.RESEND_API_KEY;
-  if (!admin || !apiKey) return json({ ok: false, error: "Service unavailable" }, 503);
+  if (!ctx || !apiKey) return json({ ok: false, error: "Service unavailable" }, 503);
 
   // The webhook has metadata only; the text comes from the Receiving API. html_format=cid keeps inline
   // images as cid: references (matched to the attachments' content ids) instead of base64 data.
@@ -172,7 +174,7 @@ export async function POST(request: Request) {
       return json({ ok: true, status: "rejected" }, 200);
     }
     const listed = await listAttachments();
-    return forwardedEmail(admin, apiKey, {
+    return forwardedEmail(ctx, apiKey, {
       forwardToken,
       sender,
       verified: forwardSenderVerified(message.authentication),
@@ -207,12 +209,7 @@ export async function POST(request: Request) {
     stripAttachmentPlaceholders(keptText, plannedFiles(files, plan), { inlineImages: plansInlineImage(files, plan) }) ||
     (saving ? attachmentsOnlyBody(saving) : "");
 
-  const { data, error } = await admin.rpc("post_submitter_reply", {
-    reply_token: token,
-    sender_email: sender,
-    reply_body: body,
-    provider_email_id: emailId,
-  });
+  const { data, error } = await postSubmitterReply(ctx, { token, sender, body, emailId });
   if (error) {
     // A database without 20261014030000_comments_email.sql has no submitter threads: nothing to post.
     if (error.code === "PGRST202") return json({ ok: true, ignored: true }, 200);
@@ -231,7 +228,7 @@ export async function POST(request: Request) {
   after(async () => {
     if (saving && commentId && replyTaskId) {
       try {
-        const copied = await copyReplyAttachments(admin, source, { emailId, commentId, taskId: replyTaskId, plan, listed });
+        const copied = await copyReplyAttachments(ctx, source, { emailId, commentId, taskId: replyTaskId, plan, listed });
         console.info(`Reply by email: ${copied.added} attachment(s) added, ${copied.skipped} skipped, ${plan.ignored.length} left out`);
       } catch (e) {
         console.error("Reply by email: attachments failed", e instanceof Error ? e.name : "error");
@@ -254,17 +251,17 @@ export async function POST(request: Request) {
 // A forwarded email becomes the person's task (post_email_forward decides where, or refuses); its
 // attachments and the queued emails follow after the response.
 async function forwardedEmail(
-  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  ctx: ApiContext,
   apiKey: string,
   input: { forwardToken: string; sender: string; verified: boolean; emailId: string; message: Received; listed: unknown[] | null },
 ) {
-  const { data, error } = await admin.rpc("post_email_forward", {
-    forward_token: input.forwardToken,
-    sender_email: input.sender,
-    sender_verified: input.verified,
-    email_subject: typeof input.message.subject === "string" ? input.message.subject.slice(0, 2000) : "",
-    email_body: forwardedText(input.message.text, input.message.html),
-    provider_email_id: input.emailId,
+  const { data, error } = await postEmailForward(ctx, {
+    token: input.forwardToken,
+    sender: input.sender,
+    verified: input.verified,
+    subject: typeof input.message.subject === "string" ? input.message.subject.slice(0, 2000) : "",
+    body: forwardedText(input.message.text, input.message.html),
+    emailId: input.emailId,
   });
   if (error) {
     console.error("Forwarded email failed", error.code);
@@ -293,7 +290,7 @@ async function forwardedEmail(
   after(async () => {
     if (plan.copy.length || plan.skipped.length) {
       try {
-        const copied = await copyForwardedAttachments(admin, resendFileSource(apiKey), {
+        const copied = await copyForwardedAttachments(ctx, resendFileSource(apiKey), {
           emailId: input.emailId,
           forwardId,
           taskId,
@@ -341,16 +338,16 @@ async function deliveryEvent(
 ) {
   const emailId = typeof data.email_id === "string" ? data.email_id : null;
   if (!emailId || !/^[\w-]{1,100}$/.test(emailId)) return json({ ok: true, ignored: true }, 200);
-  const admin = createAdminClient();
-  if (!admin) return json({ ok: false, error: "Service unavailable" }, 503);
+  const ctx = adminContext();
+  if (!ctx) return json({ ok: false, error: "Service unavailable" }, 503);
   const bounce = data.bounce && typeof data.bounce === "object" ? data.bounce : null;
   const suppressed = data.suppressed && typeof data.suppressed === "object" ? data.suppressed : null;
-  const { data: result, error } = await admin.rpc("record_email_event", {
-    provider_email_id: emailId,
-    event_type: type,
-    event_time: eventTime(createdAt),
-    bounce_type: shortText(bounce?.type ?? suppressed?.type),
-    bounce_subtype: shortText(bounce?.subType),
+  const { data: result, error } = await recordEmailEvent(ctx, {
+    emailId,
+    type,
+    eventTime: eventTime(createdAt),
+    bounceType: shortText(bounce?.type ?? suppressed?.type),
+    bounceSubtype: shortText(bounce?.subType),
   });
   if (error) {
     // A database without this release's update can't store it; acknowledge so Resend doesn't retry forever.

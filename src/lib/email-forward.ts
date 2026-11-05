@@ -1,9 +1,16 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import type { ApiContext } from "@/lib/api/core/context";
+import {
+  attachForwardedFile,
+  attachReplyFile,
+  noteReplySkippedFiles,
+  removeStorageObjects,
+  uploadAttachmentFile,
+} from "@/lib/api/system/mutations";
 import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/attachments";
 import { MAX_RECEIVED_ATTACHMENTS, type ReceivedFile, type ReceivedFilePlan, type SkippedFile } from "@/lib/reply-attachments";
 import { safeDownload } from "@/lib/safe-fetch";
-import type { createAdminClient } from "@/lib/supabase/admin";
 
 // Forward emails to create tasks (Real features 1) and a form submitter's emailed reply (Email designs):
 // after post_email_forward() made the task, or post_submitter_reply() posted the reply, the inbound email
@@ -15,7 +22,6 @@ import type { createAdminClient } from "@/lib/supabase/admin";
 // Background work of the verified webhook, so the service role is fine here. Nothing logs a file name,
 // an address, or a link.
 
-type Admin = NonNullable<ReturnType<typeof createAdminClient>>;
 
 export const MAX_FORWARDED_ATTACHMENTS = MAX_RECEIVED_ATTACHMENTS;
 export type { SkippedFile };
@@ -80,7 +86,7 @@ function downloadUrls(listed: unknown[]): Map<string, string> {
 // is then removed again). Returns how many were added and every file that wasn't, with why (the plan's
 // own skips first).
 export async function copyReceivedAttachments(
-  admin: Admin,
+  ctx: ApiContext,
   source: ReceivedFileSource,
   options: {
     emailId: string;
@@ -109,13 +115,10 @@ export async function copyReceivedAttachments(
     const headerType = downloaded.contentType?.split(";")[0].trim().toLowerCase() ?? null;
     const type = file.contentType ?? (headerType && CONTENT_TYPE.test(headerType) ? headerType : null);
     const path = attachmentPath(options.taskId, file.filename, randomUUID());
-    const uploaded = await admin.storage
-      .from(ATTACHMENTS_BUCKET)
-      .upload(path, downloaded.bytes, { contentType: type ?? undefined, upsert: false });
-    if (uploaded.error) return "failed";
+    if (!(await uploadAttachmentFile(ctx, path, downloaded.bytes, type))) return "failed";
     if (!(await options.record({ path, name: file.filename, type, size: downloaded.bytes.byteLength }))) {
       // Not recorded (e.g. the 10-file limit): don't leave the file behind in the task's folder.
-      await admin.storage.from(ATTACHMENTS_BUCKET).remove([path]);
+      await removeStorageObjects(ctx, ATTACHMENTS_BUCKET, [path]);
       return "failed";
     }
     return null;
@@ -135,23 +138,17 @@ export async function copyReceivedAttachments(
 
 // Forwarded emails: up to 10 attachments, each recorded through attach_forwarded_file (as the person).
 export async function copyForwardedAttachments(
-  admin: Admin,
+  ctx: ApiContext,
   source: ReceivedFileSource,
   options: { emailId: string; forwardId: string; taskId: string; plan: ReceivedFilePlan; listed?: unknown[] | null },
 ): Promise<{ added: number; skipped: number }> {
-  const result = await copyReceivedAttachments(admin, source, {
+  const result = await copyReceivedAttachments(ctx, source, {
     emailId: options.emailId,
     taskId: options.taskId,
     plan: options.plan,
     listed: options.listed,
     record: async (file) => {
-      const { error } = await admin.rpc("attach_forwarded_file", {
-        target_forward: options.forwardId,
-        file_path: file.path,
-        file_name: file.name,
-        file_type: file.type,
-        file_size: file.size,
-      });
+      const error = await attachForwardedFile(ctx, options.forwardId, file);
       if (error) console.error("Forwarded email: attach_forwarded_file refused", error.code);
       return !error;
     },
@@ -163,28 +160,22 @@ export async function copyForwardedAttachments(
 // (attach_reply_file), and the ones left out are noted on the comment (note_reply_skipped_files) — the
 // plan's skips right away, so they show even if this work is cut short, then any that failed.
 export async function copyReplyAttachments(
-  admin: Admin,
+  ctx: ApiContext,
   source: ReceivedFileSource,
   options: { emailId: string; commentId: string; taskId: string; plan: ReceivedFilePlan; listed?: unknown[] | null },
 ): Promise<{ added: number; skipped: number }> {
   const note = async (files: SkippedFile[]) => {
-    const { error } = await admin.rpc("note_reply_skipped_files", { target_comment: options.commentId, files });
+    const error = await noteReplySkippedFiles(ctx, options.commentId, files);
     if (error) console.error("Reply by email: note_reply_skipped_files refused", error.code);
   };
   if (options.plan.skipped.length) await note(options.plan.skipped);
-  const result = await copyReceivedAttachments(admin, source, {
+  const result = await copyReceivedAttachments(ctx, source, {
     emailId: options.emailId,
     taskId: options.taskId,
     plan: options.plan,
     listed: options.listed,
     record: async (file) => {
-      const { error } = await admin.rpc("attach_reply_file", {
-        target_comment: options.commentId,
-        file_path: file.path,
-        file_name: file.name,
-        file_type: file.type,
-        file_size: file.size,
-      });
+      const error = await attachReplyFile(ctx, options.commentId, file);
       if (error) console.error("Reply by email: attach_reply_file refused", error.code);
       return !error;
     },

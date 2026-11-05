@@ -1,6 +1,6 @@
 "use client";
 
-import type { ParentCandidate } from "@/lib/data";
+import type { ParentCandidate } from "@/lib/api/tasks/model";
 
 // Nov 2 notes (batch 16, 124): the "Make a subtask of…" picker's searches. A GET route (never queued
 // behind other Server Actions), the newest search wins (older ones are aborted), and the blank list

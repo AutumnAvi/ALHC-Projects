@@ -115,11 +115,15 @@ test("QW1: no 'is the migration applied' probes run on page loads", () => {
 // ---- QW2 ----------------------------------------------------------------------------------------
 
 test("QW2: the viewer comes from the locally verified token; getUser() only where a fresh check matters", () => {
-  const auth = fs.readFileSync("src/lib/auth.ts", "utf8");
+  // Big move 1: who the caller is lives in the data-access layer (src/lib/auth.ts binds it).
+  const auth = fs.readFileSync("src/lib/api/auth/queries.ts", "utf8");
   assert.match(auth, /auth\.getClaims\(\)/);
   assert.match(auth, /rpc\("is_allowlisted"\)/, "the allowlist is still asked on every request");
+  // Big move 1: the one getUser() call is the layer's getFreshUser, and only reset-password calls it.
   const callers = walk("src").filter((f) => /auth\.getUser\(/.test(fs.readFileSync(f, "utf8")));
-  assert.deepEqual(callers.map((f) => f.split(path.sep).join("/")), ["src/app/reset-password/actions.ts"]);
+  assert.deepEqual(callers.map((f) => f.split(path.sep).join("/")), ["src/lib/api/auth/mutations.ts"]);
+  const fresh = walk("src").filter((f) => !f.includes(`api${path.sep}auth`) && /getFreshUser\(/.test(fs.readFileSync(f, "utf8")));
+  assert.deepEqual(fresh.map((f) => f.split(path.sep).join("/")), ["src/app/reset-password/actions.ts"]);
 });
 
 // ---- QW3 ----------------------------------------------------------------------------------------

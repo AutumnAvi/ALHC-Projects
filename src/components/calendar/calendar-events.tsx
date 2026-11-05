@@ -6,7 +6,7 @@ import { useConfirm } from "@/components/confirm";
 import { DIALOG_HINT, DIALOG_LABEL, Dialog } from "@/components/dialog";
 import { SingleDatePicker, TimeInput } from "@/components/task/date-picker";
 import { useServerAction } from "@/components/toast";
-import { createCalendarEvent, deleteCalendarEvent, updateCalendarEvent } from "@/lib/actions";
+import { createCalendarEvent, deleteCalendarEvent, updateCalendarEvent } from "@/lib/actions/calendar";
 import {
   EVENT_NOTES_MAX,
   EVENT_TITLE_MAX,

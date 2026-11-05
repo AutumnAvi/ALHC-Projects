@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { cancelApproval, decideApproval, requestApproval, resubmitApproval } from "@/lib/actions";
-import type { Profile, TaskApproval, TaskDetail } from "@/lib/data";
+import { cancelApproval, decideApproval, requestApproval, resubmitApproval } from "@/lib/actions/approvals";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskApproval, TaskDetail } from "@/lib/api/task-pane/model";
 import { taskPermissions } from "@/lib/permissions";
 import { hasRole } from "@/lib/roles";
 

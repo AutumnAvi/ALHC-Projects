@@ -19,8 +19,8 @@ import {
   listMyTeamIds,
   listProjectStatusUpdates,
   listTeams,
-  type ProjectOrigin,
 } from "@/lib/data";
+import { type ProjectOrigin } from "@/lib/api/projects/model";
 import { hasRole } from "@/lib/roles";
 import { isProjectVisibility } from "@/lib/workspace";
 import { getViewerTimeZone } from "@/lib/timezone";

@@ -16,7 +16,7 @@ import {
   rotateInboundToken,
   setInboundSigningSecret,
   updateInboundEndpoint,
-} from "@/lib/actions";
+} from "@/lib/actions/integrations";
 import {
   INBOUND_CALL_STATUS_LABELS,
   INBOUND_RATE_PER_MINUTE,

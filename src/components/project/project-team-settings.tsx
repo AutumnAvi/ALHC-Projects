@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { updateProjectTeam } from "@/lib/actions";
+import { updateProjectTeam } from "@/lib/actions/projects";
 import { PROJECT_VISIBILITIES, VISIBILITY_DESCRIPTIONS, VISIBILITY_LABELS, type ProjectVisibility } from "@/lib/workspace";
 
 // Settings → General → Team and privacy (Admin+). Moving to another team needs you to be on it (the

@@ -4,7 +4,8 @@ import { useEffect, useState, useTransition } from "react";
 import { Plus, UsersRound, X } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
-import { loadTaskRoles, setTaskRoleLink, type TaskRolesInfo } from "@/lib/actions";
+import { loadTaskRoles, setTaskRoleLink } from "@/lib/actions/members";
+import { type TaskRolesInfo } from "@/lib/api/members/model";
 import { ROLE_SLOTS, type RoleSlot } from "@/lib/project-roles";
 import { PANE_LABEL } from "./pane-styles";
 

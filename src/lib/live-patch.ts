@@ -11,7 +11,10 @@
 // refetch: "refresh" (the page) or "refetch" (only the open task pane).
 
 import type { TaskChange } from "@/components/project/use-project-tasks";
-import type { InboxItem, MyTask, ProjectTask, SubtaskItem, TaskComment, TaskDetail } from "@/lib/data";
+import type { InboxItem } from "@/lib/api/inbox/model";
+import type { MyTask } from "@/lib/api/my-tasks/model";
+import type { ProjectTask, SubtaskItem } from "@/lib/api/tasks/model";
+import type { TaskComment, TaskDetail } from "@/lib/api/task-pane/model";
 import { REACTIONS, type ReactionKey } from "@/lib/reactions";
 import type { Json } from "@/lib/supabase/database.types";
 

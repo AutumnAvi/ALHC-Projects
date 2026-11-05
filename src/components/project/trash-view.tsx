@@ -2,13 +2,14 @@
 
 import { useOptimistic } from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { useServerAction } from "@/components/toast";
-import { restoreTask } from "@/lib/actions";
-import type { Profile, TrashedTask } from "@/lib/data";
+import { restoreTask } from "@/lib/actions/tasks";
+import type { Profile } from "@/lib/api/people/model";
+import type { TrashedTask } from "@/lib/api/tasks/model";
 import { TRASH_RETENTION_DAYS, trashDaysLeft, trashDeletesInLabel } from "@/lib/trash";
 
 // Deleted tasks stay in the Trash for TRASH_RETENTION_DAYS (Nov 1 notes, item 66): restoring one before

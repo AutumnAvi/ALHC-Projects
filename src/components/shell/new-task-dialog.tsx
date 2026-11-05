@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { Lock } from "lucide-react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
-import { createPrivateTask } from "@/lib/actions";
+import { createPrivateTask } from "@/lib/actions/tasks";
 
 // Create → Task: the My tasks quick-add in a dialog. The task is private (only you, and whoever you
 // assign it to, can see it) until it's added to a project, exactly like the Add task box in My tasks.

@@ -9,9 +9,9 @@ import { ImageLightbox } from "@/components/task/task-attachments";
 import { PickableFileCard, useTaskFileUploads, type PickableFile } from "@/components/task/task-file-uploads";
 import { previewKind } from "@/lib/attachment-preview";
 import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { MAX_REVIEW_ASSETS, MAX_REVIEW_MESSAGE, reviewMediaKind } from "@/lib/review-checks";
-import { sendReviewCheck } from "@/lib/review-actions";
+import { sendReviewCheck } from "@/lib/actions/reviews";
 import { finishPendingReview, startPendingReview } from "./review-events";
 
 // Oct 26 notes (batch 3): "Send review check" — pick the task's files and who reviews them (the form's

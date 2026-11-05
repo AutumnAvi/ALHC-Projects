@@ -22,12 +22,24 @@ import { renderDigestEmail, renderReportEmail, unsubscribeLinks } from "@/lib/em
 import { backgroundOrigin } from "@/lib/origin";
 import { resolveTaskLinkMarkers } from "@/lib/rule-placeholders";
 import { settingsHref } from "@/lib/shell";
-import { createAdminClient } from "@/lib/supabase/admin";
+import type { ApiContext } from "@/lib/api/core/context";
+import {
+  claimEmailDeliveries,
+  claimNotificationEmails,
+  claimScheduledEmails,
+  completeEmailOutbox,
+} from "@/lib/api/system/mutations";
+import {
+  approvalRoundFiles,
+  digestEmailContents,
+  emailDesignContext,
+  emailSenderName,
+  submitterReplyToken,
+} from "@/lib/api/system/queries";
+import { adminContext } from "@/lib/server/context";
 import { EMAIL_GRID_FILES, emailFileList, type ReviewEmailAsset } from "@/lib/review-email";
 import { approverReviewHref } from "@/lib/approver-review";
 import { isUuid } from "@/lib/ids";
-import { ATTACHMENTS_BUCKET } from "@/lib/attachments";
-import { thumbnailPath } from "@/lib/review-thumbnail-shared";
 import { WORKSPACE_ASSETS_BUCKET } from "@/lib/workspace";
 
 // Email delivery for the outbox the database fills (form confirmations, rule emails, comment emails to
@@ -481,17 +493,6 @@ export function fromHeader(configured: string, senderName: string | null): strin
   return `"${senderName}" <${address}>`;
 }
 
-async function workspaceSenderName(admin: NonNullable<ReturnType<typeof createAdminClient>>): Promise<string | null> {
-  const { data } = await admin
-    .from("workspaces")
-    .select("email_sender_name")
-    .is("deleted_at", null)
-    .order("created_at")
-    .limit(1)
-    .maybeSingle();
-  return data?.email_sender_name ?? null;
-}
-
 // Reply-To (Comments and reply by email): only a response to a form's submitter gets one — its thread's
 // r-<token>@<reply domain> address, while inbound replies are configured (RESEND_WEBHOOK_SECRET). Every
 // other email is no-reply. `token` is the database lookup (submitter_reply_token, service role).
@@ -504,19 +505,14 @@ export async function replyToFor(
   return found && /^[0-9a-f]{40}$/.test(found) ? replyAddress(found) : null;
 }
 
-async function replyTo(row: OutboxRow, admin: NonNullable<ReturnType<typeof createAdminClient>>): Promise<string | null> {
-  return replyToFor(row, async (emailId) => {
-    const { data, error } = await admin.rpc("submitter_reply_token", { target_email: emailId });
-    return error || typeof data !== "string" ? null : data;
-  });
+async function replyTo(row: OutboxRow, ctx: ApiContext): Promise<string | null> {
+  return replyToFor(row, (emailId) => submitterReplyToken(ctx, emailId));
 }
 
 function scheduledKind(row: OutboxRow): "digest" | "report" | null {
   const kind = row.task_id ? null : payloadOf(row).kind;
   return kind === "digest" || kind === "report" ? kind : null;
 }
-
-type Admin = NonNullable<ReturnType<typeof createAdminClient>>;
 
 // Digests and reports (Real features 3): a digest's items are read now, with the recipient's own access
 // (digest_email_items); a report's numbers were built as the recipient when it was queued. Both carry
@@ -525,23 +521,20 @@ type Admin = NonNullable<ReturnType<typeof createAdminClient>>;
 async function renderScheduled(
   row: OutboxRow,
   kind: "digest" | "report",
-  admin: Admin,
+  ctx: ApiContext,
   design: AppliedDesign,
 ): Promise<{ email: Rendered; headers: Record<string, string> } | { error: string }> {
   let email: Rendered;
   if (kind === "digest") {
-    const [items, tasks] = await Promise.all([
-      admin.rpc("digest_email_items", { target_email: row.id }),
-      admin.rpc("digest_email_tasks", { target_email: row.id }),
-    ]);
-    if (items.error) return { error: "Couldn’t read the digest’s items" };
-    // Nov 1 notes (batch 11): the tasks due or overdue (none on a database without the update).
-    if (tasks.error && tasks.error.code !== "PGRST202") return { error: "Couldn’t read the digest’s tasks" };
-    const dueTasks = tasks.error ? [] : (tasks.data ?? []);
-    if (!items.data?.length && !dueTasks.length) {
+    const contents = await digestEmailContents(ctx, row.id);
+    if ("failed" in contents) {
+      return { error: contents.failed === "items" ? "Couldn’t read the digest’s items" : "Couldn’t read the digest’s tasks" };
+    }
+    const dueTasks = contents.tasks;
+    if (!contents.items.length && !dueTasks.length) {
       return { error: "Not sent: everything in it was read, archived, finished, or can no longer be opened" };
     }
-    email = renderDigestEmail(row, items.data ?? [], design, dueTasks);
+    email = renderDigestEmail(row, contents.items, design, dueTasks);
   } else {
     email = renderReportEmail(row, design);
   }
@@ -574,21 +567,20 @@ export function emailLogoUrl(path: string): string | null {
 // workspace), and the fill-in values. Without the database update, the built-in look of the guessed kind.
 async function designFor(
   row: OutboxRow,
-  admin: Admin,
+  ctx: ApiContext,
 ): Promise<{ design: AppliedDesign; requestWrap: boolean; taskNumbers: EmailNumber[] | null }> {
   const fallback = guessDesignKind(row);
-  const { data, error } = await admin.rpc("email_design_context", { target_email: row.id });
-  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+  const context = await emailDesignContext(ctx, row.id);
+  if (!context) {
     return { design: defaultAppliedDesign(fallback), requestWrap: true, taskNumbers: null };
   }
-  const ctx = data as Record<string, unknown>;
-  const kind = isEmailDesignKind(ctx.kind) ? ctx.kind : fallback;
-  const v = ctx.values && typeof ctx.values === "object" && !Array.isArray(ctx.values) ? (ctx.values as Record<string, unknown>) : {};
+  const kind = isEmailDesignKind(context.kind) ? context.kind : fallback;
+  const v = context.values && typeof context.values === "object" && !Array.isArray(context.values) ? (context.values as Record<string, unknown>) : {};
   const s = (key: string) => (typeof v[key] === "string" && (v[key] as string).trim() ? (v[key] as string) : null);
   const origin = backgroundOrigin();
   const taskId = s("task_id");
   const projectId = s("task_project_id");
-  const formId = typeof ctx.form_id === "string" ? ctx.form_id : null;
+  const formId = typeof context.form_id === "string" ? context.form_id : null;
   // Nov 1 notes (batch 11): emails are hard-coded in these templates; a stored design (email_designs,
   // no longer editable in the app) is never applied — only the built-in look of the kind.
   const design = applyDesign(
@@ -781,8 +773,8 @@ export async function sendEmailNow(
     console.info(`[email:mocked] ${what}`);
     return "mocked";
   }
-  const admin = createAdminClient();
-  const senderName = admin ? await workspaceSenderName(admin) : null;
+  const ctx = adminContext();
+  const senderName = ctx ? await emailSenderName(ctx) : null;
   // No Reply-To here: a review check's email and every test are no-reply; a test of a replyable email
   // (a response to a submitter) comes from the same sender as the real one would.
   const from = fromFor(email.replyable === true, senderName)!;
@@ -816,50 +808,25 @@ const EMAIL_FILES_SIGNED = EMAIL_GRID_FILES;
 // recipient can open the task): the approval named in the item's own data, its round's files on that
 // task, and for each only an already-drawn thumbnail (never the file itself) signed for a week. Anything
 // missing = a file card. Best effort: a failure leaves the email without previews.
-async function approvalEmailFiles(row: OutboxRow, admin: Admin): Promise<ApprovalEmailFile[]> {
+async function approvalEmailFiles(row: OutboxRow, ctx: ApiContext): Promise<ApprovalEmailFile[]> {
   const p = payloadOf(row);
   if (!isNotification(row) || str(p.item_kind) !== "approval_requested") return [];
   const data = p.data && typeof p.data === "object" && !Array.isArray(p.data) ? p.data : {};
   const approvalId = data.approval_id;
   if (!isUuid(approvalId)) return [];
   try {
-    const request = await admin.from("approval_requests").select("task_id, round_id").eq("id", approvalId).maybeSingle();
-    const roundId = request.data?.round_id;
-    if (!request.data || !roundId) return [];
-    const round = await admin.from("approval_rounds").select("task_id, attachment_ids").eq("id", roundId).maybeSingle();
-    if (!round.data || round.data.task_id !== request.data.task_id) return [];
-    const taskId = round.data.task_id;
-    const ids = (round.data.attachment_ids ?? []).filter(isUuid);
-    if (ids.length === 0) return [];
-    const files = await admin
-      .from("task_attachments")
-      .select("id, file_name, content_type")
-      .in("id", ids)
-      .eq("task_id", taskId)
-      .is("deleted_at", null);
-    const byId = new Map((files.data ?? []).map((f) => [f.id, f] as const));
-    const ordered = ids.flatMap((id) => {
-      const f = byId.get(id);
-      return f ? [f] : [];
-    });
     const seconds = APPROVAL_PREVIEW_DAYS * 86400;
-    return await Promise.all(
-      ordered.map(async (f, i) => {
-        // Only the first ones the email shows are signed.
-        const signed =
-          i < EMAIL_FILES_SIGNED
-            ? await admin.storage.from(ATTACHMENTS_BUCKET).createSignedUrl(thumbnailPath(taskId, f.id), seconds)
-            : null;
-        const url = signed && !signed.error ? (signed.data?.signedUrl ?? null) : null;
-        return {
-          assetId: f.id,
-          name: f.file_name,
-          contentType: f.content_type,
-          thumbnailUrl: url && url.startsWith("https://") ? url : null,
-          thumbnailWidth: null,
-        };
-      }),
-    );
+    const files = await approvalRoundFiles(ctx, approvalId, { signFirst: EMAIL_FILES_SIGNED, expiresIn: seconds });
+    return files.map((f) => {
+      const url = f.signedUrl;
+      return {
+        assetId: f.id,
+        name: f.fileName,
+        contentType: f.contentType,
+        thumbnailUrl: url && url.startsWith("https://") ? url : null,
+        thumbnailWidth: null,
+      };
+    });
   } catch {
     return [];
   }
@@ -867,22 +834,22 @@ async function approvalEmailFiles(row: OutboxRow, admin: Admin): Promise<Approva
 
 async function deliver(
   row: OutboxRow,
-  admin: Admin,
+  ctx: ApiContext,
   senderName: string | null,
 ): Promise<{ outcome: "sent" | "mocked" | "error"; id?: string; error?: string }> {
   const scheduled = scheduledKind(row);
   let email: Rendered;
   let headers: Record<string, string> = {};
   let reply: string | null = null;
-  const { design, requestWrap, taskNumbers } = await designFor(row, admin);
+  const { design, requestWrap, taskNumbers } = await designFor(row, ctx);
   if (scheduled) {
-    const rendered = await renderScheduled(row, scheduled, admin, design);
+    const rendered = await renderScheduled(row, scheduled, ctx, design);
     if ("error" in rendered) return { outcome: "error", error: rendered.error };
     email = rendered.email;
     headers = rendered.headers;
   } else {
-    reply = await replyTo(row, admin);
-    const approvalFiles = await approvalEmailFiles(row, admin);
+    reply = await replyTo(row, ctx);
+    const approvalFiles = await approvalEmailFiles(row, ctx);
     email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap, taskNumbers, approvalFiles });
   }
   if (!isEmailConfigured()) {
@@ -930,28 +897,20 @@ async function deliver(
 // Claims queued emails with the service role and delivers them. Without SUPABASE_SERVICE_ROLE_KEY
 // nothing is claimed and rows stay pending for a later run.
 export async function drainOutbox(options: { onlyId?: string | null; max?: number } = {}) {
-  const admin = createAdminClient();
-  if (!admin) return { claimed: 0, sent: 0, mocked: 0, failed: 0, skipped: "no service role key" as const };
-  const { data, error } = await admin.rpc("claim_email_deliveries", {
-    max_items: options.max ?? 20,
-    only_id: options.onlyId ?? null,
-  });
+  const ctx = adminContext();
+  if (!ctx) return { claimed: 0, sent: 0, mocked: 0, failed: 0, skipped: "no service role key" as const };
+  const claim = { max: options.max ?? 20, onlyId: options.onlyId ?? null };
+  const { data, error } = await claimEmailDeliveries(ctx, claim);
   if (error) throw new Error(`Failed to claim emails: ${error.message}`);
   // Notification emails (Real features 2) have their own claim, so the release before them never takes
   // one; a database without the migration doesn't have it yet (PGRST202 → none). Digests and scheduled
   // reports (Real features 3) likewise. These two only log a failure: the rows the claims before them
   // already marked "sending" must still go out now, not wait out the 10-minute reclaim.
-  const notifications = await admin.rpc("claim_notification_emails", {
-    max_items: options.max ?? 20,
-    only_id: options.onlyId ?? null,
-  });
+  const notifications = await claimNotificationEmails(ctx, claim);
   if (notifications.error && notifications.error.code !== "PGRST202") {
     console.error("Failed to claim notification emails", notifications.error.code);
   }
-  const scheduled = await admin.rpc("claim_scheduled_emails", {
-    max_items: options.max ?? 20,
-    only_id: options.onlyId ?? null,
-  });
+  const scheduled = await claimScheduledEmails(ctx, claim);
   if (scheduled.error && scheduled.error.code !== "PGRST202") {
     console.error("Failed to claim digest and report emails", scheduled.error.code);
   }
@@ -961,22 +920,22 @@ export async function drainOutbox(options: { onlyId?: string | null; max?: numbe
     ...(scheduled.error ? [] : (scheduled.data ?? [])),
   ];
   const counts = { claimed: claimed.length, sent: 0, mocked: 0, failed: 0 };
-  const senderName = claimed.length ? await workspaceSenderName(admin) : null;
+  const senderName = claimed.length ? await emailSenderName(ctx) : null;
   for (const row of claimed) {
     let result: Awaited<ReturnType<typeof deliver>>;
     try {
-      result = await deliver(row, admin, senderName);
+      result = await deliver(row, ctx, senderName);
     } catch (e) {
       // Network errors keep only their kind (a message could carry request details).
       result = { outcome: "error", error: e instanceof Error && e.name === "TimeoutError" ? "Resend timed out" : "Couldn’t reach Resend" };
     }
     if (result.outcome === "error") counts.failed += 1;
     else counts[result.outcome] += 1;
-    await admin.rpc("complete_email_outbox", {
-      target_email: row.id,
+    await completeEmailOutbox(ctx, {
+      emailId: row.id,
       outcome: result.outcome === "error" ? "error" : result.outcome,
-      message_id: result.id ?? null,
-      error_message: result.error ?? null,
+      messageId: result.id ?? null,
+      errorMessage: result.error ?? null,
     });
   }
   return counts;

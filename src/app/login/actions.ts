@@ -2,9 +2,10 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import * as authApi from "@/lib/api/auth/mutations";
 import { safeNextPath } from "@/lib/auth";
 import { requestOrigin } from "@/lib/origin";
-import { createClient } from "@/lib/supabase/server";
+import { actionContext } from "@/lib/server/context";
 
 export type PasswordAuthState = { error?: string; notice?: string };
 
@@ -18,32 +19,28 @@ export async function passwordAuth(
   const next = safeNextPath(String(formData.get("next") ?? ""));
   if (!email || !password) return { error: "Enter your email and password." };
 
-  const supabase = await createClient();
+  const ctx = await actionContext();
 
   if (intent === "sign-up") {
     // The confirmation link returns through /auth/callback, which applies the allowlist gate.
     const origin = (await headers()).get("origin") ?? (await requestOrigin());
     const redirectTo = new URL("/auth/callback", origin);
     redirectTo.searchParams.set("next", next);
-    const { data, error } = await supabase.auth.signUp({
+    const { error, session } = await authApi.signUp(ctx, {
       email,
       password,
-      options: { emailRedirectTo: redirectTo.toString() },
+      emailRedirectTo: redirectTo.toString(),
     });
     if (error) return { error: error.message };
-    if (!data.session) {
+    if (!session) {
       return { notice: `Check ${email} for a confirmation link, then sign in.` };
     }
   } else {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await authApi.signInWithPassword(ctx, { email, password });
     if (error) return { error: error.message };
   }
 
-  const { data: allowlisted, error: allowlistError } = await supabase.rpc("is_allowlisted");
-  if (allowlistError || allowlisted !== true) {
-    // Never leave a non-allowlisted user holding a session.
-    await supabase.auth.signOut();
-    redirect(`/denied?email=${encodeURIComponent(email)}`);
-  }
+  // Never leave a non-allowlisted user holding a session (the gate signs them out).
+  if (!(await authApi.enforceAllowlist(ctx))) redirect(`/denied?email=${encodeURIComponent(email)}`);
   redirect(next);
 }

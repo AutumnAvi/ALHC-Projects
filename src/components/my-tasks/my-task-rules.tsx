@@ -21,7 +21,7 @@ import { RuleIcon } from "@/components/rules/rule-icons";
 import { MISSING_INPUT, TAGS_OFF, type RuleContext } from "@/components/rules/rule-shared";
 import { PlaceholderInput } from "@/components/rules/placeholder-input";
 import { useNotify, useServerAction } from "@/components/toast";
-import { deleteMyTaskRule, saveMyTaskRule, setMyTaskRuleEnabled } from "@/lib/actions";
+import { deleteMyTaskRule, saveMyTaskRule, setMyTaskRuleEnabled } from "@/lib/actions/my-task-rules";
 import {
   MY_TASK_ACTIONS,
   MY_TASK_CONDITIONS,

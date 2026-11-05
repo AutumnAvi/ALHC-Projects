@@ -5,7 +5,7 @@
 // the next open). Fifty tasks at most (client.ts).
 
 import { isServer, type FetchQueryOptions, type QueryClient } from "@tanstack/query-core";
-import type { TaskDetail, TaskExtras, TaskPaneContext, TaskPanePayload } from "@/lib/data";
+import type { TaskDetail, TaskExtras, TaskPaneContext, TaskPanePayload } from "@/lib/api/task-pane/model";
 import { queryKeys } from "./keys";
 import { newestOf, readStamped, writeNewest, type Stamped } from "./stamped";
 import { getJson } from "./transport";

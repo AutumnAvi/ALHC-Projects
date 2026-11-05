@@ -37,7 +37,7 @@ import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { FormLiveSwitch, FormStatusBadge } from "@/components/forms/form-status";
-import { deleteForm, setFormLive, updateForm } from "@/lib/actions";
+import { deleteForm, setFormLive, updateForm } from "@/lib/actions/forms";
 import { MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
 import { FORM_LOCKED_FIELD_NOTE, type FieldDef } from "@/lib/fields";
 import { FieldLockIcon } from "@/components/project/field-lock";

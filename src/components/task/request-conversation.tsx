@@ -1,7 +1,7 @@
 "use client";
 
 import { MailX } from "lucide-react";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { conversationNote } from "@/lib/verified-domains";
 
 // Nov 1 notes, item 69: in a request's pane, what workers need to know about its email conversation.

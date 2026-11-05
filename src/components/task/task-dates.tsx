@@ -4,10 +4,10 @@ import { useEffect, useOptimistic, useState, useSyncExternalStore } from "react"
 import { CalendarDays, Clock, Repeat, X } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
-import { updateTask } from "@/lib/actions";
+import { updateTask } from "@/lib/actions/tasks";
 import { addDays, useToday } from "@/lib/dates";
 import { dayLabel, formatTime } from "@/lib/date-input";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { describeRecurrence } from "@/lib/recurrence";
 import { useDependencyShift } from "./dependency-shift";
 import { DateRangePicker, TimeInput, type DateRange } from "./date-picker";

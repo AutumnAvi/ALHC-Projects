@@ -2,7 +2,7 @@ import { History } from "lucide-react";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
-import type { ProjectStatusUpdate } from "@/lib/data";
+import type { ProjectStatusUpdate } from "@/lib/api/projects/model";
 
 // Every status change, newest first (project_status_updates; written by set_project_status). Readable by
 // everyone in the project; portfolios show the latest one as a column.

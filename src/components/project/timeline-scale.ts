@@ -1,6 +1,6 @@
 import { timelineWindow } from "@/lib/date-input";
 import { addDays, formatDueDate } from "@/lib/dates";
-import type { ProjectTask } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
 
 // Date math for the Timeline. Dates are calendar dates (YYYY-MM-DD) with no time zone, handled as
 // UTC days so every viewer sees the same columns.

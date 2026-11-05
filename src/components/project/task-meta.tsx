@@ -1,9 +1,11 @@
 "use client";
 
 import { CalendarDays, Layers, ListChecks, MessageSquare, Paperclip, Repeat, UserRound } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { addDays, formatDueDate, isOverdue, useToday } from "@/lib/dates";
-import type { Profile, ProjectTask } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { ProjectTask } from "@/lib/api/tasks/model";
 import { APPROVAL_STATUS_LABELS, approvalStatusText, type ApprovalTaskStatus } from "@/lib/task-kinds";
 
 // Asana's due dates: overdue in red, today and tomorrow in green (spelled out), the rest as dates.

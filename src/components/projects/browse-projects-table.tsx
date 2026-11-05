@@ -10,7 +10,7 @@ import { Popover } from "@/components/popover";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { joinProject } from "@/lib/actions";
+import { joinProject } from "@/lib/actions/projects";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus } from "@/lib/portfolios";
 import { projectColorClass } from "@/lib/project-colors";
 import { ROLE_LABELS, isProjectRole } from "@/lib/roles";

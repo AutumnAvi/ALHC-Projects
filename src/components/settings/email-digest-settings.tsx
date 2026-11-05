@@ -4,7 +4,7 @@ import { useState, useSyncExternalStore } from "react";
 import { Segmented } from "@/components/project/view-chrome";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { setEmailDigest, setReportEmails } from "@/lib/actions";
+import { setEmailDigest, setReportEmails } from "@/lib/actions/me";
 import {
   DIGEST_FREQUENCIES,
   HOURS,

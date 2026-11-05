@@ -5,7 +5,7 @@ import { GoalStatusBadge } from "@/components/goals/goal-status-badge";
 import { ProgressBar } from "@/components/portfolio/progress-bar";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState } from "@/components/ui";
-import type { TeamPerson } from "@/lib/data";
+import type { TeamPerson } from "@/lib/api/teams/model";
 import { personHref } from "@/lib/people";
 import { NO_PROGRESS, type Goal, type GoalProgress } from "@/lib/goals";
 import { formatProgress } from "@/lib/portfolios";

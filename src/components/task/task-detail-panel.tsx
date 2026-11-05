@@ -7,10 +7,14 @@ import { Check, ChevronRight, Clock, FileInput, Hash, Link2, ListPlus, Lock, Pap
 import { usePaneExpanded, usePaneWide } from "./pane-size";
 import { CloseButton, ExpandButton, PANE_HEADER, PaneShell, useClosePane, WideViewToggle } from "./task-pane-frame";
 import { RecordRecent } from "@/components/shell/shell-context";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useNotify, useServerAction } from "@/components/toast";
-import { assignRequestNumber, completeApprovalAsApprover, setTaskCompleted, updateTask } from "@/lib/actions";
-import type { Profile, TaskDetail } from "@/lib/data";
+import { assignRequestNumber } from "@/lib/actions/numbering";
+import { completeApprovalAsApprover } from "@/lib/actions/approvals";
+import { setTaskCompleted, updateTask } from "@/lib/actions/tasks";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { taskPermissions } from "@/lib/permissions";
 import type { Tag } from "@/lib/tags";
 import { completeModeLabel, completeModeOf } from "@/lib/approval-complete";

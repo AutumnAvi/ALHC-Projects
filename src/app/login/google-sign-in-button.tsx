@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { signInWithGoogle } from "@/lib/api/client/auth";
+import { createApiContext } from "@/lib/api/core/context";
 import { createClient } from "@/lib/supabase/client";
 
 export function GoogleSignInButton({ next }: { next: string }) {
@@ -13,15 +15,9 @@ export function GoogleSignInButton({ next }: { next: string }) {
     const redirectTo = new URL("/auth/callback", window.location.origin);
     redirectTo.searchParams.set("next", next);
 
-    const { error } = await createClient().auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: redirectTo.toString(),
-        queryParams: { prompt: "select_account" },
-      },
-    });
-    if (error) {
-      setError(error.message);
+    const { error } = await signInWithGoogle(createApiContext(createClient()), redirectTo.toString());
+    if (error !== null) {
+      setError(error);
       setPending(false);
     }
   }

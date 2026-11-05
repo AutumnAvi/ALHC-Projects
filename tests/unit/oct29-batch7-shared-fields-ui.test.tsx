@@ -13,7 +13,7 @@ import { ProjectAccessProvider } from "@/components/project/project-access";
 import { ProjectPageProvider } from "@/components/project/project-page-context";
 import { ToastProvider } from "@/components/toast";
 import { TaskFields } from "@/components/task/task-fields";
-import type { TaskDetail } from "@/lib/data";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { SHARED_FIELD_EDITABLE, SHARED_FIELD_READ_ONLY, type FieldDef, type FieldSharing } from "@/lib/fields";
 
 const router = { push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch() {} };

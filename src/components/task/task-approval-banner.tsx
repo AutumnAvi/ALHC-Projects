@@ -22,7 +22,8 @@ import {
 import { Dialog } from "@/components/dialog";
 import { APPROVAL_STATUS_LABELS } from "@/lib/task-kinds";
 import { feedbackSnippet, feedbackSubtaskText, roundFeedback, shortFileName, type FeedbackTone } from "@/lib/approval-feedback";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { useConfirm } from "@/components/confirm";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
@@ -35,9 +36,10 @@ import {
   handOffApproval,
   setTaskApprovers,
   withdrawApproval,
-} from "@/lib/actions";
+} from "@/lib/actions/approvals";
 import { cantDecideMessage, cantSendMessage } from "@/lib/approval-complete";
-import type { ApprovalRound, Profile, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/data";
+import type { ApprovalRound, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/api/task-pane/model";
+import type { Profile } from "@/lib/api/people/model";
 import { formatDueDate, useToday } from "@/lib/dates";
 import { taskPermissions } from "@/lib/permissions";
 import { hasRole } from "@/lib/roles";

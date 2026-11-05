@@ -15,7 +15,9 @@ import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
 import { TaskDetailPanel } from "@/components/task/task-detail-panel";
 import { SubtaskPrefsProvider } from "@/components/task/subtask-prefs";
-import type { ProjectTask, Section, TaskDetail } from "@/lib/data";
+import type { ProjectTask } from "@/lib/api/tasks/model";
+import type { Section } from "@/lib/api/projects/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import {
   DEFAULT_SUBTASK_PREFS,
   isOrganized,

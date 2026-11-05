@@ -1,7 +1,7 @@
 // Nov 4 notes (batch 27, 161): an approval round's feedback as small pills next to the task's files —
 // one per file the approver reviewed ("✗ logo.pdf: Do better", "✓ flyer.png: approved"; the lines
 // approverDecisionNote() writes), plus the approver's overall note. Pure, so the unit tests can pin it.
-import type { ApprovalRound } from "@/lib/data";
+import type { ApprovalRound } from "@/lib/api/task-pane/model";
 
 export type FeedbackTone = "approved" | "changes_requested" | "rejected";
 

@@ -1,7 +1,7 @@
-import { createClient } from "@supabase/supabase-js";
+import { isApiError } from "@/lib/api/core/errors";
+import { emailUnsubscribe } from "@/lib/api/public/mutations";
 import { isUnsubscribeWhat, UNSUBSCRIBE_TOKEN, type UnsubscribeWhat } from "@/lib/email-schedules";
-import { readSupabaseEnv } from "@/lib/env";
-import type { Database } from "@/lib/supabase/database.types";
+import { anonContext } from "@/lib/server/context";
 
 // The one-click "Turn off" links in Inbox digests and scheduled report emails (Real features 3). No
 // sign-in: the token in the link is the person's unsubscribe token, and email_unsubscribe() turns off
@@ -40,17 +40,14 @@ export async function POST(request: Request) {
   const { token, what, fromPage } = input(url, form);
 
   let status = "unknown";
-  const env = readSupabaseEnv();
-  if (token && what && env) {
-    const supabase = createClient<Database>(env.url, env.anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    });
-    const { data, error } = await supabase.rpc("email_unsubscribe", { unsubscribe_token: token, what });
-    if (error) {
-      console.error("Unsubscribe failed", error.code);
+  const ctx = token && what ? anonContext() : null;
+  if (token && what && ctx) {
+    try {
+      status = await emailUnsubscribe(ctx, token, what);
+    } catch (error) {
+      if (!isApiError(error)) throw error;
+      console.error("Unsubscribe failed", error.detail?.code);
       status = "error";
-    } else {
-      status = (data as { status?: string } | null)?.status ?? "unknown";
     }
   }
 

@@ -3,9 +3,11 @@
 import { useRef, useState } from "react";
 import { FileText, Image as ImageIcon, Paperclip, Video } from "lucide-react";
 import { Thumbnail } from "@/components/task/task-attachments";
-import { registerAttachment } from "@/lib/actions";
+import { registerAttachment } from "@/lib/actions/comments";
 import { previewKind } from "@/lib/attachment-preview";
-import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL, attachmentPath } from "@/lib/attachments";
+import { uploadTaskFile } from "@/lib/api/client/storage";
+import { createApiContext } from "@/lib/api/core/context";
+import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL, attachmentPath } from "@/lib/attachments";
 import { reviewMediaKind } from "@/lib/review-checks";
 import { createClient } from "@/lib/supabase/client";
 
@@ -26,7 +28,7 @@ export function useTaskFileUploads(taskId: string, onAttached: (file: PickableFi
     const chosen = Array.from(list ?? []);
     if (fileInput.current) fileInput.current.value = "";
     if (!chosen.length) return;
-    const supabase = createClient();
+    const ctx = createApiContext(createClient());
     for (const file of chosen) {
       const key = `${file.name}-${crypto.randomUUID()}`;
       if (file.size > MAX_ATTACHMENT_BYTES) {
@@ -41,10 +43,8 @@ export function useTaskFileUploads(taskId: string, onAttached: (file: PickableFi
       const fail = (message: string) =>
         setUploads((current) => current.map((u) => (u.key === key ? { ...u, error: message } : u)));
       const path = attachmentPath(taskId, file.name, crypto.randomUUID());
-      const stored = await supabase.storage
-        .from(ATTACHMENTS_BUCKET)
-        .upload(path, file, { contentType: file.type || undefined, upsert: false });
-      if (stored.error) {
+      const stored = await uploadTaskFile(ctx, path, file);
+      if (stored.error !== null) {
         fail("Couldn’t upload. Try again.");
         continue;
       }

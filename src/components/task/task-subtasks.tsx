@@ -2,13 +2,16 @@
 
 import { useOptimistic, useRef, useState, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, Lock, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { RowCompleteControl } from "./row-complete-control";
-import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask } from "@/lib/actions";
+import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask } from "@/lib/actions/tasks";
 import { addDays, useToday } from "@/lib/dates";
-import type { Profile, SubtaskItem, TaskDetail } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { SubtaskItem } from "@/lib/api/tasks/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { formatRequestLabel } from "@/lib/request-numbers";
 import { taskPermissions } from "@/lib/permissions";
 import { hasRole } from "@/lib/roles";

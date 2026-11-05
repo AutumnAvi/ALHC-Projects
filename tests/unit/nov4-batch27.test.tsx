@@ -10,7 +10,7 @@ import { PeopleDirectoryProvider, TaskTitleText } from "@/components/task/title-
 import { approvalPillText } from "@/components/task/task-approval-banner";
 import { feedbackSnippet, feedbackSubtaskText, parseDecisionNote, roundFeedback, shortFileName } from "@/lib/approval-feedback";
 import { approverDecisionNote } from "@/lib/approver-review";
-import type { ApprovalRound, TaskApproval } from "@/lib/data";
+import type { ApprovalRound, TaskApproval } from "@/lib/api/task-pane/model";
 import { parseQuickAdd } from "@/lib/quick-add";
 import { titleHasMentions, titleMentionHandle, titleMentionSegments } from "@/lib/title-mentions";
 
@@ -158,8 +158,10 @@ test("162: quick add keeps the @person in the name (under their full name) and n
   assert.equal(parsed.title, "remember to message @Dana Diaz");
   assert.equal(parsed.person?.id, "u1");
   assert.equal(parsed.dueOn, "2026-11-05");
-  const actions = fs.readFileSync("src/lib/actions.ts", "utf8");
-  const quick = actions.slice(actions.indexOf("export async function quickAddTask"), actions.indexOf("export async function setMyTasksChecked"));
+  // Big move 1: quick add's write lives in the layer (src/lib/api/my-tasks/mutations.ts).
+  const actions = fs.readFileSync("src/lib/api/my-tasks/mutations.ts", "utf8");
+  const at = actions.indexOf("export async function quickAddTask");
+  const quick = actions.slice(at, actions.indexOf("\n}\n", at));
   assert.ok(!/assignee_id: mentionId/.test(quick), "the mention never becomes the assignee");
 });
 

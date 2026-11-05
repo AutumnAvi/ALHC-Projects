@@ -6,7 +6,7 @@ import { Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Max
 import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { useServerAction } from "@/components/toast";
-import { decideApproval } from "@/lib/actions";
+import { decideApproval } from "@/lib/actions/approvals";
 import {
   approverDecision,
   approverDecisionNote,
@@ -16,7 +16,7 @@ import {
   approverReviewStorageKey,
   parseStoredReview,
 } from "@/lib/approver-review";
-import type { ApprovalRound, TaskAttachment } from "@/lib/data";
+import type { ApprovalRound, TaskAttachment } from "@/lib/api/task-pane/model";
 import { answerProblem, approveFile, confirmQuestion, nextUnreviewedIndex, reviewTally, reviewedLabel, setFileNote, submitLabel, unapproveFile, type FileReviews } from "@/lib/review-portal";
 import { reviewMediaKind, type ReviewFile } from "@/lib/review-checks";
 

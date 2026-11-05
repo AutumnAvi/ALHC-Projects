@@ -2,12 +2,13 @@
 
 import { useId, useState } from "react";
 import { CalendarDays, ChevronDown, ChevronRight, X } from "lucide-react";
-import { Avatar, displayName } from "@/components/avatar";
+import { Avatar } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { Dialog } from "@/components/dialog";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { setApprovalFollowUp, setTaskApprovers } from "@/lib/actions";
+import { setApprovalFollowUp, setTaskApprovers } from "@/lib/actions/approvals";
 import {
   FOLLOW_UP_LABELS,
   approvalSetupProblem,
@@ -16,7 +17,8 @@ import {
   type ApprovalFollowUp,
   type ApprovalSetupDraft,
 } from "@/lib/approval-setup";
-import type { Profile, TaskDetail } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { formatDueDate } from "@/lib/dates";
 import { hasRole } from "@/lib/roles";
 import { SingleDatePicker } from "./date-picker";

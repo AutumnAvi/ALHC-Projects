@@ -1,6 +1,7 @@
-import { displayName } from "@/components/avatar";
+import { displayName } from "@/lib/people";
 import { OPTION_COLOR_CLASSES, fieldChips, type FieldDef } from "@/lib/fields";
-import type { Profile, ProjectTask } from "@/lib/data";
+import type { Profile } from "@/lib/api/people/model";
+import type { ProjectTask } from "@/lib/api/tasks/model";
 import { TEXT_TOOLTIP_LENGTH, textPreview } from "@/lib/long-text";
 
 export type FieldContext = {
