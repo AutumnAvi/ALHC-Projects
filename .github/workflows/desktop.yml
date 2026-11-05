@@ -1,0 +1,74 @@
+# Big move 3 (docs/design/desktop.md): unsigned native builds of the desktop app (apps/desktop) on macOS
+# and Windows, uploaded as workflow artifacts (14 days) for trying the app. Runs on pull requests that
+# touch the desktop app, and by hand (Actions → Desktop builds → Run workflow). Signing, notarization,
+# and releases are a separate, manual step for now: docs/desktop-release.md.
+name: Desktop builds
+
+on:
+  pull_request:
+    # Only the desktop app's own files change what these builds compile (ci.yml builds its launcher page,
+    # which uses @alhc/core, on every pull request).
+    paths:
+      - apps/desktop/**
+      - .github/workflows/desktop.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple silicon, unsigned)
+            os: macos-latest
+            bundles: app,dmg
+            artifact: alhc-projects-macos-arm64-unsigned
+          - name: Windows (x64, unsigned)
+            os: windows-latest
+            bundles: nsis,msi
+            artifact: alhc-projects-windows-x64-unsigned
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The version in apps/desktop/src-tauri/rust-toolchain.toml (bump both together).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      # `tauri build` runs `npm run build:frontend` (tauri.conf.json → build.beforeBuildCommand). No
+      # signing identity or certificate is configured, so the bundles are unsigned. (bash: PowerShell would
+      # split nsis,msi.)
+      - name: Build the app (unsigned)
+        shell: bash
+        run: npm run build --workspace @alhc/desktop -- --bundles ${{ matrix.bundles }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 14

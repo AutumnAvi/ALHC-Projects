@@ -130,6 +130,11 @@ packages), `npm run build` (the app), `npm run db:test`, `npm run db:types`. Per
 
 ## 8. Left for the desktop step
 
+**Done in big move 3, differently** ([desktop.md](desktop.md)): `apps/desktop` wraps the hosted web app in a Tauri
+window instead of rebuilding its UI on the core (every page is a Server Component and every write a Server
+Action, so the core alone isn't a UI). It shares `@alhc/core/desktop-links` with the core. The notes below
+stay as the route to a local UI, should one ever be needed (offline, say).
+
 - `apps/desktop` (Tauri, online-only): makes its own supabase-js client with the person's session (same
   RLS), wraps it in `createApiContext(db)`, and calls `@alhc/core/api/…` directly — or reaches the
   existing JSON routes through `@alhc/core/query/transport` (`configureTransport({ baseUrl, headers })`).

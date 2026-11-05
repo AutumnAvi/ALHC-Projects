@@ -76,3 +76,61 @@ jobs:
       - name: Run database smoke tests
         if: steps.changes.outputs.supabase == 'true'
         run: npm run db:test
+
+  # Big move 3 (docs/design/desktop.md): the desktop app (apps/desktop). The checks job above already lints,
+  # type-checks, and tests its TypeScript with the rest of the workspace; this builds the launcher page and
+  # checks the Rust shell on Linux (WebKitGTK): format, clippy in development and release configurations,
+  # and the navigation-policy tests. Native (unsigned) macOS and Windows builds are desktop.yml's (it runs
+  # when apps/desktop changes, or by hand).
+  desktop:
+    name: desktop (launcher, Rust shell)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck (desktop)
+        run: npm run typecheck --workspace @alhc/desktop
+
+      # The Rust build embeds apps/desktop/dist (tauri.conf.json → build.frontendDist).
+      - name: Build the launcher page (desktop)
+        run: npm run build:frontend --workspace @alhc/desktop
+
+      # Tauri's Linux prerequisites (https://v2.tauri.app/start/prerequisites/#linux).
+      - name: Install WebKitGTK and the Tauri build prerequisites
+        run: >-
+          sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y
+          libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      # The version in apps/desktop/src-tauri/rust-toolchain.toml (bump both together).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: cargo fmt
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --check
+
+      # Without the custom-protocol feature Tauri builds as under `tauri dev` (cfg(dev)); with it, as
+      # `tauri build` does. Both must be warning-free.
+      - name: cargo clippy (development and release configurations)
+        working-directory: apps/desktop/src-tauri
+        run: |
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo clippy --locked --all-targets --features tauri/custom-protocol -- -D warnings
+
+      - name: cargo test (navigation policy)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked

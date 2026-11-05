@@ -1,0 +1,96 @@
+/* The launcher's look follows the web app's sign-in screen (apps/web/src/components/auth-card.tsx):
+   zinc-50 page, the dark "A" tile, Asana-blue primary button. System fonts: nothing is downloaded. */
+:root {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #18181b;
+  background: #fafafa;
+  -webkit-font-smoothing: antialiased;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+.launcher {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  box-sizing: border-box;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.tile {
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #18181b;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.status {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.detail {
+  max-width: 26rem;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #52525b;
+}
+
+.retry {
+  height: 32px;
+  margin-top: 4px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: #4573d2;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.retry:hover {
+  background: #3a63bb;
+}
+
+.retry:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(69 115 210 / 30%);
+}
+
+[hidden] {
+  display: none !important;
+}

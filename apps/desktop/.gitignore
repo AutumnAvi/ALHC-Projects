@@ -1,0 +1,2 @@
+# The launcher page Vite builds (npm run build:frontend); Tauri bundles it.
+/dist/

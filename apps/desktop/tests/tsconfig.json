@@ -1,0 +1,9 @@
+{
+  // The launcher's unit tests run on Node's test runner, so they get Node's types (src/ gets the DOM).
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts"]
+}

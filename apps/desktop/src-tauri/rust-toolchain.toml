@@ -1,0 +1,7 @@
+# The Rust release the shell is checked with (CI installs the same one: .github/workflows/ci.yml and
+# desktop.yml). Pinned so a new Rust release can't turn the CI red on its own (new lints with -D warnings);
+# bump it on purpose. Tauri 2.12 needs 1.90 or later (Cargo.toml → rust-version).
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
