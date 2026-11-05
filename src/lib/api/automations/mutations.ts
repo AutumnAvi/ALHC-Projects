@@ -9,6 +9,7 @@ import type { ApiContext } from "@/lib/api/core/context";
 import { check, checkUpdated, nowIso } from "@/lib/api/core/db";
 import { ApiError, NOT_ALLOWED, invalid, isApiError } from "@/lib/api/core/errors";
 import { id, text } from "@/lib/api/core/validate";
+import { blockedCompletionReason, parseBlockerCounts, ruleCompletesTask } from "@/lib/blocked-completion";
 import { MAX_BULK_TASKS, type BulkRuleRun } from "@/lib/bulk";
 import {
   MAX_SECRET_LENGTH,
@@ -263,6 +264,33 @@ export async function installRulePreset(
 
 const MANUAL_RULE_STATUSES: readonly ManualRuleStatus[] = ["succeeded", "scheduled", "failed", "skipped", "conditions", "duplicate"];
 
+// Nov 5 note 163: automations never complete a blocked task. The database runs a rule's Mark complete as
+// system code, which its dependency guard doesn't check, so a run by hand would complete a task that
+// still waits on open tasks. Until the database skips that step itself (outcome "blocked"), a hand-run or
+// bulk-run automation that would complete its task isn't run on a blocked one at all. Answers each given
+// task's open-blocker count (hidden blockers included), only for automations that complete; fails closed
+// (a failed count refuses the run instead of letting a completion through).
+async function blockersForCompletingRule(
+  ctx: ApiContext,
+  actions: Json | null | undefined,
+  taskIds: string[],
+): Promise<Map<string, number>> {
+  if (!ruleCompletesTask(actions) || taskIds.length === 0) return new Map();
+  const counts = new Map<string, number>();
+  for (let i = 0; i < taskIds.length; i += 2000) {
+    const result = await ctx.db.rpc("open_blocker_counts", { task_ids: taskIds.slice(i, i + 2000) });
+    check(result);
+    for (const [taskId, count] of parseBlockerCounts(result.data)) counts.set(taskId, count);
+  }
+  return counts;
+}
+
+async function ruleActions(ctx: ApiContext, ruleId: string): Promise<{ project_id: string; actions: Json } | null> {
+  const rule = await ctx.db.from("rules").select("project_id, actions").eq("id", ruleId).is("deleted_at", null).maybeSingle();
+  check(rule);
+  return rule.data;
+}
+
 // Runs a "Run manually" rule on a task now (run_manual_rule: Editor+ of the rule's project, the task in
 // that project). `summary` is what each step did (the run log's step results); a run whose actions
 // failed comes back as status "failed" with its error in `failure` (nothing it did is kept). The rule may
@@ -273,7 +301,13 @@ export async function runManualRule(ctx: ApiContext, ruleId: string, taskId: str
   let reason: string | undefined;
   let partial: ManualRuleRun["partial"] = null;
   const supabase = ctx.db;
-  const ran = await supabase.rpc("run_manual_rule", { target_rule: id(ruleId, "rule"), target_task: id(taskId, "task") });
+  const ruleKey = id(ruleId, "rule");
+  const taskKey = id(taskId, "task");
+  // Note 163: never complete a blocked task (see blockersForCompletingRule). Nothing runs; it says why.
+  const rule = await ruleActions(ctx, ruleKey);
+  const blockers = (await blockersForCompletingRule(ctx, rule?.actions, [taskKey])).get(taskKey) ?? 0;
+  if (blockers > 0) return { status: "skipped", summary: [], reason: blockedCompletionReason(blockers), partial: null };
+  const ran = await supabase.rpc("run_manual_rule", { target_rule: ruleKey, target_task: taskKey });
   if (ran.error?.code === "PGRST202") throw invalid("Running automations from a task needs this release’s database update");
   check(ran);
   const data = (ran.data ?? {}) as { status?: unknown; detail?: Json | null };
@@ -306,20 +340,26 @@ export async function runManualRuleOnTasks(ctx: ApiContext, ruleId: string, task
   if (ids.length === 0) throw invalid("Select at least one task");
   if (ids.length > MAX_BULK_TASKS) throw invalid(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
   const supabase = ctx.db;
-  const rule = await supabase.from("rules").select("project_id").eq("id", id(ruleId, "automation")).is("deleted_at", null).maybeSingle();
-  check(rule);
-  if (!rule.data) throw invalid("That automation isn’t available any more");
+  const rule = await ruleActions(ctx, id(ruleId, "automation"));
+  if (!rule) throw invalid("That automation isn’t available any more");
   const inProject = await supabase
     .from("task_projects")
     .select("task_id")
-    .eq("project_id", rule.data.project_id)
+    .eq("project_id", rule.project_id)
     .in("task_id", ids)
     .is("deleted_at", null);
   check(inProject);
   const runnable = new Set((inProject.data ?? []).map((m) => m.task_id));
   const ordered = ids.filter((t) => runnable.has(t));
   summary.notInProject = ids.length - ordered.length;
+  // Note 163: an automation that completes its task isn't run on a blocked one (counted, with why).
+  const blockers = await blockersForCompletingRule(ctx, rule.actions, ordered);
   for (const taskId of ordered) {
+    const blockedBy = blockers.get(taskId) ?? 0;
+    if (blockedBy > 0) {
+      summary.blocked = (summary.blocked ?? 0) + 1;
+      continue;
+    }
     const ran = await supabase.rpc("run_manual_rule", { target_rule: ruleId, target_task: taskId });
     if (ran.error?.code === "PGRST202") throw invalid("Running automations needs this release’s database update");
     if (ran.error) {
