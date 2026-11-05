@@ -160,10 +160,16 @@ function loadPdfJs(): Promise<PdfJs> {
   return pdfjsLoad;
 }
 
-// The built-in fonts' data (Helvetica, Times, …) for PDFs that don't embed their fonts.
-function standardFontDataUrl(): string | undefined {
-  const dir = path.join(process.cwd(), "node_modules", "pdfjs-dist", "standard_fonts");
-  return existsSync(dir) ? `${dir}${path.sep}` : undefined;
+// The built-in fonts' data (Helvetica, Times, …) for PDFs that don't embed their fonts. Found the way
+// Node finds a package — node_modules here, else in a parent folder: since big move 2 the app runs from
+// apps/web (locally and in its Vercel function) while npm installs pdf.js in the monorepo root's
+// node_modules, which next.config.ts traces into this route.
+export function standardFontDataUrl(start: string = process.cwd()): string | undefined {
+  for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
+    const fonts = path.join(dir, "node_modules", "pdfjs-dist", "standard_fonts");
+    if (existsSync(fonts)) return `${fonts}${path.sep}`;
+    if (path.dirname(dir) === dir) return undefined;
+  }
 }
 
 async function renderPdf(canvasLib: Canvas, bytes: Uint8Array): Promise<Buffer> {

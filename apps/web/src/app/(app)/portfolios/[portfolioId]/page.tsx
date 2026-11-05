@@ -20,7 +20,7 @@ import {
 import { type ProjectStatusUpdate } from "@alhc/core/api/projects/model";
 import { nestedPortfolioProjects } from "@alhc/core/portfolio-picker";
 import { EMPTY_COUNTS } from "@alhc/core/portfolios";
-import { softRead } from "@/lib/soft-read";
+import { softRead } from "@alhc/core/api/core/soft-read";
 import type { Json } from "@alhc/core/supabase/database.types";
 import { getViewerTimeZone } from "@/lib/timezone";
 

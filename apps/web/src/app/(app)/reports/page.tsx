@@ -38,7 +38,7 @@ import {
   withDefaultWindow,
   withoutReportTags,
 } from "@alhc/core/reports";
-import { softRead } from "@/lib/soft-read";
+import { softRead } from "@alhc/core/api/core/soft-read";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@alhc/core/workload";
 

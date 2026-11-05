@@ -6,7 +6,7 @@ import { SearchResults } from "@/components/search/search-results";
 import { TaskPaneSlot } from "@/components/task/task-pane";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { listVisibleTags, listTaskTagIds, searchTasks } from "@/lib/data";
-import { softRead } from "@/lib/soft-read";
+import { softRead } from "@alhc/core/api/core/soft-read";
 
 export const metadata: Metadata = { title: "Search" };
 

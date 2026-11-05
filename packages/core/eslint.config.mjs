@@ -11,6 +11,14 @@ const NODE_BUILTINS = [
   "stream", "string_decoder", "timers", "tls", "tty", "url", "util", "v8", "vm", "worker_threads", "zlib",
 ];
 
+// Browser-only, including what the WebWorker library declares that a page or Node lacks.
+const BROWSER_GLOBALS = [
+  "window", "document", "localStorage", "sessionStorage", "navigator", "location", "history", "self",
+  "importScripts", "postMessage", "close", "caches", "indexedDB", "onmessage", "onmessageerror", "onerror",
+  "onlanguagechange", "onoffline", "ononline", "onrejectionhandled", "onunhandledrejection",
+];
+const NODE_GLOBALS = ["process", "Buffer", "require", "module", "__dirname", "__filename", "global"];
+
 export default defineConfig([
   ...tseslint.configs.recommended,
   {
@@ -41,13 +49,22 @@ export default defineConfig([
       ],
       "no-restricted-globals": [
         "error",
-        ...["window", "document", "localStorage", "sessionStorage", "navigator", "location", "history", "self"].map((name) => ({
+        ...BROWSER_GLOBALS.map((name) => ({
           name,
           message: "Core has no DOM: take the value as an argument (or keep this in the web app).",
         })),
-        ...["process", "Buffer", "require", "module", "__dirname", "__filename", "global"].map((name) => ({
+        ...NODE_GLOBALS.map((name) => ({
           name,
           message: "Core has no Node globals (process.env included): take the value as an argument.",
+        })),
+      ],
+      // …nor through globalThis.
+      "no-restricted-properties": [
+        "error",
+        ...[...BROWSER_GLOBALS, ...NODE_GLOBALS].map((property) => ({
+          object: "globalThis",
+          property,
+          message: "Core has neither browser nor Node globals: take the value as an argument.",
         })),
       ],
     },

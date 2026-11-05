@@ -54,7 +54,7 @@ built-ins, `server-only`, and `process.env` — transitively — **and** it is e
    task edits' stores, the transport the desktop app points at the JSON routes).
 
 **Stays in `apps/web`:** everything tied to Next.js or the server (`src/lib/server/` — the only place
-that makes Supabase clients —, `data.ts` and `screen-loaders.ts` bindings, `actions/`, `auth.ts`, the
+that makes server Supabase clients —, `data.ts` and `screen-loaders.ts` bindings, `actions/`, `auth.ts`, the
 email / Slack / webhook outbox renderers and drains, `safe-fetch.ts`, review thumbnails, `env.ts`,
 `origin.ts`, `timezone.ts`, the Supabase client factories, the Asana importer — server-only on purpose),
 everything React (`live.ts`, `dates.ts`, `pending-creates.ts`, `query/use-cache-entry.ts`, components),
@@ -66,7 +66,8 @@ browser-only stores (`completion-store`, `optimistic-session`, `rule-feedback-bu
 
 Two modules were split so the rule holds: `live-patch.ts` now owns the `TaskChange` type it produces
 (it used to import it from a component), and `my-tasks.ts`'s cookie writer (`document.cookie`) moved
-to `apps/web/src/lib/my-tasks-cookie.ts`.
+to `apps/web/src/lib/my-tasks-cookie.ts`. The web app's `src/lib/soft-read.ts` was the same function as the
+layer's `api/core/soft-read.ts` (plus `server-only`); it is gone and the three pages import the core's.
 
 ## 4. How code imports it
 
@@ -85,14 +86,16 @@ to `apps/web/src/lib/my-tasks-cookie.ts`.
 
 | Check | What it enforces |
 | --- | --- |
-| `packages/core/tsconfig.json` | `lib: ["ESNext", "WebWorker"]`, `types: []`: the web platform every runtime has (fetch, URL, Web Crypto, streams, timers) without the DOM and without Node's globals. `window`, `document`, `HTMLElement`, `localStorage`, `process`, `Buffer` don't type-check. |
-| `packages/core/eslint.config.mjs` | `no-restricted-imports` (Next.js, React, `@tanstack/react-query`, Node built-ins and `node:*`, `server-only`, `@supabase/ssr`, `@/…`, the web app, its own name) and `no-restricted-globals` (browser and Node globals, `process.env` included). |
-| `packages/core/tests/boundaries.test.ts` | only `.ts` modules, no `"use client"` / `"use server"`; imports stay inside `src/` or name a declared dependency; the dependencies are framework-free; no browser or Node global (the type checker decides what a name refers to); only `src/api/` talks to Supabase. |
+| `packages/core/tsconfig.json` | `lib: ["ESNext", "WebWorker"]`, `types: []`: the web platform (fetch, URL, Web Crypto, streams, timers) without the DOM and without Node's globals. `window`, `document`, `HTMLElement`, `localStorage`, `process`, `Buffer` don't type-check (unless a stray `node:` import drags Node's types in, which the other two walls refuse). |
+| `packages/core/eslint.config.mjs` | `no-restricted-imports` (Next.js, React, `@tanstack/react-query`, Node built-ins and `node:*`, `server-only`, `@supabase/ssr`, `@/…`, the web app, its own name), `no-restricted-globals` and `no-restricted-properties` on `globalThis` (browser, worker-only, and Node globals, `process.env` included). |
+| `packages/core/tests/boundaries.test.ts` | only `.ts` modules, no `"use client"` / `"use server"`; imports stay inside `src/` or name a declared dependency; the dependencies are framework-free; globals by the type checker — a web-platform global must be one Node 20+, browsers, and webviews all have (an allowlist: fetch, URL, Request / Response, File / Blob, streams, TextEncoder, Web Crypto, timers, console, …), Node's are refused, `globalThis.X` counts as `X`; only `src/api/` talks to Supabase. |
 | `packages/core/tests/api-layer.test.ts` | the layer's behavior (error mapping, `read()`'s memo, permission paths, typing) and its own rules: reads never import writes, the caller's context first, the layer never picks a client. |
 | `apps/web/tests/unit/api-layer.test.ts` | the web side: no layer code in the app, client components take only browser-safe parts of the layer, no Supabase call outside the layer (but the proxy's session refresh and Realtime's token), only `src/lib/server/context.ts` makes server clients, the service role / anon key users pinned. |
 
 A mutation check during the move planted `import "next/headers"`, `import "node:fs"`, `window`,
-`process.env`, and `self` in a core file: ESLint, `tsc`, and the boundary tests each refused them.
+`process.env`, `self`, and later `globalThis.process` / `importScripts` in a core file: ESLint and the
+boundary tests refused every one, and `tsc` refused `window` (a stray `node:` import brings Node's types
+along, which is why the import rules and the type-checked globals test don't rely on `tsc` alone).
 
 ## 6. Building and deploying
 

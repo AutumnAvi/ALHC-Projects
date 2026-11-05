@@ -72,14 +72,26 @@ test("core's dependencies are framework-free", () => {
 });
 
 // What a name refers to is the type checker's call (a local `const window = …` is fine; the global isn't).
-// With core's tsconfig (no DOM, no Node types) the Node globals don't exist at all and the browser-only
-// ones that the web platform also defines in workers (self, location, navigator) are caught here.
-const BANNED_GLOBALS = new Set([
+// With core's tsconfig the DOM and Node's types aren't there, so `window` or `process` don't even
+// type-check — unless a stray import drags Node's types in. The WebWorker library is there, for the web
+// platform every runtime shares, but it also declares browser-only things Node lacks (self, location,
+// XMLHttpRequest, FileReader, indexedDB, importScripts, …). So: a global from the web platform must be on
+// this list of what Node 20+, browsers, and desktop webviews all have; one from Node's types, or one that
+// doesn't resolve at all, is refused; ECMAScript's own globals (Map, Promise, JSON, Intl, …) are fine.
+const CROSS_RUNTIME_WEB_GLOBALS = new Set([
+  "fetch", "Request", "Response", "Headers", "RequestInit", "RequestInfo", "RequestCredentials", "ResponseInit",
+  "HeadersInit", "BodyInit", "FormData", "Blob", "File", "URL", "URLSearchParams", "AbortController", "AbortSignal",
+  "ReadableStream", "WritableStream", "TransformStream", "TextEncoder", "TextDecoder", "crypto", "Crypto",
+  "console", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask", "structuredClone",
+  "atob", "btoa", "performance", "DOMException", "Event", "EventTarget",
+]);
+
+const HOST_GLOBALS = new Set([
   "window", "document", "localStorage", "sessionStorage", "navigator", "location", "history", "self",
   "process", "Buffer", "require", "module", "__dirname", "__filename", "global",
 ]);
 
-test("no browser or Node globals (process.env included): values come in as arguments", () => {
+test("no browser-only or Node globals (process.env included): values come in as arguments", () => {
   const configFile = ts.findConfigFile(PKG, ts.sys.fileExists, "tsconfig.json");
   assert.ok(configFile, "packages/core/tsconfig.json");
   const parsed = ts.getParsedCommandLineOfConfigFile(configFile, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });
@@ -88,25 +100,50 @@ test("no browser or Node globals (process.env included): values come in as argum
   assert.ok(!(parsed.options.lib ?? []).some((lib) => /dom/i.test(lib)), "core is checked without the DOM library");
   const program = ts.createProgram(parsed.fileNames, parsed.options);
   const checker = program.getTypeChecker();
+  const webLibrary = (sf: ts.SourceFile) => program.isSourceFileDefaultLibrary(sf) && /lib\.(webworker|dom)[\w.]*\.d\.ts$/.test(sf.fileName);
+  const nodeTypes = (sf: ts.SourceFile) => /[\\/]node_modules[\\/]@types[\\/]/.test(sf.fileName);
+  // Why `name` (resolved to `symbol`) may not be used here, or null when it may.
+  const refusal = (name: string, symbol: ts.Symbol | undefined): string | null => {
+    const files = (symbol?.declarations ?? []).map((d) => d.getSourceFile());
+    // Unresolved: a host global this config leaves out (anything else unresolved fails tsc anyway).
+    if (!files.length) return HOST_GLOBALS.has(name) ? "is a Node or browser global" : null;
+    if (files.every(nodeTypes)) return "is a Node global";
+    if (files.every(webLibrary) && !CROSS_RUNTIME_WEB_GLOBALS.has(name)) return "is a browser / worker global Node lacks";
+    return null;
+  };
   const found: string[] = [];
   for (const sf of program.getSourceFiles()) {
     if (!path.resolve(sf.fileName).startsWith(SRC + path.sep)) continue;
+    const at = (n: ts.Node) => `${rel(sf.fileName)}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
     const visit = (n: ts.Node) => {
-      if (ts.isIdentifier(n) && BANNED_GLOBALS.has(n.text)) {
+      // globalThis.X / globalThis["X"] is X.
+      if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "globalThis") {
+        const why = refusal(n.name.text, checker.getSymbolAtLocation(n.name));
+        if (why) found.push(`${at(n)} uses ${n.getText(sf)}, which ${why}`);
+      } else if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "globalThis") {
+        const key = n.argumentExpression;
+        if (!ts.isStringLiteralLike(key) || !CROSS_RUNTIME_WEB_GLOBALS.has(key.text)) found.push(`${at(n)} uses ${n.getText(sf)}`);
+      } else if (ts.isIdentifier(n) && n.text !== "globalThis" && n.text !== "undefined") {
         const parent = n.parent;
         const isName =
           (ts.isPropertyAccessExpression(parent) && parent.name === n) ||
           (ts.isQualifiedName(parent) && parent.right === n) ||
           ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isPropertyDeclaration(parent) ||
-            ts.isMethodDeclaration(parent) || ts.isVariableDeclaration(parent) || ts.isParameter(parent) ||
-            ts.isBindingElement(parent) || ts.isFunctionDeclaration(parent)) && parent.name === n);
+            ts.isMethodDeclaration(parent) || ts.isMethodSignature(parent) || ts.isVariableDeclaration(parent) ||
+            ts.isParameter(parent) || ts.isBindingElement(parent) || ts.isFunctionDeclaration(parent) ||
+            ts.isTypeAliasDeclaration(parent) || ts.isInterfaceDeclaration(parent) || ts.isClassDeclaration(parent) ||
+            ts.isEnumDeclaration(parent) || ts.isEnumMember(parent) || ts.isTypeParameterDeclaration(parent) ||
+            ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent) || ts.isLabeledStatement(parent) ||
+            ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent) || ts.isImportClause(parent) ||
+            ts.isNamespaceImport(parent) || ts.isPropertyAccessExpression(parent.parent ?? parent)) &&
+            (parent as { name?: ts.Node }).name === n);
         if (!isName) {
           const symbol = checker.getSymbolAtLocation(n);
-          // A global: declared by a default library or by @types/* (Node's types, pulled in by a stray
-          // node: import), never by core itself.
-          const ambient = (sf: ts.SourceFile) => program.isSourceFileDefaultLibrary(sf) || /[\\/]node_modules[\\/]@types[\\/]/.test(sf.fileName);
-          const global = !symbol || (symbol.declarations ?? []).every((d) => ambient(d.getSourceFile()));
-          if (global) found.push(`${rel(sf.fileName)}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1} uses ${n.text}`);
+          // Only globals are judged: anything core itself or a dependency declares is fine.
+          const files = (symbol?.declarations ?? []).map((d) => d.getSourceFile());
+          const global = !symbol || files.every((f) => program.isSourceFileDefaultLibrary(f) || nodeTypes(f));
+          const why = global ? refusal(n.text, symbol) : null;
+          if (why) found.push(`${at(n)} uses ${n.text}, which ${why}`);
         }
       }
       ts.forEachChild(n, visit);

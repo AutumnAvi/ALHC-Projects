@@ -20,6 +20,7 @@ import {
   seedChipLinks,
   snapCaret,
 } from "@/lib/link-chips";
+import { standardFontDataUrl } from "@/lib/review-thumbnails";
 import { thumbnailRouteOrigin } from "@/lib/review-thumbnail-request";
 import { parseThumbnailResponse } from "@alhc/core/review-thumbnail-shared";
 
@@ -138,6 +139,14 @@ test("QW3: only the thumbnail route loads pdf.js and Skia", () => {
   assert.match(config, /const PDFJS = path\.relative\(__dirname, path\.dirname\(require\.resolve\("pdfjs-dist\/package\.json"\)\)\)/);
   assert.doesNotMatch(config, /"\/\*": \[`\$\{PDFJS\}\/standard_fonts/, "fonts no longer ship with every route");
   assert.match(config, /"\/api\/review-thumbnails": \[`\$\{PDFJS\}\/standard_fonts/);
+});
+
+test("QW3: PDF thumbnails find pdf.js's standard fonts from the app's folder (npm installs pdf.js at the repo root)", () => {
+  const fonts = standardFontDataUrl(path.resolve("."));
+  assert.ok(fonts, "found from apps/web");
+  assert.equal(path.relative(path.resolve("../.."), fonts).split(path.sep).join("/"), "node_modules/pdfjs-dist/standard_fonts");
+  assert.ok(fs.existsSync(path.join(fonts, "LiberationSans-Regular.ttf")));
+  assert.equal(standardFontDataUrl(path.parse(path.resolve(".")).root), undefined, "nothing above the filesystem root");
 });
 
 test("QW3: the hop stays on this app's own hosts", () => {
