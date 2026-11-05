@@ -51,6 +51,8 @@ import { ApprovalSetupDialog } from "./approval-setup-dialog";
 import { ApproverReviewDialog } from "./approver-review";
 import { approverReviewFiles } from "@alhc/core/approver-review";
 import { FeedbackSubtaskButton } from "./feedback-subtask";
+import { AssetThumb } from "./asset-thumb";
+import { feedbackSubtaskTitle } from "@alhc/core/feedback-subtask";
 import { canAddSubtask } from "./task-subtasks";
 
 // Oct 27 notes (batch 6, items 45 / 45b): the approval panel of an approval task's pane (since Nov 4
@@ -715,6 +717,7 @@ export function ApprovalFeedback({ task, profiles, memberId }: { task: TaskDetai
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const nameOf = (id: string) => (id === memberId ? "You" : profilesById.get(id) ? displayName(profilesById.get(id)!) : "Someone");
   const canSubtask = canAddSubtask(task);
+  const contentTypes = new Map(task.attachments.map((a) => [a.id, a.contentType] as const));
   return (
     <section id={`approval-feedback-${task.id}`} className="mt-6 scroll-mt-4" aria-labelledby={`approval-feedback-heading-${task.id}`} data-approval-feedback="">
       <h3 id={`approval-feedback-heading-${task.id}`} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900">
@@ -735,6 +738,16 @@ export function ApprovalFeedback({ task, profiles, memberId }: { task: TaskDetai
                 buttonClassName={`inline-flex h-7 max-w-full items-center gap-1 rounded-full border px-2 text-xs ${FEEDBACK_PILL[item.tone]}`}
                 button={
                   <span className="flex min-w-0 items-center gap-1" data-feedback-pill={item.tone}>
+                    {item.fileName ? (
+                      // Nov 5 note 166: which file this is about, at a glance.
+                      <AssetThumb
+                        fileId={item.fileId}
+                        fileName={item.fileName}
+                        contentType={contentTypes.get(item.fileId ?? "") ?? null}
+                        className="-ml-1 size-5"
+                        iconClassName="size-3"
+                      />
+                    ) : null}
                     <Icon className="size-3.5 shrink-0" aria-hidden />
                     <span className="shrink-0 font-medium">{title}</span>
                     <span className="min-w-0 truncate opacity-80">· {snippet}</span>
@@ -748,12 +761,26 @@ export function ApprovalFeedback({ task, profiles, memberId }: { task: TaskDetai
                     </p>
                     {item.fileName ? (
                       item.fileId ? (
-                        <a href={`/attachments/${item.fileId}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 break-all text-xs font-medium text-zinc-800 hover:underline">
-                          <Paperclip className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+                        <a
+                          href={`/attachments/${item.fileId}?preview=1`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-2 break-all text-xs font-medium text-zinc-800 hover:underline"
+                        >
+                          <AssetThumb
+                            fileId={item.fileId}
+                            fileName={item.fileName}
+                            contentType={contentTypes.get(item.fileId) ?? null}
+                            className="size-12"
+                            iconClassName="size-5"
+                          />
                           {item.fileName}
                         </a>
                       ) : (
-                        <p className="break-all text-xs font-medium text-zinc-800">{item.fileName}</p>
+                        <p className="flex items-center gap-2 break-all text-xs font-medium text-zinc-800">
+                          <AssetThumb fileId={null} fileName={item.fileName} className="size-12" iconClassName="size-5" />
+                          {item.fileName}
+                        </p>
                       )
                     ) : null}
                     <p className="whitespace-pre-wrap text-zinc-800">{item.text || "Approved, no note."}</p>
@@ -767,7 +794,14 @@ export function ApprovalFeedback({ task, profiles, memberId }: { task: TaskDetai
                       ) : null}
                     </p>
                     {item.tone !== "approved" && item.text && canSubtask ? (
-                      <FeedbackSubtaskButton task={task} feedback={feedbackSubtaskText(item)} from={nameOf(item.approverId)} className="-ml-1.5" />
+                      <FeedbackSubtaskButton
+                        task={task}
+                        feedback={item.text}
+                        file={item.fileName ? { id: item.fileId, name: item.fileName } : null}
+                        legacyTitle={item.fileName ? feedbackSubtaskTitle(feedbackSubtaskText(item)) : null}
+                        from={nameOf(item.approverId)}
+                        className="-ml-1.5"
+                      />
                     ) : null}
                   </div>
                 )}

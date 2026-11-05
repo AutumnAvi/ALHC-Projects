@@ -8,6 +8,7 @@ import type { ApiContext } from "../core/context";
 import { previewKind } from "../../attachment-preview";
 import { ATTACHMENTS_BUCKET } from "../../attachments";
 import { reviewMediaKind } from "../../review-checks";
+import { thumbnailPath } from "../../review-thumbnail-shared";
 
 // ---------------------------------------------------------------------------------------------
 // Metadata rows
@@ -86,4 +87,22 @@ async function servableInline(ctx: ApiContext, file: StoredFile, media: boolean)
   const storedType = await storedContentType(ctx, file.storagePath);
   if (!storedType) return false;
   return kindOf(file.storagePath, storedType) === kind;
+}
+
+// Nov 5 note 166: a small picture of a file for a feedback pill. An image is its own preview (the same
+// inline rule as signedFileUrl); any other file uses the thumbnail drawn for it when it was sent for
+// approval or review (a PDF's first page, stored next to it as <task>/thumb-<attachment>.jpg), signed with
+// the caller's own client, so Storage's policies decide as for the file. Null when there's none.
+export async function signedThumbnailUrl(
+  ctx: ApiContext,
+  attachmentId: string,
+  file: StoredFile,
+  seconds: number,
+): Promise<string | null> {
+  if (previewKind(file.fileName, file.contentType) === "image") {
+    return (await servableInline(ctx, file, false)) ? signedObjectUrl(ctx, file.storagePath, seconds) : null;
+  }
+  const taskId = file.storagePath.split("/")[0];
+  if (!taskId) return null;
+  return signedObjectUrl(ctx, thumbnailPath(taskId, attachmentId), seconds);
 }

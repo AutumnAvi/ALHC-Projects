@@ -33,12 +33,14 @@ import { AccessRequestDecision } from "@/components/inbox/access-request-decisio
 import { isFieldChange, type InboxDensity } from "@alhc/core/inbox";
 import { seedFromTitle } from "@/lib/task-seed";
 import { formatDueDate } from "@/lib/dates";
-import { approverReviewHref } from "@alhc/core/approver-review";
+import { inboxReviewHref } from "@alhc/core/approver-review";
 
 // One notification card in the Inbox (Asana parity, batch 5): unread dot, actor, "Actor verb Task",
 // where it happened, the comment or message (Detailed density), an approver's "Open review" button, the
 // time, and hover actions (always shown on touch screens). Nov 4 notes (batch 25, 159): an approver
-// never decides from the Inbox — only on the review page, where the files are.
+// never decides from the Inbox — only on the review page, where the files are. Nov 5 note 164: an
+// approval the viewer still has to decide (a request or a reminder) opens that review page, from the
+// card itself and its "Open review" button, never just the task.
 
 export const INBOX_KIND = {
   assigned: { icon: UserPlus, verb: "assigned you" },
@@ -247,8 +249,12 @@ export function InboxCard({
     </>
   );
   const decides = item.approval !== null && item.approval.approverId === memberId;
-  const titleLink =
-    taskCard && item.taskId ? (
+  const reviewHref = inboxReviewHref(item, memberId);
+  const titleLink = reviewHref ? (
+    <Link href={reviewHref} onClick={onOpen} data-inbox-review-link="" className={linkClass}>
+      {linkText}
+    </Link>
+  ) : taskCard && item.taskId ? (
       // A task opens in the pane next to the list at once (no navigation; Oct 19 notes).
       <TaskLink
         taskId={item.taskId}
@@ -315,12 +321,12 @@ export function InboxCard({
               compact row the hover / focus actions would cover it. */}
           {openRule ? <p className="mt-1">{openRule}</p> : null}
           {accessRequest ? <AccessRequestDecision request={accessRequest} compact={compact} /> : null}
-          {decides && item.approval?.status === "pending" && item.taskId ? (
+          {reviewHref ? (
             // Note 159: no Approve / Request changes / Reject here — the approver decides on the review
             // page after seeing the files (an older request without a round opens the task instead).
-            <p className="relative z-10 mt-2">
+            <p className={`relative z-10 ${compact ? "mt-1" : "mt-2"}`}>
               <Link
-                href={approverReviewHref(item.taskId)}
+                href={reviewHref}
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpen();

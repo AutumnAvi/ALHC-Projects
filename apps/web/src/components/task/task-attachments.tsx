@@ -3,12 +3,14 @@
 import { useClosesPopovers } from "@/components/overlay-registry";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Paperclip, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, LayoutGrid, List, Paperclip, Trash2, X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { deleteAttachment, registerAttachment } from "@/lib/actions/comments";
 import { previewKind } from "@alhc/core/attachment-preview";
+import { attachmentRows, type AttachmentView } from "@alhc/core/attachment-list";
+import { FileTypeIcon } from "./file-type-icon";
 import { MAX_ATTACHMENT_BYTES, attachmentPath, formatBytes } from "@alhc/core/attachments";
 import { uploadTaskFile } from "@alhc/core/api/client/storage";
 import { createApiContext } from "@alhc/core/api/core/context";
@@ -24,7 +26,7 @@ export function useAttachmentUpload(taskId: string) {
   const [uploading, setUploading] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  async function upload(files: FileList) {
+  async function upload(files: FileList | readonly File[]) {
     setError(null);
     const ctx = createApiContext(createClient());
     for (const file of Array.from(files)) {
@@ -64,7 +66,7 @@ export function useAttachmentUpload(taskId: string) {
       onChange={(e) => e.currentTarget.files && void upload(e.currentTarget.files)}
     />
   );
-  return { input, pick: () => inputRef.current?.click(), uploading, error };
+  return { input, pick: () => inputRef.current?.click(), add: (files: FileList | readonly File[]) => void upload(files), uploading, error };
 }
 
 export type AttachmentUpload = ReturnType<typeof useAttachmentUpload>;
@@ -80,17 +82,23 @@ function extensionOf(name: string) {
 // The pane's Attachments (Asana parity, batch 3): cards with an image thumbnail (or the file type), the
 // name, size, and age; images open in a lightbox, PDFs in the browser's viewer, the rest download.
 // Shown once a task has files (the header's paperclip adds the first).
+// Nov 5 note 165: compact by default — the first few files by name with a small file-type icon and no
+// preview; "Show all N" lists every name, and Previews (next to the heading) is the card grid as before.
+// Open, download, remove, upload, and dropping files on the section work in every view.
 export function TaskAttachments({
   attachments,
   links = [],
   upload,
   canEdit,
+  initialView = "compact",
 }: {
   attachments: TaskAttachment[];
   // Imported attachments that stayed in Asana: name + link only (files aren't copied).
   links?: TaskAttachmentLink[];
   upload: AttachmentUpload;
   canEdit: boolean;
+  // How the section opens (compact; the tests render the other views).
+  initialView?: AttachmentView;
 }) {
   const [, run] = useServerAction();
   const confirm = useConfirm();
@@ -100,21 +108,211 @@ export function TaskAttachments({
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const thumbRefs = useRef(new Map<string, HTMLButtonElement>());
 
+  const [view, setView] = useState<AttachmentView>(initialView);
+  const [dropping, setDropping] = useState(false);
+  const listId = useId();
+
   const kinds = new Map(attachments.map((a) => [a.id, previewKind(a.fileName, a.contentType)]));
   const images = attachments.filter((a) => kinds.get(a.id) === "image" && !brokenIds.has(a.id));
   const openImage = lightboxIndex === null ? null : (images[lightboxIndex] ?? null);
 
   if (attachments.length === 0 && links.length === 0 && upload.uploading === 0 && !upload.error) return null;
 
+  const total = attachments.length + links.length;
+  const { shown, hidden } = attachmentRows(total, view);
+  const previews = view === "previews";
+  const openImageOf = (id: string) => setLightboxIndex(images.findIndex((a) => a.id === id));
+  const keepRef = (id: string) => (el: HTMLButtonElement | null) => {
+    if (el) thumbRefs.current.set(id, el);
+    else thumbRefs.current.delete(id);
+  };
+  const remove = async (attachment: TaskAttachment) => {
+    if (await confirm({ title: `Remove “${attachment.fileName}” from this task?`, confirmLabel: "Remove", tone: "danger" })) {
+      run(() => deleteAttachment(attachment.id));
+    }
+  };
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+
   return (
-    <section className="mt-6" aria-labelledby="attachments-heading">
-      <div className="flex items-baseline justify-between">
-        <h3 id="attachments-heading" className="text-sm font-semibold text-zinc-900">
+    <section
+      className={`mt-6 rounded-lg ${dropping ? "outline-2 outline-offset-4 outline-dashed outline-accent-400" : ""}`}
+      aria-labelledby="attachments-heading"
+      data-attachments-view={view}
+      onDragOver={(e) => {
+        if (!canEdit || !hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        if (!dropping) setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e) => {
+        if (!canEdit || !hasFiles(e)) return;
+        e.preventDefault();
+        setDropping(false);
+        if (e.dataTransfer.files.length) upload.add(e.dataTransfer.files);
+      }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h3 id="attachments-heading" className="flex items-baseline gap-1.5 text-sm font-semibold text-zinc-900">
           Attachments
+          {total > 0 ? <span className="text-xs font-normal tabular-nums text-zinc-400">{total}</span> : null}
         </h3>
-        <span className="text-xs text-zinc-500">Up to 25 MB each</span>
+        <div className="flex items-center gap-1 print:hidden">
+          {previews ? <span className="mr-1 text-xs text-zinc-500">Up to 25 MB each</span> : null}
+          {!previews && hidden > 0 ? (
+            <button
+              type="button"
+              onClick={() => setView("all")}
+              aria-controls={listId}
+              aria-expanded={false}
+              data-attachments-show-all=""
+              className="btn-ghost h-6 px-1.5 text-xs"
+            >
+              Show all {total}
+            </button>
+          ) : null}
+          <span role="group" aria-label="How attachments show" className="inline-flex rounded-md border border-zinc-200 p-0.5">
+            <button
+              type="button"
+              aria-pressed={!previews}
+              aria-label="Names only"
+              data-tooltip="Names only"
+              onClick={() => setView(view === "previews" ? "compact" : view)}
+              className={`inline-flex size-6 items-center justify-center rounded ${!previews ? "bg-zinc-100 text-zinc-900" : "text-zinc-500 hover:text-zinc-900"}`}
+            >
+              <List className="size-3.5" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-pressed={previews}
+              aria-label="Previews"
+              data-tooltip="Previews"
+              data-attachments-previews=""
+              onClick={() => setView("previews")}
+              className={`inline-flex size-6 items-center justify-center rounded ${previews ? "bg-zinc-100 text-zinc-900" : "text-zinc-500 hover:text-zinc-900"}`}
+            >
+              <LayoutGrid className="size-3.5" aria-hidden />
+            </button>
+          </span>
+          {canEdit && !previews ? (
+            <button
+              type="button"
+              onClick={upload.pick}
+              aria-label="Attach files"
+              data-tooltip="Attach files (up to 25 MB each)"
+              className="btn-icon size-7"
+            >
+              <Paperclip className="size-3.5" aria-hidden />
+            </button>
+          ) : null}
+        </div>
       </div>
 
+      {!previews ? (
+        <>
+          <ul id={listId} className="mt-1.5 flex flex-col" aria-label="Attached files" data-attachments-list="">
+            {attachments.slice(0, shown).map((attachment) => {
+              const kind = kinds.get(attachment.id);
+              const image = kind === "image" && !brokenIds.has(attachment.id);
+              const href = kind === "pdf" ? `/attachments/${attachment.id}?preview=1` : `/attachments/${attachment.id}`;
+              const name = "min-w-0 flex-1 truncate text-left text-sm text-zinc-800 hover:underline focus-visible:outline-2 focus-visible:outline-accent-500";
+              return (
+                <li key={attachment.id} className="group flex h-8 items-center gap-2 rounded-md px-1.5 hover:bg-zinc-50">
+                  <FileTypeIcon fileName={attachment.fileName} contentType={attachment.contentType} />
+                  {image ? (
+                    <button
+                      type="button"
+                      ref={keepRef(attachment.id)}
+                      onClick={() => openImageOf(attachment.id)}
+                      title={attachment.fileName}
+                      aria-label={`Preview ${attachment.fileName}`}
+                      className={name}
+                    >
+                      {attachment.fileName}
+                    </button>
+                  ) : (
+                    <a href={href} target="_blank" rel="noopener noreferrer" title={attachment.fileName} className={name}>
+                      {attachment.fileName}
+                    </a>
+                  )}
+                  <span className="shrink-0 text-2xs tabular-nums text-zinc-400 group-hover:hidden [@media(hover:none)]:hidden">
+                    {formatBytes(attachment.sizeBytes)}
+                  </span>
+                  <span className="hidden shrink-0 items-center gap-0.5 group-focus-within:flex group-hover:flex [@media(hover:none)]:flex">
+                    <a
+                      href={`/attachments/${attachment.id}?download`}
+                      aria-label={`Download ${attachment.fileName}`}
+                      data-tooltip="Download"
+                      className="rounded p-1 text-zinc-500 hover:text-zinc-900"
+                    >
+                      <Download className="size-3.5" />
+                    </a>
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        aria-label={`Remove attachment ${attachment.fileName}`}
+                        data-tooltip="Remove"
+                        onClick={() => void remove(attachment)}
+                        className="rounded p-1 text-zinc-500 hover:text-red-600"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </span>
+                </li>
+              );
+            })}
+            {links.slice(0, Math.max(0, shown - attachments.length)).map((link) => {
+              const href = link.attachmentId ? `/attachments/${link.attachmentId}` : link.url;
+              const note = link.attachmentId ? "Linked" : link.source === "asana" ? "In Asana" : "Link";
+              return (
+                <li key={link.id} className="flex h-8 items-center gap-2 rounded-md px-1.5 hover:bg-zinc-50">
+                  <ExternalLink className="size-4 shrink-0 text-zinc-500" aria-hidden />
+                  {href ? (
+                    <a href={href} target="_blank" rel="noreferrer noopener" title={link.name} className="min-w-0 flex-1 truncate text-sm text-zinc-800 hover:underline">
+                      {link.name}
+                    </a>
+                  ) : (
+                    <span title={link.name} className="min-w-0 flex-1 truncate text-sm text-zinc-800">
+                      {link.name}
+                    </span>
+                  )}
+                  <span className="shrink-0 text-2xs text-zinc-400">{note}</span>
+                </li>
+              );
+            })}
+            {upload.uploading > 0 ? (
+              <li className="flex h-8 items-center gap-2 px-1.5 text-xs text-zinc-500" aria-live="polite">
+                <Paperclip className="size-4 shrink-0 animate-pulse" aria-hidden />
+                Uploading {upload.uploading}…
+              </li>
+            ) : null}
+          </ul>
+          {hidden > 0 ? (
+            <button
+              type="button"
+              onClick={() => setView("all")}
+              aria-controls={listId}
+              aria-expanded={false}
+              className="mt-0.5 px-1.5 text-xs font-medium text-accent-700 hover:underline print:hidden"
+            >
+              Show {hidden} more
+            </button>
+          ) : view === "all" && attachmentRows(total, "compact").hidden > 0 ? (
+            <button
+              type="button"
+              onClick={() => setView("compact")}
+              aria-controls={listId}
+              aria-expanded
+              className="mt-0.5 px-1.5 text-xs font-medium text-accent-700 hover:underline print:hidden"
+            >
+              Show fewer
+            </button>
+          ) : null}
+        </>
+      ) : (
       <ul className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2" aria-label="Attached files">
         {attachments.map((attachment) => {
           const kind = kinds.get(attachment.id);
@@ -124,11 +322,8 @@ export function TaskAttachments({
               {thumbnail ? (
                 <button
                   type="button"
-                  ref={(el) => {
-                    if (el) thumbRefs.current.set(attachment.id, el);
-                    else thumbRefs.current.delete(attachment.id);
-                  }}
-                  onClick={() => setLightboxIndex(images.findIndex((a) => a.id === attachment.id))}
+                  ref={keepRef(attachment.id)}
+                  onClick={() => openImageOf(attachment.id)}
                   aria-label={`Preview ${attachment.fileName}`}
                   className={`${CARD_PREVIEW} focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-500`}
                 >
@@ -180,11 +375,7 @@ export function TaskAttachments({
                     type="button"
                     aria-label={`Remove attachment ${attachment.fileName}`}
                     data-tooltip="Remove"
-                    onClick={async () => {
-                      if (await confirm({ title: `Remove “${attachment.fileName}” from this task?`, confirmLabel: "Remove", tone: "danger" })) {
-                        run(() => deleteAttachment(attachment.id));
-                      }
-                    }}
+                    onClick={() => void remove(attachment)}
                     className="rounded bg-white/90 p-1 text-zinc-500 shadow-sm hover:text-red-600"
                   >
                     <Trash2 className="size-3.5" />
@@ -241,6 +432,7 @@ export function TaskAttachments({
           </li>
         ) : null}
       </ul>
+      )}
       {upload.error ? (
         <p role="alert" className="mt-1 text-xs text-red-600">
           {upload.error}

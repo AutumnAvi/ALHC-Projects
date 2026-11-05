@@ -1,6 +1,6 @@
 "use client";
 
-import { useOptimistic, useRef, useState, type DragEvent } from "react";
+import { useMemo, useOptimistic, useRef, useState, type DragEvent } from "react";
 import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripVertical, ListChecks, ListFilter, Lock, MoreHorizontal, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { displayName } from "@alhc/core/people";
@@ -22,6 +22,8 @@ import { ConvertToMainTaskDialog, canConvertSubtaskRow } from "./task-convert";
 import { PersonPicker } from "./person-picker";
 import { useDateText } from "./task-dates";
 import { PANE_HEADING } from "./pane-styles";
+import { TaskTitleText, titleHasChips, usePeopleDirectory } from "./title-text";
+import type { TitleAsset } from "@alhc/core/title-assets";
 import { TaskLink } from "@/components/task/task-link";
 import { seedFromSubtask } from "@/lib/task-seed";
 import { usePendingCreates, withPendingCreate } from "@/lib/pending-creates";
@@ -111,6 +113,12 @@ export function TaskSubtasks({
   // Stays ticked while adding several in a row.
   const [blockParent, setBlockParent] = useState(false);
   const canEdit = taskPermissions(task).canEdit;
+  // Nov 5 note 166: this task's files, so a subtask named after one (made from feedback on it) shows it as
+  // a chip that opens the file.
+  const titleAssets = useMemo(
+    () => task.attachments.map((a) => ({ id: a.id, name: a.fileName, contentType: a.contentType })),
+    [task.attachments],
+  );
   const done = allSubtasks.filter((s) => s.completedAt).length;
   const approvalBySubtask = new Map(task.approvals.filter((a) => a.subtaskId).map((a) => [a.subtaskId!, a] as const));
   // This task's own depth is its number of ancestors (0 = an ordinary task); subtasks sit one below.
@@ -293,27 +301,13 @@ export function TaskSubtasks({
                     {formatRequestLabel(subtask.requestLabel)}
                   </span>
                 ) : null}
-                {!canEdit ? (
-                  <span className={`min-w-0 flex-1 truncate px-1 text-sm ${completed ? "text-zinc-400 line-through" : "text-zinc-800"}`}>
-                    {subtask.title}
-                  </span>
-                ) : (
-                <input
-                  id={`subtask-${subtask.id}`}
-                  defaultValue={subtask.title}
-                  onBlur={(e) => {
-                    const title = e.currentTarget.value.trim();
-                    if (!title) e.currentTarget.value = subtask.title;
-                    else if (title !== subtask.title) run(() => updateSubtask(subtask.id, { title }));
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") e.currentTarget.blur();
-                  }}
-                  className={`h-7 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:bg-white focus:outline-none ${
-                    completed ? "text-zinc-400 line-through" : "text-zinc-800"
-                  }`}
+                <SubtaskName
+                  subtask={subtask}
+                  canEdit={canEdit}
+                  completed={completed}
+                  assets={titleAssets}
+                  onRename={(title) => run(() => updateSubtask(subtask.id, { title }))}
                 />
-                )}
                 {subtask.subtaskCount > 0 ? (
                   <span
                     className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500"
@@ -480,6 +474,67 @@ export function TaskSubtasks({
 }
 
 // The subtask's assignee: their avatar, or a dashed person on hover; a picker for Editors.
+// A subtask's name in the list. Editors rename it in place; a name with chips (a file it's about, an
+// @person — notes 162 and 166) shows as text with the chips until it's clicked (or the box is focused).
+function SubtaskName({
+  subtask,
+  canEdit,
+  completed,
+  assets,
+  onRename,
+}: {
+  subtask: SubtaskItem;
+  canEdit: boolean;
+  completed: boolean;
+  assets: readonly TitleAsset[];
+  onRename: (title: string) => void;
+}) {
+  const people = usePeopleDirectory();
+  const [editing, setEditing] = useState(false);
+  const tone = completed ? "text-zinc-400 line-through" : "text-zinc-800";
+  const chips = titleHasChips(subtask.title, people, assets);
+  if (!canEdit || (chips && !editing)) {
+    return (
+      <span
+        data-subtask-name=""
+        onClick={(e) => {
+          if (!canEdit || (e.target as HTMLElement).closest("a")) return;
+          setEditing(true);
+        }}
+        className={`min-w-0 flex-1 truncate px-1 text-sm ${tone} ${canEdit ? "cursor-text rounded-md border border-transparent py-0.5 hover:border-zinc-200" : ""}`}
+      >
+        <TaskTitleText title={subtask.title} people={people} assets={assets} />
+        {canEdit ? (
+          <button type="button" onClick={() => setEditing(true)} className="sr-only focus:not-sr-only focus:ml-1 focus:text-xs">
+            Rename {subtask.title}
+          </button>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <input
+      id={`subtask-${subtask.id}`}
+      defaultValue={subtask.title}
+      autoFocus={editing}
+      onBlur={(e) => {
+        const title = e.currentTarget.value.trim();
+        setEditing(false);
+        if (!title) e.currentTarget.value = subtask.title;
+        else if (title !== subtask.title) onRename(title);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          e.currentTarget.value = subtask.title;
+          e.currentTarget.blur();
+        }
+      }}
+      className={`h-7 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:bg-white focus:outline-none ${tone}`}
+    />
+  );
+}
+
 function SubtaskAssignee({
   subtask,
   people,

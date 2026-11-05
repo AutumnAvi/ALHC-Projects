@@ -1,7 +1,7 @@
 "use client";
 
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
-import { useOptimistic, useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useOptimistic, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { Check, ChevronRight, Clock, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, Pencil, Send, ThumbsUp, UserRound, X } from "lucide-react";
 import { usePaneExpanded, usePaneWide } from "./pane-size";
@@ -44,8 +44,8 @@ import { completionsVersion, recentCompletion, subscribeCompletions, trackComple
 import { recordTaskEdits } from "./task-edits";
 import { SCROLL_AREA } from "@/components/shell/shell-frame";
 import { MentionTextarea } from "./mention-textarea";
-import { TaskTitleText, usePeopleDirectory } from "./title-text";
-import { titleHasMentions } from "@alhc/core/title-mentions";
+import { TaskTitleText, titleHasChips, usePeopleDirectory } from "./title-text";
+import { titleAssetsFor } from "@alhc/core/title-assets";
 
 export function TaskDetailPanel({
   task,
@@ -475,13 +475,19 @@ function PaneTitle({ task, canEdit, completed, profiles }: { task: TaskDetail; c
   const cancelled = useRef(false);
   const directory = usePeopleDirectory();
   const people = directory.length ? directory : profiles.map((p) => ({ id: p.id, name: displayName(p), email: p.email }));
+  // Nov 5 note 166: the files the name can chip — the one(s) its description ties it to by id (a subtask
+  // made from feedback on a file), then its own files by name.
+  const assets = useMemo(
+    () => titleAssetsFor(task.notes, task.attachments.map((a) => ({ id: a.id, name: a.fileName, contentType: a.contentType }))),
+    [task.notes, task.attachments],
+  );
   const tone = completed ? "text-zinc-500" : "text-zinc-900";
   const text = "text-2xl font-semibold leading-tight tracking-tight";
   if (!canEdit) {
     // Read-only (Viewer / Commenter): the name as text, not a box that looks editable.
     return (
       <h2 id="task-title" className={`break-words py-1 ${text} ${tone}`}>
-        <TaskTitleText title={title} people={people} />
+        <TaskTitleText title={title} people={people} assets={assets} />
       </h2>
     );
   }
@@ -501,7 +507,7 @@ function PaneTitle({ task, canEdit, completed, profiles }: { task: TaskDetail; c
       },
     );
   }
-  if (draft === null && titleHasMentions(title, people)) {
+  if (draft === null && titleHasChips(title, people, assets)) {
     return (
       <div className="group/title -mx-2 flex items-start gap-1">
         <h2
@@ -513,7 +519,7 @@ function PaneTitle({ task, canEdit, completed, profiles }: { task: TaskDetail; c
           }}
           className={`min-w-0 flex-1 cursor-text break-words rounded-md border border-transparent px-2 py-1 hover:border-zinc-200 ${text} ${tone}`}
         >
-          <TaskTitleText title={title} people={people} />
+          <TaskTitleText title={title} people={people} assets={assets} />
         </h2>
         <button
           type="button"

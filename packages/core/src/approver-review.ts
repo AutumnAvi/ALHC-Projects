@@ -47,6 +47,24 @@ export function approverReviewHref(taskId: string): string {
   return `/approve/${taskId}`;
 }
 
+// Nov 5 note 164: an Inbox approval item (a request, a resubmission, or a due / overdue reminder) the
+// viewer still has to decide goes straight to the review page — the card itself and its "Open review"
+// button — never just the task. No Approve / Request changes / Reject there (note 159). A request already
+// decided or cancelled, or one for someone else, opens the task as before. An item whose request couldn't
+// be read (an older item without approval_id) still goes to the review page, which sends an older request
+// without a round to its task and otherwise says there's nothing to review.
+export type InboxApprovalItem = {
+  kind: string;
+  taskId: string | null;
+  approval: { status: string; approverId: string } | null;
+};
+
+export function inboxReviewHref(item: InboxApprovalItem, memberId: string): string | null {
+  if (item.kind !== "approval_requested" || !item.taskId) return null;
+  if (item.approval && (item.approval.approverId !== memberId || item.approval.status !== "pending")) return null;
+  return approverReviewHref(item.taskId);
+}
+
 export function parseStoredReview(raw: string | null): { files: FileReviews; overall: string } {
   try {
     const value = raw ? (JSON.parse(raw) as { files?: unknown; overall?: unknown }) : null;
