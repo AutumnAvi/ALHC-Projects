@@ -36,18 +36,10 @@ import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import {
-  moveTask,
-  placeTask,
-  saveListCollapsedGroups,
-  saveListColumnWidths,
-  setFieldLocked,
-  setFieldValue,
-  setTaskCompleted,
-  updateSubtask,
-  updateTask,
-  type ActionResult,
-} from "@/lib/actions";
+import { moveTask, placeTask, setTaskCompleted, updateSubtask, updateTask } from "@/lib/actions/tasks";
+import { saveListCollapsedGroups, saveListColumnWidths } from "@/lib/actions/views";
+import { setFieldLocked, setFieldValue } from "@/lib/actions/fields";
+import { type ActionResult } from "@/lib/api/core/result";
 import {
   MAX_COLUMN_WIDTH,
   clampColumnWidth,

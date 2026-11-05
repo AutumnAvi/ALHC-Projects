@@ -3,7 +3,7 @@
 import { Clock, Send, X } from "lucide-react";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
-import { cancelPendingInvite, resendPendingInvite } from "@/lib/actions";
+import { cancelPendingInvite, resendPendingInvite } from "@/lib/actions/members";
 import { RESEND_INVITE_MINUTES, describeInviteEmail, type PendingInvite } from "@/lib/workspace";
 
 // People invited before their first sign-in (projects, portfolios, teams): they join with this role when

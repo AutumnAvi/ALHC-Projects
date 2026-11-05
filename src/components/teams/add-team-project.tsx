@@ -4,7 +4,7 @@ import { FolderKanban, FolderPlus } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { updateProjectTeam } from "@/lib/actions";
+import { updateProjectTeam } from "@/lib/actions/projects";
 
 export type MovableProject = {
   id: string;

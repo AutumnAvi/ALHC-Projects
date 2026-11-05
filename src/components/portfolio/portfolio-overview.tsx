@@ -18,7 +18,7 @@ import {
   removePortfolioChild,
   removePortfolioProject,
   updatePortfolio,
-} from "@/lib/actions";
+} from "@/lib/actions/portfolios";
 import type { Portfolio, PortfolioChild, PortfolioField, PortfolioProject } from "@/lib/api/portfolios/model";
 import type { ProjectStatusUpdate } from "@/lib/api/projects/model";
 import type { Json } from "@/lib/supabase/database.types";

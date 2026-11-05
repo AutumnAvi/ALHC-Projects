@@ -8,12 +8,14 @@ import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
-import { setWorkspaceLogo, updateWorkspaceSettings } from "@/lib/actions";
+import { setWorkspaceLogo, updateWorkspaceSettings } from "@/lib/actions/workspace";
 import type { Workspace } from "@/lib/api/workspace/model";
 import type { WorkspaceImportRun } from "@/lib/api/imports/model";
 import { describeImportCreated } from "@/lib/imports-shared";
+import { uploadWorkspaceLogo } from "@/lib/api/client/storage";
+import { createApiContext } from "@/lib/api/core/context";
 import { createClient } from "@/lib/supabase/client";
-import { LOGO_MAX_BYTES, LOGO_TYPES, WORKSPACE_ASSETS_BUCKET, logoObjectPath } from "@/lib/workspace";
+import { LOGO_MAX_BYTES, LOGO_TYPES, logoObjectPath } from "@/lib/workspace";
 
 const LABEL = "text-xs font-medium text-zinc-600";
 
@@ -48,13 +50,11 @@ export function GeneralSettings({
     }
     setUploading(true);
     const path = logoObjectPath(workspace.id, file.name);
-    const { error } = await createClient()
-      .storage.from(WORKSPACE_ASSETS_BUCKET)
-      .upload(path, file, { contentType: file.type, upsert: false });
+    const { error } = await uploadWorkspaceLogo(createApiContext(createClient()), path, file);
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
-    if (error) {
-      setLogoError(`Couldn’t upload the logo: ${error.message}`);
+    if (error !== null) {
+      setLogoError(`Couldn’t upload the logo: ${error}`);
       return;
     }
     run(() => setWorkspaceLogo(path, file.size));

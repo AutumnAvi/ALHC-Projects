@@ -6,6 +6,7 @@ import type { AccessGrantRole } from "@/lib/access-requests";
 import type { ActionResult } from "@/lib/api/core/result";
 import type { ProjectTeamChoice, StatusTemplateInput } from "@/lib/api/projects/model";
 import * as projectsApi from "@/lib/api/projects/mutations";
+import * as projectsQueries from "@/lib/api/projects/queries";
 import { run, runWith } from "@/lib/server/action";
 import { actionContext } from "@/lib/server/context";
 
@@ -68,11 +69,11 @@ export async function setProjectStatus(
 }
 
 export async function listProjectTeamChoices(): Promise<ProjectTeamChoice[]> {
-  return projectsApi.listProjectTeamChoices(await actionContext());
+  return projectsQueries.listProjectTeamChoices(await actionContext());
 }
 
 export async function listProjectTemplateChoices() {
-  return projectsApi.listProjectTemplateChoices(await actionContext());
+  return projectsQueries.listProjectTemplateChoices(await actionContext());
 }
 
 export async function setSectionsLocked(projectId: string, locked: boolean): Promise<ActionResult> {

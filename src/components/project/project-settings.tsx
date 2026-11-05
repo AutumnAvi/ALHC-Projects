@@ -2,7 +2,8 @@
 
 import { useOptimistic } from "react";
 import { useServerAction } from "@/components/toast";
-import { setDependencyShiftMode, updateProjectWorkflow } from "@/lib/actions";
+import { setDependencyShiftMode } from "@/lib/actions/dependencies";
+import { updateProjectWorkflow } from "@/lib/actions/numbering";
 import type { Project } from "@/lib/api/projects/model";
 import { DEPENDENCY_SHIFT_MODES, DEPENDENCY_SHIFT_OPTIONS, type DependencyShiftMode } from "@/lib/dependencies";
 

@@ -25,13 +25,10 @@ import { useDependencyShift } from "@/components/task/dependency-shift";
 import { useNotify, useServerAction } from "@/components/toast";
 import { beginLocalMutation, dropTokenTasks, endLocalMutation, failMutation } from "@/lib/optimistic-session";
 import { finishRunning, startRunning } from "@/lib/rule-running";
-import {
-  addProjectMemberByProfile,
-  bulkEditTasks,
-  listBulkManualRules,
-  runManualRuleOnTasks,
-  type BulkManualRule,
-} from "@/lib/actions";
+import { addProjectMemberByProfile } from "@/lib/actions/members";
+import { bulkEditTasks } from "@/lib/actions/tasks";
+import { listBulkManualRules, runManualRuleOnTasks } from "@/lib/actions/automations";
+import { type BulkManualRule } from "@/lib/api/automations/model";
 import { Dialog } from "@/components/dialog";
 import { MAX_BULK_TASKS, bulkRuleRunMessage, bulkRuleRunTone, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@/lib/bulk";
 import type { Section } from "@/lib/api/projects/model";

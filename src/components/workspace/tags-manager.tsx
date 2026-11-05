@@ -6,7 +6,7 @@ import { displayName } from "@/lib/people";
 import { TagChip } from "@/components/tags/tag-chip";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { createTag, updateTag } from "@/lib/actions";
+import { createTag, updateTag } from "@/lib/actions/tags";
 import type { Profile } from "@/lib/api/people/model";
 import { MAX_TAG_NAME, canManageTag, type Tag } from "@/lib/tags";
 import { ColorPicker } from "@/components/color-picker";

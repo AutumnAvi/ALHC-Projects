@@ -9,7 +9,7 @@ import { dayLabel } from "@/lib/date-input";
 import { OPTION_COLOR_CLASSES, fieldChips } from "@/lib/fields";
 import { formatRequestLabel } from "@/lib/request-numbers";
 import { TASK_KIND_LABELS } from "@/lib/task-kinds";
-import { testRule } from "@/lib/actions";
+import { testRule } from "@/lib/actions/automations";
 import { conditionGroup, groupsPass, type RuleAction, type RuleCondition, type TriggerType } from "@/lib/rules";
 import { testHeadline, type RuleTestResult } from "@/lib/rule-steps";
 import type { Json } from "@/lib/supabase/database.types";

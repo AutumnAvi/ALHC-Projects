@@ -7,9 +7,7 @@ import type { ApiContext } from "@/lib/api/core/context";
 import { check, checkUpdated, nowIso } from "@/lib/api/core/db";
 import { ApiError, NEEDS_DATABASE_UPDATE, invalid, schemaMissing } from "@/lib/api/core/errors";
 import { id, optionalDate, optionalText, projectVisibility, text } from "@/lib/api/core/validate";
-import type { ProjectTeamChoice, StatusTemplateInput } from "@/lib/api/projects/model";
-import { listMyTeamIds, listTeams } from "@/lib/api/teams/queries";
-import { listProjectTemplates } from "@/lib/api/templates/queries";
+import type { StatusTemplateInput } from "@/lib/api/projects/model";
 import { getWorkspace } from "@/lib/api/workspace/queries";
 import { isProjectStatus } from "@/lib/portfolios";
 import { STATUS_TITLE_MAX } from "@/lib/project-page";
@@ -158,25 +156,6 @@ export async function setProjectStatus(
     throw invalid("“On hold” isn’t available until this release’s database update is fully applied. Pick another status for now.");
   }
   check(result);
-}
-
-// The New project dialog's choices. These two only read (Server Actions the dialog calls on open).
-
-// Teams a new project can go in: the viewer's teams plus the default team (open to everyone), default
-// first. Read with the viewer's client.
-export async function listProjectTeamChoices(ctx: ApiContext): Promise<ProjectTeamChoice[]> {
-  const [workspace, teams, mine] = await Promise.all([getWorkspace(ctx), listTeams(ctx), listMyTeamIds(ctx)]);
-  const defaultId = workspace?.defaultTeamId ?? null;
-  return teams
-    .filter((t) => t.id === defaultId || mine.has(t.id))
-    .map((t) => ({ id: t.id, name: t.name, isDefault: t.id === defaultId }))
-    .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name));
-}
-
-// The sidebar's New project → "Use a template" step: every workspace template (read with RLS).
-export async function listProjectTemplateChoices(ctx: ApiContext) {
-  const templates = await listProjectTemplates(ctx);
-  return templates.map(({ id, name, description, summary }) => ({ id, name, description, summary }));
 }
 
 // Oct 27 notes (batch 5): Owner settings → Lock section order. Only the project's Owners change it (the

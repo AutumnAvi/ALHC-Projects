@@ -6,7 +6,7 @@ import { Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Max
 import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { useServerAction } from "@/components/toast";
-import { decideApproval } from "@/lib/actions";
+import { decideApproval } from "@/lib/actions/approvals";
 import {
   approverDecision,
   approverDecisionNote,

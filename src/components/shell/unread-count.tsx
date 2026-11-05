@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeLive } from "@/lib/live";
 import { userTopic } from "@/lib/live-patch";
+import { countUnreadInboxRows, unreadInboxCount } from "@/lib/api/client/inbox";
+import { createApiContext } from "@/lib/api/core/context";
 import { createClient } from "@/lib/supabase/client";
 
 const POLL_MS = 60_000;
@@ -18,21 +20,17 @@ export function useUnreadCount(initial: number, memberId: string, scope: string)
     const ticket = ++request.current;
     // Same rows as countUnreadInbox: unread and still in the inbox. Counting archived
     // items made the badge jump when the server render landed.
-    const supabase = createClient();
-    const counted = await supabase.rpc("inbox_unread_count");
+    const ctx = createApiContext(createClient());
+    const counted = await unreadInboxCount(ctx);
     if (ticket !== request.current) return;
-    if (!counted.error && typeof counted.data === "number") {
-      setState((current) => ({ ...current, count: counted.data ?? 0 }));
+    if (typeof counted === "number") {
+      setState((current) => ({ ...current, count: counted }));
       return;
     }
     // A database without inbox_unread_count still counts through the table.
-    if (counted.error && counted.error.code !== "PGRST202" && counted.error.code !== "42883") return;
-    const { count, error } = await supabase
-      .from("inbox_items")
-      .select("id", { count: "exact", head: true })
-      .is("read_at", null)
-      .is("archived_at", null);
-    if (!error && count !== null && ticket === request.current) setState((current) => ({ ...current, count }));
+    if (counted === null) return;
+    const count = await countUnreadInboxRows(ctx);
+    if (count !== null && ticket === request.current) setState((current) => ({ ...current, count }));
   }, []);
 
   // Nov 4 notes (batch 21, QW4): one mechanism at a time. While the live channel is up it alone

@@ -20,6 +20,7 @@ import {
 import { check, checkUpdated, maybe, readInChunks, rows } from "@/lib/api/core/db";
 import { actionError, attempt, type ActionResult } from "@/lib/api/core/result";
 import { email, id, optionalIsoDate, projectRole, text } from "@/lib/api/core/validate";
+import type { Project } from "@/lib/api/projects/model";
 import { getProject } from "@/lib/api/projects/queries";
 import { getViewer } from "@/lib/api/auth/queries";
 
@@ -185,7 +186,8 @@ test("read() shares answers within a context like React's cache(), and never acr
 
 test("read() keeps a rejection for its context (as cache() did)", async () => {
   let loads = 0;
-  const failing = read(async () => {
+  const failing = read(async (ctx: ApiContext) => {
+    void ctx;
     loads++;
     throw new ApiError("unavailable", "Failed to load x: timeout");
   });
@@ -240,10 +242,16 @@ test("the viewer comes from the caller's own session and the allowlist check, on
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type Expect<T extends true> = T;
-type _ContextFirst = Expect<Equal<Parameters<typeof getProject>[0], ApiContext>>;
-type _ReadKeepsItsType = Expect<Equal<ReturnType<typeof getProject>, ReturnType<typeof getProject>>>;
-type _CodesAreClosed = Expect<Equal<ApiError["code"], ApiErrorCode>>;
-type _ActionResultCarriesCode = Expect<Equal<ActionResult["code"], ApiErrorCode | undefined>>;
+export type TypeChecks = [
+  // The caller's context comes first.
+  Expect<Equal<Parameters<typeof getProject>[0], ApiContext>>,
+  // read() keeps the function's own signature (optional parameters included).
+  Expect<Equal<Parameters<typeof getProject>[1], string>>,
+  Expect<Equal<Awaited<ReturnType<typeof getProject>>, Project | null>>,
+  // Error codes are a closed set, and a Server Action's answer carries one.
+  Expect<Equal<ApiError["code"], ApiErrorCode>>,
+  Expect<Equal<ActionResult["code"], ApiErrorCode | undefined>>,
+];
 
 test("layer functions can't be called without a context (compile-time)", () => {
   // @ts-expect-error the caller's context comes first
@@ -318,7 +326,7 @@ test("every exported layer read and write takes the caller's ApiContext first", 
     for (const st of sf.statements) {
       const exported = ts.canHaveModifiers(st) && ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
       if (!exported) continue;
-      let fn: ts.SignatureDeclaration | undefined;
+      let fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression | undefined;
       let name = "";
       if (ts.isFunctionDeclaration(st)) [fn, name] = [st, st.name?.text ?? ""];
       else if (ts.isVariableStatement(st)) {
@@ -328,10 +336,11 @@ test("every exported layer read and write takes the caller's ApiContext first", 
         if (init && ts.isCallExpression(init) && init.expression.getText(sf) === "read") init = init.arguments[0];
         if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) fn = init;
       }
-      if (!fn || !/^(async )?/.test(fn.getText(sf))) continue;
-      if (!fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) continue;
+      // Async functions only: the reads and writes (constants and sync helpers are left alone).
+      if (!fn || !ts.getModifiers(fn)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) continue;
       const first = fn.parameters[0];
-      const ok = first && (first.type?.getText(sf) === "ApiContext" || first.type?.getText(sf) === "Db");
+      // A public, token-checked call may take `ApiContext | null` (null: Supabase isn't set up here).
+      const ok = first && /^(ApiContext|Db)( \| null)?$/.test(first.type?.getText(sf) ?? "");
       assert.ok(ok, `${rel(file)}#${name} takes the caller's context first`);
     }
   }

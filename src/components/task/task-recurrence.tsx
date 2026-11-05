@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CalendarDays, ChevronRight, Repeat } from "lucide-react";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { setTaskRecurrence } from "@/lib/actions";
+import { setTaskRecurrence } from "@/lib/actions/tasks";
 import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { formatDueDate } from "@/lib/dates";
 import {

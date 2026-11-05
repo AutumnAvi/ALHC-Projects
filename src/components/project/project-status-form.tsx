@@ -6,7 +6,7 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { setProjectStatus } from "@/lib/actions";
+import { setProjectStatus } from "@/lib/actions/projects";
 import type { Project } from "@/lib/api/projects/model";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus, type ProjectStatus } from "@/lib/portfolios";
 

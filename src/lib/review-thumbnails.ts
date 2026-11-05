@@ -1,16 +1,19 @@
 import "server-only";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
+import { uploadObject } from "@/lib/api/attachments/mutations";
+import { downloadObject, signedObjectUrl } from "@/lib/api/attachments/queries";
+import type { ApiContext } from "@/lib/api/core/context";
+import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { reviewMediaKind } from "@/lib/review-checks";
 import { THUMBNAIL_BUDGET_MS, thumbnailPath, type ReviewThumbnail } from "@/lib/review-thumbnail-shared";
-import type { createClient } from "@/lib/supabase/server";
 
 // Oct 27 notes (batch 5): thumbnails for the review check email — an image, or a PDF's first page, drawn
 // on the server as a JPEG (about 1,200 px wide since Nov 1 notes, batch 8) and stored next to the file in
 // the private task-attachments bucket at <task id>/thumb-<attachment id>.jpg (two path segments, so the
 // task's Viewers+ read it like any of its files and Editors+ write it). Everything goes through the
-// signed-in Editor's own Supabase client, never the service role; the email gets a signed link that lasts
+// signed-in Editor's own context (the data-access layer's Storage calls with their own Supabase client),
+// never the service role; the email gets a signed link that lasts
 // as long as the review link. Best effort: a file that can't be drawn (too big, a broken file, no renderer
 // on this server) gets a file tile instead, and the email still goes out.
 //
@@ -18,8 +21,6 @@ import type { createClient } from "@/lib/supabase/server";
 // traced), so only the route that draws thumbnails imports it (src/app/api/review-thumbnails/route.ts).
 // Everything else — the review Server Actions included — asks that route (review-thumbnail-request.ts),
 // so the libraries ship with one server function instead of every page that has a task pane.
-
-type Supabase = Awaited<ReturnType<typeof createClient>>;
 
 // Nov 1 notes (batch 8): the email shows each file near the full width of its content (EMAIL_IMAGE_WIDTH,
 // 504 px), so thumbnails are drawn at about twice that for sharp screens (they were 480 px wide before).
@@ -206,41 +207,34 @@ export async function renderThumbnail(kind: "image" | "pdf", bytes: Uint8Array):
   return kind === "pdf" ? renderPdf(canvasLib, bytes) : renderImage(canvasLib, bytes);
 }
 
-async function signedThumbnail(supabase: Supabase, objectPath: string, seconds: number): Promise<string | null> {
-  const { data, error } = await supabase.storage.from(ATTACHMENTS_BUCKET).createSignedUrl(objectPath, seconds);
-  return error || !data?.signedUrl ? null : data.signedUrl;
-}
-
 // The size of a thumbnail already stored, read from its header (null when it can't be read: the email
 // then draws it at the full content width).
-async function storedSize(supabase: Supabase, objectPath: string): Promise<{ width: number; height: number } | null> {
-  const { data, error } = await supabase.storage.from(ATTACHMENTS_BUCKET).download(objectPath);
-  if (error || !data || data.size > THUMB_MAX_BYTES * 4) return null;
+async function storedSize(ctx: ApiContext, objectPath: string): Promise<{ width: number; height: number } | null> {
+  const data = await downloadObject(ctx, objectPath);
+  if (!data || data.size > THUMB_MAX_BYTES * 4) return null;
   return jpegSize(new Uint8Array(await data.arrayBuffer()));
 }
 
-async function oneThumbnail(supabase: Supabase, taskId: string, source: ThumbnailSource, seconds: number): Promise<ReviewThumbnail | null> {
+async function oneThumbnail(ctx: ApiContext, taskId: string, source: ThumbnailSource, seconds: number): Promise<ReviewThumbnail | null> {
   const objectPath = thumbnailPath(taskId, source.attachmentId);
   // Files never change, so a thumbnail drawn for an earlier round (or an earlier send) is reused. One drawn
   // before batch 8 (480 px) is kept too and shown at its own width (sharp, if a little smaller): people
   // can't replace a stored file (no update policy on the bucket), and the original is a click away.
-  const existing = await signedThumbnail(supabase, objectPath, seconds);
+  const existing = await signedObjectUrl(ctx, objectPath, seconds);
   if (existing) {
-    const size = await storedSize(supabase, objectPath).catch(() => null);
+    const size = await storedSize(ctx, objectPath).catch(() => null);
     return { url: existing, width: size?.width ?? null, height: size?.height ?? null };
   }
   const kind = reviewMediaKind(source.name, source.contentType);
   if (kind !== "image" && kind !== "pdf") return null;
-  const download = await supabase.storage.from(ATTACHMENTS_BUCKET).download(source.storagePath);
-  if (download.error || !download.data) return null;
-  if (download.data.size > MAX_ATTACHMENT_BYTES) return null;
-  const jpeg = await renderThumbnail(kind, new Uint8Array(await download.data.arrayBuffer()));
-  const upload = await supabase.storage
-    .from(ATTACHMENTS_BUCKET)
-    .upload(objectPath, jpeg, { contentType: "image/jpeg", upsert: false });
+  const original = await downloadObject(ctx, source.storagePath);
+  if (!original) return null;
+  if (original.size > MAX_ATTACHMENT_BYTES) return null;
+  const jpeg = await renderThumbnail(kind, new Uint8Array(await original.arrayBuffer()));
+  const uploadError = await uploadObject(ctx, objectPath, jpeg, { contentType: "image/jpeg", upsert: false });
   // Someone else drew it at the same moment: theirs is the same picture.
-  if (upload.error && !/exists|duplicate/i.test(upload.error.message)) return null;
-  const url = await signedThumbnail(supabase, objectPath, seconds);
+  if (uploadError && !/exists|duplicate/i.test(uploadError)) return null;
+  const url = await signedObjectUrl(ctx, objectPath, seconds);
   const size = jpegSize(new Uint8Array(jpeg));
   return url ? { url, width: size?.width ?? null, height: size?.height ?? null } : null;
 }
@@ -248,7 +242,7 @@ async function oneThumbnail(supabase: Supabase, taskId: string, source: Thumbnai
 // Signed thumbnails (with their sizes) by asset id, for the files that could be drawn (the rest are left
 // out: the email shows a file tile for them). Links last until the review link expires.
 export async function reviewThumbnails(
-  supabase: Supabase,
+  ctx: ApiContext,
   taskId: string,
   assets: ThumbnailSource[],
   expiresAt: Date,
@@ -262,7 +256,7 @@ export async function reviewThumbnails(
     while (next < queue.length) {
       const source = queue[next++];
       try {
-        const thumb = await withTimeout(oneThumbnail(supabase, taskId, source, seconds), RENDER_TIMEOUT_MS);
+        const thumb = await withTimeout(oneThumbnail(ctx, taskId, source, seconds), RENDER_TIMEOUT_MS);
         if (thumb) urls.set(source.assetId, thumb);
       } catch (error) {
         // Logs the kind of failure only (never a file name, path, or link).

@@ -7,7 +7,7 @@ import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { useServerAction } from "@/components/toast";
-import { restoreTask } from "@/lib/actions";
+import { restoreTask } from "@/lib/actions/tasks";
 import type { Profile } from "@/lib/api/people/model";
 import type { TrashedTask } from "@/lib/api/tasks/model";
 import { TRASH_RETENTION_DAYS, trashDaysLeft, trashDeletesInLabel } from "@/lib/trash";

@@ -3,8 +3,8 @@
 import { useEffect, useState, useTransition } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
-import { createMessageThread } from "@/lib/actions";
-import { loadMessageProjects } from "@/lib/shell-actions";
+import { createMessageThread } from "@/lib/actions/messages";
+import { loadMessageProjects } from "@/lib/actions/shell";
 
 type Choice = { id: string; name: string };
 

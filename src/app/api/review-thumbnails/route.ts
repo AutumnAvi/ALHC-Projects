@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getViewer } from "@/lib/auth";
+import { listAttachmentFiles } from "@/lib/api/attachments/queries";
+import { getViewer } from "@/lib/api/auth/queries";
 import { isUuid } from "@/lib/ids";
 import { MAX_REVIEW_ASSETS } from "@/lib/review-checks";
 import { reviewThumbnails } from "@/lib/review-thumbnails";
-import { createClient } from "@/lib/supabase/server";
+import { routeContext } from "@/lib/server/context";
 
 // Nov 4 notes (batch 21, QW3): the one server function that draws review email thumbnails, so pdf.js and
 // @napi-rs/canvas (Skia) ship with it alone (next.config.ts) instead of with every page. The review
@@ -27,7 +28,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE });
     }
   }
-  const { user, allowlisted } = await getViewer();
+  const ctx = await routeContext();
+  const { user, allowlisted } = await getViewer(ctx);
   if (!user || !allowlisted) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: NO_STORE });
 
   let body: unknown;
@@ -52,14 +54,10 @@ export async function POST(request: Request) {
   if (wanted.length === 0) return NextResponse.json({ thumbnails: {} }, { headers: NO_STORE });
 
   // The files, read through RLS with the sender's own client (unreadable ones simply aren't drawn).
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("task_attachments")
-    .select("id, file_name, content_type, storage_path, size_bytes")
-    .in("id", wanted.map((a) => a.attachmentId));
-  const byId = new Map((data ?? []).map((a) => [a.id, a] as const));
+  const data = await listAttachmentFiles(ctx, wanted.map((a) => a.attachmentId));
+  const byId = new Map(data.map((a) => [a.id, a] as const));
   const thumbnails = await reviewThumbnails(
-    supabase,
+    ctx,
     taskId,
     wanted.flatMap(({ assetId, attachmentId }) => {
       const a = byId.get(attachmentId);

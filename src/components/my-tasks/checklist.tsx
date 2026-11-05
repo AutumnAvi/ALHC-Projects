@@ -15,7 +15,8 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { SkeletonRows } from "@/components/ui";
 import { blockedCount } from "@/components/project/inline-cells";
 import { ApprovalStatusBadge } from "@/components/project/task-meta";
-import { dismissDatePrompt, setTaskCompleted, undoTaskCompleted } from "@/lib/actions";
+import { dismissDatePrompt, undoTaskCompleted } from "@/lib/actions/my-tasks";
+import { setTaskCompleted } from "@/lib/actions/tasks";
 import {
   QUICK_ADD_PENDING_SCOPE,
   SETTLE_MS,

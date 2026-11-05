@@ -7,7 +7,7 @@ import { Popover } from "@/components/popover";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { setMyTasksChecked } from "@/lib/actions";
+import { setMyTasksChecked } from "@/lib/actions/my-tasks";
 import { CHECKED_MODE_OPTIONS, completedToday, type CheckedMode } from "@/lib/checklist";
 import type { AwaitingApproval, MyTask } from "@/lib/api/my-tasks/model";
 import { saveMyTasksLayout, type MyTasksLayout } from "@/lib/my-tasks";

@@ -2,7 +2,12 @@
 // through ctx.db (RLS decides); no Next.js here.
 import { getViewer } from "@/lib/api/auth/queries";
 import { type ApiContext, read } from "@/lib/api/core/context";
-import { maybe, rows } from "@/lib/api/core/db";
+import { check, maybe, rows } from "@/lib/api/core/db";
+import { invalid } from "@/lib/api/core/errors";
+import { id } from "@/lib/api/core/validate";
+import type { BulkManualRule, ManualRule } from "@/lib/api/automations/model";
+import { listMyProjectRoles } from "@/lib/api/projects/queries";
+import { MAX_BULK_TASKS } from "@/lib/bulk";
 import { type MyTaskRule, toMyTaskRule } from "@/lib/my-task-rules";
 import { type PortfolioRuleDef, type PortfolioRuleRun, toPortfolioRuleDef } from "@/lib/portfolio-rules";
 import { type FeedbackRun, firstChangingAction } from "@/lib/rule-feedback";
@@ -15,6 +20,7 @@ import {
   runReason,
   toRuleDef,
 } from "@/lib/rules";
+import { hasRole } from "@/lib/roles";
 import { partialOf } from "@/lib/run-outcome";
 
 export const listProjectRules = read(async (ctx: ApiContext, projectId: string): Promise<RuleDef[]> => {
@@ -272,3 +278,96 @@ export const listMyTaskRules = read(async (ctx: ApiContext): Promise<MyTaskRule[
   if (result.error?.code === "PGRST205" || result.error?.code === "42P01") return null;
   return rows(result, "My Tasks automations").map(toMyTaskRule);
 });
+
+// "Run manually" rules a task can run from the pane's "…" menu (ManualRule in model.ts): enabled rules
+// with the manual trigger in the task's projects where the viewer is an Editor, in the order the task was
+// added to them. A subtask or a private task has no projects and gets none.
+export async function listManualRules(ctx: ApiContext, taskId: string): Promise<ManualRule[]> {
+  const supabase = ctx.db;
+  const [task, memberships] = await Promise.all([
+    supabase.from("tasks").select("parent_task_id").eq("id", id(taskId, "task")).maybeSingle(),
+    supabase
+      .from("task_projects")
+      .select("project_id")
+      .eq("task_id", taskId)
+      .is("deleted_at", null)
+      .order("created_at")
+      .order("project_id"),
+  ]);
+  check(task);
+  check(memberships);
+  if (!task.data || task.data.parent_task_id) return [];
+  const roles = await listMyProjectRoles(ctx);
+  const projectIds = [...new Set((memberships.data ?? []).map((m) => m.project_id))].filter((p) =>
+    hasRole(roles.get(p) ?? null, "editor"),
+  );
+  if (projectIds.length === 0) return [];
+  const [projects, rules] = await Promise.all([
+    supabase.from("projects").select("id, name").in("id", projectIds).is("deleted_at", null),
+    supabase
+      .from("rules")
+      .select("id, name, project_id")
+      .in("project_id", projectIds)
+      .eq("trigger_type", "manual")
+      .eq("enabled", true)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at"),
+  ]);
+  check(projects);
+  check(rules);
+  const position = new Map(projectIds.map((p, i) => [p, i] as const));
+  const ordered = [...(projects.data ?? [])].sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
+  return ordered.flatMap((project) =>
+    (rules.data ?? [])
+      .filter((rule) => rule.project_id === project.id)
+      .map((rule) => ({ id: rule.id, name: rule.name, projectId: project.id, projectName: project.name })),
+  );
+}
+
+// Nov 2 notes (batch 17, 127): the bulk bar's "Run automation" list (BulkManualRule in model.ts): the
+// "Run manually" automations of the selected tasks' projects where the viewer is an Editor, each with how
+// many of the selected tasks are in its project.
+export async function listBulkManualRules(ctx: ApiContext, taskIds: string[]): Promise<BulkManualRule[]> {
+  const ids = [...new Set(taskIds.map((t) => id(t, "task")))];
+  if (ids.length === 0) return [];
+  if (ids.length > MAX_BULK_TASKS) throw invalid(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
+  const supabase = ctx.db;
+  const memberships = await supabase.from("task_projects").select("task_id, project_id").in("task_id", ids).is("deleted_at", null);
+  check(memberships);
+  const roles = await listMyProjectRoles(ctx);
+  const tasksIn = new Map<string, Set<string>>();
+  for (const m of memberships.data ?? []) {
+    if (!hasRole(roles.get(m.project_id) ?? null, "editor")) continue;
+    const set = tasksIn.get(m.project_id) ?? new Set<string>();
+    set.add(m.task_id);
+    tasksIn.set(m.project_id, set);
+  }
+  const projectIds = [...tasksIn.keys()];
+  if (projectIds.length === 0) return [];
+  const [projects, rules] = await Promise.all([
+    supabase.from("projects").select("id, name").in("id", projectIds).is("deleted_at", null).order("name"),
+    supabase
+      .from("rules")
+      .select("id, name, project_id")
+      .in("project_id", projectIds)
+      .eq("trigger_type", "manual")
+      .eq("enabled", true)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("created_at"),
+  ]);
+  check(projects);
+  check(rules);
+  return (projects.data ?? []).flatMap((project) =>
+    (rules.data ?? [])
+      .filter((rule) => rule.project_id === project.id)
+      .map((rule) => ({
+        id: rule.id,
+        name: rule.name,
+        projectId: project.id,
+        projectName: project.name,
+        taskCount: tasksIn.get(project.id)?.size ?? 0,
+      })),
+  );
+}

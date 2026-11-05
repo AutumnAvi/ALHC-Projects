@@ -3,6 +3,8 @@
 import { getViewer } from "@/lib/api/auth/queries";
 import { type ApiContext, read } from "@/lib/api/core/context";
 import { readInChunks, rows, rpcMissing } from "@/lib/api/core/db";
+import { invalid } from "@/lib/api/core/errors";
+import { id } from "@/lib/api/core/validate";
 import {
   assembleMyTasks,
   type AwaitingApproval,
@@ -13,7 +15,8 @@ import {
 } from "@/lib/api/my-tasks/model";
 import { visibleTaskNumbers, visibleTaskPlaces } from "@/lib/api/numbers/queries";
 import { listReadableProjects } from "@/lib/api/projects/queries";
-import { approvalRowStates, openBlockerCounts, taskAccessSets, taskTitles } from "@/lib/api/tasks/queries";
+import type { SubtaskItem } from "@/lib/api/tasks/model";
+import { approvalRowStates, listSubtaskTrees, openBlockerCounts, taskAccessSets, taskTitles } from "@/lib/api/tasks/queries";
 import { isMyTaskSectionKind, type MyTaskPlacement, type MyTaskSection } from "@/lib/my-tasks";
 import { parseTaskKind } from "@/lib/task-kinds";
 
@@ -178,3 +181,13 @@ export const listAwaitingMyApproval = read(async (ctx: ApiContext): Promise<Awai
   ]);
   return awaitingFrom(requests.data, tasks.data ?? [], rounds.data ?? [], places, access);
 });
+
+// The subtask tree under some rows (expanding a row), numbered as projectId numbers them.
+export async function loadSubtaskRows(ctx: ApiContext, rootIds: string[], projectId?: string | null): Promise<SubtaskItem[]> {
+  if (!Array.isArray(rootIds) || rootIds.length > 500) throw invalid("Too many tasks");
+  return listSubtaskTrees(
+    ctx,
+    rootIds.map((rootId) => id(rootId, "task")),
+    projectId ? id(projectId, "project") : undefined,
+  );
+}

@@ -2,7 +2,7 @@
 
 import { useOptimistic } from "react";
 import { useServerAction } from "@/components/toast";
-import { setTagsEnabled } from "@/lib/actions";
+import { setTagsEnabled } from "@/lib/actions/workspace";
 
 // Oct 26 notes (batch 3): Admin console → Tags → "Use tags in this workspace" (off by default). Off hides
 // tags everywhere in the app (task pane, List column, filters, grouping, rules, search, reports, bulk

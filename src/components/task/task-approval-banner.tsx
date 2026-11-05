@@ -36,7 +36,7 @@ import {
   handOffApproval,
   setTaskApprovers,
   withdrawApproval,
-} from "@/lib/actions";
+} from "@/lib/actions/approvals";
 import { cantDecideMessage, cantSendMessage } from "@/lib/approval-complete";
 import type { ApprovalRound, TaskApproval, TaskApprovalInfo, TaskDetail } from "@/lib/api/task-pane/model";
 import type { Profile } from "@/lib/api/people/model";

@@ -1,57 +1,46 @@
-"use server";
-
-// Reads the app shell loads on demand (Asana parity, batch 1): the search palette's live results and
-// recents, the Settings modal, and the Create menu's dialogs. Every one runs with the signed-in person's
-// own Supabase client (cookies), never the service role, so RLS decides what comes back: no task or
-// project the person can't open is ever returned, workspace admins included.
-
-import { displayName } from "@/lib/people";
-import { bareTaskTitle, numbersOf } from "@/lib/request-numbers";
-import { getViewer } from "@/lib/auth";
-import {
-  getGoalViewer,
-  getMyForwarding,
-  getMySettings,
-  listActivePeople,
-  listGoals,
-  listMyProjectRoles,
-  listProfiles,
-  visibleTaskNumbers,
-  visibleTaskPlaces,
-  listProjects,
-  listProjectTemplates,
-  listReadableProjects,
-  listMyCalendarFeeds,
-  listTeams,
-} from "@/lib/data";
-import { type MySettings } from "@/lib/api/me/model";
+// Big move 1: the shell area's reads — what the app shell loads on demand (Asana parity, batch 1): the
+// search palette's live results and recents, the "#" link picker's suggestions, the Settings modal, and the
+// Create menu's dialogs. Every one runs with the caller's own context (the signed-in person's session,
+// never the service role), so RLS decides what comes back: no task or project the person can't open is
+// ever returned, workspace admins included. No Next.js here: configuration (the email switches, the reply
+// domain) and the viewer's time zone come in as arguments.
+import { getViewer } from "@/lib/api/auth/queries";
+import { listMyCalendarFeeds } from "@/lib/api/calendar/queries";
+import type { ApiContext } from "@/lib/api/core/context";
+import { getGoalViewer, listGoals } from "@/lib/api/goals/queries";
+import type { MySettings } from "@/lib/api/me/model";
+import { getMyForwarding, getMySettings } from "@/lib/api/me/queries";
+import { visibleTaskNumbers, visibleTaskPlaces } from "@/lib/api/numbers/queries";
+import { listActivePeople, listProfiles } from "@/lib/api/people/queries";
+import { listMyProjectRoles, listProjects, listReadableProjects, listStarredProjectIds } from "@/lib/api/projects/queries";
+import { LINK_SEARCH_MAX_PROJECTS, LINK_SEARCH_MAX_TASKS, type SettingsEmailConfig } from "@/lib/api/shell/model";
+import { listTeams } from "@/lib/api/teams/queries";
+import { listProjectTemplates } from "@/lib/api/templates/queries";
 import { isCalendarFeedScope, type CalendarFeed } from "@/lib/calendar-feeds";
-import { isEmailConfigured } from "@/lib/email";
-import { forwardingAddress, isInboundEmailConfigured } from "@/lib/email-reply";
 import { fieldTypeLabel, isFieldType } from "@/lib/fields";
-import type { GalleryTemplate, TemplatePreview } from "@/lib/templates";
 import { isUuid } from "@/lib/ids";
+import { displayName } from "@/lib/people";
 import { templateOutline, type TemplateOutline } from "@/lib/project-roles";
+import { bareTaskTitle, numbersOf } from "@/lib/request-numbers";
 import { hasRole, type ProjectRole } from "@/lib/roles";
 import {
   EMPTY_RESULTS,
   MAX_RECENTS,
   isSearchKind,
+  type EmailSetup,
+  type ForwardingSetup,
   type QuickProject,
   type QuickResults,
   type QuickTask,
   type RecentItem,
-  type EmailSetup,
-  type ForwardingSetup,
   type RecentRef,
   type SearchKind,
 } from "@/lib/shell";
-import { createClient } from "@/lib/supabase/server";
-import { getViewerTimeZone } from "@/lib/timezone";
+import type { GalleryTemplate, TemplatePreview } from "@/lib/templates";
 import { todayIn } from "@/lib/workload";
 
-async function signedIn() {
-  const { user, allowlisted } = await getViewer();
+async function signedIn(ctx: ApiContext) {
+  const { user, allowlisted } = await getViewer(ctx);
   return Boolean(user && allowlisted);
 }
 
@@ -67,22 +56,22 @@ function rank<T>(items: T[], label: (item: T) => string, needle: string): T[] {
 }
 
 // The palette's live results. `only` narrows to one kind (a chip), with more rows.
-export async function quickSearch(query: string, only: SearchKind | null = null): Promise<QuickResults> {
+export async function quickSearch(ctx: ApiContext, query: string, only: SearchKind | null = null): Promise<QuickResults> {
   const q = typeof query === "string" ? query.trim().slice(0, 200) : "";
-  if (!q || !(await signedIn())) return EMPTY_RESULTS;
+  if (!q || !(await signedIn(ctx))) return EMPTY_RESULTS;
   const kind = isSearchKind(only) ? only : null;
   const limit = kind ? 20 : 5;
   const needle = q.toLowerCase();
-  const supabase = await createClient();
+  const supabase = ctx.db;
 
   const [taskResult, projects, people] = await Promise.all([
     !kind || kind === "tasks" ? supabase.rpc("search_tasks", { query: q, max_results: limit }) : null,
-    !kind || kind === "projects" ? listReadableProjects() : null,
-    !kind || kind === "people" ? listActivePeople() : null,
+    !kind || kind === "projects" ? listReadableProjects(ctx) : null,
+    !kind || kind === "people" ? listActivePeople(ctx) : null,
   ]);
 
   const taskRows = taskResult && !taskResult.error ? (taskResult.data ?? []) : [];
-  const taskNumbers = await visibleTaskNumbers(taskRows.map((task) => task.id));
+  const taskNumbers = await visibleTaskNumbers(ctx, taskRows.map((task) => task.id));
   const tasks: QuickTask[] = taskRows.map((t) => {
     const numbers = taskNumbers.get(t.id) ?? [];
     const label = numbers[0]?.label ?? null;
@@ -123,16 +112,16 @@ export async function quickSearch(query: string, only: SearchKind | null = null)
 }
 
 // Recently opened tasks and projects, newest first, keeping only what the person can still read.
-export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
-  if (!Array.isArray(refs) || !(await signedIn())) return [];
+export async function resolveRecents(ctx: ApiContext, refs: RecentRef[]): Promise<RecentItem[]> {
+  if (!Array.isArray(refs) || !(await signedIn(ctx))) return [];
   const wanted = refs
     .filter((r) => r && (r.kind === "task" || r.kind === "project") && isUuid(r.id))
     .slice(0, MAX_RECENTS);
   if (wanted.length === 0) return [];
   const taskIds = wanted.filter((r) => r.kind === "task").map((r) => r.id);
-  const supabase = await createClient();
+  const supabase = ctx.db;
   const [projects, taskResult] = await Promise.all([
-    listReadableProjects(),
+    listReadableProjects(ctx),
     taskIds.length
       ? supabase
           .from("tasks")
@@ -145,7 +134,7 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
   const tasks = taskResult && !taskResult.error ? taskResult.data ?? [] : [];
   // Every project of each task the person can read, in the order it was added to them (Oct 29 notes, 55b:
   // no home project): the first one labels and opens it, and its numbers are the badges.
-  const places = await visibleTaskPlaces(tasks.map((t) => t.id));
+  const places = await visibleTaskPlaces(ctx, tasks.map((t) => t.id));
   const tasksById = new Map(tasks.map((t) => [t.id, t] as const));
 
   return wanted.flatMap((ref): RecentItem[] => {
@@ -184,44 +173,98 @@ export async function resolveRecents(refs: RecentRef[]): Promise<RecentItem[]> {
   });
 }
 
+// Nov 4 notes (batch 25, 158): "#" alone (no query) in the link picker suggests before anything is typed,
+// like "@" does for people: the tasks and projects this browser opened recently (ids only, resolved through
+// RLS like the palette's recents), then the person's open tasks they were assigned most recently and their
+// starred, then other active, projects. `userId` is the signed-in person (the caller checked the session).
+export async function linkSuggestions(
+  ctx: ApiContext,
+  userId: string,
+  recent: RecentRef[],
+): Promise<{ tasks: QuickTask[]; projects: QuickProject[] }> {
+  const supabase = ctx.db;
+  const [assigned, projects, starred] = await Promise.all([
+    supabase
+      .from("tasks")
+      .select("id")
+      .eq("assignee_id", userId)
+      .is("completed_at", null)
+      .is("deleted_at", null)
+      .order("assigned_at", { ascending: false, nullsFirst: false })
+      .order("updated_at", { ascending: false })
+      .limit(LINK_SEARCH_MAX_TASKS),
+    listReadableProjects(ctx),
+    listStarredProjectIds(ctx).catch(() => [] as string[]),
+  ]);
+  const recentTasks = recent.filter((r) => r.kind === "task");
+  const taskRefs: RecentRef[] = [
+    ...recentTasks,
+    ...(assigned.error ? [] : (assigned.data ?? []))
+      .filter((t) => !recentTasks.some((r) => r.id === t.id))
+      .map((t) => ({ kind: "task" as const, id: t.id })),
+  ];
+  const recentProjects = recent.filter((r) => r.kind === "project");
+  const resolved = await resolveRecents(ctx, [...taskRefs.slice(0, MAX_RECENTS - recentProjects.length), ...recentProjects]);
+  const tasks = resolved.flatMap((r) => (r.kind === "task" ? [toQuickTask(r)] : [])).slice(0, LINK_SEARCH_MAX_TASKS);
+  const recentProjectList = resolved.flatMap((r) => (r.kind === "project" ? [{ id: r.id, name: r.name, archived: r.archived }] : []));
+  const seen = new Set(recentProjectList.map((p) => p.id));
+  const starredSet = new Set(starred);
+  const others = projects
+    .filter((p) => p.archived_at === null && !seen.has(p.id))
+    .sort((a, b) => Number(starredSet.has(b.id)) - Number(starredSet.has(a.id)))
+    .map((p) => ({ id: p.id, name: p.name, archived: false }));
+  return { tasks, projects: [...recentProjectList, ...others].slice(0, LINK_SEARCH_MAX_PROJECTS) };
+}
+
+function toQuickTask(item: QuickTask & { kind: "task" }): QuickTask {
+  const { kind: _kind, ...task } = item;
+  void _kind;
+  return task;
+}
+
 // What the Settings modal loads when it opens (since Asana parity, batch 5), in one round trip: the
 // person's own settings and what email can do in this workspace (configuration, plus the active projects
 // they administer by their own role, where inbound webhooks are set up).
-export async function loadSettings(): Promise<{ me: MySettings; email: EmailSetup } | null> {
-  if (!(await signedIn())) return null;
-  const [me, projects, roles] = await Promise.all([getMySettings(), listProjects(), listMyProjectRoles()]);
+export async function loadSettings(
+  ctx: ApiContext,
+  config: SettingsEmailConfig,
+): Promise<{ me: MySettings; email: EmailSetup } | null> {
+  if (!(await signedIn(ctx))) return null;
+  const [me, projects, roles] = await Promise.all([getMySettings(ctx), listProjects(ctx), listMyProjectRoles(ctx)]);
   if (!me) return null;
-  const sending = isEmailConfigured();
+  const sending = config.sending;
   return {
     me,
     email: {
       sending,
       // Replies only come back when comment emails go out with a Reply-To address.
-      replyByEmail: sending && isInboundEmailConfigured(),
+      replyByEmail: sending && config.inbound,
       // listProjects() is active projects only; an archived one caps everyone at Viewer anyway.
       inboundProjects: projects.flatMap((p) => (hasRole(roles.get(p.id), "admin") ? [{ id: p.id, name: p.name }] : [])),
-      forwarding: await loadForwarding(projects, roles),
+      forwarding: await loadForwarding(ctx, config, projects, roles),
     },
   };
 }
 
 // Settings → Email forwarding: the person's address (made the first time they open Settings) once
 // inbound email is set up here — the same Resend webhook as replies, plus what /api/inbound/email needs to
-// read the message and write the task (RESEND_API_KEY, the service-role key) — and the database update is
-// applied.
+// read the message and write the task (RESEND_API_KEY, the service-role key: `config.forwarding`) — and the
+// database update is applied.
 async function loadForwarding(
+  ctx: ApiContext,
+  config: SettingsEmailConfig,
   projects: { id: string; name: string }[],
   roles: Map<string, ProjectRole>,
 ): Promise<ForwardingSetup> {
-  if (!isInboundEmailConfigured() || !process.env.RESEND_API_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (!config.forwarding) {
     return { state: "not_configured" };
   }
-  const forwarding = await getMyForwarding();
+  const forwarding = await getMyForwarding(ctx);
   if (!forwarding) return { state: "needs_update" };
   const names = new Map(projects.map((p) => [p.id, p.name] as const));
   return {
     state: "ready",
-    address: forwardingAddress(forwarding.token),
+    address: config.forwardingAddress(forwarding.token),
     defaultProjectId: forwarding.defaultProjectId,
     projects: projects.flatMap((p) => (hasRole(roles.get(p.id), "editor") ? [{ id: p.id, name: p.name }] : [])),
     recent: forwarding.recent.map((f) => ({
@@ -240,21 +283,20 @@ async function loadForwarding(
 
 // Projects the person can post a message in (Commenter+, active; an archived project caps everyone at
 // Viewer), for Create → Message.
-export async function loadMessageProjects(): Promise<{ id: string; name: string }[]> {
-  if (!(await signedIn())) return [];
-  const [projects, roles] = await Promise.all([listProjects(), listMyProjectRoles()]);
+export async function loadMessageProjects(ctx: ApiContext): Promise<{ id: string; name: string }[]> {
+  if (!(await signedIn(ctx))) return [];
+  const [projects, roles] = await Promise.all([listProjects(ctx), listMyProjectRoles(ctx)]);
   return projects.filter((p) => hasRole(roles.get(p.id), "commenter")).map(({ id, name }) => ({ id, name }));
 }
 
-// What the New goal dialog needs, for Create → Goal.
-export async function loadGoalDialog() {
-  if (!(await signedIn())) return null;
-  const [viewer, profiles, teams, goals, timeZone] = await Promise.all([
-    getGoalViewer(),
-    listProfiles(),
-    listTeams(),
-    listGoals(),
-    getViewerTimeZone(),
+// What the New goal dialog needs, for Create → Goal. `timeZone` is the viewer's (the adapter reads it).
+export async function loadGoalDialog(ctx: ApiContext, timeZone: string) {
+  if (!(await signedIn(ctx))) return null;
+  const [viewer, profiles, teams, goals] = await Promise.all([
+    getGoalViewer(ctx),
+    listProfiles(ctx),
+    listTeams(ctx),
+    listGoals(ctx),
   ]);
   return {
     viewer,
@@ -267,10 +309,10 @@ export async function loadGoalDialog() {
 
 // The New project gallery (Asana parity, batch 4): every workspace template (templates are readable by
 // everyone allowlisted), with "mine" for the ones the person saved.
-export async function loadProjectGallery(): Promise<GalleryTemplate[] | null> {
-  const { user, allowlisted } = await getViewer();
+export async function loadProjectGallery(ctx: ApiContext): Promise<GalleryTemplate[] | null> {
+  const { user, allowlisted } = await getViewer(ctx);
   if (!user || !allowlisted) return null;
-  const templates = await listProjectTemplates();
+  const templates = await listProjectTemplates(ctx);
   return templates.map((t) => ({
     id: t.id,
     name: t.name,
@@ -291,9 +333,9 @@ function textOf(value: unknown): string | null {
 
 // What a template holds, for the gallery's preview: its sections with their first few task titles, and
 // its fields. Read with the person's own client (templates are workspace-level).
-export async function loadTemplatePreview(templateId: string): Promise<TemplatePreview | null> {
-  if (!isUuid(templateId) || !(await signedIn())) return null;
-  const supabase = await createClient();
+export async function loadTemplatePreview(ctx: ApiContext, templateId: string): Promise<TemplatePreview | null> {
+  if (!isUuid(templateId) || !(await signedIn(ctx))) return null;
+  const supabase = ctx.db;
   const { data } = await supabase
     .from("project_templates")
     .select("sections:content->sections, tasks:content->tasks, fields:content->fields")
@@ -331,10 +373,11 @@ export async function loadTemplatePreview(templateId: string): Promise<TemplateP
 // fields, and roles (from the template's snapshot, readable by everyone signed in) — and the people of the
 // workspace who can fill its roles.
 export async function loadTemplateOutline(
+  ctx: ApiContext,
   templateId: string,
 ): Promise<{ outline: TemplateOutline; people: { id: string; name: string }[] } | null> {
-  if (!isUuid(templateId) || !(await signedIn())) return null;
-  const supabase = await createClient();
+  if (!isUuid(templateId) || !(await signedIn(ctx))) return null;
+  const supabase = ctx.db;
   const [{ data }, people] = await Promise.all([
     supabase
       .from("project_templates")
@@ -342,7 +385,7 @@ export async function loadTemplateOutline(
       .eq("id", templateId)
       .is("deleted_at", null)
       .maybeSingle(),
-    listActivePeople(),
+    listActivePeople(ctx),
   ]);
   if (!data) return null;
   return {
@@ -355,18 +398,19 @@ export async function loadTemplateOutline(
 // team (never the token: only its hint), and the name of what it covers, read with their own client.
 // available = false on a database without the update.
 export async function loadCalendarFeed(
+  ctx: ApiContext,
   scope: string,
   targetId: string | null,
 ): Promise<{ available: boolean; feed: CalendarFeed | null; targetName: string | null } | null> {
-  if (!(await signedIn()) || !isCalendarFeedScope(scope)) return null;
+  if (!(await signedIn(ctx)) || !isCalendarFeedScope(scope)) return null;
   if (scope !== "my_tasks" && !isUuid(targetId)) return null;
-  const feeds = await listMyCalendarFeeds();
+  const feeds = await listMyCalendarFeeds(ctx);
   if (!feeds) return { available: false, feed: null, targetName: null };
   const feed =
     feeds.find((f) => f.scope === scope && (scope === "my_tasks" || f.projectId === targetId || f.teamId === targetId)) ?? null;
   let targetName: string | null = scope === "my_tasks" ? "My tasks" : (feed?.targetName ?? null);
   if (!targetName && targetId) {
-    const supabase = await createClient();
+    const supabase = ctx.db;
     const row =
       scope === "project"
         ? (await supabase.from("projects").select("name").eq("id", targetId).is("deleted_at", null).maybeSingle()).data
@@ -377,17 +421,20 @@ export async function loadCalendarFeed(
 }
 
 // Settings → Calendar sync: every live link of the person's. Null on a database without the update.
-export async function loadCalendarFeeds(): Promise<CalendarFeed[] | null> {
-  if (!(await signedIn())) return null;
-  return listMyCalendarFeeds();
+export async function loadCalendarFeeds(ctx: ApiContext): Promise<CalendarFeed[] | null> {
+  if (!(await signedIn(ctx))) return null;
+  return listMyCalendarFeeds(ctx);
 }
 
 // Oct 26 notes (batch 4): a task the pane can't open may be in the Trash. Trashed tasks are readable only
 // by Editors+ of one of their projects (RLS), who can also restore them, so a row here means "show
 // Restore". Null for anything else (missing, or no access): the pane says Not found as before.
-export async function loadTrashedTask(taskId: string): Promise<{ id: string; title: string; deletedAt: string } | null> {
-  if (!(await signedIn()) || !isUuid(taskId)) return null;
-  const supabase = await createClient();
+export async function loadTrashedTask(
+  ctx: ApiContext,
+  taskId: string,
+): Promise<{ id: string; title: string; deletedAt: string } | null> {
+  if (!(await signedIn(ctx)) || !isUuid(taskId)) return null;
+  const supabase = ctx.db;
   const { data } = await supabase
     .from("tasks")
     .select("id, title, deleted_at")

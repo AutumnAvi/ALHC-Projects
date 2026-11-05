@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Archive, Check, Lock } from "lucide-react";
 import { useNotify, useServerAction } from "@/components/toast";
-import { requestProjectAccess } from "@/lib/actions";
+import { requestProjectAccess } from "@/lib/actions/projects";
 import type { ProjectAccessStatus } from "@/lib/access-requests";
 
 // Oct 26 notes (batch 3): a project link someone isn't part of (/project-access/<id>, where the project

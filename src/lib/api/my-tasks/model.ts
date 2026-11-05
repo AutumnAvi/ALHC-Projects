@@ -1,6 +1,7 @@
 // Big move 1: the my-tasks area's types and pure mappers (no database access; safe to import anywhere,
 // the browser included).
 import type { ApprovalRowState } from "@/lib/api/tasks/model";
+import type { Recurrence } from "@/lib/recurrence";
 import { displayTaskTitle, numbersOf, type RequestLabel, type TaskNumber, type TaskPlace } from "@/lib/request-numbers";
 import type { Json } from "@/lib/supabase/database.types";
 import { type ApprovalTaskStatus, parseTaskKind, type TaskKind } from "@/lib/task-kinds";
@@ -183,3 +184,14 @@ export function awaitingFrom(
   }
   return out;
 }
+
+// What the My tasks / Home quick-add bar sends (parsed in the browser by parseQuickAdd).
+export type QuickAddTaskInput = {
+  title: string;
+  projectId?: string | null;
+  // The @person typed in the bar: a follower, never the assignee.
+  mentionId?: string | null;
+  dueOn?: string | null;
+  repeat?: { freq: Recurrence["freq"]; interval: number; weekdays: number[]; fromCompletion: boolean } | null;
+  timeZone?: string;
+};

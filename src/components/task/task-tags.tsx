@@ -5,7 +5,7 @@ import { Plus } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { TagChip } from "@/components/tags/tag-chip";
 import { useServerAction } from "@/components/toast";
-import { addNewTaskTag, addTaskTag, removeTaskTag } from "@/lib/actions";
+import { addNewTaskTag, addTaskTag, removeTaskTag } from "@/lib/actions/tags";
 import { MAX_TAG_NAME, addableTags, tagsFor, type Tag } from "@/lib/tags";
 
 // The pane's Tags row: chips (× removes) and a picker that searches workspace tags and can create one.

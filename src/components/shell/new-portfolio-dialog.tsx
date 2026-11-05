@@ -2,7 +2,8 @@
 
 import { useActionState } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
-import { createPortfolio, type ActionResult } from "@/lib/actions";
+import { createPortfolio } from "@/lib/actions/portfolios";
+import { type ActionResult } from "@/lib/api/core/result";
 
 // New portfolio as a modal (Esc or a click outside closes it), like Asana.
 export function NewPortfolioDialog({ onClose }: { onClose: () => void }) {

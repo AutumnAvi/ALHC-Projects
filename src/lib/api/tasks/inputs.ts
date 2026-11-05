@@ -3,6 +3,7 @@ import { invalid } from "@/lib/api/core/errors";
 import { timeZone } from "@/lib/api/core/validate";
 import { isFrequency, recurrenceJson, type Recurrence } from "@/lib/recurrence";
 import type { Json } from "@/lib/supabase/database.types";
+import { TASK_KINDS, type TaskKind } from "@/lib/task-kinds";
 import { isIsoDate } from "@/lib/views";
 
 // A repeat rule as the database takes it (null = no repeat).
@@ -39,4 +40,10 @@ export function recurrenceInput(value: Recurrence | null): Json | null {
     timezone: value.timezone ? timeZone(value.timezone) : undefined,
     fromCompletion: value.fromCompletion === true,
   });
+}
+
+// Task, milestone, or approval.
+export function taskKindInput(value: unknown): TaskKind {
+  if (!TASK_KINDS.includes(value as TaskKind)) throw invalid("Choose a task type");
+  return value as TaskKind;
 }

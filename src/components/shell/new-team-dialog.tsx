@@ -2,7 +2,8 @@
 
 import { useActionState } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
-import { createTeam, type ActionResult } from "@/lib/actions";
+import { createTeam } from "@/lib/actions/teams";
+import { type ActionResult } from "@/lib/api/core/result";
 
 // Create → Team: the Teams page's "start a team" form as a modal. You become its first lead.
 export function NewTeamDialog({ onClose }: { onClose: () => void }) {

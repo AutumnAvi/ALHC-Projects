@@ -10,7 +10,13 @@ import { useProjectPermissions } from "@/components/project/project-access";
 import { Segmented } from "@/components/project/view-chrome";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
-import { deleteRule, duplicateRule, installRulePreset, setRuleEnabled, setRulePausedUntil } from "@/lib/actions";
+import {
+  deleteRule,
+  duplicateRule,
+  installRulePreset,
+  setRuleEnabled,
+  setRulePausedUntil,
+} from "@/lib/actions/automations";
 import { RulePauseControls, isPausedNow } from "./rule-pause";
 import { runSteps } from "@/lib/rule-steps";
 import { RUN_TONE_CLASS, filterRuns, runFilterLabel, runOutcome, runOutcomeText, type RunFilter } from "@/lib/run-outcome";

@@ -21,3 +21,33 @@ export type ProjectTemplate = {
   // Admin+ of the live source project, or a workspace admin: rename, replace, delete.
   canManage: boolean;
 };
+
+// ---------------------------------------------------------------------------------------------
+// Inputs of the templates area's writes (mutations.ts), shared with their Server Actions
+// ---------------------------------------------------------------------------------------------
+
+export type SaveProjectTemplateInput = {
+  name: string;
+  description: string | null;
+  startOn: string | null;
+  replaceTemplateId: string | null;
+};
+
+export type ProjectFromTemplateInput = {
+  name: string;
+  startOn: string | null;
+  teamId?: string | null;
+  visibility?: string | null;
+  // Nov 2 notes (batch 14, 95): the "Customize before creating" edits and the people for its roles.
+  customization?: import("@/lib/project-roles").TemplateCustomization | null;
+};
+
+export type DuplicateProjectInput = { name: string; options: import("@/lib/templates").DuplicateOptions };
+
+export type TaskTemplatePatch = {
+  name?: string;
+  title?: string;
+  notes?: string | null;
+  subtasks?: string[];
+  clearAssignee?: boolean;
+};

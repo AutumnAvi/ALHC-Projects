@@ -83,9 +83,10 @@ test("110: saved stars stay until the props agree, then later changes win; a dra
   assert.deepEqual(draggedProjectIds("c", ["a", "b"]), ["c"], "an unselected row drags alone");
   const sidebar = fs.readFileSync("src/components/shell/sidebar-projects.tsx", "utf8");
   assert.match(sidebar, /projects\.filter\(\(p\) => !starredSet\.has\(p\.id\)\)/, "a starred project isn't listed under Projects too");
-  const actions = fs.readFileSync("src/lib/actions.ts", "utf8");
-  const starring = actions.slice(actions.indexOf("export async function setProjectsStarred"), actions.indexOf("// Oct 26 notes (batch 3): personal sidebar folders"));
-  assert.match(starring, /revalidatePath\("\/", "layout"\)/, "the sidebar's layout is revalidated");
+  // Big move 1: the Server Action is a thin adapter (src/lib/actions/sidebar.ts) over the layer's write.
+  const actions = fs.readFileSync("src/lib/actions/sidebar.ts", "utf8");
+  const starring = actions.slice(actions.indexOf("export async function setProjectsStarred"), actions.indexOf("\n}\n", actions.indexOf("export async function setProjectsStarred")));
+  assert.match(starring, /revalidate: \[\["\/", "layout"\]\]/, "the sidebar's layout is revalidated");
 });
 
 // ---- 111 ----------------------------------------------------------------------------------------

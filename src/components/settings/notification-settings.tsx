@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useServerAction } from "@/components/toast";
-import { setEmailComments, setNotificationSetting } from "@/lib/actions";
+import { setEmailComments, setNotificationSetting } from "@/lib/actions/me";
 import {
   NOTIFICATION_KINDS,
   type NotificationChannel,

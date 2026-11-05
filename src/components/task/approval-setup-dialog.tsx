@@ -8,7 +8,7 @@ import { Dialog } from "@/components/dialog";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { setApprovalFollowUp, setTaskApprovers } from "@/lib/actions";
+import { setApprovalFollowUp, setTaskApprovers } from "@/lib/actions/approvals";
 import {
   FOLLOW_UP_LABELS,
   approvalSetupProblem,

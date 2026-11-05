@@ -21,7 +21,7 @@ import {
   type ReviewStatus,
   type TaskReviewRound,
 } from "@/lib/review-checks";
-import { loadTaskReviews, resendReviewCheck, withdrawReviewCheck } from "@/lib/review-actions";
+import { loadTaskReviews, resendReviewCheck, withdrawReviewCheck } from "@/lib/actions/reviews";
 import { reviewsChanged, reviewsReloaded, useReviewEvents } from "./review-events";
 
 // Oct 26 notes (batch 3): the pane's Reviews tab. Every review check of the task, newest round first: who

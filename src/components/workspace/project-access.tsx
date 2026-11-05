@@ -7,8 +7,9 @@ import { RolePicker, RoleChangePicker, projectRoleOptions } from "@/components/r
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { Skeleton } from "@/components/ui";
-import { changeProjectMemberRole, inviteProjectMember } from "@/lib/actions";
-import { loadPersonProjectAccess, type PersonProjectAccess } from "@/lib/people-actions";
+import { changeProjectMemberRole, inviteProjectMember } from "@/lib/actions/members";
+import { loadPersonProjectAccess } from "@/lib/actions/people";
+import { type PersonProjectAccess } from "@/lib/api/shell/model";
 import { PERSON_DEFAULT_ROLE, ROLE_DESCRIPTIONS, ROLE_LABELS } from "@/lib/roles";
 import { projectColorClass } from "@/lib/project-colors";
 

@@ -2,7 +2,7 @@
 
 import { useOptimistic } from "react";
 import { useServerAction } from "@/components/toast";
-import { setGoalsEnabled } from "@/lib/actions";
+import { setGoalsEnabled } from "@/lib/actions/workspace";
 
 // Nov 2 notes (batch 13, note 88): Admin console → Organization → "Use goals in this workspace" (off by
 // default). Off hides Goals from the sidebar, the Create menu, project and team Overviews, and the Goals

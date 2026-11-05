@@ -26,7 +26,9 @@ import {
 import { useConfirm } from "@/components/confirm";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
-import { deleteTask, restoreTask, setReplyThreadClosed, setTaskKind, type ActionResult } from "@/lib/actions";
+import { deleteTask, restoreTask, setTaskKind } from "@/lib/actions/tasks";
+import { setReplyThreadClosed } from "@/lib/actions/comments";
+import { type ActionResult } from "@/lib/api/core/result";
 import { requestApprovalAction } from "./approval-action";
 import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { describeRecurrence } from "@/lib/recurrence";

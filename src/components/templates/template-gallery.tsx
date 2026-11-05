@@ -8,7 +8,7 @@ import { Dialog, DIALOG_LABEL } from "@/components/dialog";
 import { MenuItem, Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { deleteProjectTemplate, updateProjectTemplate } from "@/lib/actions";
+import { deleteProjectTemplate, updateProjectTemplate } from "@/lib/actions/templates";
 import type { ProjectTemplate } from "@/lib/api/templates/model";
 import type { TaskTemplate } from "@/lib/row-mappers";
 import { describeSummary } from "@/lib/templates";

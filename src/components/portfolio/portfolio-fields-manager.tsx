@@ -7,7 +7,7 @@ import { ListPlus, Plus, Trash2, X } from "lucide-react";
 import { EmptyState } from "@/components/ui";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { createPortfolioField, deletePortfolioField, updatePortfolioField } from "@/lib/actions";
+import { createPortfolioField, deletePortfolioField, updatePortfolioField } from "@/lib/actions/portfolios";
 import type { PortfolioField } from "@/lib/api/portfolios/model";
 import {
   OPTION_COLORS,

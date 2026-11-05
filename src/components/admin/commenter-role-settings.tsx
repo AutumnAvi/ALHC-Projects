@@ -4,7 +4,7 @@ import { useOptimistic } from "react";
 import Link from "next/link";
 import { useConfirm } from "@/components/confirm";
 import { useServerAction } from "@/components/toast";
-import { convertCommenterMember, setCommenterRoleAllowed } from "@/lib/actions";
+import { convertCommenterMember, setCommenterRoleAllowed } from "@/lib/actions/workspace";
 import type { CommenterMember } from "@/lib/api/workspace/model";
 import { personHref } from "@/lib/people";
 

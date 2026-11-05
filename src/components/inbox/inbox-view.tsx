@@ -12,13 +12,8 @@ import { useOpenTaskId } from "@/components/shell/right-panel";
 import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, HEADER_TAB } from "@/components/ui";
-import {
-  archiveInboxItems,
-  markInboxRead,
-  markInboxUnread,
-  setInboxBookmark,
-  type ActionResult,
-} from "@/lib/actions";
+import { archiveInboxItems, markInboxRead, markInboxUnread, setInboxBookmark } from "@/lib/actions/inbox";
+import { type ActionResult } from "@/lib/api/core/result";
 import type { InboxItem } from "@/lib/api/inbox/model";
 import type { Profile } from "@/lib/api/people/model";
 import {

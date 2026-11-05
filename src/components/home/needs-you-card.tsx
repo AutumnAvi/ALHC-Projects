@@ -9,7 +9,7 @@ import { useTaskHref } from "@/components/project/shared";
 import { TaskLink } from "@/components/task/task-link";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { markInboxRead } from "@/lib/actions";
+import { markInboxRead } from "@/lib/actions/inbox";
 import type { AwaitingApproval } from "@/lib/api/my-tasks/model";
 import type { InboxItem } from "@/lib/api/inbox/model";
 import type { Profile } from "@/lib/api/people/model";

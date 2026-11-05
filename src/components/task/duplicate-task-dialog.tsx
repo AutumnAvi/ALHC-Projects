@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { Dialog } from "@/components/dialog";
 import { useOpenTask } from "@/components/task/task-link";
 import { useNotify } from "@/components/toast";
-import { duplicateTask } from "@/lib/actions";
+import { duplicateTask } from "@/lib/actions/tasks";
 import { DUPLICATE_TASK_OPTIONS, describeDuplicateSkips, type DuplicateTaskOptionKey } from "@/lib/duplicate-task";
 
 // Duplicate task (the pane's "…" menu): name the copy and choose what comes along. The copy lands in this

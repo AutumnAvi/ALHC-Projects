@@ -25,7 +25,7 @@ import {
   setCommentPinned,
   setFollowing,
   toggleReaction,
-} from "@/lib/actions";
+} from "@/lib/actions/comments";
 import { canRespondToSubmitter, submitterResponseSubject } from "@/lib/comment-email";
 import { mentionSegments } from "@/lib/mentions";
 import { mergePendingComments, type PendingComment } from "@/lib/pending-comments";

@@ -10,12 +10,12 @@ import { PickableFileCard, useTaskFileUploads, type PickableFile } from "@/compo
 import { reviewFileList } from "@/components/task/send-review-dialog";
 import { previewKind } from "@/lib/attachment-preview";
 import { useNotify, useServerAction } from "@/components/toast";
-import { sendForApproval } from "@/lib/actions";
+import { sendForApproval } from "@/lib/actions/approvals";
 import type { Profile } from "@/lib/api/people/model";
 import type { TaskDetail } from "@/lib/api/task-pane/model";
 import { taskPermissions } from "@/lib/permissions";
 import { MAX_REVIEW_ASSETS } from "@/lib/review-checks";
-import { sendReviewCheck } from "@/lib/review-actions";
+import { sendReviewCheck } from "@/lib/actions/reviews";
 import type { AfterApproval } from "@/lib/task-kinds";
 
 // Oct 27 notes (batch 6, items 45 / 45b): "Ready for approval". The assignee (or an Editor) sends the

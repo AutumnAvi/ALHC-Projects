@@ -4,8 +4,9 @@ import { connection } from "next/server";
 import { ReviewClosedNotice, ReviewPortal } from "@/components/review/review-portal";
 import { emailLogoUrl } from "@/lib/email";
 import { isUuid } from "@/lib/ids";
-import { REVIEW_REFUSALS, isReviewToken, parsePublicReview, type PublicReviewResult } from "@/lib/review-checks";
-import { createAnonServerClient } from "@/lib/supabase/anon-server";
+import { viewPublicReview } from "@/lib/api/reviews/queries";
+import { REVIEW_REFUSALS, type PublicReviewResult } from "@/lib/review-checks";
+import { anonContext } from "@/lib/server/context";
 
 // Oct 26 notes (batch 3): the public review page. No sign-in: the token in the link is the only key, checked
 // by review_check_view (anon; the token's hash, its expiry, 600 requests an hour) with a cookie-less anon
@@ -14,15 +15,9 @@ import { createAnonServerClient } from "@/lib/supabase/anon-server";
 export const dynamic = "force-dynamic";
 
 const loadReview = cache(async (token: string): Promise<PublicReviewResult> => {
-  if (!isReviewToken(token)) return { status: "unknown" };
-  const supabase = createAnonServerClient();
-  if (!supabase) return { status: "unknown" };
-  const { data, error } = await supabase.rpc("review_check_view", { review_token: token });
-  if (error) {
-    console.error("Review page:", error.code);
-    return { status: "unknown" };
-  }
-  return parsePublicReview(data);
+  const anon = anonContext();
+  if (!anon) return { status: "unknown" };
+  return viewPublicReview(anon, token);
 });
 
 export async function generateMetadata({ params }: PageProps<"/review/[token]">): Promise<Metadata> {

@@ -4,6 +4,9 @@ import { parseAccessStatus, type ProjectAccessRequest, type ProjectAccessStatus 
 import { getViewer } from "@/lib/api/auth/queries";
 import { type ApiContext, read } from "@/lib/api/core/context";
 import { isMissingColumn, maybe, rows } from "@/lib/api/core/db";
+import { listMyTeamIds, listTeams } from "@/lib/api/teams/queries";
+import { listProjectTemplates } from "@/lib/api/templates/queries";
+import { getWorkspace } from "@/lib/api/workspace/queries";
 import { GOAL_COLUMNS, toGoal } from "@/lib/api/goals/model";
 import {
   type BrowseProjectPeople,
@@ -19,6 +22,7 @@ import {
   type ProjectStatusUpdate,
   type ProjectStoryItem,
   type ProjectStoryKind,
+  type ProjectTeamChoice,
   type ProjectTeamAccess,
   type RoleUsage,
   type Section,
@@ -662,3 +666,22 @@ export const getDependencyShiftMode = read(async (ctx: ApiContext, projectId: st
   if (result.error || !result.data) return "ask";
   return parseDependencyShiftMode(result.data.dependency_shift);
 });
+
+// The New project dialog's choices (Server Actions the dialog calls on open).
+
+// Teams a new project can go in: the viewer's teams plus the default team (open to everyone), default
+// first. Read with the viewer's client.
+export async function listProjectTeamChoices(ctx: ApiContext): Promise<ProjectTeamChoice[]> {
+  const [workspace, teams, mine] = await Promise.all([getWorkspace(ctx), listTeams(ctx), listMyTeamIds(ctx)]);
+  const defaultId = workspace?.defaultTeamId ?? null;
+  return teams
+    .filter((t) => t.id === defaultId || mine.has(t.id))
+    .map((t) => ({ id: t.id, name: t.name, isDefault: t.id === defaultId }))
+    .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name));
+}
+
+// The sidebar's New project → "Use a template" step: every workspace template (read with RLS).
+export async function listProjectTemplateChoices(ctx: ApiContext) {
+  const templates = await listProjectTemplates(ctx);
+  return templates.map(({ id, name, description, summary }) => ({ id, name, description, summary }));
+}

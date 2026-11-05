@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getViewer } from "@/lib/auth";
-import { listMyRecentRuleRuns } from "@/lib/data";
+import { listMyRecentRuleRuns } from "@/lib/api/automations/queries";
+import { getViewer } from "@/lib/api/auth/queries";
 import { FEEDBACK_OVERLAP_SECONDS, type FeedbackResponse } from "@/lib/rule-feedback";
+import { routeContext } from "@/lib/server/context";
 
 // Nov 1 notes, batch 10 (77): the signed-in person's own automation runs since a cursor, for the live
 // feedback toasts. Read with their own client (never the service role), so RLS decides. A GET route, not
@@ -9,7 +10,8 @@ import { FEEDBACK_OVERLAP_SECONDS, type FeedbackResponse } from "@/lib/rule-feed
 //   GET /api/rule-feedback?since=<ISO cursor>   runs from FEEDBACK_OVERLAP_SECONDS before the cursor
 //   GET /api/rule-feedback?within=<seconds>     runs from the last N seconds (the first check; ≤ 600)
 export async function GET(request: NextRequest) {
-  const { user, allowlisted } = await getViewer();
+  const ctx = await routeContext();
+  const { user, allowlisted } = await getViewer(ctx);
   const headers = { "Cache-Control": "private, no-store" };
   if (!user || !allowlisted) return NextResponse.json({ error: "Forbidden" }, { status: 403, headers });
   const now = new Date();
@@ -25,6 +27,6 @@ export async function GET(request: NextRequest) {
   } else {
     return NextResponse.json({ error: "Pass since or within" }, { status: 400, headers });
   }
-  const body: FeedbackResponse = { cursor: now.toISOString(), runs: await listMyRecentRuleRuns(from) };
+  const body: FeedbackResponse = { cursor: now.toISOString(), runs: await listMyRecentRuleRuns(ctx, from) };
   return NextResponse.json(body, { headers });
 }

@@ -7,7 +7,8 @@ import { DIALOG_LABEL, Dialog } from "@/components/dialog";
 import { SmartPicker, type SmartOption } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { listManualRules, runManualRule, type ManualRule, type ManualRuleStatus } from "@/lib/actions";
+import { listManualRules, runManualRule } from "@/lib/actions/automations";
+import { type ManualRule, type ManualRuleStatus } from "@/lib/api/automations/model";
 import { partialSummary, type PartialRun } from "@/lib/run-outcome";
 import { finishRunning, startRunning } from "@/lib/rule-running";
 

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Check, FolderClosed, FolderPlus, Plus, Search } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useNotify, useServerAction } from "@/components/toast";
-import { addPortfolioProjects, createProjectInPortfolio } from "@/lib/actions";
+import { addPortfolioProjects, createProjectInPortfolio } from "@/lib/actions/portfolios";
 import { filterPickerProjects, pickedLabel, type PickerProject } from "@/lib/portfolio-picker";
 import { projectColorClass } from "@/lib/project-colors";
 

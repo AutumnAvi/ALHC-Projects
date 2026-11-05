@@ -2,8 +2,10 @@
 
 import { useId, useRef, useState, useTransition, type ReactNode } from "react";
 import { CheckCircle2, FileText, Loader2, Paperclip, X } from "lucide-react";
-import { submitForm } from "@/lib/actions";
-import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
+import { submitForm } from "@/lib/actions/forms";
+import { uploadFormFile } from "@/lib/api/client/storage";
+import { createApiContext } from "@/lib/api/core/context";
+import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/attachments";
 import {
   FORM_UPLOAD_EXTENSIONS,
   MAX_FILES_PER_QUESTION,
@@ -74,10 +76,8 @@ export function PublicForm({ form }: { form: PublicFormDef }) {
     try {
       uploadKey.current ??= randomId();
       const path = formUploadPath(uploadKey.current, form.id, file.name, randomId());
-      const { error } = await createAnonBrowserClient()
-        .storage.from(ATTACHMENTS_BUCKET)
-        .upload(path, file, { contentType: file.type || undefined, upsert: false });
-      if (error) return { error: `${file.name} couldn’t be uploaded. Try again in a few minutes.` };
+      const { error } = await uploadFormFile(createApiContext(createAnonBrowserClient()), path, file);
+      if (error !== null) return { error: `${file.name} couldn’t be uploaded. Try again in a few minutes.` };
       uploadedCount.current += 1;
       return { path, name: file.name.slice(0, 255) };
     } catch {

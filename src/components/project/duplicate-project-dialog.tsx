@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { useServerAction } from "@/components/toast";
-import { duplicateProject } from "@/lib/actions";
+import { duplicateProject } from "@/lib/actions/templates";
 import { DEFAULT_DUPLICATE_OPTIONS, type DuplicateOptions } from "@/lib/templates";
 
 type Toggle = Exclude<keyof DuplicateOptions, "startOn">;

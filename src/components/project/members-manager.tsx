@@ -12,14 +12,14 @@ import { MemberRolePicker, RolePicker, projectRoleOptions } from "@/components/r
 import { SmartPicker } from "@/components/smart-picker";
 import { useShell } from "@/components/shell/shell-context";
 import { useNotify, useServerAction } from "@/components/toast";
+import { addTeamToProject } from "@/lib/actions/teams";
 import {
-  addTeamToProject,
   changeProjectMemberRole,
   inviteProjectMember,
   leaveProject,
   removeProjectMember,
   transferProjectOwnership,
-} from "@/lib/actions";
+} from "@/lib/actions/members";
 import type { ProjectMember } from "@/lib/api/projects/model";
 import {
   PERSON_DEFAULT_ROLE,

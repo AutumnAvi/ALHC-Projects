@@ -13,7 +13,7 @@ import { useTabChord } from "@/components/shortcuts/keyboard";
 import { useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
 import { Widget, WidgetTitle } from "@/components/home/widget";
-import { createPrivateTask, setTaskCompleted } from "@/lib/actions";
+import { createPrivateTask, setTaskCompleted } from "@/lib/actions/tasks";
 import type { MyTask } from "@/lib/api/my-tasks/model";
 import { seedFromMyTask } from "@/lib/task-seed";
 import { MoreTaskNumbers } from "@/components/task/task-number";

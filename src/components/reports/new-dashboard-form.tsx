@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
-import { createPersonalDashboard, type ActionResult } from "@/lib/actions";
+import { createPersonalDashboard } from "@/lib/actions/reports";
+import { type ActionResult } from "@/lib/api/core/result";
 
 export function NewDashboardForm() {
   const [state, formAction, pending] = useActionState(async (_: ActionResult, formData: FormData) => {

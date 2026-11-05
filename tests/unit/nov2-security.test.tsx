@@ -4,7 +4,7 @@
 // through trash_task (which says why it can't), soft deletes check a row changed, Viewers and Commenters
 // get no Delete or edit controls, and a Commenter removes only themselves as a follower.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -107,7 +107,13 @@ const paneTask = (viewerRole: ProjectRole): TaskDetail => ({
   privateReaderIds: [],
 });
 
-const actions = readFileSync(new URL("../../src/lib/actions.ts", import.meta.url), "utf8");
+// Big move 1: the writes live in the data-access layer (src/lib/api/<area>/mutations.ts).
+const apiDir = new URL("../../src/lib/api/", import.meta.url);
+const actions = readdirSync(apiDir)
+  .map((area) => new URL(`${area}/mutations.ts`, apiDir))
+  .filter((file) => existsSync(file))
+  .map((file) => readFileSync(file, "utf8"))
+  .join("\n");
 const bodyOf = (name: string) => {
   const start = actions.indexOf(`export async function ${name}(`);
   assert.ok(start >= 0, `${name} exists`);

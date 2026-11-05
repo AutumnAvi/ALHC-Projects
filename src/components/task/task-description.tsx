@@ -5,7 +5,7 @@ import { Pencil } from "lucide-react";
 import { MentionText } from "@/components/task/comment-parts";
 import { MentionTextarea } from "@/components/task/mention-textarea";
 import { useServerAction } from "@/components/toast";
-import { updateTask } from "@/lib/actions";
+import { updateTask } from "@/lib/actions/tasks";
 import { appLinkSegments } from "@/lib/app-links";
 import type { TaskDetail } from "@/lib/api/task-pane/model";
 

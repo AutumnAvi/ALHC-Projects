@@ -9,7 +9,7 @@ import { readRecents, recordRecent, useShell } from "@/components/shell/shell-co
 import { isMac } from "@/components/shortcuts/keyboard";
 import { projectColorClass } from "@/lib/project-colors";
 import { TaskNumberBadge } from "@/components/task/task-number";
-import { quickSearch, resolveRecents } from "@/lib/shell-actions";
+import { quickSearch, resolveRecents } from "@/lib/actions/shell";
 import {
   EMPTY_RESULTS,
   SEARCH_KINDS,

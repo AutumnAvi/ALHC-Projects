@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApprovalDecisionForm } from "@/components/task/task-approval-banner";
 import { useServerAction } from "@/components/toast";
-import { decideApproval } from "@/lib/actions";
+import { decideApproval } from "@/lib/actions/approvals";
 import type { ApprovalRound, TaskAttachment } from "@/lib/api/task-pane/model";
 import { approverReviewFiles } from "@/lib/approver-review";
 import { ApproverReview } from "./approver-review";

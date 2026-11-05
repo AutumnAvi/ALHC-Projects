@@ -20,7 +20,7 @@ import {
   postGoalStatusUpdate,
   unlinkGoal,
   updateGoal,
-} from "@/lib/actions";
+} from "@/lib/actions/goals";
 import type { GoalLink, GoalStatusUpdate } from "@/lib/api/goals/model";
 import {
   GOAL_STATUSES,

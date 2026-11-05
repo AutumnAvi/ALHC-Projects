@@ -2,7 +2,7 @@
 
 import { useNotify, useServerAction } from "@/components/toast";
 import { SmartPicker } from "@/components/smart-picker";
-import { setPortfolioFieldValue } from "@/lib/actions";
+import { setPortfolioFieldValue } from "@/lib/actions/portfolios";
 import { formatDueDate } from "@/lib/dates";
 import type { PortfolioField } from "@/lib/api/portfolios/model";
 import { NumberInput } from "@/components/number-input";

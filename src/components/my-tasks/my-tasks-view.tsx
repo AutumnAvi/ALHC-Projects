@@ -39,16 +39,13 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState, SkeletonRows } from "@/components/ui";
 import {
   createMyTaskSection,
-  createPrivateTask,
   deleteMyTaskSection,
   placeMyTask,
   placeMyTaskSection,
   renameMyTaskSection,
-  setTaskCompleted,
-  updateSubtask,
-  updateTask,
-  type ActionResult,
-} from "@/lib/actions";
+} from "@/lib/actions/my-tasks";
+import { createPrivateTask, setTaskCompleted, updateSubtask, updateTask } from "@/lib/actions/tasks";
+import { type ActionResult } from "@/lib/api/core/result";
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
 import { dayLabel } from "@/lib/date-input";
 import {

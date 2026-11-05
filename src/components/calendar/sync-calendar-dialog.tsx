@@ -6,7 +6,7 @@ import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify } from "@/components/toast";
-import { createCalendarFeed, revokeCalendarFeed, rotateCalendarFeed } from "@/lib/actions";
+import { createCalendarFeed, revokeCalendarFeed, rotateCalendarFeed } from "@/lib/actions/calendar";
 import {
   CALENDAR_FEED_COMPLETED_DAYS,
   calendarFeedLabel,
@@ -14,7 +14,7 @@ import {
   type CalendarFeedScope,
   type calendarFeedUrls,
 } from "@/lib/calendar-feeds";
-import { loadCalendarFeed } from "@/lib/shell-actions";
+import { loadCalendarFeed } from "@/lib/actions/shell";
 
 type Urls = ReturnType<typeof calendarFeedUrls>;
 type Loaded = { available: boolean; feed: CalendarFeed | null; targetName: string | null };

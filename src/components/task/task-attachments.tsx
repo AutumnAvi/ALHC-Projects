@@ -7,14 +7,11 @@ import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Paperclip,
 import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { deleteAttachment, registerAttachment } from "@/lib/actions";
+import { deleteAttachment, registerAttachment } from "@/lib/actions/comments";
 import { previewKind } from "@/lib/attachment-preview";
-import {
-  ATTACHMENTS_BUCKET,
-  MAX_ATTACHMENT_BYTES,
-  attachmentPath,
-  formatBytes,
-} from "@/lib/attachments";
+import { MAX_ATTACHMENT_BYTES, attachmentPath, formatBytes } from "@/lib/attachments";
+import { uploadTaskFile } from "@/lib/api/client/storage";
+import { createApiContext } from "@/lib/api/core/context";
 import type { TaskAttachment, TaskAttachmentLink } from "@/lib/api/task-pane/model";
 import { createClient } from "@/lib/supabase/client";
 
@@ -29,7 +26,7 @@ export function useAttachmentUpload(taskId: string) {
 
   async function upload(files: FileList) {
     setError(null);
-    const supabase = createClient();
+    const ctx = createApiContext(createClient());
     for (const file of Array.from(files)) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
         setError(`${file.name} is larger than 25 MB.`);
@@ -37,11 +34,9 @@ export function useAttachmentUpload(taskId: string) {
       }
       setUploading((n) => n + 1);
       const path = attachmentPath(taskId, file.name, crypto.randomUUID());
-      const { error: uploadError } = await supabase.storage
-        .from(ATTACHMENTS_BUCKET)
-        .upload(path, file, { contentType: file.type || undefined, upsert: false });
-      if (uploadError) {
-        setError(`Couldn’t upload ${file.name}: ${uploadError.message}`);
+      const { error: uploadError } = await uploadTaskFile(ctx, path, file);
+      if (uploadError !== null) {
+        setError(`Couldn’t upload ${file.name}: ${uploadError}`);
       } else {
         run(() =>
           registerAttachment({

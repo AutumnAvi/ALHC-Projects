@@ -6,7 +6,7 @@ import { MailPlus } from "lucide-react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { useShell } from "@/components/shell/shell-context";
 import { useNotify } from "@/components/toast";
-import { inviteToWorkspace } from "@/lib/actions";
+import { inviteToWorkspace } from "@/lib/actions/workspace";
 import { describeInvites } from "@/lib/workspace";
 
 // Invite (the Create menu, the sidebar's Invite button, the avatar menu): workspace admins invite people

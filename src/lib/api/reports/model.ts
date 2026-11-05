@@ -1,6 +1,7 @@
 // Big move 1: the reports area's types and pure mappers (no database access; safe to import anywhere,
 // the browser included).
 import type { PortfolioCounts } from "@/lib/portfolios";
+import type { ReportFilters } from "@/lib/reports";
 
 // ---------------------------------------------------------------------------------------------
 // Reporting and export. Every number comes from SECURITY INVOKER RPCs that only count projects the
@@ -31,3 +32,6 @@ export type AllProjectsRow = {
 };
 
 export type SectionLabel = { id: string; name: string; projectId: string };
+
+// A personal dashboard widget as the Reports pages send it (a new one, or the changed parts of one).
+export type PersonalWidgetInput = { kind: string; title?: string; filters?: ReportFilters; interval?: string };

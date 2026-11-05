@@ -5,12 +5,15 @@ import {
   commentFromPageRow,
   type CommentPage,
   type CommentRefs,
+  olderCursor,
   parseCommentPage,
 } from "@/lib/api/comments/model";
 import type { ApiContext, Db } from "@/lib/api/core/context";
 import { rpcMissing } from "@/lib/api/core/db";
-import type { TaskComment, TaskDetail, TaskStory } from "@/lib/api/task-pane/model";
-import { withRuleProjects } from "@/lib/api/task-pane/queries";
+import { ApiError } from "@/lib/api/core/errors";
+import { id } from "@/lib/api/core/validate";
+import type { SubmitterConversation, TaskComment, TaskDetail, TaskStory } from "@/lib/api/task-pane/model";
+import { loadSubmitterConversation, withRuleProjects } from "@/lib/api/task-pane/queries";
 import { appLinkIds } from "@/lib/app-links";
 import { type CommentEmail, commentEmailStatus } from "@/lib/comment-email";
 import { SKIP_REASONS, type SkipReason } from "@/lib/reply-attachments";
@@ -182,4 +185,22 @@ export async function loadCommentRefs(supabase: Db, bodies: string[]): Promise<C
   for (const t of tasks.data ?? []) refs.tasks[t.id] = { title: t.title, projectId: t.home_project_id };
   for (const p of projects.data ?? []) refs.projects[p.id] = { name: p.name };
   return refs;
+}
+
+// The next older page of comments (task_comment_page). The pane draws the newest page first. Also answers
+// where the page after it starts (null = none left).
+export async function loadOlderComments(
+  ctx: ApiContext,
+  taskId: string,
+  beforeAt: string,
+  beforeId: string,
+): Promise<{ comments: TaskComment[]; older: { beforeAt: string; beforeId: string } | null }> {
+  const page = await loadTaskCommentPage(ctx, id(taskId), { at: beforeAt, id: beforeId });
+  if (!page) throw new ApiError("not_deployed", "Earlier comments need this release’s database update");
+  return { comments: page.comments, older: olderCursor(page) };
+}
+
+// Item 69 (pane): whether this request's email conversation is on.
+export async function loadRequestConversation(ctx: ApiContext, taskId: string): Promise<SubmitterConversation | null> {
+  return loadSubmitterConversation(ctx, id(taskId, "task"));
 }

@@ -30,9 +30,11 @@ test("128: a pin override is forgotten only once this task's data agrees", () =>
   // Saved: a pinned, b gone from the pinned ones. c belongs to another task and stays.
   assert.deepEqual(settledPinOverrides(overrides, "t1", (id) => (id === "a" ? "2026-11-02T10:00:01Z" : undefined)), ["a", "b"]);
   // The pin goes through no refresh (that was the 2 s wait).
-  const actions = fs.readFileSync("src/lib/actions.ts", "utf8");
-  const pin = actions.slice(actions.indexOf("export async function setCommentPinned"), actions.indexOf("export async function completeApprovalAsApprover"));
-  assert.ok(!pin.includes("return run("), "setCommentPinned saves quietly");
+  // Big move 1: the Server Action is a thin adapter (src/lib/actions/comments.ts).
+  const actions = fs.readFileSync("src/lib/actions/comments.ts", "utf8");
+  const at = actions.indexOf("export async function setCommentPinned");
+  const pin = actions.slice(at, actions.indexOf("\n}\n", at));
+  assert.match(pin, /refresh: false/, "setCommentPinned saves quietly");
 });
 
 test("129: posting reveals the new comment", () => {

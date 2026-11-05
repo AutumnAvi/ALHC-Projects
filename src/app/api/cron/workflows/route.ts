@@ -3,7 +3,8 @@ import { drainOutbox } from "@/lib/email";
 import { removeStaleFormUploads } from "@/lib/form-uploads";
 import { removePurgedFiles } from "@/lib/trash-files";
 import { drainIntegrationOutbox } from "@/lib/integrations";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { queueScheduledEmails, workflowTick } from "@/lib/api/system/mutations";
+import { adminContext } from "@/lib/server/context";
 
 // Scheduler entry point (Vercel Cron, or any external scheduler sending
 // `Authorization: Bearer $CRON_SECRET`). Runs due delayed rule actions and due-date rules, then
@@ -22,20 +23,20 @@ function authorized(request: Request) {
 
 export async function GET(request: Request) {
   if (!authorized(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const admin = createAdminClient();
-  if (!admin) return Response.json({ error: "SUPABASE_SERVICE_ROLE_KEY is not set" }, { status: 503 });
+  const ctx = adminContext();
+  if (!ctx) return Response.json({ error: "SUPABASE_SERVICE_ROLE_KEY is not set" }, { status: 503 });
 
-  const tick = await admin.rpc("workflow_tick");
+  const tick = await workflowTick(ctx);
   if (tick.error) return Response.json({ error: tick.error.message }, { status: 500 });
   // Due Inbox digests and scheduled reports (Real features 3). pg_cron queues them every 5 minutes on
   // the hosted database; this covers databases without pg_cron. A database without the migration
   // doesn't have the function (PGRST202 → nothing to queue).
   // A failure here never holds up delivery of what's already queued.
-  const queued = await admin.rpc("alhc_queue_scheduled_emails");
+  const queued = await queueScheduledEmails(ctx);
   if (queued.error && queued.error.code !== "PGRST202") console.error("Queueing digests and reports failed", queued.error.code);
   const email = await drainOutbox({ max: 50 });
   const integrations = await drainIntegrationOutbox({ max: 50 });
-  const formUploads = await removeStaleFormUploads(admin);
-  const trashFiles = await removePurgedFiles(admin);
+  const formUploads = await removeStaleFormUploads(ctx.db);
+  const trashFiles = await removePurgedFiles(ctx.db);
   return Response.json({ tick: tick.data, scheduled: queued.data ?? null, email, integrations, formUploads, trashFiles });
 }

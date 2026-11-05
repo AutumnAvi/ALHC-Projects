@@ -27,7 +27,7 @@ import type { Section } from "@/lib/api/projects/model";
 import { bareTaskTitle, displayTaskTitle } from "@/lib/request-numbers";
 import { TaskNumberBadge } from "@/components/task/task-number";
 import { useNotify, useServerAction } from "@/components/toast";
-import { removeTaskDependency, setTaskDependency } from "@/lib/actions";
+import { removeTaskDependency, setTaskDependency } from "@/lib/actions/dependencies";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@/lib/fields";
 import { groupOf, isIsoDate, type ViewConfig } from "@/lib/views";
 import { useOpenTaskId } from "@/components/shell/right-panel";

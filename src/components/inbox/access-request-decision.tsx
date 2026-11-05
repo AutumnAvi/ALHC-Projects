@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Check, X } from "lucide-react";
 import { useServerAction } from "@/components/toast";
-import { decideAccessRequest } from "@/lib/actions";
+import { decideAccessRequest } from "@/lib/actions/projects";
 import { ROLE_LABELS, isProjectRole } from "@/lib/roles";
 import type { InboxAccessRequest } from "@/lib/access-requests";
 

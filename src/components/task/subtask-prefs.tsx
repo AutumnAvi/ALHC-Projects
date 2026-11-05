@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
-import { saveSubtaskPreferences } from "@/lib/actions";
+import { saveSubtaskPreferences } from "@/lib/actions/me";
 import { DEFAULT_SUBTASK_PREFS, type SubtaskPrefs } from "@/lib/subtask-view";
 
 // Oct 27 notes (batch 5): the person's Subtasks filter and sort, read once by the app layout and shared by

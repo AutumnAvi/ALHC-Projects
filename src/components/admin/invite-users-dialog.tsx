@@ -5,7 +5,7 @@ import { Copy, MailPlus } from "lucide-react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { useShell } from "@/components/shell/shell-context";
 import { useNotify } from "@/components/toast";
-import { inviteToWorkspace } from "@/lib/actions";
+import { inviteToWorkspace } from "@/lib/actions/workspace";
 import { describeInvites, splitEmails } from "@/lib/workspace";
 
 const MAX_INVITES = 50;

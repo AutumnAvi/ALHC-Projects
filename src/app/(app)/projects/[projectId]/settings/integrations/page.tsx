@@ -4,7 +4,7 @@ import { IntegrationsSettings } from "@/components/project/integrations-settings
 import { ReadOnlyNotice } from "@/components/project/project-access";
 import { getProject, getProjectIntegrations, getProjectRole } from "@/lib/data";
 import { hasRole } from "@/lib/roles";
-import { loadSlackSettings } from "@/lib/slack-actions";
+import { loadSlackSettings } from "@/lib/actions/slack";
 
 export async function generateMetadata({
   params,

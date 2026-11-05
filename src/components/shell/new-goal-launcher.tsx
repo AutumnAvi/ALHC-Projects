@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Dialog } from "@/components/dialog";
 import { NewGoalDialog } from "@/components/goals/new-goal-dialog";
-import { loadGoalDialog } from "@/lib/shell-actions";
+import { loadGoalDialog } from "@/lib/actions/shell";
 
 type GoalDialogData = NonNullable<Awaited<ReturnType<typeof loadGoalDialog>>>;
 

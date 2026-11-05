@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { saveTaskAsTemplate } from "@/lib/actions";
+import { saveTaskAsTemplate } from "@/lib/actions/templates";
 
 // The pane's "…" → Save as task template: a task template of one of the task's projects (Editor+
 // there). Captures the title, notes, subtasks, that project's field values, and optionally the assignee.

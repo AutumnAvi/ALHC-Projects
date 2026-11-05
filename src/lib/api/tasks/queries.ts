@@ -3,7 +3,9 @@
 import { getViewer } from "@/lib/api/auth/queries";
 import { type ApiContext, type Db, read } from "@/lib/api/core/context";
 import { readInChunks, rows, rpcMissing } from "@/lib/api/core/db";
+import { ApiError } from "@/lib/api/core/errors";
 import { softRead } from "@/lib/api/core/soft-read";
+import { id } from "@/lib/api/core/validate";
 import {
   firstVisibleNumbers,
   numbersWithTheirProjects,
@@ -541,4 +543,19 @@ export async function listSubtaskParents(ctx: ApiContext, taskId: string, query:
       completed: c.completed_at !== null,
     })),
   };
+}
+
+// 42. "Make a subtask of…": tasks the viewer edits that this task can go under (searchable). Since Nov 2
+// notes (batch 16, 124) the picker reads GET /api/task-pane/<id>/parents (a route, so searches never queue
+// behind other actions); this stays for callers that want it (a Server Action).
+export async function searchSubtaskParents(ctx: ApiContext, taskId: string, query: string): Promise<ParentCandidate[] | undefined> {
+  const result = await listSubtaskParents(ctx, id(taskId, "task"), typeof query === "string" ? query : "");
+  if (result.error) throw new ApiError("failed", result.error);
+  return result.data;
+}
+
+// Labels of tasks as one project shows them (rows added on the client, e.g. expanded subtasks).
+export async function loadProjectLabels(ctx: ApiContext, projectId: string, taskIds: string[]): Promise<Record<string, RequestLabel>> {
+  const labels = await visibleRequestLabelsIn(ctx, id(projectId, "project"), (taskIds ?? []).slice(0, 2000).map((t) => id(t, "task")));
+  return Object.fromEntries(labels);
 }

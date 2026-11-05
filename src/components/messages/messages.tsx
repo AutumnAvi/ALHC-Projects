@@ -24,8 +24,8 @@ import {
   setTeamThreadFollowing,
   toggleMessageReaction,
   toggleTeamMessageReaction,
-  type ActionResult,
-} from "@/lib/actions";
+} from "@/lib/actions/messages";
+import { type ActionResult } from "@/lib/api/core/result";
 import type {
   MessageThread,
   MessageThreadSummary,

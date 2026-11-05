@@ -109,11 +109,12 @@ test("141: feedback notes become list entries (stops other than failures stay to
 });
 
 test("141: running an automation by hand doesn't wait for the page to render again", () => {
-  const actions = fs.readFileSync("src/lib/actions.ts", "utf8");
+  // Big move 1: the Server Actions are thin adapters (src/lib/actions/automations.ts).
+  const actions = fs.readFileSync("src/lib/actions/automations.ts", "utf8");
   for (const name of ["runManualRule(", "runManualRuleOnTasks("]) {
     const at = actions.indexOf(`export async function ${name}`);
     const body = actions.slice(at, actions.indexOf("\n}\n", at));
-    assert.ok(body.includes("runWithoutRefresh("), `${name} answers without a refresh`);
+    assert.ok(body.includes("refresh: false"), `${name} answers without a refresh`);
   }
   const dialog = fs.readFileSync("src/components/task/run-rule-dialog.tsx", "utf8");
   assert.ok(dialog.includes("startRunning(") && dialog.includes("router.refresh()"), "the dialog lists the run and refreshes in the background");

@@ -14,7 +14,7 @@ import {
   deleteTaskTemplate,
   saveProjectAsTemplate,
   updateTaskTemplate,
-} from "@/lib/actions";
+} from "@/lib/actions/templates";
 import type { Profile } from "@/lib/api/people/model";
 import type { TaskTemplate } from "@/lib/row-mappers";
 import { MAX_TEMPLATE_SUBTASKS } from "@/lib/templates";

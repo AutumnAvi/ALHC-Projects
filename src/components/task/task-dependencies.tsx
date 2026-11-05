@@ -6,7 +6,7 @@ import { Popover } from "@/components/popover";
 import { Segmented } from "@/components/project/view-chrome";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { removeTaskDependency, setTaskDependency } from "@/lib/actions";
+import { removeTaskDependency, setTaskDependency } from "@/lib/actions/dependencies";
 import { slackLabel } from "@/lib/critical-path";
 import { DEPENDENCY_KINDS, MAX_LAG_DAYS, dependencyLabel, isDependencyKind, type DependencyKind } from "@/lib/dependencies";
 import type { TaskDependency, TaskDetail } from "@/lib/api/task-pane/model";

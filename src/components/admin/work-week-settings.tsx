@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useNotify, useServerAction } from "@/components/toast";
-import { setWorkWeek } from "@/lib/actions";
+import { setWorkWeek } from "@/lib/actions/workspace";
 import { WEEKDAYS, describeWorkWeek } from "@/lib/workdays";
 
 // Admin console → Organization → Workweek: the days rules count as business days ("Set due date"

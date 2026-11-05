@@ -4,7 +4,7 @@ import { useOptimistic, useState } from "react";
 import { Globe, X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { useServerAction } from "@/components/toast";
-import { addVerifiedDomain, removeVerifiedDomain, setVerifiedDomainConversations } from "@/lib/actions";
+import { addVerifiedDomain, removeVerifiedDomain, setVerifiedDomainConversations } from "@/lib/actions/workspace";
 import type { VerifiedDomain } from "@/lib/api/workspace/model";
 import { normalizeDomainInput } from "@/lib/verified-domains";
 

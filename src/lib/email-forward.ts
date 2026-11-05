@@ -1,5 +1,13 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { createApiContext } from "@/lib/api/core/context";
+import {
+  attachForwardedFile,
+  attachReplyFile,
+  noteReplySkippedFiles,
+  removeStorageObjects,
+  uploadAttachmentFile,
+} from "@/lib/api/system/mutations";
 import { ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES, attachmentPath } from "@/lib/attachments";
 import { MAX_RECEIVED_ATTACHMENTS, type ReceivedFile, type ReceivedFilePlan, type SkippedFile } from "@/lib/reply-attachments";
 import { safeDownload } from "@/lib/safe-fetch";
@@ -91,6 +99,7 @@ export async function copyReceivedAttachments(
     listed?: unknown[] | null;
   },
 ): Promise<{ added: number; skipped: SkippedFile[] }> {
+  const ctx = createApiContext(admin);
   const failed: SkippedFile[] = [];
   let added = 0;
   if (!options.plan.copy.length) return { added, skipped: [...options.plan.skipped] };
@@ -109,13 +118,10 @@ export async function copyReceivedAttachments(
     const headerType = downloaded.contentType?.split(";")[0].trim().toLowerCase() ?? null;
     const type = file.contentType ?? (headerType && CONTENT_TYPE.test(headerType) ? headerType : null);
     const path = attachmentPath(options.taskId, file.filename, randomUUID());
-    const uploaded = await admin.storage
-      .from(ATTACHMENTS_BUCKET)
-      .upload(path, downloaded.bytes, { contentType: type ?? undefined, upsert: false });
-    if (uploaded.error) return "failed";
+    if (!(await uploadAttachmentFile(ctx, path, downloaded.bytes, type))) return "failed";
     if (!(await options.record({ path, name: file.filename, type, size: downloaded.bytes.byteLength }))) {
       // Not recorded (e.g. the 10-file limit): don't leave the file behind in the task's folder.
-      await admin.storage.from(ATTACHMENTS_BUCKET).remove([path]);
+      await removeStorageObjects(ctx, ATTACHMENTS_BUCKET, [path]);
       return "failed";
     }
     return null;
@@ -139,19 +145,14 @@ export async function copyForwardedAttachments(
   source: ReceivedFileSource,
   options: { emailId: string; forwardId: string; taskId: string; plan: ReceivedFilePlan; listed?: unknown[] | null },
 ): Promise<{ added: number; skipped: number }> {
+  const ctx = createApiContext(admin);
   const result = await copyReceivedAttachments(admin, source, {
     emailId: options.emailId,
     taskId: options.taskId,
     plan: options.plan,
     listed: options.listed,
     record: async (file) => {
-      const { error } = await admin.rpc("attach_forwarded_file", {
-        target_forward: options.forwardId,
-        file_path: file.path,
-        file_name: file.name,
-        file_type: file.type,
-        file_size: file.size,
-      });
+      const error = await attachForwardedFile(ctx, options.forwardId, file);
       if (error) console.error("Forwarded email: attach_forwarded_file refused", error.code);
       return !error;
     },
@@ -167,8 +168,9 @@ export async function copyReplyAttachments(
   source: ReceivedFileSource,
   options: { emailId: string; commentId: string; taskId: string; plan: ReceivedFilePlan; listed?: unknown[] | null },
 ): Promise<{ added: number; skipped: number }> {
+  const ctx = createApiContext(admin);
   const note = async (files: SkippedFile[]) => {
-    const { error } = await admin.rpc("note_reply_skipped_files", { target_comment: options.commentId, files });
+    const error = await noteReplySkippedFiles(ctx, options.commentId, files);
     if (error) console.error("Reply by email: note_reply_skipped_files refused", error.code);
   };
   if (options.plan.skipped.length) await note(options.plan.skipped);
@@ -178,13 +180,7 @@ export async function copyReplyAttachments(
     plan: options.plan,
     listed: options.listed,
     record: async (file) => {
-      const { error } = await admin.rpc("attach_reply_file", {
-        target_comment: options.commentId,
-        file_path: file.path,
-        file_name: file.name,
-        file_type: file.type,
-        file_size: file.size,
-      });
+      const error = await attachReplyFile(ctx, options.commentId, file);
       if (error) console.error("Reply by email: attach_reply_file refused", error.code);
       return !error;
     },

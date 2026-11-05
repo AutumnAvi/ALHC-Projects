@@ -13,7 +13,7 @@ import { TeamPersonPicker, type TeamCandidate, type TeamPick } from "@/component
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { addTeamMember, changeTeamMemberRole, decideTeamJoinRequest, removeTeamMember } from "@/lib/actions";
+import { addTeamMember, changeTeamMemberRole, decideTeamJoinRequest, removeTeamMember } from "@/lib/actions/teams";
 import type { TeamPerson } from "@/lib/api/teams/model";
 import { personHref } from "@/lib/people";
 import { ADD_TEAM_MEMBER_ID, TEAM_ROLE_LABELS, isTeamRole, type TeamJoinRequest, type TeamRole } from "@/lib/teams";

@@ -17,7 +17,7 @@ import {
   leavePortfolio,
   removePortfolioMember,
   transferPortfolioOwnership,
-} from "@/lib/actions";
+} from "@/lib/actions/portfolios";
 import type { Portfolio, PortfolioMember } from "@/lib/api/portfolios/model";
 import {
   PORTFOLIO_ROLES,

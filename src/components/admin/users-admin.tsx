@@ -23,7 +23,7 @@ import {
   removeWorkspaceMember,
   resendWorkspaceInvite,
   setDefaultProjectRole,
-} from "@/lib/actions";
+} from "@/lib/actions/workspace";
 import {
   DEFAULT_PROJECT_ROLES,
   ROLE_DESCRIPTIONS,

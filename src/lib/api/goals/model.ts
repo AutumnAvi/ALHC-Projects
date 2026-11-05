@@ -57,3 +57,31 @@ export type GoalStatusUpdate = {
   authorName: string;
   createdAt: string;
 };
+
+// ---------------------------------------------------------------------------------------------
+// Goal writes' inputs
+// ---------------------------------------------------------------------------------------------
+
+export type GoalInput = {
+  title: string;
+  parentId?: string | null;
+  teamId?: string | null;
+  ownerId?: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  progressMode?: string;
+};
+
+export type GoalPatch = {
+  title?: string;
+  notes?: string | null;
+  parentId?: string | null;
+  teamId?: string | null;
+  ownerId?: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  progressMode?: string;
+  manualProgress?: number;
+};
+
+export type GoalLinkTarget = { projectId: string } | { portfolioId: string };

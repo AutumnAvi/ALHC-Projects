@@ -6,7 +6,7 @@ import { Check, ChevronDown, Lock, MoreHorizontal, Plus, Search, X } from "lucid
 import { MenuItem, Popover } from "@/components/popover";
 import { useConfirm } from "@/components/confirm";
 import { useNotify, useServerAction } from "@/components/toast";
-import { addTaskToProject, deleteTask, moveTask, removeTaskFromProject, restoreTask } from "@/lib/actions";
+import { addTaskToProject, deleteTask, moveTask, removeTaskFromProject, restoreTask } from "@/lib/actions/tasks";
 import type { TaskDetail, TaskMembership } from "@/lib/api/task-pane/model";
 import type { RequestLabel } from "@/lib/request-numbers";
 import { projectColorClass } from "@/lib/project-colors";
