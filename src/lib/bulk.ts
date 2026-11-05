@@ -91,12 +91,15 @@ export type BulkRuleRun = {
   // and the first skipped step's reason. Not counted in `ran`.
   partial?: number;
   firstSkipped?: string;
+  // Nov 5 note 163: tasks the automation wasn't run on because it would complete them while they're
+  // blocked by tasks that aren't done. Not counted in `ran`.
+  blocked?: number;
 };
 
 // Whether the bulk run needs a look (the notice goes amber): anything failed or partly ran.
 export function bulkRuleRunTone(run: BulkRuleRun): "ran" | "partial" | "failed" {
   if (run.failed > 0 && run.ran === 0 && !run.partial) return "failed";
-  if (run.failed > 0 || (run.partial ?? 0) > 0) return "partial";
+  if (run.failed > 0 || (run.partial ?? 0) > 0 || (run.blocked ?? 0) > 0) return "partial";
   return "ran";
 }
 
@@ -110,6 +113,7 @@ export function bulkRuleRunMessage(name: string, run: BulkRuleRun): string {
         })`
       : null,
     !run.ran && !run.partial ? `“${name}” didn’t change any task` : null,
+    run.blocked ? `${taskCount(run.blocked)} not run: blocked by tasks that aren’t done, and it would mark ${run.blocked === 1 ? "it" : "them"} complete` : null,
     run.conditions ? `${taskCount(run.conditions)} didn’t match its conditions` : null,
     run.skipped ? `${taskCount(run.skipped)} skipped (ran too often or would loop)` : null,
     run.notInProject ? `${taskCount(run.notInProject)} not in its project` : null,
