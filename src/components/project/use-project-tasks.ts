@@ -15,20 +15,7 @@ import { getQueryClient } from "@/lib/query/browser-client";
 import { queryKeys } from "@/lib/query/keys";
 import { isTaskEdit, type TaggedEdit } from "@/lib/query/task-edits";
 import { useCacheEntry } from "@/lib/query/use-cache-entry";
-import type { Json } from "@/lib/supabase/database.types";
-
-export type TaskChange =
-  | { type: "complete"; taskId: string; completed: boolean }
-  | { type: "move"; taskId: string; sectionId: string | null; sortOrder: number }
-  | { type: "assign"; taskId: string; assigneeId: string | null }
-  | { type: "field"; taskId: string; fieldId: string; value: Json }
-  | { type: "due"; taskId: string; dueOn: string | null }
-  | { type: "dates"; taskId: string; startOn: string | null; dueOn: string | null }
-  | { type: "tags"; taskId: string; tagIds: string[] }
-  | { type: "title"; taskId: string; title: string }
-  // Nov 4 notes, batch 26: a live update took the task out of this project (trashed, removed) — or put
-  // it back, which cancels an earlier "gone" until the server's copy arrives.
-  | { type: "presence"; taskId: string; present: boolean };
+import type { TaskChange } from "@/lib/live-patch";
 
 type TaggedChange = { token: number; change: TaskChange };
 

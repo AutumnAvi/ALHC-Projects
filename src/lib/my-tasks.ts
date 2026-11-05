@@ -22,6 +22,3 @@ export const isMyTasksLayout = (value: unknown): value is MyTasksLayout =>
   value === "checklist" || value === "sections" || value === "due";
 // The cookie as the page reads it: anything unknown (or no cookie) opens the checklist.
 export const myTasksLayoutOf = (value: unknown): MyTasksLayout => (isMyTasksLayout(value) ? value : DEFAULT_MY_TASKS_LAYOUT);
-export function saveMyTasksLayout(layout: MyTasksLayout) {
-  document.cookie = `${MY_TASKS_LAYOUT_COOKIE}=${layout}; path=/; max-age=31536000; samesite=lax`;
-}

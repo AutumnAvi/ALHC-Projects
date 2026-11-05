@@ -72,12 +72,8 @@ import { TaskTitleText } from "@/components/task/title-text";
 import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@/lib/task-seed";
 import { trackCompletion } from "@/lib/completion-store";
 import { useLiveMyTasks } from "./use-live-my-tasks";
-import {
-  saveMyTasksLayout,
-  type MyTaskPlacement,
-  type MyTaskSection,
-  type MyTasksLayout,
-} from "@/lib/my-tasks";
+import type { MyTaskPlacement, MyTaskSection, MyTasksLayout } from "@/lib/my-tasks";
+import { saveMyTasksLayout } from "@/lib/my-tasks-cookie";
 
 type Group = { key: string; title: string; tasks: MyTask[]; section?: MyTaskSection };
 

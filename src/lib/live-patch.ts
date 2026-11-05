@@ -10,13 +10,27 @@
 // Anything a patch can't build from the message (a new task in a List, a new story) asks the caller to
 // refetch: "refresh" (the page) or "refetch" (only the open task pane).
 
-import type { TaskChange } from "@/components/project/use-project-tasks";
 import type { InboxItem } from "@/lib/api/inbox/model";
 import type { MyTask } from "@/lib/api/my-tasks/model";
 import type { ProjectTask, SubtaskItem } from "@/lib/api/tasks/model";
 import type { TaskComment, TaskDetail } from "@/lib/api/task-pane/model";
 import { REACTIONS, type ReactionKey } from "@/lib/reactions";
 import type { Json } from "@/lib/supabase/database.types";
+
+// A change to a project's tasks as List / Board / Calendar / Timeline overlay it (the web app's
+// components/project/use-project-tasks.ts): an optimistic edit, or one a live message carried.
+export type TaskChange =
+  | { type: "complete"; taskId: string; completed: boolean }
+  | { type: "move"; taskId: string; sectionId: string | null; sortOrder: number }
+  | { type: "assign"; taskId: string; assigneeId: string | null }
+  | { type: "field"; taskId: string; fieldId: string; value: Json }
+  | { type: "due"; taskId: string; dueOn: string | null }
+  | { type: "dates"; taskId: string; startOn: string | null; dueOn: string | null }
+  | { type: "tags"; taskId: string; tagIds: string[] }
+  | { type: "title"; taskId: string; title: string }
+  // Nov 4 notes, batch 26: a live update took the task out of this project (trashed, removed) — or put
+  // it back, which cancels an earlier "gone" until the server's copy arrives.
+  | { type: "presence"; taskId: string; present: boolean };
 
 export const LIVE_TABLES = [
   "tasks",
