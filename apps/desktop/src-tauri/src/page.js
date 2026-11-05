@@ -13,7 +13,8 @@
   //    that asked). Next.js links change pages without a load, which the shell can't see, so these become
   //    real loads, which the shell hands to the browser.
   // Links for a new window (target="_blank", ⌘/Ctrl-click) need nothing here: WKWebView and WebView2 ask
-  // the shell for the window. (WebKitGTK, Linux development builds only, drops them.)
+  // the shell for the window. (The opener plugin's own click handler, which would cancel them and ask for
+  // IPC pages don't have, is turned off in lib.rs. WebKitGTK, Linux development builds only, drops them.)
   const FILE = /^\/(attachments|review-files)\/[^/]+$/;
   const BROWSER_ONLY = /^\/(signup|forgot-password)(\/|$)/;
   const download = (href) => {

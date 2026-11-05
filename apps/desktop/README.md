@@ -24,16 +24,18 @@ npm run desktop:build                                       # an installer for t
 ```
 
 `desktop:dev` is `tauri dev`: it serves the launcher page from Vite (port 1420), builds the Rust shell, and
-opens the window. The app's address is compiled in, so changing `ALHC_APP_URL` rebuilds the shell. A
-development build registers the `alhc://` scheme for you while it runs (Windows, Linux); on macOS only an
-installed `.app` gets it (build one and open it from Applications).
+opens the window. The app's address is compiled in, so changing `ALHC_APP_URL` rebuilds the shell. On
+macOS only an installed `.app` gets the `alhc://` scheme (build one and open it from Applications). On
+Windows and Linux a development build registers it when started with `ALHC_DESKTOP_REGISTER_SCHEME=1`;
+the registration stays after it exits and sends `alhc://` links to the development build (an installed
+app's too) until the app is reinstalled.
 
 Try a deep link while it runs:
 
 ```bash
 open 'alhc://inbox?tab=mentioned'                           # macOS (installed app)
-start alhc://inbox                                          # Windows
-xdg-open 'alhc://task/<task id>'                            # Linux
+start alhc://inbox                                          # Windows (ALHC_DESKTOP_REGISTER_SCHEME=1)
+xdg-open 'alhc://task/<task id>'                            # Linux (ALHC_DESKTOP_REGISTER_SCHEME=1)
 ```
 
 `ALHC_DESKTOP_DEBUG=1` prints every navigation decision (scheme, host, and the path's first segment: paths and queries can carry tokens). `ALHC_SUPABASE_URL` points the signed-file allowance at another Supabase project (a local `supabase start`, say).

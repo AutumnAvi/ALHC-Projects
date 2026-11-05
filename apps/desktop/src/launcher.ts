@@ -53,12 +53,27 @@ export function retryDelaySeconds(failures: number): number {
   return RETRY_SECONDS[Math.min(Math.max(failures, 1), RETRY_SECONDS.length) - 1];
 }
 
-// The web app needs a current web engine (Next.js 16 targets Safari 16.4; Tailwind 4 needs color-mix and
-// :has). WebView2 is always current; on a Mac it's the system's Safari, which can be years old. Rather than
-// a broken page, the launcher says so. `supports` is CSS.supports.
-export function engineTooOld(supports: (property: string, value?: string) => boolean): boolean {
+// Whether this engine has RegExp lookbehind (Safari 16.4): the one feature of Next.js 16's target (Safari
+// 16.4: also class static blocks, which the app-router chunk uses) the launcher can test without eval, which
+// its CSP doesn't allow. A RegExp from a string isn't eval.
+export function hasLookbehind(): boolean {
   try {
-    return !(supports("selector(:has(a))") && supports("color", "color-mix(in srgb, red, blue)"));
+    new RegExp("(?<=a)b");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The web app needs a current web engine (Next.js 16 targets Safari 16.4; Tailwind 4 needs color-mix and
+// :has, Safari 16.2). WebView2 is always current; on a Mac it's the system's Safari, which can be years old.
+// Rather than a page that never starts, the launcher says so. `supports` is CSS.supports.
+export function engineTooOld(
+  supports: (property: string, value?: string) => boolean,
+  lookbehind: () => boolean = hasLookbehind,
+): boolean {
+  try {
+    return !(supports("selector(:has(a))") && supports("color", "color-mix(in srgb, red, blue)") && lookbehind());
   } catch {
     return true;
   }

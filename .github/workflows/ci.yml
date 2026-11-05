@@ -85,7 +85,8 @@ jobs:
   desktop:
     name: desktop (launcher, Rust shell)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # About 5 minutes normally; a slow Ubuntu mirror once took 24 of them on apt alone.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -106,7 +107,7 @@ jobs:
       # Tauri's Linux prerequisites (https://v2.tauri.app/start/prerequisites/#linux).
       - name: Install WebKitGTK and the Tauri build prerequisites
         run: >-
-          sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y
+          sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Acquire::Retries=3
           libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       # The version in apps/desktop/src-tauri/rust-toolchain.toml (bump both together).
