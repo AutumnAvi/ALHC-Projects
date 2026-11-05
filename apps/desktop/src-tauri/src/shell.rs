@@ -4,7 +4,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use tauri::webview::{NewWindowFeatures, NewWindowResponse};
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
@@ -20,15 +20,75 @@ const PAGE_SCRIPT: &str = include_str!("page.js");
 /// deploy can't call the new deploy's Server Actions, and a desktop window stays open for days.
 const STALE_AFTER: Duration = Duration::from_secs(8 * 60 * 60);
 
+/// When the main window went to the background, on two clocks: the wall clock keeps counting while the
+/// computer sleeps (a laptop spends most of a weekend asleep; `Instant` doesn't count that on macOS or
+/// Linux), and `Instant` still counts if the wall clock is set back.
+#[derive(Clone, Copy, Debug)]
+struct Since {
+    instant: Instant,
+    wall: SystemTime,
+}
+
+impl Since {
+    fn now() -> Self {
+        Self {
+            instant: Instant::now(),
+            wall: SystemTime::now(),
+        }
+    }
+
+    fn stale_at(self, now: Since) -> bool {
+        now.instant.saturating_duration_since(self.instant) >= STALE_AFTER
+            || now.wall.duration_since(self.wall).unwrap_or_default() >= STALE_AFTER
+    }
+}
+
+/// Page zoom from the View menu (macOS, and Linux development builds): WebView2 zooms by itself
+/// (Ctrl + / - / 0, `zoom_hotkeys_enabled`), but Tauri's zoom keys for WKWebView and WebKitGTK are a page
+/// script that needs IPC, which pages don't get. Safari's steps.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Zoom {
+    In,
+    Out,
+    Reset,
+}
+
+#[cfg(not(windows))]
+const ZOOM_LEVELS: [f64; 11] = [0.5, 0.75, 0.85, 1.0, 1.15, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
+#[cfg(not(windows))]
+fn zoom_level(current: f64, step: Zoom) -> f64 {
+    const CLOSE: f64 = 0.001;
+    match step {
+        Zoom::Reset => 1.0,
+        Zoom::In => ZOOM_LEVELS
+            .into_iter()
+            .find(|level| *level > current + CLOSE)
+            .unwrap_or(ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]),
+        Zoom::Out => ZOOM_LEVELS
+            .into_iter()
+            .rev()
+            .find(|level| *level < current - CLOSE)
+            .unwrap_or(ZOOM_LEVELS[0]),
+    }
+}
+
 pub struct Shell {
     pub policy: Policy,
     launcher: Url,
     page_script: String,
     popups: AtomicU32,
     external: Mutex<policy::ExternalGate>,
-    background_since: Mutex<Option<Instant>>,
+    background_since: Mutex<Option<Since>>,
     #[cfg(not(windows))]
     downloads: Mutex<std::collections::HashMap<String, std::path::PathBuf>>,
+    /// Each window's zoom (webviews can set it but not report it).
+    #[cfg(not(windows))]
+    zoom: Mutex<std::collections::HashMap<String, f64>>,
+    /// macOS: the main window was closed in full screen and is hidden once it has left it.
+    #[cfg(target_os = "macos")]
+    hide_after_fullscreen: std::sync::atomic::AtomicBool,
 }
 
 /// Where the launcher page is served: the Vite dev server under `tauri dev`, else the app's own protocol
@@ -67,6 +127,10 @@ impl Shell {
             background_since: Mutex::new(None),
             #[cfg(not(windows))]
             downloads: Mutex::new(Default::default()),
+            #[cfg(not(windows))]
+            zoom: Mutex::new(Default::default()),
+            #[cfg(target_os = "macos")]
+            hide_after_fullscreen: Default::default(),
         })
     }
 
@@ -187,7 +251,6 @@ fn window_builder<'a>(
         .title(TITLE)
         // Tauri's file-drop capture would break the app's HTML drag and drop (List, Board, uploads).
         .disable_drag_drop_handler()
-        .zoom_hotkeys_enabled(true)
         .initialization_script(script)
         .on_navigation(move |url| navigate(&nav_app, &nav_label, kind, url))
         .on_new_window(move |url, features| new_window(&popup_app, url, features))
@@ -198,6 +261,10 @@ fn window_builder<'a>(
                 &title
             });
         });
+    // WebView2's own zoom (Ctrl + / - / 0, Ctrl + wheel). Elsewhere this would inject Tauri's zoom script,
+    // whose IPC call pages aren't allowed: zoom is the View menu's there (see Zoom).
+    #[cfg(windows)]
+    let builder = builder.zoom_hotkeys_enabled(true);
     with_downloads(app, builder)
 }
 
@@ -294,6 +361,12 @@ pub fn open_link(app: &AppHandle, link: &Url) {
     }
     match main_window(app) {
         Some(window) => {
+            // The launcher loads the app afresh, so coming back to the front now (show) mustn't also
+            // count as a return after a long time away: that reload would replace the linked page.
+            *shell(app)
+                .background_since
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
             let _ = window.navigate(shell(app).launcher_url("open", link.as_str()));
             show(&window);
         }
@@ -307,7 +380,8 @@ pub fn open_link(app: &AppHandle, link: &Url) {
 
 /// Reload through the launcher, so a page that can't load shows "Can't reach ALHC Projects" with a retry
 /// instead of the webview's error page. Anything that isn't an app page (the launcher, a file) reloads in
-/// place.
+/// place. The page replaces itself with the launcher (which replaces itself with the page again): a load
+/// from the shell (navigate) would add a history entry, and Back would land on the same page.
 pub fn reload(app: &AppHandle, window: &WebviewWindow) {
     let current = window.url().ok();
     let path = current
@@ -315,7 +389,14 @@ pub fn reload(app: &AppHandle, window: &WebviewWindow) {
         .and_then(|url| shell(app).policy.app_path(url));
     match path {
         Some(path) if window.label() == MAIN => {
-            let _ = window.navigate(shell(app).launcher_url("to", &path));
+            let launcher = shell(app).launcher_url("to", &path);
+            let script = format!(
+                "location.replace({})",
+                serde_json::Value::from(launcher.as_str())
+            );
+            if window.eval(script).is_err() {
+                let _ = window.navigate(launcher);
+            }
         }
         _ => {
             let _ = window.eval("location.reload()");
@@ -334,12 +415,64 @@ pub fn focus_changed(app: &AppHandle, window: &WebviewWindow, focused: bool) {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     if !focused {
-        since.get_or_insert_with(Instant::now);
+        since.get_or_insert_with(Since::now);
         return;
     }
-    if since.take().is_some_and(|at| at.elapsed() >= STALE_AFTER) {
+    if since.take().is_some_and(|at| at.stale_at(Since::now())) {
         drop(since);
         reload(app, window);
+    }
+}
+
+/// View → Zoom In / Zoom Out / Actual Size, for the window the menu acts on.
+#[cfg(not(windows))]
+pub fn zoom(app: &AppHandle, window: &WebviewWindow, step: Zoom) {
+    let state = shell(app);
+    let mut levels = state.zoom.lock().unwrap_or_else(|e| e.into_inner());
+    let level = zoom_level(levels.get(window.label()).copied().unwrap_or(1.0), step);
+    if window.set_zoom(level).is_ok() {
+        levels.insert(window.label().to_string(), level);
+    }
+}
+
+/// A window closed for good: forget what the shell kept about it (a new main window starts at 100%).
+pub fn forget_window(app: &AppHandle, label: &str) {
+    #[cfg(not(windows))]
+    shell(app)
+        .zoom
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(label);
+    #[cfg(windows)]
+    let _ = (app, label);
+}
+
+/// macOS: closing the main window hides it; in full screen it leaves full screen first (hiding a window
+/// there leaves an empty, black Space) and is hidden once that's done (`resized_main`).
+#[cfg(target_os = "macos")]
+pub fn hide_main(app: &AppHandle, window: &WebviewWindow) {
+    if window.is_fullscreen().unwrap_or(false) {
+        shell(app)
+            .hide_after_fullscreen
+            .store(true, Ordering::SeqCst);
+        if window.set_fullscreen(false).is_ok() {
+            return;
+        }
+        shell(app)
+            .hide_after_fullscreen
+            .store(false, Ordering::SeqCst);
+    }
+    let _ = window.hide();
+}
+
+/// macOS: tao reports a resize once the window has left full screen.
+#[cfg(target_os = "macos")]
+pub fn resized_main(app: &AppHandle, window: &WebviewWindow) {
+    let state = shell(app);
+    if state.hide_after_fullscreen.load(Ordering::SeqCst) && !window.is_fullscreen().unwrap_or(true)
+    {
+        state.hide_after_fullscreen.store(false, Ordering::SeqCst);
+        let _ = window.hide();
     }
 }
 
@@ -349,4 +482,47 @@ pub fn app_url(app: &AppHandle, window: &WebviewWindow) -> Option<Url> {
         .url()
         .ok()
         .filter(|url| shell(app).policy.is_app(url))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_after_eight_hours_awake_asleep_or_with_the_clock_set_back() {
+        let at = Since::now();
+        let later = |awake: u64, wall: i64| Since {
+            instant: at.instant + Duration::from_secs(awake),
+            wall: if wall >= 0 {
+                at.wall + Duration::from_secs(wall.unsigned_abs())
+            } else {
+                at.wall - Duration::from_secs(wall.unsigned_abs())
+            },
+        };
+        let hours = |h: u64| h * 60 * 60;
+        // A few minutes away: not stale.
+        assert!(!at.stale_at(later(300, 300)));
+        // Eight hours in the background, awake.
+        assert!(at.stale_at(later(hours(8), hours(8) as i64)));
+        // A weekend with the lid closed: minutes awake, days on the wall clock.
+        assert!(at.stale_at(later(600, hours(60) as i64)));
+        // The wall clock set back an hour during a long day: the monotonic clock still counts.
+        assert!(at.stale_at(later(hours(9), -(hours(1) as i64))));
+        // Just under eight hours on both.
+        assert!(!at.stale_at(later(hours(8) - 1, hours(8) as i64 - 1)));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn zoom_steps_like_safari_and_stops_at_the_ends() {
+        assert_eq!(zoom_level(1.0, Zoom::In), 1.15);
+        assert_eq!(zoom_level(1.0, Zoom::Out), 0.85);
+        assert_eq!(zoom_level(1.15, Zoom::Out), 1.0);
+        assert_eq!(zoom_level(3.0, Zoom::In), 3.0);
+        assert_eq!(zoom_level(0.5, Zoom::Out), 0.5);
+        assert_eq!(zoom_level(2.5, Zoom::Reset), 1.0);
+        // A level between steps goes to the next one.
+        assert_eq!(zoom_level(1.2, Zoom::In), 1.25);
+        assert_eq!(zoom_level(1.2, Zoom::Out), 1.15);
+    }
 }

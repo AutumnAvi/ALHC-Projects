@@ -66,7 +66,7 @@ else if (engineTooOld((property, value) => (value === undefined ? CSS.supports(p
   show(
     "ALHC Projects needs a newer web engine",
     shell.platform === "macos"
-      ? "Update macOS (System Settings → General → Software Update) to get the latest Safari, then open the app again."
+      ? "Install the latest Safari or macOS update from Software Update (System Preferences, or System Settings → General on macOS 13 and later), then open the app again."
       : "Update Microsoft Edge WebView2 (or Windows), then open the app again.",
     false,
   );

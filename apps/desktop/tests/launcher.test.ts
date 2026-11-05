@@ -1,7 +1,15 @@
 // Big move 3 (docs/design/desktop.md): the desktop launcher's rules.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { appOriginOf, engineTooOld, launchTarget, probeUrl, readShellInfo, retryDelaySeconds } from "../src/launcher";
+import {
+  appOriginOf,
+  engineTooOld,
+  hasLookbehind,
+  launchTarget,
+  probeUrl,
+  readShellInfo,
+  retryDelaySeconds,
+} from "../src/launcher";
 
 const APP = "https://alhc-projects.vercel.app";
 const T = "7a1c2d3e-4f50-4a61-8b72-9c8d7e6f5a4b";
@@ -43,11 +51,15 @@ test("probing and retrying", () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5, 50].map(retryDelaySeconds), [2, 2, 4, 8, 15, 30, 30]);
 });
 
-test("an engine without :has() or color-mix() is too old for the web app", () => {
+test("an engine without :has(), color-mix(), or Safari 16.4's JavaScript is too old for the web app", () => {
   const modern = () => true;
+  assert.equal(hasLookbehind(), true);
   assert.equal(engineTooOld(modern), false);
+  assert.equal(engineTooOld(modern, () => true), false);
   assert.equal(engineTooOld((property) => property !== "selector(:has(a))"), true);
   assert.equal(engineTooOld((property) => property !== "color"), true);
+  // Safari 16.2 / 16.3: :has() and color-mix(), but no lookbehind (nor the class static blocks Next.js uses).
+  assert.equal(engineTooOld(modern, () => false), true);
   assert.equal(
     engineTooOld(() => {
       throw new Error("no CSS.supports");

@@ -26,7 +26,8 @@ The app shows the hosted web app, so a new desktop release is only needed when t
    npm ci
    ```
 
-Tools on the build machine: Node 22, Rust stable (`rustup`), and the platform's tools below.
+Tools on the build machine: Node 22, `rustup` (`apps/desktop/src-tauri/rust-toolchain.toml` picks the Rust
+release, and rustup installs it on the first build), and the platform's tools below.
 
 ## 1. macOS: sign and notarize
 
@@ -50,10 +51,12 @@ Tools on the build machine: Node 22, Rust stable (`rustup`), and the platform's 
    - the Apple ID's email, an **app-specific password** (appleid.apple.com → Sign-In and Security), and
      the team id.
 4. Xcode or the Command Line Tools (`xcode-select --install`), and both Rust targets for a universal
-   build (Apple silicon and Intel):
+   build (Apple silicon and Intel), added to the pinned Rust release (rustup keeps targets per release:
+   from the repository root they would go to `stable` instead). Run it again after bumping
+   `rust-toolchain.toml`:
 
    ```bash
-   rustup target add aarch64-apple-darwin x86_64-apple-darwin
+   (cd apps/desktop/src-tauri && rustup target add aarch64-apple-darwin x86_64-apple-darwin)
    ```
 
 ### Build
@@ -117,11 +120,23 @@ committed once settled.
 {
   "bundle": {
     "windows": {
-      "signCommand": "trusted-signing-cli -e https://<region>.codesigning.azure.net -a <account> -c <certificate profile> -d \"ALHC Projects\" %1"
+      "signCommand": {
+        "cmd": "trusted-signing-cli",
+        "args": [
+          "-e", "https://<region>.codesigning.azure.net",
+          "-a", "<account>",
+          "-c", "<certificate profile>",
+          "-d", "ALHC Projects",
+          "%1"
+        ]
+      }
     }
   }
 }
 ```
+
+(The object form, because Tauri splits the one-string form on spaces with no shell: quotes don't keep
+"ALHC Projects" together there.)
 
 The signer reads the Azure credentials of a service principal allowed to sign from the environment:
 
@@ -195,9 +210,14 @@ can't be updated any more.
 
 ## Where the app keeps its data
 
-Signing out is enough for a shared machine. To start completely fresh (sign-in, window size):
+Signing out is enough for a shared machine. To start completely fresh (sign-in, window size), sign out
+first (so the server ends the session even if a cookie survives), then:
 
 - macOS: quit the app, then remove `~/Library/WebKit/com.autumnlakemarketing.alhcprojects`,
+  `~/Library/HTTPStorages/com.autumnlakemarketing.alhcprojects` and the
+  `com.autumnlakemarketing.alhcprojects.binarycookies` file next to it (the cookies),
   `~/Library/Caches/com.autumnlakemarketing.alhcprojects`, and
-  `~/Library/Application Support/com.autumnlakemarketing.alhcprojects`.
-- Windows: uninstall (Settings → Apps) and remove `%LOCALAPPDATA%\com.autumnlakemarketing.alhcprojects`.
+  `~/Library/Application Support/com.autumnlakemarketing.alhcprojects` (the window size).
+- Windows: uninstall (Settings → Apps), then remove `%LOCALAPPDATA%\com.autumnlakemarketing.alhcprojects`
+  (the sign-in) and `%APPDATA%\com.autumnlakemarketing.alhcprojects` (the window size). The NSIS
+  uninstaller's "Delete the application data" box does both; the MSI's has no such box.

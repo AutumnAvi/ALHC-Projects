@@ -1,6 +1,6 @@
 //! The app menu (macOS and Linux; Windows has none: WebView2's own keys reload (Ctrl+R, F5), go back and
-//! forward (Alt+←/→), print (Ctrl+P), and find (Ctrl+F)). On macOS the Edit menu is what makes ⌘C, ⌘V,
-//! ⌘X, and ⌘A work in the page at all.
+//! forward (Alt+←/→), print (Ctrl+P), find (Ctrl+F), and zoom (Ctrl + / - / 0)). On macOS the Edit menu is
+//! what makes ⌘C, ⌘V, ⌘X, and ⌘A work in the page at all, and the View menu's zoom items are the only zoom.
 
 use tauri::menu::{AboutMetadata, Menu, MenuBuilder, MenuEvent, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Manager, WebviewWindow, Wry};
@@ -13,6 +13,9 @@ const BACK: &str = "back";
 const FORWARD: &str = "forward";
 const PRINT: &str = "print";
 const OPEN_IN_BROWSER: &str = "open-in-browser";
+const ZOOM_IN: &str = "zoom-in";
+const ZOOM_OUT: &str = "zoom-out";
+const ACTUAL_SIZE: &str = "actual-size";
 
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let about = AboutMetadata {
@@ -64,6 +67,22 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         )
         .separator()
         .item(
+            &MenuItemBuilder::with_id(ACTUAL_SIZE, "Actual Size")
+                .accelerator("CmdOrCtrl+0")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(ZOOM_IN, "Zoom In")
+                .accelerator("CmdOrCtrl+=")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(ZOOM_OUT, "Zoom Out")
+                .accelerator("CmdOrCtrl+-")
+                .build(app)?,
+        )
+        .separator()
+        .item(
             &MenuItemBuilder::with_id(BACK, "Back")
                 .accelerator("CmdOrCtrl+[")
                 .build(app)?,
@@ -106,6 +125,9 @@ pub fn handle(app: &AppHandle, event: MenuEvent) {
         PRINT => {
             let _ = window.print();
         }
+        ZOOM_IN => shell::zoom(app, &window, shell::Zoom::In),
+        ZOOM_OUT => shell::zoom(app, &window, shell::Zoom::Out),
+        ACTUAL_SIZE => shell::zoom(app, &window, shell::Zoom::Reset),
         OPEN_IN_BROWSER => {
             if let Some(url) = shell::app_url(app, &window) {
                 let _ = app.opener().open_url(url.as_str(), None::<&str>);

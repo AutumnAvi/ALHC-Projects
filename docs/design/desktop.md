@@ -127,9 +127,12 @@ target=_blank ─────► an app page or a stored file: another app windo
   (`/login?next=`).
 - `desktopLinkFor(path)` builds the link for a page (for a future "Open in desktop app").
 - **Registration.** The scheme is in `tauri.conf.json` (`plugins.deep-link.desktop.schemes`): the macOS
-  bundle's `Info.plist` and the Windows installers register it. A development build registers it for the
-  user while it runs (Windows, Linux). macOS hands links to the running app; Windows and Linux start a new
-  process with the link, which the single-instance plugin passes to the running app before it exits.
+  bundle's `Info.plist` and the Windows installers register it. A development build registers it only with
+  `ALHC_DESKTOP_REGISTER_SCHEME=1` (Windows, Linux): the registration stays after it exits and points
+  `alhc://` at the development build, an installed app's links included (the Windows installer registers
+  per user, under the same key), until the app is reinstalled. macOS hands links to the running app;
+  Windows and Linux start a new process with the link, which the single-instance plugin passes to the
+  running app before it exits.
 - The shell sends the link to the launcher (`index.html?open=<link>`), which maps it and checks the app
   answers first; the Rust side never maps links itself.
 
@@ -149,7 +152,9 @@ ask for iframes too; WebView2 for the main frame):
 
 - **New windows** (`target="_blank"`, ⌘-click): an app page or a stored file opens another app window that
   shares the session (a file preview, a public form, "Open review page"); anything else goes to the
-  browser. (WebKitGTK, which only Linux development builds use, drops plain `target="_blank"` links.)
+  browser. (WebKitGTK, which only Linux development builds use, drops plain `target="_blank"` links.) The
+  opener plugin's own link script is off (`open_js_links_on_click(false)`): it would cancel these clicks
+  and ask for `open_url` over IPC, which pages don't get, so they would do nothing.
 - **Opening other apps is limited**: the same URL twice within two seconds opens once, and at most five
   open in ten seconds (`ExternalGate`). A browser only opens other apps after a click; the shell can't tell
   a click from a frame loading a link, so it limits instead.
@@ -167,16 +172,23 @@ ask for iframes too; WebView2 for the main frame):
   and drop (List, Board, uploads) needs it off, notably on Windows.
 - **Menus and keys.** macOS gets an app menu (About, Hide, Quit), File (Open in Browser ⇧⌘O, Print ⌘P,
   Close ⌘W), Edit (without it ⌘C / ⌘V / ⌘A don't work in a WKWebView), View (Reload ⌘R through the launcher,
-  Back ⌘[, Forward ⌘], Full screen), and Window. Windows has no menu bar: WebView2's own keys reload
-  (Ctrl+R, F5), go back and forward (Alt+←/→), print (Ctrl+P), and find (Ctrl+F). Zoom keys work on both
-  (`zoom_hotkeys_enabled`).
+  Actual Size ⌘0, Zoom In ⌘=, Zoom Out ⌘-, Back ⌘[, Forward ⌘], Full screen), and Window. Zoom is the
+  shell's (`set_zoom`, Safari's steps, per window): Tauri's zoom keys for WKWebView are a page script that
+  needs IPC. Windows has no menu bar: WebView2's own keys reload (Ctrl+R, F5), go back and forward
+  (Alt+←/→), print (Ctrl+P), find (Ctrl+F), and zoom (Ctrl + / - / 0, Ctrl + wheel:
+  `zoom_hotkeys_enabled`).
 - **Windows of the app.** Closing the main window on macOS hides it (the app keeps running; the Dock icon
-  brings it back; ⌘Q quits), the macOS convention. On Windows closing it quits. The main window's size and
+  brings it back; ⌘Q quits), the macOS convention; in full screen it leaves full screen first (hiding it
+  there would leave an empty Space). On Windows closing it quits. The main window's size and
   place are remembered (window-state plugin).
 - **A page left open across a deploy.** A page loaded before a deploy can't call the new deploy's Server
   Actions (`UnrecognizedActionError`) until it reloads, and a desktop window stays open for days. So when
   the main window comes back after eight hours or more in the background, the shell reloads it (through
-  the launcher). Unsent text in an open box is lost then, as on any reload.
+  the launcher). Time asleep counts (the wall clock, with the monotonic clock as a fallback if the clock is
+  set back), and a deep link that brings the window back is a fresh load already, so it isn't reloaded
+  again. A reload replaces the page in the history (Back doesn't land on the same page). Unsent text in an
+  open box is lost then, as on any reload. One gap: a Mac put to sleep with the app in front gets no
+  "came back" event; it reloads the next time it comes back to the front.
 
 ## Notifications and the Dock badge: not built
 
@@ -227,8 +239,12 @@ replace `icon.svg` (and the web app's favicon) and rerun it.
 - **Logs** never contain a URL beyond its host and first path segment (paths and queries carry tokens:
   review links, calendar feeds, signed files): a failed open logs the scheme and the error's kind, and
   `ALHC_DESKTOP_DEBUG=1` prints the policy's decisions as `scheme://host/first-segment/…`.
-- **Release builds** have no developer tools (Tauri's default), `freezePrototype` is on, the binary is
-  stripped, and the Rust dependencies are Tauri and four official plugins (deep link, single instance,
+- **`freezePrototype` is off.** Tauri runs it on every page of the app's windows, the hosted app included,
+  and a frozen `Object.prototype` breaks ordinary code that sets a name like `toString` on a plain object
+  (the web app's pdf.js worker URL, so PDF review files wouldn't open). It guards Tauri's own JavaScript
+  API, which no page here can use.
+- **Release builds** have no developer tools (Tauri's default), the binary is stripped, and the Rust
+  dependencies are Tauri and four official plugins (deep link, single instance,
   opener, window state) plus `serde_json` and `url`.
 
 ## Auto-update: not set up
@@ -265,7 +281,8 @@ and Microsoft's code signing, and both are needed. No keys are created in this c
 - **macOS 11.3 (Big Sur) or later** (`minimumSystemVersion`; downloads need WKDownload). The page runs in the
   system WebKit, so Safari must be up to date for the web app (Next.js 16 targets Safari 16.4, which Big Sur
   11.7 and later get as an update). An older engine gets "ALHC Projects needs a newer web engine" from the
-  launcher (no `:has()` or `color-mix()`) instead of a broken page.
+  launcher (no `:has()`, `color-mix()`, or RegExp lookbehind, Safari 16.4's JavaScript) instead of a page
+  that never starts.
 - **Windows 10 and 11** with the WebView2 runtime (built into Windows 11; the installer downloads it when
   missing). Installs per user (no admin rights).
 - **Linux**: development builds only (CI and `tauri dev`); not shipped.
