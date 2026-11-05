@@ -2,8 +2,8 @@
 //! and the windows pages open (file previews, public forms). Every webview gets the same page script, the
 //! navigation policy (`policy.rs`), the new-window rule, and the download handling.
 
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use tauri::webview::{NewWindowFeatures, NewWindowResponse};
@@ -19,6 +19,20 @@ const PAGE_SCRIPT: &str = include_str!("page.js");
 /// After this long in the background the main window reloads when it comes back: a page loaded before a
 /// deploy can't call the new deploy's Server Actions, and a desktop window stays open for days.
 const STALE_AFTER: Duration = Duration::from_secs(8 * 60 * 60);
+
+/// How long a stale reload waits, so a deep link that brought the window back (macOS may report the focus
+/// before the link) wins.
+const STALE_RELOAD_DELAY: Duration = Duration::from_millis(300);
+
+/// How long Reload waits for the page to confirm it replaced itself with the launcher before loading the
+/// launcher from the shell instead (a page whose web process died, or that's stuck, runs no script).
+const RELOAD_FALLBACK_AFTER: Duration = Duration::from_millis(1500);
+
+/// macOS: how long after the last resize of a full-screen exit the main window is hidden. tao reports a
+/// resize during the exit animation as well as at its end (and its full-screen state reads "not full
+/// screen" as soon as the exit is asked for), so the hide waits for the resizes to stop.
+#[cfg(target_os = "macos")]
+const HIDE_AFTER_FULLSCREEN_EXIT: Duration = Duration::from_millis(1000);
 
 /// When the main window went to the background, on two clocks: the wall clock keeps counting while the
 /// computer sleeps (a laptop spends most of a weekend asleep; `Instant` doesn't count that on macOS or
@@ -86,9 +100,14 @@ pub struct Shell {
     /// Each window's zoom (webviews can set it but not report it).
     #[cfg(not(windows))]
     zoom: Mutex<std::collections::HashMap<String, f64>>,
-    /// macOS: the main window was closed in full screen and is hidden once it has left it.
+    /// Counts deep links, so a stale reload scheduled just before one is dropped.
+    links: AtomicU64,
+    /// macOS: the main window was closed in full screen and is hidden once it has left it; the resizes
+    /// seen since, so only the last one's timer hides it.
     #[cfg(target_os = "macos")]
-    hide_after_fullscreen: std::sync::atomic::AtomicBool,
+    hide_after_fullscreen: AtomicBool,
+    #[cfg(target_os = "macos")]
+    fullscreen_resizes: AtomicU64,
 }
 
 /// Where the launcher page is served: the Vite dev server under `tauri dev`, else the app's own protocol
@@ -129,8 +148,11 @@ impl Shell {
             downloads: Mutex::new(Default::default()),
             #[cfg(not(windows))]
             zoom: Mutex::new(Default::default()),
+            links: AtomicU64::new(0),
             #[cfg(target_os = "macos")]
-            hide_after_fullscreen: Default::default(),
+            hide_after_fullscreen: AtomicBool::new(false),
+            #[cfg(target_os = "macos")]
+            fullscreen_resizes: AtomicU64::new(0),
         })
     }
 
@@ -141,6 +163,16 @@ impl Shell {
 
 fn shell(app: &AppHandle) -> tauri::State<'_, Shell> {
     app.state::<Shell>()
+}
+
+/// Run `then` on the main thread after `delay`.
+fn later(app: &AppHandle, delay: Duration, then: impl FnOnce(&AppHandle) + Send + 'static) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        let target = app.clone();
+        let _ = target.run_on_main_thread(move || then(&app));
+    });
 }
 
 /// Hand a URL to the system: the browser, the mail app, a calendar app. Never logs the URL (signed file
@@ -349,6 +381,13 @@ pub fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
 }
 
 pub fn show(window: &WebviewWindow) {
+    // Shown again before a full-screen close finished hiding it: it stays.
+    #[cfg(target_os = "macos")]
+    if window.label() == MAIN {
+        shell(window.app_handle())
+            .hide_after_fullscreen
+            .store(false, Ordering::SeqCst);
+    }
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
@@ -363,6 +402,8 @@ pub fn open_link(app: &AppHandle, link: &Url) {
         Some(window) => {
             // The launcher loads the app afresh, so coming back to the front now (show) mustn't also
             // count as a return after a long time away: that reload would replace the linked page.
+            // (A stale reload already scheduled is dropped too: `links`.)
+            shell(app).links.fetch_add(1, Ordering::SeqCst);
             *shell(app)
                 .background_since
                 .lock()
@@ -381,7 +422,8 @@ pub fn open_link(app: &AppHandle, link: &Url) {
 /// Reload through the launcher, so a page that can't load shows "Can't reach ALHC Projects" with a retry
 /// instead of the webview's error page. Anything that isn't an app page (the launcher, a file) reloads in
 /// place. The page replaces itself with the launcher (which replaces itself with the page again): a load
-/// from the shell (navigate) would add a history entry, and Back would land on the same page.
+/// from the shell (navigate) would add a history entry, and Back would land on the same page. If the page
+/// doesn't confirm it ran that (its web process died, or it's stuck), the shell loads the launcher itself.
 pub fn reload(app: &AppHandle, window: &WebviewWindow) {
     let current = window.url().ok();
     let path = current
@@ -391,12 +433,26 @@ pub fn reload(app: &AppHandle, window: &WebviewWindow) {
         Some(path) if window.label() == MAIN => {
             let launcher = shell(app).launcher_url("to", &path);
             let script = format!(
-                "location.replace({})",
+                "location.replace({}); \"replaced\"",
                 serde_json::Value::from(launcher.as_str())
             );
-            if window.eval(script).is_err() {
+            let replaced = Arc::new(AtomicBool::new(false));
+            let ran = Arc::clone(&replaced);
+            let asked = window.eval_with_callback(script, move |result| {
+                if result.contains("replaced") {
+                    ran.store(true, Ordering::SeqCst);
+                }
+            });
+            if asked.is_err() {
                 let _ = window.navigate(launcher);
+                return;
             }
+            let window = window.clone();
+            later(app, RELOAD_FALLBACK_AFTER, move |_| {
+                if !replaced.load(Ordering::SeqCst) {
+                    let _ = window.navigate(launcher);
+                }
+            });
         }
         _ => {
             let _ = window.eval("location.reload()");
@@ -420,7 +476,13 @@ pub fn focus_changed(app: &AppHandle, window: &WebviewWindow, focused: bool) {
     }
     if since.take().is_some_and(|at| at.stale_at(Since::now())) {
         drop(since);
-        reload(app, window);
+        let links = state.links.load(Ordering::SeqCst);
+        let window = window.clone();
+        later(app, STALE_RELOAD_DELAY, move |app| {
+            if shell(app).links.load(Ordering::SeqCst) == links {
+                reload(app, &window);
+            }
+        });
     }
 }
 
@@ -465,18 +527,29 @@ pub fn hide_main(app: &AppHandle, window: &WebviewWindow) {
     let _ = window.hide();
 }
 
-/// macOS: tao reports a resize once the window has left full screen.
+/// macOS: while a full-screen close is pending, each resize restarts the wait; the last one comes when
+/// the window has left full screen (tao's windowDidExitFullScreen), and the window is hidden a moment
+/// after it (HIDE_AFTER_FULLSCREEN_EXIT).
 #[cfg(target_os = "macos")]
 pub fn resized_main(app: &AppHandle, window: &WebviewWindow) {
     let state = shell(app);
-    if state.hide_after_fullscreen.load(Ordering::SeqCst) && !window.is_fullscreen().unwrap_or(true)
-    {
-        state.hide_after_fullscreen.store(false, Ordering::SeqCst);
-        let _ = window.hide();
+    if !state.hide_after_fullscreen.load(Ordering::SeqCst) {
+        return;
     }
+    let resize = state.fullscreen_resizes.fetch_add(1, Ordering::SeqCst) + 1;
+    let window = window.clone();
+    later(app, HIDE_AFTER_FULLSCREEN_EXIT, move |app| {
+        let state = shell(app);
+        if state.fullscreen_resizes.load(Ordering::SeqCst) == resize
+            && state.hide_after_fullscreen.swap(false, Ordering::SeqCst)
+        {
+            let _ = window.hide();
+        }
+    });
 }
 
 /// The page shown in the window, if it's an app page (for "Open in Browser").
+#[cfg(not(windows))]
 pub fn app_url(app: &AppHandle, window: &WebviewWindow) -> Option<Url> {
     window
         .url()
