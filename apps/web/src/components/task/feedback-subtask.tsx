@@ -5,7 +5,7 @@ import { Check, ListPlus } from "lucide-react";
 import { useNotify, useServerAction } from "@/components/toast";
 import { createSubtaskFromFeedback } from "@/lib/actions/tasks";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
-import { feedbackSubtaskNotes, feedbackSubtaskTitle } from "@alhc/core/feedback-subtask";
+import { feedbackAssetTitle, feedbackSubtaskNotes, feedbackSubtaskTitle } from "@alhc/core/feedback-subtask";
 import { withPendingCreate } from "@/lib/pending-creates";
 
 // A link back to the task the feedback is on (the subtask's description; its breadcrumb also leads there).
@@ -21,22 +21,29 @@ function taskLink(task: TaskDetail): string | null {
 // background; a refusal takes it
 // away again and the toast says why. Once made (or while a subtask by that name exists) it reads
 // "Subtask created". Editors only (the caller decides; create_subtask checks).
+// Nov 5 note 166: feedback on one file names the subtask feedback first, then the file
+// ("Do better — logo.pdf"), and its description ties it to the file by id (the name's file chip).
+// `legacyTitle` is the name a subtask from this feedback got before, so it still reads "Subtask created".
 export function FeedbackSubtaskButton({
   task,
   feedback,
   from,
+  file = null,
+  legacyTitle = null,
   className = "",
 }: {
   task: TaskDetail;
   feedback: string;
   from: string;
+  file?: { id: string | null; name: string } | null;
+  legacyTitle?: string | null;
   className?: string;
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
   const [made, setMade] = useState(false);
-  const title = feedbackSubtaskTitle(feedback);
-  const exists = made || task.subtasks.some((s) => s.title.trim() === title);
+  const title = file ? feedbackAssetTitle(feedback, file.name) : feedbackSubtaskTitle(feedback);
+  const exists = made || task.subtasks.some((s) => s.title.trim() === title || (legacyTitle !== null && s.title.trim() === legacyTitle));
 
   if (exists) {
     return (
@@ -49,7 +56,9 @@ export function FeedbackSubtaskButton({
 
   function create() {
     setMade(true);
-    const notes = feedbackSubtaskNotes({ feedback, from, link: taskLink(task) });
+    const asset = file?.id ? { id: file.id, name: file.name } : null;
+    const origin = typeof window === "undefined" ? null : window.location.origin;
+    const notes = feedbackSubtaskNotes({ feedback, from, link: taskLink(task), asset, origin });
     run(async () => {
       const result = await withPendingCreate(`subtasks:${task.id}`, title, () => createSubtaskFromFeedback(task.id, title, notes));
       if (result.error) setMade(false);

@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleCheck,
   Ellipsis,
+  Eye,
   FolderClosed,
   GripVertical,
   Lock,
@@ -48,6 +49,7 @@ import { createPrivateTask, setTaskCompleted, updateSubtask, updateTask } from "
 import { type ActionResult } from "@alhc/core/api/core/result";
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
 import { dayLabel } from "@alhc/core/date-input";
+import { approverReviewHref } from "@alhc/core/approver-review";
 import {
   ExpandToggle,
   InlineAssigneeCell,
@@ -1515,6 +1517,19 @@ export function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; open
         <MoreTaskNumbers numbers={item.taskNumbers} />
       </span>
       {item.roundNumber ? <span className="chip shrink-0">Round {item.roundNumber}</span> : null}
+      {decides ? (
+        // Nov 5 note 164: straight to the round's review page, where the files are.
+        <Link
+          href={approverReviewHref(item.taskId)}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Open review of “${title}”`}
+          data-awaiting-review=""
+          className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-accent-700 hover:bg-accent-50"
+        >
+          <Eye className="size-3.5" aria-hidden />
+          Open review
+        </Link>
+      ) : null}
       {item.projectId ? (
         <Link
           href={`/projects/${item.projectId}/list`}

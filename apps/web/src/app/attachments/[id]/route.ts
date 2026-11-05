@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getAttachmentFile, signedFileUrl } from "@alhc/core/api/attachments/queries";
+import { getAttachmentFile, signedFileUrl, signedThumbnailUrl } from "@alhc/core/api/attachments/queries";
 import { getViewer } from "@alhc/core/api/auth/queries";
 import { routeContext } from "@/lib/server/context";
 
@@ -11,6 +11,9 @@ const MEDIA_URL_TTL_SECONDS = 3600;
 // GET /attachments/<id>?download   always a download
 // GET /attachments/<id>?media=1    the same, plus videos (MP4, WebM, MOV) in the browser's player, with an
 //                                  hour-long link so a video keeps playing (Oct 26 notes, batch 3: Reviews)
+// GET /attachments/<id>?thumb=1    a small picture of it (Nov 5 note 166: feedback pills): an image itself,
+//                                  else the thumbnail drawn when it was sent for approval (a PDF's first
+//                                  page); 404 when there is none (the pill shows the file-type icon)
 // The metadata row is read with the viewer's client (RLS: Viewer+ on the task), then the browser is
 // redirected to a 60-second signed URL of the private bucket. The redirect itself is never cached, so
 // every <img> load gets a fresh URL. Inline only when the file name, the recorded type, the storage path,
@@ -24,6 +27,12 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/attachments/
 
   const attachment = await getAttachmentFile(api, id);
   if (!attachment) return new NextResponse("Not found", { status: 404 });
+
+  if (request.nextUrl.searchParams.get("thumb") === "1") {
+    const thumbUrl = await signedThumbnailUrl(api, id, attachment, SIGNED_URL_TTL_SECONDS);
+    if (!thumbUrl) return noStore(new NextResponse("No thumbnail", { status: 404 }));
+    return noStore(NextResponse.redirect(thumbUrl));
+  }
 
   const wantsDownload = request.nextUrl.searchParams.has("download");
   const media = request.nextUrl.searchParams.get("media") === "1";

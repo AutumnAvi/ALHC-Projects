@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, CalendarClock, ShieldCheck } from "lucide-react";
+import { ArrowRight, CalendarClock, Eye, ShieldCheck } from "lucide-react";
+import { approverReviewHref, inboxReviewHref } from "@alhc/core/approver-review";
+import { useShellMemberId } from "@/components/shell/shell-context";
 import { Avatar } from "@/components/avatar";
 import { displayName } from "@alhc/core/people";
 import { describeInboxItem, inboxItemHref } from "@/components/inbox/inbox-card";
@@ -23,7 +25,8 @@ export const NEEDS_YOU_INBOX = 5;
 
 // Home's "Needs you" (Nov 1 notes, batch 9b, item 65): what's waiting on the person — approvals they
 // decide, unread @mentions, new tasks without a date, and the first few other unread Inbox items. A
-// row opens the task in the pane (and marks the Inbox item read) or the message / project.
+// row opens the task in the pane (and marks the Inbox item read) or the message / project. Nov 5 note
+// 164: an approval round waiting on the person opens its review page (where the files are), not the task.
 export function NeedsYouCard({
   approvals,
   mentions,
@@ -76,13 +79,9 @@ export function NeedsYouCard({
           ) : null}
           {approvals.length > 0 ? (
             <Group title="Approvals waiting on you" count={approvals.length}>
-              {approvals.slice(0, 5).map((item) => (
-                <li key={item.requestId}>
-                  <TaskLink
-                    taskId={item.taskId}
-                    seed={() => seedFromTitle(item.taskId, item.title, { dueOn: item.dueOn, kind: item.isApprovalTask ? "approval" : undefined })}
-                    className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-zinc-50"
-                  >
+              {approvals.slice(0, 5).map((item) => {
+                const body = (
+                  <>
                     <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-green-50 text-green-700">
                       <ShieldCheck className="size-3.5" aria-hidden />
                     </span>
@@ -90,9 +89,33 @@ export function NeedsYouCard({
                       {displayTaskTitle(item.title, item.requestLabel)}
                     </span>
                     {item.dueOn ? <span className="shrink-0 text-xs text-zinc-500">Due {formatDueDate(item.dueOn)}</span> : null}
-                  </TaskLink>
-                </li>
-              ))}
+                  </>
+                );
+                const className = "flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-zinc-50";
+                return (
+                  <li key={item.requestId}>
+                    {item.roundNumber !== null ? (
+                      // A round of an approval task: decided on its review page, with the files.
+                      <Link href={approverReviewHref(item.taskId)} data-needs-you-review="" className={className}>
+                        {body}
+                        <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent-700">
+                          <Eye className="size-3.5" aria-hidden />
+                          Open review
+                        </span>
+                      </Link>
+                    ) : (
+                      // An older request (an approval subtask): decided in the task's Approvals list.
+                      <TaskLink
+                        taskId={item.taskId}
+                        seed={() => seedFromTitle(item.taskId, item.title, { dueOn: item.dueOn, kind: item.isApprovalTask ? "approval" : undefined })}
+                        className={className}
+                      >
+                        {body}
+                      </TaskLink>
+                    )}
+                  </li>
+                );
+              })}
             </Group>
           ) : null}
           {mentions.length > 0 ? (
@@ -130,6 +153,7 @@ function Group({ title, count, children }: { title: string; count: number | null
 function InboxRow({ item, actors }: { item: InboxItem; actors: Profile[] }) {
   const [, run] = useServerAction();
   const taskHref = useTaskHref();
+  const memberId = useShellMemberId();
   const actor = actors.find((p) => p.id === item.actorId);
   const { verb, ruleName } = describeInboxItem(item);
   const name = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? "Someone");
@@ -149,9 +173,14 @@ function InboxRow({ item, actors }: { item: InboxItem; actors: Profile[] }) {
   );
   const className = "flex items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-zinc-50";
   const isTask = item.taskId && !item.message && !item.teamMessage && !item.statusUpdate && !item.project;
+  const reviewHref = memberId ? inboxReviewHref(item, memberId) : null;
   return (
     <li>
-      {isTask ? (
+      {reviewHref ? (
+        <Link href={reviewHref} onClick={markRead} className={className}>
+          {body}
+        </Link>
+      ) : isTask ? (
         <TaskLink
           taskId={item.taskId!}
           seed={() => seedFromTitle(item.taskId!, item.taskTitle, { parentTitle: item.parentTitle })}
