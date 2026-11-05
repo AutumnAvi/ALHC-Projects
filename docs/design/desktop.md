@@ -179,16 +179,21 @@ ask for iframes too; WebView2 for the main frame):
   `zoom_hotkeys_enabled`).
 - **Windows of the app.** Closing the main window on macOS hides it (the app keeps running; the Dock icon
   brings it back; ⌘Q quits), the macOS convention; in full screen it leaves full screen first (hiding it
-  there would leave an empty Space). On Windows closing it quits. The main window's size and
-  place are remembered (window-state plugin).
+  there would leave an empty Space) and hides a second after the exit's last resize (tao resizes during
+  the animation and at its end, and reads "not full screen" as soon as the exit is asked for). On Windows
+  closing it quits. The main window's size and place are remembered (window-state plugin).
 - **A page left open across a deploy.** A page loaded before a deploy can't call the new deploy's Server
   Actions (`UnrecognizedActionError`) until it reloads, and a desktop window stays open for days. So when
   the main window comes back after eight hours or more in the background, the shell reloads it (through
   the launcher). Time asleep counts (the wall clock, with the monotonic clock as a fallback if the clock is
-  set back), and a deep link that brings the window back is a fresh load already, so it isn't reloaded
-  again. A reload replaces the page in the history (Back doesn't land on the same page). Unsent text in an
-  open box is lost then, as on any reload. One gap: a Mac put to sleep with the app in front gets no
-  "came back" event; it reloads the next time it comes back to the front.
+  set back). A deep link that brings the window back is a fresh load already: it clears the timer, and a
+  stale reload waits 300 ms so a link that arrives just after the focus (macOS may report them in either
+  order) drops it. A reload replaces the page in the history (Back doesn't land on the same page): the
+  page runs `location.replace` to the launcher, and if it doesn't confirm within 1.5 s (its web process
+  died, or it's stuck) the shell loads the launcher itself. Unsent text in an open box is lost then, as on
+  any reload. One gap: a Mac that goes to sleep with the app in front reports no "went to the
+  background", so the time asleep isn't counted; that window reloads only after its next eight hours in
+  the background (View → Reload, ⌘R, does it by hand).
 
 ## Notifications and the Dock badge: not built
 

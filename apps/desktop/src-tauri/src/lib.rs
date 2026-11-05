@@ -85,7 +85,7 @@ pub fn run() {
                 WindowEvent::Focused(focused) => shell::focus_changed(app, &webview, *focused),
                 // macOS: closing the window keeps the app running (⌘Q quits); the Dock icon brings it back.
                 // A window in full screen leaves it first (hiding it there would leave an empty Space):
-                // it's hidden once the exit is done (tao reports the resize then).
+                // it's hidden a moment after the exit's last resize (shell::resized_main).
                 #[cfg(target_os = "macos")]
                 WindowEvent::CloseRequested { api, .. } if window.label() == shell::MAIN => {
                     api.prevent_close();
