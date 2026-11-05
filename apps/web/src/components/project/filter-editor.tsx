@@ -1,0 +1,648 @@
+"use client";
+
+import { useState } from "react";
+import { Plus, X } from "lucide-react";
+import { displayName } from "@alhc/core/people";
+import { SmartPicker } from "@/components/smart-picker";
+import { formatDueDate } from "@/lib/dates";
+import type { Profile } from "@alhc/core/api/people/model";
+import type { Section } from "@alhc/core/api/projects/model";
+import { NumberInput } from "@/components/number-input";
+import { formatNumberValue, numberPrefixOf, type FieldDef } from "@alhc/core/fields";
+import { TagChip } from "@/components/tags/tag-chip";
+import type { Tag } from "@alhc/core/tags";
+import { APPROVAL_FILTER_KEYS, APPROVAL_FILTER_LABELS, type ApprovalFilterKey } from "@alhc/core/task-kinds";
+import {
+  DUE_KINDS,
+  completionOf,
+  type Completion,
+  type DueFilter,
+  type DueKind,
+  type FieldFilter,
+  type FieldOp,
+  type ViewFilters,
+} from "@alhc/core/views";
+
+export type FilterContext = {
+  sections: Pick<Section, "id" | "name">[];
+  profiles: Profile[];
+  fields: FieldDef[];
+  // Workspace tags (the Tag filter shows only when given).
+  tags?: Tag[];
+};
+
+const inputClass = "control h-8 w-full";
+
+// The Approval filter's choices (Oct 27 notes, batch 6): "Waiting on me to approve" first, then the
+// statuses in order, then "Paused".
+export const APPROVAL_FILTER_ORDER: readonly ApprovalFilterKey[] = [
+  "waiting_on_me",
+  ...APPROVAL_FILTER_KEYS.filter((key) => key !== "waiting_on_me"),
+];
+
+export function approvalFilterLabel(keys: readonly ApprovalFilterKey[]): string {
+  const ordered = APPROVAL_FILTER_ORDER.filter((key) => keys.includes(key));
+  return `Approval: ${ordered.map((key) => APPROVAL_FILTER_LABELS[key]).join(", ")}`;
+}
+const pickerClass = "h-8 w-full";
+
+// ---------------------------------------------------------------------------------------------
+// Chips: one removable chip per active filter
+// ---------------------------------------------------------------------------------------------
+
+type Chip = { key: string; label: string; remove: () => ViewFilters };
+
+function without<K extends keyof ViewFilters>(filters: ViewFilters, ...keys: K[]): ViewFilters {
+  const next = { ...filters };
+  for (const key of keys) delete next[key];
+  return next;
+}
+
+function personLabel(id: string | null, profiles: Map<string, Profile>) {
+  if (id === null) return "Unassigned";
+  if (id === "me") return "Me";
+  const p = profiles.get(id);
+  return p ? displayName(p) : "Former member";
+}
+
+export function dueLabel(due: DueFilter) {
+  switch (due.kind) {
+    case "upcoming":
+      return `Due in the next ${due.days ?? 7} days`;
+    case "range":
+      if (due.from && due.to) return `Due ${formatDueDate(due.from)} – ${formatDueDate(due.to)}`;
+      return due.from ? `Due on or after ${formatDueDate(due.from)}` : `Due on or before ${formatDueDate(due.to!)}`;
+    default:
+      return DUE_KINDS.find((k) => k.value === due.kind)?.label ?? "Due";
+  }
+}
+
+function fieldFilterLabel(filter: FieldFilter, field: FieldDef, context: FilterContext, profiles: Map<string, Profile>) {
+  if (filter.op === "empty") return `${field.name} is empty`;
+  if (filter.op === "not_empty") return `${field.name} is set`;
+  if (filter.op === "equals") {
+    if (field.fieldType === "boolean") return `${field.name}: ${filter.value === false ? "unchecked" : "checked"}`;
+    if (field.fieldType === "number" && typeof filter.value === "number") {
+      return `${field.name} = ${formatNumberValue(filter.value, numberPrefixOf(field))}`;
+    }
+    return `${field.name} = ${String(filter.value)}`;
+  }
+  const names = (filter.values ?? []).map((v) => {
+    if (field.boundToSections) return context.sections.find((s) => s.id === v)?.name ?? "Deleted section";
+    if (field.fieldType === "people") return personLabel(v, profiles);
+    return field.options.find((o) => o.id === v)?.name ?? "Deleted option";
+  });
+  return `${field.name}: ${names.join(", ")}`;
+}
+
+// Nov 2 notes (batch 14, 93 / 102): in a view's toolbar "show completed" (completion = all) is the Show
+// completed option's state, not a filter, so it never shows as a chip there (`viewOption`). Completed
+// only (and "completed in the last N days") still narrows the list and keeps its chip.
+export function filterChips(
+  filters: ViewFilters,
+  context: FilterContext,
+  options: { completionIsViewOption?: boolean } = {},
+): Chip[] {
+  const profiles = new Map(context.profiles.map((p) => [p.id, p]));
+  const chips: Chip[] = [];
+  const completion = completionOf(filters);
+  if (completion !== "incomplete" && !(options.completionIsViewOption && completion === "all")) {
+    chips.push({
+      key: "completion",
+      label:
+        completion === "all"
+          ? "Incomplete and completed"
+          : filters.completed_within_days
+            ? `Completed in the last ${filters.completed_within_days} days`
+            : "Completed",
+      remove: () => without(filters, "completion", "completed_within_days"),
+    });
+  }
+  if (filters.due) chips.push({ key: "due", label: dueLabel(filters.due), remove: () => without(filters, "due") });
+  if (filters.sections?.length) {
+    const names = filters.sections.map((id) =>
+      id === null ? "No section" : (context.sections.find((s) => s.id === id)?.name ?? "Deleted section"),
+    );
+    chips.push({ key: "sections", label: `Section: ${names.join(", ")}`, remove: () => without(filters, "sections") });
+  }
+  if (filters.assignees?.length) {
+    chips.push({
+      key: "assignees",
+      label: `Assignee: ${filters.assignees.map((id) => personLabel(id, profiles)).join(", ")}`,
+      remove: () => without(filters, "assignees"),
+    });
+  }
+  if (filters.tags?.length) {
+    const names = filters.tags.map((id) =>
+      id === null ? "No tag" : (context.tags?.find((t) => t.id === id)?.name ?? "Deleted tag"),
+    );
+    chips.push({ key: "tags", label: `Tag: ${names.join(", ")}`, remove: () => without(filters, "tags") });
+  }
+  if (filters.approval?.length) {
+    chips.push({ key: "approval", label: approvalFilterLabel(filters.approval), remove: () => without(filters, "approval") });
+  }
+  filters.fields?.forEach((filter, index) => {
+    const field = context.fields.find((f) => f.id === filter.field_id);
+    if (!field) return;
+    chips.push({
+      key: `field-${index}`,
+      label: fieldFilterLabel(filter, field, context, profiles),
+      remove: () => {
+        const fields = filters.fields!.filter((_, i) => i !== index);
+        return fields.length ? { ...filters, fields } : without(filters, "fields");
+      },
+    });
+  });
+  if (filters.text) chips.push({ key: "text", label: `Contains “${filters.text}”`, remove: () => without(filters, "text") });
+  return chips;
+}
+
+export function FilterChips({
+  filters,
+  context,
+  onChange,
+  completionIsViewOption = false,
+}: {
+  filters: ViewFilters;
+  context: FilterContext;
+  onChange?: (filters: ViewFilters) => void;
+  completionIsViewOption?: boolean;
+}) {
+  const chips = filterChips(filters, context, { completionIsViewOption });
+  if (chips.length === 0) return null;
+  return (
+    <ul className="flex flex-wrap items-center gap-1.5" aria-label="Active filters">
+      {chips.map((chip) => (
+        <li
+          key={chip.key}
+          className="inline-flex h-6 max-w-full items-center gap-1 rounded-md border border-accent-200 bg-accent-50 pr-0.5 pl-2 text-xs text-accent-700"
+        >
+          <span className="truncate">{chip.label}</span>
+          {onChange ? (
+            <button
+              type="button"
+              onClick={() => onChange(chip.remove())}
+              aria-label={`Remove filter ${chip.label}`}
+              className="rounded p-0.5 text-accent-600 hover:bg-accent-100 hover:text-accent-700"
+            >
+              <X className="size-3" />
+            </button>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Editor
+// ---------------------------------------------------------------------------------------------
+
+function toggleIn<T>(list: T[] | undefined, value: T): T[] {
+  const current = list ?? [];
+  return current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
+}
+
+function setList<K extends "sections" | "assignees" | "tags">(filters: ViewFilters, key: K, list: (string | null)[]): ViewFilters {
+  return list.length ? { ...filters, [key]: list } : without(filters, key);
+}
+
+// Ticks or unticks one Approval choice (kept in APPROVAL_FILTER_ORDER).
+export function toggleApprovalFilter(filters: ViewFilters, key: ApprovalFilterKey): ViewFilters {
+  const current = filters.approval ?? [];
+  const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+  const ordered = APPROVAL_FILTER_ORDER.filter((k) => next.includes(k));
+  return ordered.length ? { ...filters, approval: ordered } : without(filters, "approval");
+}
+
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <fieldset className="border-t border-zinc-100 pt-3 first:border-t-0 first:pt-0">
+      <legend className="mb-1.5 text-xs font-medium text-zinc-500">{title}</legend>
+      {children}
+    </fieldset>
+  );
+}
+
+function Check({ checked, onChange, children }: { checked: boolean; onChange: () => void; children: React.ReactNode }) {
+  return (
+    <label className="flex items-center gap-2 rounded px-1 py-0.5 text-sm text-zinc-800 hover:bg-zinc-50">
+      <input type="checkbox" checked={checked} onChange={onChange} className="size-3.5 accent-zinc-900" />
+      <span className="truncate">{children}</span>
+    </label>
+  );
+}
+
+// Commits on blur / Enter so typing doesn't re-run the view on every keystroke.
+function LazyInput({
+  value,
+  onCommit,
+  symbol,
+  ...props
+}: Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "prefix"> & {
+  value: string;
+  onCommit: (value: string) => void;
+  // A number field's symbol (item 49): a number box with the symbol inside.
+  symbol?: string | null;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [synced, setSynced] = useState(value);
+  if (synced !== value) {
+    setSynced(value);
+    setDraft(value);
+  }
+  const { type, ...rest } = props;
+  const box = {
+    ...rest,
+    value: draft,
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setDraft(e.currentTarget.value),
+    onBlur: () => draft !== value && onCommit(draft),
+    onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (draft !== value) onCommit(draft);
+      }
+    },
+    className: inputClass,
+  };
+  if (type === "number" && symbol) return <NumberInput {...box} symbol={symbol} wrapperClassName="w-full" />;
+  return <input type={type} {...box} />;
+}
+
+export function FilterEditor({
+  filters,
+  onChange,
+  context,
+  idPrefix,
+  showText = false,
+}: {
+  filters: ViewFilters;
+  onChange: (filters: ViewFilters) => void;
+  context: FilterContext;
+  idPrefix: string;
+  showText?: boolean;
+}) {
+  const completion = completionOf(filters);
+
+  function setCompletion(value: Completion) {
+    const next = without(filters, "completion", "completed_within_days");
+    onChange(value === "incomplete" ? next : { ...next, completion: value });
+  }
+
+  function setDueKind(kind: DueKind | "") {
+    if (!kind) return onChange(without(filters, "due"));
+    if (kind === "range") {
+      const today = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const from = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-01`;
+      return onChange({ ...filters, due: { kind, from } });
+    }
+    onChange({ ...filters, due: { kind } });
+  }
+
+  const usedFields = new Set(filters.fields?.map((f) => f.field_id));
+  const addableFields = context.fields.filter((f) => !usedFields.has(f.id));
+
+  function setFieldFilter(index: number, filter: FieldFilter | null) {
+    const fields = [...(filters.fields ?? [])];
+    if (filter) fields[index] = filter;
+    else fields.splice(index, 1);
+    onChange(fields.length ? { ...filters, fields } : without(filters, "fields"));
+  }
+
+  return (
+    <div className="space-y-3">
+      <Group title="Completion">
+        <label htmlFor={`${idPrefix}-completion`} className="sr-only">
+          Completion
+        </label>
+        <SmartPicker
+          id={`${idPrefix}-completion`}
+          label="Completion"
+          value={completion}
+          onChange={(value) => setCompletion(value as Completion)}
+          className={pickerClass}
+          options={[
+            { value: "incomplete", label: "Incomplete tasks" },
+            { value: "completed", label: "Completed tasks" },
+            { value: "all", label: "All tasks" },
+          ]}
+        />
+        {completion === "completed" ? (
+          <label className="mt-2 flex items-center gap-2 text-sm text-zinc-700">
+            <span className="shrink-0">Completed in the last</span>
+            <LazyInput
+              type="number"
+              min={1}
+              max={3650}
+              placeholder="any"
+              aria-label="Completed in the last N days"
+              value={filters.completed_within_days ? String(filters.completed_within_days) : ""}
+              onCommit={(value) => {
+                const days = Number.parseInt(value, 10);
+                const next = without(filters, "completed_within_days");
+                onChange(Number.isInteger(days) && days >= 1 && days <= 3650 ? { ...next, completed_within_days: days } : next);
+              }}
+            />
+            <span className="shrink-0">days</span>
+          </label>
+        ) : null}
+      </Group>
+
+      <Group title="Due date">
+        <label htmlFor={`${idPrefix}-due`} className="sr-only">
+          Due date
+        </label>
+        <SmartPicker
+          id={`${idPrefix}-due`}
+          label="Due date"
+          value={filters.due?.kind ?? ""}
+          onChange={(value) => setDueKind(value as DueKind | "")}
+          className={pickerClass}
+          options={[{ value: "", label: "Any due date" }, ...DUE_KINDS.map((k) => ({ value: k.value, label: k.label }))]}
+        />
+        {filters.due?.kind === "upcoming" ? (
+          <label className="mt-2 flex items-center gap-2 text-sm text-zinc-700">
+            <span className="shrink-0">Next</span>
+            <LazyInput
+              type="number"
+              min={1}
+              max={365}
+              aria-label="Upcoming days"
+              value={String(filters.due.days ?? 7)}
+              onCommit={(value) => {
+                const days = Number.parseInt(value, 10);
+                onChange({
+                  ...filters,
+                  due: Number.isInteger(days) && days >= 1 && days <= 365 && days !== 7 ? { kind: "upcoming", days } : { kind: "upcoming" },
+                });
+              }}
+            />
+            <span className="shrink-0">days</span>
+          </label>
+        ) : null}
+        {filters.due?.kind === "range" ? (
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {(["from", "to"] as const).map((end) => (
+              <label key={end} className="flex flex-col gap-1 text-xs text-zinc-500">
+                {end === "from" ? "From" : "To"}
+                <input
+                  type="date"
+                  value={filters.due?.[end] ?? ""}
+                  onChange={(e) => {
+                    const due: DueFilter = { ...filters.due!, [end]: e.currentTarget.value || undefined };
+                    if (!due[end]) delete due[end];
+                    onChange(due.from || due.to ? { ...filters, due } : without(filters, "due"));
+                  }}
+                  className={inputClass}
+                />
+              </label>
+            ))}
+          </div>
+        ) : null}
+      </Group>
+
+      <Group title="Section">
+        <div className="max-h-36 overflow-y-auto">
+          <Check
+            checked={filters.sections?.includes(null) ?? false}
+            onChange={() => onChange(setList(filters, "sections", toggleIn(filters.sections, null)))}
+          >
+            No section
+          </Check>
+          {context.sections.map((s) => (
+            <Check
+              key={s.id}
+              checked={filters.sections?.includes(s.id) ?? false}
+              onChange={() => onChange(setList(filters, "sections", toggleIn(filters.sections, s.id)))}
+            >
+              {s.name}
+            </Check>
+          ))}
+        </div>
+      </Group>
+
+      <Group title="Assignee">
+        <div className="max-h-36 overflow-y-auto">
+          {[{ id: "me" as string | null, name: "Me" }, { id: null, name: "Unassigned" }, ...context.profiles.map((p) => ({ id: p.id as string | null, name: displayName(p) }))].map(
+            (option) => (
+              <Check
+                key={option.id ?? "none"}
+                checked={filters.assignees?.includes(option.id) ?? false}
+                onChange={() => onChange(setList(filters, "assignees", toggleIn(filters.assignees, option.id)))}
+              >
+                {option.name}
+              </Check>
+            ),
+          )}
+        </div>
+      </Group>
+
+      {context.tags?.length ? (
+        <Group title="Tag">
+          <div className="max-h-36 overflow-y-auto">
+            <Check
+              checked={filters.tags?.includes(null) ?? false}
+              onChange={() => onChange(setList(filters, "tags", toggleIn(filters.tags, null)))}
+            >
+              No tag
+            </Check>
+            {context.tags.map((t) => (
+              <Check
+                key={t.id}
+                checked={filters.tags?.includes(t.id) ?? false}
+                onChange={() => onChange(setList(filters, "tags", toggleIn(filters.tags, t.id)))}
+              >
+                <TagChip tag={t} />
+              </Check>
+            ))}
+          </div>
+        </Group>
+      ) : null}
+
+      <Group title="Approval">
+        {APPROVAL_FILTER_ORDER.map((key) => (
+          <Check
+            key={key}
+            checked={filters.approval?.includes(key) ?? false}
+            onChange={() => onChange(toggleApprovalFilter(filters, key))}
+          >
+            {APPROVAL_FILTER_LABELS[key]}
+          </Check>
+        ))}
+      </Group>
+
+      {context.fields.length > 0 ? (
+        <Group title="Fields">
+          <div className="space-y-2">
+            {filters.fields?.map((filter, index) => {
+              const field = context.fields.find((f) => f.id === filter.field_id);
+              return field ? (
+                <FieldFilterRow
+                  key={filter.field_id}
+                  field={field}
+                  filter={filter}
+                  context={context}
+                  idPrefix={`${idPrefix}-field-${index}`}
+                  onChange={(next) => setFieldFilter(index, next)}
+                />
+              ) : null;
+            })}
+            {addableFields.length > 0 && (filters.fields?.length ?? 0) < 20 ? (
+              <div className="flex items-center gap-2">
+                <Plus className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
+                <SmartPicker
+                  label="Add a field filter"
+                  placeholder="Add a field filter…"
+                  value=""
+                  searchable
+                  onChange={(value) => {
+                    const field = context.fields.find((f) => f.id === value);
+                    if (field) onChange({ ...filters, fields: [...(filters.fields ?? []), initialFieldFilter(field, context)] });
+                  }}
+                  className={pickerClass}
+                  options={addableFields.map((f) => ({ value: f.id, label: f.name }))}
+                />
+              </div>
+            ) : null}
+          </div>
+        </Group>
+      ) : null}
+
+      {showText ? (
+        <Group title="Text">
+          <LazyInput
+            aria-label="Title or description contains"
+            placeholder="Title or description contains…"
+            maxLength={200}
+            value={filters.text ?? ""}
+            onCommit={(value) => onChange(value.trim() ? { ...filters, text: value.trim() } : without(filters, "text"))}
+          />
+        </Group>
+      ) : null}
+    </div>
+  );
+}
+
+function choicesFor(field: FieldDef, context: FilterContext): { id: string; name: string }[] | null {
+  if (field.boundToSections) return context.sections.map((s) => ({ id: s.id, name: s.name }));
+  if (field.fieldType === "single_select" || field.fieldType === "multi_select") return field.options;
+  if (field.fieldType === "people") return context.profiles.map((p) => ({ id: p.id, name: displayName(p) }));
+  return null;
+}
+
+function initialFieldFilter(field: FieldDef, context: FilterContext): FieldFilter {
+  const choices = choicesFor(field, context);
+  if (choices?.length) return { field_id: field.id, op: "in", values: [choices[0].id] };
+  if (field.fieldType === "boolean") return { field_id: field.id, op: "equals", value: true };
+  return { field_id: field.id, op: "not_empty" };
+}
+
+function FieldFilterRow({
+  field,
+  filter,
+  context,
+  idPrefix,
+  onChange,
+}: {
+  field: FieldDef;
+  filter: FieldFilter;
+  context: FilterContext;
+  idPrefix: string;
+  onChange: (filter: FieldFilter | null) => void;
+}) {
+  const choices = choicesFor(field, context);
+  const ops: { value: FieldOp; label: string }[] = choices
+    ? [
+        { value: "in", label: "is any of" },
+        { value: "empty", label: "is empty" },
+        { value: "not_empty", label: "is set" },
+      ]
+    : field.fieldType === "boolean"
+      ? [{ value: "equals", label: "is" }]
+      : [
+          { value: "equals", label: "is" },
+          { value: "empty", label: "is empty" },
+          { value: "not_empty", label: "is set" },
+        ];
+
+  function setOp(op: FieldOp) {
+    if (op === "in") onChange(choices?.length ? { field_id: field.id, op, values: [choices[0].id] } : null);
+    else if (op === "equals") onChange({ field_id: field.id, op, value: field.fieldType === "number" ? 0 : field.fieldType === "boolean" ? true : "" });
+    else onChange({ field_id: field.id, op });
+  }
+
+  return (
+    <div className="rounded-md border border-zinc-200 p-2">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">{field.name}</span>
+        <label htmlFor={`${idPrefix}-op`} className="sr-only">
+          {field.name} condition
+        </label>
+        <SmartPicker
+          id={`${idPrefix}-op`}
+          label={`${field.name} condition`}
+          value={filter.op}
+          onChange={(value) => setOp(value as FieldOp)}
+          className="h-6 w-auto text-xs"
+          panelWidth={200}
+          options={ops.map((o) => ({ value: o.value, label: o.label }))}
+        />
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          aria-label={`Remove ${field.name} filter`}
+          className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      {filter.op === "in" && choices ? (
+        <div className="mt-1.5 max-h-32 overflow-y-auto">
+          {choices.map((choice) => (
+            <Check
+              key={choice.id}
+              checked={filter.values?.includes(choice.id) ?? false}
+              onChange={() => {
+                const values = toggleIn(filter.values, choice.id);
+                onChange(values.length ? { ...filter, values } : null);
+              }}
+            >
+              {choice.name}
+            </Check>
+          ))}
+        </div>
+      ) : null}
+      {filter.op === "equals" && field.fieldType === "boolean" ? (
+        <SmartPicker
+          label={`${field.name} value`}
+          value={filter.value === false ? "false" : "true"}
+          onChange={(value) => onChange({ ...filter, value: value === "true" })}
+          className={`mt-1.5 ${pickerClass}`}
+          options={[
+            { value: "true", label: "Checked" },
+            { value: "false", label: "Unchecked" },
+          ]}
+        />
+      ) : null}
+      {filter.op === "equals" && field.fieldType !== "boolean" ? (
+        <div className="mt-1.5">
+          <LazyInput
+            type={field.fieldType === "number" ? "number" : field.fieldType === "date" ? "date" : "text"}
+            symbol={numberPrefixOf(field)}
+            aria-label={`${field.name} value`}
+            value={filter.value === undefined ? "" : String(filter.value)}
+            onCommit={(value) => {
+              if (field.fieldType === "number") {
+                const n = Number(value);
+                if (value.trim() && Number.isFinite(n)) onChange({ ...filter, value: n });
+              } else {
+                onChange({ ...filter, value });
+              }
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}

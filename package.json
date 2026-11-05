@@ -2,39 +2,21 @@
   "name": "alhc-projects",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/core",
+    "apps/web"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "typecheck": "next typegen && tsc --noEmit",
-    "test": "node --import ./tests/unit/register.mjs --test tests/unit/*.test.ts tests/unit/*.test.tsx",
+    "dev": "npm run dev --workspace @alhc/web",
+    "build": "npm run build --workspace @alhc/web",
+    "start": "npm run start --workspace @alhc/web",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test --workspaces",
     "db:test": "bash supabase/tests/run.sh",
-    "db:types": "supabase gen types typescript --linked --schema public > src/lib/supabase/database.types.ts"
-  },
-  "dependencies": {
-    "@napi-rs/canvas": "^0.1.100",
-    "@supabase/ssr": "^0.12.7",
-    "@supabase/supabase-js": "^2.117.2",
-    "@tanstack/query-core": "5.105.3",
-    "@tanstack/react-query": "5.105.3",
-    "@vercel/speed-insights": "^2.0.0",
-    "lucide-react": "^1.52.0",
-    "next": "16.3.8",
-    "pdfjs-dist": "^4.10.38",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "server-only": "^0.0.1"
+    "db:types": "supabase gen types typescript --linked --schema public > packages/core/src/supabase/database.types.ts"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.3.8",
-    "supabase": "^2.119.0",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "supabase": "^2.119.0"
   }
 }

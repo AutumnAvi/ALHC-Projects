@@ -1,0 +1,20 @@
+{
+  // The core package's own check. "WebWorker" brings the web platform every runtime has (fetch, URL, Web
+  // Crypto, streams, timers, console) without the DOM, and there are no Node types: window, document,
+  // HTMLElement, localStorage, process, or Buffer in src/ fail here. The web app type-checks these files
+  // again with its own settings when it imports them. tests/ has its own config (Node's test runner).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ESNext", "WebWorker"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"]
+}

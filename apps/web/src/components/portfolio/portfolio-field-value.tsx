@@ -1,0 +1,116 @@
+"use client";
+
+import { useNotify, useServerAction } from "@/components/toast";
+import { SmartPicker } from "@/components/smart-picker";
+import { setPortfolioFieldValue } from "@/lib/actions/portfolios";
+import { formatDueDate } from "@/lib/dates";
+import type { PortfolioField } from "@alhc/core/api/portfolios/model";
+import { NumberInput } from "@/components/number-input";
+import { OPTION_COLOR_CLASSES, formatNumberValue, notANumberNote, numberPrefixOf, readNumberBox } from "@alhc/core/fields";
+import { MAX_PORTFOLIO_FIELD_TEXT } from "@alhc/core/portfolios";
+import type { Json } from "@alhc/core/supabase/database.types";
+
+const CONTROL = "control h-7 w-full min-w-0 text-xs";
+
+// Read-only rendering of a portfolio field value (report columns, viewers).
+export function PortfolioFieldDisplay({ field, value }: { field: PortfolioField; value: Json | undefined }) {
+  if (value === undefined || value === null || value === "") return <span className="text-zinc-400">—</span>;
+  if (field.fieldType === "single_select") {
+    const option = field.options.find((o) => o.id === value);
+    if (!option) return <span className="text-zinc-400">—</span>;
+    return (
+      <span className={`inline-block max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium ${OPTION_COLOR_CLASSES[option.color]}`}>
+        {option.name}
+      </span>
+    );
+  }
+  if (field.fieldType === "date" && typeof value === "string") {
+    return <span className="tabular-nums">{`${formatDueDate(value)}, ${value.slice(0, 4)}`}</span>;
+  }
+  if (field.fieldType === "number" && typeof value === "number") {
+    return <span className="tabular-nums">{formatNumberValue(value, numberPrefixOf(field))}</span>;
+  }
+  return <span className="break-words">{String(value)}</span>;
+}
+
+// Editable value for portfolio Editors+ (set_portfolio_field_value; the database checks type and role).
+export function PortfolioFieldInput({
+  field,
+  projectId,
+  projectName,
+  value,
+}: {
+  field: PortfolioField;
+  projectId: string;
+  projectName: string;
+  value: Json | undefined;
+}) {
+  const [pending, run] = useServerAction();
+  const notify = useNotify();
+  const label = `${field.name} for ${projectName}`;
+  const save = (next: string | number | null) => run(() => setPortfolioFieldValue(field.id, projectId, next));
+  const current = value === undefined || value === null ? "" : String(value);
+
+  if (field.fieldType === "single_select") {
+    return (
+      <SmartPicker
+        label={label}
+        value={field.options.some((o) => o.id === current) ? current : ""}
+        disabled={pending}
+        onChange={(next) => {
+          if (next !== current) save(next || null);
+        }}
+        className="h-7 w-full min-w-0 text-xs"
+        options={[{ value: "", label: "—" }, ...field.options.map((o) => ({ value: o.id, label: o.name }))]}
+      />
+    );
+  }
+  if (field.fieldType === "date") {
+    return (
+      <input
+        type="date"
+        aria-label={label}
+        key={current}
+        defaultValue={current}
+        disabled={pending}
+        onChange={(e) => {
+          const next = e.currentTarget.value;
+          if (next !== current && (next === "" || /^\d{4}-\d{2}-\d{2}$/.test(next))) save(next || null);
+        }}
+        className={CONTROL}
+      />
+    );
+  }
+  const box = {
+    "aria-label": label,
+    defaultValue: current,
+    disabled: pending,
+    placeholder: "—",
+    onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+      if (field.fieldType === "number") {
+        // Text that isn't a number (the box then reads "") keeps the saved value instead of clearing it.
+        const entry = readNumberBox(e.currentTarget.value, e.currentTarget.validity.badInput);
+        if (entry.kind === "keep") {
+          e.currentTarget.value = current;
+          notify(notANumberNote(field.name, numberPrefixOf(field)));
+          return;
+        }
+        const next = entry.kind === "clear" ? null : entry.value;
+        if (next !== (typeof value === "number" ? value : null)) save(next);
+        return;
+      }
+      const raw = e.currentTarget.value.trim();
+      if (raw === current.trim()) return;
+      save(raw || null);
+    },
+    onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") e.currentTarget.blur();
+    },
+    className: CONTROL,
+  };
+  if (field.fieldType === "number") {
+    // The field's symbol (item 49) sits inside the box.
+    return <NumberInput key={current} {...box} symbol={numberPrefixOf(field)} wrapperClassName="w-full" symbolClassName="text-xs" />;
+  }
+  return <input type="text" key={current} {...box} maxLength={MAX_PORTFOLIO_FIELD_TEXT} />;
+}

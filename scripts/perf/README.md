@@ -46,7 +46,7 @@ The script signs in as `perf-seed@example.com` with the password `local-password
 
 ## Calls per screen (Nov 4 notes, batch 22)
 
-`local-api.mjs` stands in for the Supabase API (PostgREST 12 + a JWKS endpoint) so the app runs against the seed database; `screen-calls.mjs` counts the Supabase requests each screen makes (the app logs them when `ALHC_DB_TRACE` names a file; `src/lib/supabase/db-trace.ts`, never in production).
+`local-api.mjs` stands in for the Supabase API (PostgREST 12 + a JWKS endpoint) so the app runs against the seed database; `screen-calls.mjs` counts the Supabase requests each screen makes (the app logs them when `ALHC_DB_TRACE` names a file; `apps/web/src/lib/supabase/db-trace.ts`, never in production).
 
 ```bash
 mkdir -p /tmp/alhc-api && node scripts/perf/local-api.mjs keys /tmp/alhc-api
@@ -55,8 +55,8 @@ mkdir -p /tmp/alhc-api && node scripts/perf/local-api.mjs keys /tmp/alhc-api
 # PostgREST 12 sets request.jwt.claims, so redefine it locally to read either.
 node scripts/perf/local-api.mjs serve /tmp/alhc-api 3011 &
 node scripts/perf/local-api.mjs cookie /tmp/alhc-api a1000000-0000-4000-8000-000000000001 perf-seed@example.com > /tmp/alhc-api/cookie
-# .env.local: NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321, NEXT_PUBLIC_SUPABASE_ANON_KEY=$(cat /tmp/alhc-api/anon.key),
-# ALHC_DB_TRACE=/tmp/alhc-db-trace.jsonl; then npx next dev -p 3122
+# apps/web/.env.local: NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321, NEXT_PUBLIC_SUPABASE_ANON_KEY=$(cat /tmp/alhc-api/anon.key),
+# ALHC_DB_TRACE=/tmp/alhc-db-trace.jsonl; then, in apps/web: npx next dev -p 3122
 COOKIE=/tmp/alhc-api/cookie ALHC_DB_TRACE=/tmp/alhc-db-trace.jsonl node scripts/perf/screen-calls.mjs after 5
 ```
 

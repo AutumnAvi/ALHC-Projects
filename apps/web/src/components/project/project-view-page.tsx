@@ -1,0 +1,298 @@
+import { redirect } from "next/navigation";
+import { BoardView } from "@/components/project/board-view";
+import { CalendarView } from "@/components/project/calendar-view";
+import { ListView } from "@/components/project/list-view";
+import { TimelineView } from "@/components/project/timeline-view";
+import { ViewToolbar } from "@/components/project/view-toolbar";
+import { ViewConfigProvider } from "@/components/project/view-config";
+import { ProjectLiveUpdates } from "@/components/project/project-live";
+import { TaskPaneSlot } from "@/components/task/task-pane";
+import { bulkContextFrom } from "@/components/bulk/bulk-context";
+import { requireMember } from "@/lib/auth";
+import { loadAppShell, loadProjectFrame, loadProjectViewPage } from "@/lib/screen-loaders";
+import { calendarVisibleDays, timelineWindow, type TimelineZoom } from "@alhc/core/date-input";
+import {
+  filterProjectTaskIds,
+  listCalendarEvents,
+  listProjectDependencies,
+  listProjectSchedule,
+  projectCriticalPath,
+  listProjectTasks,
+  listSectionTaskCounts,
+  listSubtaskTrees,
+  getDependencyShiftMode,
+} from "@/lib/data";
+import { type ProjectTask, type SubtaskItem } from "@alhc/core/api/tasks/model";
+import { todayIn } from "@alhc/core/workload";
+import { EMPTY_CRITICAL_PATH } from "@alhc/core/critical-path";
+import { getViewerTimeZone } from "@/lib/timezone";
+import {
+  decodeConfig,
+  groupOf,
+  isIsoDate,
+  parsePageLimits,
+  pruneConfig,
+  ROW_PAGE,
+  showsSubtasks,
+  sortOf,
+  withShowCompleted,
+  withoutTags,
+  type ProjectView,
+  type ViewConfig,
+  type ViewLayout,
+} from "@alhc/core/views";
+
+type SearchParams = Record<string, string | string[] | undefined>;
+
+export function queryString(searchParams: SearchParams) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, v);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+// /projects/<id>/list|board|calendar|timeline open the project's first view with that layout (keeping
+// ?task= and ?f=), so older links keep working. Without one, the layout renders its default config.
+export async function LayoutRoute({
+  projectId,
+  layout,
+  searchParams,
+}: {
+  projectId: string;
+  layout: ViewLayout;
+  searchParams: SearchParams;
+}) {
+  // A shared tab first; the viewer's own view of that layout only when no shared one exists.
+  const { views } = await loadProjectFrame(projectId);
+  const view = views.find((v) => v.layout === layout && v.ownerId === null) ?? views.find((v) => v.layout === layout);
+  if (view) redirect(`/projects/${projectId}/views/${view.id}${queryString(searchParams)}`);
+  return <ProjectViewPage projectId={projectId} view={null} layout={layout} searchParams={searchParams} />;
+}
+
+// Renders a saved view, or the default config for a layout when the project has no such view.
+// `?f=` carries an unsaved (draft) config; `?task=` opens the task pane.
+export async function ProjectViewPage({
+  projectId,
+  view,
+  layout,
+  searchParams,
+}: {
+  projectId: string;
+  view: ProjectView | null;
+  layout: ViewLayout;
+  searchParams: SearchParams;
+}) {
+  const openTaskId = typeof searchParams.task === "string" ? searchParams.task : null;
+  const paging = layout === "list" || layout === "board";
+  // Calendar and Timeline load the visible date window instead of every card.
+  const scheduling = layout === "calendar" || layout === "timeline";
+
+  // Nov 4 notes (batch 22, M1): the project's sections, fields, and the person's own settings here come
+  // from the project frame, people / tags / preferences from the app shell — both already read by the
+  // layouts in this request (one call each, shared). The page itself reads its cards (List / Board: one
+  // project_view_page call with their labels and the section counts).
+  const [member, frame, shell, timeZone, fullTasks, dependencies, criticalPath, shiftSettings] = await Promise.all([
+    requireMember(),
+    loadProjectFrame(projectId),
+    loadAppShell(),
+    getViewerTimeZone(),
+    paging || scheduling ? Promise.resolve(null) : listProjectTasks(projectId),
+    layout === "timeline" ? listProjectDependencies(projectId) : Promise.resolve([]),
+    layout === "timeline" ? projectCriticalPath(projectId) : Promise.resolve(EMPTY_CRITICAL_PATH),
+    // Nov 2 notes (batch 16, 125): Timeline moves dependents at once with Auto-shift.
+    layout === "timeline" ? getDependencyShiftMode(projectId) : Promise.resolve(null),
+  ]);
+  const { sections, fields, project } = frame;
+  const profiles = shell.profiles;
+  const tags = shell.visibleTags;
+  const tagsOn = shell.tagsEnabled;
+  const columnWidths = layout === "list" ? frame.columnWidths : {};
+  // The List groups this person collapsed here (Oct 26 notes, batch 4).
+  const collapsedGroups = layout === "list" ? frame.collapsedGroups : [];
+  // Oct 27 notes (batch 5): the viewer's own Show / Hide completed for this project's List and Board.
+  const showCompleted = paging ? frame.showCompleted : null;
+  // Oct 27 notes (batch 6): the List rows this person opened to show their subtasks.
+  const expandedTaskIds = layout === "list" ? shell.expandedTaskIds : [];
+  // Nov 2 notes (batch 14, 94): the viewer's own version of this shared view ("Save for me").
+  const personalConfig = view && view.ownerId === null ? (frame.personalConfigs.get(view.id) ?? null) : null;
+  const bulk = layout === "list" ? bulkContextFrom(shell, frame.members, projectId, member.id) : undefined;
+  const context = {
+    sectionIds: new Set(sections.map((s) => s.id)),
+    fields,
+    profileIds: new Set(profiles.map((p) => p.id)),
+    tagIds: new Set(tags.map((t) => t.id)),
+  };
+  // Oct 26 notes (batch 3): with the workspace's tags off, no tag filter or tag grouping applies.
+  const tagless = (c: ViewConfig) => (tagsOn ? c : withoutTags(c));
+  // The person's Show / Hide completed applies to the saved view (an unsaved ?f= draft carries its own, set
+  // by the same toggle), so turning it on or off never shows as an unsaved change.
+  const personal = (c: ViewConfig) => (showCompleted === null ? c : withShowCompleted(c, showCompleted));
+  // What everyone sees, and what this person sees: their own version when they saved one.
+  const sharedConfig = personal(tagless(pruneConfig(view?.config ?? {}, context)));
+  const baseConfig = personalConfig ? personal(tagless(pruneConfig(personalConfig, context))) : sharedConfig;
+  let config = tagless(pruneConfig(decodeConfig(searchParams.f) ?? baseConfig, context));
+  // Older links carry ?sub=1: show it as an unsaved draft of the view's Show subtasks setting.
+  if (layout === "list" && searchParams.sub === "1" && !showsSubtasks(config)) config = { ...config, show_subtasks: true };
+  const limits = parsePageLimits(typeof searchParams.n === "string" ? searchParams.n : undefined);
+  const today = todayIn(timeZone);
+  const calendarMode = searchParams.cal === "week" ? "week" : "month";
+  const timelineZoom: TimelineZoom =
+    searchParams.tl === "month" || searchParams.tl === "quarter" ? searchParams.tl : "week";
+  const requestedDay = typeof searchParams.d === "string" && isIsoDate(searchParams.d) ? searchParams.d : today;
+  const calendarDays = layout === "calendar" ? calendarVisibleDays(requestedDay, calendarMode) : null;
+  const scheduleRange = calendarDays
+    ? { start: calendarDays[0], end: calendarDays[calendarDays.length - 1] }
+    : layout === "timeline"
+      ? timelineWindow(requestedDay, timelineZoom)
+      : null;
+  // List and Board paint one page per group. Calendar and Timeline load the visible dates (and the
+  // undated tray). A missing function falls back to the full card list.
+  const [viewPage, scheduleTasks, calendarEvents, scheduleSectionCounts] = await Promise.all([
+    paging
+      ? loadProjectViewPage(
+          projectId,
+          config.filters ?? {},
+          timeZone,
+          groupOf(config),
+          sortOf(config),
+          ROW_PAGE,
+          limits,
+        )
+      : Promise.resolve(null),
+    scheduleRange
+      ? listProjectSchedule(
+          projectId,
+          config.filters ?? {},
+          timeZone,
+          scheduleRange,
+          layout === "calendar" ? "calendar" : "timeline",
+        )
+      : Promise.resolve(null),
+    // Oct 26 notes (batch 4): the Calendar's events (not tasks) for the same visible days.
+    calendarDays
+      ? listCalendarEvents({ projectId }, calendarDays[0], calendarDays[calendarDays.length - 1])
+      : Promise.resolve(null),
+    // List / Board get the section counts with their cards.
+    paging ? Promise.resolve(null) : listSectionTaskCounts(projectId),
+  ]);
+  const taskPageResult = viewPage?.pages ?? null;
+  const sectionCounts = paging ? (viewPage?.sectionCounts ?? null) : scheduleSectionCounts;
+  // Events are loaded for the server's window only, so a calendar that pages in the browser (a database
+  // without project_schedule_cards, which has no calendar_events either) shows none.
+  const windowedEvents = scheduleTasks !== null ? calendarEvents : null;
+  let taskPage = taskPageResult;
+  let everyTask = fullTasks;
+  let visible: ProjectTask[];
+  if (scheduleTasks) {
+    visible = scheduleTasks;
+  } else if (taskPage) {
+    const seen = new Set<string>();
+    visible = [];
+    for (const group of taskPage) {
+      for (const task of group.tasks) {
+        if (seen.has(task.id)) continue;
+        seen.add(task.id);
+        visible.push(task);
+      }
+    }
+  } else {
+    everyTask = fullTasks ?? (await listProjectTasks(projectId));
+    const matching = await filterProjectTaskIds(projectId, config.filters ?? {}, timeZone);
+    visible = everyTask.filter((task) => matching.has(task.id));
+    taskPage = null;
+  }
+  // The open task (?task=) is read on the client (useOpenTaskId): opening one never renders this page.
+  const props = { projectId, projectName: project?.name ?? null, sections, tasks: visible, profiles, fields, config, tags };
+  // List's “Show subtasks” (the view's show_subtasks setting, off by default): each task's subtask tree
+  // under its row. Otherwise the trees of the rows this person opened (others load when opened).
+  const showSubtasks = layout === "list" && showsSubtasks(config);
+  let subtasks: SubtaskItem[] = [];
+  if (layout === "list") {
+    const opened = new Set(expandedTaskIds);
+    const roots = visible.filter((t) => t.subtaskCount > 0 && (showSubtasks || opened.has(t.id))).map((t) => t.id);
+    // Numbered as this project numbers them.
+    if (roots.length) subtasks = await listSubtaskTrees(roots, projectId);
+  }
+  // Every task per section, whatever the view shows: a section can be deleted only when it's empty.
+  const sectionTaskCounts: Record<string, number> = sectionCounts ?? {};
+  if (!sectionCounts) {
+    for (const task of everyTask ?? visible) {
+      if (task.sectionId) sectionTaskCounts[task.sectionId] = (sectionTaskCounts[task.sectionId] ?? 0) + 1;
+    }
+  }
+
+  return (
+    <main className="flex min-h-0 flex-1 flex-col">
+      <ViewConfigProvider key={`config-${view?.id ?? layout}`} baseConfig={baseConfig} config={config}>
+        <ViewToolbar
+          projectId={projectId}
+          view={view}
+          layout={layout}
+          context={{ sections, profiles, fields, tags }}
+          showCompleted={showCompleted}
+          sharedConfig={sharedConfig}
+          hasPersonalVersion={personalConfig !== null}
+        />
+        {layout === "list" ? (
+          // The toolbar stays put; the list scrolls under it with a sticky column header.
+          <div className="min-h-0 flex-1 overflow-auto">
+            <ListView
+              key={`list-${view?.id ?? "default"}`}
+              {...props}
+              taskPage={taskPage}
+              bulk={bulk}
+              subtasks={subtasks}
+              expandedTaskIds={expandedTaskIds}
+              columnWidths={columnWidths}
+              collapsedGroups={collapsedGroups}
+              sectionTaskCounts={sectionTaskCounts}
+            />
+          </div>
+        ) : null}
+        {layout === "board" ? (
+          <BoardView
+            key={`board-${view?.id ?? "default"}`}
+            {...props}
+            taskPage={taskPage}
+            sectionTaskCounts={sectionTaskCounts}
+          />
+        ) : null}
+        {layout === "calendar" ? (
+          <CalendarView
+            projectId={projectId}
+            tasks={visible}
+            profiles={profiles}
+            projectName={project?.name ?? null}
+            sections={sections}
+            tags={tags}
+            fields={fields}
+            windowed={scheduleTasks !== null}
+            today={today}
+            anchor={requestedDay}
+            mode={calendarMode}
+            days={calendarDays}
+            events={windowedEvents}
+          />
+        ) : null}
+        {layout === "timeline" ? (
+          <TimelineView
+            key={`timeline-${view?.id ?? "default"}`}
+            {...props}
+            dependencies={dependencies}
+            criticalPath={criticalPath}
+            shiftMode={shiftSettings}
+            workWeek={layout === "timeline" ? shell.workWeek : undefined}
+            windowed={scheduleTasks !== null}
+            today={today}
+            anchor={requestedDay}
+            zoom={timelineZoom}
+          />
+        ) : null}
+      </ViewConfigProvider>
+      <TaskPaneSlot taskId={openTaskId} />
+      <ProjectLiveUpdates projectId={projectId} />
+    </main>
+  );
+}
