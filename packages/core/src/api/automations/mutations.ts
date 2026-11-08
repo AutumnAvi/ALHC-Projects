@@ -240,6 +240,15 @@ export async function deleteRule(ctx: ApiContext, ruleId: string): Promise<void>
   );
 }
 
+// AI builder round 3: the assistant's Undo of "Remove automation" brings the rule back as it was (on or
+// off). An ordinary update (rules_update_admin: Admin+ of the rule's project; validate_rule runs again).
+export async function restoreRule(ctx: ApiContext, ruleId: string, enabled: boolean): Promise<void> {
+  const supabase = ctx.db;
+  checkUpdated(
+    await supabase.from("rules").update({ deleted_at: null, enabled: Boolean(enabled) }).eq("id", id(ruleId)).select("id"),
+  );
+}
+
 export async function installRulePreset(
   ctx: ApiContext,
   projectId: string,

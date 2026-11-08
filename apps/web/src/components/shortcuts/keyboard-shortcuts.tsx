@@ -18,6 +18,7 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
         { keys: ["/"], label: "Search tasks, projects, and people" },
         { keys: [mod, "K"], label: "Search (works while typing too)" },
         { keys: ["Tab", "then", "Q"], label: "Create a task (on Home: add one in My tasks; in a List view: in the current section)" },
+        { keys: ["Tab", "then", "A"], label: "Open or close the AI assistant (workspace admins of the Testing data pilot)" },
       ],
     },
     {

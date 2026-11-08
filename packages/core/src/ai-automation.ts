@@ -115,39 +115,29 @@ const stepProps = {
   titles: { type: "array" as const, items: str },
 };
 
+// The rule draft's object (name, trigger, conditions, actions), limited to the given actions. Round 3's
+// assistant uses the same object inside its change set, without the steps that post or notify.
+export function ruleDraftObjectSchema(actions: readonly string[] = AI_RULE_ACTIONS) {
+  const step = (types: readonly string[]) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["type", ...STEP_KEYS],
+    properties: { type: { type: "string", enum: [...types] }, ...stepProps },
+  });
+  return {
+    name: str,
+    trigger: step(AI_RULE_TRIGGERS),
+    conditions: { type: "array", items: step(AI_RULE_CONDITIONS) },
+    actions: { type: "array", items: step(actions) },
+  };
+}
+
 export const RULE_DRAFT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["name", "trigger", "conditions", "actions", "unsupported"],
-  properties: {
-    name: str,
-    trigger: {
-      type: "object",
-      additionalProperties: false,
-      required: ["type", ...STEP_KEYS],
-      properties: { type: { type: "string", enum: [...AI_RULE_TRIGGERS] }, ...stepProps },
-    },
-    conditions: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["type", ...STEP_KEYS],
-        properties: { type: { type: "string", enum: [...AI_RULE_CONDITIONS] }, ...stepProps },
-      },
-    },
-    actions: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["type", ...STEP_KEYS],
-        properties: { type: { type: "string", enum: [...AI_RULE_ACTIONS] }, ...stepProps },
-      },
-    },
-    unsupported: str,
-  },
-} as const;
+  properties: { ...ruleDraftObjectSchema(), unsupported: str },
+};
 
 export const AI_RULE_SYSTEM_PROMPT = [
   "You draft one automation (When → If → Then) for a project in ALHC Projects, an Asana-style app, from the user's description.",
@@ -203,7 +193,9 @@ const refuse = (message: string): never => {
 };
 
 // The model's draft → a rule the canvas opens (ids, the engine's own key names), or why it can't be one.
-export function ruleFromModel(raw: unknown, ctx: AiRuleContext): AiRuleResult {
+// `actions`: the actions this caller allows (round 3's assistant leaves out the ones that post or notify).
+export function ruleFromModel(raw: unknown, ctx: AiRuleContext, opts: { actions?: readonly ActionType[] } = {}): AiRuleResult {
+  const allowedActions: readonly string[] = opts.actions ?? AI_RULE_ACTIONS;
   try {
     if (!isObj(raw)) refuse("The AI’s answer wasn’t an automation");
     const draft = raw as Obj;
@@ -314,7 +306,7 @@ export function ruleFromModel(raw: unknown, ctx: AiRuleContext): AiRuleResult {
     // Then.
     const actions: RuleAction[] = actionsRaw.map((a, i): RuleAction => {
       const what = `Action ${i + 1}`;
-      if (!isObj(a) || !(AI_RULE_ACTIONS as readonly string[]).includes(String(a.type))) return refuse(`${what}: not an action this builder supports`);
+      if (!isObj(a) || !allowedActions.includes(String(a.type))) return refuse(`${what}: not an action this builder supports`);
       const step = blankStep(a);
       const type = step.type as ActionType;
       switch (type) {

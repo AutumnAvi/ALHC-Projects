@@ -5,6 +5,7 @@ import "server-only";
 // plain message only; nothing else (no provider message, prompt, or key) is ever returned or logged.
 import { NextResponse, type NextRequest } from "next/server";
 import { AUTOMATION_LIMIT_REACHED, EDIT_LIMIT_REACHED, LIMIT_REACHED } from "@alhc/core/api/ai-builder/mutations";
+import { ASSISTANT_LIMIT_REACHED } from "@alhc/core/ai-assistant";
 import { isApiError, type ApiErrorCode } from "@alhc/core/api/core/errors";
 import type { ApiContext } from "@alhc/core/api/core/context";
 import { routeContext } from "@/lib/server/context";
@@ -20,7 +21,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   failed: 502,
 };
 
-const LIMITS = new Set([LIMIT_REACHED, EDIT_LIMIT_REACHED, AUTOMATION_LIMIT_REACHED]);
+const LIMITS = new Set([LIMIT_REACHED, EDIT_LIMIT_REACHED, AUTOMATION_LIMIT_REACHED, ASSISTANT_LIMIT_REACHED]);
 
 export async function aiRoute(
   request: NextRequest,

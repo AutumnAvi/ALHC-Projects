@@ -243,3 +243,126 @@ Undo, the run log, database-enforced limits, and the brief / instruction as data
 3. On a Testing data project's Automations page: Ask AI for an automation → the canvas opens filled in and
    off; Create; History shows "Automation · Saved" linking to it. Ask for "email the client" → refused.
 4. As a non-admin or on a main-workspace project: no AI button; the routes answer 403.
+
+## Round 3: "AI everywhere" (branch `feat/ai-builder-p3` → `feat/ai-builder`; draft PR, do not merge to main)
+
+Note 171: an AI assistant reachable from anywhere in the app that changes existing data of Testing data
+projects. It shows every change first, asks before applying, and can undo. Automations are the priority.
+
+### Entry points
+
+- **Ask AI** in the top bar (between search and the avatar), and **Tab then A** anywhere (listed in the
+  `?` shortcuts help; like Tab then Q it never fires while typing). Both only for workspace admins of the
+  live Testing data pilot: the button stays hidden for everyone else, and the server checks again on every
+  request (fails closed).
+- The panel floats at the bottom right (the panel layer). It is not a right panel on purpose: the task
+  pane stays open beside it, so the open task is the context. It works on project List / Board / every
+  view, the task pane, My tasks, an automation list, and one automation.
+
+### Context (server side only)
+
+The browser sends the page as kinds and ids (`assistantPageFromPath`: project, task, my_tasks, rules,
+rule, other). `loadAssistantContext` (`packages/core/src/api/ai-assistant/queries.ts`) loads everything
+with the person's own client: the pilot projects they're in (with their role), sections, members, the focus
+project's fields, its top-level tasks (open first, ≤ 60) plus the open task with its parent and subtasks
+(or, on My tasks, their open tasks in pilot projects), open-blocker counts, and the project's automations.
+A page outside the pilot is refused. The model sees refs (P1, S3, F2, T7, R1) and aliases (member:1) —
+never an id, an email, or a person's name — and the prompt marks all workspace text as data.
+
+### Change sets
+
+`packages/core/src/ai-assistant.ts`. The model answers one flat object: `summary`, `unsupported`, `ops`
+(every op has the same keys; unused ones are `""`), and `rules` (automation drafts the ops name by key).
+Operations, in priority order:
+
+| Area | Operations |
+| --- | --- |
+| Automations | `create_rule` (always created **off**), `update_rule` (whole new steps), `enable_rule`, `disable_rule`, `remove_rule` (Undo brings it back) |
+| Sections | `create_section` (before a section or at the end), `rename_section`, `move_section` |
+| Tasks / subtasks | `rename_task`, `set_description`, `move_task` (a section of its project, a section created in the same change set, or another pilot project), `assign_task` (project members only), `set_dates`, `set_field` (text, number, date, single / multi choice; not locked or Status fields), `complete_task` / `reopen_task` |
+
+Automations use the round 2 vocabulary (`ai-automation.ts`) without Notify and Add comment (they post or
+notify by themselves), and are checked by the rules engine's own `ruleProblems` (then `validate_rule` on
+save). An automation with branches, Or groups, or other steps can still be turned on / off / removed but
+not rewritten. `resolveAssistantPlan` maps refs back to ids from the same server-loaded context and drops
+anything it can't do with a plain reason (shown as "Left out"): unknown refs, ops the person's role
+doesn't allow (Editor+, Admin+ for automations, Owner when sections are locked), non-members, unknown
+options, blocked / approval / repeating tasks for Complete, no-ops, repeats. Nothing invented is ever
+written; a request it can't do at all fails with the explanation.
+
+### Apply, Undo, and the log
+
+- **Nothing is written before Confirm.** The panel lists each change with before → after (automations as
+  the rule builder's sentence; edits show the old one struck through); each can be left out (a move into a
+  new section keeps that section).
+- **Apply** (`applyAssistantRun`): an apply key (the same Confirm twice answers the first result); every
+  chosen op is checked again against the database (the project is a live pilot project, the person's role
+  there now, the target belongs to it, open blockers for Complete) and against the state the AI saw
+  (`expect`); anything changed → nothing is written ("stale"). Then each op runs through the existing
+  typed-API mutation as the person (`updateTask`, `moveTask`, `addTaskToProject` / `removeTaskFromProject`,
+  `setFieldValue`, `setTaskCompleted`, `createSection`, `renameSection`, `placeSection`, `createRule`,
+  `updateRule`, `setRuleEnabled`, `deleteRule`) — RLS, the guards, `validate_rule`, and the dependency
+  guard decide, no service role. A refusal part way rolls back what was written (status `rolled_back`).
+  Each op's state before and after is recorded. Server Actions run with `deliver: false`.
+- **Undo** (`undoAssistantRun`): first compares every change with the state right after apply; anything
+  changed (or no longer allowed) → nothing is undone and the conflicts are listed. Else each change is put
+  back in reverse (created sections and automations removed, a removed automation restored with
+  `restoreRule`). Progress is kept per change, so Undo again is safe.
+- **Log** `ai_assistant_runs`: actor, workspace, page kind and ids, instruction length (never the text),
+  model, effort, why that model (`route_reason`, `escalated`), tokens (both calls when escalated), op
+  count and per-op summary, the resolved change set, what was applied (before / after, touched ids), Undo
+  conflicts, and failures (`error_code` + the provider's HTTP status, type, and message, scrubbed — never a
+  key, a header, or a prompt). Shown under **AI assistant** on `/ai-builder`.
+
+### Models
+
+`AI_BUILDER_CALLS.assistant_small` = Haiku 5.5 (low effort, 3,000 tokens, 25 s) for a small single-step
+edit; `assistant_large` = Sonnet 5.5 (medium effort, 6,000 tokens, 55 s) for automations or several
+steps. `routeAssistant` decides (automation pages or words → `rules_page` / `mentions_rules`; > 240
+characters → `long_request`; "and then", "also", "then", ";", two "and"s, three sentences →
+`multi_step`; else `small_edit`). A Haiku answer with automation ops, more than 5 ops, or invalid output is
+asked again of Sonnet (`escalated_rules` / `escalated_size` / `escalated_invalid`). Overrides:
+`AI_BUILDER_ASSISTANT_SMALL_MODEL` / `_EFFORT`, `AI_BUILDER_ASSISTANT_LARGE_MODEL` / `_EFFORT`
+(allowlisted values only).
+
+**Schema rule (the Anthropic structured-output lesson):** at most 16 `anyOf` unions per schema, and a
+nullable key counts as one. The change-set schema has **no** union and no nullable key (one flat op object,
+an `op` enum, blanks instead of null). `packages/core/tests/ai-assistant.test.ts` walks it and fails on any
+nullable union or more than 16 `anyOf`, and `structuredOutputIssues` must be empty.
+
+### Migration (written, NOT applied)
+
+`supabase/migrations/20261108152314_ai_assistant_round3_a.sql` — additive, no tail, no `DROP` / `DELETE`:
+the `ai_assistant_runs` table (RLS: pilot admins read, each person writes their own; column grants),
+`guard_ai_assistant_run()` (invoker: identity fixed, state machine, change set set once, apply key once,
+rate limits 2 generating / 30 an hour / 150 a day per person / 400 a day per workspace), indexes on every
+foreign key. No new client SECURITY DEFINER function; nothing for anon. Suite
+`supabase/tests/zz58_ai_assistant_smoke.sql`.
+
+Apply steps (only after Avi authorizes): the round 1 and round 2 migrations first; then hand
+`20261108152314_ai_assistant_round3_a.sql` (slug `ai_assistant_round3_a`) to the `migration-applier`
+subagent; confirm with `list_migrations`. Until it's applied the assistant fails closed (the run insert
+fails, no model call).
+
+### Known limits
+
+- No creating or deleting tasks, comments, tags, followers, dependencies, approvals, fields, or projects;
+  no notifications, emails, Slack, or webhooks; nothing outside the Testing data pilot.
+- The assistant's own writes queue nothing to send, but they are ordinary edits: assigning someone else
+  gives them the usual in-app assignment item, and a project's existing automations react to the changes
+  like to any edit. AI-made automations start off.
+- Context is bounded (60 tasks of the focus project, 30 subtasks, 30 automations, 20 projects); a task
+  not in it can't be named.
+- A move to another project goes to a section by ref (only sections of loaded projects) or none.
+- Undo is all or nothing per run; a run that changed something since can't be undone in part.
+
+### Manual checks (preview, after the migration is applied)
+
+1. On a Testing data project's List: Ask AI → "add a Blocked section before Doing and move the print
+   run there" → two changes, the move marked "Needs change 1"; untick 1 → 2 unticks too. Confirm; Undo.
+2. On the Automations page: "whenever a task is completed move it to Done" → a new automation (off) as a
+   sentence; Confirm; it's in the list, off. Then "turn off Triage", "remove …" → Undo brings it back.
+3. Open a task → Tab then A → "due next Friday, assign to Dana, priority High". Edit the task by hand,
+   then Undo → it lists the conflict and changes nothing.
+4. "Complete the print run" on a blocked task → left out with the blocked reason.
+5. As a non-admin or on a main-workspace page: no button; Tab then A does nothing; the route answers 403.
