@@ -4,6 +4,7 @@
 // Synthetic fixtures, a fake Anthropic client: no network, no database writes, nothing billable.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import type { ReactNode } from "react";
@@ -12,7 +13,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
-import { AI_BUILDER_CALLS, type AiProposal } from "@alhc/core/ai-builder";
+import { AI_BUILDER_CALLS, AI_MODEL_EFFORTS, PROPOSAL_JSON_SCHEMA, structuredOutputIssues, type AiProposal } from "@alhc/core/ai-builder";
+import { EDIT_OPS_JSON_SCHEMA } from "@alhc/core/ai-builder-ops";
+import { RULE_DRAFT_JSON_SCHEMA } from "@alhc/core/ai-automation";
 import { counterIds, draftToProposal, draftView, proposalToDraft, type AiDraft } from "@alhc/core/ai-builder-draft";
 import { fieldRef } from "@alhc/core/views";
 import { DraftPreview } from "@/components/ai-builder/draft-preview";
@@ -23,7 +26,7 @@ import { ProjectDataSourceProvider, type ProjectDataSource } from "@/components/
 import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
-import { callConfig, createAnthropicProvider } from "@/lib/ai-builder/anthropic";
+import { anthropicMessageCreate, callConfig, createAnthropicProvider } from "@/lib/ai-builder/anthropic";
 import { POST as editPost } from "@/app/api/ai-builder/edit/route";
 import { POST as automationPost } from "@/app/api/ai-builder/automation/route";
 
@@ -198,6 +201,27 @@ test("edits and automation drafts call Haiku with a smaller output, low effort, 
   assert.equal(callConfig("edit", { AI_BUILDER_EDIT_MODEL: "some-other-model" }).model, "claude-haiku-5-5");
   assert.equal(callConfig("build", { AI_BUILDER_BUILD_EFFORT: "max" }).effort, "low");
   assert.equal(callConfig("build", {}).model, "claude-sonnet-5-5");
+});
+
+test("each call's request matches that model's params, and its schema is one structured output will compile", () => {
+  const schemas = { build: PROPOSAL_JSON_SCHEMA, edit: EDIT_OPS_JSON_SCHEMA, automation: RULE_DRAFT_JSON_SCHEMA };
+  for (const kind of ["build", "edit", "automation"] as const) {
+    const { params } = anthropicMessageCreate(kind, { system: "s", prompt: "p", schema: schemas[kind] });
+    assert.equal(params.model, AI_BUILDER_CALLS[kind].model);
+    assert.equal(params.max_tokens, AI_BUILDER_CALLS[kind].maxTokens);
+    assert.ok(AI_MODEL_EFFORTS[params.model].includes(params.output_config.effort), params.output_config.effort);
+    assert.equal(params.output_config.format.type, "json_schema");
+    assert.equal(structuredOutputIssues(params.output_config.format.schema).join("\n"), "");
+    assert.ok(!("thinking" in params), "thinking stays adaptive; disabling it is not valid for every effort");
+    assert.ok(!("tools" in params));
+  }
+  const require = createRequire(import.meta.url);
+  const dts = fs.readFileSync(path.join(path.dirname(require.resolve("@anthropic-ai/sdk")), "resources/messages/messages.d.ts"), "utf8");
+  const union = dts.slice(dts.indexOf("export type Model ="), dts.indexOf(";", dts.indexOf("export type Model =")));
+  const literals = [...union.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  for (const model of [AI_BUILDER_CALLS.build.model, AI_BUILDER_CALLS.edit.model, AI_BUILDER_CALLS.automation.model]) {
+    assert.ok(literals.includes(model), `${model} is not a literal in @anthropic-ai/sdk's Model union`);
+  }
 });
 
 test("a 429 on an edit is a rate-limited code, never the provider's message", async () => {

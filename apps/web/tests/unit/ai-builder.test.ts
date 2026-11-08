@@ -8,7 +8,7 @@ import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 import { AI_BUILDER_MAX_OUTPUT_TOKENS, AI_BUILDER_MODEL } from "@alhc/core/ai-builder";
-import { aiBuilderConfigured, createAnthropicProvider, providerErrorCode } from "@/lib/ai-builder/anthropic";
+import { aiBuilderConfigured, createAnthropicProvider, providerErrorCode, providerErrorDetail } from "@/lib/ai-builder/anthropic";
 import { POST } from "@/app/api/ai-builder/generate/route";
 
 type Create = (params: Record<string, unknown>) => Promise<unknown>;
@@ -46,11 +46,17 @@ test("refusals, truncation, and malformed output are codes, never content", asyn
   assert.equal(((await run({ content: [{ type: "text", text: '{"name": "X"' }] })) as { code: string }).code, "invalid_output");
 });
 
-test("provider errors map to codes and the log never carries the provider's message", async () => {
+test("provider errors map to codes and the log keeps the HTTP status and error type, never the key", async () => {
   const headers = new Headers();
-  assert.equal(providerErrorCode(new Anthropic.AuthenticationError(401, {}, "invalid x-api-key", headers)), "auth");
+  const authBody = { type: "error", error: { type: "authentication_error", message: "invalid x-api-key sk-ant-api03-SECRET" } };
+  const authError = new Anthropic.AuthenticationError(401, authBody, "invalid x-api-key sk-ant-api03-SECRET", headers);
+  assert.equal(providerErrorCode(authError), "auth");
+  assert.equal(providerErrorDetail(authError), "HTTP 401 authentication_error invalid [redacted] [redacted]");
   assert.equal(providerErrorCode(new Anthropic.RateLimitError(429, {}, "rate limited", headers)), "rate_limited");
   assert.equal(providerErrorCode(new Anthropic.InternalServerError(529, {}, "overloaded", headers)), "overloaded");
+  const unavailable = new Anthropic.InternalServerError(503, { type: "error", error: { type: "api_error", message: "unavailable" } }, "unavailable", headers);
+  assert.equal(providerErrorCode(unavailable), "provider_error");
+  assert.equal(providerErrorDetail(unavailable), "HTTP 503 api_error unavailable");
   assert.equal(providerErrorCode(new Anthropic.APIConnectionTimeoutError({ message: "timed out" })), "timeout");
   assert.equal(providerErrorCode(new Error("anything")), "provider_error");
 
@@ -60,14 +66,16 @@ test("provider errors map to codes and the log never carries the provider's mess
   try {
     const res = await createAnthropicProvider(
       client(async () => {
-        throw new Anthropic.AuthenticationError(401, {}, "invalid x-api-key sk-ant-api03-SECRET", headers);
+        throw authError;
       }),
     ).generate(request);
     assert.equal((res as { code: string }).code, "auth");
+    assert.equal((res as { detail: string }).detail, "HTTP 401 authentication_error invalid [redacted] [redacted]");
   } finally {
     console.error = original;
   }
-  assert.ok(logged.length > 0 && logged.every((l) => !l.includes("sk-ant") && !l.includes("x-api-key")), logged.join("\n"));
+  assert.ok(logged.some((l) => l.includes("HTTP 401") && l.includes("authentication_error")));
+  assert.ok(logged.every((l) => !l.includes("sk-ant") && !l.includes("x-api-key")), logged.join("\n"));
 });
 
 test("without ANTHROPIC_API_KEY the builder says it isn't configured and calls nothing", async () => {

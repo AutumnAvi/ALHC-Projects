@@ -11,6 +11,7 @@ import {
   AI_BUILDER_LIMITS,
   AI_BUILDER_SYSTEM_PROMPT,
   AI_ERROR_MESSAGES,
+  scrubProviderDetail,
   PROPOSAL_JSON_SCHEMA,
   aiPeople,
   buildProposalPrompt,
@@ -95,12 +96,15 @@ async function startRun(
 }
 
 async function failRun(ctx: ApiContext, runId: string, code: AiProviderErrorCode | "unsupported", result?: AiProviderResult) {
-  // Best effort: the run is logged as failed with a code, never the provider's message.
+  // The code is the closed error_code. A provider failure also keeps its HTTP status, error type, and
+  // message (scrubbed: no key, no prompt) on the run, so the log says why it failed before any tokens.
+  const detail = result && !result.ok && result.detail ? scrubProviderDetail(result.detail) : "";
   await ctx.db
     .from("ai_builder_runs")
     .update({
       status: "failed",
       error_code: code,
+      ...(detail ? { proposal: { error: detail } } : {}),
       model: result?.model || null,
       effort: result?.effort ?? null,
       input_tokens: result?.inputTokens ?? null,

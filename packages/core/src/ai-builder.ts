@@ -15,13 +15,22 @@
 export type AiCallKind = "build" | "edit" | "automation";
 export const AI_CALL_KINDS: readonly AiCallKind[] = ["build", "edit", "automation"];
 
-// Models this builder may call (checked against @anthropic-ai/sdk's Model union and Anthropic's model list).
+// Models this builder may call. These are literals of @anthropic-ai/sdk's Model union (1.6.0) and of
+// Anthropic's model list: claude-haiku-5-5 is Haiku 5.5 (released October 2026), not a guessed id.
+// Haiku 5.5 supports output_config.effort (default medium, so a call sets it) and JSON structured output.
+// It does not get thinking: { type: "disabled" }: that 400s at xhigh/max, and with JSON output it can
+// skip the answer. xhigh and max stay off the allowlist (they think for much longer than an edit).
 export const AI_BUILDER_ALLOWED_MODELS = ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"] as const;
 export type AiBuilderModel = (typeof AI_BUILDER_ALLOWED_MODELS)[number];
-// Effort is the depth control on these models (adaptive thinking is on by default; Haiku 5.5 and Opus 5.5
-// default to medium, so it's always set explicitly).
 export const AI_BUILDER_ALLOWED_EFFORTS = ["low", "medium", "high"] as const;
 export type AiBuilderEffort = (typeof AI_BUILDER_ALLOWED_EFFORTS)[number];
+// Efforts each of these models accepts. All three take low | medium | high; Haiku also takes xhigh | max,
+// which this builder never sends.
+export const AI_MODEL_EFFORTS: Record<AiBuilderModel, readonly AiBuilderEffort[]> = {
+  "claude-sonnet-5-5": AI_BUILDER_ALLOWED_EFFORTS,
+  "claude-haiku-5-5": AI_BUILDER_ALLOWED_EFFORTS,
+  "claude-opus-5-5": AI_BUILDER_ALLOWED_EFFORTS,
+};
 
 export const AI_BUILDER_MODELS: Record<AiCallKind, AiBuilderModel> = {
   build: "claude-sonnet-5-5",
@@ -575,7 +584,96 @@ export function aiRunStatusLabel(kind: AiRunKind, status: AiRunStatus): string {
   return AI_RUN_STATUS_LABELS[status];
 }
 
-// Why a generation failed (stored in ai_builder_runs.error_code; never the provider's message).
+// Structured outputs compile the schema into a grammar (Anthropic, "Schema complexity limits").
+// A request is rejected before any tokens — the edit and automation calls were — when it has more than
+// 16 parameters that use anyOf (a nullable field is one: anyOf [type, null]) or more than 24 optional
+// parameters, or when it uses a keyword the grammar doesn't take. Keep every key required and prefer
+// a blank ("", -1, []) over null.
+export const AI_OUTPUT_SCHEMA_LIMITS = { unionParams: 16, optionalParams: 24 } as const;
+
+const UNSUPPORTED_SCHEMA_KEYS = new Set([
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "minLength",
+  "maxLength",
+  "pattern",
+  "format",
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "patternProperties",
+  "unevaluatedProperties",
+  "dependentRequired",
+  "dependentSchemas",
+  "prefixItems",
+  "contains",
+  "uniqueItems",
+  "maxItems",
+  "$schema",
+  "examples",
+]);
+
+// What's wrong with a schema as Anthropic structured output (empty = it can be sent).
+export function structuredOutputIssues(schema: unknown): string[] {
+  const issues: string[] = [];
+  let unions = 0;
+  let optionals = 0;
+  const visit = (node: unknown, asProperty: boolean, where: string) => {
+    if (!isObj(node)) return;
+    if (asProperty && (Array.isArray(node.anyOf) || Array.isArray(node.type))) unions += 1;
+    for (const key of Object.keys(node)) {
+      if (UNSUPPORTED_SCHEMA_KEYS.has(key)) issues.push(`${where}: “${key}” isn’t supported in structured output`);
+    }
+    if ("minItems" in node && node.minItems !== 0 && node.minItems !== 1) issues.push(`${where}: minItems must be 0 or 1`);
+    if (node.type === "object" || isObj(node.properties)) {
+      if (node.additionalProperties !== false) issues.push(`${where}: an object must set additionalProperties to false`);
+      const props = isObj(node.properties) ? node.properties : {};
+      const required = Array.isArray(node.required) ? node.required.filter((k): k is string => typeof k === "string") : [];
+      const keys = Object.keys(props);
+      if (required.length !== keys.length || required.some((k) => !keys.includes(k))) issues.push(`${where}: every property must be required`);
+      const req = new Set(required);
+      for (const [key, sub] of Object.entries(props)) {
+        if (!req.has(key)) optionals += 1;
+        visit(sub, true, `${where}.${key}`);
+      }
+    }
+    if (Array.isArray(node.anyOf)) node.anyOf.forEach((branch, i) => visit(branch, false, `${where} anyOf ${i + 1}`));
+    if (node.items) visit(node.items, false, `${where}[]`);
+    if (isObj(node.$defs)) for (const [key, sub] of Object.entries(node.$defs)) visit(sub, false, `${where} ${key}`);
+  };
+  visit(schema, false, "schema");
+  if (unions > AI_OUTPUT_SCHEMA_LIMITS.unionParams) {
+    issues.push(`schema: ${unions} union parameters (the limit is ${AI_OUTPUT_SCHEMA_LIMITS.unionParams})`);
+  }
+  if (optionals > AI_OUTPUT_SCHEMA_LIMITS.optionalParams) {
+    issues.push(`schema: ${optionals} optional parameters (the limit is ${AI_OUTPUT_SCHEMA_LIMITS.optionalParams})`);
+  }
+  return issues;
+}
+
+// A failed provider call, for the run log. The code stays error_code (a closed word); this line is the
+// provider's HTTP status, error.type, and error message. Never a key, a header, or the prompt.
+const PROVIDER_SECRET = /sk-ant-[A-Za-z0-9_-]+|x-api-key\S*|bearer\s+\S+/gi;
+const PROMPT_MARKER = /<(?:brief|instruction|draft|description|template_outline|project)\b/i;
+
+export function scrubProviderDetail(value: string): string {
+  return value.replace(PROVIDER_SECRET, "[redacted]").replace(/\s+/g, " ").trim().slice(0, 400);
+}
+
+export function formatProviderError(status: number | null, type: string | null, message: string | null): string | null {
+  const safeType = type && /^[a-z0-9_]+$/i.test(type) ? type : null;
+  const safeMessage = message && !PROMPT_MARKER.test(message) ? scrubProviderDetail(message) : null;
+  const bits = [status != null && Number.isFinite(status) ? `HTTP ${status}` : null, safeType, safeMessage].filter((b): b is string => Boolean(b));
+  return bits.length ? scrubProviderDetail(bits.join(" ")) : null;
+}
+
+// Why a generation failed (stored in ai_builder_runs.error_code). The provider's own line, when there is
+// one, is stored beside it (formatProviderError) — never instead of the code, and never the prompt.
 export const AI_ERROR_MESSAGES: Record<string, string> = {
   unsupported: "The AI couldn’t make that with what this builder supports. Try describing it differently.",
   not_configured: "The AI builder isn’t configured on this deployment (no model key).",

@@ -10,8 +10,11 @@ import {
   AI_BUILDER_CALLS,
   AI_BUILDER_LIMITS,
   AI_BUILDER_MODELS,
+  AI_MODEL_EFFORTS,
   PROPOSAL_JSON_SCHEMA,
   aiCallConfig,
+  formatProviderError,
+  structuredOutputIssues,
   aiPeople,
   assigneeFromModel,
   parseProposal,
@@ -59,7 +62,7 @@ import {
   generateProposal,
   recordAutomationSaved,
 } from "@alhc/core/api/ai-builder/mutations";
-import { getAiAutomationDraft } from "@alhc/core/api/ai-builder/queries";
+import { getAiAutomationDraft, toRunSummary } from "@alhc/core/api/ai-builder/queries";
 import { createApiContext } from "@alhc/core/api/core/context";
 import { isApiError } from "@alhc/core/api/core/errors";
 import { fakeDb, hasStep, step, type Answer, type Call } from "./fake-db";
@@ -124,6 +127,23 @@ test("each kind of call has its own model: Sonnet builds, Haiku edits and drafts
   assert.equal(aiCallConfig("edit", { model: "claude-haiku-5-5-20990101" }).model, "claude-haiku-5-5");
   assert.equal(aiCallConfig("build", { effort: "max" }).effort, "low", "only low / medium / high");
   assert.equal(aiCallConfig("build", { effort: "medium" }).effort, "medium");
+  for (const kind of ["build", "edit", "automation"] as const) {
+    const call = AI_BUILDER_CALLS[kind];
+    assert.ok(AI_MODEL_EFFORTS[call.model].includes(call.effort), `${kind}: ${call.model} accepts effort ${call.effort}`);
+  }
+});
+
+test("the three output schemas stay inside structured output's limits (a null on every key does not)", () => {
+  for (const schema of [PROPOSAL_JSON_SCHEMA, EDIT_OPS_JSON_SCHEMA, RULE_DRAFT_JSON_SCHEMA]) {
+    assert.deepEqual(structuredOutputIssues(schema), [], JSON.stringify(structuredOutputIssues(schema)));
+  }
+  // The shape that rejected the edit and automation calls: one anyOf per key, past the 16-union limit.
+  const properties = Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, { anyOf: [{ type: "string" }, { type: "null" }] }]));
+  const issues = structuredOutputIssues({ type: "object", additionalProperties: false, required: Object.keys(properties), properties });
+  assert.ok(issues.some((issue) => issue.includes("union")), issues.join("\n"));
+  assert.equal(formatProviderError(400, "invalid_request_error", "schema is too complex sk-ant-api03-SECRET"), "HTTP 400 invalid_request_error schema is too complex [redacted]");
+  assert.equal(formatProviderError(503, "api_error", "overloaded <instruction>the brief"), "HTTP 503 api_error");
+  assert.equal(formatProviderError(null, "not a type", null), null);
 });
 
 // ---- The proposal: start dates and assignees -----------------------------------------------------------
@@ -280,6 +300,15 @@ test("an AI change is a bounded list of edits, applied through the draft's rules
   assert.equal(p.tasks.find((t) => t.title === "Book venue")?.assignee, null);
   assert.equal(p.tasks.find((t) => t.title === "Book venue")?.start_in_days, null);
   assert.ok(parseProposal(p, { members }).ok);
+  // Blanks (what the schema now requires) mean the same as the nulls above.
+  const blanks = applyDraftOps(
+    proposal,
+    { unsupported: "", ops: [op({ op: "update_task", task: "t1", name: "", section: "", type: "", due_in_days: -1, start_in_days: -1, options: [], values: [], subtasks: [], clear: ["notes"] })] },
+    people,
+    counterIds(),
+  );
+  assert.ok(blanks.ok, JSON.stringify(blanks));
+  if (blanks.ok) assert.equal(draftToProposal(blanks.draft).tasks[0].notes, "");
 });
 
 test("an invalid or unsupported AI change is refused whole, never half-applied", () => {
@@ -498,6 +527,47 @@ test("an AI change is refused for outsiders, a stale or someone else's draft, a 
       reject("unavailable"),
     );
   }
+  const logged = pilot();
+  await assert.rejects(
+    editDraft(
+      createApiContext(logged.db),
+      editInput(),
+      provider({ ok: false, code: "provider_error", detail: "HTTP 503 api_error overloaded sk-ant-api03-SECRET", model: "claude-haiku-5-5", effort: "low", inputTokens: null, outputTokens: null }).p,
+    ),
+    (e: unknown) => isApiError(e) && !e.message.includes("sk-ant"),
+  );
+  const failed = logged.calls.find((c) => c.target === "table:ai_builder_runs" && hasStep(c, "update"))!;
+  const patch = step(failed, "update")![0] as { error_code: string; proposal: { error: string } };
+  assert.equal(patch.error_code, "provider_error");
+  assert.equal(patch.proposal.error, "HTTP 503 api_error overloaded [redacted]");
+  assert.ok(!JSON.stringify(patch).includes("sk-ant") && !JSON.stringify(patch).includes("Move the flyer"));
+  const summary = toRunSummary(
+    {
+      id: RUN,
+      actor_id: ME,
+      kind: "edit",
+      parent_run_id: null,
+      effort: "low",
+      target_project_id: null,
+      rule_id: null,
+      status: "failed",
+      proposal: patch.proposal,
+      proposal_version: 0,
+      model: "claude-haiku-5-5",
+      input_tokens: null,
+      output_tokens: null,
+      error_code: "provider_error",
+      project_id: null,
+      created_ids: null,
+      undo_conflicts: null,
+      created_at: "2026-11-08T00:00:00Z",
+      applied_at: null,
+      undone_at: null,
+    },
+    ME,
+  );
+  assert.equal(summary.errorDetail, patch.proposal.error);
+  assert.equal(summary.projectName, null);
 });
 
 test("the server's draft check and Create refuse assignees outside the pilot", async () => {
