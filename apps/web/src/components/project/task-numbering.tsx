@@ -27,7 +27,7 @@ const KINDS = [
 const noSubscribe = () => () => {};
 
 // Every IANA zone the browser knows, listed only after hydration (the server's list can differ).
-function useTimeZones(current: string): string[] {
+export function useTimeZones(current: string): string[] {
   const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
   if (!mounted || typeof Intl.supportedValuesOf !== "function") return [current];
   const zones = Intl.supportedValuesOf("timeZone");
