@@ -12,8 +12,11 @@
 // edits to a draft and automation drafts use the small, fast one with a smaller output ceiling and a
 // tighter timeout. The deployment may override a model or an effort with server-side environment
 // variables (apps/web reads them), but only to a value on the allowlists below; anything else is ignored.
-export type AiCallKind = "build" | "edit" | "automation";
-export const AI_CALL_KINDS: readonly AiCallKind[] = ["build", "edit", "automation"];
+// Round 3 (note 171): the global assistant's two calls — assistant_small (Haiku: a small, single-step
+// edit) and assistant_large (Sonnet: several changes, or anything with automations). routeAssistant() in
+// ai-assistant.ts picks one.
+export type AiCallKind = "build" | "edit" | "automation" | "assistant_small" | "assistant_large";
+export const AI_CALL_KINDS: readonly AiCallKind[] = ["build", "edit", "automation", "assistant_small", "assistant_large"];
 
 // Models this builder may call. These are literals of @anthropic-ai/sdk's Model union (1.6.0) and of
 // Anthropic's model list: claude-haiku-5-5 is Haiku 5.5 (released October 2026), not a guessed id.
@@ -36,6 +39,8 @@ export const AI_BUILDER_MODELS: Record<AiCallKind, AiBuilderModel> = {
   build: "claude-sonnet-5-5",
   edit: "claude-haiku-5-5",
   automation: "claude-haiku-5-5",
+  assistant_small: "claude-haiku-5-5",
+  assistant_large: "claude-sonnet-5-5",
 };
 
 export type AiCallConfig = {
@@ -53,6 +58,9 @@ export const AI_BUILDER_CALLS: Record<AiCallKind, AiCallConfig> = {
   build: { model: AI_BUILDER_MODELS.build, effort: "low", maxTokens: 8000, timeoutMs: 55_000, maxRetries: 1 },
   edit: { model: AI_BUILDER_MODELS.edit, effort: "low", maxTokens: 3000, timeoutMs: 25_000, maxRetries: 1 },
   automation: { model: AI_BUILDER_MODELS.automation, effort: "low", maxTokens: 2000, timeoutMs: 25_000, maxRetries: 1 },
+  // Round 3: a small change set ≈ 3,000 × $0.50 / 1M; a large one (rules, several steps) ≈ 6,000 × $10 / 1M = $0.06.
+  assistant_small: { model: AI_BUILDER_MODELS.assistant_small, effort: "low", maxTokens: 3000, timeoutMs: 25_000, maxRetries: 1 },
+  assistant_large: { model: AI_BUILDER_MODELS.assistant_large, effort: "medium", maxTokens: 6000, timeoutMs: 55_000, maxRetries: 1 },
 };
 
 export function isAllowedAiModel(value: unknown): value is AiBuilderModel {

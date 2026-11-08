@@ -5709,6 +5709,70 @@ export type Database = {
         };
         Relationships: [];
       };
+      // AI builder round 3 (20261108152314_ai_assistant_round3_a.sql): the global assistant's runs.
+      ai_assistant_runs: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          actor_id: string;
+          request_key: string;
+          status: string;
+          page_kind: string;
+          page_project_id: string | null;
+          page_task_id: string | null;
+          page_rule_id: string | null;
+          instruction_chars: number;
+          model: string | null;
+          effort: string | null;
+          route_reason: string | null;
+          escalated: boolean;
+          input_tokens: number | null;
+          output_tokens: number | null;
+          proposal: Json | null;
+          op_count: number;
+          ops_summary: Json | null;
+          error_code: string | null;
+          error_detail: string | null;
+          apply_key: string | null;
+          applied: Json | null;
+          touched_ids: string[] | null;
+          undo_conflicts: Json | null;
+          generated_at: string | null;
+          applied_at: string | null;
+          undone_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          workspace_id: string;
+          request_key: string;
+          page_kind?: string;
+          page_project_id?: string | null;
+          page_task_id?: string | null;
+          page_rule_id?: string | null;
+          instruction_chars?: number;
+        };
+        Update: {
+          status?: string;
+          model?: string | null;
+          effort?: string | null;
+          route_reason?: string | null;
+          escalated?: boolean;
+          input_tokens?: number | null;
+          output_tokens?: number | null;
+          proposal?: Json | null;
+          op_count?: number;
+          ops_summary?: Json | null;
+          error_code?: string | null;
+          error_detail?: string | null;
+          apply_key?: string | null;
+          applied?: Json | null;
+          touched_ids?: string[] | null;
+          undo_conflicts?: Json | null;
+          generated_at?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
