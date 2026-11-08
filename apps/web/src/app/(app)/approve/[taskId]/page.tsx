@@ -3,10 +3,12 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ThumbsUp } from "lucide-react";
 import { ApproverReviewPage } from "@/components/task/approver-review-page";
+import { ReviewTaskDetails } from "@/components/task/review-task-details";
 import { TaskLiveRefresh } from "@/components/task/task-live-refresh";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
 import { getTaskDetail } from "@/lib/data";
+import { reviewTaskDetails } from "@alhc/core/approver-review";
 import { isUuid } from "@alhc/core/ids";
 
 export const metadata: Metadata = { title: "Review for approval" };
@@ -17,6 +19,8 @@ export const metadata: Metadata = { title: "Review for approval" };
 // Nov 4 notes (batch 25, 159): the one place an approver decides from a link (Inbox, reminders, emails):
 // a round with only text is decided here too, and an older request on a task (no round) opens the task,
 // whose Approvals list shows it with the task.
+// Nov 8 note 167: the same read also fills a read-only details panel (name, project, assignee, due date,
+// key fields, description). reviewTaskDetails keeps comments off that panel. No second query.
 export default async function ApproveTaskPage({ params }: PageProps<"/approve/[taskId]">) {
   const { taskId } = await params;
   if (!isUuid(taskId)) notFound();
@@ -30,6 +34,7 @@ export default async function ApproveTaskPage({ params }: PageProps<"/approve/[t
   if (!myRequest && task.approvals.some((a) => !a.roundId && a.approverId === member.id && a.status === "pending")) {
     redirect(backHref);
   }
+  const details = reviewTaskDetails(task);
   return (
     <main className="flex min-h-0 flex-1 flex-col">
       <TaskLiveRefresh taskId={task.id} />
@@ -52,11 +57,15 @@ export default async function ApproveTaskPage({ params }: PageProps<"/approve/[t
             round={latest}
             attachments={task.attachments}
             backHref={backHref}
+            details={details}
           />
         ) : (
-          <EmptyState icon={ThumbsUp} title="Nothing to review here" size="page">
-            You aren’t asked to approve this task right now, or the decision was already made.
-          </EmptyState>
+          <div className="mx-auto max-w-3xl space-y-4">
+            <ReviewTaskDetails details={details} />
+            <EmptyState icon={ThumbsUp} title="Nothing to review here" size="page">
+              You aren’t asked to approve this task right now, or the decision was already made.
+            </EmptyState>
+          </div>
         )}
       </div>
     </main>
