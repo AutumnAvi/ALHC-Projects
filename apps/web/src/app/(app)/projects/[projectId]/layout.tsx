@@ -65,7 +65,6 @@ export default async function ProjectLayout({
       actionTypes: [...new Set(r.actions.map((a) => a.type))],
       branches: ruleBranchCount(r),
     })),
-    taskTemplates: taskTemplates.map(({ id, name, title }) => ({ id, name, title })),
     statusTemplates,
     statusTemplatesAvailable: true,
     numbering,

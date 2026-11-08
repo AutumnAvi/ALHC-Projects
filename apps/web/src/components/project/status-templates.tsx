@@ -7,6 +7,8 @@ import { Dialog } from "@/components/dialog";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
 import { useProjectPermissions } from "@/components/project/project-access";
+import { AddButton, EmptyGroup, Intro, RowMenu } from "@/components/project/customize/ui";
+import { MenuItem } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { createStatusTemplate, deleteStatusTemplate, updateStatusTemplate } from "@/lib/actions/projects";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus, type ProjectStatus } from "@alhc/core/portfolios";
@@ -38,94 +40,83 @@ export function StatusTemplatesView({
   available: boolean;
 }) {
   const canEdit = useProjectPermissions().canEdit;
-  const [pending, run] = useServerAction();
+  const [, run] = useServerAction();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<StatusTemplate | "new" | null>(null);
 
   if (!available) {
-    return (
-      <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">
-        Status templates need this release’s database update, which isn’t applied yet.
-      </p>
-    );
+    return <EmptyGroup>Status templates need this release’s database update, which isn’t applied yet.</EmptyGroup>;
   }
 
+  // Nov 8 notes (batch 30): the shared Customize pattern — "+ Add" in the header, a row per template
+  // (a click edits it), and Remove under the "…" that shows on the row you point at.
   return (
     <div>
-      <p className="mb-3 text-xs text-zinc-500">
-        Saved layouts for status updates: a status, a title, and section headings that fill in a new update. Pick one in
-        the status update panel.
-      </p>
-      {canEdit ? (
-        <button
-          type="button"
-          data-panel-focus
-          disabled={templates.length >= STATUS_TEMPLATES_PER_PROJECT}
-          onClick={() => setEditing("new")}
-          className="btn-primary mb-3 h-8 w-full"
-        >
-          <Plus className="size-4" aria-hidden />
-          Add template
-        </button>
+      {canEdit && templates.length < STATUS_TEMPLATES_PER_PROJECT ? (
+        <AddButton onClick={() => setEditing("new")} label="Add status template" />
       ) : null}
+      <Intro>Pick one when you write a status update.</Intro>
       {templates.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">
+        <EmptyGroup>
           No status templates yet.{" "}
           {canEdit
             ? "Add one with the headings your team reports on, like What we’ve accomplished, What’s blocked, and Next steps."
             : "Project editors can add them."}
-        </p>
+        </EmptyGroup>
       ) : (
-        <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
-          {templates.map((t) => (
-            <li key={t.id} className="flex items-center gap-2 px-3 py-2">
+        <ul aria-label="Status templates" className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+          {templates.map((t, i) => (
+            <li key={t.id} className="group flex min-h-row items-center gap-2 px-2.5 text-sm hover:bg-zinc-50">
               <FileText className="size-4 shrink-0 text-zinc-500" aria-hidden />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-1.5 truncate text-sm text-zinc-900">
-                  {t.status ? <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_STATUS_DOT[t.status]}`} /> : null}
-                  {t.name}
-                </span>
-                <span className="block truncate text-xs text-zinc-500">
-                  {t.sections.length
-                    ? t.sections.map((s) => s.heading).join(" · ")
-                    : t.status
-                      ? PROJECT_STATUS_LABELS[t.status]
-                      : "No sections"}
-                </span>
-              </span>
               {canEdit ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setEditing(t)}
-                    aria-label={`Edit ${t.name}`}
-                    data-tooltip="Edit"
-                    className="btn-icon size-7"
-                  >
-                    <Pencil className="size-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={async () => {
-                      if (
-                        await confirm({
-                          title: `Remove the status template “${t.name}”?`,
-                          message: "Updates already posted with it stay as they are.",
-                          confirmLabel: "Remove",
-                          tone: "danger",
-                        })
-                      ) {
-                        run(() => deleteStatusTemplate(t.id));
-                      }
-                    }}
-                    aria-label={`Remove ${t.name}`}
-                    data-tooltip="Remove"
-                    className="btn-icon size-7 hover:bg-red-50 hover:text-red-700"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </>
+                <button
+                  type="button"
+                  data-panel-focus={i === 0 ? true : undefined}
+                  onClick={() => setEditing(t)}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch text-left text-zinc-900"
+                >
+                  {t.status ? <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_STATUS_DOT[t.status]}`} /> : null}
+                  <span className="truncate">{t.name}</span>
+                </button>
+              ) : (
+                <span className="flex min-w-0 flex-1 items-center gap-1.5 text-zinc-900">
+                  {t.status ? <span aria-hidden className={`size-2 shrink-0 rounded-full ${PROJECT_STATUS_DOT[t.status]}`} /> : null}
+                  <span className="truncate">{t.name}</span>
+                </span>
+              )}
+              {canEdit ? (
+                <RowMenu label={`More for ${t.name}`}>
+                  {(close) => (
+                    <>
+                      <MenuItem
+                        onClick={() => {
+                          close();
+                          setEditing(t);
+                        }}
+                      >
+                        <Pencil className="size-3.5 text-zinc-500" aria-hidden /> Edit
+                      </MenuItem>
+                      <MenuItem
+                        danger
+                        onClick={async () => {
+                          close();
+                          if (
+                            await confirm({
+                              title: `Remove the status template “${t.name}”?`,
+                              message: "Updates already posted with it stay as they are.",
+                              confirmLabel: "Remove",
+                              tone: "danger",
+                            })
+                          ) {
+                            run(() => deleteStatusTemplate(t.id));
+                          }
+                        }}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden /> Remove
+                      </MenuItem>
+                    </>
+                  )}
+                </RowMenu>
               ) : null}
             </li>
           ))}

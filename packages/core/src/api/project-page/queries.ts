@@ -5,6 +5,7 @@
 // (inviteProjectMember, addTeamToProject, changeProjectMemberRole, updateProjectTeam, …), which the database
 // checks again. No Next.js here.
 import { getViewer } from "../auth/queries";
+import { listProjectRules, listRecentRuleRuns } from "../automations/queries";
 import type { ApiContext } from "../core/context";
 import {
   getProjectIntegrations,
@@ -25,6 +26,7 @@ import { commenterRoleAllowed, listPendingInvites } from "../workspace/queries";
 import { isUuid } from "../../ids";
 import type { CustomizeDetails, ShareData } from "../../project-page";
 import { compareMembers, hasRole } from "../../roles";
+import type { RuleRun } from "../../rules";
 import { isProjectVisibility } from "../../workspace";
 
 // `resendable`: invites can be emailed again (an email provider is set up: the adapter's isEmailConfigured()).
@@ -100,4 +102,16 @@ export async function loadCustomizeDetails(ctx: ApiContext, projectId: string): 
       emailsSent: (emails ?? []).filter((d) => d.status === "sent" || d.status === "mocked").length,
     },
   };
+}
+
+// Nov 8 notes (batch 30): Customize → Automations → History, the project's newest automation runs (rule_runs
+// RLS: Viewers+ of the automation's project; task titles only when the caller can read the task).
+export async function loadCustomizeRuns(ctx: ApiContext, projectId: string, limit = 20): Promise<RuleRun[]> {
+  if (!isUuid(projectId)) return [];
+  const rules = await listProjectRules(ctx, projectId);
+  return listRecentRuleRuns(
+    ctx,
+    rules.map((r) => r.id),
+    limit,
+  );
 }

@@ -298,6 +298,7 @@ export function FieldEditorDialog({
   batch4,
   sharing = null,
   existingFields = NO_FIELDS,
+  initialTab = "new",
   onCreated,
   onClose,
 }: {
@@ -310,10 +311,12 @@ export function FieldEditorDialog({
   sharing?: FieldSharing | null;
   // This project's fields (library fields it already uses, by group, aren't offered again).
   existingFields?: Pick<FieldDef, "id" | "libraryFieldId">[];
+  // Adding: which tab opens first (Customize → Fields' "+ Add" menu picks one; batch 30).
+  initialTab?: "new" | "library";
   onCreated?: (fieldId: string) => void;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<"new" | "library">("new");
+  const [tab, setTab] = useState<"new" | "library">(initialTab);
   const creating = field === null;
   const shared = field ? sharedFieldView(field, sharing).shared : false;
   return (

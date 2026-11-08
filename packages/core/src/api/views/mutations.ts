@@ -280,9 +280,11 @@ async function moveRow(ctx: ApiContext, table: "project_views" | "dashboard_widg
   }
   const list = siblings;
   const index = list.findIndex((s) => s.id === rowId);
-  const target = index + (direction < 0 ? -1 : 1);
-  if (index === -1 || target < 0 || target >= list.length) return;
-  [list[index], list[target]] = [list[target], list[index]];
+  // Nov 8 notes (batch 30): a drag moves a tab several places at once (±1 is the old swap).
+  const target = Math.min(Math.max(index + Math.trunc(direction), 0), list.length - 1);
+  if (index === -1 || target === index) return;
+  const [moved] = list.splice(index, 1);
+  list.splice(target, 0, moved);
   for (const [i, item] of list.entries()) {
     const order = (i + 1) * ORDER_STEP;
     if (item.sort_order !== order) {
@@ -293,6 +295,14 @@ async function moveRow(ctx: ApiContext, table: "project_views" | "dashboard_widg
 
 export async function moveView(ctx: ApiContext, viewId: string, direction: -1 | 1): Promise<void> {
   await moveRow(ctx, "project_views", viewId, direction);
+}
+
+// Nov 8 notes (batch 30): Customize → Tabs drags a view `steps` places among its project's shared views
+// (negative = left). Editors+ by the views' RLS.
+export async function moveViewBy(ctx: ApiContext, viewId: string, steps: number): Promise<void> {
+  if (!Number.isInteger(steps) || Math.abs(steps) > 500) throw invalid("Choose where to move the tab");
+  if (steps === 0) return;
+  await moveRow(ctx, "project_views", viewId, steps);
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -134,6 +134,7 @@ test("81: the builders say Automation, not Rule", () => {
     "src/components/rules/rule-canvas.tsx",
     "src/components/rules/rules-view.tsx",
     "src/components/project/customize-panel.tsx",
+    "src/components/project/customize/automations.tsx",
     "src/components/portfolio/portfolio-rules.tsx",
     "src/components/my-tasks/my-task-rules.tsx",
     "src/components/task/run-rule-dialog.tsx",

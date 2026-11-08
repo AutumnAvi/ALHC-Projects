@@ -3,6 +3,7 @@
 import { type ApiContext, type Db, read } from "../core/context";
 import { isMissingColumn, maybe, rpcMissing } from "../core/db";
 import { numbersFromPlaces, placesFromLabels, taskNumbersFrom } from "./model";
+import type { NumberingCounts } from "../../customize";
 import { isUuid } from "../../ids";
 import {
   numberWithItsProject,
@@ -202,4 +203,31 @@ export async function numbersWithTheirProjects(
   return new Map(
     tasks.map((t) => [t.id, { label: labels.get(t.id) ?? null, projectName: t.projectId ? (names.get(t.projectId) ?? null) : null }] as const),
   );
+}
+
+// Nov 8 notes (batch 30): Customize's numbering switch and page say how many tasks a change touches —
+// `unnumbered`: active top-level tasks here without this project's number (what "Also number the N tasks
+// already here" numbers), `labelled`: tasks whose stored label this project renders (what a format change
+// relabels). Head counts through RLS; null when a count can't be read.
+export async function numberingCounts(ctx: ApiContext, projectId: string): Promise<NumberingCounts> {
+  if (!isUuid(projectId)) return { unnumbered: null, labelled: null };
+  const supabase = ctx.db;
+  const [all, numbered, labelled] = await Promise.all([
+    supabase
+      .from("task_projects")
+      .select("task_id, task:tasks!inner(deleted_at)", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .is("deleted_at", null)
+      .is("task.deleted_at", null),
+    supabase.from("task_project_numbers").select("task_id", { count: "exact", head: true }).eq("project_id", projectId),
+    supabase
+      .from("tasks")
+      .select("id", { count: "exact", head: true })
+      .eq("home_project_id", projectId)
+      .is("deleted_at", null)
+      .not("req_label", "is", null),
+  ]);
+  const unnumbered =
+    all.error || all.count === null ? null : Math.max(0, all.count - (numbered.error ? 0 : (numbered.count ?? 0)));
+  return { unnumbered, labelled: labelled.error ? null : labelled.count };
 }

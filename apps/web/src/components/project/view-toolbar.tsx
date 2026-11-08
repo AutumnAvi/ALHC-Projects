@@ -13,6 +13,7 @@ import {
   Diamond,
   Filter,
   LayoutList,
+  LayoutTemplate,
   Plus,
   Rows3,
   Search,
@@ -36,6 +37,9 @@ import {
   setProjectShowCompleted,
 } from "@/lib/actions/views";
 import { requestAddTask } from "./shared";
+import { useTaskTemplates } from "./task-templates-context";
+import { useApprovalAction } from "@/components/task/approval-action";
+import { createTaskFromTemplate } from "@/lib/actions/templates";
 import { withPendingSection } from "./pending-sections";
 import {
   columnsOf,
@@ -806,7 +810,7 @@ function AddTaskSplit({
       )}
       <Popover
         label="More ways to add"
-        panelClassName="w-60 p-1.5"
+        panelClassName="w-64 p-1.5"
         buttonClassName="btn-primary h-7 rounded-l-none border-l border-white/30 px-1.5"
         button={<ChevronDown className="size-3.5" aria-hidden />}
       >
@@ -878,6 +882,66 @@ function AddMenu({
         }}
       >
         <Diamond className="size-4 text-zinc-500" /> Add milestone
+      </MenuItem>
+      <AddFromTemplate projectId={projectId} topSectionId={topSectionId} close={close} />
+    </>
+  );
+}
+
+// Nov 8 notes (batch 30): task templates live here, under "From a template" (they left Customize). A pick
+// adds the template's task to the top section; "Manage templates…" opens Settings → Templates.
+function AddFromTemplate({
+  projectId,
+  topSectionId,
+  close,
+}: {
+  projectId: string;
+  topSectionId: string | null;
+  close: () => void;
+}) {
+  const templates = useTaskTemplates();
+  const [, run] = useServerAction();
+  const notify = useNotify();
+  const approvalAction = useApprovalAction();
+  const router = useRouter();
+  return (
+    <>
+      <div role="separator" className="mx-0.5 my-1 h-px bg-zinc-100" />
+      <p className="px-2 pb-0.5 pt-1 text-2xs font-medium text-zinc-400">From a template</p>
+      {templates.length === 0 ? (
+        <p className="px-2 py-1 text-xs text-zinc-500">No task templates yet. Open a task, then “…” → Save as task template.</p>
+      ) : (
+        templates.map((template) => (
+          <MenuItem
+            key={template.id}
+            onClick={() => {
+              close();
+              run(async () => {
+                const result = await createTaskFromTemplate(template.id, topSectionId, null);
+                if (!result.error && result.kind === "approval" && result.taskId) approvalAction(result.taskId, "setup");
+                // Locked fields (Oct 29 notes, batch 7): only the project's Owners and Admins set them.
+                if (!result.error && result.lockedLeftOut) {
+                  notify(
+                    `Task added. ${result.lockedLeftOut} locked field value${result.lockedLeftOut === 1 ? " was" : "s were"} left out: only project Owners and Admins can set ${result.lockedLeftOut === 1 ? "it" : "them"}.`,
+                  );
+                }
+                return result;
+              });
+            }}
+          >
+            <LayoutTemplate className="size-4 shrink-0 text-zinc-500" />
+            <span className="min-w-0 truncate">{template.name}</span>
+          </MenuItem>
+        ))
+      )}
+      <div role="separator" className="mx-0.5 my-1 h-px bg-zinc-100" />
+      <MenuItem
+        onClick={() => {
+          close();
+          router.push(`/projects/${projectId}/settings/templates`);
+        }}
+      >
+        <span className="text-zinc-500">Manage templates…</span>
       </MenuItem>
     </>
   );
