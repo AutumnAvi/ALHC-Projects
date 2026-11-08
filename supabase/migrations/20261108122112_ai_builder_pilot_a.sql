@@ -425,7 +425,9 @@ begin
      or new.brief_chars <> old.brief_chars or new.template_id is distinct from old.template_id then
     raise exception 'A run''s identity can''t change' using errcode = 'insufficient_privilege';
   end if;
-  writing := public.ai_builder_writing_run() = old.id;
+  -- Never null: outside ai_builder_apply / ai_builder_undo the setting is unset, and null would skip the
+  -- checks below.
+  writing := coalesce(public.ai_builder_writing_run() = old.id, false);
   if not writing and (
        new.project_id is distinct from old.project_id or new.created_ids is distinct from old.created_ids
        or new.fingerprint is distinct from old.fingerprint or new.applied_at is distinct from old.applied_at
@@ -516,48 +518,48 @@ declare
   ftype text;
   fld jsonb;
 begin
-  if jsonb_typeof(p) <> 'object' then return 'The proposal must be an object'; end if;
-  if jsonb_typeof(p -> 'name') <> 'string' or char_length(btrim(p ->> 'name')) not between 1 and 100 then
+  if coalesce(jsonb_typeof(p), 'missing') <> 'object' then return 'The proposal must be an object'; end if;
+  if coalesce(jsonb_typeof(p -> 'name'), 'missing') <> 'string' or coalesce(char_length(btrim(p ->> 'name')), 0) not between 1 and 100 then
     return 'The project name must be 1–100 characters';
   end if;
-  if p ? 'description' and jsonb_typeof(p -> 'description') not in ('string', 'null') then return 'Bad description'; end if;
+  if p ? 'description' and coalesce(jsonb_typeof(p -> 'description'), 'missing') not in ('string', 'null') then return 'Bad description'; end if;
   if char_length(coalesce(p ->> 'description', '')) > 2000 then return 'The description is too long'; end if;
 
-  if jsonb_typeof(p -> 'sections') <> 'array' or jsonb_array_length(p -> 'sections') not between 1 and 20 then
+  if coalesce(jsonb_typeof(p -> 'sections'), 'missing') <> 'array' or jsonb_array_length(p -> 'sections') not between 1 and 20 then
     return 'A proposal has 1–20 sections';
   end if;
   for s in select * from jsonb_array_elements(p -> 'sections') loop
-    if jsonb_typeof(s -> 'name') <> 'string' or char_length(btrim(s ->> 'name')) not between 1 and 100 then
+    if coalesce(jsonb_typeof(s -> 'name'), 'missing') <> 'string' or coalesce(char_length(btrim(s ->> 'name')), 0) not between 1 and 100 then
       return 'Each section name must be 1–100 characters';
     end if;
-    if lower(btrim(s ->> 'name')) = any (section_names) then return 'Section names must be different'; end if;
+    if coalesce(lower(btrim(s ->> 'name')) = any (section_names), false) then return 'Section names must be different'; end if;
     section_names := section_names || lower(btrim(s ->> 'name'));
   end loop;
 
-  if jsonb_typeof(coalesce(p -> 'fields', '[]')) <> 'array' or jsonb_array_length(coalesce(p -> 'fields', '[]')) > 10 then
+  if coalesce(jsonb_typeof(coalesce(p -> 'fields', '[]')), 'missing') <> 'array' or jsonb_array_length(coalesce(p -> 'fields', '[]')) > 10 then
     return 'A proposal has at most 10 fields';
   end if;
   for f in select * from jsonb_array_elements(coalesce(p -> 'fields', '[]')) loop
-    if jsonb_typeof(f -> 'name') <> 'string' or char_length(btrim(f ->> 'name')) not between 1 and 100 then
+    if coalesce(jsonb_typeof(f -> 'name'), 'missing') <> 'string' or coalesce(char_length(btrim(f ->> 'name')), 0) not between 1 and 100 then
       return 'Each field name must be 1–100 characters';
     end if;
-    if lower(btrim(f ->> 'name')) = any (field_names) then return 'Field names must be different'; end if;
+    if coalesce(lower(btrim(f ->> 'name')) = any (field_names), false) then return 'Field names must be different'; end if;
     field_names := field_names || lower(btrim(f ->> 'name'));
     ftype := f ->> 'type';
     if ftype is null or ftype not in ('text', 'number', 'date', 'single_select', 'multi_select') then
       return 'Unsupported field type';
     end if;
-    if jsonb_typeof(coalesce(f -> 'options', '[]')) <> 'array' then return 'Bad options'; end if;
+    if coalesce(jsonb_typeof(coalesce(f -> 'options', '[]')), 'missing') <> 'array' then return 'Bad options'; end if;
     if ftype in ('single_select', 'multi_select') then
       if jsonb_array_length(coalesce(f -> 'options', '[]')) not between 1 and 20 then
         return 'A choice field has 1–20 options';
       end if;
       option_names := '{}';
       for o in select * from jsonb_array_elements(f -> 'options') loop
-        if jsonb_typeof(o) <> 'string' or char_length(btrim(o #>> '{}')) not between 1 and 100 then
+        if coalesce(jsonb_typeof(o), 'missing') <> 'string' or coalesce(char_length(btrim(o #>> '{}')), 0) not between 1 and 100 then
           return 'Each option must be 1–100 characters';
         end if;
-        if lower(btrim(o #>> '{}')) = any (option_names) then return 'Option names must be different'; end if;
+        if coalesce(lower(btrim(o #>> '{}')) = any (option_names), false) then return 'Option names must be different'; end if;
         option_names := option_names || lower(btrim(o #>> '{}'));
       end loop;
     elsif jsonb_array_length(coalesce(f -> 'options', '[]')) > 0 then
@@ -565,19 +567,19 @@ begin
     end if;
   end loop;
 
-  if jsonb_typeof(coalesce(p -> 'tasks', '[]')) <> 'array' or jsonb_array_length(coalesce(p -> 'tasks', '[]')) > 50 then
+  if coalesce(jsonb_typeof(coalesce(p -> 'tasks', '[]')), 'missing') <> 'array' or jsonb_array_length(coalesce(p -> 'tasks', '[]')) > 50 then
     return 'A proposal has at most 50 starter tasks';
   end if;
   for t in select * from jsonb_array_elements(coalesce(p -> 'tasks', '[]')) loop
-    if jsonb_typeof(t -> 'title') <> 'string' or char_length(btrim(t ->> 'title')) not between 1 and 200 then
+    if coalesce(jsonb_typeof(t -> 'title'), 'missing') <> 'string' or coalesce(char_length(btrim(t ->> 'title')), 0) not between 1 and 200 then
       return 'Each task title must be 1–200 characters';
     end if;
-    if jsonb_typeof(t -> 'section') <> 'string' or not (lower(btrim(t ->> 'section')) = any (section_names)) then
+    if coalesce(jsonb_typeof(t -> 'section'), 'missing') <> 'string' or not coalesce(lower(btrim(t ->> 'section')) = any (section_names), false) then
       return 'Each task must name one of the proposal''s sections';
     end if;
     if char_length(coalesce(t ->> 'notes', '')) > 2000 then return 'Task notes are too long'; end if;
-    if t ? 'due_in_days' and jsonb_typeof(t -> 'due_in_days') <> 'null' then
-      if jsonb_typeof(t -> 'due_in_days') <> 'number' then
+    if t ? 'due_in_days' and coalesce(jsonb_typeof(t -> 'due_in_days'), 'missing') <> 'null' then
+      if coalesce(jsonb_typeof(t -> 'due_in_days'), 'missing') <> 'number' then
         return 'A due date is 0–365 days from today';
       end if;
       if (t ->> 'due_in_days')::numeric not between 0 and 365
@@ -585,15 +587,15 @@ begin
         return 'A due date is 0–365 days from today';
       end if;
     end if;
-    if jsonb_typeof(coalesce(t -> 'subtasks', '[]')) <> 'array' or jsonb_array_length(coalesce(t -> 'subtasks', '[]')) > 5 then
+    if coalesce(jsonb_typeof(coalesce(t -> 'subtasks', '[]')), 'missing') <> 'array' or jsonb_array_length(coalesce(t -> 'subtasks', '[]')) > 5 then
       return 'A task has at most 5 subtasks';
     end if;
     for o in select * from jsonb_array_elements(coalesce(t -> 'subtasks', '[]')) loop
-      if jsonb_typeof(o) <> 'string' or char_length(btrim(o #>> '{}')) not between 1 and 200 then
+      if coalesce(jsonb_typeof(o), 'missing') <> 'string' or coalesce(char_length(btrim(o #>> '{}')), 0) not between 1 and 200 then
         return 'Each subtask title must be 1–200 characters';
       end if;
     end loop;
-    if jsonb_typeof(coalesce(t -> 'values', '[]')) <> 'array' or jsonb_array_length(coalesce(t -> 'values', '[]')) > 10 then
+    if coalesce(jsonb_typeof(coalesce(t -> 'values', '[]')), 'missing') <> 'array' or jsonb_array_length(coalesce(t -> 'values', '[]')) > 10 then
       return 'Bad task values';
     end if;
     for v in select * from jsonb_array_elements(coalesce(t -> 'values', '[]')) loop
@@ -601,20 +603,20 @@ begin
       where lower(btrim(x ->> 'name')) = lower(btrim(v ->> 'field')) limit 1;
       if fld is null then return 'A task value names a field the proposal doesn''t have'; end if;
       ftype := fld ->> 'type';
-      if ftype = 'text' and (jsonb_typeof(v -> 'value') <> 'string' or char_length(v ->> 'value') > 1000) then
+      if ftype = 'text' and (coalesce(jsonb_typeof(v -> 'value'), 'missing') <> 'string' or char_length(v ->> 'value') > 1000) then
         return 'A text value must be text (up to 1,000 characters)';
-      elsif ftype = 'number' and jsonb_typeof(v -> 'value') <> 'number' then
+      elsif ftype = 'number' and coalesce(jsonb_typeof(v -> 'value'), 'missing') <> 'number' then
         return 'A number value must be a number';
-      elsif ftype = 'date' and (jsonb_typeof(v -> 'value') <> 'string' or (v ->> 'value') !~ '^\d{4}-\d{2}-\d{2}$') then
+      elsif ftype = 'date' and (coalesce(jsonb_typeof(v -> 'value'), 'missing') <> 'string' or (v ->> 'value') !~ '^\d{4}-\d{2}-\d{2}$') then
         return 'A date value must be YYYY-MM-DD';
       elsif ftype = 'date' and not public.ai_builder_is_date(v ->> 'value') then
         return 'A date value must be a real date';
-      elsif ftype = 'single_select' and (jsonb_typeof(v -> 'value') <> 'string' or not exists (
+      elsif ftype = 'single_select' and (coalesce(jsonb_typeof(v -> 'value'), 'missing') <> 'string' or not exists (
           select 1 from jsonb_array_elements_text(fld -> 'options') x where lower(btrim(x)) = lower(btrim(v ->> 'value')))) then
         return 'A choice value must be one of the field''s options';
-      elsif ftype = 'multi_select' and (case when jsonb_typeof(v -> 'value') <> 'array' then true else exists (
+      elsif ftype = 'multi_select' and (case when coalesce(jsonb_typeof(v -> 'value'), 'missing') <> 'array' then true else exists (
           select 1 from jsonb_array_elements(v -> 'value') y
-          where jsonb_typeof(y) <> 'string' or not exists (
+          where coalesce(jsonb_typeof(y), 'missing') <> 'string' or not exists (
             select 1 from jsonb_array_elements_text(fld -> 'options') x where lower(btrim(x)) = lower(btrim(y #>> '{}')))) end) then
         return 'Choice values must be the field''s options';
       end if;
@@ -730,7 +732,7 @@ begin
   if not found then
     raise exception 'Run not found' using errcode = 'no_data_found';
   end if;
-  if r.actor_id <> auth.uid() or not public.ai_pilot_admin(r.workspace_id) then
+  if r.actor_id is distinct from auth.uid() or not public.ai_pilot_admin(r.workspace_id) then
     raise exception 'Only the admin who made this proposal can apply it in the Testing data pilot' using errcode = 'insufficient_privilege';
   end if;
   if r.status in ('applied', 'undone') then
@@ -837,7 +839,7 @@ begin
   if not found then
     raise exception 'Run not found' using errcode = 'no_data_found';
   end if;
-  if r.actor_id <> auth.uid() or not public.ai_pilot_admin(r.workspace_id) then
+  if r.actor_id is distinct from auth.uid() or not public.ai_pilot_admin(r.workspace_id) then
     raise exception 'Only the admin who applied this run can undo it in the Testing data pilot' using errcode = 'insufficient_privilege';
   end if;
   if r.status = 'undone' then

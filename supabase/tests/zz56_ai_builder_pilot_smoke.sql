@@ -166,6 +166,11 @@ begin
   assert public.ai_builder_proposal_problem(ok) is null, 'a minimal proposal is fine';
   assert public.ai_builder_proposal_problem('[]') is not null, 'not an object';
   assert public.ai_builder_proposal_problem('{"name":"","sections":[{"name":"A"}]}') is not null, 'empty name';
+  assert public.ai_builder_proposal_problem('{"sections":[{"name":"A"}]}') is not null, 'missing name';
+  assert public.ai_builder_proposal_problem('{"name":"X"}') is not null, 'missing sections';
+  assert public.ai_builder_proposal_problem('{"name":"X","sections":[{}]}') is not null, 'section without a name';
+  assert public.ai_builder_proposal_problem('{"name":"X","sections":[{"name":"A"}],"tasks":[{"section":"A"}]}') is not null, 'task without a title';
+  assert public.ai_builder_proposal_problem('{"name":"X","sections":[{"name":"A"}],"tasks":[{"title":"T"}]}') is not null, 'task without a section';
   assert public.ai_builder_proposal_problem('{"name":"X","sections":[]}') is not null, 'no sections';
   assert public.ai_builder_proposal_problem('{"name":"X","sections":[{"name":"A"},{"name":"a"}]}') is not null, 'duplicate sections';
   assert public.ai_builder_proposal_problem('{"name":"X","sections":[{"name":"A"}],"fields":[{"name":"F","type":"formula","options":[]}]}') is not null, 'unsupported type';
