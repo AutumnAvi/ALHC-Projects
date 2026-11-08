@@ -87,6 +87,11 @@ export async function moveView(viewId: string, direction: -1 | 1): Promise<Actio
   return run((ctx) => viewsApi.moveView(ctx, viewId, direction));
 }
 
+// Nov 8 notes (batch 30): Customize → Tabs drags a view tab several places at once.
+export async function moveViewBy(viewId: string, steps: number): Promise<ActionResult> {
+  return run((ctx) => viewsApi.moveViewBy(ctx, viewId, steps));
+}
+
 // ---------------------------------------------------------------------------------------------
 // A project's tabs
 // ---------------------------------------------------------------------------------------------

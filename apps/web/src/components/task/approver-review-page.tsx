@@ -6,8 +6,9 @@ import { ApprovalDecisionForm } from "@/components/task/task-approval-banner";
 import { useServerAction } from "@/components/toast";
 import { decideApproval } from "@/lib/actions/approvals";
 import type { ApprovalRound, TaskAttachment } from "@alhc/core/api/task-pane/model";
-import { approverReviewFiles } from "@alhc/core/approver-review";
+import { approverReviewFiles, type ReviewTaskDetails } from "@alhc/core/approver-review";
 import { ApproverReview } from "./approver-review";
+import { ReviewTaskDetails as ReviewTaskDetailsPanel } from "./review-task-details";
 
 // The /approve/<task> page's client part. Nov 4 notes (batch 25, 159): this page is where an approver
 // decides (the Inbox, reminders, and emails only link here). A round with files is the full per-file
@@ -20,11 +21,13 @@ export function ApproverReviewPage(props: {
   attachments: TaskAttachment[];
   backHref: string;
   recipientName?: string | null;
+  // Nov 8 note 167: the task's own details (no comments). The page builds this from the task it already loaded.
+  details: ReviewTaskDetails;
 }) {
   const router = useRouter();
   const [pending, run] = useServerAction();
   const [rejecting, setRejecting] = useState(false);
-  const { backHref, recipientName, ...rest } = props;
+  const { backHref, recipientName, details, ...rest } = props;
   const hasFiles = approverReviewFiles(rest.round, rest.attachments).length > 0;
 
   function decide(decision: "approved" | "changes_requested" | "rejected", note: string) {
@@ -45,6 +48,7 @@ export function ApproverReviewPage(props: {
   if (!hasFiles) {
     return (
       <div className="mx-auto max-w-3xl space-y-4" data-approve-text-only="">
+        <ReviewTaskDetailsPanel details={details} />
         {finalText}
         <ApprovalDecisionForm idPrefix={`approve-${rest.taskId}`} pending={pending} recipientName={recipientName} onDecide={decide} />
       </div>
@@ -53,6 +57,7 @@ export function ApproverReviewPage(props: {
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
+      <ReviewTaskDetailsPanel details={details} />
       {finalText}
       <ApproverReview {...rest} variant="full" onDone={() => router.push(backHref)} />
       <div className="border-t border-zinc-200 pt-3" data-approve-reject="">

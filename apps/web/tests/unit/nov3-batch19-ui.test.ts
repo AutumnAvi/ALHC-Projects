@@ -58,6 +58,7 @@ test("the quick add never locks while an earlier add is saving", () => {
 });
 
 test("Customize → Emails shows Deliveries to Admins only", () => {
-  const source = fs.readFileSync("src/components/project/customize-panel.tsx", "utf8");
-  assert.match(source, /\{canManage \? <SubHeading>Deliveries<\/SubHeading> : null\}/);
+  // Nov 8 notes (batch 30): the delivery log is the Emails page's footer link, still Admin+ only.
+  const source = fs.readFileSync("src/components/project/customize/pages.tsx", "utf8");
+  assert.match(source, /\{canManage \? \(\s*<FooterLink\s*href=\{`\$\{base\}\/settings\/deliveries`\}/);
 });
