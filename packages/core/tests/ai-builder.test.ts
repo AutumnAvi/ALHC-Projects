@@ -292,7 +292,8 @@ test("generation: a valid answer is stored as version 1 of the run, with usage; 
   assert.equal(patch.input_tokens, 900);
   const insert = fake.calls.find((c) => c.target === "table:ai_builder_runs" && hasStep(c, "insert"))!;
   const row = step(insert, "insert")![0] as Record<string, unknown>;
-  assert.deepEqual(Object.keys(row).sort(), ["brief_chars", "request_key", "template_id", "workspace_id"], "the brief's text is never logged");
+  // Round 2 adds the run's kind (build); still never the brief's text.
+  assert.deepEqual(Object.keys(row).sort(), ["brief_chars", "kind", "request_key", "template_id", "workspace_id"], "the brief's text is never logged");
   assert.ok(!fake.calls.some((c) => /projects|tasks|sections|custom_fields|ai_builder_apply/.test(c.target)), "no project writes");
 });
 

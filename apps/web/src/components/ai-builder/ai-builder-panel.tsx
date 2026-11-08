@@ -1,22 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
-import { ArrowLeft, Loader2, Plus, Sparkles, Trash2, Undo2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Loader2, Sparkles, Undo2 } from "lucide-react";
 import {
+  AI_BUILDER_CALLS,
   AI_BUILDER_LIMITS,
-  AI_FIELD_TYPE_LABELS,
   conflictText,
   parseProposal,
   proposalCounts,
   type AiProposal,
 } from "@alhc/core/ai-builder";
+import {
+  describeDraftChanges,
+  draftToProposal,
+  proposalToDraft,
+  reconcileDraft,
+  renameProject,
+  setDescription,
+  type AiDraft,
+  type DraftPerson,
+} from "@alhc/core/ai-builder-draft";
 import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
-import { applyAiProposal, cancelAiRun, undoAiRun, type AiBuilderSetup } from "@/lib/actions/ai-builder";
+import { applyAiProposal, cancelAiRun, checkAiDraft, undoAiRun, type AiBuilderSetup } from "@/lib/actions/ai-builder";
+import { newDraftId } from "./draft-data-source";
+import { DraftPreview } from "./draft-preview";
+import { MicButton } from "./speech";
 
 // AI builder pilot (experimental, feat/ai-builder): describe a project, review an editable preview of
 // exactly what would be added, then Create. Nothing exists until Create; Cancel leaves nothing behind.
+// Round 2 (note 168): the preview is the app's real List and Board over an in-memory draft (click to edit
+// anything), with an AI box (type or dictate) that asks the small model for changes; the last AI change
+// can be undone here.
 // Undo moves the new project to the Trash while nothing in it has changed. Only workspace admins of the
 // Testing data pilot ever see this; the server checks that again on every step.
 
@@ -38,7 +54,7 @@ export function AiBuilderPanel({ setup, onBack }: { setup: AiBuilderSetup; onBac
   const [phase, setPhase] = useState<Phase>({ kind: "brief" });
   const [brief, setBrief] = useState("");
   const [templateId, setTemplateId] = useState<string>("");
-  const [draft, setDraft] = useState<AiProposal | null>(null);
+  const [draft, setDraft] = useState<AiDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [pending, run] = useServerAction();
@@ -60,7 +76,7 @@ export function AiBuilderPanel({ setup, onBack }: { setup: AiBuilderSetup; onBac
         setError(body.error ?? "The proposal couldn’t be made. Try again.");
         return;
       }
-      setDraft(body.proposal);
+      setDraft(proposalToDraft(body.proposal, newDraftId));
       setPhase({ kind: "review", runId: body.runId, version: body.version ?? 1 });
     } catch {
       setError("The proposal couldn’t be made. Check your connection and try again.");
@@ -70,12 +86,13 @@ export function AiBuilderPanel({ setup, onBack }: { setup: AiBuilderSetup; onBac
     }
   }
 
-  const check = useMemo(() => (draft ? parseProposal(draft) : null), [draft]);
+  const proposal = useMemo(() => (draft ? draftToProposal(draft) : null), [draft]);
+  const check = useMemo(() => (proposal ? parseProposal(proposal) : null), [proposal]);
 
   async function apply() {
-    if (phase.kind !== "review" || !draft || !check?.ok || inFlight.current) return;
+    if (phase.kind !== "review" || !proposal || !check?.ok || inFlight.current) return;
     inFlight.current = true;
-    const res = (await run(() => applyAiProposal({ runId: phase.runId, proposal: draft, version: phase.version, localToday: localToday() }))) as
+    const res = (await run(() => applyAiProposal({ runId: phase.runId, proposal, version: phase.version, localToday: localToday() }))) as
       | { error?: string; projectId?: string }
       | undefined;
     inFlight.current = false;
@@ -101,7 +118,7 @@ export function AiBuilderPanel({ setup, onBack }: { setup: AiBuilderSetup; onBac
   if (setup.access !== "ready") return null;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+    <div className={`mx-auto w-full px-4 py-6 sm:px-6 ${phase.kind === "review" ? "max-w-6xl" : "max-w-3xl"}`}>
       <div className="mb-4 flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-700">
           <Sparkles className="size-5" aria-hidden />
@@ -136,8 +153,11 @@ export function AiBuilderPanel({ setup, onBack }: { setup: AiBuilderSetup; onBac
               placeholder="A spring open house at two facilities: invitations, catering, signage, and a follow-up survey."
               className="field h-auto w-full py-2"
             />
-            <span className="mt-1 block text-right text-2xs text-zinc-500">
-              {brief.length} / {AI_BUILDER_LIMITS.briefMaxChars}
+            <span className="mt-1 flex items-center justify-between text-2xs text-zinc-500">
+              <MicButton text={brief} onText={(next) => setBrief(next.slice(0, AI_BUILDER_LIMITS.briefMaxChars))} disabled={generating || !setup.configured} />
+              <span>
+                {brief.length} / {AI_BUILDER_LIMITS.briefMaxChars}
+              </span>
             </span>
           </label>
           {setup.templates.length > 0 ? (
@@ -173,11 +193,15 @@ export function AiBuilderPanel({ setup, onBack }: { setup: AiBuilderSetup; onBac
         </div>
       ) : null}
 
-      {phase.kind === "review" && draft ? (
-        <ProposalEditor
+      {phase.kind === "review" && draft && proposal ? (
+        <DraftReview
+          runId={phase.runId}
           draft={draft}
-          onChange={setDraft}
+          setDraft={setDraft}
+          proposal={proposal}
           problems={check && !check.ok ? check.problems : []}
+          members={setup.members}
+          configured={setup.configured}
           busy={pending}
           onApply={apply}
           onCancel={cancel}
@@ -221,199 +245,206 @@ export function AiBuilderPanel({ setup, onBack }: { setup: AiBuilderSetup; onBac
   );
 }
 
-function ProposalEditor({
+type AiChange = { before: AiDraft; changes: string[] };
+
+function DraftReview({
+  runId,
   draft,
-  onChange,
+  setDraft,
+  proposal,
   problems,
+  members: pilotMembers,
+  configured,
   busy,
   onApply,
   onCancel,
 }: {
-  draft: AiProposal;
-  onChange: (next: AiProposal) => void;
+  runId: string;
+  draft: AiDraft;
+  setDraft: (draft: AiDraft) => void;
+  proposal: AiProposal;
   problems: string[];
+  members: AiBuilderSetup["members"];
+  configured: boolean;
   busy: boolean;
   onApply: () => void;
   onCancel: () => void;
 }) {
-  const counts = proposalCounts(draft);
-  const set = (patch: Partial<AiProposal>) => onChange({ ...draft, ...patch });
-  const sectionOptions = draft.sections.map((s) => ({ value: s.name, label: s.name }));
-  const used = (section: string) => draft.tasks.some((t) => t.section.toLowerCase() === section.toLowerCase());
+  const [today] = useState(localToday);
+  const members = useMemo<DraftPerson[]>(() => pilotMembers.map((m) => ({ id: m.id, name: m.me ? `${m.name} (you)` : m.name, email: m.email })), [pilotMembers]);
+  const counts = proposalCounts(proposal);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [changing, setChanging] = useState(false);
+  const [changeError, setChangeError] = useState<string | null>(null);
+  const [lastChange, setLastChange] = useState<AiChange | null>(null);
+  const inFlight = useRef(false);
+
+  // The server's check of the edited draft (the same check Create runs), a moment after the last edit.
+  const [serverProblems, setServerProblems] = useState<{ for: string; problems: string[] } | null>(null);
+  const key = JSON.stringify(proposal);
+  useEffect(() => {
+    if (problems.length) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      checkAiDraft(proposal)
+        .then((res) => {
+          if (live) setServerProblems({ for: key, problems: res.error ? [res.error] : (res.data?.problems ?? []) });
+        })
+        .catch(() => undefined);
+    }, 700);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [key, proposal, problems.length]);
+  const shown = problems.length ? problems : serverProblems?.for === key ? serverProblems.problems : [];
+  const checking = !problems.length && serverProblems?.for !== key;
+
+  async function askAi() {
+    const text = instruction.trim();
+    if (!text || inFlight.current) return;
+    inFlight.current = true;
+    setChanging(true);
+    setChangeError(null);
+    const before = draft;
+    try {
+      const res = await fetch("/api/ai-builder/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestKey: requestKey(), runId, proposal: draftToProposal(before), instruction: text }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { proposal?: AiProposal; error?: string };
+      if (!res.ok || !body.proposal) {
+        setChangeError(body.error ?? "The AI couldn’t change the draft. Try again.");
+        return;
+      }
+      const next = reconcileDraft(before, proposalToDraft(body.proposal, newDraftId));
+      const changes = describeDraftChanges(before, next);
+      setDraft(next);
+      setLastChange({ before, changes: changes.length ? changes : ["Nothing visible changed"] });
+      setInstruction("");
+    } catch {
+      setChangeError("The AI couldn’t change the draft. Check your connection and try again.");
+    } finally {
+      inFlight.current = false;
+      setChanging(false);
+    }
+  }
 
   return (
-    <div className="space-y-5">
-      <section aria-labelledby="ai-proposal-project" className="space-y-2">
-        <h3 id="ai-proposal-project" className="text-sm font-semibold text-zinc-900">
-          Project
-        </h3>
-        <input aria-label="Project name" value={draft.name} onChange={(e) => set({ name: e.currentTarget.value })} className="field w-full" />
+    <div className="space-y-4">
+      <section aria-label="Project" className="space-y-1">
+        <input
+          aria-label="Project name"
+          defaultValue={draft.name}
+          key={`name:${draft.name}`}
+          maxLength={AI_BUILDER_LIMITS.nameMax}
+          onBlur={(e) => {
+            const res = renameProject(draft, e.currentTarget.value);
+            setNameError(res.ok ? null : res.error);
+            if (res.ok && res.draft.name !== draft.name) setDraft(res.draft);
+          }}
+          className="w-full rounded-md border border-transparent bg-transparent px-1 text-xl font-semibold tracking-tight text-zinc-900 hover:border-zinc-200 focus:border-zinc-300"
+        />
         <textarea
           aria-label="Description"
-          value={draft.description}
-          onChange={(e) => set({ description: e.currentTarget.value })}
+          defaultValue={draft.description}
+          key={`description:${draft.description}`}
           rows={2}
-          className="field h-auto w-full py-2"
+          placeholder="Add a description"
+          maxLength={AI_BUILDER_LIMITS.descriptionMax}
+          onBlur={(e) => {
+            const res = setDescription(draft, e.currentTarget.value);
+            if (res.ok && res.draft.description !== draft.description) setDraft(res.draft);
+          }}
+          className="w-full resize-none rounded-md border border-transparent bg-transparent px-1 py-1 text-sm text-zinc-700 hover:border-zinc-200 focus:border-zinc-300"
         />
-      </section>
-
-      <section aria-labelledby="ai-proposal-sections" className="space-y-2">
-        <h3 id="ai-proposal-sections" className="text-sm font-semibold text-zinc-900">
-          Sections ({draft.sections.length})
-        </h3>
-        <ul className="space-y-1">
-          {draft.sections.map((s, i) => (
-            <li key={i} className="flex items-center gap-2">
-              <input
-                aria-label={`Section ${i + 1}`}
-                value={s.name}
-                onChange={(e) => {
-                  const name = e.currentTarget.value;
-                  const old = s.name;
-                  set({
-                    sections: draft.sections.map((x, j) => (j === i ? { name } : x)),
-                    tasks: draft.tasks.map((t) => (t.section === old ? { ...t, section: name } : t)),
-                  });
-                }}
-                className="control flex-1"
-              />
-              <button
-                type="button"
-                aria-label={`Remove section ${s.name}`}
-                data-tooltip={used(s.name) ? "Move or remove its tasks first" : "Remove"}
-                disabled={used(s.name) || draft.sections.length <= 1}
-                onClick={() => set({ sections: draft.sections.filter((_, j) => j !== i) })}
-                className="btn-icon"
-              >
-                <X className="size-4" />
-              </button>
-            </li>
-          ))}
-        </ul>
-        {draft.sections.length < AI_BUILDER_LIMITS.sectionsMax ? (
-          <button type="button" onClick={() => set({ sections: [...draft.sections, { name: `Section ${draft.sections.length + 1}` }] })} className="btn-ghost h-7 px-2">
-            <Plus className="size-4" aria-hidden />
-            Add section
-          </button>
+        {nameError ? (
+          <p role="alert" className="text-sm text-red-700">
+            {nameError}
+          </p>
         ) : null}
       </section>
 
-      <section aria-labelledby="ai-proposal-fields" className="space-y-2">
-        <h3 id="ai-proposal-fields" className="text-sm font-semibold text-zinc-900">
-          Fields ({draft.fields.length})
-        </h3>
-        {draft.fields.length === 0 ? <p className="text-sm text-zinc-500">No custom fields.</p> : null}
-        <ul className="space-y-2">
-          {draft.fields.map((f, i) => (
-            <li key={i} className="rounded-md border border-zinc-200 p-2">
-              <div className="flex items-center gap-2">
-                <input
-                  aria-label={`Field ${i + 1} name`}
-                  value={f.name}
-                  onChange={(e) => {
-                    const name = e.currentTarget.value;
-                    set({
-                      fields: draft.fields.map((x, j) => (j === i ? { ...x, name } : x)),
-                      tasks: draft.tasks.map((t) => ({ ...t, values: t.values.map((v) => (v.field === f.name ? { ...v, field: name } : v)) })),
-                    });
-                  }}
-                  className="control flex-1"
-                />
-                <span className="chip">{AI_FIELD_TYPE_LABELS[f.type]}</span>
-                <button
-                  type="button"
-                  aria-label={`Remove field ${f.name}`}
-                  data-tooltip="Remove"
-                  onClick={() =>
-                    set({
-                      fields: draft.fields.filter((_, j) => j !== i),
-                      tasks: draft.tasks.map((t) => ({ ...t, values: t.values.filter((v) => v.field !== f.name) })),
-                    })
-                  }
-                  className="btn-icon"
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-              {f.options.length > 0 ? <p className="mt-1 text-2xs text-zinc-600">Options: {f.options.join(", ")}</p> : null}
-            </li>
-          ))}
-        </ul>
-      </section>
+      <DraftPreview draftKey={runId} draft={draft} setDraft={setDraft} today={today} members={members} />
 
-      <section aria-labelledby="ai-proposal-tasks" className="space-y-2">
-        <h3 id="ai-proposal-tasks" className="text-sm font-semibold text-zinc-900">
-          Starter tasks ({draft.tasks.length})
+      <section aria-labelledby="ai-change-title" className="rounded-lg border border-violet-200 bg-violet-50/40 p-3">
+        <h3 id="ai-change-title" className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-zinc-900">
+          <Sparkles className="size-4 text-violet-700" aria-hidden />
+          Ask AI to change the draft
         </h3>
-        <ul className="space-y-2">
-          {draft.tasks.map((t, i) => {
-            const setTask = (patch: Partial<AiProposal["tasks"][number]>) =>
-              set({ tasks: draft.tasks.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
-            return (
-              <li key={i} className="space-y-1 rounded-md border border-zinc-200 p-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <input aria-label={`Task ${i + 1} title`} value={t.title} onChange={(e) => setTask({ title: e.currentTarget.value })} className="control min-w-48 flex-1" />
-                  <SmartPicker label={`Task ${i + 1} section`} value={t.section} onChange={(section) => setTask({ section })} options={sectionOptions} />
-                  <label className="flex items-center gap-1 text-2xs text-zinc-600">
-                    Due in
-                    <input
-                      type="number"
-                      min={0}
-                      max={AI_BUILDER_LIMITS.dueInDaysMax}
-                      aria-label={`Task ${i + 1} due in days`}
-                      value={t.due_in_days ?? ""}
-                      onChange={(e) => setTask({ due_in_days: e.currentTarget.value === "" ? null : Math.trunc(Number(e.currentTarget.value)) })}
-                      className="control w-16"
-                    />
-                    days
-                  </label>
-                  <button
-                    type="button"
-                    aria-label={`Remove task ${t.title}`}
-                    data-tooltip="Remove"
-                    onClick={() => set({ tasks: draft.tasks.filter((_, j) => j !== i) })}
-                    className="btn-icon"
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
-                </div>
-                {t.notes ? <p className="whitespace-pre-line text-2xs text-zinc-600">{t.notes}</p> : null}
-                {t.values.length || t.subtasks.length ? (
-                  <div className="flex flex-wrap gap-1">
-                    {t.values.map((v, k) => (
-                      <span key={`v${k}`} className="chip">
-                        {v.field}: {Array.isArray(v.value) ? v.value.join(", ") : String(v.value)}
-                      </span>
-                    ))}
-                    {t.subtasks.map((s, k) => (
-                      <span key={`s${k}`} className="chip">
-                        Subtask: {s}
-                        <button
-                          type="button"
-                          aria-label={`Remove subtask ${s}`}
-                          onClick={() => setTask({ subtasks: t.subtasks.filter((_, m) => m !== k) })}
-                          className="ml-1 text-zinc-500 hover:text-zinc-800"
-                        >
-                          <X className="size-3" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void askAi();
+          }}
+          className="space-y-2"
+        >
+          <textarea
+            aria-label="What should change?"
+            value={instruction}
+            onChange={(e) => setInstruction(e.currentTarget.value.slice(0, AI_BUILDER_LIMITS.instructionMaxChars))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void askAi();
+              }
+            }}
+            rows={2}
+            disabled={changing || !configured}
+            placeholder="Add a QA section before Done, give every design task to a Designer placeholder, and push due dates a week later."
+            className="field h-auto w-full bg-white py-2"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <MicButton text={instruction} onText={(next) => setInstruction(next.slice(0, AI_BUILDER_LIMITS.instructionMaxChars))} disabled={changing || !configured} />
+            <button type="submit" disabled={changing || !instruction.trim() || !configured} className="btn-primary h-8 px-3">
+              {changing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Sparkles className="size-4" aria-hidden />}
+              {changing ? "Changing…" : "Change with AI"}
+            </button>
+            <span className="text-2xs text-zinc-500">
+              Uses the faster model ({AI_BUILDER_CALLS.edit.model}). Your edits so far are sent with the request; nothing is created.
+            </span>
+          </div>
+        </form>
+        {changeError ? (
+          <p role="alert" className="mt-2 text-sm text-red-700">
+            {changeError}
+          </p>
+        ) : null}
+        {lastChange ? (
+          <div role="status" className="mt-2 rounded-md border border-zinc-200 bg-white p-2 text-sm text-zinc-800">
+            <div className="flex items-start justify-between gap-2">
+              <p className="font-medium">The AI changed the draft:</p>
+              <button
+                type="button"
+                className="btn-ghost h-7 shrink-0 px-2"
+                onClick={() => {
+                  setDraft(lastChange.before);
+                  setLastChange(null);
+                }}
+              >
+                <Undo2 className="size-4" aria-hidden />
+                Undo AI change
+              </button>
+            </div>
+            <ul className="mt-1 list-disc pl-5 text-zinc-700">
+              {lastChange.changes.map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
 
       <div className="sticky bottom-0 -mx-4 border-t border-zinc-200 bg-white px-4 py-3 sm:-mx-6 sm:px-6">
         <p className="mb-2 text-sm text-zinc-700">
           Create will add 1 private project with {counts.sections} sections, {counts.fields} fields ({counts.options} options), {counts.tasks} tasks,{" "}
-          {counts.subtasks} subtasks, and {counts.values} field values. No automations, emails, or notifications.
+          {counts.subtasks} subtasks, and {counts.values} field values. No automations or emails; assigned teammates get the usual assignment notice.
         </p>
-        {problems.length ? (
+        {shown.length ? (
           <ul role="alert" className="mb-2 list-disc pl-5 text-sm text-red-700">
-            {problems.slice(0, 5).map((p) => (
+            {shown.slice(0, 5).map((p) => (
               <li key={p}>{p}</li>
             ))}
           </ul>
@@ -422,10 +453,11 @@ function ProposalEditor({
           <button type="button" onClick={onCancel} disabled={busy} className="btn-secondary h-8 px-3">
             Cancel
           </button>
-          <button type="button" onClick={onApply} disabled={busy || problems.length > 0} className="btn-primary h-8 px-3">
+          <button type="button" onClick={onApply} disabled={busy || changing || shown.length > 0} className="btn-primary h-8 px-3">
             {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
             Create project
           </button>
+          {checking ? <span className="text-2xs text-zinc-500">Checking…</span> : null}
         </div>
       </div>
     </div>

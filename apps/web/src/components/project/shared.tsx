@@ -23,8 +23,7 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { useApprovalAction } from "@/components/task/approval-action";
 import { withPendingSection } from "./pending-sections";
 import { usePendingCreates, withPendingCreate } from "@/lib/pending-creates";
-import { createSection, deleteSection, renameSection } from "@/lib/actions/projects";
-import { createTask } from "@/lib/actions/tasks";
+import { useProjectData } from "./project-data-source";
 import { createTaskFromTemplate } from "@/lib/actions/templates";
 import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, type TaskKind } from "@alhc/core/task-kinds";
 import type { Section } from "@alhc/core/api/projects/model";
@@ -50,6 +49,7 @@ export function SectionTitle({
   count: number;
 }) {
   const [, run] = useServerAction();
+  const data = useProjectData();
   // Oct 27 notes (batch 5): while the owner has locked the sections, only owners rename them.
   const { canEditSections, locked } = useSectionPermissions();
   const lock = locked ? (
@@ -81,7 +81,7 @@ export function SectionTitle({
         onBlur={(e) => {
           const name = e.currentTarget.value.trim();
           if (!name) e.currentTarget.value = section.name;
-          else if (name !== section.name) run(() => renameSection(section.id, name));
+          else if (name !== section.name) run(() => data.renameSection(section.id, name));
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
@@ -180,6 +180,7 @@ function SectionMenu({
   close: () => void;
 }) {
   const [pending, run] = useServerAction();
+  const data = useProjectData();
   // Adding a section asks for its name in the same panel; before = the section it goes in front of.
   const [adding, setAdding] = useState<{ before: string | null; label: string } | null>(null);
   const vertical = orientation === "vertical";
@@ -203,7 +204,7 @@ function SectionMenu({
           const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
           if (!name) return;
           close();
-          run(() => withPendingSection(projectId, name, adding.before, () => createSection(projectId, name, adding.before)));
+          run(() => withPendingSection(projectId, name, adding.before, () => data.createSection(projectId, name, adding.before)));
         }}
       >
         <label htmlFor={`new-section-${section.id}`} className="mb-1 block text-xs font-medium text-zinc-600">
@@ -277,7 +278,7 @@ function SectionMenu({
         disabled={pending || taskCount > 0}
         onClick={() => {
           close();
-          run(() => deleteSection(section.id));
+          run(() => data.deleteSection(section.id));
         }}
       >
         <Trash2 className="size-4" /> Delete section
@@ -382,6 +383,7 @@ export function AddTaskInput({
   onClose?: () => void;
 }) {
   const [pending, run] = useServerAction();
+  const data = useProjectData();
   const notify = useNotify();
   const [open, setOpen] = useState(defaultOpen);
   const [kind, setKind] = useState<TaskKind>(defaultKind);
@@ -429,7 +431,7 @@ export function AddTaskInput({
           const result = await withPendingCreate(
             pendingTaskScope(projectId, sectionId),
             title,
-            () => createTask(projectId, sectionId, title, kind, atTop),
+            () => data.createTask(projectId, sectionId, title, kind, atTop),
             { atTop, kind },
           );
           // Nov 1 notes, batch 9a: a new approval task opens in the pane with the guided setup.
@@ -531,6 +533,7 @@ export function AddTaskInput({
 
 export function AddSection({ projectId, variant }: { projectId: string; variant: "list" | "board" }) {
   const [pending, run] = useServerAction();
+  const data = useProjectData();
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // Editors+, and only owners while the sections are locked (Oct 27 notes, batch 5).
@@ -563,7 +566,7 @@ export function AddSection({ projectId, variant }: { projectId: string; variant:
         // Nov 2 notes (batch 14, 92): the section shows at once; the box stays open for the next one.
         if (inputRef.current) inputRef.current.value = "";
         setOpen(false);
-        run(() => withPendingSection(projectId, name, null, () => createSection(projectId, name)));
+        run(() => withPendingSection(projectId, name, null, () => data.createSection(projectId, name)));
       }}
       className={variant === "board" ? "w-70 shrink-0 self-start rounded-xl bg-zinc-100/70 p-2" : "max-w-sm"}
     >
