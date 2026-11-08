@@ -27,6 +27,19 @@ const PUBLIC_PATHS = [
   "/review",
 ];
 
+// AI builder pilot ONLY (feat/ai-builder, never merged): on this branch's Vercel Preview, sign visitors in
+// automatically as a dedicated test admin whose only membership is the "Testing data" workspace. Needs
+// VERCEL_ENV === "preview" (Vercel sets it; never "preview" on production or locally) AND
+// ALHC_PREVIEW_AUTOLOGIN=1 plus the account's email/password, all set for Preview on this branch only.
+function previewAutoLogin(): { email: string; password: string } | null {
+  if (process.env.VERCEL_ENV !== "preview") return null;
+  if (process.env.ALHC_PREVIEW_AUTOLOGIN !== "1") return null;
+  const email = process.env.ALHC_PREVIEW_AUTOLOGIN_EMAIL;
+  const password = process.env.ALHC_PREVIEW_AUTOLOGIN_PASSWORD;
+  if (!email || !password) return null;
+  return { email, password };
+}
+
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
@@ -58,7 +71,32 @@ export async function updateSession(request: NextRequest) {
   // getClaims() validates the JWT and refreshes an expired session; do not run code between
   // client creation and this call.
   const { data } = await supabase.auth.getClaims();
-  const signedIn = Boolean(data?.claims?.sub);
+  let signedIn = Boolean(data?.claims?.sub);
+
+  const auto = previewAutoLogin();
+  if (auto && !signedIn && !request.nextUrl.pathname.startsWith("/api/")) {
+    const { error } = await supabase.auth.signInWithPassword(auto);
+    if (!error) {
+      signedIn = true;
+      // Reload the same page so server components see the new session cookies.
+      const target = request.nextUrl.clone();
+      if (target.pathname === "/login") {
+        target.pathname = "/";
+        target.search = "";
+      }
+      const redirect = NextResponse.redirect(target);
+      for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
+      return redirect;
+    }
+  }
+  if (auto && signedIn && request.nextUrl.pathname === "/login") {
+    const home = request.nextUrl.clone();
+    home.pathname = "/";
+    home.search = "";
+    const redirect = NextResponse.redirect(home);
+    for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
+    return redirect;
+  }
 
   if (!signedIn && !isPublicPath(request.nextUrl.pathname)) {
     const loginUrl = request.nextUrl.clone();
