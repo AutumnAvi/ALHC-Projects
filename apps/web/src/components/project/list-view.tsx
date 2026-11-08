@@ -36,9 +36,7 @@ import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { useNotify, useServerAction } from "@/components/toast";
 import { EmptyState } from "@/components/ui";
-import { moveTask, placeTask, setTaskCompleted, updateSubtask, updateTask } from "@/lib/actions/tasks";
-import { saveListCollapsedGroups, saveListColumnWidths } from "@/lib/actions/views";
-import { setFieldLocked, setFieldValue } from "@/lib/actions/fields";
+import { useProjectData } from "./project-data-source";
 import { type ActionResult } from "@alhc/core/api/core/result";
 import {
   MAX_COLUMN_WIDTH,
@@ -197,6 +195,8 @@ export function ListView({
   const [, startTransition] = useTransition();
   const bulkEdit = useBulkEdit();
   const { canEdit, canManage } = useProjectPermissions();
+  // Where writes go: the Server Actions, or an AI builder draft's in-memory source (project-data-source.tsx).
+  const data = useProjectData();
   const who = canEdit ? "editor" : "viewer";
   // Oct 29 notes (batch 7): who may lock a field (a shared one: its publishing project's Owners / Admins).
   const fieldSharing = useFieldSharing();
@@ -218,18 +218,18 @@ export function ListView({
       savedCollapsed.current = collapsedAll;
       unsavedCollapsed.current = null;
       startTransition(async () => {
-        const result = await saveListCollapsedGroups(projectId, [...collapsedAll]);
+        const result = await data.saveListCollapsedGroups(projectId, [...collapsedAll]);
         if (result.error) notify(result.error);
       });
     }, 300);
     return () => clearTimeout(timer);
-  }, [collapsedAll, projectId, notify]);
+  }, [collapsedAll, projectId, notify, data]);
   useEffect(
     () => () => {
       // Leaving within the moment before a save: save now (fire and forget).
-      if (unsavedCollapsed.current) void saveListCollapsedGroups(projectId, [...unsavedCollapsed.current]);
+      if (unsavedCollapsed.current) void data.saveListCollapsedGroups(projectId, [...unsavedCollapsed.current]);
     },
-    [projectId],
+    [projectId, data],
   );
   const pages = useGroupPages();
   const showMorePage = usePagedShowMore();
@@ -307,7 +307,7 @@ export function ListView({
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       startTransition(async () => {
-        const result = await saveListColumnWidths(projectId, widthsRef.current);
+        const result = await data.saveListColumnWidths(projectId, widthsRef.current);
         if (result.error) notify(result.error);
       });
     }, 400);
@@ -352,14 +352,14 @@ export function ListView({
     // A blocked task has a lock instead of a checkbox; never try (and undo) completing it.
     if (completed && blockedCount(task) > 0) return;
     run(
-      trackCompletion(task.id, completed, () => setTaskCompleted(task.id, completed)),
+      trackCompletion(task.id, completed, () => data.setTaskCompleted(task.id, completed)),
       () => applyChange({ type: "complete", taskId: task.id, completed }),
     );
   };
 
   const rename = (task: ProjectTask, title: string) =>
     run(
-      () => updateTask(task.id, { title }),
+      () => data.updateTask(task.id, { title }),
       () => applyChange({ type: "title", taskId: task.id, title }),
     );
 
@@ -388,20 +388,20 @@ export function ListView({
   const assign = (task: ProjectTask, assigneeId: string | null) => {
     if (assigneeId === task.assigneeId) return;
     run(
-      () => updateTask(task.id, { assigneeId }),
+      () => data.updateTask(task.id, { assigneeId }),
       () => applyChange({ type: "assign", taskId: task.id, assigneeId }),
     );
   };
   const setField = (task: ProjectTask, field: FieldDef, value: Json) =>
     run(
-      () => setFieldValue(task.id, field.id, value),
+      () => data.setFieldValue(task.id, field.id, value),
       () => applyChange({ type: "field", taskId: task.id, fieldId: field.id, value }),
     );
   const moveToSection = (task: ProjectTask, sectionId: string | null) => {
     if (sectionId === task.sectionId) return;
     const last = optimisticTasks.filter((t) => t.sectionId === sectionId && t.id !== task.id).at(-1)?.sortOrder ?? 0;
     run(
-      () => moveTask(task.id, projectId, sectionId),
+      () => data.moveTask(task.id, projectId, sectionId),
       () => applyChange({ type: "move", taskId: task.id, sectionId, sortOrder: last + 1024 }),
     );
   };
@@ -414,6 +414,18 @@ export function ListView({
   ) => {
     const dates = mergeDateEdit(task, edit, task.kind === "milestone");
     if (!dates) return;
+    // An AI builder draft has no dependencies to shift: its dates change in place.
+    if (data.draft) {
+      const draft = data.draft;
+      close();
+      run(
+        () => draft.changeDates(task.id, dates),
+        () => {
+          if (tasksById.has(task.id)) applyChange({ type: "dates", taskId: task.id, startOn: dates.startOn, dueOn: dates.dueOn });
+        },
+      );
+      return;
+    }
     const before = new Map<string, RowPatch | undefined>();
     shift.changeDates(task, dates, {
       projectId,
@@ -448,11 +460,11 @@ export function ListView({
     toggle(subtask) {
       const completed = !subtask.completedAt;
       if (completed && blockedCount(subtask) > 0) return;
-      editSubtask(subtask, { completedAt: completed ? new Date().toISOString() : null }, trackCompletion(subtask.id, completed, () => setTaskCompleted(subtask.id, completed)));
+      editSubtask(subtask, { completedAt: completed ? new Date().toISOString() : null }, trackCompletion(subtask.id, completed, () => data.setTaskCompleted(subtask.id, completed)));
     },
-    rename: (subtask, title) => editSubtask(subtask, { title }, () => updateSubtask(subtask.id, { title })),
+    rename: (subtask, title) => editSubtask(subtask, { title }, () => data.updateSubtask(subtask.id, { title })),
     assign(subtask, assigneeId) {
-      if (assigneeId !== subtask.assigneeId) editSubtask(subtask, { assigneeId }, () => updateTask(subtask.id, { assigneeId }));
+      if (assigneeId !== subtask.assigneeId) editSubtask(subtask, { assigneeId }, () => data.updateTask(subtask.id, { assigneeId }));
     },
     dates: changeRowDates,
     expand: (id) => trees.toggle(id),
@@ -548,14 +560,21 @@ export function ListView({
         : null,
     );
     run(
-      () => placeTask(task.id, projectId, sectionId, beforeId),
+      () => data.placeTask(task.id, projectId, sectionId, beforeId),
       () => applyChange({ type: "move", taskId: task.id, sectionId, sortOrder }),
     );
   }
 
   // Nov 2 notes (batch 14, 94): a section move is a view change (section_order in the draft config).
   function moveSection(sectionId: string, beforeId: string | null) {
-    if (beforeId === sectionId || !viewConfig) return;
+    if (beforeId === sectionId) return;
+    // An AI builder draft's sections move in the draft itself (it has no saved views).
+    if (data.draft) {
+      const draft = data.draft;
+      run(() => draft.moveSection(sectionId, beforeId));
+      return;
+    }
+    if (!viewConfig) return;
     viewConfig.apply(withSectionMoved(config, optimisticSections, sectionId, beforeId, (s) => !isPendingSection(s)));
   }
 
@@ -644,10 +663,10 @@ export function ListView({
             ? undefined
             : () => applyColumns(columns.map((c, i) => (i === index + 1 ? column : i === index ? columns[index + 1] : c)))
         }
-        onEditField={field && canEdit ? () => setEditingFieldId(field.id) : undefined}
+        onEditField={field && canEdit ? () => (data.draft ? data.draft.editField(field.id) : setEditingFieldId(field.id)) : undefined}
         lock={
           field && fieldLockManageable(field, fieldSharing[field.id], { canManage })
-            ? { locked: Boolean(field.locked), toggle: () => run(() => setFieldLocked(field.id, !field.locked)) }
+            ? { locked: Boolean(field.locked), toggle: () => run(() => data.setFieldLocked(field.id, !field.locked)) }
             : null
         }
       />
@@ -683,7 +702,7 @@ export function ListView({
           {canEdit ? (
             <button
               type="button"
-              onClick={() => setAddingField(true)}
+              onClick={() => (data.draft ? data.draft.addField() : setAddingField(true))}
               aria-label="Add a field"
               title="Add field"
               className="btn-icon size-6 text-zinc-400 hover:text-zinc-700"

@@ -139,3 +139,103 @@ audit record; running it again answers `already_cleaned`.
    “Changed since it was created: tasks or subtasks.”
 6. Without `ANTHROPIC_API_KEY`: the panel says it isn't configured.
 7. 11 generations within an hour: the 11th is refused with the limit message.
+
+## Round 2 (branch `feat/ai-builder-p2` → `feat/ai-builder`; draft PR, do not merge to main)
+
+Avi's notes 168–170. Migration `supabase/migrations/20261108140817_ai_builder_round2_a.sql` (made with
+`supabase migration new`; additive, **no tail**, **not applied**), suite
+`supabase/tests/zz57_ai_builder_round2_smoke.sql`. No new client SECURITY DEFINER function (suite 60
+unchanged); nothing for anon. Everything in phase 1 still holds: the registry + `ai_pilot_admin()` gate,
+the signed-in person's own client (no service role), idempotent all-or-nothing Apply, ownership-checked
+Undo, the run log, database-enforced limits, and the brief / instruction as data.
+
+### What's new
+
+- **A preview that looks like the project (168).** The draft is drawn with the app's own `ListView` and
+  `BoardView` (List / Board toggle), not a form. The views read their writes from
+  `useProjectData()` (`apps/web/src/components/project/project-data-source.tsx`); outside the AI builder
+  that is exactly the Server Actions they imported before, so real projects behave as they did. In the
+  preview it is an in-memory source (`components/ai-builder/draft-data-source.ts`) over the draft model
+  (`packages/core/src/ai-builder-draft.ts`): rename tasks and sections in place, add, delete, and drag
+  tasks and sections, pick assignees, start / due dates, and field values in the cells, add or edit a field
+  and its options ("+" column, column menu → Edit field, or Add field), and open a task (row click) for its
+  notes, subtasks, a new placeholder, and Remove task. Starter tasks are created open (no tick box).
+  Every edit goes through the draft's rules first; the server's own check (`checkAiDraft` →
+  `parseProposal` with the pilot's people) runs a moment after each edit and again on Create.
+- **Assignees** are people of the Testing data workspace (`ai_pilot_members()`: its workspace admins and
+  active team members) or **placeholders** ("Designer"), which become a project role with nobody in it on
+  Create (Overview → Project roles; the tasks are linked to it as their assignee role). Anyone assigned
+  other than you joins the new project as an Editor first (the Share dialog's own `add_project_member`)
+  and gets the usual assignment notice; nothing else notifies or sends. The model never sees a person:
+  people are aliases (`member:1` = you).
+- **Ask AI to change the draft.** A text box under the preview (with a mic: the browser's Web Speech API
+  fills the box, you send it; hidden where the browser has no speech recognition) sends the current
+  draft and the instruction to `POST /api/ai-builder/edit`. The model answers a bounded list of edits
+  (`packages/core/src/ai-builder-ops.ts`: ≤ 40 operations in a closed schema), applied through the same
+  draft rules and checked again on the server; one bad edit refuses the whole change. The preview lists
+  what changed, and **Undo AI change** puts the draft back (locally). Each request is a child run in the
+  log (`kind = 'edit'`, `parent_run_id` = the build).
+- **Models (169).** `AI_BUILDER_CALLS` in `packages/core/src/ai-builder.ts`: the first build is
+  `claude-sonnet-5-5` (8,000 output tokens, 55 s, effort `low`, as in phase 1); AI changes and automation
+  drafts are `claude-haiku-5-5` (3,000 / 2,000 output tokens, 25 s, effort `low`; Haiku 5.5 defaults to
+  `medium`, so it's set explicitly). Optional server-side overrides `AI_BUILDER_{BUILD,EDIT,AUTOMATION}_MODEL`
+  / `_EFFORT` are accepted only from `AI_BUILDER_ALLOWED_MODELS` (`claude-sonnet-5-5`, `claude-haiku-5-5`,
+  `claude-opus-5-5`) and `low | medium | high`. Every run logs its model and effort
+  (`ai_builder_runs.effort`).
+- **Ask AI for an automation (170).** On the project's Automations page (Testing data projects, pilot
+  admins who are the project's Owner / Admin; checked again by the route and the database). The
+  description goes to Haiku, which answers a draft limited to these existing steps and to the project's
+  own sections, fields (single choice, text, number), and members:
+  - **When:** task added, moves into / out of a section, a field changes, assignee changes, completed,
+    reopened, all subtasks done, comment added, file attached, due date changes, due date approaching,
+    overdue, start date changes, run manually.
+  - **If:** section is / isn't, complete / incomplete, field equals / is set / is empty, has / has no
+    assignee, assignee is / isn't, overdue, due within, has / has no due date, name contains, open / all-done
+    subtasks, blocked / not blocked, attachment, comment.
+  - **Then:** move to section, set field, set assignee, add followers, add comment, send Inbox
+    notification, mark complete / incomplete, rename, add to the description, create subtasks, set due date.
+  - Never: email, Slack, webhooks, other projects, schedules, waits, approvals, templates, converting.
+  The draft is translated to ids and checked with the rules engine's own checks (`ruleProblems`); anything
+  else is refused with a plain message. It opens in the **normal rule canvas** (`/rules/new?ai=<run>`),
+  starts off, and is saved only by the canvas's Create (`createRule`, `validate_rule`); the run then
+  records the rule (`rule_id`; the guard accepts only a live rule of that project created by the same
+  person). Mark complete is the ordinary `{ type: "complete_task" }`, so the database's blocked-completion
+  guard (notes 163 / 163b) holds for AI-made automations like any other (zz57 runs one on a blocked task).
+  The AI flow itself sends nothing.
+- **Limits** (database-enforced, `guard_ai_builder_run()`): first builds keep phase 1's (10 an hour,
+  30 a day per person, 60 a day per workspace); AI changes 30 an hour / 100 a day per person; automation
+  drafts 10 an hour / 30 a day per person; 300 runs a day per workspace in all; at most 2 generating at once.
+
+### Apply steps (only after Avi authorizes)
+
+1. Apply `20261108122112_ai_builder_pilot_a.sql` first (phase 1: everything above its `-- TAIL`, then the
+   tail by hand), if it isn't already.
+2. Apply `20261108140817_ai_builder_round2_a.sql` (the `migration-applier` subagent, in chunks:
+   `ai_builder_round2_a`, `_b`, …). It has no tail.
+3. Confirm with `list_migrations`. Until it's applied the builder fails closed: setup can't read the
+   pilot's people (`ai_pilot_members` is missing), so Build with AI and Ask AI for an automation stay hidden,
+   and the routes answer with an error instead of calling the model.
+4. Optional: `AI_BUILDER_*_MODEL` / `_EFFORT` for the branch's Preview environment only.
+
+### Known limits
+
+- The preview has no task pane (a row opens the draft's own editor), no tags, no bulk edits, no column
+  widths or collapsed groups remembered, and no dependency shifting; draft subtasks only have a name.
+- Undo AI change goes back one change (the last); manual edits after it are lost if you undo.
+- Assigning a teammate other than yourself sends them the normal assignment notice when the project is
+  created.
+- AI automations use one branch (no Else if / Otherwise) and the steps listed above; the person can add
+  anything else in the canvas before saving.
+
+### Manual checks (preview)
+
+1. Build with AI → the preview is the List (and Board via the toggle); rename a section in place, drag a
+   task to another section, set a start and due date in the cells, open a task and add a placeholder and
+   a subtask, add a choice field from "+". Create: the project matches the preview; the placeholder is a
+   project role.
+2. Type (or dictate) "add a QA section before Done and move every review task into it" → the change list
+   shows; Undo AI change restores the previous draft. History shows an "AI change" run with
+   `claude-haiku-5-5 · low`.
+3. On a Testing data project's Automations page: Ask AI for an automation → the canvas opens filled in and
+   off; Create; History shows "Automation · Saved" linking to it. Ask for "email the client" → refused.
+4. As a non-admin or on a main-workspace project: no AI button; the routes answer 403.

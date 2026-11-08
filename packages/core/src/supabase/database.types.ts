@@ -5679,11 +5679,27 @@ export type Database = {
           undone_at: string | null;
           created_at: string;
           updated_at: string;
+          // AI builder round 2 (20261108160000_ai_builder_round2_a.sql).
+          kind: string;
+          parent_run_id: string | null;
+          target_project_id: string | null;
+          rule_id: string | null;
+          effort: string | null;
         };
-        Insert: { workspace_id: string; request_key: string; brief_chars?: number; template_id?: string | null };
+        Insert: {
+          workspace_id: string;
+          request_key: string;
+          brief_chars?: number;
+          template_id?: string | null;
+          kind?: string;
+          parent_run_id?: string | null;
+          target_project_id?: string | null;
+        };
         Update: {
           status?: string;
           model?: string | null;
+          effort?: string | null;
+          rule_id?: string | null;
           input_tokens?: number | null;
           output_tokens?: number | null;
           proposal?: Json | null;
@@ -5706,6 +5722,11 @@ export type Database = {
       ai_pilot_ensure_workspace: {
         Args: { pilot_marker: string };
         Returns: Json;
+      };
+      // AI builder round 2: the pilot workspace's people (its workspace admins and active team members).
+      ai_pilot_members: {
+        Args: { target_workspace: string };
+        Returns: { profile_id: string; name: string | null; email: string | null; is_me: boolean }[];
       };
       ai_pilot_seed_comment: {
         Args: { target_workspace: string; source_key: string; target_task: string; comment_body: string };

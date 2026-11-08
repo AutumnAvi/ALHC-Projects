@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useRef, type ComponentProps, type FocusEvent, type PointerEvent } from "react";
+import { createContext, useCallback, useContext, useRef, type ComponentProps, type FocusEvent, type PointerEvent } from "react";
 import { useTaskHref } from "@/components/project/shared";
 import { useOpenTaskId, useTaskPane } from "@/components/shell/right-panel";
 import type { TaskSeed } from "@/lib/task-seed";
@@ -15,19 +15,25 @@ const HOVER_DELAY_MS = 75;
 // task, draws the pane from `seed` at once, and moves the URL with history.pushState — no server render.
 export function useOpenTask() {
   const { openTask } = useTaskPane();
-  return openTask;
+  return useContext(TaskOpenOverride) ?? openTask;
 }
+
+// AI builder round 2: the preview draws a draft (no task exists yet) with the real List and Board. Inside
+// it, opening a task opens the draft's own editor instead of the task pane, and nothing is prefetched.
+export const TaskOpenOverride = createContext<((taskId: string, seed?: TaskSeed | null) => void) | null>(null);
 
 // Hover / focus prefetch of a task's pane data, for any element (rows, cards, bars).
 export function useTaskPrefetch(taskId: string, seed?: () => TaskSeed | null | undefined) {
   const timer = useRef<number | undefined>(undefined);
+  const draft = useContext(TaskOpenOverride) !== null;
   const start = useCallback(() => {
+    if (draft) return;
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       seedTask(seed?.());
       prefetchTaskPane(taskId);
     }, HOVER_DELAY_MS);
-  }, [taskId, seed]);
+  }, [taskId, seed, draft]);
   const cancel = useCallback(() => window.clearTimeout(timer.current), []);
   return {
     onPointerEnter: (e: PointerEvent) => {
@@ -35,6 +41,7 @@ export function useTaskPrefetch(taskId: string, seed?: () => TaskSeed | null | u
     },
     onPointerLeave: cancel,
     onFocus: () => {
+      if (draft) return;
       seedTask(seed?.());
       prefetchTaskPane(taskId);
     },

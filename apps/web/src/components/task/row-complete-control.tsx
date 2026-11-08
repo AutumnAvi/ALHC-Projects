@@ -4,6 +4,7 @@ import { ApprovalToggle, CompleteToggle, kindToggleLabel } from "@/components/co
 import { rowCompleteMode } from "@alhc/core/approval-complete";
 import type { ApprovalTaskStatus, TaskKind } from "@alhc/core/task-kinds";
 import type { TaskSeed } from "@/lib/task-seed";
+import { useProjectData } from "@/components/project/project-data-source";
 import { useApprovalAction } from "./approval-action";
 import { BlockedToggle } from "./blockers-popover";
 
@@ -47,6 +48,8 @@ export function RowCompleteControl({
   onToggle: () => void;
 }) {
   const approvalAction = useApprovalAction();
+  // An AI builder draft's starter tasks are created open: their mark is never a button.
+  if (useProjectData().draft) readOnly = true;
   const mode = rowCompleteMode(task, completed);
   const approvalControl =
     mode === "approve" ||

@@ -31,7 +31,7 @@ test("one request: the central model, a bounded output, structured output, the b
     }),
   );
   const res = await p.generate(request);
-  assert.deepEqual(res, { ok: true, output: { name: "X" }, model: AI_BUILDER_MODEL, inputTokens: 812, outputTokens: 640 });
+  assert.deepEqual(res, { ok: true, output: { name: "X" }, model: AI_BUILDER_MODEL, effort: "low", inputTokens: 812, outputTokens: 640 });
   assert.equal(seen.model, AI_BUILDER_MODEL);
   assert.equal(seen.max_tokens, AI_BUILDER_MAX_OUTPUT_TOKENS);
   assert.deepEqual((seen.output_config as { format: unknown }).format, { type: "json_schema", schema: { type: "object" } });

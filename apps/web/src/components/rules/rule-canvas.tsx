@@ -3,6 +3,7 @@
 import { useClosesPopovers } from "@/components/overlay-registry";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { recordAiAutomationSaved } from "@/lib/actions/ai-builder";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   ArrowDown,
@@ -105,6 +106,7 @@ export function RuleCanvas({
   batch4,
   canEdit,
   backHref,
+  aiRunId = null,
 }: {
   projectId: string;
   projectName: string;
@@ -121,6 +123,9 @@ export function RuleCanvas({
   // Admin+ (rules are managed by project admins); everyone else reads.
   canEdit: boolean;
   backHref: string;
+  // AI builder round 2 (note 170): this new rule was drafted by "Ask AI for an automation". It saves through
+  // this canvas's normal path; afterwards the AI builder's log records which rule it became.
+  aiRunId?: string | null;
 }) {
   const router = useRouter();
   const notify = useNotify();
@@ -282,6 +287,10 @@ export function RuleCanvas({
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const input = { name, triggerType, triggerConfig, conditions, actions, enabled, timeZone, ...(v2 ? { ownerId, runOnRuleChanges } : {}) };
       const result = rule ? await updateRule(rule.id, input) : await createRule(projectId, input);
+      if (!result.error && !rule && aiRunId && "ruleId" in result && result.ruleId) {
+        // Best effort: the rule is saved either way; only the AI builder's log would miss which one it was.
+        await recordAiAutomationSaved(aiRunId, result.ruleId).catch(() => undefined);
+      }
       if (!result.error) {
         setDirty(false);
         dirtyRef.current = false;
@@ -544,6 +553,12 @@ export function RuleCanvas({
                   </div>
                 ) : null}
                 <RuleSummary triggerType={triggerType} triggerConfig={triggerConfig} branches={branches} ctx={ctx} projectName={projectName} />
+                {aiRunId ? (
+                  <p role="note" className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
+                    Drafted by AI from your description. Check every step below: nothing is saved until you click Create, and it starts
+                    off until you turn it on.
+                  </p>
+                ) : null}
                 {initial && initial.missing.length ? (
                   <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                     From a template. Still to pick (highlighted below): {initial.missing.join(", ")}.
