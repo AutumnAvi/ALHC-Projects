@@ -34,6 +34,8 @@ export type AiRunSummary = {
   inputTokens: number | null;
   outputTokens: number | null;
   errorCode: string | null;
+  // The provider's HTTP status, error type, and message, when a call failed at the provider.
+  errorDetail: string | null;
   projectId: string | null;
   created: { sections: number; fields: number; tasks: number; subtasks: number } | null;
   undoConflicts: string[] | null;
@@ -56,7 +58,11 @@ export type AiProviderErrorCode =
   | "provider_error";
 
 type Usage = { model: string; effort?: AiBuilderEffort | null; inputTokens: number | null; outputTokens: number | null };
-export type AiProviderResult = ({ ok: true; output: unknown } & Usage) | ({ ok: false; code: AiProviderErrorCode } & Usage);
+// `detail` is the provider's own line (HTTP status, error type, message) for the run log. Absent when
+// the failure isn't a provider response. Never a key or the prompt.
+export type AiProviderResult =
+  | ({ ok: true; output: unknown } & Usage)
+  | ({ ok: false; code: AiProviderErrorCode; detail?: string | null } & Usage);
 
 // `kind` picks the model, effort, output ceiling, and timeout (AI_BUILDER_CALLS; build = phase 1's call).
 export type AiProviderRequest = { kind?: AiCallKind; system: string; prompt: string; schema: Record<string, unknown> };

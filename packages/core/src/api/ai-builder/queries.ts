@@ -109,6 +109,7 @@ export function toRunSummary(row: RunRow, viewerId: string | null): AiRunSummary
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
     errorCode: row.error_code,
+    errorDetail: row.status === "failed" && proposal && typeof proposal.error === "string" && typeof proposal.name !== "string" ? proposal.error : null,
     projectId: row.project_id,
     created: created
       ? { sections: length(created.sections), fields: length(created.fields), tasks: length(created.tasks), subtasks: length(created.subtasks) }

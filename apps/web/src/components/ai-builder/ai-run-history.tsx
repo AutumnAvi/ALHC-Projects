@@ -68,6 +68,7 @@ export function AiRunHistory({ runs }: { runs: AiRunSummary[] }) {
             <td className="py-2 pr-3">
               {aiRunStatusLabel(r.kind, r.status)}
               {r.errorCode ? <span className="block text-2xs text-zinc-500">{AI_ERROR_MESSAGES[r.errorCode] ?? r.errorCode}</span> : null}
+              {r.errorDetail ? <span className="block text-2xs text-zinc-500">{r.errorDetail}</span> : null}
               {!r.mine ? <span className="block text-2xs text-zinc-500">Another admin’s run</span> : null}
             </td>
             <td className="py-2 pr-3 text-zinc-600">

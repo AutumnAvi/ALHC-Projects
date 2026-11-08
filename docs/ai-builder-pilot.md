@@ -178,7 +178,11 @@ Undo, the run log, database-enforced limits, and the brief / instruction as data
 - **Models (169).** `AI_BUILDER_CALLS` in `packages/core/src/ai-builder.ts`: the first build is
   `claude-sonnet-5-5` (8,000 output tokens, 55 s, effort `low`, as in phase 1); AI changes and automation
   drafts are `claude-haiku-5-5` (3,000 / 2,000 output tokens, 25 s, effort `low`; Haiku 5.5 defaults to
-  `medium`, so it's set explicitly). Optional server-side overrides `AI_BUILDER_{BUILD,EDIT,AUTOMATION}_MODEL`
+  `medium`, so it's set explicitly). Haiku 5.5 accepts that effort and JSON structured output. A schema
+  with a null (`anyOf`) on every key is over the provider's 16-union limit and is rejected before any
+  tokens, so an edit or an automation draft uses blanks (`""`, `-1`, `[]`) instead of null. A failed call
+  logs the provider's HTTP status, error type, and message on the run (never the key or the prompt).
+  Optional server-side overrides `AI_BUILDER_{BUILD,EDIT,AUTOMATION}_MODEL`
   / `_EFFORT` are accepted only from `AI_BUILDER_ALLOWED_MODELS` (`claude-sonnet-5-5`, `claude-haiku-5-5`,
   `claude-opus-5-5`) and `low | medium | high`. Every run logs its model and effort
   (`ai_builder_runs.effort`).
