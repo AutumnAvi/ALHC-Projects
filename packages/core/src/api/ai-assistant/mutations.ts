@@ -14,12 +14,18 @@
 //   undoAssistantRun  refuses (and lists them) when anything it changed has changed since; else puts every
 //                   change back in reverse order, removing only what it made. Repeating it is safe.
 import {
+  ASSISTANT_ANSWER_SCHEMA,
+  ASSISTANT_ANSWER_SYSTEM_PROMPT,
   ASSISTANT_ERROR_MESSAGES,
   ASSISTANT_JSON_SCHEMA,
   ASSISTANT_LIMITS,
   ASSISTANT_LIMIT_REACHED,
   ASSISTANT_SYSTEM_PROMPT,
+  assistantAnswerPrompt,
+  assistantMode,
   assistantPrompt,
+  isHowToQuestion,
+  cleanAnswer,
   escalationReason,
   matchesExpect,
   opsSummary,
@@ -29,8 +35,11 @@ import {
   routeAssistant,
   sameState,
   selectionProblem,
+  type AssistantContext,
   type AssistantOp,
+  type AssistantPlan,
 } from "../../ai-assistant";
+import { ANSWER_ONLY_NOTE, canChangeIn } from "../../ai-capabilities";
 import { AI_ERROR_MESSAGES, isRequestKey, scrubProviderDetail } from "../../ai-builder";
 import type { Json } from "../../supabase/database.types";
 import { isIsoDate } from "../../views";
@@ -41,8 +50,9 @@ import { id, text } from "../core/validate";
 import type { AiProposalProvider, AiProviderResult } from "../ai-builder/model";
 import { requirePilot } from "../ai-builder/mutations";
 import { listPilotMembers } from "../ai-builder/queries";
-import type { AppliedRecord, AssistantApplyInput, AssistantApplyResult, AssistantProposal, AssistantUndoResult, ProposeInput } from "./model";
+import type { AppliedRecord, AssistantApplyInput, AssistantApplyResult, AssistantProposal, AssistantTurnOnResult, AssistantUndoResult, ProposeInput } from "./model";
 import { checkOpAccess, readOpState, undoOp, writeOp } from "./ops";
+import { setRuleEnabled } from "../automations/mutations";
 import { getAssistantRunRow, loadAssistantContext } from "./queries";
 
 export { ASSISTANT_LIMIT_REACHED };
@@ -110,6 +120,21 @@ export async function proposeChanges(ctx: ApiContext, input: ProposeInput, provi
     throw writeError(inserted.error);
   }
   const runId = inserted.data.id;
+  const focus = context.projects.find((p) => p.id === context.currentProjectId);
+  const ruleContext = {
+    sections: focus?.sections.map((s) => ({ id: s.id, name: s.name })) ?? [],
+    fields: fieldDefs.filter((f) => f.projectId === context.currentProjectId),
+    people: context.people.map((p) => ({ id: p.id, name: p.name })),
+  };
+  const base = { runId, pageKind: page.kind, contextLabel: label, ruleContext };
+
+  // Round 4 (notes 172 / 176): below Editor here (or with nothing the person may change on this page), and
+  // for how-to questions, the assistant answers in plain words — no operations, nothing to confirm.
+  const canChange = canChangeHere(context);
+  const mode = assistantMode(instruction, canChange);
+  if (mode.mode === "answer") {
+    return { ...base, ...(await answerRun(ctx, runId, provider, instruction, context, mode.reason)) };
+  }
 
   const request = { system: ASSISTANT_SYSTEM_PROMPT, prompt: assistantPrompt(instruction, context), schema: ASSISTANT_JSON_SCHEMA as Record<string, unknown> };
   const route = routeAssistant(instruction, page.kind);
@@ -136,6 +161,7 @@ export async function proposeChanges(ctx: ApiContext, input: ProposeInput, provi
     throw new ApiError("invalid", resolved.error);
   }
   const plan = resolved.plan;
+  await describeFieldUsage(ctx, plan);
   const saved = await ctx.db
     .from("ai_assistant_runs")
     .update({
@@ -157,9 +183,11 @@ export async function proposeChanges(ctx: ApiContext, input: ProposeInput, provi
   check(saved);
   if (!saved.data?.length) throw new ApiError("conflict", "This request was cancelled");
 
-  const focus = context.projects.find((p) => p.id === context.currentProjectId);
   return {
-    runId,
+    ...base,
+    mode: "change",
+    answer: null,
+    answerOnly: false,
     summary: plan.summary,
     unsupported: plan.unsupported,
     ops: plan.ops,
@@ -167,14 +195,104 @@ export async function proposeChanges(ctx: ApiContext, input: ProposeInput, provi
     model: result.model,
     routeReason: reason,
     escalated,
-    pageKind: page.kind,
-    contextLabel: label,
-    ruleContext: {
-      sections: focus?.sections.map((s) => ({ id: s.id, name: s.name })) ?? [],
-      fields: fieldDefs.filter((f) => f.projectId === context.currentProjectId),
-      people: context.people.map((p) => ({ id: p.id, name: p.name })),
-    },
   };
+}
+
+// Whether the person may change anything on this page: the page's project (Editor+, not archived), or —
+// on My tasks and other pages — any project of the context.
+export function canChangeHere(context: AssistantContext): boolean {
+  const focus = context.projects.find((p) => p.id === context.currentProjectId);
+  if (focus) return canChangeIn(focus.role, focus.archived);
+  return context.projects.some((p) => canChangeIn(p.role, p.archived));
+}
+
+type AnswerPart = Pick<AssistantProposal, "mode" | "answer" | "answerOnly" | "summary" | "unsupported" | "ops" | "rejected" | "model" | "routeReason" | "escalated">;
+
+// Answer mode (round 4, note 176): Haiku answers from a bounded help summary and the page's context. A
+// change request from someone who may change nothing here gets the plain answer without a model call.
+// The run is logged like any other (rate limits included) — never the answer's or the question's text.
+async function answerRun(
+  ctx: ApiContext,
+  runId: string,
+  provider: AiProposalProvider,
+  instruction: string,
+  context: AssistantContext,
+  reason: "question" | "answer_only_role",
+): Promise<AnswerPart> {
+  const answerOnly = reason === "answer_only_role";
+  const routeReason = answerOnly ? "answer_only_role" : "answer_question";
+  let answer: string;
+  let result: AiProviderResult | null = null;
+  if (answerOnly && !isHowToQuestion(instruction)) {
+    answer = `${ANSWER_ONLY_NOTE.replace(", so the assistant only answers questions", "")} You can still ask how something works.`;
+  } else {
+    result = await callProvider(provider, {
+      kind: "assistant_answer",
+      system: ASSISTANT_ANSWER_SYSTEM_PROMPT,
+      prompt: assistantAnswerPrompt(instruction, context, answerOnly ? ANSWER_ONLY_NOTE : null),
+      schema: ASSISTANT_ANSWER_SCHEMA as Record<string, unknown>,
+    });
+    if (!result.ok) {
+      await failRun(ctx, runId, result.code, { detail: result.detail ?? null, result, reason: routeReason });
+      throw new ApiError("unavailable", AI_ERROR_MESSAGES[result.code] ?? AI_ERROR_MESSAGES.provider_error);
+    }
+    const cleaned = cleanAnswer(result.output);
+    if (!cleaned) {
+      await failRun(ctx, runId, "invalid_output", { result, reason: routeReason });
+      throw new ApiError("unavailable", AI_ERROR_MESSAGES.invalid_output ?? AI_ERROR_MESSAGES.provider_error);
+    }
+    answer = cleaned;
+  }
+  const stored: AssistantPlan & { mode: "answer" } = { summary: "", unsupported: "", ops: [], rejected: [], mode: "answer" };
+  const saved = await ctx.db
+    .from("ai_assistant_runs")
+    .update({
+      status: "proposed",
+      proposal: stored as unknown as Json,
+      model: result?.model || null,
+      effort: result?.effort ?? null,
+      route_reason: routeReason,
+      input_tokens: result?.inputTokens ?? null,
+      output_tokens: result?.outputTokens ?? null,
+      op_count: 0,
+      ops_summary: {} as Json,
+      generated_at: new Date().toISOString(),
+    })
+    .eq("id", runId)
+    .eq("status", "generating")
+    .select("id");
+  check(saved);
+  return {
+    mode: "answer",
+    answer,
+    answerOnly,
+    summary: "",
+    unsupported: "",
+    ops: [],
+    rejected: [],
+    model: result?.model ?? "",
+    routeReason,
+    escalated: false,
+  };
+}
+
+const hasValue = (v: Json) => !(v == null || v === "" || (Array.isArray(v) && v.length === 0));
+
+// Round 4 (note 172): what removing a field or an option means for the tasks that use it, added to the
+// change's "after" line ("N tasks have a value; values are kept"). Read with the person's own access.
+async function describeFieldUsage(ctx: ApiContext, plan: AssistantPlan): Promise<void> {
+  for (const op of plan.ops) {
+    if (op.op !== "remove_field" && !(op.op === "update_field_options" && op.removedOptionIds.length)) continue;
+    const values = (await ctx.db.from("task_field_values").select("task_id, value").eq("field_id", op.fieldId).limit(5000)).data ?? [];
+    if (op.op === "remove_field") {
+      const n = values.filter((v) => hasValue(v.value as Json)).length;
+      op.after = `${op.after} · ${n ? `${n} task${n === 1 ? " has" : "s have"} a value; values are kept` : "no task has a value"}`;
+    } else {
+      const removed = new Set(op.removedOptionIds);
+      const n = values.filter((v) => (Array.isArray(v.value) ? v.value : [v.value]).some((x) => typeof x === "string" && removed.has(x))).length;
+      if (n) op.after = `${op.after} · ${n} task${n === 1 ? " uses" : "s use"} a removed option and lose${n === 1 ? "s" : ""} it (Undo brings it back)`;
+    }
+  }
 }
 
 type StoredApplied = { selected: number[]; records: AppliedRecord[]; rollbackFailed?: number[] };
@@ -213,7 +331,8 @@ export async function applyAssistantRun(ctx: ApiContext, input: AssistantApplyIn
   if (!run || run.workspace_id !== access.workspaceId || run.actor_id.toLowerCase() !== me) throw new ApiError("not_found", "Run not found");
   // Idempotent: the same Confirm again answers what it did the first time.
   if (run.apply_key === applyKey && (run.status === "applied" || run.status === "undone")) {
-    return { runId, applied: parseApplied(run.applied)?.records.length ?? 0, repeated: true };
+    const records = parseApplied(run.applied)?.records ?? [];
+    return { runId, applied: records.length, repeated: true, createdRules: createdRulesOf(records) };
   }
   if (run.status === "applying") throw new ApiError("conflict", "These changes are being applied already");
   if (run.status !== "proposed") throw new ApiError("conflict", "These changes can’t be applied any more");
@@ -227,7 +346,10 @@ export async function applyAssistantRun(ctx: ApiContext, input: AssistantApplyIn
   check(claimed);
   if (!claimed.data?.length) {
     const now = await getAssistantRunRow(ctx, runId);
-    if (now?.apply_key === applyKey && now.status === "applied") return { runId, applied: parseApplied(now.applied)?.records.length ?? 0, repeated: true };
+    if (now?.apply_key === applyKey && now.status === "applied") {
+      const records = parseApplied(now.applied)?.records ?? [];
+      return { runId, applied: records.length, repeated: true, createdRules: createdRulesOf(records) };
+    }
     throw new ApiError("conflict", "These changes are being applied already");
   }
 
@@ -288,7 +410,64 @@ export async function applyAssistantRun(ctx: ApiContext, input: AssistantApplyIn
     .eq("status", "applying")
     .select("id");
   check(done);
-  return { runId, applied: records.length, repeated: false };
+  return { runId, applied: records.length, repeated: false, createdRules: createdRulesOf(records) };
+}
+
+const createdRulesOf = (records: AppliedRecord[]) =>
+  records.flatMap((r) => (r.op.op === "create_rule" && r.created && !r.undone ? [{ index: r.index, ruleId: r.created, projectId: r.op.projectId, name: r.op.rule.name }] : []));
+
+// Round 4 (note 173): Turn on & Finish — turns on automations THIS run made (never another), through the
+// same path as the Active switch (setRuleEnabled: RLS, validate_rule), after checking the person's role
+// again (Owner / Admin, the role table) and that the automation is still as the run left it. Recorded in
+// the run, so Undo turns it off before removing it. `ruleIds` = which of them (all when omitted).
+export async function turnOnAssistantRules(ctx: ApiContext, runIdInput: unknown, ruleIdsInput?: unknown): Promise<AssistantTurnOnResult> {
+  const access = await requirePilot(ctx);
+  const runId = id(runIdInput, "run");
+  const me = await viewerId(ctx, access.workspaceId);
+  const run = await getAssistantRunRow(ctx, runId);
+  if (!run || run.workspace_id !== access.workspaceId || run.actor_id.toLowerCase() !== me) throw new ApiError("not_found", "Run not found");
+  if (run.status !== "applied") throw new ApiError("conflict", "Only automations of applied changes can be turned on here");
+  const applied = parseApplied(run.applied);
+  if (!applied) throw new ApiError("failed", "The run’s record of its changes isn’t valid");
+  const made = applied.records.filter((r) => r.op.op === "create_rule" && r.created && !r.undone);
+  let wanted = made;
+  if (ruleIdsInput !== undefined) {
+    if (!Array.isArray(ruleIdsInput) || ruleIdsInput.length > made.length || !ruleIdsInput.every((x) => typeof x === "string")) throw new ApiError("invalid", "Invalid selection");
+    const ids = new Set((ruleIdsInput as string[]).map((x) => x.toLowerCase()));
+    wanted = made.filter((r) => ids.has(r.created!.toLowerCase()));
+    if (wanted.length !== ids.size) throw new ApiError("invalid", "Only automations these changes made can be turned on here");
+  }
+  if (!wanted.length) return { turnedOn: [], alreadyOn: [] };
+
+  // Check all before turning any on.
+  for (const r of wanted) {
+    await checkOpAccess(ctx, access.workspaceId, r.op);
+    const now = await readOpState(ctx, r.op, r.created);
+    const expected = r.after ? { ...r.after, enabled: Boolean(r.turnedOn) } : null;
+    if (!expected || !sameState({ ...now, enabled: Boolean(now.enabled) }, expected)) {
+      throw new ApiError("conflict", `“${r.op.label}” changed since; turn it on in the automation builder`);
+    }
+  }
+  const turnedOn: string[] = [];
+  const alreadyOn: string[] = [];
+  for (const r of wanted) {
+    if (r.turnedOn) {
+      alreadyOn.push(r.created!);
+      continue;
+    }
+    await setRuleEnabled(ctx, r.created!, true);
+    r.turnedOn = true;
+    r.after = await readOpState(ctx, r.op, r.created);
+    turnedOn.push(r.created!);
+  }
+  const saved = await ctx.db
+    .from("ai_assistant_runs")
+    .update({ applied: { ...applied, turnedOnAt: new Date().toISOString() } as unknown as Json })
+    .eq("id", runId)
+    .eq("status", "applied")
+    .select("id");
+  check(saved);
+  return { turnedOn, alreadyOn };
 }
 
 // Undoes `records` in reverse (marking each), answering the indexes that couldn't be put back.
@@ -339,7 +518,7 @@ export async function undoAssistantRun(ctx: ApiContext, runIdInput: unknown): Pr
   for (const r of [...applied.records].reverse()) {
     if (r.undone) continue;
     try {
-      await undoOp(ctx, r.op, r.before, r.created);
+      await undoOp(ctx, r.op, r.before, r.created, { turnedOn: r.turnedOn });
       r.undone = true;
       undone += 1;
     } catch (error) {

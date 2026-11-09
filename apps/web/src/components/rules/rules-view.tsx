@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { AskAiAutomation } from "@/components/ai-builder/ask-ai-automation";
+import { EditWithAiButton } from "@/components/ai-assistant/edit-with-ai";
 import { Fragment, useId, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronRight, Copy, GitBranch, History, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -399,6 +400,8 @@ export function RulesView({
                     >
                       <Pencil className="size-4" />
                     </Link>
+                    {/* Round 4 (note 174): the assistant with this automation as its context (Owners / Admins). */}
+                    {canEdit ? <EditWithAiButton projectId={projectId} ruleId={rule.id} ruleName={rule.name} /> : null}
                     {canEdit ? (
                       <button
                         type="button"

@@ -5,6 +5,9 @@
 //   pane        the task side pane                                       z-30
 //   panel       right panels (Customize, status sheet), bulk bar, drawer z-40
 //   modal       dialogs, full-screen task, form editor, rule canvas      z-50
+//   assistant   the AI assistant's bubble and panel (round 4, note 174:  z-[55]
+//               usable on top of the rule canvas and the full-screen task)
+//   assistantModal  a modal opened from the assistant (Expand)           z-[57]
 //   popover     menus and pickers (also when opened inside a modal)      z-[60]
 //   floating    hover cards, tooltips, smart picker lists, vocab picker  z-[70]
 //   palette     the ⌘K search palette (above every menu)                 z-[75]
@@ -18,6 +21,8 @@ export const LAYER = {
   pane: "z-30",
   panel: "z-40",
   modal: "z-50",
+  assistant: "z-[55]",
+  assistantModal: "z-[57]",
   popover: "z-[60]",
   floating: "z-[70]",
   palette: "z-[75]",
@@ -32,6 +37,8 @@ export const LAYER_Z: Record<Layer, number> = {
   pane: 30,
   panel: 40,
   modal: 50,
+  assistant: 55,
+  assistantModal: 57,
   popover: 60,
   floating: 70,
   palette: 75,

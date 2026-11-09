@@ -4,7 +4,10 @@ import { useClosesPopovers } from "@/components/overlay-registry";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { recordAiAutomationSaved } from "@/lib/actions/ai-builder";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { EditWithAiButton } from "@/components/ai-assistant/edit-with-ai";
+import { setCanvasDraft } from "@/components/ai-assistant/assistant-store";
+import { SentenceRow } from "./rule-readonly";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -172,6 +175,13 @@ export function RuleCanvas({
     testOpenRef.current = testOpen;
   }, [dirty, testOpen]);
 
+  // Round 4 (note 174): the AI assistant never applies over unsaved edits of this automation.
+  const ruleId = rule?.id ?? null;
+  useEffect(() => {
+    setCanvasDraft({ ruleId, dirty });
+  }, [ruleId, dirty]);
+  useEffect(() => () => setCanvasDraft(null), []);
+
   function closeTest() {
     setTestOpen(false);
     testButtonRef.current?.focus();
@@ -272,7 +282,9 @@ export function RuleCanvas({
   const problems = ruleProblems({ triggerType, triggerConfig, ...joinBranches(branches) }, "project", { v3: ctx.v3 });
   const blocked = saveBlockedReason(problems);
 
-  function save() {
+  // `turnOn` (round 4, note 173): "Turn on & create" — the same save with the automation on.
+  function save(turnOn = false) {
+    const on = turnOn || enabled;
     if (blocked) {
       notify(blocked);
       return;
@@ -285,7 +297,7 @@ export function RuleCanvas({
     const { conditions, actions } = joinBranches(branches);
     run(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const input = { name, triggerType, triggerConfig, conditions, actions, enabled, timeZone, ...(v2 ? { ownerId, runOnRuleChanges } : {}) };
+      const input = { name, triggerType, triggerConfig, conditions, actions, enabled: on, timeZone, ...(v2 ? { ownerId, runOnRuleChanges } : {}) };
       const result = rule ? await updateRule(rule.id, input) : await createRule(projectId, input);
       if (!result.error && !rule && aiRunId && "ruleId" in result && result.ruleId) {
         // Best effort: the rule is saved either way; only the AI builder's log would miss which one it was.
@@ -299,7 +311,8 @@ export function RuleCanvas({
           setTestOpen(false);
           setRevealed(result.signingSecrets);
         } else {
-          notify(rule ? "Automation saved" : enabled ? "Automation created and on" : "Automation created (off)");
+          if (turnOn) setEnabled(true);
+          notify(rule ? "Automation saved" : on ? "Automation created and on" : "Automation created (off)");
           router.push(backHref);
         }
       }
@@ -344,7 +357,8 @@ export function RuleCanvas({
   useClosesPopovers(true, rootRef);
 
   return (
-    <div ref={rootRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-50 flex flex-col bg-white text-sm">
+    // data-assistant-allowed (round 4, note 174): Tab then A opens the AI assistant over the canvas.
+    <div ref={rootRef} role="dialog" aria-modal="true" aria-labelledby={titleId} data-assistant-allowed className="fixed inset-0 z-50 flex flex-col bg-white text-sm">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-zinc-200 px-3 sm:px-4">
         <button type="button" onClick={leave} aria-label="Back" data-tooltip="Back" className="btn-icon">
           <ArrowLeft className="size-4" />
@@ -466,6 +480,7 @@ export function RuleCanvas({
             <span className="hidden sm:inline">Test</span>
           </button>
         )}
+        {rule && canEdit ? <EditWithAiButton projectId={projectId} ruleId={rule.id} compact /> : null}
         <button type="button" onClick={leave} className="btn-secondary h-8 px-3">
           {canEdit ? "Cancel" : "Close"}
         </button>
@@ -474,10 +489,22 @@ export function RuleCanvas({
             {blocked}
           </span>
         ) : null}
+        {canEdit && !rule && !enabled ? (
+          // Round 4 (note 173): a new automation (an AI draft included) starts off; this creates it on.
+          <button
+            type="button"
+            onClick={() => save(true)}
+            disabled={pending || Boolean(blocked)}
+            data-tooltip={blocked ?? "Create it and turn it on"}
+            className="btn-secondary h-8 px-3"
+          >
+            Turn on &amp; create
+          </button>
+        ) : null}
         {canEdit ? (
           <button
             type="button"
-            onClick={save}
+            onClick={() => save()}
             disabled={pending || Boolean(blocked)}
             aria-describedby={blocked ? "rule-save-blocked" : undefined}
             data-tooltip={blocked ?? undefined}
@@ -750,31 +777,6 @@ function RuleSummary({
         <FolderClosed className="size-3.5" aria-hidden />
         Tasks in <span className="font-medium text-zinc-700">{projectName}</span> (subtasks don’t trigger automations)
       </p>
-    </div>
-  );
-}
-
-// One line of the sentence: the word ("When", "If", "Then") in a gutter, then its tokens.
-function SentenceRow({
-  word,
-  children,
-  aside,
-  muted = false,
-}: {
-  word: ReactNode;
-  children: ReactNode;
-  aside?: ReactNode;
-  muted?: boolean;
-}) {
-  return (
-    <div className="flex items-start gap-3 border-t border-zinc-100 px-4 py-2.5 transition-colors first:border-t-0 hover:bg-zinc-50/70 focus-within:bg-zinc-50/70">
-      <span
-        className={`mt-1 w-20 shrink-0 text-xs font-semibold uppercase tracking-wide ${muted ? "text-zinc-400" : "text-zinc-500"}`}
-      >
-        {word}
-      </span>
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-sm text-zinc-700">{children}</div>
-      {aside}
     </div>
   );
 }

@@ -19,6 +19,12 @@ export type ProposeInput = {
 // left out and why, and enough of the project to draw automations the way the rule builder does.
 export type AssistantProposal = {
   runId: string;
+  // Round 4 (note 176): "answer" = a how-to question answered in plain words (no operations, nothing to
+  // confirm); "change" = a change set. `answerOnly`: the person's role here allows no changes at all
+  // (Commenter / Viewer), so every request is answered (ANSWER_ONLY_NOTE).
+  mode: "change" | "answer";
+  answer: string | null;
+  answerOnly: boolean;
   summary: string;
   unsupported: string;
   ops: AssistantOp[];
@@ -32,7 +38,11 @@ export type AssistantProposal = {
 };
 
 export type AssistantApplyInput = { runId: unknown; applyKey: unknown; selected: unknown; timeZone?: unknown };
-export type AssistantApplyResult = { runId: string; applied: number; repeated: boolean };
+// `createdRules`: automations this change set made (they start off), for Turn on & Finish and Open in builder.
+export type AssistantApplyResult = { runId: string; applied: number; repeated: boolean; createdRules: { index: number; ruleId: string; projectId: string; name: string }[] };
+
+// Round 4 (note 173): Turn on & Finish — which of the run's new automations are on now.
+export type AssistantTurnOnResult = { turnedOn: string[]; alreadyOn: string[] };
 
 export type AssistantUndoResult =
   | { status: "undone" | "already_undone"; undone: number }
@@ -48,6 +58,9 @@ export type AppliedRecord = {
   after: OpState | null;
   created: string | null;
   undone: boolean;
+  // Round 4 (note 173): an automation this run made that the person turned on afterwards (Undo turns it
+  // off before removing it).
+  turnedOn?: boolean;
 };
 
 export type AssistantRunSummary = {

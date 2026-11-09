@@ -27,6 +27,7 @@ import { maybe, rows } from "../core/db";
 import { ApiError } from "../core/errors";
 import { id } from "../core/validate";
 import { listPilotMembers } from "../ai-builder/queries";
+import { listProjectFieldSharing } from "../fields/queries";
 import type { AssistantRunSummary } from "./model";
 
 export const NOT_PILOT_PAGE = "The AI assistant only works on projects of the Testing data workspace";
@@ -204,17 +205,29 @@ export async function loadAssistantContext(ctx: ApiContext, workspaceId: string,
     ? rows(await ctx.db.from("custom_fields").select("*").in("project_id", fieldProjectIds).is("deleted_at", null).order("sort_order"), "fields")
     : [];
   const fieldDefs = fieldRows.map(toFieldDef);
-  const fields: Omit<AssistantField, "ref">[] = fieldRows.map((f) => ({
-    id: f.id,
-    projectId: f.project_id,
-    name: f.name,
-    fieldType: f.field_type,
-    options: (Array.isArray(f.options) ? f.options : []).flatMap((o) =>
-      o && typeof o === "object" && !Array.isArray(o) && typeof o.id === "string" && typeof o.name === "string" ? [{ id: o.id, name: o.name }] : [],
-    ),
-    boundToSections: Boolean(f.bound_to_sections),
-    locked: Boolean((f as { locked?: boolean }).locked),
-  }));
+  // Round 4 (note 172): which fields are shared through the field library and whether this person may
+  // change their definition (booleans only; the focus project's — the one fields are changed in).
+  const sharing = focusId ? await listProjectFieldSharing(ctx, focusId).catch(() => null) : null;
+  const fields: Omit<AssistantField, "ref">[] = fieldRows.map((f) => {
+    const share = f.project_id === focusId ? (sharing?.[f.id] ?? null) : null;
+    const libraryFieldId = (f as { library_field_id?: string | null }).library_field_id ?? null;
+    return {
+      id: f.id,
+      projectId: f.project_id,
+      name: f.name,
+      fieldType: f.field_type,
+      options: (Array.isArray(f.options) ? f.options : []).flatMap((o) =>
+        o && typeof o === "object" && !Array.isArray(o) && typeof o.id === "string" && typeof o.name === "string"
+          ? [{ id: o.id, name: o.name, ...(typeof o.color === "string" ? { color: o.color } : {}) }]
+          : [],
+      ),
+      boundToSections: Boolean(f.bound_to_sections),
+      locked: Boolean((f as { locked?: boolean }).locked),
+      shared: Boolean(libraryFieldId || share?.isShared || share?.libraryFieldId),
+      definitionEditable: share ? share.definitionEditable : null,
+      definitionManageable: share ? share.definitionManageable : null,
+    };
+  });
   const valueRows: { task_id: string; field_id: string; value: Json }[] = [];
   for (const part of chunk(taskIds, 200)) {
     if (!part.length || !fields.length) break;

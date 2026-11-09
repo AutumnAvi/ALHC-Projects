@@ -19,7 +19,7 @@ const summary = (s: Record<string, number>) =>
 export function AssistantRunHistory({ runs }: { runs: AssistantRunSummary[] }) {
   const [pending, run] = useServerAction();
   const [notes, setNotes] = useState<Record<string, string>>({});
-  if (runs.length === 0) return <EmptyState title="No AI assistant runs yet">Open Ask AI in the top bar (or Tab then A) on any Testing data page.</EmptyState>;
+  if (runs.length === 0) return <EmptyState title="No AI assistant runs yet">Open the AI assistant’s bubble (or Tab then A) on any Testing data page.</EmptyState>;
   async function undo(id: string) {
     const res = (await run(() => undoAssistantChanges(id))) as { undo?: { status: string; conflicts?: string[] } } | undefined;
     const u = res?.undo;
@@ -46,7 +46,7 @@ export function AssistantRunHistory({ runs }: { runs: AssistantRunSummary[] }) {
             <td className="py-2 pr-3">{ASSISTANT_PAGE_LABELS[r.pageKind as AssistantPageKind] ?? r.pageKind}</td>
             <td className="py-2 pr-3">{r.opCount ? `${r.opCount}: ${summary(r.opsSummary)}` : "—"}</td>
             <td className="py-2 pr-3">
-              {ASSISTANT_STATUS_LABELS[r.status] ?? r.status}
+              {r.routeReason?.startsWith("answer_") && r.status === "proposed" ? "Answered" : (ASSISTANT_STATUS_LABELS[r.status] ?? r.status)}
               {r.errorCode ? <span className="block text-2xs text-red-700">{r.errorCode}{r.errorDetail ? ` · ${r.errorDetail}` : ""}</span> : null}
               {notes[r.id] ? <span className="block text-2xs text-zinc-600">{notes[r.id]}</span> : null}
             </td>

@@ -20,7 +20,6 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
 import { SearchPalette } from "@/components/shell/search-palette";
-import { AssistantButton } from "@/components/ai-assistant/assistant-button";
 import { useShell } from "@/components/shell/shell-context";
 import type { ShellDialog } from "@alhc/core/shell";
 
@@ -53,7 +52,6 @@ export function TopBar() {
         <SearchPalette />
       </div>
       <div className="flex shrink-0 items-center justify-end md:w-58">
-        <AssistantButton />
         <AvatarMenu />
       </div>
     </header>

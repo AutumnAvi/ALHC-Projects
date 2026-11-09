@@ -191,6 +191,17 @@ export async function deleteField(ctx: ApiContext, fieldId: string): Promise<voi
   );
 }
 
+// Brings back a removed field with its values (they were never removed). The same rules as removing it:
+// Editor+ (a locked field: Owners and Admins of its project — guard_trash_change and the lock guard
+// decide); a shared library field comes back with its group's current definition. AI builder round 4
+// (note 172): the assistant's Undo of "remove a field".
+export async function restoreField(ctx: ApiContext, fieldId: string): Promise<void> {
+  checkUpdated(
+    await ctx.db.from("custom_fields").update({ deleted_at: null }).eq("id", id(fieldId)).select("id"),
+    "Only Editors and above can bring back fields",
+  );
+}
+
 export async function setFieldValue(ctx: ApiContext, taskId: string, fieldId: string, value: Json): Promise<void> {
   // A text field's limit (item 48; the database checks it too): no other value is a string this long.
   if (typeof value === "string" && textLength(value) > MAX_TEXT_FIELD_LENGTH) {

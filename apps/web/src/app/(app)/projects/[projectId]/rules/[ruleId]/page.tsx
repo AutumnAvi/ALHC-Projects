@@ -12,6 +12,14 @@ export async function generateMetadata({ params }: PageProps<"/projects/[project
   return { title: rule ? `${rule.name} · Automation` : "Automation" };
 }
 
+// A short fingerprint of what the canvas shows of a saved automation.
+function savedVersion(rule: { name: string; enabled: boolean; triggerType: string; triggerConfig: unknown; conditions: unknown; actions: unknown }) {
+  const text = JSON.stringify([rule.name, rule.enabled, rule.triggerType, rule.triggerConfig, rule.conditions, rule.actions]);
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36);
+}
+
 // A rule on the full-page canvas (Asana parity, batch 4). Rules are read by project Viewers+ (RLS);
 // Admin+ change them.
 export default async function RulePage({ params, searchParams }: PageProps<"/projects/[projectId]/rules/[ruleId]">) {
@@ -29,7 +37,9 @@ export default async function RulePage({ params, searchParams }: PageProps<"/pro
   if (!project || !rule) notFound();
   return (
     <RuleCanvas
-      key={rule.id}
+      // Round 4 (note 174): a new key when the saved automation changed (an applied AI edit), so the
+      // canvas loads it again; unsaved edits are never written over (the assistant refuses first).
+      key={`${rule.id}:${savedVersion(rule)}`}
       projectId={projectId}
       projectName={project.name}
       rule={rule}
