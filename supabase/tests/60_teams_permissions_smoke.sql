@@ -607,8 +607,10 @@ begin
   -- per statement instead of a role check per row).
   -- Nov 4 notes (batch 23) added project_ids_with_role and portfolio_ids_with_role (the same for every
   -- other policy: the caller's projects / portfolios at a role, once per statement).
+  -- AI builder pilot (experimental, feat/ai-builder) added ai_pilot_ensure_workspace (main-workspace admins
+  -- create or reopen the one registered Testing data pilot workspace).
   assert exposed =
-    'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
+    'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,ai_pilot_ensure_workspace,apply_task_numbering,assign_request_number,'
     'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
     'complete_approval_as_approver,convert_commenter_members,create_project_from_template,create_project_from_template_custom,create_review_check,custom_field_has_role,decide_approval,decide_project_access_request,decide_team_join_request,'
     'delete_project_template,duplicate_project,finish_import_run,get_project_integrations,get_public_form,goal_hidden_project_count,hand_off_approval,has_portfolio_role,'

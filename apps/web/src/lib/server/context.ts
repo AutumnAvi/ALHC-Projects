@@ -6,6 +6,7 @@ import { cache } from "react";
 import { createApiContext, type ApiContext } from "@alhc/core/api/core/context";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createAnonServerClient } from "@/lib/supabase/anon-server";
+import { createBearerServerClient } from "@/lib/supabase/bearer-server";
 import { createClient } from "@/lib/supabase/server";
 
 // One context per server render: the layout, the page, and every read under them share one client and
@@ -36,6 +37,14 @@ export function anonContext(): ApiContext | null {
 // bypasses RLS, so never use it to serve a person's request. Null without the service role key.
 export function adminContext(): ApiContext | null {
   const db = createAdminClient();
+  return db ? createApiContext(db) : null;
+}
+
+// AI builder round 5 (note 178): the MCP endpoint's context — one person, through a short-lived token the
+// server minted for them after their personal access token checked out (lib/mcp/auth.ts). RLS decides as for
+// that person; never the service role, never cookies. Null when Supabase isn't configured.
+export function bearerContext(accessToken: string): ApiContext | null {
+  const db = createBearerServerClient(accessToken);
   return db ? createApiContext(db) : null;
 }
 

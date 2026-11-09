@@ -22,13 +22,15 @@ import type { Json, TablesUpdate } from "../../supabase/database.types";
 export async function createProject(
   ctx: ApiContext,
   input: { name: unknown; team: unknown; visibility: unknown },
+  // AI builder round 5: the AI makes projects in the Testing data pilot workspace (null = the workspace).
+  opts: { workspaceId?: string | null } = {},
 ): Promise<string> {
   const name = text(input.name, "Project name", { max: 200 });
   const teamValue = input.team;
   const teamId = teamValue ? id(teamValue, "team") : null;
   const visibility = projectVisibility(input.visibility ?? "private");
   const supabase = ctx.db;
-  const workspace = await getWorkspace(ctx);
+  const workspace = opts.workspaceId ? { id: id(opts.workspaceId, "workspace") } : await getWorkspace(ctx);
   if (!workspace) throw new ApiError("failed", "No workspace is available");
 
   const { data: last } = await supabase
@@ -185,7 +187,7 @@ export async function createSection(
   projectId: string,
   name: string,
   beforeSectionId: string | null = null,
-): Promise<void> {
+): Promise<{ sectionId: string | undefined }> {
   const sectionName = text(name, "Section name", { max: 200 });
   const supabase = ctx.db;
   let sortOrder: number;
@@ -230,6 +232,8 @@ export async function createSection(
   if (reindex && beforeSectionId && inserted.data) {
     check(await supabase.rpc("place_section", { target_section: inserted.data.id, before_section: beforeSectionId }));
   }
+  // AI builder round 3: the assistant's Undo removes exactly the section it made.
+  return { sectionId: inserted.data?.id };
 }
 
 export async function renameSection(ctx: ApiContext, sectionId: string, name: string): Promise<void> {

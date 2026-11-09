@@ -1,6 +1,7 @@
 "use client";
 
 import { RuleFeedbackLayer } from "@/components/rules/rule-feedback";
+import { AiAssistant } from "@/components/ai-assistant/ai-assistant";
 import { Suspense, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { TooltipLayer } from "@/components/tooltip-layer";
@@ -71,6 +72,10 @@ export function AppShell({
         <TooltipLayer />
         {/* Batch 10: "Automation X ran on N tasks" and loop-protection warnings after the person's changes. */}
         <RuleFeedbackLayer />
+        {/* AI builder round 3 (experimental): the global assistant, for Testing data pilot admins only. */}
+        <Suspense fallback={null}>
+          <AiAssistant />
+        </Suspense>
       </div>
     </RightPanelProvider>
   );

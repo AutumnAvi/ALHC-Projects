@@ -11,9 +11,7 @@ import { useOpenTaskId } from "@/components/shell/right-panel";
 import { RowCompleteControl } from "@/components/task/row-complete-control";
 import { TaskLink } from "@/components/task/task-link";
 import { useServerAction } from "@/components/toast";
-import { moveTask, placeTask, setTaskCompleted, updateTask } from "@/lib/actions/tasks";
-import { moveTaskTag } from "@/lib/actions/tags";
-import { setFieldValue } from "@/lib/actions/fields";
+import { useProjectData } from "./project-data-source";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@alhc/core/tags";
 import type { TaskSeed } from "@/lib/task-seed";
@@ -84,6 +82,8 @@ export function BoardView({
   const config = viewConfig?.current ?? configProp;
   const [, run] = useServerAction();
   const { canEdit, canManage } = useProjectPermissions();
+  // Where writes go: the Server Actions, or an AI builder draft's in-memory source (project-data-source.tsx).
+  const data = useProjectData();
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   // The column a card was dragged from (grouped by tag, a task sits in several columns).
@@ -156,20 +156,20 @@ export function BoardView({
       run(
         () =>
           manualOrder
-            ? placeTask(task.id, projectId, target.sectionId, beforeId)
-            : moveTask(task.id, projectId, target.sectionId),
+            ? data.placeTask(task.id, projectId, target.sectionId, beforeId)
+            : data.moveTask(task.id, projectId, target.sectionId),
         () => applyChange({ type: "move", taskId: task.id, sectionId: target.sectionId, sortOrder }),
       );
     } else if (target.kind === "assignee") {
       if (task.assigneeId === target.assigneeId) return;
       run(
-        () => updateTask(task.id, { assigneeId: target.assigneeId }),
+        () => data.updateTask(task.id, { assigneeId: target.assigneeId }),
         () => applyChange({ type: "assign", taskId: task.id, assigneeId: target.assigneeId }),
       );
     } else if (target.kind === "field") {
       if ((task.fieldValues[target.fieldId] ?? null) === target.optionId) return;
       run(
-        () => setFieldValue(task.id, target.fieldId, target.optionId),
+        () => data.setFieldValue(task.id, target.fieldId, target.optionId),
         () => applyChange({ type: "field", taskId: task.id, fieldId: target.fieldId, value: target.optionId }),
       );
     } else if (target.kind === "tag") {
@@ -179,7 +179,7 @@ export function BoardView({
       const next = task.tagIds.filter((t) => t !== fromTagId);
       if (target.tagId && !next.includes(target.tagId)) next.push(target.tagId);
       run(
-        () => moveTaskTag(task.id, fromTagId, target.tagId),
+        () => data.moveTaskTag(task.id, fromTagId, target.tagId),
         () => applyChange({ type: "tags", taskId: task.id, tagIds: next }),
       );
     }
@@ -190,7 +190,7 @@ export function BoardView({
     // A blocked card has a lock instead of a checkbox (Oct 27 notes, batch 6): never try and undo.
     if (completed && blockedCount(task) > 0) return;
     run(
-      trackCompletion(task.id, completed, () => setTaskCompleted(task.id, completed)),
+      trackCompletion(task.id, completed, () => data.setTaskCompleted(task.id, completed)),
       () => applyChange({ type: "complete", taskId: task.id, completed }),
     );
   }

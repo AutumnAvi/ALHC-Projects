@@ -11,6 +11,7 @@ import {
   Lock,
   Plus,
   Search,
+  Sparkles,
   SlidersHorizontal,
   Upload,
   Users,
@@ -29,6 +30,8 @@ import { createProject } from "@/lib/actions/projects";
 import { type ActionResult } from "@alhc/core/api/core/result";
 import { projectColorClass } from "@/lib/project-colors";
 import { loadProjectGallery, loadTemplatePreview } from "@/lib/actions/shell";
+import { loadAiBuilder, type AiBuilderSetup } from "@/lib/actions/ai-builder";
+import { AiBuilderPanel } from "@/components/ai-builder/ai-builder-panel";
 import {
   GALLERY_CATEGORIES,
   describeSummary,
@@ -39,7 +42,7 @@ import {
 } from "@alhc/core/templates";
 import { VISIBILITY_LABELS, type ProjectVisibility } from "@alhc/core/workspace";
 
-type Step = { kind: "gallery" } | { kind: "blank" } | { kind: "import" } | { kind: "template"; template: GalleryTemplate };
+type Step = { kind: "gallery" } | { kind: "blank" } | { kind: "import" } | { kind: "ai" } | { kind: "template"; template: GalleryTemplate };
 
 const DEFAULT_SECTIONS = ["To do", "In progress", "Done"];
 
@@ -88,12 +91,28 @@ export function NewProjectDialog({ onClose, teamId }: { onClose: () => void; tea
 
   useClosesPopovers(true, panelRef);
   const back = () => setStep({ kind: "gallery" });
+  // AI builder pilot (experimental, feat/ai-builder): offered only when the server says the viewer is a
+  // workspace admin of the Testing data pilot (checked again on every step).
+  const [aiSetup, setAiSetup] = useState<AiBuilderSetup | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadAiBuilder()
+      .then((res) => {
+        if (live && res.data?.access === "ready") setAiSetup(res.data);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
   const heading =
     step.kind === "blank"
       ? "Blank project"
       : step.kind === "import"
         ? "Import a project"
-        : step.kind === "template"
+        : step.kind === "ai"
+          ? "Build with AI (pilot)"
+          : step.kind === "template"
           ? step.template.name
           : "Template gallery";
 
@@ -120,6 +139,12 @@ export function NewProjectDialog({ onClose, teamId }: { onClose: () => void; tea
         </h2>
         {step.kind === "gallery" ? (
           <>
+            {aiSetup ? (
+              <button type="button" onClick={() => setStep({ kind: "ai" })} className="btn-secondary h-8 px-3">
+                <Sparkles className="size-4" aria-hidden />
+                Build with AI
+              </button>
+            ) : null}
             <button type="button" onClick={() => setStep({ kind: "import" })} className="btn-secondary h-8 px-3">
               <FileInput className="size-4" aria-hidden />
               Import
@@ -141,6 +166,8 @@ export function NewProjectDialog({ onClose, teamId }: { onClose: () => void; tea
             onBlank={() => setStep({ kind: "blank" })}
             onPick={(template) => setStep({ kind: "template", template })}
           />
+        ) : step.kind === "ai" && aiSetup ? (
+          <AiBuilderPanel setup={aiSetup} onBack={back} />
         ) : step.kind === "template" ? (
           <TemplateStep template={step.template} defaultTeamId={teamId} onBack={back} />
         ) : (

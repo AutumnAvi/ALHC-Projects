@@ -5627,11 +5627,229 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      // AI builder pilot (experimental, feat/ai-builder; 20261108122112_ai_builder_pilot_a.sql).
+      ai_pilot_workspaces: {
+        Row: {
+          workspace_id: string;
+          marker: string;
+          name: string;
+          created_by: string | null;
+          created_at: string;
+          cleaned_at: string | null;
+          cleanup_report: Json | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      ai_pilot_seed_items: {
+        Row: {
+          workspace_id: string;
+          kind: string;
+          source_key: string;
+          local_id: string | null;
+          created_by: string;
+          created_at: string;
+        };
+        Insert: { workspace_id: string; kind: string; source_key: string; local_id?: string | null };
+        Update: never;
+        Relationships: [];
+      };
+      ai_builder_runs: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          actor_id: string;
+          request_key: string;
+          status: string;
+          brief_chars: number;
+          template_id: string | null;
+          model: string | null;
+          input_tokens: number | null;
+          output_tokens: number | null;
+          proposal: Json | null;
+          proposal_version: number;
+          error_code: string | null;
+          project_id: string | null;
+          created_ids: Json | null;
+          fingerprint: Json | null;
+          undo_conflicts: Json | null;
+          generated_at: string | null;
+          applied_at: string | null;
+          undone_at: string | null;
+          created_at: string;
+          updated_at: string;
+          // AI builder round 2 (20261108160000_ai_builder_round2_a.sql).
+          kind: string;
+          parent_run_id: string | null;
+          target_project_id: string | null;
+          rule_id: string | null;
+          effort: string | null;
+        };
+        Insert: {
+          workspace_id: string;
+          request_key: string;
+          brief_chars?: number;
+          template_id?: string | null;
+          kind?: string;
+          parent_run_id?: string | null;
+          target_project_id?: string | null;
+        };
+        Update: {
+          status?: string;
+          model?: string | null;
+          effort?: string | null;
+          rule_id?: string | null;
+          input_tokens?: number | null;
+          output_tokens?: number | null;
+          proposal?: Json | null;
+          proposal_version?: number;
+          error_code?: string | null;
+          generated_at?: string | null;
+        };
+        Relationships: [];
+      };
+      // AI builder round 3 (20261108152314_ai_assistant_round3_a.sql): the global assistant's runs.
+      ai_assistant_runs: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          actor_id: string;
+          request_key: string;
+          status: string;
+          page_kind: string;
+          page_project_id: string | null;
+          page_task_id: string | null;
+          page_rule_id: string | null;
+          instruction_chars: number;
+          model: string | null;
+          effort: string | null;
+          route_reason: string | null;
+          escalated: boolean;
+          input_tokens: number | null;
+          output_tokens: number | null;
+          proposal: Json | null;
+          op_count: number;
+          ops_summary: Json | null;
+          error_code: string | null;
+          error_detail: string | null;
+          apply_key: string | null;
+          applied: Json | null;
+          touched_ids: string[] | null;
+          undo_conflicts: Json | null;
+          generated_at: string | null;
+          applied_at: string | null;
+          undone_at: string | null;
+          created_at: string;
+          updated_at: string;
+          // Round 5 (20261109120000_ai_assistant_round5_a.sql): runs made from an MCP client.
+          source: string;
+          token_id: string | null;
+        };
+        Insert: {
+          workspace_id: string;
+          request_key: string;
+          source?: string;
+          token_id?: string | null;
+          page_kind?: string;
+          page_project_id?: string | null;
+          page_task_id?: string | null;
+          page_rule_id?: string | null;
+          instruction_chars?: number;
+        };
+        Update: {
+          status?: string;
+          model?: string | null;
+          effort?: string | null;
+          route_reason?: string | null;
+          escalated?: boolean;
+          input_tokens?: number | null;
+          output_tokens?: number | null;
+          proposal?: Json | null;
+          op_count?: number;
+          ops_summary?: Json | null;
+          error_code?: string | null;
+          error_detail?: string | null;
+          apply_key?: string | null;
+          applied?: Json | null;
+          touched_ids?: string[] | null;
+          undo_conflicts?: Json | null;
+          generated_at?: string | null;
+        };
+        Relationships: [];
+      };
+      // AI builder round 5 (20261109120000_ai_assistant_round5_a.sql): MCP personal access tokens. Clients
+      // never read token_hash or the rate-limit window (column grants).
+      personal_access_tokens: {
+        Row: {
+          id: string;
+          profile_id: string;
+          workspace_id: string;
+          name: string;
+          token_prefix: string;
+          scopes: string[];
+          created_at: string;
+          last_used_at: string | null;
+          expires_at: string;
+          revoked_at: string | null;
+        };
+        Insert: {
+          workspace_id: string;
+          name: string;
+          token_prefix: string;
+          token_hash: string;
+          scopes: string[];
+          expires_at: string;
+        };
+        Update: {
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      // AI builder round 5 (20261109120000_ai_assistant_round5_a.sql): the MCP route's token lookup (service role only).
+      mcp_token_verify: {
+        Args: { target_hash: string };
+        Returns: Json;
+      };
+      // AI builder pilot (experimental, feat/ai-builder).
+      ai_pilot_admin: {
+        Args: { target_workspace: string };
+        Returns: boolean;
+      };
+      ai_pilot_ensure_workspace: {
+        Args: { pilot_marker: string };
+        Returns: Json;
+      };
+      // AI builder round 2: the pilot workspace's people (its workspace admins and active team members).
+      ai_pilot_members: {
+        Args: { target_workspace: string };
+        Returns: { profile_id: string; name: string | null; email: string | null; is_me: boolean }[];
+      };
+      ai_pilot_seed_comment: {
+        Args: { target_workspace: string; source_key: string; target_task: string; comment_body: string };
+        Returns: string;
+      };
+      ai_pilot_seed_field_value: {
+        Args: { target_workspace: string; source_key: string; target_task: string; target_field: string; new_value: Json };
+        Returns: string;
+      };
+      ai_builder_apply: {
+        Args: { target_run: string; expected_version: number; local_today: string };
+        Returns: Json;
+      };
+      ai_builder_undo: {
+        Args: { target_run: string };
+        Returns: Json;
+      };
+      ai_builder_proposal_problem: {
+        Args: { p: Json };
+        Returns: string | null;
+      };
       // Nov 4 notes, batch 26: used by the realtime.messages policies (who may join a live-update topic).
       alhc_live_topic_allowed: {
         Args: { topic: string };

@@ -25,9 +25,10 @@ function teamRole(value: unknown): string {
 // ---------------------------------------------------------------------------------------------
 
 // A new team (the creator becomes its first lead). Answers the new team's id.
-export async function createTeam(ctx: ApiContext, input: { name: unknown; description: unknown }): Promise<string> {
+// AI builder round 5: `opts.workspaceId` = the Testing data pilot workspace.
+export async function createTeam(ctx: ApiContext, input: { name: unknown; description: unknown }, opts: { workspaceId?: string | null } = {}): Promise<string> {
   const name = text(input.name, "Team name", { max: 100 });
-  const workspace = await getWorkspace(ctx);
+  const workspace = opts.workspaceId ? { id: id(opts.workspaceId, "workspace") } : await getWorkspace(ctx);
   if (!workspace) throw new ApiError("failed", "No workspace is available");
   const supabase = ctx.db;
   const inserted = await supabase

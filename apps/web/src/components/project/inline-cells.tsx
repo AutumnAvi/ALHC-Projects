@@ -9,7 +9,7 @@ import { Assignee, EmptyCellHint } from "@/components/project/task-meta";
 import { DateRangePicker, SingleDatePicker } from "@/components/task/date-picker";
 import { PeopleList, PersonPicker } from "@/components/task/person-picker";
 import { useNotify } from "@/components/toast";
-import { loadSubtaskRows, setTaskRowExpanded } from "@/lib/actions/my-tasks";
+import { useProjectData } from "./project-data-source";
 import { type ActionResult } from "@alhc/core/api/core/result";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { SubtaskItem } from "@alhc/core/api/tasks/model";
@@ -253,6 +253,7 @@ export function useSubtaskTrees({
   showAll?: boolean;
 }) {
   const notify = useNotify();
+  const data = useProjectData();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(initialExpanded));
   // With Show subtasks on: rows closed for this visit (not saved; the view's setting opens them).
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -283,7 +284,7 @@ export function useSubtaskTrees({
     const roots = missingKey ? missingKey.split(",").filter((root) => !inFlight.current.has(root)) : [];
     if (roots.length === 0) return;
     for (const root of roots) inFlight.current.add(root);
-    void loadSubtaskRows(roots, projectId)
+    void data.loadSubtaskRows(roots, projectId)
       .catch(() => ({ error: "Couldn’t load the subtasks", data: undefined }))
       .then((result) => {
         for (const root of roots) inFlight.current.delete(root);
@@ -299,7 +300,7 @@ export function useSubtaskTrees({
         });
         if (!result.error) setKept((current) => withoutIds(current, (result.data ?? []).map((item) => item.id)));
       });
-  }, [missingKey, projectId, notify, version]);
+  }, [missingKey, projectId, notify, version, data]);
 
   return {
     childrenOf,
@@ -313,7 +314,7 @@ export function useSubtaskTrees({
       }
       const open = !expanded.has(id);
       setExpanded((current) => toggled(current, id));
-      void setTaskRowExpanded(id, open).then((result) => {
+      void data.setTaskRowExpanded(id, open).then((result) => {
         if (result.error) notify(result.error);
       });
     },

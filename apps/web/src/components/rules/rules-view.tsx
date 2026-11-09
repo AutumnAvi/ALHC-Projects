@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { AskAiAutomation } from "@/components/ai-builder/ask-ai-automation";
+import { EditWithAiButton } from "@/components/ai-assistant/edit-with-ai";
 import { Fragment, useId, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronRight, Copy, GitBranch, History, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -154,10 +156,14 @@ export function RulesView({
           that undo each other, chains stop after ten, an automation that keeps failing pauses itself, and Status fields always follow the section.
         </p>
         {canEdit ? (
-          <Link href={`${base}/rules/new`} className="btn-primary h-8 px-3">
-            <Plus className="size-4" aria-hidden />
-            Add automation
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* AI builder round 2 (experimental): shown only on Testing data pilot projects. */}
+            <AskAiAutomation projectId={projectId} />
+            <Link href={`${base}/rules/new`} className="btn-primary h-8 px-3">
+              <Plus className="size-4" aria-hidden />
+              Add automation
+            </Link>
+          </div>
         ) : null}
       </div>
 
@@ -394,6 +400,8 @@ export function RulesView({
                     >
                       <Pencil className="size-4" />
                     </Link>
+                    {/* Round 4 (note 174): the assistant with this automation as its context (Owners / Admins). */}
+                    {canEdit ? <EditWithAiButton projectId={projectId} ruleId={rule.id} ruleName={rule.name} /> : null}
                     {canEdit ? (
                       <button
                         type="button"

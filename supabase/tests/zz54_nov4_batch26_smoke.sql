@@ -373,7 +373,11 @@ begin
   -- h. A field value: the value on the field's project, a signal on the task.
   select v.task_id, v.field_id, cf.project_id into f
   from public.task_field_values v join public.custom_fields cf on cf.id = v.field_id
-  where cf.field_type = 'text' and not cf.locked order by v.task_id limit 1;
+  -- A project-only field (a shared library field syncs the value into its other placements: a second
+  -- message), picked in a stable order (random ids used to make this pick vary between runs).
+  where cf.field_type = 'text' and not cf.locked and cf.library_field_id is null and not cf.in_library
+    and not exists (select 1 from public.custom_fields c2 where c2.library_field_id = cf.id)
+  order by v.task_id, v.field_id limit 1;
   if f.task_id is not null then
     truncate realtime.messages;
     update public.task_field_values set value = to_jsonb('Live value'::text) where task_id = f.task_id and field_id = f.field_id;
