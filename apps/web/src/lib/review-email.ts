@@ -1,5 +1,5 @@
 import "server-only";
-import { applyDesign, DESIGN_DEFAULTS, type AppliedDesign } from "@/lib/email-design";
+import { applyDesign, BRAND_BORDER, BRAND_PAGE, DESIGN_DEFAULTS, type AppliedDesign } from "@/lib/email-design";
 import { escapeHtml, layout, type Rendered } from "@/lib/email-layout";
 import { REVIEW_LINK_DAYS, reviewMediaKind, roundLabel } from "@alhc/core/review-checks";
 
@@ -79,8 +79,8 @@ function fileRow(asset: ReviewEmailAsset, href: string) {
   const link = escapeHtml(href);
   const width = emailImageWidth(asset.thumbnailWidth);
   const picture = asset.thumbnailUrl
-    ? `<a href="${link}" target="_blank" style="display:block;text-decoration:none"><img src="${escapeHtml(asset.thumbnailUrl)}" alt="${name}" width="${width}" style="display:block;width:100%;max-width:${width}px;height:auto;border:1px solid #e4e4e7;border-radius:8px;outline:none;text-decoration:none"></a>`
-    : `<a href="${link}" target="_blank" style="display:block;text-decoration:none;color:#18181b"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="96" align="center" valign="middle" bgcolor="#f4f4f5" style="height:96px;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:8px;${FONT}"><span style="display:block;font-size:18px;font-weight:700;letter-spacing:0.5px;color:#52525b">${escapeHtml(
+    ? `<a href="${link}" target="_blank" style="display:block;text-decoration:none"><img src="${escapeHtml(asset.thumbnailUrl)}" alt="${name}" width="${width}" style="display:block;width:100%;max-width:${width}px;height:auto;border:1px solid ${BRAND_BORDER};border-radius:8px;outline:none;text-decoration:none"></a>`
+    : `<a href="${link}" target="_blank" style="display:block;text-decoration:none;color:#18181b"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="96" align="center" valign="middle" bgcolor="${BRAND_PAGE}" style="height:96px;background:${BRAND_PAGE};border:1px solid ${BRAND_BORDER};border-radius:8px;${FONT}"><span style="display:block;font-size:18px;font-weight:700;letter-spacing:0.5px;color:#52525b">${escapeHtml(
         extensionLabel(asset.name),
       )}</span><span style="display:block;margin-top:2px;font-size:12px;color:#71717a">${kindWord(asset)}</span></td></tr></table></a>`;
   return `<tr><td valign="top" style="padding:0 0 16px 0">${picture}<a href="${link}" target="_blank" style="display:block;margin-top:6px;font-size:13px;line-height:18px;color:#3f3f46;text-decoration:none;word-break:break-word;${FONT}">${name}</a></td></tr>`;

@@ -56,7 +56,7 @@ test("the email's files: a signed thumbnail, else a file tile; each opens that f
   assert.ok(rendered.html.includes(`src="${signed}"`), "the image's thumbnail is the signed stored one");
   assert.ok(rendered.html.includes(`alt="poster.png"`), "alt text = the file name");
   assert.ok(!rendered.html.includes(`${urls.page}/file/`), "never the token route as an image address");
-  assert.equal(rendered.html.match(/<img /g)?.length, 1, "files without a thumbnail get a tile, not an image");
+  assert.equal(rendered.html.match(/<img /g)?.length, 2, "the brand logo, plus one thumbnail; other files are tiles");
   assert.match(rendered.html, />PDF</, "the PDF's tile");
   assert.match(rendered.html, />DOCX</, "and the document's");
   for (const id of ["asset-1", "asset-2", "asset-3"]) {

@@ -7,6 +7,37 @@
 // form override; every setting resolves form → project → workspace → the built-in default below
 // (mirrors resolve_email_design()). Fill-in fields like {task_name} are replaced when an email is
 // rendered; unknown ones render blank. Pure: the drain, the editor's preview, and the unit tests use it.
+// Nov 1 notes (batch 11) stopped applying stored designs; the drain uses DESIGN_DEFAULTS only.
+// Nov 9 notes (181): those defaults are the Autumn Lake brand for both kinds.
+
+// Autumn Lake brand (Nov 9 notes, 181). The layout draws the logo, the maroon bar, the page, and the
+// card; the accent is link and header text, and the button is the orange call to action.
+export const BRAND_SITE_FALLBACK = "https://alhc-projects.vercel.app";
+export const BRAND_LOGO_PATH = "/brand/logo-horizontal.png";
+export const BRAND_LOGO_ALT = "Autumn Lake Healthcare";
+export const BRAND_LOGO_WIDTH = 170;
+export const BRAND_FOOTER = "Sent by Autumn Lake Marketing";
+export const BRAND_SENDER_NAME = "Autumn Lake Marketing";
+export const BRAND_BAR = "#751c1b";
+export const BRAND_BUTTON = "#ff6800";
+export const BRAND_LINK = "#b34a00";
+export const BRAND_PAGE = "#f1f5f9";
+export const BRAND_BORDER = "#e2e8f0";
+export const BRAND_HIGHLIGHT = "#fff2e6";
+
+// The public site the logo is served from: NEXT_PUBLIC_APP_URL, else the Vercel production domain,
+// else the hosted app. Email clients need an absolute URL.
+export function publicSiteUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim().replace(/\/+$/, "");
+  if (vercel) return /^https?:\/\//i.test(vercel) ? vercel.replace(/\/+$/, "") : `https://${vercel}`;
+  return BRAND_SITE_FALLBACK;
+}
+
+export function brandLogoUrl(): string {
+  return `${publicSiteUrl()}${BRAND_LOGO_PATH}`;
+}
 
 export const EMAIL_DESIGN_KINDS = ["internal", "requester"] as const;
 export type EmailDesignKind = (typeof EMAIL_DESIGN_KINDS)[number];
@@ -110,35 +141,36 @@ export const EMPTY_SETTINGS = Object.fromEntries(DESIGN_FIELDS.map((f) => [f, nu
 
 const ALL_SHOWN = Object.fromEntries(BLOCK_DESIGN_FIELDS.map((f) => [f, true])) as { [K in BlockDesignField]: boolean };
 
-// The built-in look: blue accent, no logo, each email's own subject, heading, and small print, every
-// block shown, the app's sign-off. For internal emails an empty button label keeps each email's own
-// ("Open task", "Open Inbox", …); requester emails have no button unless a label is set (it then links
-// to the request's form, for another request).
+// The built-in look (Nov 9 notes, 181): Autumn Lake colors and sign-off, each email's own subject,
+// heading, and small print, every block shown. An empty logo path means the layout draws the public
+// brand logo. For internal emails an empty button label keeps each email's own ("Open task", "Open
+// Inbox", …); requester emails have no button unless a label is set (it then links to the request's
+// form, for another request). The accent is link and header text; the layout's top bar is BRAND_BAR.
 export const DESIGN_DEFAULTS: Record<EmailDesignKind, ResolvedDesign> = {
   internal: {
     logoPath: "",
-    accentColor: "#4573d2",
+    accentColor: BRAND_LINK,
     subjectTemplate: "",
     headerText: "",
     headingText: "",
     introMessage: "",
     buttonLabel: "",
-    buttonColor: "#4573d2",
+    buttonColor: BRAND_BUTTON,
     noticeText: "",
-    footerText: "Sent by ALHC Projects",
+    footerText: BRAND_FOOTER,
     ...ALL_SHOWN,
   },
   requester: {
     logoPath: "",
-    accentColor: "#4573d2",
+    accentColor: BRAND_LINK,
     subjectTemplate: "",
     headerText: "{project_name}",
     headingText: "",
     introMessage: "",
     buttonLabel: "",
-    buttonColor: "#4573d2",
+    buttonColor: BRAND_BUTTON,
     noticeText: "",
-    footerText: "Sent by ALHC Projects",
+    footerText: BRAND_FOOTER,
     ...ALL_SHOWN,
   },
 };

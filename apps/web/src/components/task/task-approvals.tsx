@@ -30,26 +30,23 @@ export function legacyApprovals(approvals: TaskApproval[], excludeId: string | n
 const inputClass =
   "field h-auto w-full py-1.5";
 
-// The pane's Approvals block: approval requests on this task. An approval task's own requests (one per
-// approver in each round — roundId set; Oct 27 notes, batch 6) are in the approval panel at the top
-// instead, so this lists only the other ("…" → Request approval) ones. Since Asana parity, batch 3 it
-// shows only when there are requests, or while an Editor writes one (requesting / onRequestingChange).
+// The pane's Approvals block: approval requests on this task that aren't part of an approval-task round
+// (legacy requests and ones an automation created). An approval task's own round requests are in the
+// approval row instead. Shown only when there is at least one; Editors can ask for another from here.
+// Nov 9 notes (180): the task's "…" menu no longer opens this.
 export function TaskApprovals({
   task,
   profiles,
   memberId,
   excludeId = null,
-  requesting: open,
-  onRequestingChange: setOpen,
 }: {
   task: TaskDetail;
   profiles: Profile[];
   memberId: string;
   // A request shown elsewhere (round requests are always left out).
   excludeId?: string | null;
-  requesting: boolean;
-  onRequestingChange: (requesting: boolean) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const [pending, run] = useServerAction();
   const [approverId, setApproverId] = useState("");
   const [note, setNote] = useState("");
