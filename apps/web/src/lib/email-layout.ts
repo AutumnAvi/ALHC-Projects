@@ -1,5 +1,17 @@
 import "server-only";
-import { defaultAppliedDesign, designedHeading, designedSubject, type AppliedDesign } from "@/lib/email-design";
+import {
+  BRAND_BAR,
+  BRAND_BORDER,
+  BRAND_HIGHLIGHT,
+  BRAND_LOGO_ALT,
+  BRAND_LOGO_WIDTH,
+  BRAND_PAGE,
+  brandLogoUrl,
+  defaultAppliedDesign,
+  designedHeading,
+  designedSubject,
+  type AppliedDesign,
+} from "@/lib/email-design";
 import type { Json, Tables } from "@alhc/core/supabase/database.types";
 
 // The HTML / text shell every outbox email uses (Real features 3 moved it out of email.ts so the digest
@@ -114,16 +126,21 @@ export function layout(
     .join("\n\n");
 
   const accent = escapeHtml(design.accentColor);
+  // Nov 9 notes (181): no stored logo means the public Autumn Lake logo. A design that names its own
+  // path still uses that URL (the old editor path); hiding the logo block hides both.
+  const shownLogo = logoUrl ?? (show.logo ? brandLogoUrl() : null);
   const font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
   const headerRow =
-    logoUrl || headerText
+    shownLogo || headerText
       ? `<tr><td style="padding:20px 28px 0 28px">${
-          logoUrl
-            ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(headerText || design.headerText || "Logo")}" height="32" style="display:block;height:32px;max-width:200px;border:0;outline:none;text-decoration:none">`
+          shownLogo
+            ? logoUrl
+              ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(headerText || design.headerText || "Logo")}" height="32" style="display:block;height:32px;max-width:200px;border:0;outline:none;text-decoration:none">`
+              : `<img src="${escapeHtml(shownLogo)}" alt="${BRAND_LOGO_ALT}" width="${BRAND_LOGO_WIDTH}" style="display:block;width:${BRAND_LOGO_WIDTH}px;max-width:${BRAND_LOGO_WIDTH}px;height:auto;border:0;outline:none;text-decoration:none">`
             : ""
         }${
           headerText
-            ? `<p style="margin:${logoUrl ? "10px" : "0"} 0 0 0;font-size:13px;font-weight:600;letter-spacing:0.2px;color:${accent}">${textHtml(headerText)}</p>`
+            ? `<p style="margin:${shownLogo ? "10px" : "0"} 0 0 0;font-size:13px;font-weight:600;letter-spacing:0.2px;color:${accent}">${textHtml(headerText)}</p>`
             : ""
         }</td></tr>`
       : "";
@@ -143,19 +160,24 @@ export function layout(
   const small = (value: string) =>
     `<p style="margin:12px 0 0 0;font-size:12px;line-height:1.5;color:#71717a;text-align:center;${font}">${textHtml(value)}</p>`;
 
+  const bar = escapeHtml(BRAND_BAR);
+  const page = escapeHtml(BRAND_PAGE);
+  const cardBorder = escapeHtml(BRAND_BORDER);
+  const highlight = escapeHtml(BRAND_HIGHLIGHT);
+  const link = accent;
   const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="x-apple-disable-message-reformatting"><title>${escapeHtml(shownHeading || subject)}</title></head>
-<body style="margin:0;padding:0;background:#f4f4f5;${font}">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f4f5" style="background:#f4f4f5"><tr><td align="center" style="padding:32px 12px">
+<html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="x-apple-disable-message-reformatting"><title>${escapeHtml(shownHeading || subject)}</title></head>
+<body style="margin:0;padding:0;background:${page};${font}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${page}" style="background:${page}"><tr><td align="center" style="padding:32px 12px">
 <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:560px">
 ${preface ? `<tr><td style="padding:0 4px 12px 4px;font-size:12px;color:#a1a1aa;${font}">${escapeHtml(preface)}</td></tr>` : ""}
-<tr><td bgcolor="#ffffff" style="background:#ffffff;border:1px solid #e4e4e7;border-radius:12px">
+<tr><td bgcolor="#ffffff" style="background:#ffffff;border:1px solid ${cardBorder};border-radius:12px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-<tr><td height="4" bgcolor="${accent}" style="height:4px;line-height:4px;font-size:0;background:${accent};border-radius:12px 12px 0 0">&nbsp;</td></tr>
+<tr><td height="6" bgcolor="${bar}" style="height:6px;line-height:6px;font-size:0;background:${bar};border-radius:12px 12px 0 0">&nbsp;</td></tr>
 ${headerRow}
 ${
   replyLine
-    ? `<tr><td style="padding:16px 28px 0 28px;${font}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#eff6ff" style="padding:10px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:14px;line-height:20px;font-weight:600;color:#1e3a8a;${font}">${escapeHtml(replyLine)}</td></tr></table></td></tr>`
+    ? `<tr><td style="padding:16px 28px 0 28px;${font}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${highlight}" style="padding:10px 14px;background:${highlight};border:1px solid #ffd7b5;border-radius:8px;font-size:14px;line-height:20px;font-weight:600;color:${link};${font}">${escapeHtml(replyLine)}</td></tr></table></td></tr>`
     : ""
 }
 <tr><td style="padding:20px 28px 28px 28px;${font}">
@@ -172,7 +194,7 @@ ${button}
 ${footer.map(small).join("")}
 ${
   footerLink
-    ? `<p style="margin:12px 0 0 0;font-size:12px;text-align:center;${font}"><a href="${escapeHtml(footerLink.href)}" style="color:#52525b">${escapeHtml(footerLink.label)}</a></p>`
+    ? `<p style="margin:12px 0 0 0;font-size:12px;text-align:center;${font}"><a href="${escapeHtml(footerLink.href)}" style="color:${link}">${escapeHtml(footerLink.label)}</a></p>`
     : ""
 }
 ${signOff ? small(signOff) : ""}

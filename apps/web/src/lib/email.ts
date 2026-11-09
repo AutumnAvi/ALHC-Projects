@@ -1,6 +1,7 @@
 import "server-only";
 import {
   applyDesign,
+  BRAND_SENDER_NAME,
   defaultAppliedDesign,
   DESIGN_DEFAULTS,
   formatDesignDate,
@@ -480,9 +481,13 @@ export function senderAddress(configured: string | null): string | null {
 }
 
 // The From header an email gets: its sender (configuredSender) with the workspace's sender name in front.
-export function fromFor(replyable: boolean, senderName: string | null): string | null {
+// Nov 9 notes (181): a requester email with no workspace sender name is "Autumn Lake Marketing". A name
+// the workspace set is kept. Internal emails are unchanged when none is set.
+export function fromFor(replyable: boolean, senderName: string | null, requester = false): string | null {
   const configured = configuredSender(replyable);
-  return configured ? fromHeader(configured, senderName) : null;
+  if (!configured) return null;
+  const name = senderName?.trim() || (requester ? BRAND_SENDER_NAME : "");
+  return fromHeader(configured, name || null);
 }
 
 // The From header: EMAIL_FROM, with the workspace's sender name (Settings → Workspace → Email) in front
@@ -550,8 +555,16 @@ async function renderScheduled(
 // Which design an email uses when the database can't say (a database without the email designs
 // update): emails to a form's submitter are requester emails, everything else internal.
 export function guessDesignKind(row: OutboxRow): EmailDesignKind {
+  const payloadKind = payloadOf(row).kind;
+  if (payloadKind === "invite" || payloadKind === "notification" || payloadKind === "digest" || payloadKind === "report") {
+    return "internal";
+  }
   if (isSubmitterResponse(row) || row.template === "form_confirmation") return "requester";
-  if (row.template === "requester_update" && !row.to_profile_id) return "requester";
+  // A rule email to someone who isn't a workspace person (the form's submitter): requester_update, or
+  // custom with no profile. Comment emails are custom too, but they name a comment and a profile.
+  if ((row.template === "requester_update" || row.template === "custom") && !row.to_profile_id && !row.comment_id) {
+    return "requester";
+  }
   return "internal";
 }
 
@@ -777,7 +790,8 @@ export async function sendEmailNow(
   const senderName = ctx ? await emailSenderName(ctx) : null;
   // No Reply-To here: a review check's email and every test are no-reply; a test of a replyable email
   // (a response to a submitter) comes from the same sender as the real one would.
-  const from = fromFor(email.replyable === true, senderName)!;
+  // Review checks (the only caller) are requester emails, as is a replyable design test.
+  const from = fromFor(email.replyable === true, senderName, true)!;
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -876,7 +890,7 @@ async function deliver(
     },
     body: JSON.stringify({
       // Only an email with a Reply-To the app reads comes from EMAIL_FROM; the rest from the no-reply sender.
-      from: fromFor(Boolean(reply), senderName)!,
+      from: fromFor(Boolean(reply), senderName, design.kind === "requester")!,
       to: [row.to_email],
       subject: email.subject,
       text: email.text,
