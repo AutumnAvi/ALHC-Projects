@@ -170,6 +170,9 @@ export function AssistantBubble({ pos, viewport, open, onMove }: { pos: BubblePo
           if (e.button !== 0) return;
           moved.current = false;
           press.current = { start: { x: e.clientX, y: e.clientY }, grab: { x: e.clientX - xy.x, y: e.clientY - xy.y }, id: e.pointerId, dragging: false };
+          // Captured at once: a fast first move that leaves the 48px button still reaches it (a click
+          // still fires on the button).
+          e.currentTarget.setPointerCapture?.(e.pointerId);
         }}
         onPointerMove={(e) => {
           const p = press.current;
@@ -177,7 +180,6 @@ export function AssistantBubble({ pos, viewport, open, onMove }: { pos: BubblePo
           if (!p.dragging) {
             if (!isDrag(p.start, { x: e.clientX, y: e.clientY })) return;
             p.dragging = true;
-            e.currentTarget.setPointerCapture?.(e.pointerId);
           }
           setDrag(dragPoint({ x: e.clientX, y: e.clientY }, p.grab, viewport));
         }}
