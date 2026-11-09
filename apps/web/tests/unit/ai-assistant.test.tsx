@@ -10,13 +10,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NextRequest } from "next/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
-import { ASSISTANT_JSON_SCHEMA } from "@alhc/core/ai-assistant";
-import { AI_BUILDER_CALLS, structuredOutputIssues } from "@alhc/core/ai-builder";
+import { FINISH_TOOL } from "@alhc/core/ai-assistant";
+import { TOOL_NAMES, toolInputSchema } from "@alhc/core/ai-tools";
+import { AI_BUILDER_CALLS } from "@alhc/core/ai-builder";
 import { AssistantDock } from "@/components/ai-assistant/ai-assistant";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
-import { anthropicMessageCreate } from "@/lib/ai-builder/anthropic";
+import { anthropicMessageCreate, anthropicToolCreate } from "@/lib/ai-builder/anthropic";
 import { POST as proposePost } from "@/app/api/ai-assistant/propose/route";
 
 const P = "33333333-3333-4333-8333-333333333331";
@@ -74,20 +75,30 @@ test("the shortcut is Tab then A, registered and listed in the shortcuts help", 
   assert.equal((help.match(/"Tab", "then", "A"/g) ?? []).length, 1, "no other Tab then A");
 });
 
-test("the assistant's provider calls: Haiku for small edits, Sonnet for automations, the flat schema, no thinking", () => {
+test("the assistant's provider calls: Haiku first, Sonnet on escalation, tool calling with cached tools, no thinking", () => {
+  const tools = [
+    ...TOOL_NAMES.slice(0, 3).map((n) => ({ name: n, description: n, input_schema: toolInputSchema(n, "assistant") })),
+    { ...FINISH_TOOL, input_schema: FINISH_TOOL.input_schema as unknown as Record<string, unknown> },
+  ];
   for (const kind of ["assistant_small", "assistant_large"] as const) {
-    const { params, options } = anthropicMessageCreate(kind, { system: "s", prompt: "p", schema: ASSISTANT_JSON_SCHEMA as Record<string, unknown> }, {});
+    const { params, options } = anthropicToolCreate({ kind, system: "s", messages: [{ role: "user", content: "p" }], tools }, {});
     assert.equal(params.model, AI_BUILDER_CALLS[kind].model);
     assert.equal(params.output_config.effort, AI_BUILDER_CALLS[kind].effort);
-    assert.equal(params.output_config.format.schema, ASSISTANT_JSON_SCHEMA);
+    assert.equal(params.tools.length, tools.length);
+    assert.ok("cache_control" in params.tools[params.tools.length - 1], "the tool list is cached");
     assert.equal(options.timeout, AI_BUILDER_CALLS[kind].timeoutMs);
     assert.ok(!("thinking" in params));
   }
-  assert.equal(anthropicMessageCreate("assistant_small", { system: "s", prompt: "p", schema: {} }, {}).params.model, "claude-haiku-5-5");
-  assert.equal(anthropicMessageCreate("assistant_large", { system: "s", prompt: "p", schema: {} }, {}).params.model, "claude-sonnet-5-5");
+  assert.equal(AI_BUILDER_CALLS.assistant_small.model, "claude-haiku-5-5");
+  assert.equal(AI_BUILDER_CALLS.assistant_large.model, "claude-sonnet-5-5");
   // A deployment override is used only when it's on the allowlist.
   assert.equal(anthropicMessageCreate("assistant_small", { system: "s", prompt: "p", schema: {} }, { AI_BUILDER_ASSISTANT_SMALL_MODEL: "gpt-x" }).params.model, "claude-haiku-5-5");
-  assert.deepEqual(structuredOutputIssues(ASSISTANT_JSON_SCHEMA), []);
+  // Tool results and tool uses round-trip to the SDK's blocks.
+  const conv = anthropicToolCreate(
+    { kind: "assistant_small", system: "s", tools, messages: [{ role: "user", content: "p" }, { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "finish", input: {} }] }, { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok", is_error: true }] }] },
+    {},
+  );
+  assert.deepEqual(conv.params.messages[2].content, [{ type: "tool_result", tool_use_id: "t1", content: "ok", is_error: true }]);
 });
 
 test("the propose route refuses cross-site and non-JSON requests before anything runs", async () => {

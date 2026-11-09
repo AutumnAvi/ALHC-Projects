@@ -43,7 +43,7 @@ export function AssistantRunHistory({ runs }: { runs: AssistantRunSummary[] }) {
         {runs.map((r) => (
           <tr key={r.id} className="align-top">
             <td className="py-2 pr-3 whitespace-nowrap text-zinc-600">{new Date(r.createdAt).toLocaleString()}</td>
-            <td className="py-2 pr-3">{ASSISTANT_PAGE_LABELS[r.pageKind as AssistantPageKind] ?? r.pageKind}</td>
+            <td className="py-2 pr-3">{r.source === "mcp" ? "MCP client" : (ASSISTANT_PAGE_LABELS[r.pageKind as AssistantPageKind] ?? r.pageKind)}</td>
             <td className="py-2 pr-3">{r.opCount ? `${r.opCount}: ${summary(r.opsSummary)}` : "—"}</td>
             <td className="py-2 pr-3">
               {r.routeReason?.startsWith("answer_") && r.status === "proposed" ? "Answered" : (ASSISTANT_STATUS_LABELS[r.status] ?? r.status)}

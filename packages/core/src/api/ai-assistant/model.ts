@@ -1,7 +1,9 @@
-// AI builder round 3 (experimental, feat/ai-builder-p3): the global assistant's types (no database access;
+// AI builder rounds 3–5 (experimental, feat/ai-builder-p5): the global assistant's types (no database access;
 // safe to import anywhere, the browser included).
-import type { AssistantOp, AssistantPageKind, AssistantRejected, OpState } from "../../ai-assistant";
+import type { AssistantPageKind, AssistantRejected, OpState, Question, StagedOp } from "../../ai-assistant";
 import type { FieldDef } from "../../fields";
+
+export type AssistantOp = StagedOp;
 
 // Whether the assistant shows here: only a workspace admin of the live Testing data pilot (the server
 // decides; every request checks again).
@@ -15,13 +17,11 @@ export type ProposeInput = {
   localToday: unknown;
 };
 
-// What the panel needs to show a change set: the operations (with their before / after lines), what was
-// left out and why, and enough of the project to draw automations the way the rule builder does.
+// What the panel needs to show a change set: the staged changes (before / after, destructive, who they
+// message), what was left out and why, a question the person answers (a name that matched several
+// people), and enough of the project to draw automations the way the rule builder does.
 export type AssistantProposal = {
   runId: string;
-  // Round 4 (note 176): "answer" = a how-to question answered in plain words (no operations, nothing to
-  // confirm); "change" = a change set. `answerOnly`: the person's role here allows no changes at all
-  // (Commenter / Viewer), so every request is answered (ANSWER_ONLY_NOTE).
   mode: "change" | "answer";
   answer: string | null;
   answerOnly: boolean;
@@ -29,28 +29,31 @@ export type AssistantProposal = {
   unsupported: string;
   ops: AssistantOp[];
   rejected: AssistantRejected[];
+  question: Question | null;
   model: string;
   routeReason: string;
   escalated: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  toolCalls: number;
   pageKind: AssistantPageKind;
   contextLabel: string;
   ruleContext: { sections: { id: string; name: string }[]; fields: FieldDef[]; people: { id: string; name: string }[] };
 };
 
-export type AssistantApplyInput = { runId: unknown; applyKey: unknown; selected: unknown; timeZone?: unknown };
+// `acknowledged`: the chosen changes that message people, each ticked by the person (they name who).
+export type AssistantApplyInput = { runId: unknown; applyKey: unknown; selected: unknown; acknowledged?: unknown; timeZone?: unknown };
 // `createdRules`: automations this change set made (they start off), for Turn on & Finish and Open in builder.
-export type AssistantApplyResult = { runId: string; applied: number; repeated: boolean; createdRules: { index: number; ruleId: string; projectId: string; name: string }[] };
+export type AssistantApplyResult = { runId: string; applied: number; repeated: boolean; createdRules: { index: number; ruleId: string; projectId: string; name: string; notifies: string | null }[] };
 
-// Round 4 (note 173): Turn on & Finish — which of the run's new automations are on now.
 export type AssistantTurnOnResult = { turnedOn: string[]; alreadyOn: string[] };
 
 export type AssistantUndoResult =
-  | { status: "undone" | "already_undone"; undone: number }
+  | { status: "undone" | "already_undone"; undone: number; notUndone: string[] }
   | { status: "conflict"; conflicts: string[] };
 
-// One applied operation, as the run keeps it for Undo: the state before (read just before the write) and
-// the state once the whole change set was applied (Undo refuses when the data no longer matches it), and
-// the id of anything it made.
+// One applied change, as the run keeps it for Undo: the state just before the write, the state once the
+// whole change set was applied (Undo refuses when the data no longer matches it), and what it made.
 export type AppliedRecord = {
   index: number;
   op: AssistantOp;
@@ -58,8 +61,6 @@ export type AppliedRecord = {
   after: OpState | null;
   created: string | null;
   undone: boolean;
-  // Round 4 (note 173): an automation this run made that the person turned on afterwards (Undo turns it
-  // off before removing it).
   turnedOn?: boolean;
 };
 
@@ -67,6 +68,7 @@ export type AssistantRunSummary = {
   id: string;
   mine: boolean;
   status: string;
+  source: string;
   pageKind: string;
   model: string | null;
   effort: string | null;

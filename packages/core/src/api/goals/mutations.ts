@@ -21,8 +21,9 @@ function goalPeriod(start: unknown, end: unknown) {
 }
 
 // Answers the new goal's id.
-export async function createGoal(ctx: ApiContext, input: GoalInput): Promise<string> {
-  const workspace = await getWorkspace(ctx);
+// AI builder round 5: `opts.workspaceId` = the Testing data pilot workspace.
+export async function createGoal(ctx: ApiContext, input: GoalInput, opts: { workspaceId?: string | null } = {}): Promise<string> {
+  const workspace = opts.workspaceId ? { id: id(opts.workspaceId, "workspace") } : await getWorkspace(ctx);
   if (!workspace) throw new ApiError("failed", "No workspace is available");
   const mode = input.progressMode ?? "manual";
   if (!isProgressMode(mode)) throw invalid("Choose how progress is measured");

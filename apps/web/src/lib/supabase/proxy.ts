@@ -25,6 +25,9 @@ const PUBLIC_PATHS = [
   // Review checks (Oct 26 notes, batch 3): the reviewer's page and its files; a token in the URL, no
   // sign-in (/review-files, the task's own view of uploads, is not public).
   "/review",
+  // AI builder round 5 (note 178): the MCP endpoint authorizes ONLY with a personal access token
+  // (Authorization: Bearer); it never reads the session cookie, so the preview auto-login can't reach it.
+  "/api/mcp",
 ];
 
 // AI builder pilot ONLY (feat/ai-builder, never merged): on this branch's Vercel Preview, sign visitors in

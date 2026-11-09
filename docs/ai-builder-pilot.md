@@ -485,3 +485,83 @@ box; focus kept for 2 s) is reported in the PR.
 5. Open an automation → Edit with AI (header) → the panel opens over the canvas; edit a step by hand
    without saving, ask for a change → Confirm stays disabled with "Save or discard…".
 6. Drag the bubble to the left edge, reload → it's still there; arrow keys move it; Reset puts it back.
+
+## Round 5: AI can do anything (in your role) + MCP server + Haiku first (notes 177–179; branch `feat/ai-builder-p5` → `feat/ai-builder`; draft PR, do not merge to main)
+
+### Why note 177 failed, and the fix
+
+Avi on an automation page: "this automation should be setting the task to an approval task and then setting
+me as the approval". The rule engine already had Set task type → Approval with its approval setup
+(`set_task_type` + approvers, any / all, due days, after approval) and Request approval, plus the "approval
+decided" / "task type changed" triggers and "task type is / isn't" / "approval status is" conditions. But the
+AI's rule vocabulary left them all out, the prompts said approvals were unsupported, an existing automation
+with such a step was shown to the model as "can't rewrite", the assistant had no op to set a task's type or
+approvers, and the model was never told who was asking (so "me" — and "Sarah" — meant nothing).
+
+Fixed: the assistant now uses each engine's **full** vocabulary (`ai-rule-steps.ts`; only Slack, webhooks,
+and Convert to a project — secrets / destinations — are left to the builder), existing automations are shown
+in full and edited with `update_automation`, `set_task_type` (with approvers) and `set_approvers` work on a
+task directly, the context says `you: member:1` ("me", "I", "my"), names of the page's projects' members go
+to the model (never emails or ids), and people are resolved on the server: one match is used, several ask a
+short question in the panel (the candidates are shown to the person, not sent to the model beyond the
+context), none is refused. The round 2 automation-draft vocabulary (`ai-automation.ts`) gained the same steps.
+
+**Privacy tradeoff:** the model now sees the display names of members of the projects on the page (bounded,
+`ASSISTANT_LIMITS.contextPeopleMax`) so "assign it to Sarah" works. Emails and ids still never reach it;
+`search_people` finds others by name and returns aliases.
+
+### One capability registry (note 178)
+
+- `packages/core/src/ai-tools.ts`: 118 tools (110 writes, 8 reads incl. `find_tools`), each with its group,
+  label, where it lives in the UI, the lowest project role that may do it by hand (plus extra conditions),
+  destructive / messages-people flags, Undo or not, and its input params (one JSON Schema per tool, for both
+  the model and MCP).
+- `packages/core/src/api/capabilities/`: one handler per tool — stage (resolve, check the role, preview;
+  nothing written), read (what Apply compares and Undo puts back), verify (checked again at Confirm), apply
+  (an existing typed-API mutation, with the person's own context), undo. `engine.ts` is the one path the
+  assistant's Confirm / Undo and MCP's writes share. Round 4's `ai-capabilities.ts` and
+  `api/ai-assistant/ops.ts` were folded into it (deleted).
+- `TYPED_API_EXCLUSIONS` lists every typed-API write the registry doesn't reach, with why; a test fails on a
+  new mutation with neither. The role matrix (docs/MCP.md) is generated from the registry
+  (`capabilityMatrixMarkdown`).
+- Destructive changes are red in the panel with counts ("and its 1 subtask"); changes that would message
+  people need their own tick naming who; anything without Undo says so before Confirm.
+
+### Tool calling (note 178)
+
+The assistant is a tool conversation (`AiProposalProvider.converse`, `anthropicToolCreate`): the model gets
+the page's tool groups (~9k tokens of tool specs on a project page, ~6.6k elsewhere, vs ~16k for all 118;
+measured as characters / 3.6) plus `find_tools`, which adds more on request, and `finish`. Tool specs and the
+system prompt are marked for prompt caching. Read tools answer at once; write tools only stage. At most
+`ASSISTANT_LIMITS.toolRounds` rounds and `toolCallsMax` calls.
+
+### Models (note 179)
+
+Haiku 5.5 for everything (questions, edits, automations). Sonnet 5.5 only when the request is long or has
+many steps (`routeAssistant`), when Haiku's plan is long or wide (more than `smallMaxOps` changes or
+`smallMaxGroups` groups → planned again by Sonnet, both calls' tokens logged), or after Haiku's tool calls
+failed validation twice in one conversation (`escalated_invalid`). The run logs the model, why, and tokens.
+The round 1 builder's first build stays on Sonnet (note 169); Haiku wasn't measured on full builds this round.
+
+### Answer mode (note 176 follow-up)
+
+The help text is generated from the registry (`registryHelp`: each tool's label, where by hand, the role)
+plus the hand-written summary, bounded. Commenters and Viewers get answers only.
+
+### MCP server
+
+See docs/MCP.md (endpoint, tokens, the auth method, client setup, tool list, what's left out).
+
+### Migration (written, NOT applied)
+
+`20261109120000_ai_assistant_round5_a.sql` (additive, no tail), after `20261108152314_ai_assistant_round3_a.sql`
+(round 4 added none): `personal_access_tokens` (own rows, no hash read, revoke only), `mcp_token_verify`
+(service role only), `ai_assistant_runs.source` / `token_id` with their guard. Suite
+`zz59_ai_assistant_round5_smoke.sql` (the next suite is `zz60_`). No new client definer; nothing for anon.
+
+### Known limits
+
+- No OAuth 2.1 for MCP yet (personal access tokens only).
+- MCP minting needs the project's legacy JWT secret (see docs/MCP.md).
+- Left out this round: project / team Messages, numbering settings, portfolio fields and membership, goal
+  links, status templates, team / privacy, imports, integrations (TYPED_API_EXCLUSIONS has every one).

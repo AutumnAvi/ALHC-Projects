@@ -97,6 +97,7 @@ test("the service role and the anon key are used only where they always were", (
     "src/lib/actions/slack.ts", // the bot token, after the database confirmed a workspace admin
     "src/lib/email.ts", // the email outbox drain
     "src/lib/integrations.ts", // the Slack / webhook outbox drain
+    "src/lib/mcp/auth.ts", // the MCP endpoint's token lookup (mcp_token_verify answers only the owner's id); the call itself runs as that person
   ]);
   assert.deepEqual(users("anonContext"), [
     "src/app/api/calendar/[token]/route.ts",

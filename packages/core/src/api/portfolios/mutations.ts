@@ -19,10 +19,12 @@ import type { Json, TablesUpdate } from "../../supabase/database.types";
 // ---------------------------------------------------------------------------------------------
 
 // Answers the new portfolio's id.
-export async function createPortfolio(ctx: ApiContext, input: { name: unknown }): Promise<string> {
+// AI builder round 5: `opts.workspaceId` = the Testing data pilot workspace (the AI never makes one in
+// the main workspace); without it, the workspace.
+export async function createPortfolio(ctx: ApiContext, input: { name: unknown }, opts: { workspaceId?: string | null } = {}): Promise<string> {
   const name = text(input.name, "Portfolio name", { max: 100 });
   const supabase = ctx.db;
-  const workspace = await getWorkspace(ctx);
+  const workspace = opts.workspaceId ? { id: id(opts.workspaceId, "workspace") } : await getWorkspace(ctx);
   if (!workspace) throw new ApiError("failed", "No workspace is available");
   const inserted = await supabase
     .from("portfolios")

@@ -26,6 +26,12 @@ export default async function AiBuilderHistoryPage() {
         icon={Sparkles}
         title="AI builder history"
         description={`Experimental pilot · ${state.workspaceName} workspace only · the latest 50 runs`}
+        actions={
+          // Round 5 (note 178): tokens for MCP clients (Claude Desktop, Cursor, …).
+          <a href="/settings/mcp" className="btn-secondary">
+            AI &amp; MCP settings
+          </a>
+        }
       />
       <div className="px-gutter py-4">
         <AiRunHistory runs={list} />
