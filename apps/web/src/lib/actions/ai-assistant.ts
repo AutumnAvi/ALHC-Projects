@@ -3,7 +3,7 @@
 // packages/core/src/api/ai-assistant/mutations.ts. The model call is a route (api/ai-assistant/propose:
 // its own time limit). Applying and undoing run as the signed-in person through the typed API; they
 // queue no email, Slack, or webhook delivery of their own (deliver: false).
-import type { AssistantAccess, AssistantApplyResult, AssistantUndoResult } from "@alhc/core/api/ai-assistant/model";
+import type { AssistantAccess, AssistantApplyResult, AssistantTurnOnResult, AssistantUndoResult } from "@alhc/core/api/ai-assistant/model";
 import * as assistantApi from "@alhc/core/api/ai-assistant/mutations";
 import { getAiBuilderAccess } from "@alhc/core/api/ai-builder/queries";
 import type { ActionResult } from "@alhc/core/api/core/result";
@@ -25,6 +25,14 @@ export async function applyAssistantChanges(input: { runId: string; applyKey: st
 
 export async function undoAssistantChanges(runId: string) {
   return runWith<{ undo: AssistantUndoResult }>(async (ctx) => ({ undo: await assistantApi.undoAssistantRun(ctx, runId) }), {
+    deliver: false,
+    revalidate: [["/", "layout"]],
+  });
+}
+
+// Round 4 (note 173): Turn on & Finish — turns on automations this run made (Owner / Admin, checked again).
+export async function turnOnAssistantRules(runId: string, ruleIds?: string[]) {
+  return runWith<{ result: AssistantTurnOnResult }>(async (ctx) => ({ result: await assistantApi.turnOnAssistantRules(ctx, runId, ruleIds) }), {
     deliver: false,
     revalidate: [["/", "layout"]],
   });

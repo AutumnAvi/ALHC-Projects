@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { ArrowRightToLine, Maximize2, Minimize2, MoveHorizontal, RotateCcw, SearchX, Trash2, X } from "lucide-react";
 import { useTaskPane } from "@/components/shell/right-panel";
+import { dialogOpen } from "@/components/shortcuts/keyboard";
 import { useServerAction } from "@/components/toast";
 import { EmptyState, Skeleton } from "@/components/ui";
 import { restoreTask } from "@/lib/actions/tasks";
@@ -59,7 +60,7 @@ export function PaneShell({
       if (e.key !== "Escape" || e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
-      if (document.querySelector("[role='dialog']:not([data-task-pane]), [role='alertdialog']")) return;
+      if (dialogOpen("[data-task-pane]")) return;
       if (expanded) setPaneExpanded(false);
       else close();
     }
@@ -82,6 +83,8 @@ export function PaneShell({
           data-pane-state={paneState}
           data-task-id={taskId}
           role={expanded ? "dialog" : undefined}
+          // Round 4 (note 174): Tab then A opens the AI assistant over the full-screen task.
+          data-assistant-allowed={expanded ? "" : undefined}
           aria-modal={expanded ? true : undefined}
           aria-label={label}
           className={

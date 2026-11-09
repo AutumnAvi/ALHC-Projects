@@ -13,7 +13,6 @@ import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks
 import { ASSISTANT_JSON_SCHEMA } from "@alhc/core/ai-assistant";
 import { AI_BUILDER_CALLS, structuredOutputIssues } from "@alhc/core/ai-builder";
 import { AssistantDock } from "@/components/ai-assistant/ai-assistant";
-import { AssistantButton } from "@/components/ai-assistant/assistant-button";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
 import { DEFAULT_SIDEBAR_PREFS } from "@/lib/sidebar-prefs";
@@ -62,14 +61,13 @@ test("the panel opens on every kind of page and says what it's working on", () =
   }
 });
 
-test("the top bar button stays hidden until the server says this person may use it", () => {
-  assert.equal(renderToStaticMarkup(<AssistantButton />), "", "hidden on the server and by default");
-  assert.ok(read("src/components/shell/top-bar.tsx").includes("<AssistantButton />"), "in the top bar");
+test("the assistant is mounted once by the app shell (round 4: a floating bubble, no top bar button)", () => {
+  assert.ok(!read("src/components/shell/top-bar.tsx").includes("AssistantButton"), "the top bar's button is gone (note 176)");
   assert.ok(read("src/components/shell/app-shell.tsx").includes("<AiAssistant />"), "mounted once by the app shell");
 });
 
 test("the shortcut is Tab then A, registered and listed in the shortcuts help", () => {
-  assert.ok(read("src/components/ai-assistant/ai-assistant.tsx").includes('useTabChord("a", () => toggleAssistant())'));
+  assert.ok(read("src/components/ai-assistant/ai-assistant.tsx").includes('useTabChord("a", () => toggleAssistant(), { allowOver: ASSISTANT_ALLOWED })'));
   const help = read("src/components/shortcuts/keyboard-shortcuts.tsx");
   assert.ok(help.includes('{ keys: ["Tab", "then", "A"], label: "Open or close the AI assistant'));
   for (const taken of ['"Tab", "then", "Q"', '"Tab", "then", "M"']) assert.ok(help.includes(taken), "the existing chords stay");

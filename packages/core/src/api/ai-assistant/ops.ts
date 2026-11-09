@@ -2,8 +2,9 @@
 // undoes. Every write is an existing typed-API mutation run with the signed-in person's own context, so
 // RLS, the guards, validate_rule, and the dependency (blocked-completion) guard decide exactly as when the
 // person does it by hand. Nothing here uses the service role or sends anything.
-import { RULE_OPS, ruleState, taskState, type AssistantOp, type OpState } from "../../ai-assistant";
-import { hasRole, isProjectRole, type ProjectRole } from "../../roles";
+import { RULE_OPS, fieldState, ruleState, taskState, type AssistantOp, type OpState } from "../../ai-assistant";
+import { capabilityRefusal, type AiCapabilityFacts } from "../../ai-capabilities";
+import { isProjectRole, type ProjectRole } from "../../roles";
 import { isTriggerType, type RuleAction, type RuleCondition } from "../../rules";
 import { parseBlockerCounts, blockedCompletionReason } from "../../blocked-completion";
 import type { Json } from "../../supabase/database.types";
@@ -11,7 +12,8 @@ import type { ApiContext } from "../core/context";
 import { maybe, rows } from "../core/db";
 import { ApiError, invalid } from "../core/errors";
 import { createRule, deleteRule, restoreRule, setRuleEnabled, updateRule } from "../automations/mutations";
-import { setFieldValue } from "../fields/mutations";
+import { createField, deleteField, restoreField, setFieldValue, updateField } from "../fields/mutations";
+import { listProjectFieldSharing } from "../fields/queries";
 import { createSection, deleteSection, renameSection } from "../projects/mutations";
 import { addTaskToProject, moveTask, placeSection, removeTaskFromProject, setTaskCompleted, updateTask } from "../tasks/mutations";
 import { NOT_PILOT_PAGE } from "./queries";
@@ -23,29 +25,51 @@ const noSigningSecrets = () => {
 export const isRuleOp = (op: AssistantOp) => RULE_OPS.has(op.op);
 const taskIdOf = (op: AssistantOp): string | null => ("taskId" in op ? op.taskId : null);
 
-// The person's role in a project of the pilot (archived = Viewer), or a refusal when it isn't one.
-async function pilotRole(ctx: ApiContext, workspaceId: string, projectId: string): Promise<ProjectRole> {
+// A project of the pilot as the role table reads it (archived = Viewer), or a refusal when it isn't one.
+async function pilotProject(ctx: ApiContext, workspaceId: string, projectId: string) {
   const p = maybe(
-    await ctx.db.from("projects").select("id, workspace_id, archived_at, deleted_at").eq("id", projectId).maybeSingle(),
+    await ctx.db.from("projects").select("id, name, workspace_id, archived_at, sections_locked, deleted_at").eq("id", projectId).maybeSingle(),
     "project",
   );
   if (!p || p.deleted_at || p.workspace_id !== workspaceId) throw new ApiError("forbidden", NOT_PILOT_PAGE);
   const role = (await ctx.db.rpc("project_role", { target_project: projectId })).data;
   if (!isProjectRole(role)) throw new ApiError("forbidden", "You’re not a member of that project any more");
-  return p.archived_at ? "viewer" : role;
+  return { name: p.name as string, role: (p.archived_at ? "viewer" : role) as ProjectRole, archived: Boolean(p.archived_at), sectionsLocked: Boolean(p.sections_locked) };
+}
+
+// What the role table needs to know about a field, read now (with the field library's sharing answer).
+async function fieldFacts(ctx: ApiContext, fieldId: string, projectId: string, undoing: boolean): Promise<NonNullable<AiCapabilityFacts["field"]>> {
+  const f = maybe(
+    await ctx.db.from("custom_fields").select("project_id, name, locked, bound_to_sections, library_field_id, deleted_at").eq("id", fieldId).maybeSingle(),
+    "field",
+  );
+  // Undo of a removal finds the field removed; every other operation needs it live.
+  if (!f || f.project_id !== projectId || (f.deleted_at && !undoing)) throw new ApiError("forbidden", "That field isn’t in this project any more");
+  const sharing = (await listProjectFieldSharing(ctx, projectId).catch(() => null))?.[fieldId] ?? null;
+  return {
+    name: f.name,
+    locked: Boolean(f.locked),
+    boundToSections: Boolean(f.bound_to_sections),
+    shared: Boolean(f.library_field_id || sharing?.isShared || sharing?.libraryFieldId),
+    definitionEditable: sharing ? sharing.definitionEditable : null,
+    definitionManageable: sharing ? sharing.definitionManageable : null,
+  };
 }
 
 // Checks again, against the database now, that the person may make this change: every project it touches
-// is a live project of the pilot where their own role allows it (Editor+, Admin+ for automations), and
-// its target really belongs to the operation's project. Throws a plain refusal otherwise.
+// is a live project of the pilot where the role table (ai-capabilities.ts — the same rules as by hand)
+// allows it, and its target really belongs to the operation's project. Throws a plain refusal otherwise.
 // `undoing`: the check before Undo (a task moved to another project is found there now).
 export async function checkOpAccess(ctx: ApiContext, workspaceId: string, op: AssistantOp, opts: { completing?: boolean; undoing?: boolean } = {}) {
-  const need: ProjectRole = isRuleOp(op) ? "admin" : "editor";
   const projects = [op.projectId, ...(op.op === "move_task" && op.toProjectId !== op.projectId ? [op.toProjectId] : [])];
   for (const projectId of projects) {
-    if (!hasRole(await pilotRole(ctx, workspaceId, projectId), need)) {
-      throw new ApiError("forbidden", need === "admin" ? "Only the project’s Owners and Admins change its automations" : "Your role in this project doesn’t allow that");
-    }
+    const facts: AiCapabilityFacts = { projectName: "", ...(await pilotProject(ctx, workspaceId, projectId)) };
+    facts.projectName = facts.projectName || "this project";
+    const fieldId = "fieldId" in op ? op.fieldId : null;
+    if (fieldId && projectId === op.projectId) facts.field = await fieldFacts(ctx, fieldId, op.projectId, Boolean(opts.undoing) && op.op === "remove_field");
+    // Undoing a field's creation is its removal; undoing a removal is putting it back (same rules).
+    const why = capabilityRefusal(op.op, facts);
+    if (why) throw new ApiError("forbidden", why.charAt(0).toUpperCase() + why.slice(1));
   }
   if ("ruleId" in op) {
     const r = maybe(await ctx.db.from("rules").select("project_id").eq("id", op.ruleId).maybeSingle(), "automation");
@@ -59,10 +83,7 @@ export async function checkOpAccess(ctx: ApiContext, workspaceId: string, op: As
     const s = maybe(await ctx.db.from("sections").select("project_id").eq("id", op.sectionId).maybeSingle(), "section");
     if (!s || s.project_id !== op.toProjectId) throw new ApiError("forbidden", "That section isn’t in that project");
   }
-  if (op.op === "set_field") {
-    const f = maybe(await ctx.db.from("custom_fields").select("project_id").eq("id", op.fieldId).maybeSingle(), "field");
-    if (!f || f.project_id !== op.projectId) throw new ApiError("forbidden", "That field isn’t in this project");
-  }
+  // (set_field and the field operations: fieldFacts checked the field is in this project.)
   const taskId = taskIdOf(op);
   if (taskId) {
     const t = maybe(await ctx.db.from("tasks").select("id, root_task_id, kind").eq("id", taskId).maybeSingle(), "task");
@@ -142,6 +163,16 @@ export async function readOpState(ctx: ApiContext, op: AssistantOp, created: str
     }
     case "move_section":
       return { order: await sectionOrder(ctx, op.projectId) };
+    case "create_field":
+    case "rename_field":
+    case "update_field_options":
+    case "remove_field": {
+      const fieldId = op.op === "create_field" ? created : op.fieldId;
+      if (!fieldId) return {};
+      const f = maybe(await ctx.db.from("custom_fields").select("name, options, deleted_at").eq("id", fieldId).maybeSingle(), "field");
+      if (!f) return { missing: true };
+      return fieldState({ name: f.name, options: f.options, deleted: Boolean(f.deleted_at) });
+    }
     case "create_rule":
     case "update_rule":
     case "enable_rule":
@@ -219,6 +250,21 @@ export async function writeOp(ctx: ApiContext, op: AssistantOp, createdBy: Map<n
     case "set_field":
       await setFieldValue(ctx, op.taskId, op.fieldId, op.value);
       return null;
+    // Round 4 (note 172): fields go through the field editor's own writes.
+    case "create_field": {
+      const res = await createField(ctx, op.projectId, { name: op.name, fieldType: op.fieldType, options: op.options, showInViews: true });
+      if (!res.fieldId) throw new ApiError("failed", "The field wasn’t created");
+      return res.fieldId;
+    }
+    case "rename_field":
+      await updateField(ctx, op.fieldId, { name: op.name });
+      return null;
+    case "update_field_options":
+      await updateField(ctx, op.fieldId, { options: op.options });
+      return null;
+    case "remove_field":
+      await deleteField(ctx, op.fieldId);
+      return null;
     case "move_task": {
       const sectionId = op.newSection !== null ? (createdBy.get(op.newSection) ?? null) : op.sectionId;
       if (op.newSection !== null && !sectionId) throw invalid("The new section wasn’t made, so the task can’t move into it");
@@ -235,10 +281,25 @@ export async function writeOp(ctx: ApiContext, op: AssistantOp, createdBy: Map<n
 }
 
 // Puts things back as `before` had them (Undo, or rolling back a change set that failed part way).
-export async function undoOp(ctx: ApiContext, op: AssistantOp, before: OpState, created: string | null): Promise<void> {
+export async function undoOp(ctx: ApiContext, op: AssistantOp, before: OpState, created: string | null, opts: { turnedOn?: boolean } = {}): Promise<void> {
   switch (op.op) {
     case "create_rule":
+      // Round 4 (note 173): an automation turned on after it was made is turned off first, then removed.
+      if (created && opts.turnedOn) await setRuleEnabled(ctx, created, false);
       if (created) await deleteRule(ctx, created);
+      return;
+    case "create_field":
+      if (created) await deleteField(ctx, created);
+      return;
+    case "rename_field":
+      await updateField(ctx, op.fieldId, { name: String(before.name ?? "") });
+      return;
+    case "update_field_options":
+      // The options as they were (ids and colors), so every value that used them reads again.
+      await updateField(ctx, op.fieldId, { options: op.previous });
+      return;
+    case "remove_field":
+      await restoreField(ctx, op.fieldId);
       return;
     case "update_rule":
       await updateRule(ctx, op.ruleId, ruleInput(before), noSigningSecrets);

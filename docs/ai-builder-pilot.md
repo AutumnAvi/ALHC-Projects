@@ -366,3 +366,122 @@ fails, no model call).
    then Undo → it lists the conflict and changes nothing.
 4. "Complete the print run" on a blocked task → left out with the blocked reason.
 5. As a non-admin or on a main-workspace page: no button; Tab then A does nothing; the route answers 403.
+
+## Round 4: fields, roles, automation finish, AI on Automations, dictation, the bubble (branch `feat/ai-builder-p4` → `feat/ai-builder`; draft PR, do not merge to main)
+
+Notes 172–176 (Nov 9). **No migration** (the next suite is still `zz59_`): the round 3 run log already
+covers everything — answers are logged as runs, and "turn on" is recorded in an applied run's `applied`
+JSON (the guard allows `applied → applied`).
+
+### Who may do what (note 172)
+
+`packages/core/src/ai-capabilities.ts` is one table, op → the lowest project role that may do it by
+hand, plus conditions. It is used three times: in the model's context (each project's `your_role` and
+`may_change`), by the resolver (an op above the role is "Left out" with a plain reason), and at Confirm,
+Undo, and Turn on (`checkOpAccess` reads the role, the project's lock, and the field's lock / sharing from
+the database again). The AI never exceeds manual permissions.
+
+| Operations | Owner | Admin | Editor | Commenter | Viewer | Extra conditions (as by hand) |
+| --- | :-: | :-: | :-: | :-: | :-: | --- |
+| Automations: create (starts off), edit, turn on / off, remove; Turn on & Finish | ✓ | ✓ | | | | |
+| Sections: add, rename, reorder | ✓ | ✓ | ✓ | | | while the project locks its sections: Owners only (`sections_06_lock`) |
+| Tasks / subtasks: rename, description, move, assign, dates, field values, complete / reopen | ✓ | ✓ | ✓ | | | assign to members only; never complete a blocked, approval, or repeating task; a locked field's values: Owners / Admins |
+| Custom fields: add, rename, change options, remove from the project | ✓ | ✓ | ✓ | | | locked field: definition Owners / Admins of the governing project, removal Owners / Admins; shared library field: definition only editors of the publishing project, removal here only removes it here; the section-bound Status: rename only |
+| Questions ("how do I…?") | ✓ | ✓ | ✓ | ✓ | ✓ | answers only, nothing written |
+
+Archived projects count everyone as a Viewer. **Pilot gate on top:** the assistant is still only for
+workspace admins of the Testing data pilot. If it opens to members later, the same table applies per
+project unchanged (a member who's a Commenter somewhere gets answers there and changes where they're an
+Editor); only `requirePilot` / `getAiBuilderAccess` would widen, and the run log's RLS would need a
+per-member read policy.
+
+### Custom field operations (note 172)
+
+`create_field` (text, number, date, checkbox, single / multi-select, people; ≤ 50 options of ≤ 100
+characters; created shown in List and Board), `rename_field`, `update_field_options` (the model sends the
+whole new list: a name already there keeps its option and values, `Old => New` renames one and keeps its
+values, new names add, left-out names remove — "N tasks use a removed option" is shown), and
+`remove_field` (the manual "Delete field" / "Remove from this project": a soft delete, values kept; the
+change says how many tasks have a value). Writes are `createField` / `updateField` / `deleteField`; Undo:
+remove what it created, put the name / options back (ids and colors), or bring a removed field back with
+`restoreField` (new, `packages/core/src/api/fields/mutations.ts`: clears `deleted_at`, same rules as
+removing). Undo refuses when the field changed since.
+
+### Automations (notes 173, 174)
+
+- Each new or edited automation in a change set has **Expand**: the whole automation read-only in the
+  builder's layout (summary, WHEN, IF with Or groups, Else if / Otherwise, THEN every step in order, ALSO)
+  in a modal on the same page (`components/rules/rule-readonly.tsx`, which the canvas now shares for its
+  sentence rows), with Open in builder.
+- New automations are still created **off**. A "Turn on after creating" tick per new automation; after
+  Confirm, **Turn on & Finish** turns on the ticked ones made by this run (and closes) or **Finish** leaves
+  them off. `turnOnAssistantRules` checks Owner / Admin and that the automation is unchanged, goes through
+  `setRuleEnabled`, and records `turnedOn` in the run; Undo turns it off, then removes it. Once on, an
+  AI-made automation is an ordinary automation: the database's blocked-completion guard (note 163b,
+  `zz55`) and every other engine check apply.
+- The rule canvas has **Turn on & create** next to Create for a new automation (the AI draft path
+  included; default still off), and **Edit with AI** in its header. The Automations list has an **Edit
+  with AI** button per automation (Owners / Admins, like Edit). Both open the assistant with that
+  automation as its page and "Change this automation so that " in the box.
+- The canvas reports unsaved edits (`setCanvasDraft`); a change set that edits, toggles, or removes the
+  open automation can't be confirmed until they're saved or discarded ("Save or discard your changes to
+  this automation first"). After an applied AI edit the canvas reloads the saved automation (its key is
+  the saved version).
+
+### The bubble and its layer (notes 174, 176)
+
+- The top bar's Ask AI is gone; a floating ✦ bubble (bottom right, above the bulk bar and the pane's
+  comment box) opens the panel next to it (beside it on a side edge, above / below on the bottom / top
+  edge, flipped to stay on screen). Drag it anywhere (a 6 px threshold keeps a click a click; mouse and
+  touch): it snaps to the nearest edge, never goes off screen, re-clamps on resize, and is remembered per
+  person in this browser (`localStorage`, `alhc.ai-bubble.<person>`). Keyboard: arrows along its edge move
+  it, an arrow across moves it to that edge, Shift moves farther, Home resets (announced); the panel has
+  "Reset the bubble's position". Pure rules in `apps/web/src/lib/assistant-bubble.ts`.
+- New layers (`lib/layers.ts`): `assistant` z-[55] (bubble and panel: above modals — the rule canvas, the
+  full-screen task — below menus, alerts, and toasts) and `assistantModal` z-[57] (Expand).
+- Tab then A also works over dialogs marked `data-assistant-allowed` (the rule canvas, the full-screen
+  task, the assistant itself), never over other dialogs. The panel is a non-modal dialog
+  (`aria-modal="false"`): `dialogOpen()` counts it only while it has focus, so the page's shortcuts (and the
+  task pane's Escape) keep working beside it.
+- Hidden in print; mounted only in the app shell (never on forms, the review portal, or sign-in).
+
+### Answer mode (notes 172, 176)
+
+A how-to question (`isHowToQuestion`: "how / what / where / why …", "is there", "explain", or a question
+without a change verb) is answered in plain text by Haiku 5.5 (`assistant_answer`, low effort, 1,500
+tokens) from a bounded server-side help summary (`ASSISTANT_HELP_SUMMARY`) and the page's context (names,
+roles, sections, fields, automations). No operations, nothing written; the run is logged (`route_reason`
+`answer_question`, op count 0, never the question or the answer) and shows as "Answered". Commenters and
+Viewers (and pages where the person may change nothing) get answer mode only: a change request is
+declined with "Your role here doesn't allow changes … ask an Owner" without a model call
+(`answer_only_role`).
+
+### Dictation and paste (note 175)
+
+What was checked: no app code intercepts paste or text insertion — no `paste` / `beforeinput` listener
+or `onPaste` anywhere in `apps/web`, no contentEditable editors, no `user-select` on fields; every global
+shortcut handler skips typing targets and ⌘ / Ctrl combinations. New unit tests run the real handlers
+(Tab chords, the assistant's Escape, the bubble's keys) with ⌘ / Ctrl+V, Fn, Space, letters, IME and
+dictation keys inside text fields and assert none is prevented. Fixed on this branch: the assistant's box
+stays enabled while the AI thinks or applies (only Ask is disabled) and is cleared after an answer only if
+nobody typed or dictated into it meanwhile; Escape in the panel closes it only when its box is empty (a
+dictation tool's Escape cancels its own insertion and isn't passed to the page behind); the panel opens
+above the rule canvas and full-screen task instead of under them. The browser check (clipboard paste and
+`insertText` into the assistant box, Ask AI for an automation, a task name, a description, and a comment
+box; focus kept for 2 s) is reported in the PR.
+
+### Manual checks (preview, after the round 3 migration is applied)
+
+1. As a project Owner: "take away the priority field in this project" → "Delete the field “Priority” · N
+   tasks have a value; values are kept"; Confirm; Undo brings it back with its values. "Add an Effort
+   field with S, M, L", "rename Low to Lowest in Priority" → the option keeps its tasks.
+2. As an Editor of a project: ask to turn off an automation → left out ("only Owners and Admins"); lock a
+   field by hand, then ask to rename it → left out.
+3. As a Viewer / Commenter: "rename this task" → "Your role here doesn't allow changes…"; "how do I add a
+   form?" → a plain answer.
+4. "Whenever a task is done move it to Done" → Expand shows the whole automation; tick Turn on after
+   creating; Confirm; Turn on & Finish → it's on in the list; Undo (on /ai-builder) turns it off and
+   removes it.
+5. Open an automation → Edit with AI (header) → the panel opens over the canvas; edit a step by hand
+   without saving, ask for a change → Confirm stays disabled with "Save or discard…".
+6. Drag the bubble to the left edge, reload → it's still there; arrow keys move it; Reset puts it back.
