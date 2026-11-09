@@ -17,7 +17,6 @@ import {
   Printer,
   Repeat,
   Send,
-  ShieldCheck,
   ThumbsUp,
   Trash2,
   Workflow,
@@ -57,14 +56,14 @@ export function printTask() {
   window.print();
 }
 
-// The pane's "…" (Asana parity, batch 3): what used to crowd the top of the pane — Repeats, the task
-// type, approvals — plus convert, save as template, duplicate, run a rule, copy link, print, and delete.
+// The pane's "…" (Asana parity, batch 3): what used to crowd the top of the pane — Repeats and the task
+// type — plus convert, save as template, duplicate, run a rule, copy link, print, and delete.
+// Nov 9 notes (180): no one-off approval request here — Task type → Approval and Send review check cover it.
 // Viewers and Commenters get the read-only items.
 export function TaskMoreMenu({
   task,
   canEdit,
   canAddSubtask,
-  onRequestApproval,
   onAddSubtask,
   onAttach,
   onCopyLink,
@@ -74,7 +73,6 @@ export function TaskMoreMenu({
   task: TaskDetail;
   canEdit: boolean;
   canAddSubtask: boolean;
-  onRequestApproval: () => void;
   onAddSubtask: () => void;
   onAttach: () => void;
   onCopyLink: () => void;
@@ -201,8 +199,6 @@ export function TaskMoreMenu({
                   () => window.dispatchEvent(new Event(OPEN_REPEATS_EVENT)),
                   close,
                 )}
-                {/* Approval tasks are sent with Ready for approval (Oct 27 notes, batch 6), not a one-off request. */}
-                {task.kind !== "approval" ? item(ShieldCheck, "Request approval…", onRequestApproval, close) : null}
                 {/* Oct 26 notes (batch 3): files out for review by a client (or anyone) by email. */}
                 {item(Send, "Send review check…", () => setDialog("review"), close)}
                 {canAddSubtask ? item(ListPlus, "Add subtask", onAddSubtask, close) : null}

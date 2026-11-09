@@ -71,7 +71,6 @@ export function TaskDetailPanel({
   const [completedAt, setOptimisticCompleted] = useOptimistic(task.completedAt);
   const [assigneeId, setOptimisticAssignee] = useOptimistic(task.assigneeId);
   const [addingSubtask, setAddingSubtask] = useState(false);
-  const [requestingApproval, setRequestingApproval] = useState(false);
   // Nov 2 notes (batch 15, 112): the approval setup opened from Task type → Approval, before the type is saved.
   const [approvalSetup, setApprovalSetup] = useState<Promise<{ error?: string }> | null>(null);
   const completed = Boolean(completedAt);
@@ -327,7 +326,6 @@ export function TaskDetailPanel({
             task={task}
             canEdit={canEdit}
             canAddSubtask={canAddSubtask(task)}
-            onRequestApproval={() => setRequestingApproval(true)}
             onAddSubtask={() => setAddingSubtask(true)}
             onAttach={upload.pick}
             onCopyLink={copyLink}
@@ -444,13 +442,7 @@ export function TaskDetailPanel({
 
           <TaskSubtasks task={task} profiles={profiles} adding={addingSubtask} onAddingChange={setAddingSubtask} memberId={memberId} />
 
-          <TaskApprovals
-            task={task}
-            profiles={profiles}
-            memberId={memberId}
-            requesting={requestingApproval}
-            onRequestingChange={setRequestingApproval}
-          />
+          <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
 
           {task.kind === "approval" ? <ApprovalFeedback task={task} profiles={profiles} memberId={memberId} /> : null}
 

@@ -144,7 +144,7 @@ test("designed headings: {email_heading} is the email's own; empty = the email's
 test("every block hides from the HTML and the text part", () => {
   process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
   const all = renderEmail(comment, { design: internal({ logoPath: "", headerText: "Studio", introMessage: "Hello there" }) });
-  for (const piece of ["Studio", "Hello there", "Looks good to me", "Task: ", "Open task", "You follow this task", "Sent by ALHC Projects", "Do not reply to this email. Open the task to answer."]) {
+  for (const piece of ["Studio", "Hello there", "Looks good to me", "Task: ", "Open task", "You follow this task", "Sent by Autumn Lake Marketing", "Do not reply to this email. Open the task to answer."]) {
     assert.ok(all.text.includes(piece), `shown by default: ${piece}`);
   }
   assert.ok(all.html.includes("<h1"));
@@ -157,7 +157,7 @@ test("every block hides from the HTML and the text part", () => {
     [{ showDetails: false }, "Task: ", ">Task</td>"],
     [{ showButton: false }, "Open task", ">Open task</a>"],
     [{ showNotice: false }, "You follow this task", "You follow this task"],
-    [{ showFooter: false }, "Sent by ALHC Projects", "Sent by ALHC Projects"],
+    [{ showFooter: false }, "Sent by Autumn Lake Marketing", "Sent by Autumn Lake Marketing"],
   ];
   for (const [flag, text, html] of cases) {
     assert.ok(all.html.includes(html), `shown by default in the HTML: ${html}`);

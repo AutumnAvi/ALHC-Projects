@@ -1,4 +1,4 @@
-import type { AppliedDesign } from "@/lib/email-design";
+import { BRAND_BORDER, BRAND_PAGE, type AppliedDesign } from "@/lib/email-design";
 import "server-only";
 import { escapeHtml, layout, payloadOf, str, type Block, type OutboxRow, type Rendered } from "@/lib/email-layout";
 import { isDigestFrequency, isScheduleFrequency, type UnsubscribeWhat } from "@alhc/core/email-schedules";
@@ -277,8 +277,8 @@ const STATUS_LABELS: Record<string, string> = {
   complete: "Complete",
 };
 
-const TH = "padding:6px 8px;text-align:left;font-size:12px;font-weight:500;color:#71717a;border-bottom:1px solid #e4e4e7";
-const TD = "padding:6px 8px;font-size:13px;border-bottom:1px solid #f4f4f5";
+const TH = `padding:6px 8px;text-align:left;font-size:12px;font-weight:500;color:#71717a;border-bottom:1px solid ${BRAND_BORDER}`;
+const TD = `padding:6px 8px;font-size:13px;border-bottom:1px solid ${BRAND_PAGE}`;
 const TDN = `${TD};text-align:right;font-variant-numeric:tabular-nums`;
 
 function statTiles(t: Totals): Block {
@@ -292,7 +292,7 @@ function statTiles(t: Totals): Block {
     html: `<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:4px -6px 0"><tr>${tiles
       .map(
         (tile) =>
-          `<td style="background:#f4f4f5;border-radius:8px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:600;${
+          `<td style="background:${BRAND_PAGE};border-radius:8px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:600;${
             tile.label === "Overdue" && tile.value > 0 ? "color:#b91c1c" : ""
           }">${tile.value}</div><div style="${MUTED}">${escapeHtml(tile.label)}</div></td>`,
       )
