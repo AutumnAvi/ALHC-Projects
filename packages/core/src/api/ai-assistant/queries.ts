@@ -318,7 +318,7 @@ export const listAssistantRuns = read(async (ctx: ApiContext, workspaceId: strin
   rows(
     await ctx.db
       .from("ai_assistant_runs")
-      .select("id, actor_id, status, page_kind, model, effort, route_reason, escalated, op_count, ops_summary, input_tokens, output_tokens, error_code, error_detail, created_at, applied_at, undone_at")
+      .select("id, actor_id, status, source, page_kind, model, effort, route_reason, escalated, op_count, ops_summary, input_tokens, output_tokens, error_code, error_detail, created_at, applied_at, undone_at")
       .eq("workspace_id", id(workspaceId, "workspace"))
       .order("created_at", { ascending: false })
       .limit(50),
@@ -327,6 +327,7 @@ export const listAssistantRuns = read(async (ctx: ApiContext, workspaceId: strin
     id: r.id,
     mine: r.actor_id === viewerId,
     status: r.status,
+    source: (r as { source?: string }).source ?? "app",
     pageKind: r.page_kind,
     model: r.model,
     effort: r.effort,

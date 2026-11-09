@@ -342,20 +342,21 @@ test("Edit with AI on every automation row and in the canvas header; Turn on & c
 });
 
 test("the assistant never applies over the canvas's unsaved edits of that automation", () => {
-  const ops = [{ op: "update_rule", ruleId: "r1" }, { op: "rename_task" }];
+  const ops = [{ op: "update_automation", args: { rule_id: "r1" } }, { op: "rename_task", args: {} }];
   assert.equal(blockedByCanvas(ops, { ruleId: "r1", dirty: true }), true);
   assert.equal(blockedByCanvas(ops, { ruleId: "r1", dirty: false }), false);
   assert.equal(blockedByCanvas(ops, { ruleId: "r2", dirty: true }), false, "another automation is fine");
   assert.equal(blockedByCanvas(ops, null), false);
   assert.match(UNSAVED_CANVAS, /Save or discard your changes/);
   const ui = read("src/components/ai-assistant/ai-assistant.tsx");
-  assert.ok(ui.includes("disabled={phase.kind === \"applying\" || phase.selected.size === 0 || canvasBlocked}"), "Confirm waits");
+  assert.ok(ui.includes("disabled={phase.kind === \"applying\" || phase.selected.size === 0 || canvasBlocked || needsAck.length > 0}"), "Confirm waits");
 });
 
 test("the proposal offers Expand, Turn on after creating, and Turn on & Finish after Confirm", () => {
   const ui = read("src/components/ai-assistant/ai-assistant.tsx");
-  assert.ok(ui.includes('op.op === "create_rule" || op.op === "update_rule" ? ('));
+  assert.ok(ui.includes('(op.op === "create_automation" || op.op === "update_automation") && op.system === "project"'));
+  assert.ok(ui.includes('onClick={() => onExpand(op)}'));
   assert.ok(ui.includes("Turn on after creating"));
-  assert.ok(ui.includes("Turn on &amp; Finish") && ui.includes("turnOnAssistantRules(phase.proposal.runId, [...phase.turnOn])"));
+  assert.ok(ui.includes("Turn on &amp; Finish") && ui.includes("turnOnAssistantRules(phase.proposal.runId, [...phase.turnOn], outward)"));
   assert.ok(ui.includes("createPortal("), "Expand is a modal on the same page (no navigation)");
 });

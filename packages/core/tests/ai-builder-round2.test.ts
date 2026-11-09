@@ -364,9 +364,11 @@ test("the AI may only use existing triggers, conditions, and actions, and leaves
   for (const t of AI_RULE_TRIGGERS) assert.ok(values(TRIGGERS).has(t), t);
   for (const c of AI_RULE_CONDITIONS) assert.ok(values(CONDITIONS).has(c), c);
   for (const a of AI_RULE_ACTIONS) assert.ok(values(ACTIONS).has(a), a);
-  for (const banned of ["send_email", "send_slack", "call_webhook", "add_to_project", "move_to_project", "create_task", "convert_to_project", "delay", "request_approval"]) {
+  for (const banned of ["send_email", "send_slack", "call_webhook", "add_to_project", "move_to_project", "create_task", "convert_to_project", "delay"]) {
     assert.ok(!(AI_RULE_ACTIONS as readonly string[]).includes(banned), banned);
   }
+  // Round 5 (note 177): set_task_type (with approvers) and request_approval are in; automations start off.
+  for (const a of ["set_task_type", "request_approval"]) assert.ok((AI_RULE_ACTIONS as readonly string[]).includes(a), a);
   const schema = JSON.stringify(RULE_DRAFT_JSON_SCHEMA);
   assert.ok(!schema.includes("send_email") && !schema.includes("call_webhook"));
   assert.ok(!automationPrompt("x", ruleCtx).includes(ME), "people as aliases");

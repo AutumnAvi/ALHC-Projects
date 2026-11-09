@@ -8,7 +8,8 @@ import { aiRoute } from "@/lib/ai-builder/route";
 // calls the routed model (Haiku or Sonnet), and stores the checked change set. Nothing is changed here:
 // the person confirms it first (an action, applyAssistantChanges).
 //   POST /api/ai-assistant/propose  { requestKey, page, instruction, localToday } → AssistantProposal
-export const maxDuration = 120;
+// Round 5: a tool conversation is several rounds (Haiku first; Sonnet when it escalates).
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   return aiRoute(request, { maxBody: 8_000, label: "assistant" }, (ctx, body) =>

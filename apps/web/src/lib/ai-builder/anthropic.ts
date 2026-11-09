@@ -12,7 +12,7 @@ import "server-only";
 // ignored (aiCallConfig).
 import Anthropic from "@anthropic-ai/sdk";
 import { aiCallConfig, formatProviderError, type AiCallConfig, type AiCallKind } from "@alhc/core/ai-builder";
-import type { AiProposalProvider, AiProviderErrorCode, AiProviderResult } from "@alhc/core/api/ai-builder/model";
+import type { AiContentBlock, AiConverseRequest, AiConverseResult, AiProposalProvider, AiProviderErrorCode, AiProviderResult } from "@alhc/core/api/ai-builder/model";
 
 export function aiBuilderConfigured(): boolean {
   return typeof process.env.ANTHROPIC_API_KEY === "string" && process.env.ANTHROPIC_API_KEY.trim().length > 0;
@@ -53,6 +53,40 @@ export function providerErrorDetail(error: unknown): string | null {
 }
 
 type MessagesClient = Pick<Anthropic, "messages">;
+
+// Round 5 (note 178): the Messages request for a tool conversation (the assistant). The tools and the
+// system prompt are marked for prompt caching (they repeat on every round of a conversation).
+export function anthropicToolCreate(request: AiConverseRequest, env?: Record<string, string | undefined>) {
+  const config = callConfig(request.kind, env);
+  const tools = request.tools.map((t, i) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.input_schema as Anthropic.Tool["input_schema"],
+    ...(i === request.tools.length - 1 ? { cache_control: { type: "ephemeral" as const } } : {}),
+  }));
+  const messages = request.messages.map((m) => ({
+    role: m.role,
+    content: typeof m.content === "string" ? m.content : m.content.map(toSdkBlock),
+  })) as Anthropic.MessageParam[];
+  return {
+    config,
+    params: {
+      model: config.model,
+      max_tokens: config.maxTokens,
+      system: [{ type: "text" as const, text: request.system, cache_control: { type: "ephemeral" as const } }],
+      messages,
+      tools,
+      output_config: { effort: config.effort },
+    },
+    options: { timeout: config.timeoutMs, maxRetries: config.maxRetries },
+  };
+}
+
+function toSdkBlock(b: AiContentBlock) {
+  if (b.type === "tool_result") return { type: "tool_result" as const, tool_use_id: b.tool_use_id, content: b.content, ...(b.is_error ? { is_error: true } : {}) };
+  if (b.type === "tool_use") return { type: "tool_use" as const, id: b.id, name: b.name, input: b.input };
+  return { type: "text" as const, text: b.text };
+}
 
 // Maps an SDK failure to a code (most specific first; APIConnectionTimeoutError is an APIConnectionError,
 // which is an APIError in the TypeScript SDK).
@@ -102,6 +136,29 @@ export function createAnthropicProvider(client?: MessagesClient, env?: Record<st
       } catch {
         return { ok: false, code: "invalid_output", ...usage };
       }
+    },
+    // Round 5: one round of a tool conversation. Never logs the prompt, the tools' results, or the key.
+    async converse(request): Promise<AiConverseResult> {
+      const { config, params, options } = anthropicToolCreate(request, env);
+      const base = { model: config.model, effort: config.effort, inputTokens: null, outputTokens: null };
+      if (!client && !aiBuilderConfigured()) return { ok: false, code: "not_configured", ...base };
+      const api = client ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: config.timeoutMs, maxRetries: config.maxRetries });
+      let message: Anthropic.Message;
+      try {
+        message = await api.messages.create(params as Anthropic.MessageCreateParamsNonStreaming, options);
+      } catch (error) {
+        const code = providerErrorCode(error);
+        const detail = providerErrorDetail(error);
+        console.error(`[ai-builder] provider call failed: ${request.kind} ${code}${detail ? ` ${detail}` : ""}`);
+        return { ok: false, code, detail, ...base };
+      }
+      const usage = { model: message.model ?? config.model, effort: config.effort, inputTokens: message.usage?.input_tokens ?? null, outputTokens: message.usage?.output_tokens ?? null };
+      if (message.stop_reason === "refusal") return { ok: false, code: "refused", ...usage };
+      if (message.stop_reason === "max_tokens") return { ok: false, code: "truncated", ...usage };
+      const content: AiContentBlock[] = message.content.flatMap((b): AiContentBlock[] =>
+        b.type === "text" ? [{ type: "text", text: b.text }] : b.type === "tool_use" ? [{ type: "tool_use", id: b.id, name: b.name, input: b.input }] : [],
+      );
+      return { ok: true, content, stopReason: String(message.stop_reason ?? ""), ...usage };
     },
   };
 }

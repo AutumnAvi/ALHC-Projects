@@ -19,7 +19,8 @@ export async function loadAssistantAccess(): Promise<ActionResult & { data?: Ass
   });
 }
 
-export async function applyAssistantChanges(input: { runId: string; applyKey: string; selected: number[]; timeZone?: string }) {
+// Round 5: `acknowledged` = the chosen changes that message people, each ticked by the person.
+export async function applyAssistantChanges(input: { runId: string; applyKey: string; selected: number[]; acknowledged?: number[]; timeZone?: string }) {
   return runWith<AssistantApplyResult>((ctx) => assistantApi.applyAssistantRun(ctx, input), { deliver: false, revalidate: [["/", "layout"]] });
 }
 
@@ -31,8 +32,9 @@ export async function undoAssistantChanges(runId: string) {
 }
 
 // Round 4 (note 173): Turn on & Finish — turns on automations this run made (Owner / Admin, checked again).
-export async function turnOnAssistantRules(runId: string, ruleIds?: string[]) {
-  return runWith<{ result: AssistantTurnOnResult }>(async (ctx) => ({ result: await assistantApi.turnOnAssistantRules(ctx, runId, ruleIds) }), {
+// Round 5: an automation whose steps message people needs `acknowledge` (the person's tick naming who).
+export async function turnOnAssistantRules(runId: string, ruleIds?: string[], acknowledge?: boolean) {
+  return runWith<{ result: AssistantTurnOnResult }>(async (ctx) => ({ result: await assistantApi.turnOnAssistantRules(ctx, runId, ruleIds, acknowledge) }), {
     deliver: false,
     revalidate: [["/", "layout"]],
   });

@@ -145,6 +145,15 @@ export function memoryDb(
         filters.push((r) => list.includes(value(r, col)));
         return api;
       },
+      ilike(col: string, pattern: string) {
+        const re = new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".")}$`, "i");
+        filters.push((r) => re.test(String(value(r, col) ?? "")));
+        return api;
+      },
+      not(col: string, op: string, v: unknown) {
+        filters.push((r) => (op === "is" && v === null ? value(r, col) != null : value(r, col) !== v));
+        return api;
+      },
       lt(col: string, v: number) {
         filters.push((r) => (value(r, col) as number) < v);
         return api;

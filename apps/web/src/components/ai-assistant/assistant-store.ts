@@ -74,7 +74,7 @@ export const UNSAVED_CANVAS = "Save or discard your changes to this automation f
 
 // Whether a change set would write over the open canvas's unsaved edits (an edit, on / off, or removal of
 // the automation the canvas has open). Pure, for tests.
-export function blockedByCanvas(ops: readonly { op: string; ruleId?: string }[], canvas: CanvasDraft | null): boolean {
+export function blockedByCanvas(ops: readonly { op: string; args?: Record<string, unknown> }[], canvas: CanvasDraft | null): boolean {
   if (!canvas?.dirty || !canvas.ruleId) return false;
-  return ops.some((o) => typeof o.ruleId === "string" && o.ruleId === canvas.ruleId);
+  return ops.some((o) => typeof o.args?.rule_id === "string" && o.args.rule_id === canvas.ruleId);
 }

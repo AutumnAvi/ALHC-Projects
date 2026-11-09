@@ -22,13 +22,15 @@ import type { Json, TablesUpdate } from "../../supabase/database.types";
 export async function createProject(
   ctx: ApiContext,
   input: { name: unknown; team: unknown; visibility: unknown },
+  // AI builder round 5: the AI makes projects in the Testing data pilot workspace (null = the workspace).
+  opts: { workspaceId?: string | null } = {},
 ): Promise<string> {
   const name = text(input.name, "Project name", { max: 200 });
   const teamValue = input.team;
   const teamId = teamValue ? id(teamValue, "team") : null;
   const visibility = projectVisibility(input.visibility ?? "private");
   const supabase = ctx.db;
-  const workspace = await getWorkspace(ctx);
+  const workspace = opts.workspaceId ? { id: id(opts.workspaceId, "workspace") } : await getWorkspace(ctx);
   if (!workspace) throw new ApiError("failed", "No workspace is available");
 
   const { data: last } = await supabase

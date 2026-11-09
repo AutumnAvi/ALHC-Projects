@@ -67,9 +67,25 @@ export type AiProviderResult =
 // `kind` picks the model, effort, output ceiling, and timeout (AI_BUILDER_CALLS; build = phase 1's call).
 export type AiProviderRequest = { kind?: AiCallKind; system: string; prompt: string; schema: Record<string, unknown> };
 
+// Round 5 (note 178): a tool conversation (Anthropic tool use). The layer drives the loop: it sends the
+// conversation so far and the tools on offer, runs the tool calls itself (read tools at once, write tools
+// only staged), and sends the results back.
+export type AiToolSpec = { name: string; description: string; input_schema: Record<string, unknown> };
+export type AiContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: unknown }
+  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+export type AiMessage = { role: "user" | "assistant"; content: string | AiContentBlock[] };
+export type AiConverseRequest = { kind: AiCallKind; system: string; messages: AiMessage[]; tools: AiToolSpec[] };
+export type AiConverseResult =
+  | ({ ok: true; content: AiContentBlock[]; stopReason: string } & Usage)
+  | ({ ok: false; code: AiProviderErrorCode; detail?: string | null } & Usage);
+
 export type AiProposalProvider = {
   configured: boolean;
   generate(request: AiProviderRequest): Promise<AiProviderResult>;
+  // Round 5: tool use (the global assistant). Absent on providers that only answer JSON.
+  converse?(request: AiConverseRequest): Promise<AiConverseResult>;
 };
 
 export type GenerateInput = { requestKey: unknown; brief: unknown; templateId?: unknown };

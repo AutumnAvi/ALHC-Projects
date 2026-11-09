@@ -13,6 +13,10 @@
 //     builder's layout), and new ones turned on right after Confirm (Turn on & Finish);
 //   * the box stays enabled while the AI thinks (dictation that lands meanwhile is kept), and Escape in a
 //     box with text never closes the panel (dictation tools use Escape to cancel).
+// Round 5 (notes 177–179): the change set comes from tool calls over the capability registry (anything the
+// person could do by hand). Destructive changes are red with counts and say when they can't be undone; a
+// change that messages people needs its own tick naming who; a name that matched several people becomes a
+// question whose answers ask again.
 //
 // The panel isn't a right panel: the task pane must stay open beside it so the open task is the
 // assistant's context. The page goes to the server as kinds and ids only; the server loads the rest.
@@ -20,7 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ArrowRight, Check, LocateFixed, Loader2, Maximize2, MessageCircleQuestion, Sparkles, Undo2, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, LocateFixed, Loader2, Maximize2, MessageCircleQuestion, Sparkles, Undo2, X } from "lucide-react";
 import {
   ASSISTANT_LIMITS,
   ASSISTANT_PAGE_LABELS,
@@ -29,7 +33,7 @@ import {
   type AssistantOp,
   type AssistantRuleBody,
 } from "@alhc/core/ai-assistant";
-import { ANSWER_ONLY_NOTE } from "@alhc/core/ai-capabilities";
+import { ANSWER_ONLY_NOTE } from "@alhc/core/ai-tools";
 import { AI_BUILDER_CALLS } from "@alhc/core/ai-builder";
 import type { AssistantApplyResult, AssistantProposal, AssistantUndoResult } from "@alhc/core/api/ai-assistant/model";
 import { LAYER } from "@/lib/layers";
@@ -233,14 +237,15 @@ type Phase =
   | { kind: "idle" }
   | { kind: "thinking" }
   | { kind: "answer"; proposal: AssistantProposal }
-  | { kind: "proposal"; proposal: AssistantProposal; selected: Set<number>; turnOn: Set<number> }
-  | { kind: "applying"; proposal: AssistantProposal; selected: Set<number>; turnOn: Set<number> }
+  | { kind: "proposal"; proposal: AssistantProposal; selected: Set<number>; turnOn: Set<number>; ack: Set<number> }
+  | { kind: "applying"; proposal: AssistantProposal; selected: Set<number>; turnOn: Set<number>; ack: Set<number> }
   | {
       kind: "applied";
       proposal: AssistantProposal;
       count: number;
       created: AssistantApplyResult["createdRules"];
       turnOn: Set<string>;
+      turnOnAck: boolean;
       turningOn: boolean;
       undo: AssistantUndoResult | null;
       undoing: boolean;
@@ -248,14 +253,12 @@ type Phase =
 
 const MODEL_NAMES: Record<string, string> = { "claude-haiku-5-5": "Haiku 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-opus-5-5": "Opus 5.5" };
 const ROUTE_LABELS: Record<string, string> = {
-  small_edit: "a small edit",
-  rules_page: "automations",
-  mentions_rules: "automations",
+  default_small: "the fast model first",
   long_request: "a longer request",
-  multi_step: "several steps",
-  escalated_rules: "automations (asked again of the larger model)",
-  escalated_size: "many changes (asked again of the larger model)",
-  escalated_invalid: "asked again of the larger model",
+  many_steps: "many steps",
+  escalated_size: "many changes (planned again by the larger model)",
+  escalated_groups: "many kinds of change (planned again by the larger model)",
+  escalated_invalid: "the larger model took over",
   answer_question: "a question",
   answer_only_role: "answers only (your role here)",
 };
@@ -346,7 +349,7 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
         clearIfUnchanged();
         return;
       }
-      setPhase({ kind: "proposal", proposal, selected: new Set(proposal.ops.map((_, i) => i)), turnOn: new Set() });
+      setPhase({ kind: "proposal", proposal, selected: new Set(proposal.ops.map((_, i) => i)), turnOn: new Set(), ack: new Set() });
     } catch {
       setError("The AI couldn’t answer. Check your connection and try again.");
       setPhase({ kind: "idle" });
@@ -366,14 +369,23 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
     const ops = phase.proposal.ops;
     if (next.has(index)) {
       next.delete(index);
-      // A move into a new section goes with that section.
-      ops.forEach((op, i) => {
-        if (opDependency(op) === index) next.delete(i);
+      // A change that needs this one (a move into a new section, a subtask of a new task) goes with it.
+      const drop = (i: number) => ops.forEach((op, j) => {
+        if (next.has(j) && opDependency(op).includes(i)) {
+          next.delete(j);
+          drop(j);
+        }
       });
+      drop(index);
     } else {
       next.add(index);
-      const dep = opDependency(ops[index]);
-      if (dep !== null) next.add(dep);
+      const add = (i: number) => opDependency(ops[i]).forEach((d) => {
+        if (!next.has(d)) {
+          next.add(d);
+          add(d);
+        }
+      });
+      add(index);
     }
     setPhase({ ...phase, selected: next });
   }
@@ -386,6 +398,24 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
     setPhase({ ...phase, turnOn: next });
   }
 
+  function toggleAck(index: number) {
+    if (phase.kind !== "proposal") return;
+    const next = new Set(phase.ack);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    setPhase({ ...phase, ack: next });
+  }
+
+  // A clarifying question's answer asks again, with the answer added to the request.
+  function answerQuestion(option: string) {
+    if (phase.kind !== "proposal" || !phase.proposal.question) return;
+    const base = (asked.current ?? text).trim();
+    setText(`${base} (${phase.proposal.question.text.replace(/\?$/, "")}: ${option})`);
+    requestAnimationFrame(() => box.current?.focus());
+  }
+
+  const needsAck = phase.kind === "proposal" || phase.kind === "applying" ? [...phase.selected].filter((i) => phase.proposal.ops[i]?.notifies && !phase.ack.has(i)) : [];
+
   const canvasBlocked =
     (phase.kind === "proposal" || phase.kind === "applying") &&
     blockedByCanvas(
@@ -394,16 +424,17 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
     );
 
   async function confirm() {
-    if (phase.kind !== "proposal" || phase.selected.size === 0 || canvasBlocked) return;
-    const { proposal, selected, turnOn } = phase;
+    if (phase.kind !== "proposal" || phase.selected.size === 0 || canvasBlocked || needsAck.length) return;
+    const { proposal, selected, turnOn, ack } = phase;
     applyKey.current ??= crypto.randomUUID();
     setError(null);
-    setPhase({ kind: "applying", proposal, selected, turnOn });
+    setPhase({ kind: "applying", proposal, selected, turnOn, ack });
     try {
       const res = await applyAssistantChanges({
         runId: proposal.runId,
         applyKey: applyKey.current,
         selected: [...selected],
+        acknowledged: [...ack].filter((i) => selected.has(i)),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       if (res.error) {
@@ -422,23 +453,29 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
         count: res.applied ?? selected.size,
         created,
         turnOn: new Set(created.filter((c) => turnOn.has(c.index)).map((c) => c.ruleId)),
+        turnOnAck: false,
         turningOn: false,
         undo: null,
         undoing: false,
       });
     } catch {
       setError("Couldn’t reach the server. Nothing was confirmed; try again.");
-      setPhase({ kind: "proposal", proposal, selected, turnOn });
+      setPhase({ kind: "proposal", proposal, selected, turnOn, ack });
     }
   }
 
   // Turn on & Finish (note 173): turns on the automations this run made that are ticked, then closes.
   async function turnOnAndFinish() {
     if (phase.kind !== "applied" || phase.turningOn || phase.turnOn.size === 0) return;
+    const outward = phase.created.some((c) => phase.turnOn.has(c.ruleId) && c.notifies);
+    if (outward && !phase.turnOnAck) {
+      setError("Tick that you know these automations message people before turning them on.");
+      return;
+    }
     setError(null);
     setPhase({ ...phase, turningOn: true });
     try {
-      const res = await turnOnAssistantRules(phase.proposal.runId, [...phase.turnOn]);
+      const res = await turnOnAssistantRules(phase.proposal.runId, [...phase.turnOn], outward);
       if (res.error) {
         setError(res.error);
         setPhase({ ...phase, turningOn: false });
@@ -523,6 +560,9 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
             disabled={phase.kind === "applying"}
             onToggle={toggle}
             onToggleTurnOn={toggleTurnOn}
+            ack={phase.ack}
+            onToggleAck={toggleAck}
+            onAnswer={answerQuestion}
             onExpand={setExpanded}
             ruleCtx={ruleCtx}
           />
@@ -530,6 +570,7 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
         {phase.kind === "applied" ? (
           <AppliedView
             phase={phase}
+            onToggleAck={() => setPhase({ ...phase, turnOnAck: !phase.turnOnAck })}
             onToggleTurnOn={(ruleId) => {
               const next = new Set(phase.turnOn);
               if (next.has(ruleId)) next.delete(ruleId);
@@ -565,7 +606,8 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
               type="button"
               className="btn-primary h-8 px-3"
               onClick={() => void confirm()}
-              disabled={phase.kind === "applying" || phase.selected.size === 0 || canvasBlocked}
+              disabled={phase.kind === "applying" || phase.selected.size === 0 || canvasBlocked || needsAck.length > 0}
+              data-tooltip={needsAck.length ? "Tick who gets messaged first" : undefined}
             >
               {phase.kind === "applying" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Check className="size-4" aria-hidden />}
               {phase.kind === "applying" ? "Applying…" : `Confirm ${phase.selected.size} change${phase.selected.size === 1 ? "" : "s"}`}
@@ -619,7 +661,7 @@ export function AssistantDock({ configured, placement, onResetPosition }: { conf
           <div className="mt-1.5 flex items-center gap-2">
             <MicButton text={text} onText={(next) => setText(next.slice(0, ASSISTANT_LIMITS.instructionMaxChars))} disabled={!configured} />
             <span className="flex-1 truncate text-2xs text-zinc-500">
-              {MODEL_NAMES[AI_BUILDER_CALLS.assistant_small.model]} for small edits and questions, {MODEL_NAMES[AI_BUILDER_CALLS.assistant_large.model]} for automations
+              {MODEL_NAMES[AI_BUILDER_CALLS.assistant_small.model]} first; {MODEL_NAMES[AI_BUILDER_CALLS.assistant_large.model]} for long or many-step plans
             </span>
             <button type="submit" className="btn-primary h-8 px-3" disabled={busy || !text.trim() || !configured}>
               {phase.kind === "thinking" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Sparkles className="size-4" aria-hidden />}
@@ -637,8 +679,11 @@ function ruleCtxOf(proposal: AssistantProposal): RuleContext {
   return { ...proposal.ruleContext, forms: [], integrations: null, inboundEndpoints: [], members: proposal.ruleContext.people };
 }
 
+// The panel draws project automations the way the builder does (My Tasks / portfolio ones as before → after).
+const isProjectRuleOp = (op: AssistantOp) => (op.op === "create_automation" || op.op === "update_automation") && op.system === "project" && Boolean(op.rule);
+
 function createdIdOf(phase: Phase, op: AssistantOp): string | null {
-  if (phase.kind !== "applied" || op.op !== "create_rule") return null;
+  if (phase.kind !== "applied" || op.op !== "create_automation") return null;
   const index = phase.proposal.ops.indexOf(op);
   return phase.created.find((c) => c.index === index)?.ruleId ?? null;
 }
@@ -677,59 +722,80 @@ function ProposalView({
   proposal,
   selected,
   turnOn,
+  ack,
   disabled,
   onToggle,
   onToggleTurnOn,
+  onToggleAck,
+  onAnswer,
   onExpand,
   ruleCtx,
 }: {
   proposal: AssistantProposal;
   selected: Set<number>;
   turnOn: Set<number>;
+  ack: Set<number>;
   disabled: boolean;
   onToggle: (index: number) => void;
   onToggleTurnOn: (index: number) => void;
+  onToggleAck: (index: number) => void;
+  onAnswer: (option: string) => void;
   onExpand: (op: AssistantOp) => void;
   ruleCtx: RuleContext;
 }) {
   return (
     <div className="space-y-2">
       <p className="text-sm text-zinc-800">{proposal.summary}</p>
-      <ul className="space-y-1.5" aria-label="Changes to confirm">
-        {proposal.ops.map((op, i) => (
-          <li key={i} className="rounded-lg border border-zinc-200 px-2.5 py-2">
-            <div className="flex items-start gap-2">
-              <input
-                id={`ai-op-${i}`}
-                type="checkbox"
-                className="mt-0.5"
-                checked={selected.has(i)}
-                disabled={disabled}
-                onChange={() => onToggle(i)}
-                aria-label={`Include: ${op.label}`}
-              />
-              <span className="min-w-0 flex-1">
-                <label htmlFor={`ai-op-${i}`} className="block font-medium text-zinc-900">
-                  {op.label}
-                </label>
-                <OpDiff op={op} ruleCtx={ruleCtx} />
-                {opDependency(op) !== null ? <span className="text-2xs text-zinc-500">Needs change {(opDependency(op) ?? 0) + 1}.</span> : null}
-                {op.op === "create_rule" && selected.has(i) ? (
-                  <label className="mt-1 flex items-center gap-1.5 text-xs text-zinc-700">
-                    <input type="checkbox" checked={turnOn.has(i)} disabled={disabled} onChange={() => onToggleTurnOn(i)} />
-                    Turn on after creating
+      {proposal.question ? (
+        <div className="rounded-md border border-violet-200 bg-violet-50 px-2.5 py-2" data-assistant-question>
+          <p className="text-sm font-medium text-violet-900">{proposal.question.text}</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {proposal.question.options.map((o) => (
+              <button key={o} type="button" className="btn-secondary h-7 px-2 text-xs" onClick={() => onAnswer(o)}>
+                {o}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-2xs text-violet-800">Pick one, then Ask again.</p>
+        </div>
+      ) : null}
+      {proposal.ops.length ? (
+        <ul className="space-y-1.5" aria-label="Changes to confirm">
+          {proposal.ops.map((op, i) => (
+            <li key={i} className={`rounded-lg border px-2.5 py-2 ${op.destructive ? "border-red-300 bg-red-50/40" : "border-zinc-200"}`} data-destructive={op.destructive || undefined}>
+              <div className="flex items-start gap-2">
+                <input id={`ai-op-${i}`} type="checkbox" className="mt-0.5" checked={selected.has(i)} disabled={disabled} onChange={() => onToggle(i)} aria-label={`Include: ${op.label}`} />
+                <span className="min-w-0 flex-1">
+                  <label htmlFor={`ai-op-${i}`} className={`block font-medium ${op.destructive ? "text-red-800" : "text-zinc-900"}`}>
+                    {op.destructive ? <AlertTriangle className="mr-1 inline size-3.5 align-[-2px]" aria-label="Deletes or removes" /> : null}
+                    {op.label}
                   </label>
+                  <OpDiff op={op} ruleCtx={ruleCtx} />
+                  {op.noUndo ? <span className="block text-2xs font-medium text-red-700">Can’t be undone.</span> : null}
+                  {opDependency(op).length ? <span className="text-2xs text-zinc-500">Needs change {opDependency(op).map((d) => d + 1).join(", ")}.</span> : null}
+                  {op.notifies && selected.has(i) ? (
+                    <label className="mt-1 flex items-start gap-1.5 text-xs text-amber-900">
+                      <input type="checkbox" className="mt-0.5" checked={ack.has(i)} disabled={disabled} onChange={() => onToggleAck(i)} />
+                      <span>I know this messages {op.notifies}.</span>
+                    </label>
+                  ) : null}
+                  {op.op === "create_automation" && selected.has(i) && !op.after.includes("once on, it messages") ? (
+                    <label className="mt-1 flex items-center gap-1.5 text-xs text-zinc-700">
+                      <input type="checkbox" checked={turnOn.has(i)} disabled={disabled} onChange={() => onToggleTurnOn(i)} />
+                      Turn on after creating
+                    </label>
+                  ) : null}
+                </span>
+                {isProjectRuleOp(op) ? (
+                  <button type="button" className="btn-icon shrink-0" aria-label={`Expand: ${op.label}`} data-tooltip="See the whole automation" onClick={() => onExpand(op)}>
+                    <Maximize2 className="size-4" />
+                  </button>
                 ) : null}
-              </span>
-              {op.op === "create_rule" || op.op === "update_rule" ? (
-                <button type="button" className="btn-icon shrink-0" aria-label={`Expand: ${op.label}`} data-tooltip="See the whole automation" onClick={() => onExpand(op)}>
-                  <Maximize2 className="size-4" />
-                </button>
-              ) : null}
-            </div>
-          </li>
-        ))}
-      </ul>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {proposal.rejected.length || proposal.unsupported ? (
         <div className="rounded-md bg-amber-50 px-2.5 py-2 text-2xs text-amber-900">
           <p className="font-semibold">Left out</p>
@@ -743,22 +809,25 @@ function ProposalView({
       ) : null}
       <p className="text-2xs text-zinc-500">
         {MODEL_NAMES[proposal.model] ?? proposal.model} · {ROUTE_LABELS[proposal.routeReason] ?? proposal.routeReason}
+        {proposal.escalated ? " · escalated" : ""} · {proposal.toolCalls} tool call{proposal.toolCalls === 1 ? "" : "s"}
+        {proposal.inputTokens != null ? ` · ${proposal.inputTokens.toLocaleString()} in / ${(proposal.outputTokens ?? 0).toLocaleString()} out tokens` : ""}
       </p>
     </div>
   );
 }
 
-const sentence = (rule: AssistantRuleBody, ctx: RuleContext) => ruleSentence(rule, ctx);
+const sentence = (rule: AssistantRuleBody, ctx: RuleContext) => ruleSentence(rule as Parameters<typeof ruleSentence>[0], ctx);
 
 function OpDiff({ op, ruleCtx }: { op: AssistantOp; ruleCtx: RuleContext }) {
-  if (op.op === "create_rule") {
+  if (isProjectRuleOp(op) && op.op === "create_automation" && op.rule) {
     return (
       <span className="mt-0.5 block text-xs text-zinc-700">
         {sentence(op.rule, ruleCtx)} <span className="text-zinc-500">Starts off.</span>
+        {op.after.includes("once on, it messages") ? <span className="block text-amber-800">Once on, it messages {op.after.split("once on, it messages ")[1]}.</span> : null}
       </span>
     );
   }
-  if (op.op === "update_rule") {
+  if (isProjectRuleOp(op) && op.op === "update_automation" && op.rule && op.previous) {
     return (
       <span className="mt-0.5 block space-y-1 text-xs">
         <span className="block text-zinc-500 line-through decoration-zinc-300">{sentence(op.previous, ruleCtx)}</span>
@@ -770,16 +839,22 @@ function OpDiff({ op, ruleCtx }: { op: AssistantOp; ruleCtx: RuleContext }) {
     <span className="mt-0.5 flex flex-wrap items-center gap-1 text-xs">
       <span className="text-zinc-500 line-through decoration-zinc-300">{op.before}</span>
       <ArrowRight className="size-3 text-zinc-400" aria-label="becomes" />
-      <span className="text-zinc-800">{op.after}</span>
+      <span className={op.destructive ? "text-red-800" : "text-zinc-800"}>{op.after}</span>
     </span>
   );
 }
 
-function AppliedView({ phase, onToggleTurnOn }: { phase: Extract<Phase, { kind: "applied" }>; onToggleTurnOn: (ruleId: string) => void }) {
+function AppliedView({ phase, onToggleTurnOn, onToggleAck }: { phase: Extract<Phase, { kind: "applied" }>; onToggleTurnOn: (ruleId: string) => void; onToggleAck: () => void }) {
   const undo = phase.undo;
   if (undo?.status === "undone" || undo?.status === "already_undone") {
-    return <p className="text-sm text-zinc-700">Undone. Everything the assistant changed is back as it was.</p>;
+    return (
+      <div className="space-y-1">
+        <p className="text-sm text-zinc-700">Undone. Everything the assistant changed is back as it was.</p>
+        {undo.notUndone.length ? <p className="text-2xs text-red-700">Not undone (said before Confirm): {undo.notUndone.join("; ")}</p> : null}
+      </div>
+    );
   }
+  const outward = phase.created.filter((c) => c.notifies && phase.turnOn.has(c.ruleId));
   return (
     <div className="space-y-1.5">
       <p className="text-sm text-zinc-800">{phase.proposal.summary}</p>
@@ -799,6 +874,12 @@ function AppliedView({ phase, onToggleTurnOn }: { phase: Extract<Phase, { kind: 
               </li>
             ))}
           </ul>
+          {outward.length ? (
+            <label className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-900">
+              <input type="checkbox" className="mt-0.5" checked={phase.turnOnAck} onChange={onToggleAck} disabled={phase.turningOn} />
+              <span>I know that, once on, {outward.map((c) => `“${c.name}” messages ${c.notifies}`).join("; ")}.</span>
+            </label>
+          ) : null}
         </fieldset>
       ) : null}
       {undo?.status === "conflict" ? (
@@ -839,10 +920,10 @@ function RuleExpandModal({ op, ruleCtx, createdId, onClose }: { op: AssistantOp;
       back?.focus?.();
     };
   }, []);
-  if (op.op !== "create_rule" && op.op !== "update_rule") return null;
-  const ruleId = op.op === "update_rule" ? op.ruleId : createdId;
+  if (!isProjectRuleOp(op) || !op.rule) return null;
+  const ruleId = op.op === "update_automation" ? String(op.args.rule_id) : createdId;
   const also = [
-    op.op === "create_rule" ? (createdId ? "Created, off until you turn it on" : "Starts off; tick “Turn on after creating” or use Turn on & Finish") : "Keeps its on / off state",
+    op.op === "create_automation" ? (createdId ? "Created, off until you turn it on" : "Starts off; tick “Turn on after creating” or use Turn on & Finish") : "Keeps its on / off state",
     "Changes made by other automations can trigger it",
     "Runs only on tasks in this project (subtasks don’t trigger automations)",
   ];
@@ -867,10 +948,10 @@ function RuleExpandModal({ op, ruleCtx, createdId, onClose }: { op: AssistantOp;
             <X className="size-4" />
           </button>
         </div>
-        <RuleReadOnly rule={{ ...op.rule, name: op.rule.name }} ctx={ruleCtx} also={also} />
-        {op.op === "update_rule" ? (
+        <RuleReadOnly rule={{ ...op.rule, name: op.rule.name } as Parameters<typeof RuleReadOnly>[0]["rule"]} ctx={ruleCtx} also={also} />
+        {op.op === "update_automation" && op.previous ? (
           <p className="mt-3 text-xs text-zinc-500">
-            <span className="font-medium text-zinc-600">Now:</span> {ruleSentence(op.previous, ruleCtx)}
+            <span className="font-medium text-zinc-600">Now:</span> {sentence(op.previous, ruleCtx)}
           </p>
         ) : null}
       </div>

@@ -16,6 +16,9 @@
 // edit) and assistant_large (Sonnet: several changes, or anything with automations). routeAssistant() in
 // ai-assistant.ts picks one.
 // Round 4 (note 176): assistant_answer (Haiku) answers a how-to question in plain words — no operations.
+// Round 5 (note 179): Haiku first for everything — assistant_small now runs every tool conversation,
+// automations included; assistant_large (Sonnet) only for a long or many-step request, a plan Haiku made too
+// long or wide, or after Haiku's tool calls failed validation twice (routeAssistant / escalationReason).
 export type AiCallKind = "build" | "edit" | "automation" | "assistant_small" | "assistant_large" | "assistant_answer";
 export const AI_CALL_KINDS: readonly AiCallKind[] = ["build", "edit", "automation", "assistant_small", "assistant_large", "assistant_answer"];
 
@@ -61,7 +64,8 @@ export const AI_BUILDER_CALLS: Record<AiCallKind, AiCallConfig> = {
   edit: { model: AI_BUILDER_MODELS.edit, effort: "low", maxTokens: 3000, timeoutMs: 25_000, maxRetries: 1 },
   automation: { model: AI_BUILDER_MODELS.automation, effort: "low", maxTokens: 2000, timeoutMs: 25_000, maxRetries: 1 },
   // Round 3: a small change set ≈ 3,000 × $0.50 / 1M; a large one (rules, several steps) ≈ 6,000 × $10 / 1M = $0.06.
-  assistant_small: { model: AI_BUILDER_MODELS.assistant_small, effort: "low", maxTokens: 3000, timeoutMs: 25_000, maxRetries: 1 },
+  // Round 5: one round of a tool conversation (automation drafts included) ≈ 4,000 × $0.50 / 1M.
+  assistant_small: { model: AI_BUILDER_MODELS.assistant_small, effort: "low", maxTokens: 4000, timeoutMs: 30_000, maxRetries: 1 },
   assistant_large: { model: AI_BUILDER_MODELS.assistant_large, effort: "medium", maxTokens: 6000, timeoutMs: 55_000, maxRetries: 1 },
   // Round 4: an answer ≈ 1,500 × $0.50 / 1M.
   assistant_answer: { model: AI_BUILDER_MODELS.assistant_answer, effort: "low", maxTokens: 1500, timeoutMs: 25_000, maxRetries: 1 },

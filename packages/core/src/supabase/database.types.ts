@@ -5742,10 +5742,15 @@ export type Database = {
           undone_at: string | null;
           created_at: string;
           updated_at: string;
+          // Round 5 (20261109120000_ai_assistant_round5_a.sql): runs made from an MCP client.
+          source: string;
+          token_id: string | null;
         };
         Insert: {
           workspace_id: string;
           request_key: string;
+          source?: string;
+          token_id?: string | null;
           page_kind?: string;
           page_project_id?: string | null;
           page_task_id?: string | null;
@@ -5773,11 +5778,44 @@ export type Database = {
         };
         Relationships: [];
       };
+      // AI builder round 5 (20261109120000_ai_assistant_round5_a.sql): MCP personal access tokens. Clients
+      // never read token_hash or the rate-limit window (column grants).
+      personal_access_tokens: {
+        Row: {
+          id: string;
+          profile_id: string;
+          workspace_id: string;
+          name: string;
+          token_prefix: string;
+          scopes: string[];
+          created_at: string;
+          last_used_at: string | null;
+          expires_at: string;
+          revoked_at: string | null;
+        };
+        Insert: {
+          workspace_id: string;
+          name: string;
+          token_prefix: string;
+          token_hash: string;
+          scopes: string[];
+          expires_at: string;
+        };
+        Update: {
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      // AI builder round 5 (20261109120000_ai_assistant_round5_a.sql): the MCP route's token lookup (service role only).
+      mcp_token_verify: {
+        Args: { target_hash: string };
+        Returns: Json;
+      };
       // AI builder pilot (experimental, feat/ai-builder).
       ai_pilot_admin: {
         Args: { target_workspace: string };
