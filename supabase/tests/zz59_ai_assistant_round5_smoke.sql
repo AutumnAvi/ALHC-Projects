@@ -10,6 +10,11 @@ create temporary table pat_ids (name text primary key, id uuid) on commit preser
 grant all on pat_ids to authenticated, anon, service_role;
 insert into pat_ids select 'ws', workspace_id from public.ai_pilot_workspaces where cleaned_at is null limit 1;
 
+-- zz58's runs count toward the per-person hourly limit; move them back a day (harness only, triggers off).
+set session_replication_role = replica;
+update public.ai_assistant_runs set created_at = created_at - interval '2 days';
+set session_replication_role = origin;
+
 -- Grants: the hash is never readable by clients; the lookup is service role only; nothing for anon.
 do $$
 begin
