@@ -142,7 +142,7 @@ test("a response with replies on: the reply line near the top, no footnote, from
   const lines = email.text.split("\n").filter(Boolean);
   assert.deepEqual(lines.slice(0, 2), [SUBMITTER_REPLY_MARKER, CAN_REPLY_NOTE], "right under the reply marker");
   assert.ok(email.html.indexOf(CAN_REPLY_NOTE) < email.html.indexOf("Hi Terry"), "above the message in the HTML");
-  assert.match(email.html, /bgcolor="#eff6ff"[^>]*>You can reply to this email to respond\./, "a highlighted box");
+  assert.match(email.html, /bgcolor="#fff2e6"[^>]*>You can reply to this email to respond\./, "a highlighted box");
   assert.ok(!email.text.includes(NO_REPLY_NOTE) && !email.html.includes(NO_REPLY_NOTE));
   assert.equal(email.text.split(CAN_REPLY_NOTE).length, 2, "said once");
 });
@@ -228,7 +228,7 @@ test("review email (62): one big preview per row, never upscaled, Outlook-safe; 
     { assetId: "doc", name: "brief.docx", contentType: null },
   ]);
   const urls = reviewUrls("https://app.example.com", TOKEN);
-  const imgs = email.html.match(/<img [^>]*>/g) ?? [];
+  const imgs = (email.html.match(/<img [^>]*>/g) ?? []).filter((img) => !img.includes("/brand/logo-horizontal.png"));
   assert.equal(imgs.length, 3, "a picture for each thumbnail");
   assert.equal(EMAIL_IMAGE_WIDTH, 504, "the email's content width");
   assert.match(imgs[0], /width="504" style="display:block;width:100%;max-width:504px;height:auto;/, "the content width, height auto");
@@ -239,7 +239,7 @@ test("review email (62): one big preview per row, never upscaled, Outlook-safe; 
   assert.equal(email.html.match(/<tr><td valign="top" style="padding:0 0 16px 0">/g)?.length, 5, "one file per row");
   assert.match(email.html, />PDF<\/span>/, "the failed thumbnail's tile");
   assert.match(email.html, />DOCX<\/span>/, "the document's tile");
-  assert.match(email.html, /height="96"[^>]*bgcolor="#f4f4f5"/, "tiles are tables with a set height");
+  assert.match(email.html, /height="96"[^>]*bgcolor="#f1f5f9"/, "tiles are tables with a set height");
   for (const id of ["big", "small", "unknown", "failed", "doc"]) {
     assert.ok(email.html.includes(`href="${urls.file(id).replace(/&/g, "&#38;")}"`), `${id} opens its file`);
   }
