@@ -10,7 +10,7 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { setApprovalFollowUp, setTaskApprovers } from "@/lib/actions/approvals";
 import { saveExternalReviewer, withdrawReviewCheck } from "@/lib/actions/reviews";
-import { TWO_STEP_NOTE } from "@alhc/core/external-review";
+import { TWO_STAGE_FOLLOW_UP_NOTE, TWO_STEP_NOTE } from "@alhc/core/external-review";
 import {
   FOLLOW_UP_LABELS,
   approvalSetupProblem,
@@ -66,6 +66,8 @@ export function ApprovalSetupDialog({
   const savedReviewer = task.externalReview?.saved ?? null;
   const [reviewerEmail, setReviewerEmail] = useState(savedReviewer?.email ?? task.submission?.email ?? "");
   const [reviewerName, setReviewerName] = useState(savedReviewer?.name ?? task.submission?.name ?? "");
+  // Note 183: approvers plus an external reviewer — neither approval completes the task.
+  const twoStage = draft.approverIds.length > 0 && Boolean(reviewerEmail.trim());
   const [openReview, setOpenReview] = useState(task.externalReview?.latest?.status === "pending" ? task.externalReview.latest : null);
   const reviewerChanged =
     reviewerEmail.trim().toLowerCase() !== (savedReviewer?.email ?? "") || (reviewerName.trim() || null) !== (savedReviewer?.name ?? null);
@@ -124,7 +126,7 @@ export function ApprovalSetupDialog({
         if (saved.error) return saved;
       }
       if (!followUp.error) {
-        notify(`Approval set up. ${approvalSetupSummary(draft, names, sectionName)}`);
+        notify(`Approval set up. ${approvalSetupSummary(draft, names, sectionName, twoStage)}`);
         onClose();
       }
       return followUp;
@@ -230,11 +232,18 @@ export function ApprovalSetupDialog({
         ) : (
           <fieldset className="flex flex-col gap-2">
             <legend className="mb-1 text-sm text-zinc-600">When it’s approved:</legend>
+            {twoStage ? (
+              // Note 183: with an external reviewer, approving never completes the task or runs a follow-up.
+              <p role="note" className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700" data-two-stage-note="">
+                {TWO_STAGE_FOLLOW_UP_NOTE}
+              </p>
+            ) : null}
             {(Object.keys(FOLLOW_UP_LABELS) as ApprovalFollowUp[]).map((key) => {
               const disabled = key === "move_section" && sectionOptions.length === 0;
               return (
                 <label
                   key={key}
+                  hidden={twoStage}
                   className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
                     draft.followUp === key ? "border-accent-400 bg-accent-50/50" : "border-zinc-200"
                   } ${disabled ? "text-zinc-400" : "text-zinc-800"}`}
@@ -351,7 +360,8 @@ export function ApprovalSetupDialog({
         ) : null}
 
         <p className="rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-600" aria-live="polite">
-          {approvalSetupSummary(draft, names, sectionName)} Only its approvers can complete it.
+          {approvalSetupSummary(draft, names, sectionName, twoStage)}
+          {twoStage ? "" : " Only its approvers can complete it."}
         </p>
         {tried && problem ? (
           <p role="alert" className="text-sm text-red-700">

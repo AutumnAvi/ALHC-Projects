@@ -56,7 +56,7 @@ import { feedbackSubtaskTitle } from "@alhc/core/feedback-subtask";
 import { canAddSubtask } from "./task-subtasks";
 import { SendReviewDialog } from "./send-review-dialog";
 import { ExternalReviewBadge } from "@/components/project/task-meta";
-import { reviewSendGate, twoStepSteps } from "@alhc/core/external-review";
+import { externallyApproved, isTwoStageApproval, reviewSendGate, twoStepSteps } from "@alhc/core/external-review";
 
 // Oct 27 notes (batch 6, items 45 / 45b): the approval panel of an approval task's pane (since Nov 4
 // notes, batch 27, 161: a compact row with the field rows, Details in a dialog, feedback as pills).
@@ -352,7 +352,15 @@ function ApprovalPanel({
       : `${who} ${verb}. Back with ${task.assigneeId === memberId ? "you" : assigneeName}: send it again with Ready for approval.`;
   } else {
     const approvedBy = (latest?.requests ?? []).filter((r) => r.status === "approved").map((r) => nameOf(r.approverId));
-    headline = `Approved by ${approvedBy.length ? joinNames(approvedBy) : nameOf(decider)}. ${latest ? approvedOutcome(latest) : ""}`.trim();
+    // Note 183: a two-stage task stays open after the internal approval (no follow-up runs).
+    const outcome = isTwoStageApproval(task) && !completed
+      ? externallyApproved(task.externalReview)
+        ? "The external reviewer approved it too. Its approvers or its assignee complete it."
+        : "Next: the external review. The task stays open."
+      : latest
+        ? approvedOutcome(latest)
+        : "";
+    headline = `Approved by ${approvedBy.length ? joinNames(approvedBy) : nameOf(decider)}. ${outcome}`.trim();
   }
 
   const dueOverdue = Boolean(roundOpen && settings.dueOn && today && settings.dueOn < today);

@@ -10,6 +10,9 @@
 //   approve   "Approve": the viewer's own decision is open (the decision path, never a plain tick)
 //   approved  "Approved", disabled: the latest round is approved and the viewer isn't an approver — it
 //             explains that the approver completes it
+// Note 183 (Nov 10): a two-stage task (an internal approver, then an external reviewer) is never completed
+// by either approval; once the external reviewer approved it, its assignee completes it too (the database:
+// approval_assignee_may_complete in 20261110020000_nov10b_batch37_a.sql).
 // Pure and server-safe: rows, the pane, the preview, and shortcuts share it.
 import type { ApprovalTaskStatus, TaskKind } from "./task-kinds";
 
@@ -24,12 +27,24 @@ export type CompleteModeInput = {
   isApprover?: boolean;
   // A pending round waits on the viewer's own decision.
   waitingOnMe?: boolean;
+  // Note 183: the viewer is the task's assignee, and its latest external review was approved.
+  isAssignee?: boolean;
+  externallyApproved?: boolean;
 };
 
-export function completeModeOf({ kind, completed, status, isApprover = false, waitingOnMe = false }: CompleteModeInput): CompleteMode {
+export function completeModeOf({
+  kind,
+  completed,
+  status,
+  isApprover = false,
+  waitingOnMe = false,
+  isAssignee = false,
+  externallyApproved = false,
+}: CompleteModeInput): CompleteMode {
   if (kind !== "approval" || completed) return "complete";
-  // The latest round was approved: its approvers finish it (batch 9a); everyone else is told so.
-  if (status === "approved") return isApprover ? "complete" : "approved";
+  // The latest round was approved: its approvers finish it (batch 9a); everyone else is told so. Note 183:
+  // after the external reviewer approved it too, so does its assignee.
+  if (status === "approved") return isApprover || (isAssignee && externallyApproved) ? "complete" : "approved";
   if (status === "pending") return waitingOnMe ? "approve" : "waiting";
   return isApprover ? "complete" : "ready";
 }
@@ -38,11 +53,14 @@ export function completeModeOf({ kind, completed, status, isApprover = false, wa
 export const READY_FOR_APPROVAL_REASON = "Only its approvers can complete an approval task. Send it with Ready for approval.";
 export const WAITING_FOR_APPROVAL_REASON = "This task is waiting for approval. Only its approvers can complete it.";
 export const APPROVED_REASON = "This task was approved. Only its approvers can complete it.";
+// Note 183: a two-stage task waiting on (or past) its external review.
+export const EXTERNAL_PENDING_REASON =
+  "This task was approved internally. After the external reviewer approves it, its approvers or its assignee complete it.";
 
 // The approval banner's toasts when a row's control was stale or the viewer's role is too low: the assignee
 // sends with Commenter+ (approval_can_act), an approver decides with Commenter+ (decide_approval).
 export const APPROVAL_ROLE_CANT_SEND = "Your role in this project doesn’t let you send it for approval. Ask an Editor.";
-export const APPROVAL_ROLE_CANT_DECIDE = "Your role in this project doesn’t let you decide approvals. Ask an Owner or Admin.";
+export const APPROVAL_ROLE_CANT_DECIDE = "Your role in this project doesn’t let you decide approvals. Ask the project’s Owner.";
 
 // "Ready for approval" from someone who can't send it: never "Only you or an Editor…" to the assignee.
 export function cantSendMessage(viewerIsAssignee: boolean, assigneeName: string): string {
@@ -119,8 +137,10 @@ export function rowCompleteMode(
     approvalStatus?: ApprovalTaskStatus | null;
     approvalIsApprover?: boolean;
     approvalWaitingOnMe?: boolean;
+    externalApproved?: boolean;
   },
   completed = Boolean(task.completedAt),
+  assignedToMe = false,
 ): CompleteMode {
   return completeModeOf({
     kind: task.kind,
@@ -128,5 +148,7 @@ export function rowCompleteMode(
     status: task.approvalStatus,
     isApprover: task.approvalIsApprover,
     waitingOnMe: task.approvalWaitingOnMe,
+    isAssignee: assignedToMe,
+    externallyApproved: task.externalApproved,
   });
 }
