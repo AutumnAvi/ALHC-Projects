@@ -111,8 +111,9 @@ export async function ProjectViewPage({
   const columnWidths = layout === "list" ? frame.columnWidths : {};
   // The List groups this person collapsed here (Oct 26 notes, batch 4).
   const collapsedGroups = layout === "list" ? frame.collapsedGroups : [];
-  // Oct 27 notes (batch 5): the viewer's own Show / Hide completed for this project's List and Board.
-  const showCompleted = paging ? frame.showCompleted : null;
+  // Oct 27 notes (batch 5): the viewer's own Show / Hide completed for this project. Since Nov 10 (flaw
+  // audit C24) it is the one Show completed control in every layout (Calendar and Timeline too).
+  const showCompleted = frame.showCompleted;
   // Oct 27 notes (batch 6): the List rows this person opened to show their subtasks.
   const expandedTaskIds = layout === "list" ? shell.expandedTaskIds : [];
   // Nov 2 notes (batch 14, 94): the viewer's own version of this shared view ("Save for me").

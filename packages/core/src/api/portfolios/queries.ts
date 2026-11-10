@@ -126,6 +126,23 @@ export const listPortfolioProgress = read(
   },
 );
 
+// The portfolios this one sits inside (its parents, their parents, …) through links the viewer can see:
+// nesting one of them here would be a cycle the database refuses (Nov 10 audit, C94: never offered).
+export const listPortfolioAncestorIds = read(async (ctx: ApiContext, portfolioId: string): Promise<Set<string>> => {
+  const supabase = ctx.db;
+  const found = new Set<string>();
+  let frontier = [portfolioId];
+  for (let depth = 0; depth < 20 && frontier.length; depth++) {
+    const result = await supabase.from("portfolio_children").select("parent_id").in("child_id", frontier).is("deleted_at", null);
+    const parents = rows(result, "parent portfolios")
+      .map((r) => r.parent_id)
+      .filter((id) => id !== portfolioId && !found.has(id));
+    for (const id of parents) found.add(id);
+    frontier = [...new Set(parents)];
+  }
+  return found;
+});
+
 // Nested portfolios the viewer can see, in order.
 export const listPortfolioChildren = read(async (ctx: ApiContext, portfolioId: string): Promise<PortfolioChild[]> => {
   const supabase = ctx.db;
@@ -158,7 +175,15 @@ export const listPortfolioRollupProjects = read(async (ctx: ApiContext, portfoli
 export async function portfolioTimeline(ctx: ApiContext, portfolioId: string): Promise<PortfolioTimelineRow[]> {
   const supabase = ctx.db;
   const result = await supabase.rpc("portfolio_timeline", { target_portfolio: portfolioId });
-  return rows(result, "portfolio timeline").map((r) => ({
+  const list = rows(result, "portfolio timeline");
+  // C14: which of these projects ever had a status set (RLS: the same readable projects).
+  const ids = list.map((r) => r.project_id);
+  const rated = ids.length
+    ? await supabase.from("projects").select("id, status_updated_at").in("id", ids)
+    : { data: [] as { id: string; status_updated_at: string | null }[] };
+  const setIds = new Set((rated.data ?? []).filter((p) => p.status_updated_at).map((p) => p.id));
+  return list.map((r) => ({
+    statusUnset: !setIds.has(r.project_id),
     id: r.project_id,
     name: r.name,
     status: r.status,

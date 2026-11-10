@@ -71,7 +71,6 @@ import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus } from "@alhc/
 import {
   FIXED_TABS,
   VIEW_LAYOUTS,
-  personalCopyName,
   splitViews,
   type FixedTab,
   type ProjectView,
@@ -358,7 +357,7 @@ function FixedTabLink({
             >
               {isHidden ? (
                 <>
-                  <Plus className="size-4 text-zinc-500" /> Add this tab back
+                  <Plus className="size-4 text-zinc-500" /> Show this tab again
                 </>
               ) : (
                 <>
@@ -479,7 +478,7 @@ function AddTabMenu({
 function ProjectMenu({ project, canArchive }: { project: Project; canArchive: boolean }) {
   const router = useRouter();
   // Archived state flips at once (Oct 26 notes, batch 4): an archived project offers Unarchive, never Archive.
-  const { archived, archivePending, setArchived } = useProjectPage();
+  const { archived, archivePending, setArchived, openShare } = useProjectPage();
   const notify = useNotify();
   const [pending, run] = useServerAction();
   const confirm = useConfirm();
@@ -509,7 +508,8 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
             <MenuItem
               onClick={() => {
                 close();
-                router.push(`${base}/settings/members`);
+                // Every "Members" entry opens Share (flaw audit C50); the Members settings page stays.
+                openShare();
               }}
             >
               <Users className="size-4 text-zinc-500" /> Members
@@ -571,7 +571,7 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
                   router.push(`${base}/settings/templates`);
                 }}
               >
-                <LayoutTemplate className="size-4 text-zinc-500" /> Save as template…
+                <LayoutTemplate className="size-4 text-zinc-500" /> Templates…
               </MenuItem>
             ) : null}
             {canArchive ? (
@@ -585,7 +585,7 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
                     await confirm({
                       title: `Archive “${project.name}”?`,
                       message:
-                        "It becomes read-only and leaves the sidebar, Home, and project pickers. Members can still open it from Archived projects, and admins can unarchive it.",
+                        "It becomes read-only and leaves the sidebar, Home, and project pickers. Members can still open it from Archived projects, and its owners can unarchive it.",
                       confirmLabel: "Archive",
                     })
                   ) {
@@ -613,7 +613,7 @@ function ProjectMenu({ project, canArchive }: { project: Project; canArchive: bo
                   if (
                     await confirm({
                       title: `Delete “${project.name}”?`,
-                      message: "Its tasks stay recoverable in the database.",
+                      message: "This removes it for everyone. It can’t be undone from the app.",
                       confirmLabel: "Delete",
                       tone: "danger",
                     })
@@ -852,7 +852,9 @@ function ViewTab({
   const [renaming, setRenaming] = useState(false);
   const Icon = LAYOUT_ICONS[view.layout];
   const mine = view.ownerId !== null;
-  const hasMenu = active && (canEdit || isOwner || personalViews);
+  // Nov 10 (flaw audit C68): one personal-view model — "Save for me" keeps your version of a shared tab,
+  // "+ → Just for you" makes a tab only you see; the tab menu no longer offers "Make my own copy".
+  const hasMenu = active && (canEdit || isOwner);
 
   if (renaming) {
     return (
@@ -996,23 +998,6 @@ function ViewTab({
                     </MenuItem>
                   )}
                 </>
-              ) : null}
-              {!mine && personalViews ? (
-                <MenuItem
-                  onClick={() => {
-                    close();
-                    run(() =>
-                      createView(view.projectId, {
-                        name: personalCopyName(view.name),
-                        layout: view.layout,
-                        config: view.config,
-                        personal: true,
-                      }),
-                    );
-                  }}
-                >
-                  <UserRound className="size-4 text-zinc-500" /> Make my own copy
-                </MenuItem>
               ) : null}
               {!mine && isOwner && personalViews ? (
                 <MenuItem

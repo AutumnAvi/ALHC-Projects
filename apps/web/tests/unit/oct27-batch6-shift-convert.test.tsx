@@ -181,7 +181,7 @@ test("Settings → Dependencies: three choices, Ask me by default, read-only bel
   const editor = render(<DependencyShiftSettings projectId="p1" mode="auto" canEdit={false} />);
   assert.match(editor, /<fieldset[^>]*disabled=""/, "read-only below Admin");
   assert.match(editor, /<input[^>]*checked=""[^>]*value="auto"/);
-  assert.match(editor, /Only the project’s Admins and Owners change this/);
+  assert.match(editor, /Only the project’s Owners change this/);
 });
 
 test("every date change in the app goes through useDependencyShift, and the settings page loads the mode", () => {

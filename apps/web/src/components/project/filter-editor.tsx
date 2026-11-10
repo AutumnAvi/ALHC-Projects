@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { displayName } from "@alhc/core/people";
+import { plural } from "@alhc/core/rule-feedback";
 import { SmartPicker } from "@/components/smart-picker";
 import { formatDueDate } from "@/lib/dates";
 import type { Profile } from "@alhc/core/api/people/model";
@@ -68,7 +69,7 @@ function personLabel(id: string | null, profiles: Map<string, Profile>) {
 export function dueLabel(due: DueFilter) {
   switch (due.kind) {
     case "upcoming":
-      return `Due in the next ${due.days ?? 7} days`;
+      return `Due in the next ${plural(due.days ?? 7, "day")}`;
     case "range":
       if (due.from && due.to) return `Due ${formatDueDate(due.from)} – ${formatDueDate(due.to)}`;
       return due.from ? `Due on or after ${formatDueDate(due.from)}` : `Due on or before ${formatDueDate(due.to!)}`;
@@ -113,8 +114,8 @@ export function filterChips(
         completion === "all"
           ? "Incomplete and completed"
           : filters.completed_within_days
-            ? `Completed in the last ${filters.completed_within_days} days`
-            : "Completed",
+            ? `Completed in the last ${plural(filters.completed_within_days, "day")}`
+            : "Completed only",
       remove: () => without(filters, "completion", "completed_within_days"),
     });
   }
@@ -275,12 +276,16 @@ export function FilterEditor({
   context,
   idPrefix,
   showText = false,
+  completionIsViewOption = false,
 }: {
   filters: ViewFilters;
   onChange: (filters: ViewFilters) => void;
   context: FilterContext;
   idPrefix: string;
   showText?: boolean;
+  // Nov 10 (flaw audit C24): in a view's toolbar, incomplete vs all is the Show completed switch, so the
+  // Filter only offers "Completed only" (and "completed in the last N days").
+  completionIsViewOption?: boolean;
 }) {
   const completion = completionOf(filters);
 
@@ -319,14 +324,26 @@ export function FilterEditor({
         <SmartPicker
           id={`${idPrefix}-completion`}
           label="Completion"
-          value={completion}
-          onChange={(value) => setCompletion(value as Completion)}
+          value={completionIsViewOption ? (completion === "completed" ? "completed" : "any") : completion}
+          onChange={(value) => {
+            if (!completionIsViewOption) return setCompletion(value as Completion);
+            // "Any" goes back to what the Show completed switch shows (incomplete unless it's on).
+            if (value === "any") return completion === "completed" ? setCompletion("incomplete") : undefined;
+            setCompletion("completed");
+          }}
           className={pickerClass}
-          options={[
-            { value: "incomplete", label: "Incomplete tasks" },
-            { value: "completed", label: "Completed tasks" },
-            { value: "all", label: "All tasks" },
-          ]}
+          options={
+            completionIsViewOption
+              ? [
+                  { value: "any", label: "Any (use Show completed)" },
+                  { value: "completed", label: "Completed only" },
+                ]
+              : [
+                  { value: "incomplete", label: "Incomplete tasks" },
+                  { value: "completed", label: "Completed tasks" },
+                  { value: "all", label: "All tasks" },
+                ]
+          }
         />
         {completion === "completed" ? (
           <label className="mt-2 flex items-center gap-2 text-sm text-zinc-700">
