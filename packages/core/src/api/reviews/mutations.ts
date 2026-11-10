@@ -127,6 +127,23 @@ export async function rotateReviewCheck(ctx: ApiContext, reviewId: string): Prom
   };
 }
 
+// Nov 10 batch 36: who the task's external review is meant for, set ahead (approval setup) or remembered
+// from a send (set_task_external_reviewer: invoker, Editors+ by RLS). A null address clears it.
+export async function setTaskExternalReviewer(
+  ctx: ApiContext,
+  input: { taskId: string; email: string | null; name?: string | null },
+): Promise<void> {
+  const taskId = id(input.taskId, "task");
+  const email = input.email?.trim().toLowerCase() || null;
+  if (email && !EMAIL.test(email)) throw invalid("Enter the reviewer’s email address");
+  const { error } = await ctx.db.rpc("set_task_external_reviewer", {
+    target_task: taskId,
+    reviewer: email,
+    reviewer_display: email ? input.name?.trim() || null : null,
+  });
+  if (error) throw reviewError(error);
+}
+
 // Withdraw an open round (cancel_review_check: its link stops working).
 export async function cancelReviewCheck(ctx: ApiContext, reviewId: string): Promise<void> {
   id(reviewId, "review check");

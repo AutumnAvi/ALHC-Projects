@@ -9,6 +9,8 @@ import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { setApprovalFollowUp, setTaskApprovers } from "@/lib/actions/approvals";
+import { saveExternalReviewer, withdrawReviewCheck } from "@/lib/actions/reviews";
+import { TWO_STEP_NOTE } from "@alhc/core/external-review";
 import {
   FOLLOW_UP_LABELS,
   approvalSetupProblem,
@@ -28,6 +30,9 @@ import { PeopleList } from "./person-picker";
 // approve it, and then a follow-up step decision." Two short steps, the rest behind More options, and
 // Skip for now (the approval banner offers Finish setup later). Opens when a person makes a task an
 // approval task (the pane's Task type, Add approval in a List / Board) and from the banner.
+// Nov 10 batch 36: step 1 can also name the external reviewer (the requester by default). With both, the
+// internal approval comes first and an approver sends the review check after approving; a client review
+// that is already open is named, with Withdraw, instead of being replaced silently.
 export function ApprovalSetupDialog({
   task,
   profiles,
@@ -58,6 +63,12 @@ export function ApprovalSetupDialog({
     }),
   );
   const patch = (next: Partial<ApprovalSetupDraft>) => setDraft((current) => ({ ...current, ...next }));
+  const savedReviewer = task.externalReview?.saved ?? null;
+  const [reviewerEmail, setReviewerEmail] = useState(savedReviewer?.email ?? task.submission?.email ?? "");
+  const [reviewerName, setReviewerName] = useState(savedReviewer?.name ?? task.submission?.name ?? "");
+  const [openReview, setOpenReview] = useState(task.externalReview?.latest?.status === "pending" ? task.externalReview.latest : null);
+  const reviewerChanged =
+    reviewerEmail.trim().toLowerCase() !== (savedReviewer?.email ?? "") || (reviewerName.trim() || null) !== (savedReviewer?.name ?? null);
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const eligible = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter") || draft.approverIds.includes(p.id));
@@ -108,6 +119,10 @@ export function ApprovalSetupDialog({
         sectionId: draft.sectionId,
         reminders: draft.reminders,
       });
+      if (!followUp.error && reviewerChanged && (reviewerEmail.trim() || savedReviewer)) {
+        const saved = await saveExternalReviewer(task.id, reviewerEmail.trim() || null, reviewerName.trim() || null);
+        if (saved.error) return saved;
+      }
       if (!followUp.error) {
         notify(`Approval set up. ${approvalSetupSummary(draft, names, sectionName)}`);
         onClose();
@@ -154,9 +169,62 @@ export function ApprovalSetupDialog({
                 label="Approvers"
                 people={eligible}
                 selected={draft.approverIds}
-                emptyNote="Approvers need at least Commenter access to this task’s project."
+                emptyNote="Approvers need to be able to comment in this task’s project."
                 onPick={toggle}
               />
+            </div>
+            <div className="mt-2 rounded-md border border-zinc-200 p-3" data-external-reviewer="">
+              <p className="text-xs font-medium text-zinc-700">
+                External reviewer <span className="font-normal text-zinc-400">(optional)</span>
+              </p>
+              <p className="mt-0.5 text-2xs text-zinc-500">
+                Someone outside the team who reviews it by email afterwards: the requester, a facility contact, anyone.
+              </p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <input
+                  type="email"
+                  aria-label="External reviewer’s email"
+                  value={reviewerEmail}
+                  onChange={(e) => setReviewerEmail(e.currentTarget.value)}
+                  placeholder="name@example.com"
+                  className="field h-8 w-full"
+                />
+                <input
+                  aria-label="External reviewer’s name"
+                  value={reviewerName}
+                  maxLength={200}
+                  onChange={(e) => setReviewerName(e.currentTarget.value)}
+                  placeholder="Their name"
+                  className="field h-8 w-full"
+                />
+              </div>
+              {reviewerEmail.trim() && draft.approverIds.length ? (
+                <p className="mt-2 text-2xs text-zinc-600" data-two-step-note="">
+                  {TWO_STEP_NOTE}
+                </p>
+              ) : null}
+              {openReview ? (
+                <p role="note" className="mt-2 flex flex-wrap items-center gap-2 rounded bg-amber-50 px-2 py-1.5 text-2xs text-amber-900">
+                  <span className="min-w-0 flex-1">
+                    A review sent to {openReview.recipientName ?? openReview.recipientEmail} is still open. With an internal
+                    approver, the next one goes out only after the approval.
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary h-6 px-2 text-2xs"
+                    disabled={pending}
+                    onClick={() =>
+                      run(async () => {
+                        const result = await withdrawReviewCheck(openReview.id);
+                        if (!result.error) setOpenReview(null);
+                        return result;
+                      })
+                    }
+                  >
+                    Withdraw it
+                  </button>
+                </p>
+              ) : null}
             </div>
           </div>
         ) : (

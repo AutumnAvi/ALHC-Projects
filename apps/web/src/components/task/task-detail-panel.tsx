@@ -16,6 +16,7 @@ import { setTaskCompleted, updateTask } from "@/lib/actions/tasks";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { taskPermissions } from "@alhc/core/permissions";
+import { ExternalReviewBadge } from "@/components/project/task-meta";
 import type { Tag } from "@alhc/core/tags";
 import { completeModeLabel, completeModeOf } from "@alhc/core/approval-complete";
 import { requestApprovalAction } from "./approval-action";
@@ -171,7 +172,8 @@ export function TaskDetailPanel({
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-green-600 bg-white px-2.5 text-sm font-medium text-green-700 transition hover:bg-green-50"
           >
             <ThumbsUp className="size-4" strokeWidth={2.5} aria-hidden />
-            {completeModeLabel("approve")}
+            {/* C66: a round with files is reviewed file by file, so the button says what it opens. */}
+            {task.approval?.rounds[0]?.attachmentIds.length ? "Open review" : completeModeLabel("approve")}
           </button>
         ) : completeMode === "waiting" && canEdit ? (
           <button
@@ -190,11 +192,11 @@ export function TaskDetailPanel({
             type="button"
             disabled
             data-complete-mode="approved"
-            data-tooltip="Approved. Only its approvers can complete it."
+            data-tooltip={(task.approval?.approverIds.length ?? 0) > 1 ? "Approved. Only its approvers can complete it." : "Approved. Only its approver can complete it."}
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-green-300 bg-green-50 px-2.5 text-sm font-medium text-green-800 disabled:cursor-not-allowed"
           >
             <ThumbsUp className="size-4" strokeWidth={2.5} aria-hidden />
-            Approved · the approver completes it
+            {(task.approval?.approverIds.length ?? 0) > 1 ? "Approved · an approver completes it" : "Approved · the approver completes it"}
           </button>
         ) : completeMode === "ready" && canActOnApproval(task, memberId) && !task.approval?.paused ? (
           // Nov 4 notes (batch 27, 161): not while paused — the Approval row's "Feedback received" comes first.
@@ -557,10 +559,16 @@ function PaneTitle({ task, canEdit, completed, profiles }: { task: TaskDetail; c
 
 function RequestBadges({ task }: { task: TaskDetail }) {
   const [pending, run] = useServerAction();
-  if (!task.requestLabel && !task.submission && !task.canAssignRequestNumber) return null;
+  // C46: only people who can edit the task number it (the database needs Editor).
+  const canNumber = task.canAssignRequestNumber && !task.requestLabel && taskPermissions(task).canEdit;
+  // Nov 10 batch 36: the external review's state (green once approved) on any task that has one; an
+  // approval task shows it in its Approval row instead.
+  const external = task.kind !== "approval" ? (task.externalReview?.latest?.status ?? null) : null;
+  if (!task.requestLabel && !task.submission && !canNumber && !external) return null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-      {task.canAssignRequestNumber && !task.requestLabel ? (
+      {external ? <ExternalReviewBadge status={external} /> : null}
+      {canNumber ? (
         <button
           type="button"
           disabled={pending}
@@ -568,7 +576,7 @@ function RequestBadges({ task }: { task: TaskDetail }) {
           className="inline-flex items-center gap-1 rounded border border-dashed border-zinc-300 px-1.5 py-0.5 text-zinc-600 hover:border-zinc-400 hover:text-zinc-900 disabled:opacity-50"
         >
           <Hash className="size-3" aria-hidden />
-          Assign request number
+          Assign task number
         </button>
       ) : null}
       {task.submission ? (

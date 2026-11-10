@@ -136,12 +136,46 @@ export function ApprovalStatusBadge({ status, paused = false }: { status: Approv
   );
 }
 
+// Nov 10 batch 36: the task's latest external review (the review check emailed outside) was approved — a
+// small green dot next to the name in List, Board, and My tasks. The internal approval keeps its badge.
+export function ExternalApprovedDot() {
+  return (
+    <span className="inline-flex shrink-0 items-center" data-tooltip="Externally approved" data-external-approved="">
+      <span className="size-2 rounded-full bg-green-500 ring-2 ring-green-100" aria-hidden />
+      <span className="sr-only">Externally approved</span>
+    </span>
+  );
+}
+
+// Nov 10 batch 36: where the task's external review (the review check) stands, in the pane. Green once the
+// external reviewer approved; never the internal approval's badge.
+const EXTERNAL_REVIEW_LABELS: Record<string, { label: string; className: string } | undefined> = {
+  pending: { label: "External review: waiting", className: "bg-amber-50 text-amber-800 ring-amber-200" },
+  approved: { label: "Externally approved", className: "bg-green-50 text-green-800 ring-green-200" },
+  changes_requested: { label: "External review: changes requested", className: "bg-orange-50 text-orange-800 ring-orange-200" },
+};
+
+export function ExternalReviewBadge({ status }: { status: string }) {
+  const shown = EXTERNAL_REVIEW_LABELS[status];
+  if (!shown) return null;
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-px text-2xs font-medium whitespace-nowrap ring-1 ring-inset ${shown.className}`}
+      data-external-review={status}
+    >
+      {status === "approved" ? <span className="size-1.5 rounded-full bg-green-500" aria-hidden /> : null}
+      {shown.label}
+    </span>
+  );
+}
+
 export function TaskBadges({ task }: { task: ProjectTask }) {
   return (
     <>
       {task.kind === "approval" && task.approvalStatus ? (
         <ApprovalStatusBadge status={task.approvalStatus} paused={task.approvalPaused} />
       ) : null}
+      {task.externalApproved ? <ExternalApprovedDot /> : null}
       {task.recurring ? (
         <span className="inline-flex items-center text-zinc-400" title="Repeats">
           <Repeat className="size-3.5" aria-hidden />

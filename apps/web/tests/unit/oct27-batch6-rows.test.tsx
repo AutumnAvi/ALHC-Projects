@@ -414,7 +414,7 @@ test("My tasks: blocked rows are locked; editable rows rename and change the due
   assert.match(html, /aria-label="Rename “Plan the launch”"/);
   assert.match(html, /aria-label="Due date of “Plan the launch”: none\. Change"/);
   assert.ok(!/Rename “Read only”|Due date of “Read only”/.test(html), "read-only rows edit nothing");
-  assert.match(html, /Pending approval|Pending/, "approval tasks show their status");
+  assert.match(html, /Waiting for approval/, "approval tasks show their status");
 });
 
 test("My tasks: Waiting on me to approve sits at the top with the project, due date, and round", () => {
@@ -433,7 +433,7 @@ test("My tasks: Waiting on me to approve sits at the top with the project, due d
     },
   ];
   const html = render(<MyTasksView {...myProps} open={[myTask()]} awaiting={awaiting} />);
-  assert.match(html, /Waiting on me to approve/);
+  assert.match(html, /Waiting on you to approve/);
   assert.match(html, /data-awaiting-row="t9"/);
   assert.match(html, /\[Task #12\] Spring flyer/);
   assert.match(html, /Round 2/);
@@ -442,7 +442,7 @@ test("My tasks: Waiting on me to approve sits at the top with the project, due d
   assert.ok(!/aria-label="Select “Spring flyer”"/.test(html), "not selectable");
 
   const none = render(<MyTasksView {...myProps} open={[myTask()]} />);
-  assert.ok(!none.includes("Waiting on me to approve"), "hidden while empty");
+  assert.ok(!none.includes("Waiting on you to approve"), "hidden while empty");
   const onlyApprovals = render(<MyTasksView {...myProps} layout="due" sections={[]} open={[]} awaiting={awaiting} />);
-  assert.match(onlyApprovals, /Waiting on me to approve/, "shown even with nothing assigned");
+  assert.match(onlyApprovals, /Waiting on you to approve/, "shown even with nothing assigned");
 });

@@ -76,6 +76,28 @@ const DECISION_VERB: Record<string, string> = {
   rejected: "rejected",
 };
 
+// Nov 10 batch 36: an external reviewer's answer to a review check (the email link) reaches the Inbox as an
+// approval_decided item with data.review_check_id. It is not the internal approval, so it never reads like
+// one: the reviewer is named as the external reviewer and the verb says it was their review.
+const EXTERNAL_VERB: Record<string, string> = {
+  approved: "approved the external review of",
+  changes_requested: "requested changes in the external review of",
+};
+
+export function isExternalReviewItem(item: Pick<InboxItem, "kind" | "data">): boolean {
+  return item.kind === "approval_decided" && dataText(item.data, "review_check_id") !== null;
+}
+
+// Who the card names when the item has no person behind it (a rule, an emailed reply, an external reviewer).
+export function inboxActorFallback(item: Pick<InboxItem, "kind" | "data" | "emailFrom">, ruleName: string | null): string {
+  if (ruleName) return `Automation “${ruleName}”`;
+  if (isExternalReviewItem(item)) {
+    const who = dataText(item.data, "reviewer_name") ?? dataText(item.data, "reviewer_email");
+    return who ? `${who} (external reviewer)` : "The external reviewer";
+  }
+  return item.emailFrom ?? dataText(item.data, "reviewer_email") ?? "Someone";
+}
+
 // An approval reminder (Oct 27 notes, batch 6): approval_reminders_tick nudges each approver still
 // deciding the day before the approval due date (due_soon) and once it's overdue.
 export function approvalReminderOf(item: Pick<InboxItem, "kind" | "data">): "due_soon" | "overdue" | null {
@@ -107,6 +129,11 @@ export function describeInboxItem(item: InboxItem) {
   }
   let verb: string = INBOX_KIND[item.kind].verb;
   if (item.kind === "approval_decided") verb = DECISION_VERB[dataText(item.data, "status") ?? ""] ?? verb;
+  if (isExternalReviewItem(item)) {
+    verb = EXTERNAL_VERB[dataText(item.data, "status") ?? ""] ?? "answered the external review of";
+    const note = dataText(item.data, "note");
+    return { ruleName: null, verb, detail: note ?? "The internal approval isn’t affected." };
+  }
   if (item.kind === "approval_requested" && item.data && typeof item.data === "object" && !Array.isArray(item.data) && item.data.resubmitted) {
     verb = "resubmitted for your approval";
   }
@@ -213,8 +240,7 @@ export function InboxCard({
   const reminder = approvalReminderOf(item);
   // A form submitter's emailed reply has no actor: name the address it came from.
   // Oct 26 notes (batch 3): a review check's outcome names the reviewer's address.
-  const reviewer = dataText(item.data, "reviewer_email");
-  const actorName = actor ? displayName(actor) : ruleName ? `Automation “${ruleName}”` : (item.emailFrom ?? reviewer ?? "Someone");
+  const actorName = actor ? displayName(actor) : inboxActorFallback(item, ruleName);
   const ruleHref = pausedRuleHref(item);
   const accessRequest = accessRequestOf(item.data);
   const Icon = reminder

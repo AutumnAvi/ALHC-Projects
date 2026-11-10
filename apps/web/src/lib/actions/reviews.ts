@@ -90,7 +90,20 @@ export async function sendReviewCheck(input: {
   recipientName?: string | null;
   message?: string | null;
 }): Promise<SendReviewResult> {
-  return runWith(async (ctx) => deliverRound(ctx, await reviewsApi.createReviewCheck(ctx, input)), { deliver: false });
+  return runWith(async (ctx) => {
+    const review = await reviewsApi.createReviewCheck(ctx, input);
+    // Nov 10 batch 36: remember who the external review went to (Editors+; an approver who is only a
+    // Commenter can't, and that's fine — the round itself names them).
+    await reviewsApi
+      .setTaskExternalReviewer(ctx, { taskId: input.taskId, email: review.recipientEmail, name: review.recipientName })
+      .catch(() => undefined);
+    return deliverRound(ctx, review);
+  }, { deliver: false });
+}
+
+// Nov 10 batch 36: set (or clear) the task's intended external reviewer from the approval setup.
+export async function saveExternalReviewer(taskId: string, email: string | null, name?: string | null): Promise<ActionResult> {
+  return run((ctx) => reviewsApi.setTaskExternalReviewer(ctx, { taskId, email, name }), { deliver: false });
 }
 
 // "Send again": a new link for an open round (the old one stops working) and a new email.
