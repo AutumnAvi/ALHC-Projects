@@ -2988,7 +2988,7 @@ begin
   result := public.run_manual_rule(rule_id, (select id from sf_ids where name = 'lt2'));
   assert result -> 'detail' -> 'actions' -> 0 ->> 'outcome' = 'done'
     and (result -> 'detail' -> 'actions' -> 0 ->> 'result')
-      like '%0 field values (1 locked field value left out: only project Owners and Admins change locked fields, and this rule''s owner isn''t one)',
+      like '%0 field values (1 locked field value left out: only project Owners and Admins change locked fields, and this automation''s owner isn''t one)',
     format('the template step leaves Stage alone and says why: %s', result);
   assert (select value from public.task_field_values
           where task_id = (select id from sf_ids where name = 'lt2') and field_id = (select id from sf_ids where name = 'stage')) = '"st-draft"',

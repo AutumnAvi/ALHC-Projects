@@ -476,10 +476,11 @@ begin
   exception when check_violation then null;
   end;
   perform public.transfer_portfolio_ownership(pf, '88888888-8888-4888-8888-888888888888');
-  assert public.portfolio_role(pf) = 'admin', 'previous owner steps down to admin';
+  assert public.portfolio_role(pf) = 'editor', 'previous owner stays on as an editor (Nov 10 batch 36)';
+  -- An Editor (Nov 10 batch 36): RLS leaves the row alone, or the owner guard refuses.
   begin
     update public.portfolios set deleted_at = now() where id = pf;
-    raise exception 'an admin cannot delete the portfolio';
+    assert not exists (select 1 from public.portfolios where id = pf and deleted_at is not null), 'a former owner cannot delete the portfolio';
   exception when insufficient_privilege then null;
   end;
 

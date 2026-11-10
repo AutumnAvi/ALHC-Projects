@@ -3300,6 +3300,12 @@ export type Database = {
           // Nov 1 notes (batch 8, item 63): each file's outcome of a round answered file by file
           // ([{ asset_id, name, approved, note, pins }]); written only by review_check_decide.
           file_results: Json | null;
+          // Nov 10 batch 36: the one automatic reminder 24 hours after sending (nudged_at is readable;
+          // the reminder link's hash and the claim columns aren't).
+          nudged_at: string | null;
+          nudge_attempts: number;
+          nudge_claimed_at: string | null;
+          nudge_token_hash: string | null;
           created_by: string;
           created_at: string;
           updated_at: string;
@@ -5526,6 +5532,20 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Nov 10 batch 36: who a task's external review check is meant for (Editors+ write, task readers read).
+      task_review_settings: {
+        Row: {
+          task_id: string;
+          reviewer_email: string | null;
+          reviewer_name: string | null;
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { task_id: string; reviewer_email?: string | null; reviewer_name?: string | null };
+        Update: { reviewer_email?: string | null; reviewer_name?: string | null };
+        Relationships: [];
+      };
       approval_rounds: {
         Row: {
           id: string;
@@ -5871,6 +5891,32 @@ export type Database = {
       digest_next_at: {
         Args: { frequency: string; send_hour: number; send_weekday: number; zone: string; after_time: string };
         Returns: string | null;
+      };
+      claim_review_nudges: {
+        Args: { max_items?: number };
+        Returns: {
+          review_id: string;
+          task_id: string;
+          token: string;
+          recipient_email: string;
+          recipient_name: string | null;
+          round: number;
+          message: string | null;
+          task_title: string | null;
+          sender_name: string | null;
+          project_name: string | null;
+          sent_at: string;
+          expires_at: string;
+          files: Json;
+        }[];
+      };
+      finish_review_nudge: {
+        Args: { target_review: string; sent: boolean };
+        Returns: undefined;
+      };
+      set_task_external_reviewer: {
+        Args: { target_task: string; reviewer: string | null; reviewer_display?: string | null };
+        Returns: undefined;
       };
       claim_scheduled_emails: {
         Args: { max_items?: number; only_id?: string | null };
