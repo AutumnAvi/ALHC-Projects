@@ -287,11 +287,13 @@ export function SendForApprovalDialog({
         {externalReviewer ? (
           <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600" data-two-step-note="">
             After the internal approval, {approverNames.length ? joinNames(approverNames) : "the approver"} sends it to{" "}
-            {reviewerLabel(externalReviewer)} for the external review.
+            {reviewerLabel(externalReviewer)} for the external review. Neither approval completes the task (note 183):
+            it stays open, and after the external reviewer approves it, its approvers or its assignee complete it.
           </p>
         ) : null}
 
-        <div>
+        {/* Note 183: on a two-stage task "when it's approved" never runs at the internal stage, so it isn't asked. */}
+        <div hidden={Boolean(externalReviewer)}>
           <label className="flex items-start gap-2 text-sm text-zinc-800">
             <input
               type="checkbox"

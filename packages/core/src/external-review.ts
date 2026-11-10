@@ -21,6 +21,20 @@ export function reviewComesAfterApproval(task: Pick<GateTask, "kind" | "approval
   return task.kind === "approval" && (task.approval?.approverIds.length ?? 0) > 0;
 }
 
+// Note 183: a two-stage task — an approval task with approvers AND an external reviewer (set on the task,
+// the form's requester, or the latest review's address). Neither approval completes it, whatever "When it's
+// approved" says; the task stays open (the green badge once the external reviewer approves) and its
+// approvers or its assignee complete it. Mirrors approval_two_stage() (20261110020000_nov10b_batch37_a.sql).
+export function isTwoStageApproval(
+  task: Pick<GateTask, "kind" | "approval"> & { externalReview?: Pick<ExternalReview, "reviewer"> | null },
+): boolean {
+  return reviewComesAfterApproval(task) && Boolean(task.externalReview?.reviewer);
+}
+
+// Note 183: what "When it's approved" means on a two-stage task, said where the choice is shown.
+export const TWO_STAGE_FOLLOW_UP_NOTE =
+  "This task also goes to an external reviewer, so approving it never completes it or runs the step below: it stays open for the external review. After the external reviewer approves it, its approvers or its assignee complete it by hand.";
+
 export type ReviewSendGate = {
   // "after_approval": the two-step order applies to this task.
   order: "any_time" | "after_approval";

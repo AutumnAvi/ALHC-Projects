@@ -56,7 +56,7 @@ export default async function TeamCalendarPage({ params, searchParams }: PagePro
             }
           >
             The Calendar shows tasks due in {team.name}’s projects you’re a member of. Join one of the team’s public
-            projects in All work, or ask a project’s admin to invite you.
+            projects in All work, or ask the project’s Owner to invite you.
           </EmptyState>
         </div>
       ) : (

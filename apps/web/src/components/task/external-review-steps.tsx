@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Check, Send } from "lucide-react";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { reviewSendGate, reviewerLabel, twoStepSteps, TWO_STEP_NOTE } from "@alhc/core/external-review";
+import { MAX_REVIEW_MESSAGE } from "@alhc/core/review-checks";
 import { SendReviewDialog } from "./send-review-dialog";
 
 // Nov 10 batch 36: on the internal approver's review page (/approve/<task>) of a task that also has an
@@ -11,6 +12,10 @@ import { SendReviewDialog } from "./send-review-dialog";
 // internal approval is done, "Send to <reviewer>", which opens the same Send review check screen.
 export function ExternalReviewSteps({ task, memberId }: { task: TaskDetail; memberId: string }) {
   const [sending, setSending] = useState(false);
+  // Note 182: an optional message for the external reviewer, written here and carried into the Send
+  // review check screen (still editable there) and the email they get.
+  const [message, setMessage] = useState("");
+  const messageId = useId();
   const reviewer = task.externalReview?.reviewer ?? null;
   const you = task.approval?.approverIds.includes(memberId) ?? false;
   const steps = twoStepSteps(task.approval, task.externalReview, you);
@@ -40,12 +45,36 @@ export function ExternalReviewSteps({ task, memberId }: { task: TaskDetail; memb
         ))}
       </ol>
       {gate.allowed && steps[1].state === "current" ? (
-        <button type="button" className="btn-primary mt-3" onClick={() => setSending(true)} data-send-external="">
-          <Send className="size-4" aria-hidden />
-          Send to {reviewer?.name ?? reviewerLabel(reviewer)}
-        </button>
+        <div className="mt-3 flex flex-col gap-2">
+          <label htmlFor={messageId} className="text-xs font-medium text-zinc-700">
+            Message to {reviewer?.name ?? reviewerLabel(reviewer)} <span className="font-normal text-zinc-500">(optional)</span>
+          </label>
+          <textarea
+            id={messageId}
+            value={message}
+            onChange={(e) => setMessage(e.target.value.slice(0, MAX_REVIEW_MESSAGE))}
+            rows={3}
+            maxLength={MAX_REVIEW_MESSAGE}
+            placeholder="Add a note for the external reviewer. It goes in their email."
+            className="field h-auto py-2"
+            data-external-message=""
+          />
+          <div>
+            <button type="button" className="btn-primary" onClick={() => setSending(true)} data-send-external="">
+              <Send className="size-4" aria-hidden />
+              Send to {reviewer?.name ?? reviewerLabel(reviewer)}
+            </button>
+          </div>
+        </div>
       ) : null}
-      {sending ? <SendReviewDialog task={task} onClose={() => setSending(false)} /> : null}
+      {sending ? (
+        <SendReviewDialog
+          task={task}
+          initialMessage={message}
+          onClose={() => setSending(false)}
+          onSent={() => setMessage("")}
+        />
+      ) : null}
     </section>
   );
 }

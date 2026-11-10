@@ -120,7 +120,10 @@ export function renderReviewEmail(input: ReviewEmailInput): Rendered {
   const nudge = input.reminder
     ? `Just a reminder: ${input.senderName} is still waiting for your review of ${count}. It only takes a minute.`
     : null;
-  const paragraphs = (nudge ? [greeting, nudge, intro] : [greeting, input.message?.trim() || "", intro]).filter(Boolean);
+  // Note 182: the sender's own message (e.g. the internal approver's note on the approval page) goes in
+  // the first email and again in the reminder, right after the greeting / the reminder line.
+  const note = input.message?.trim() || "";
+  const paragraphs = (nudge ? [greeting, nudge, note, intro] : [greeting, note, intro]).filter(Boolean);
 
   const grid = emailFileList(input.assets, (a) => urls.file(a.assetId));
   const buttons = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0 0 0"><tr><td bgcolor="${escapeHtml(

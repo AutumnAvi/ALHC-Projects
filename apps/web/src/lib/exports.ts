@@ -212,13 +212,13 @@ export async function exportList(ctx: ApiContext, projectId: string, viewId: str
 // The Search page's list, with its Status / Project filters (Nov 10 audit, C59: the same matches it shows).
 export async function exportSearch(ctx: ApiContext, query: string, filters: SearchFilters = { status: "all", project: null }): Promise<ExportResult> {
   const trimmed = query.trim();
-  const header = ["Task", "Project", "Completed", "Due date", "Task ID"];
+  const header = ["Task", "Project", "Completed", "Due date"];
   if (!trimmed) return { title: "search", header, rows: [] };
   const results = (await searchTasks(ctx, trimmed.slice(0, 200), searchLimitFor(filters))).filter((r) => matchesSearchFilters(r, filters));
   return {
     title: `search ${trimmed}`,
     header,
-    rows: results.map((r) => [r.title, r.home_project_name, Boolean(r.completed_at), r.due_on, r.id]),
+    rows: results.map((r) => [r.title, r.home_project_name, Boolean(r.completed_at), r.due_on]),
   };
 }
 
@@ -298,12 +298,12 @@ export async function exportWorkspaceReport(
     const projectNames = new Map(projects.map((p) => [p.id, p.name]));
     async function* rows(): AsyncGenerator<CsvCell[]> {
       for await (const t of exportOverdueRows(ctx, filters, timeZone)) {
-        yield [t.title, Boolean(t.parentTaskId), projectNames.get(t.projectId) ?? "", person(t.assigneeId), t.dueOn, t.daysOverdue, t.taskId];
+        yield [t.title, Boolean(t.parentTaskId), projectNames.get(t.projectId) ?? "", person(t.assigneeId), t.dueOn, t.daysOverdue];
       }
     }
     return {
       title: "overdue tasks",
-      header: ["Task", "Subtask", "Project", "Assignee", "Due date", "Days overdue", "Task ID"],
+      header: ["Task", "Subtask", "Project", "Assignee", "Due date", "Days overdue"],
       rows: rows(),
     };
   }
