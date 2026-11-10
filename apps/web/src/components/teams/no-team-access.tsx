@@ -38,7 +38,7 @@ export function NoTeamAccess({
           router.push(`/teams/${teamId}`);
         } else {
           setRequested(true);
-          notify("Request sent to the team’s leads");
+          notify("Request sent");
         }
       }
       return result;
@@ -56,7 +56,8 @@ export function NoTeamAccess({
         {requested ? (
           <>
             <p className="mt-2 text-sm text-zinc-600">
-              Your request was sent. Once one of the team’s leads adds you, the team opens for you here.
+              Your request is waiting on the team’s Members tab. Leads aren’t notified, so let one know you asked. Once a
+              lead adds you, the team opens for you here.
             </p>
             <p className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-green-50 px-3 py-1.5 text-sm font-medium text-green-800">
               <Check className="size-4" aria-hidden />
@@ -75,8 +76,8 @@ export function NoTeamAccess({
         ) : (
           <>
             <p className="mt-2 text-sm text-zinc-600">
-              Only the people on this team can see its members, work, and calendar. Ask to join, and one of its leads
-              will add you.
+              Only the people on this team can see its members, work, and calendar. Ask to join: a lead will see your
+              request on the team’s Members tab.
             </p>
             <button type="button" onClick={ask} disabled={pending} className="btn-primary mt-5 h-9 px-4">
               {pending ? "Sending…" : "Request to join"}

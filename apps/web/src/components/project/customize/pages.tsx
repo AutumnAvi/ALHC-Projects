@@ -25,7 +25,6 @@ import { useProjectPage } from "@/components/project/project-page-context";
 import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { createForm, updateForm } from "@/lib/actions/forms";
-import { setRuleEnabled } from "@/lib/actions/automations";
 import { moveViewBy, setProjectTabHidden, setProjectViewHidden } from "@/lib/actions/views";
 import {
   inboundWebhooksStatus,
@@ -199,20 +198,30 @@ function FieldRow({
 // ---------------------------------------------------------------------------------------------
 // Forms: each form with Live / Off; Copy link under "…".
 
-export function FormsPage({ projectId, base, forms }: { projectId: string; base: string; forms: CustomizeSummary["forms"] }) {
-  const canManage = useProjectPermissions().canManage;
+export function FormsPage({
+  projectId,
+  base,
+  back,
+  forms,
+}: {
+  projectId: string;
+  base: string;
+  back: string;
+  forms: CustomizeSummary["forms"];
+}) {
+  const canBuild = useProjectPermissions().canBuild;
   const [pending, run] = useServerAction();
   const notify = useNotify();
   return (
     <div>
-      {canManage ? (
+      {canBuild ? (
         <PanelAdd>
           <button
             type="button"
             aria-label="Add form"
             data-tooltip="Add form"
             disabled={pending}
-            onClick={() => run(() => createForm(projectId, "New request form"))}
+            onClick={() => run(() => createForm(projectId, "New form"))}
             className={ADD_BUTTON}
           >
             <Plus className="size-3.5" aria-hidden />
@@ -227,7 +236,7 @@ export function FormsPage({ projectId, base, forms }: { projectId: string; base:
           {forms.map((form, i) => (
             <li key={form.id} className="group flex min-h-row items-center gap-2.5 px-2.5 text-sm hover:bg-zinc-50">
               <Link
-                href={`${base}/forms/${form.id}`}
+                href={`${base}/forms/${form.id}?back=${encodeURIComponent(back)}`}
                 data-panel-focus={i === 0 ? true : undefined}
                 className="flex min-w-0 flex-1 items-center gap-2.5 self-stretch"
               >
@@ -276,12 +285,11 @@ export function EmailsPage({
   summary: CustomizeSummary;
   details: CustomizeDetails | null | "loading";
 }) {
-  const canManage = useProjectPermissions().canManage;
+  const { canBuild, canManage } = useProjectPermissions();
   const [, run] = useServerAction();
-  const [rules, patchRule] = useOptimistic(
-    summary.rules.filter((r) => r.actionTypes.includes("send_email")),
-    (current, change: { id: string; on: boolean }) => current.map((r) => (r.id === change.id ? { ...r, enabled: change.on } : r)),
-  );
+  // C49: an automation's switch turns the whole automation off (its other steps too), so this page only
+  // says whether it's on and links to it; the switch lives on the automation itself.
+  const rules = summary.rules.filter((r) => r.actionTypes.includes("send_email"));
   const [forms, patchForm] = useOptimistic(summary.forms, (current, change: { id: string; on: boolean }) =>
     current.map((f) => (f.id === change.id ? { ...f, sendsConfirmation: change.on } : f)),
   );
@@ -296,19 +304,15 @@ export function EmailsPage({
           {rules.map((rule, i) => (
             <li key={rule.id} className="flex min-h-row items-center gap-2.5 px-2.5 text-sm">
               <RowIcon icon={Workflow} />
-              <Link href={ruleHref(base, back, rule.id)} className="min-w-0 flex-1 truncate text-zinc-900 hover:underline">
+              <Link
+                href={ruleHref(base, back, rule.id)}
+                data-panel-focus={i === 0 ? true : undefined}
+                data-tooltip="Open the automation to turn it on or off"
+                className="min-w-0 flex-1 truncate text-zinc-900 hover:underline"
+              >
                 {rule.name}
               </Link>
-              {canManage ? (
-                <PanelSwitch
-                  checked={rule.enabled}
-                  label={`${rule.name} on`}
-                  focus={i === 0}
-                  onChange={(on) => run(() => setRuleEnabled(rule.id, on), () => patchRule({ id: rule.id, on }))}
-                />
-              ) : (
-                <OnOff on={rule.enabled} />
-              )}
+              <OnOff on={rule.enabled} />
             </li>
           ))}
         </Group>
@@ -320,7 +324,7 @@ export function EmailsPage({
         <Group label="Form confirmations">
           {forms.map((form) => (
             <StaticRow key={form.id} icon={FileInput} label={form.title}>
-              {canManage ? (
+              {canBuild ? (
                 <PanelSwitch
                   checked={form.sendsConfirmation}
                   label={`Email a confirmation for ${form.title}`}
@@ -367,7 +371,7 @@ export function AppsPage({ base, details }: { base: string; details: CustomizeDe
     );
   }
   if (!details || !details.admin) {
-    return <Intro>Only project Admins and Owners connect apps.</Intro>;
+    return <Intro>Only the project’s Owners connect apps.</Intro>;
   }
   const state = {
     slackWebhook: details.integrations?.slackWebhook ?? null,

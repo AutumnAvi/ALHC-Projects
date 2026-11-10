@@ -212,7 +212,7 @@ export function firstChangingAction(detail: unknown): string | null {
 export const STOP_HEADING: Record<StopKind, string> = {
   loop: "Loop protection stopped an automation",
   depth_limit: "Loop protection stopped a long chain of automations",
-  throttled: "An automation was paused for this task",
+  throttled: "An automation hit its hourly limit on this task",
   rate_limited: "An automation hit its hourly limit",
   failed: "An automation failed",
 };

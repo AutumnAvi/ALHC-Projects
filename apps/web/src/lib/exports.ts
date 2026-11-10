@@ -27,6 +27,7 @@ import { listProjectFields } from "@alhc/core/api/fields/queries";
 import { fieldChips, fieldNameWithSymbol, type FieldDef } from "@alhc/core/fields";
 import { PROJECT_STATUS_LABELS, isProjectStatus, progressPercent, type PortfolioCounts } from "@alhc/core/portfolios";
 import { isSeriesInterval, seriesLabel, type ReportFilters } from "@alhc/core/reports";
+import { matchesSearchFilters, searchLimitFor, type SearchFilters } from "@alhc/core/search-filters";
 import type { Json } from "@alhc/core/supabase/database.types";
 import {
   columnsOf,
@@ -147,12 +148,13 @@ export async function exportList(ctx: ApiContext, projectId: string, viewId: str
       );
     }
   }
-  header.push("Tags", "Completed on", "Task ID");
-  cells.push(
-    (t) => tagsFor(t.tagIds, tagsById).map((tag) => tag.name).join(", ") || null,
-    (t) => day(t.completedAt),
-    (t) => t.id,
-  );
+  // Nov 10 (flaw audit C100): no Tags column while tags are off, and no internal Task ID column.
+  if (tagsOn) {
+    header.push("Tags");
+    cells.push((t) => tagsFor(t.tagIds, tagsById).map((tag) => tag.name).join(", ") || null);
+  }
+  header.push("Completed on");
+  cells.push((t) => day(t.completedAt));
 
   // What the order needs besides the keys: the sort / group field's values, and tags to group by tag.
   const orderFieldIds = [
@@ -207,11 +209,12 @@ export async function exportList(ctx: ApiContext, projectId: string, viewId: str
 // Search: the same results as the search page (search_tasks under RLS, up to 50). Project = the first one
 // the task was added to that the viewer can read (search_tasks' home_project_name column; Oct 29 notes,
 // 55b: there's no home project); the name carries that task's first number.
-export async function exportSearch(ctx: ApiContext, query: string): Promise<ExportResult> {
+// The Search page's list, with its Status / Project filters (Nov 10 audit, C59: the same matches it shows).
+export async function exportSearch(ctx: ApiContext, query: string, filters: SearchFilters = { status: "all", project: null }): Promise<ExportResult> {
   const trimmed = query.trim();
   const header = ["Task", "Project", "Completed", "Due date", "Task ID"];
   if (!trimmed) return { title: "search", header, rows: [] };
-  const results = await searchTasks(ctx, trimmed.slice(0, 200));
+  const results = (await searchTasks(ctx, trimmed.slice(0, 200), searchLimitFor(filters))).filter((r) => matchesSearchFilters(r, filters));
   return {
     title: `search ${trimmed}`,
     header,

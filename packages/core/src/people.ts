@@ -7,8 +7,10 @@ export function displayName(profile: { full_name: string | null; email: string }
 
 export const personHref = (profileId: string) => `/people/${profileId}`;
 
-// The filtered Reports view a profile links to ("their work in Reports").
-export const personReportsHref = (profileId: string) => `/reports?a=${profileId}`;
+// The filtered Reports view a profile links to ("their work in Reports"): every date (Nov 10 audit, C56:
+// never the default ±2 weeks), and optionally only their open tasks.
+export const personReportsHref = (profileId: string, opts: { open?: boolean } = {}) =>
+  `/reports?a=${profileId}&range=all${opts.open ? "&status=open" : ""}`;
 
 // How many open tasks / activity lines a profile shows.
 export const PROFILE_TASK_LIMIT = 50;

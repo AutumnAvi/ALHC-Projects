@@ -29,13 +29,18 @@ const people = [
 ];
 const ctx = { today: TODAY, projects, people };
 
-test("date groups: overdue, today, the next seven days, later, no date", () => {
+test("date groups: overdue, today, this week, next week, later, no date", () => {
   assert.equal(checklistGroupOf(null, TODAY), "none");
   assert.equal(checklistGroupOf("2026-10-31", TODAY), "overdue");
   assert.equal(checklistGroupOf(TODAY, TODAY), "today");
+  // Nov 10 audit (C8): calendar weeks (Sunday to Saturday).
   assert.equal(checklistGroupOf("2026-11-02", TODAY), "week");
   assert.equal(checklistGroupOf("2026-11-07", TODAY), "week");
-  assert.equal(checklistGroupOf("2026-11-08", TODAY), "later");
+  assert.equal(checklistGroupOf("2026-11-08", TODAY), "next");
+  assert.equal(checklistGroupOf("2026-11-14", TODAY), "next");
+  assert.equal(checklistGroupOf("2026-11-15", TODAY), "later");
+  assert.equal(checklistGroupOf("2026-11-07", "2026-11-05"), "week", "Thursday: Saturday is still this week");
+  assert.equal(checklistGroupOf("2026-11-08", "2026-11-05"), "next", "Thursday: Sunday is next week");
   const groups = groupChecklist(
     [
       { id: "a", title: "B later", dueOn: "2026-12-01", completedAt: null },
@@ -69,10 +74,12 @@ test("date chips: Today, Tomorrow, and the end of the work week", () => {
   assert.deepEqual(dateChips(TODAY).map((c) => [c.label, c.day]), [
     ["Today", "2026-11-01"],
     ["Tomorrow", "2026-11-02"],
-    ["This week", "2026-11-05"],
+    ["This week · Thu", "2026-11-05"],
   ]);
+  // Wednesday: this week's last workday is tomorrow, so the chip is "Next week" = Sunday.
+  assert.deepEqual(dateChips("2026-11-04")[2], { key: "week", label: "Next week · Sun", day: "2026-11-08" });
   // Thursday: nothing left this week after tomorrow, so "Next week" = Sunday.
-  assert.deepEqual(dateChips("2026-11-05")[2], { key: "week", label: "Next week", day: "2026-11-08" });
+  assert.deepEqual(dateChips("2026-11-05")[2], { key: "week", label: "Next week · Sun", day: "2026-11-08" });
   // Monday–Friday workweek on a Monday: Friday.
   assert.equal(dateChips("2026-11-02", [1, 2, 3, 4, 5])[2].day, "2026-11-06");
 });
@@ -102,8 +109,17 @@ test("quick add: dates, #project, @person, and the name that's left", () => {
   assert.equal(parseQuickAdd("Call vendor today", ctx).dueOn, TODAY);
   assert.equal(parseQuickAdd("Report in 3 days", ctx).dueOn, "2026-11-04");
   assert.equal(parseQuickAdd("Report in 2 weeks", ctx).dueOn, "2026-11-15");
-  assert.equal(parseQuickAdd("Report next week", ctx).dueOn, "2026-11-02", "next week = next Monday");
+  // Nov 10 audit (C8): the same meaning as the chips — next week's first workday, this week's last.
+  assert.equal(parseQuickAdd("Report next week", ctx).dueOn, "2026-11-08", "next week = next week's first workday (Sunday)");
   assert.equal(parseQuickAdd("Report this week", ctx).dueOn, "2026-11-05");
+  assert.equal(parseQuickAdd("Report this week", { ...ctx, today: "2026-11-05" }).dueOn, "2026-11-05", "Thursday: today");
+  assert.equal(parseQuickAdd("Report this week", { ...ctx, today: "2026-11-06" }).dueOn, "2026-11-08", "Friday: next week's first workday");
+  // Nov 10 audit (C6): a date word with an apostrophe is part of the name.
+  assert.equal(parseQuickAdd("Draft today's newsletter", ctx).title, "Draft today's newsletter");
+  assert.equal(parseQuickAdd("Draft today's newsletter", ctx).dueOn, null);
+  assert.equal(parseQuickAdd("Review tomorrow’s schedule", ctx).title, "Review tomorrow’s schedule");
+  assert.equal(parseQuickAdd("Monday's recap", ctx).title, "Monday's recap");
+  assert.equal(parseQuickAdd("Friday's email fri", ctx).dueOn, "2026-11-06", "a plain weekday later in the line still counts");
   assert.equal(parseQuickAdd("Launch on Nov 20", ctx).dueOn, "2026-11-20");
   assert.equal(parseQuickAdd("Launch on Nov 20", ctx).title, "Launch");
   assert.equal(parseQuickAdd("Launch 10/14", ctx).dueOn, "2027-10-14", "a past month and day means next year");

@@ -1,84 +1,65 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { Lock } from "lucide-react";
-import { Dialog, DIALOG_HINT, DIALOG_LABEL } from "@/components/dialog";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { Dialog, DIALOG_HINT } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
-import { createPrivateTask } from "@/lib/actions/tasks";
+import { QuickAddBar } from "@/components/my-tasks/quick-add";
+import { usePeopleDirectory } from "@/components/task/title-text";
+import { loadTaskProjects } from "@/lib/actions/shell";
 
-// Create → Task: the My tasks quick-add in a dialog. The task is private (only you, and whoever you
-// assign it to, can see it) until it's added to a project, exactly like the Add task box in My tasks.
+// Create → Task: the My tasks quick add in a dialog (Nov 10 audit, C75), so it reads the same sentence —
+// a date, "#project", "@person", a repeat — with the same chips. Opened inside a project it starts with
+// that project's "#Name" (when the person can add tasks there). Without a "#project" the task is
+// private (only you, and whoever you assign it to, can see it), like the My tasks bar.
 export function NewTaskDialog({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const notify = useNotify();
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const pathname = usePathname();
+  const people = usePeopleDirectory();
+  const [projects, setProjects] = useState<{ id: string; name: string }[] | null>(null);
 
-  function submit() {
-    const name = title.trim();
-    if (!name) return;
-    startTransition(async () => {
-      const result = await createPrivateTask(name);
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      onClose();
-      const taskId = result.taskId;
-      notify(
-        "Task created in My tasks",
-        taskId ? { label: "Open", onClick: () => router.push(`/my-tasks?task=${taskId}`) } : undefined,
-      );
-    });
-  }
+  useEffect(() => {
+    let live = true;
+    loadTaskProjects()
+      .then((list) => live && setProjects(list))
+      .catch(() => live && setProjects([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const here = /^\/projects\/([0-9a-f-]{36})(?:\/|$)/.exec(pathname)?.[1] ?? null;
+  const current = here ? projects?.find((p) => p.id === here) : undefined;
 
   return (
     <Dialog title="New task" onClose={onClose}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
-        className="flex flex-col gap-3"
-      >
-        <div>
-          <label htmlFor="new-task-title" className={DIALOG_LABEL}>
-            Task name
-          </label>
-          <input
-            id="new-task-title"
-            data-autofocus
-            value={title}
-            onChange={(e) => {
-              setTitle(e.currentTarget.value);
-              setError(null);
+      <div className="flex flex-col gap-3">
+        {projects === null ? (
+          <div className="skeleton h-12 rounded-xl" role="status" aria-label="Loading" />
+        ) : (
+          <QuickAddBar
+            projects={projects}
+            people={people.map((p) => ({ id: p.id, name: p.name, email: p.email ?? null }))}
+            initialText={current ? `#${current.name} ` : ""}
+            placeholder="Write a task name — “Call Dana tomorrow #Project”"
+            autoFocus
+            onAdded={(taskId, summary) => {
+              onClose();
+              notify(summary, taskId ? { label: "Open", onClick: () => router.push(`/my-tasks?task=${taskId}`) } : undefined);
             }}
-            required
-            maxLength={1000}
-            placeholder="Write a task name"
-            className="field mt-1 w-full"
           />
-          <p className={`${DIALOG_HINT} flex items-start gap-1.5`}>
-            <Lock className="mt-0.5 size-3 shrink-0" aria-hidden />
-            Goes to My tasks, assigned to you. Only you can see it until you assign it to someone or add it to a project.
-          </p>
-        </div>
-        {error ? (
-          <p role="alert" className="text-xs text-red-600">
-            {error}
-          </p>
-        ) : null}
-        <div className="flex justify-end gap-2">
+        )}
+        <p className={DIALOG_HINT}>
+          Assigned to you. Type a date (tomorrow, fri), # and a project, or @ and a person. Without a project it goes to
+          My tasks, and only you can see it until you assign it or add it to a project.
+        </p>
+        <div className="flex justify-end">
           <button type="button" onClick={onClose} className="btn-secondary">
             Cancel
           </button>
-          <button type="submit" disabled={pending || !title.trim()} className="btn-primary">
-            {pending ? "Creating…" : "Create task"}
-          </button>
         </div>
-      </form>
+      </div>
     </Dialog>
   );
 }

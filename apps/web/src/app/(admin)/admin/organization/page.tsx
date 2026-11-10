@@ -38,7 +38,7 @@ export default async function AdminOrganizationPage() {
       <SettingsCard
         id="admin-goals"
         title="Goals"
-        description="Asana-style goals with sub-goals and progress. Off by default."
+        description="Goals with sub-goals and progress, linked to projects and portfolios. Off by default."
         isAdmin
       >
         <GoalsSetting enabled={goalsOn} />

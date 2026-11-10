@@ -51,9 +51,9 @@ const STATUS_DOT: Record<MemberStatus, string> = {
 const LAST_ADMIN_NOTE = "A workspace needs at least one admin. Make someone else an admin first.";
 const DEFAULT_ROLE_HELP =
   "What they become when someone adds them to a project with “Their default role” (Share, a project’s Members page, or a team added that way).";
-const DEFAULTS_MISSING = "This setting needs this release’s database update.";
-const NO_ACTIVITY_NOTE = "Last activity shows once this release’s database update is applied";
-const SIGN_IN_ONLY_NOTE = "Only sign-ins are known until this release’s database update is applied";
+const DEFAULTS_MISSING = "Couldn’t load this setting. Reload the page to try again.";
+const NO_ACTIVITY_NOTE = "Couldn’t load last activity just now";
+const SIGN_IN_ONLY_NOTE = "Only sign-ins could be loaded just now";
 const ACTIVITY_HELP =
   "The last time they changed a task, commented, posted a message or a status update — anything that shows in an activity feed. Signing in alone doesn’t count.";
 
@@ -196,7 +196,7 @@ export function UsersAdmin({
   return (
     <AdminPage
       title="Users"
-      description="Everyone on the workspace’s allowlist. Only people listed here can sign in."
+      description="Everyone who can sign in to the workspace. Only people listed here have access."
       wide
       actions={
         <button type="button" aria-haspopup="dialog" onClick={() => setInviting(true)} className="btn-primary h-8">
@@ -268,7 +268,7 @@ export function UsersAdmin({
           ) : (
             <div className="overflow-x-auto rounded-lg border border-zinc-200">
               <table className="w-full min-w-[56rem] border-collapse text-sm">
-                <caption className="sr-only">People on the workspace’s allowlist</caption>
+                <caption className="sr-only">People who can sign in to the workspace</caption>
                 <thead>
                   <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-500">
                     <th scope="col" className="px-3 py-2 font-medium">

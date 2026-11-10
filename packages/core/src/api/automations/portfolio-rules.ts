@@ -33,7 +33,7 @@ export type PortfolioRuleRun = {
 };
 
 const PORTFOLIO_RULES_MISSING = "Portfolio automations need this release’s database update";
-const PORTFOLIO_RULES_ADMINS = "Only portfolio admins and owners change its automations";
+const PORTFOLIO_RULES_ADMINS = "Only the portfolio’s Owners and Editors change its automations";
 
 function portfolioRuleRow(input: PortfolioRuleInput) {
   if (!isPortfolioTrigger(input.triggerType)) throw invalid("Choose a trigger");

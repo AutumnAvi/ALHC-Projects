@@ -26,11 +26,20 @@ import { useNotify, useServerAction } from "@/components/toast";
 import { beginLocalMutation, dropTokenTasks, endLocalMutation, failMutation } from "@/lib/optimistic-session";
 import { finishRunning, startRunning } from "@/lib/rule-running";
 import { addProjectMemberByProfile } from "@/lib/actions/members";
-import { bulkEditTasks } from "@/lib/actions/tasks";
+import { bulkEditTasks, restoreTasks } from "@/lib/actions/tasks";
 import { listBulkManualRules, runManualRuleOnTasks } from "@/lib/actions/automations";
 import { type BulkManualRule } from "@alhc/core/api/automations/model";
 import { Dialog } from "@/components/dialog";
-import { MAX_BULK_TASKS, bulkRuleRunMessage, bulkRuleRunTone, bulkVerb, taskCount, type BulkOperation, type BulkResult } from "@alhc/core/bulk";
+import {
+  MAX_BULK_TASKS,
+  bulkDeleteNote,
+  bulkDoneText,
+  bulkRuleRunMessage,
+  bulkRuleRunTone,
+  taskCount,
+  type BulkOperation,
+  type BulkResult,
+} from "@alhc/core/bulk";
 import type { Section } from "@alhc/core/api/projects/model";
 import { NumberInput } from "@/components/number-input";
 import { LOCKED_FIELD_NOTE, OPTION_COLOR_CLASSES, fieldLockedFor, numberPrefixOf, type FieldDef } from "@alhc/core/fields";
@@ -57,7 +66,7 @@ export type BulkContext = {
   tags?: Tag[];
 };
 
-type Summary = { operation: BulkOperation; total: number; result: BulkResult };
+type Summary = { operation: BulkOperation; total: number; result: BulkResult; target?: string | null };
 
 // Runs bulk_update_tasks for the selection (bar buttons and shortcuts). A clean run shows a toast;
 // a partial one opens a summary naming every skipped task and why.
@@ -65,8 +74,28 @@ export function useBulkEdit() {
   const notify = useNotify();
   const [pending, startTransition] = useTransition();
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [, runAction] = useServerAction();
 
-  function apply(taskIds: string[], operation: BulkOperation, optimistic?: () => void) {
+  // Undo of a bulk delete: put back every task it moved to the Trash (private ones included, which no
+  // project's Trash lists).
+  function undoDelete(taskIds: string[]) {
+    runAction(async () => {
+      const result = await restoreTasks(taskIds);
+      if (!result.error) {
+        const restored = result.restored ?? 0;
+        const failed = result.failed ?? 0;
+        notify(
+          failed > 0
+            ? `Restored ${taskCount(restored)}. ${taskCount(failed)} couldn’t be restored.`
+            : `Restored ${taskCount(restored)}`,
+        );
+      }
+      return result;
+    });
+  }
+
+  // `target`: the project or section the tasks go to, named in the toast ("Added 3 tasks to Marketing").
+  function apply(taskIds: string[], operation: BulkOperation, optimistic?: () => void, target?: string | null) {
     if (taskIds.length === 0) return;
     if (taskIds.length > MAX_BULK_TASKS) {
       notify(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
@@ -90,9 +119,12 @@ export function useBulkEdit() {
         // Skipped tasks never changed; drop only those overlays. The ones that saved stay
         // until the server list shows them.
         if (result.skipped.length > 0) dropTokenTasks(token, result.skipped.map((skip) => skip.taskId));
-        if (result.skipped.length > 0) setSummary({ operation, total: taskIds.length, result });
+        if (result.skipped.length > 0) setSummary({ operation, total: taskIds.length, result, target });
         else if (result.updated.length === 0) notify(`No changes: ${taskCount(result.unchanged.length)} already set`);
-        else notify(`${bulkVerb(operation.action)} ${taskCount(result.updated.length)}`);
+        else if (operation.action === "delete") {
+          const trashed = result.updated;
+          notify(bulkDoneText("delete", taskCount(trashed.length)), { label: "Undo", onClick: () => undoDelete(trashed) });
+        } else notify(bulkDoneText(operation.action, taskCount(result.updated.length), target));
       } catch (error) {
         failMutation(token);
         throw error;
@@ -107,7 +139,7 @@ export function useBulkEdit() {
     if (result.skipped.length > 0) setSummary({ operation, total, result });
   }
 
-  return { pending, apply, showSummary, summary, closeSummary: () => setSummary(null) };
+  return { pending, apply, showSummary, undoDelete, summary, closeSummary: () => setSummary(null) };
 }
 
 export type BulkEdit = ReturnType<typeof useBulkEdit>;
@@ -120,15 +152,28 @@ export function BulkBar({
   context,
   bulk,
   onClear,
+  privateTaskIds,
 }: {
   selected: string[];
   completedCount: number;
   context: BulkContext;
   bulk: BulkEdit;
   onClear: () => void;
+  // My Tasks: the selected tasks that are private (no project), so no Trash lists them after a delete.
+  privateTaskIds?: string[];
 }) {
   const count = selected.length;
-  const run = (operation: BulkOperation) => bulk.apply(selected, operation);
+  // The name the toast gives the place the tasks went ("Added 3 tasks to Marketing").
+  const targetOf = (operation: BulkOperation): string | null => {
+    if (operation.action === "add_to_project") return context.projects.find((p) => p.id === operation.project_id)?.name ?? null;
+    if (operation.action === "move_section") {
+      if (!operation.section_id) return "No section";
+      return context.project?.sections.find((s) => s.id === operation.section_id)?.name ?? null;
+    }
+    if (operation.action === "my_section") return context.mySections?.find((s) => s.id === operation.section_id)?.name ?? null;
+    return null;
+  };
+  const run = (operation: BulkOperation) => bulk.apply(selected, operation, undefined, targetOf(operation));
   // A new due date moves the selected tasks' dependents (later or earlier) as their project's Settings →
   // Dependencies says: Auto-shift (with Undo), Ask me, or Off — one call, the same as the pane.
   const shift = useDependencyShift();
@@ -154,13 +199,15 @@ export function BulkBar({
   const [, runAction] = useServerAction();
   const router = useRouter();
   const [, startRefresh] = useTransition();
-  function runAutomation(rule: BulkManualRule) {
+  async function runAutomation(rule: BulkManualRule) {
     const ids = [...selected];
     if (ids.length > MAX_BULK_TASKS) {
       notify(`Select at most ${MAX_BULK_TASKS} tasks at a time`);
       return;
     }
     const count = Math.min(ids.length, rule.taskCount);
+    // C37 (Nov 10): a run on many tasks asks first, like bulk Delete.
+    if (!(await confirm({ title: `Run “${rule.name}” on ${taskCount(count)}?`, message: "It checks its conditions on each task first.", confirmLabel: "Run" }))) return;
     notify(`Running “${rule.name}” on ${taskCount(count)}…`);
     // Nov 3 notes (batch 19, 141): listed in the running indicator until it's done; the page refreshes in the
     // background afterwards (the action itself no longer waits for that).
@@ -195,14 +242,14 @@ export function BulkBar({
 
   return (
     <>
-      {bulk.summary ? <BulkSummary summary={bulk.summary} onClose={bulk.closeSummary} /> : null}
+      {bulk.summary ? <BulkSummary summary={bulk.summary} onClose={bulk.closeSummary} onUndoDelete={bulk.undoDelete} /> : null}
       {adding ? (
         <Dialog
           title={`Add ${adding.person.name} to this project and assign?`}
           description={
             context.canAddMembers
               ? `They join the project as an Editor, then ${taskCount(adding.taskIds.length)} ${adding.taskIds.length === 1 ? "is" : "are"} assigned to them.`
-              : "Only project admins and owners can add members. Ask one of them, or pick someone already in the project."
+              : "Only the project’s Owner can add members. Ask them, or pick someone already in the project."
           }
           onClose={() => setAdding(null)}
         >
@@ -381,7 +428,7 @@ export function BulkBar({
             {(close) =>
               otherProjects.length === 0 ? (
                 <p className="text-xs text-zinc-500">
-                  You aren’t an Editor of any other project. Ask a project’s owner or admin to invite you.
+                  You aren’t an Editor of any other project. Ask a project’s Owner to invite you.
                 </p>
               ) : (
                 <div className="flex flex-col">
@@ -481,7 +528,7 @@ export function BulkBar({
                 taskIds={selected}
                 onPick={(rule) => {
                   close();
-                  runAutomation(rule);
+                  void runAutomation(rule);
                 }}
               />
             )}
@@ -494,7 +541,7 @@ export function BulkBar({
               if (
                 await confirm({
                   title: `Move ${taskCount(count)} to the Trash?`,
-                  message: "Editors can restore them from Settings → Trash.",
+                  message: bulkDeleteNote(selected.filter((id) => privateTaskIds?.includes(id)).length),
                   confirmLabel: "Move to Trash",
                   tone: "danger",
                 })
@@ -872,7 +919,15 @@ function FieldValueInput({
   );
 }
 
-function BulkSummary({ summary, onClose }: { summary: Summary; onClose: () => void }) {
+function BulkSummary({
+  summary,
+  onClose,
+  onUndoDelete,
+}: {
+  summary: Summary;
+  onClose: () => void;
+  onUndoDelete: (taskIds: string[]) => void;
+}) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeRef.current?.focus();
@@ -883,7 +938,7 @@ function BulkSummary({ summary, onClose }: { summary: Summary; onClose: () => vo
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const { result, operation, total } = summary;
+  const { result, operation, total, target } = summary;
   const done = result.updated.length + result.unchanged.length;
   return (
     <div
@@ -897,7 +952,7 @@ function BulkSummary({ summary, onClose }: { summary: Summary; onClose: () => vo
         <ListChecks className="mt-0.5 size-5 shrink-0 text-accent-600" aria-hidden />
         <div className="min-w-0 flex-1">
           <h2 id="bulk-summary-title" className="font-semibold text-zinc-900">
-            {bulkVerb(operation.action)} {done} of {taskCount(total)}
+            {bulkDoneText(operation.action, `${done} of ${taskCount(total)}`, target)}
           </h2>
           <div id="bulk-summary-body">
             <p className="mt-0.5 text-zinc-600">
@@ -913,9 +968,23 @@ function BulkSummary({ summary, onClose }: { summary: Summary; onClose: () => vo
             </ul>
           </div>
         </div>
-        <button ref={closeRef} type="button" onClick={onClose} className="btn-secondary shrink-0">
-          OK
-        </button>
+        <div className="flex shrink-0 flex-col gap-2">
+          <button ref={closeRef} type="button" onClick={onClose} className="btn-secondary">
+            OK
+          </button>
+          {operation.action === "delete" && result.updated.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onUndoDelete(result.updated);
+              }}
+              className="btn-ghost"
+            >
+              Undo
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );

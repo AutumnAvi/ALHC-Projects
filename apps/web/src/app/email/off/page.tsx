@@ -8,10 +8,10 @@ export const metadata: Metadata = { title: "Turn off emails", robots: { index: f
 
 const COPY = {
   digest: {
-    title: "Turn off your Inbox digest?",
-    body: "You’ll stop getting the Inbox digest email. Your Inbox and your other notification emails stay as they are.",
+    title: "Turn off your email digest?",
+    body: "You’ll stop getting the email digest. Your Inbox and your other notification emails stay as they are.",
     button: "Turn off digest",
-    done: "Your Inbox digest is off.",
+    done: "Your email digest is off.",
   },
   reports: {
     title: "Turn off scheduled report emails?",

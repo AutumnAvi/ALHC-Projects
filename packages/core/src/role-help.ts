@@ -16,7 +16,8 @@ const row = (label: string, keys: string[], allowed: string[], detail?: string):
 
 const WORKSPACE = ["admin", "member"];
 const PROJECT = ["owner", "editor", "commenter", "viewer"];
-const PORTFOLIO = ["owner", "admin", "editor", "viewer"];
+// Nov 10 audit (C78): the portfolio roles people are given (Admin is retired, like on projects).
+const PORTFOLIO = ["owner", "editor", "viewer"];
 const TEAM = ["lead", "member"];
 
 export const ROLE_TABLES: RoleTable[] = [
@@ -69,7 +70,9 @@ export const ROLE_TABLES: RoleTable[] = [
       row("Save your own version of a view", PROJECT, ["owner", "editor", "commenter", "viewer"]),
       row("Save a view as the default for everyone; change the default view", PROJECT, ["owner"]),
       row("Fill project roles (Approver, Designer, …) and link them to tasks", PROJECT, ["owner", "editor"]),
-      row("Automations, forms, task numbering, integrations, project settings, Asana import", PROJECT, ["owner"]),
+      // Nov 10 audit (C104): Editors change task numbering (apply_task_numbering, Customize) and set up automations.
+      row("Set up automations and task numbering", PROJECT, ["owner", "editor"]),
+      row("Forms, integrations, project settings, Asana import", PROJECT, ["owner"]),
       row("Invite people, change their roles, remove them", PROJECT, ["owner"]),
       row("Lock section order; archive, transfer, or delete the project", PROJECT, ["owner"]),
     ],
@@ -82,8 +85,9 @@ export const ROLE_TABLES: RoleTable[] = [
     columns: PORTFOLIO.map((key) => ({ key, label: key[0].toUpperCase() + key.slice(1) })),
     rows: [
       row("See the portfolio and the projects in it you can open", PORTFOLIO, PORTFOLIO),
-      row("Rename it, edit notes, add, remove, and reorder projects", PORTFOLIO, ["owner", "admin", "editor"]),
-      row("Invite people and change their roles", PORTFOLIO, ["owner", "admin"]),
+      row("Rename it, edit notes, add, remove, and reorder projects", PORTFOLIO, ["owner", "editor"]),
+      row("Set up the portfolio's automations", PORTFOLIO, ["owner", "editor"]),
+      row("Invite people and change their roles", PORTFOLIO, ["owner"]),
       row("Transfer ownership or delete the portfolio", PORTFOLIO, ["owner"]),
     ],
   },
@@ -98,7 +102,7 @@ export const ROLE_TABLES: RoleTable[] = [
     rows: [
       row("See the team's members, work, and calendar", TEAM, TEAM),
       row("Join the team's public-to-team projects (as Editor)", TEAM, TEAM),
-      row("Pin curated work", TEAM, TEAM),
+      row("Pin projects on the team’s Overview", TEAM, TEAM),
       row("Rename the team, add and remove members, decide join requests", TEAM, ["lead"]),
     ],
   },

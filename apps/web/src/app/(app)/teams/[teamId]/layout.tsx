@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { TeamHeader } from "@/components/teams/team-header";
-import { canManageTeam, getTeam, getWorkspace, listTeamJoinRequests } from "@/lib/data";
+import { canManageTeam, getTeam, getWorkspace, goalsEnabled, listTeamJoinRequests } from "@/lib/data";
 import { requireTeamView } from "./require-team";
 
 // A team page: the header (name, "…" menu, member avatars) and the tabs Overview, Members, All work, and
@@ -10,11 +10,12 @@ import { requireTeamView } from "./require-team";
 export default async function TeamLayout({ children, params }: LayoutProps<"/teams/[teamId]">) {
   const { teamId } = await params;
   await requireTeamView(teamId);
-  const [team, canManage, workspace, requests] = await Promise.all([
+  const [team, canManage, workspace, requests, goalsOn] = await Promise.all([
     getTeam(teamId),
     canManageTeam(teamId),
     getWorkspace(),
     listTeamJoinRequests(teamId),
+    goalsEnabled(),
   ]);
   if (!team) notFound();
   // People asking to join show as a count on the Members tab for those who decide (leads, workspace admins).
@@ -28,6 +29,7 @@ export default async function TeamLayout({ children, params }: LayoutProps<"/tea
         canManage={canManage}
         isDefault={workspace?.defaultTeamId === team.id}
         requestCount={canManage ? requests.length : 0}
+        goalsOn={goalsOn}
       />
       <main className="min-h-0 flex-1 overflow-auto">{children}</main>
     </div>

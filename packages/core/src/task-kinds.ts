@@ -31,7 +31,7 @@ export type ApprovalTaskStatus = (typeof APPROVAL_TASK_STATUSES)[number];
 
 export const APPROVAL_STATUS_LABELS: Record<ApprovalTaskStatus, string> = {
   not_sent: "Not sent",
-  pending: "Pending approval",
+  pending: "Waiting for approval",
   changes_requested: "Changes requested",
   rejected: "Rejected",
   approved: "Approved",

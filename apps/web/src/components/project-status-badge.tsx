@@ -19,7 +19,17 @@ export const PROJECT_STATUS_DOT: Record<ProjectStatus, string> = {
   complete: "bg-zinc-500",
 };
 
-export function ProjectStatusBadge({ status, note }: { status: string; note?: string | null }) {
+// Nov 10 audit (C14): `unset` = nobody ever set the project's status (no status update yet), so it reads
+// as a grey "No status" instead of the column's default "On track".
+export function ProjectStatusBadge({ status, note, unset }: { status: string; note?: string | null; unset?: boolean }) {
+  if (unset) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-zinc-50 px-2 py-0.5 text-xs font-medium text-zinc-500 ring-1 ring-inset ring-zinc-200">
+        <span aria-hidden className="size-1.5 rounded-full bg-current" />
+        No status
+      </span>
+    );
+  }
   if (!isProjectStatus(status)) return null;
   return (
     <span

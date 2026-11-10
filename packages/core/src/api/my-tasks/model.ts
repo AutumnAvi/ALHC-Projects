@@ -39,6 +39,8 @@ export type MyTask = {
   // Oct 29 notes (batch 7): a pending round waits on the viewer, and whether they approve it.
   approvalWaitingOnMe?: boolean;
   approvalIsApprover?: boolean;
+  // Nov 10 batch 36: the latest external review check was approved (the green dot).
+  externalApproved?: boolean;
   // A subtask's top-level task (its expanded tree loads by that); null for a top-level task.
   rootTaskId?: string | null;
   // Nov 1 notes (batch 9b): the checklist's extras — the start date (kept when the due date changes), a
@@ -75,6 +77,7 @@ export function myTasksFromCards(data: Json): { open: MyTask[]; completed: MyTas
         recurring: row.recurring === true,
         assignedAt: typeof row.assigned_at === "string" ? row.assigned_at : null,
         datePrompt: row.date_prompt === true,
+        externalApproved: row.external_approved === true,
       });
     }
     return tasks;

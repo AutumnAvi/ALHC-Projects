@@ -165,7 +165,7 @@ export const EMAIL_KIND_LABELS: Record<string, string> = {
   comment: "Comment",
   invite: "Invite",
   notification: "Notification",
-  digest: "Inbox digest",
+  digest: "Email digest",
   report: "Scheduled report",
   submitter_response: "Response to submitter",
   form_confirmation: "Form confirmation",
@@ -221,5 +221,5 @@ export function digestDaysNote(workWeek: readonly number[] | null | undefined): 
   const off = WEEKDAYS.filter((_, i) => !days.includes(i));
   if (!off.length) return "Sent any day of the week.";
   const list = off.length === 1 ? off[0] : `${off.slice(0, -1).join(", ")} or ${off[off.length - 1]}`;
-  return `Only sent on workdays — never on a ${list}.`;
+  return `Only sent on the workspace’s workdays — never on a ${list}.`;
 }

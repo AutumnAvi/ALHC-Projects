@@ -1,11 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { createContext, useCallback, useContext, useMemo, useOptimistic, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
 import { StatusUpdatePanel } from "@/components/project/status-update-panel";
 import { useRightPanel } from "@/components/shell/right-panel";
 import { useServerAction } from "@/components/toast";
 import { setProjectArchived } from "@/lib/actions/projects";
+import { OPEN_SHARE_EVENT } from "@/lib/open-share";
 
 // Share is a large dialog opened from the header. Leave it out of the project page chunk until then.
 const ShareDialog = dynamic(() => import("@/components/project/share-dialog").then((m) => m.ShareDialog));
@@ -69,6 +70,15 @@ export function ProjectPageProvider({
       ),
     [run, project.id, showArchived],
   );
+  // The shell's Invite for people who aren't workspace admins opens this project's Share (Nov 10 audit, C13).
+  useEffect(() => {
+    const open = (event: Event) => {
+      event.preventDefault();
+      setSharing(true);
+    };
+    window.addEventListener(OPEN_SHARE_EVENT, open);
+    return () => window.removeEventListener(OPEN_SHARE_EVENT, open);
+  }, []);
   const value = useMemo<ProjectPage>(
     () => ({
       openShare: () => setSharing(true),

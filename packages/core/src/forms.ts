@@ -114,6 +114,8 @@ export type PublicForm = {
   viewerEmail: string | null;
   // Nov 1 notes, item 69: only these domains may submit (empty when anyone may).
   verifiedDomains?: string[];
+  // C34 (Nov 10): the form emails a confirmation (null = get_public_form didn't say).
+  sendsConfirmation?: boolean | null;
 };
 
 // Item 69: whether an address is on one of the domains (exact domain after the @, any case), and the
@@ -427,6 +429,21 @@ export function clearedBranchesMessage(broken: FormQuestion[]): string {
     return `“${broken[0].label.trim() || "Untitled question"}” now always shows: its branch question is no longer above it.`;
   }
   return `${broken.length} questions now always show: their branch questions are no longer above them.`;
+}
+
+// C36 (Nov 10): questions that showed only for an answer and lost that branch in a change (the question
+// they depended on was removed, or stopped being a choice question). Pure, for the editor's Undo toast.
+export function lostBranches(before: FormQuestion[], after: FormQuestion[]): FormQuestion[] {
+  const had = new Set(before.filter((q) => q.show_if).map((q) => q.id));
+  return after.filter((q) => had.has(q.id) && !q.show_if);
+}
+
+// What the editor says after a delete or a type change cleared those branches (with Undo).
+export function lostBranchesMessage(lost: FormQuestion[]): string {
+  if (lost.length === 1) {
+    return `“${lost[0].label.trim() || "Untitled question"}” now always shows: the answer it depended on is gone.`;
+  }
+  return `${lost.length} questions now always show: the answers they depended on are gone.`;
 }
 
 // A question that asks for a project field's value and fills it in (Asana's field-based questions).

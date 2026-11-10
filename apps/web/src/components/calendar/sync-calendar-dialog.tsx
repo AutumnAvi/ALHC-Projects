@@ -39,7 +39,8 @@ export function SyncCalendarDialog({
   onClose: () => void;
 }) {
   const notify = useNotify();
-  const [loaded, setLoaded] = useState<Loaded | null | "loading">("loading");
+  // null: this calendar isn't one the person can open; "failed": the read failed (Try again).
+  const [loaded, setLoaded] = useState<Loaded | null | "loading" | "failed">("loading");
   const [urls, setUrls] = useState<Urls | null>(null);
   const [pending, start] = useTransition();
   const confirm = useConfirm();
@@ -48,14 +49,30 @@ export function SyncCalendarDialog({
     let live = true;
     loadCalendarFeed(scope, targetId)
       .then((result) => live && setLoaded(result))
-      .catch(() => live && setLoaded(null));
+      .catch(() => live && setLoaded("failed"));
     return () => {
       live = false;
     };
   }, [scope, targetId]);
 
   function reload() {
-    loadCalendarFeed(scope, targetId).then(setLoaded, () => setLoaded(null));
+    loadCalendarFeed(scope, targetId).then(setLoaded, () => setLoaded("failed"));
+  }
+
+  function retry() {
+    setLoaded("loading");
+    reload();
+  }
+
+  // Nov 10 audit (C30): a new link stops the old one, so calendars already subscribed would stop updating.
+  async function replaceLink(feedId: string) {
+    const ok = await confirm({
+      title: "Get a new calendar link?",
+      message:
+        "Your current link stops working right away, so calendars using it will stop updating. Add the new link in each of them again.",
+      confirmLabel: "Get a new link",
+    });
+    if (ok) make(feedId);
   }
 
   function make(rotateId: string | null) {
@@ -91,7 +108,7 @@ export function SyncCalendarDialog({
   }
 
   const name =
-    loaded && loaded !== "loading"
+    loaded && loaded !== "loading" && loaded !== "failed"
       ? scope === "my_tasks"
         ? "My tasks"
         : (loaded.targetName ?? calendarFeedLabel({ scope, targetName: null }))
@@ -105,8 +122,13 @@ export function SyncCalendarDialog({
         </p>
       ) : loaded === null ? (
         <p className="text-sm text-zinc-600">This calendar isn’t available to you.</p>
-      ) : !loaded.available ? (
-        <p className="text-sm text-zinc-600">Calendar sync needs this release’s database update, which isn’t applied yet.</p>
+      ) : loaded === "failed" || !loaded.available ? (
+        <p role="alert" className="text-sm text-zinc-600">
+          Couldn’t load this.{" "}
+          <button type="button" onClick={retry} className="font-medium text-accent-700 hover:underline">
+            Try again
+          </button>
+        </p>
       ) : (
         <div className="space-y-4 text-sm">
           <p className="text-zinc-600">
@@ -135,10 +157,11 @@ export function SyncCalendarDialog({
                 ) : (
                   " · no calendar app has read it yet"
                 )}
-                . For your security the link is shown only when it’s made; get a new link to copy it again.
+                . For your security the link is shown only when it’s made. A new link replaces this one, so calendars using
+                it stop updating until you add the new one.
               </p>
               <div className="mt-2.5 flex flex-wrap gap-2">
-                <button type="button" disabled={pending} onClick={() => make(loaded.feed!.id)} className="btn-secondary">
+                <button type="button" disabled={pending} onClick={() => replaceLink(loaded.feed!.id)} className="btn-secondary">
                   Get a new link
                 </button>
                 <button

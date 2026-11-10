@@ -23,17 +23,23 @@ export function ApproverReviewPage(props: {
   recipientName?: string | null;
   // Nov 8 note 167: the task's own details (no comments). The page builds this from the task it already loaded.
   details: ReviewTaskDetails;
+  // Nov 10 batch 36: the task also has an external reviewer, so an approval stays here (the page then shows
+  // "Send to …"); anything else goes back to the task as before.
+  stayAfterApproval?: boolean;
 }) {
   const router = useRouter();
   const [pending, run] = useServerAction();
   const [rejecting, setRejecting] = useState(false);
-  const { backHref, recipientName, details, ...rest } = props;
+  const { backHref, recipientName, details, stayAfterApproval = false, ...rest } = props;
   const hasFiles = approverReviewFiles(rest.round, rest.attachments).length > 0;
 
   function decide(decision: "approved" | "changes_requested" | "rejected", note: string) {
     run(async () => {
       const result = await decideApproval(rest.requestId, decision, note || undefined);
-      if (!result.error) router.push(backHref);
+      if (!result.error) {
+        if (stayAfterApproval && decision === "approved") router.refresh();
+        else router.push(backHref);
+      }
       return result;
     });
   }
@@ -59,7 +65,7 @@ export function ApproverReviewPage(props: {
     <div className="mx-auto max-w-6xl space-y-4">
       <ReviewTaskDetailsPanel details={details} />
       {finalText}
-      <ApproverReview {...rest} variant="full" onDone={() => router.push(backHref)} />
+      <ApproverReview {...rest} variant="full" onDone={() => (stayAfterApproval ? router.refresh() : router.push(backHref))} />
       <div className="border-t border-zinc-200 pt-3" data-approve-reject="">
         {rejecting ? (
           <ApprovalDecisionForm

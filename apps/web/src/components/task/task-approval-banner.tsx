@@ -54,6 +54,9 @@ import { FeedbackSubtaskButton } from "./feedback-subtask";
 import { AssetThumb } from "./asset-thumb";
 import { feedbackSubtaskTitle } from "@alhc/core/feedback-subtask";
 import { canAddSubtask } from "./task-subtasks";
+import { SendReviewDialog } from "./send-review-dialog";
+import { ExternalReviewBadge } from "@/components/project/task-meta";
+import { reviewSendGate, twoStepSteps } from "@alhc/core/external-review";
 
 // Oct 27 notes (batch 6, items 45 / 45b): the approval panel of an approval task's pane (since Nov 4
 // notes, batch 27, 161: a compact row with the field rows, Details in a dialog, feedback as pills).
@@ -178,7 +181,7 @@ export function ApprovalTaskBanner({
       <section aria-label="Approval" className="mt-3 rounded-md border border-zinc-200 bg-zinc-50/70 px-3 py-2.5">
         <p className="flex items-center gap-2 text-sm text-zinc-700">
           <ThumbsUp className="size-4 shrink-0 text-zinc-500" aria-hidden />
-          Approvals need this release’s database update.
+          Couldn’t load this approval. Close the task and open it again to try again.
         </p>
       </section>
     );
@@ -265,6 +268,14 @@ function ApprovalPanel({
   const eligible = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter") || settings.approverIds.includes(p.id));
   const approvers = settings.approverIds.map((id) => ({ id, profile: profilesById.get(id) ?? null }));
   const approverNames = approvers.map((a) => nameOf(a.id));
+  // Nov 10 batch 36: with an external reviewer too, the approver sends the review check after approving.
+  const reviewGate = reviewSendGate(task, memberId);
+  const externalReviewer = task.externalReview?.reviewer ?? null;
+  const steps =
+    reviewGate.order === "after_approval" && externalReviewer
+      ? twoStepSteps(info, task.externalReview, info.approverIds.includes(memberId))
+      : null;
+  const [sendingReview, setSendingReview] = useState(false);
   const canSend =
     canAct &&
     !completed &&
@@ -368,7 +379,7 @@ function ApprovalPanel({
           label="Approvers"
           people={eligible}
           selected={settings.approverIds}
-          emptyNote="Approvers need at least Commenter access to this task’s project."
+          emptyNote="Approvers need to be able to comment in this task’s project."
           footer={
             <p className="px-2.5 py-1.5 text-2xs text-zinc-500">
               Ticked people approve this task. Pick someone again to remove them.
@@ -427,6 +438,13 @@ function ApprovalPanel({
     action = (
       <button type="button" data-approval-finish-setup="" onClick={() => setSettingUp(true)} className={`btn-primary ${small}`}>
         Finish setup
+      </button>
+    );
+  } else if (reviewGate.allowed && steps && steps[1].state === "current") {
+    action = (
+      <button type="button" onClick={() => setSendingReview(true)} className={`btn-primary ${small}`} data-approval-send-external="">
+        <Send className="size-3.5" aria-hidden />
+        Send to {externalReviewer?.name ?? externalReviewer?.email}
       </button>
     );
   } else if (canSend) {
@@ -513,9 +531,20 @@ function ApprovalPanel({
               {feedbackCount === 1 ? "1 note" : `${feedbackCount} notes`} ↓
             </a>
           ) : null}
+          {task.externalReview?.latest ? <ExternalReviewBadge status={task.externalReview.latest.status} /> : null}
           {action ? <div className="ml-auto flex flex-wrap items-center gap-1.5">{action}</div> : null}
         </div>
       </div>
+      {steps ? (
+        <ol className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[7.5rem] text-2xs text-zinc-500" aria-label="Approval steps" data-approval-steps="">
+          {steps.map((step, i) => (
+            <li key={i} className={step.state === "done" ? "text-green-700" : step.state === "current" ? "font-medium text-zinc-800" : ""}>
+              {i + 1}. {step.label}
+              {step.state === "done" ? " ✓" : ""}
+            </li>
+          ))}
+        </ol>
+      ) : null}
       <p id={headlineId} className="sr-only" data-approval-headline="">
         {headline}
       </p>
@@ -691,6 +720,7 @@ function ApprovalPanel({
         </Dialog>
       ) : null}
       {sending ? <SendForApprovalDialog task={task} profiles={profiles} onClose={() => setSending(false)} /> : null}
+      {sendingReview ? <SendReviewDialog task={task} onClose={() => setSendingReview(false)} /> : null}
       {settingUp ? <ApprovalSetupDialog task={task} profiles={profiles} onClose={() => setSettingUp(false)} /> : null}
     </section>
   );
@@ -1078,7 +1108,7 @@ export function ApprovalDecisionForm({
       />
       {required ? (
         <p id={hintId} className={`text-2xs ${missing ? "text-red-700" : "text-zinc-500"}`} role={tried && missing ? "alert" : undefined}>
-          {missing ? "Add a note saying what needs to change before you send it." : `${reader} gets this note with the request.`}
+          {missing ? "Add a note saying what needs to change before you send it." : `${reader} gets this note with your decision.`}
         </p>
       ) : null}
       <div className="flex flex-wrap gap-1.5">
@@ -1140,7 +1170,7 @@ function HandOffPanel({ candidates, onHandOff }: { candidates: Profile[]; onHand
         label="Hand off to"
         people={candidates}
         selected={[]}
-        emptyNote="Nobody else here can approve it (they need at least Commenter access)."
+        emptyNote="Nobody else here can approve it (approvers need to be able to comment)."
         onPick={(id) => setPicked(candidates.find((p) => p.id === id) ?? null)}
       />
     );

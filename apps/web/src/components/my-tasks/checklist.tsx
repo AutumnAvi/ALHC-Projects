@@ -14,7 +14,7 @@ import { MoreTaskNumbers } from "@/components/task/task-number";
 import { useNotify, useServerAction } from "@/components/toast";
 import { SkeletonRows } from "@/components/ui";
 import { blockedCount } from "@/components/project/inline-cells";
-import { ApprovalStatusBadge } from "@/components/project/task-meta";
+import { ApprovalStatusBadge, ExternalApprovedDot } from "@/components/project/task-meta";
 import { dismissDatePrompt, undoTaskCompleted } from "@/lib/actions/my-tasks";
 import { setTaskCompleted } from "@/lib/actions/tasks";
 import {
@@ -30,6 +30,8 @@ import {
   type ChecklistGroupKey,
 } from "@alhc/core/checklist";
 import { useToday } from "@/lib/dates";
+import { longDate } from "@alhc/core/date-input";
+import { plural } from "@alhc/core/rule-feedback";
 import type { MyTask } from "@alhc/core/api/my-tasks/model";
 import { bareTaskTitle, formatRequestLabel } from "@alhc/core/request-numbers";
 import { TaskTitleText } from "@/components/task/title-text";
@@ -38,7 +40,7 @@ import { trackCompletion } from "@/lib/completion-store";
 import { isPendingCreateId, usePendingCreates, type PendingCreate } from "@/lib/pending-creates";
 
 // My tasks as a simple checklist (Nov 1 notes, batch 9b, item 64), also Home's Today list: one list in
-// automatic date groups (Overdue, Today, This week, Later, No date), big tap targets, and a tick that
+// automatic date groups (Overdue, Today, This week, Next week, Later, No date), big tap targets, and a tick that
 // strikes the task through and — after a moment, so a mis-tap can be caught — does what the person's
 // "Checked items" setting says (sink into a collapsed Done today, stay, or hide), with an Undo toast.
 // Everything ticked clears overnight (only today's completions are shown). Dates change through
@@ -182,7 +184,8 @@ function pendingTask(entry: PendingCreate): MyTask {
 }
 
 const GROUP_HINT: Partial<Record<ChecklistGroupKey, string>> = {
-  week: "The next seven days",
+  week: "The rest of this week",
+  next: "Sunday to Saturday next week",
   none: "Give each one a day so it shows up when it matters",
 };
 
@@ -410,7 +413,7 @@ function ChecklistRow({
               <span className="truncate">{task.projectName}</span>
             </Link>
           ) : (
-            <span className="inline-flex items-center gap-1" title="Private: only you and its assignee can see it">
+            <span className="inline-flex items-center gap-1" title="Private: only the person who made it and its assignee can see it">
               <Lock className="size-3" aria-hidden />
               Private
             </span>
@@ -418,13 +421,14 @@ function ChecklistRow({
           {task.parentTitle ? <span className="truncate">in {task.parentTitle}</span> : null}
           {task.recurring ? <RepeatsMark /> : null}
           {(task.subtaskCount ?? 0) > 0 ? (
-            <span className="tabular-nums" title={`${task.subtaskDoneCount ?? 0} of ${task.subtaskCount} subtasks done`}>
-              {task.subtaskDoneCount ?? 0}/{task.subtaskCount} subtasks
+            <span className="tabular-nums" title={`${task.subtaskDoneCount ?? 0} of ${plural(task.subtaskCount ?? 0, "subtask")} done`}>
+              {task.subtaskDoneCount ?? 0}/{task.subtaskCount} {task.subtaskCount === 1 ? "subtask" : "subtasks"}
             </span>
           ) : null}
           {task.kind === "approval" && task.approvalStatus ? (
             <ApprovalStatusBadge status={task.approvalStatus} paused={task.approvalPaused} />
           ) : null}
+          {task.externalApproved ? <ExternalApprovedDot /> : null}
           {prompt ? <span className="font-medium text-accent-700">New · Set a date</span> : null}
         </div>
         {chips && task.canEdit && !done ? <DateChips task={task} list={list} workWeek={workWeek} prompt={prompt} /> : null}
@@ -443,7 +447,7 @@ function DateChips({ task, list, workWeek, prompt }: { task: MyTask; list: Check
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5" role="group" aria-label={`Set a date for “${task.title}”`}>
       {dateChips(today, workWeek).map((c) => (
-        <button key={c.key} type="button" className={chip} onClick={() => list.setDue(task, c.day)} title={c.day}>
+        <button key={c.key} type="button" className={chip} onClick={() => list.setDue(task, c.day)} title={longDate(c.day)}>
           {c.label}
         </button>
       ))}

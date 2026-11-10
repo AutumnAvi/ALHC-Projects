@@ -12,7 +12,8 @@ import { useNotify } from "@/components/toast";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
-import { taskPermissions } from "@alhc/core/permissions";
+import { reviewSendGate, TWO_STEP_NOTE } from "@alhc/core/external-review";
+import { useShellMemberId } from "@/components/shell/shell-context";
 import {
   REVIEW_STATUS_LABELS,
   reviewMediaKind,
@@ -65,7 +66,10 @@ function iconFor(file: ReviewFile) {
 }
 
 export function TaskReviews({ task, profiles }: { task: TaskDetail; profiles: Profile[] }) {
-  const canEdit = taskPermissions(task).canEdit;
+  // Nov 10 batch 36: on an approval task with approvers, only an approver sends (or sends again), after the
+  // internal approval; elsewhere Owners and Editors.
+  const gate = reviewSendGate(task, useShellMemberId() ?? "");
+  const [attempt, setAttempt] = useState(0);
   const [rounds, setRounds] = useState<TaskReviewRound[] | null | undefined>(undefined);
   const [sending, setSending] = useState(false);
   // Nov 2 notes (batch 16, 122): reviews sent, sent again, or withdrawn anywhere in this browser reload the
@@ -82,11 +86,11 @@ export function TaskReviews({ task, profiles }: { task: TaskDetail; profiles: Pr
         setRounds(loaded);
         reviewsReloaded(task.id, startedAt);
       })
-      .catch(() => live && setRounds([]));
+      .catch(() => live && setRounds(null));
     return () => {
       live = false;
     };
-  }, [task.id, task.commentTotal, task.attachments.length, version]);
+  }, [task.id, task.commentTotal, task.attachments.length, version, attempt]);
 
   const nameOf = (id: string) => {
     const p = profiles.find((x) => x.id === id);
@@ -97,9 +101,12 @@ export function TaskReviews({ task, profiles }: { task: TaskDetail; profiles: Pr
     <div className="flex flex-col gap-2">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 text-xs text-zinc-500">
-          Send files to a client or teammate for approval. They pin comments right on the files and can send files back.
+          An external review: email files to someone outside the team (the requester, a facility contact) for their
+          review. They pin comments right on the files and can send files back. It’s separate from the internal
+          approval.
+          {gate.order === "after_approval" ? <span className="mt-1 block text-zinc-600">{TWO_STEP_NOTE}</span> : null}
         </p>
-        {canEdit ? (
+        {gate.allowed ? (
           <button type="button" onClick={() => setSending(true)} className="btn-primary h-8 px-3">
             <Send className="size-3.5" aria-hidden />
             Send review check
@@ -127,10 +134,19 @@ export function TaskReviews({ task, profiles }: { task: TaskDetail; profiles: Pr
           Loading reviews…
         </p>
       ) : rounds === null ? (
-        <p className="text-sm text-zinc-500">Review checks need this release’s database update.</p>
+        <p role="alert" className="flex items-center gap-2 text-sm text-zinc-500">
+          Couldn’t load the reviews.
+          <button type="button" className="btn-ghost h-7 px-2" onClick={() => {
+            setRounds(undefined);
+            setAttempt((n) => n + 1);
+          }}>
+            Try again
+          </button>
+        </p>
       ) : rounds.length === 0 && pending.length === 0 ? (
         <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500">
-          No review checks yet.{canEdit ? " Use Send review check to ask for an approval." : ""}
+          No external reviews yet.
+          {gate.allowed ? " Use Send review check to email files to an outside reviewer." : gate.reason ? ` ${gate.reason}` : ""}
         </p>
       ) : (
         rounds.map((round, index) => (
@@ -138,7 +154,7 @@ export function TaskReviews({ task, profiles }: { task: TaskDetail; profiles: Pr
             key={round.id}
             round={round}
             senderName={nameOf(round.senderId)}
-            canEdit={canEdit}
+            canEdit={gate.allowed}
             defaultOpen={index === 0}
             onChanged={() => reviewsChanged(task.id)}
           />

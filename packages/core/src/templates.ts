@@ -62,7 +62,7 @@ export type GalleryTemplate = {
 export const GALLERY_CATEGORIES = [
   { key: "all", label: "All templates" },
   { key: "mine", label: "Your templates" },
-  { key: "workspace", label: "Shared by your team" },
+  { key: "workspace", label: "Shared in the workspace" },
   { key: "examples", label: "Examples" },
 ] as const;
 export type GalleryCategory = (typeof GALLERY_CATEGORIES)[number]["key"];

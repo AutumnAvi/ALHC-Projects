@@ -1,18 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { displayName } from "@alhc/core/people";
 import { useConfirm } from "@/components/confirm";
-import { SmartPicker } from "@/components/smart-picker";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { cancelApproval, decideApproval, requestApproval, resubmitApproval } from "@/lib/actions/approvals";
+import { cancelApproval, decideApproval, resubmitApproval } from "@/lib/actions/approvals";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { TaskApproval, TaskDetail } from "@alhc/core/api/task-pane/model";
 import { taskPermissions } from "@alhc/core/permissions";
-import { hasRole } from "@alhc/core/roles";
 
 export const APPROVAL_STATUS: Record<TaskApproval["status"], { label: string; className: string }> = {
   pending: { label: "Pending", className: "bg-amber-100 text-amber-800" },
@@ -32,8 +30,9 @@ const inputClass =
 
 // The pane's Approvals block: approval requests on this task that aren't part of an approval-task round
 // (legacy requests and ones an automation created). An approval task's own round requests are in the
-// approval row instead. Shown only when there is at least one; Editors can ask for another from here.
-// Nov 9 notes (180): the task's "…" menu no longer opens this.
+// approval row instead. Shown only when there is at least one. Nov 9 notes (180): the task's "…" menu no
+// longer opens this. Nov 10 batch 36: nobody starts a new one here any more (Task type → Approval and Send
+// review check cover it); existing requests are still listed and decided.
 export function TaskApprovals({
   task,
   profiles,
@@ -46,118 +45,24 @@ export function TaskApprovals({
   // A request shown elsewhere (round requests are always left out).
   excludeId?: string | null;
 }) {
-  const [open, setOpen] = useState(false);
   const [pending, run] = useServerAction();
-  const [approverId, setApproverId] = useState("");
-  const [note, setNote] = useState("");
-  const [asSubtask, setAsSubtask] = useState(true);
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const approvals = legacyApprovals(task.approvals, excludeId);
   // Requesting/cancelling needs Editor; an approver needs at least Commenter to be able to decide.
   const canEdit = taskPermissions(task).canEdit;
-  // The approver picker takes focus when the form opens (the old select's autoFocus).
-  useEffect(() => {
-    if (open && canEdit) document.getElementById("approval-approver")?.focus();
-  }, [open, canEdit]);
-  const approvers = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter"));
   const nameOf = (profileId: string | null) => {
     const profile = profileId ? profilesById.get(profileId) : undefined;
     return profile ? displayName(profile) : "Someone";
   };
-  if (approvals.length === 0 && !open) return null;
+  if (approvals.length === 0) return null;
 
   return (
     <section className="mt-6" aria-labelledby="approvals-heading">
-      <div className="flex items-baseline justify-between">
-        <h3 id="approvals-heading" className="text-sm font-semibold text-zinc-900">
-          Approvals
-        </h3>
-        {canEdit ? (
-          <button
-            type="button"
-            onClick={() => setOpen(!open)}
-            aria-expanded={open}
-            className="rounded px-1.5 py-0.5 text-xs font-medium text-accent-700 hover:bg-accent-50"
-          >
-            {open ? "Cancel" : "Request approval"}
-          </button>
-        ) : null}
-      </div>
+      <h3 id="approvals-heading" className="text-sm font-semibold text-zinc-900">
+        Approvals
+      </h3>
 
-      {open && canEdit ? (
-        <form
-          className="mt-2 space-y-2 rounded-md border border-zinc-200 p-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!approverId) return;
-            run(async () => {
-              const result = await requestApproval(task.id, {
-                approverId,
-                note,
-                asSubtask,
-                title: `Approve: ${task.title}`,
-              });
-              if (!result.error) {
-                setOpen(false);
-                setNote("");
-                setApproverId("");
-              }
-              return result;
-            });
-          }}
-        >
-          <div>
-            <label htmlFor="approval-approver" className="text-xs font-medium text-zinc-600">
-              Approver
-            </label>
-            <SmartPicker
-              id="approval-approver"
-              label="Approver"
-              placeholder="Choose a person…"
-              value={approverId}
-              onChange={setApproverId}
-              searchable
-              className="mt-1 h-9 w-full"
-              options={approvers.map((p) => ({
-                value: p.id,
-                label: displayName(p),
-                icon: <Avatar name={displayName(p)} src={p.avatar_url} profileId={p.id} />,
-              }))}
-            />
-          </div>
-          <div>
-            <label htmlFor="approval-note" className="text-xs font-medium text-zinc-600">
-              Note (optional)
-            </label>
-            <textarea
-              id="approval-note"
-              value={note}
-              onChange={(e) => setNote(e.currentTarget.value)}
-              rows={2}
-              maxLength={2000}
-              className={`${inputClass} mt-1 resize-y`}
-            />
-          </div>
-          <label className="flex items-center gap-2 text-xs text-zinc-600">
-            <input
-              type="checkbox"
-              checked={asSubtask}
-              onChange={(e) => setAsSubtask(e.currentTarget.checked)}
-              className="size-3.5 accent-zinc-900"
-            />
-            Track as an approval subtask
-          </label>
-          <button
-            type="submit"
-            disabled={pending || !approverId}
-            className="rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
-          >
-            Send request
-          </button>
-        </form>
-      ) : null}
-
-      {approvals.length === 0 && !open ? (
+      {approvals.length === 0 ? (
         <p className="mt-2 text-xs text-zinc-500">
           {task.kind === "approval" || excludeId ? "No other approvals requested." : "No approvals requested."}
         </p>

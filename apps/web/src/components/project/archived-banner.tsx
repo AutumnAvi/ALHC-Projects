@@ -22,7 +22,7 @@ export function ArchivedProjectBanner({ canUnarchive }: { canUnarchive: boolean 
       <Archive className="size-4 shrink-0" aria-hidden />
       <span className="min-w-0 flex-1">
         This project is archived: it’s read-only, and it’s hidden from the sidebar, Home, and project pickers.
-        {canUnarchive ? "" : " A project admin or owner can unarchive it."}
+        {canUnarchive ? "" : " The project’s Owner can unarchive it."}
       </span>
       {canUnarchive ? (
         <button

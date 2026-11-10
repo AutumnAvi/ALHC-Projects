@@ -28,15 +28,15 @@ export default async function AdminSecurityPage() {
   ]);
   const google = isGoogleAuthEnabled();
   const methods = [
-    { name: "Email and password", state: "On", note: "People create an account at /signup and confirm their address by email." },
+    { name: "Email and password", state: "On", note: "People create an account on the sign-up page and confirm their address by email." },
     { name: "Email confirmation", state: "Required", note: "An account can’t get in until its address is confirmed." },
-    { name: "Google", state: google ? "On" : "Off", note: google ? "“Continue with Google” on the sign-in screen." : "Planned as the long-term sign-in method." },
+    { name: "Google", state: google ? "On" : "Off", note: google ? "“Continue with Google” on the sign-in screen." : "Not turned on yet." },
   ];
   const count = (status: "active" | "invited" | "removed") => members.filter((m) => m.status === status).length;
   const admins = members.filter((m) => m.role === "admin" && m.status === "active");
   const allowlist = [
     { label: "Members", value: count("active"), href: "/admin/users?tab=active", note: "Signed in at least once" },
-    { label: "Invited", value: count("invited"), href: "/admin/users?tab=invited", note: "On the allowlist, not signed in yet" },
+    { label: "Invited", value: count("invited"), href: "/admin/users?tab=invited", note: "Given access, not signed in yet" },
     { label: "Removed", value: count("removed"), href: "/admin/users?tab=removed", note: "Can’t sign in; their work stays" },
   ];
 
@@ -64,8 +64,8 @@ export default async function AdminSecurityPage() {
 
       <SettingsCard
         id="admin-allowlist"
-        title="Allowlist"
-        description="Only addresses on the allowlist can sign in. Inviting someone adds their address; removing them signs them out on their next page load."
+        title="Who can sign in"
+        description="Only people listed on Users can sign in. Inviting someone gives their address access; removing them signs them out on their next page load."
         isAdmin
       >
         <dl className="grid gap-3 sm:grid-cols-3">
@@ -101,7 +101,7 @@ export default async function AdminSecurityPage() {
         {verified ? (
           <VerifiedDomainsSettings domains={verified.domains} conversationsVerifiedOnly={verified.conversationsVerifiedOnly} />
         ) : (
-          <p className="text-sm text-zinc-500">Verified domains need this release’s database update.</p>
+          <p className="text-sm text-zinc-500">Couldn’t load the verified domains. Reload the page to try again.</p>
         )}
       </SettingsCard>
 

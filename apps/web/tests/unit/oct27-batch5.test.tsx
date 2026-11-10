@@ -115,19 +115,23 @@ test("locked sections: Editors can't rename, add, or reorder them; Owners still 
 // ---------------------------------------------------------------------------------------------
 
 test("Show / Hide completed sets the completion filter, and Save view keeps the view's own", () => {
-  const view = parseViewConfig({ filters: { completion: "completed", completed_within_days: 7, text: "brief" } });
+  const view = parseViewConfig({ filters: { text: "brief" } });
   const shown = withShowCompleted(view, true);
   assert.equal(completionOf(shown.filters), "all");
-  assert.equal(shown.filters?.completed_within_days, undefined, "no 'in the last N days' left behind");
   assert.equal(shown.filters?.text, "brief", "other filters stay");
-  const hidden = withShowCompleted(view, false);
+  const hidden = withShowCompleted(shown, false);
   assert.equal(completionOf(hidden.filters), "incomplete");
   assert.equal(hidden.filters?.completion, undefined, "incomplete is the default (no key)");
   assert.equal(completionOf(withShowCompleted(parseViewConfig({}), false).filters), "incomplete");
   assert.equal(parseViewConfig({}).filters, undefined);
   assert.deepEqual(withShowCompleted(parseViewConfig({}), false), parseViewConfig({}), "hiding on a plain view changes nothing");
 
-  const restored = withCompletionOf(shown, view);
+  // Nov 10 (flaw audit C5): a "Completed in the last N days" view is left alone by the personal switch.
+  const doneThisWeek = parseViewConfig({ filters: { completion: "completed", completed_within_days: 7, text: "brief" } });
+  assert.deepEqual(withShowCompleted(doneThisWeek, true), doneThisWeek);
+  assert.deepEqual(withShowCompleted(doneThisWeek, false), doneThisWeek);
+
+  const restored = withCompletionOf(shown, doneThisWeek);
   assert.equal(restored.filters?.completion, "completed");
   assert.equal(restored.filters?.completed_within_days, 7);
   assert.equal(restored.filters?.text, "brief");

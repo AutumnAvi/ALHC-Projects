@@ -251,7 +251,7 @@ test("99: the palette sits above every menu, and alerts above the palette", () =
   const palette = fs.readFileSync("src/components/shell/search-palette.tsx", "utf8");
   assert.match(palette, /fixed inset-0 z-\[75\]/);
   assert.match(palette, /useClosesPopovers\(\)/);
-  assert.match(palette, /See all results for/, "101: the quick jump points at the full results page");
+  assert.match(palette, /See all tasks matching/, "101: the quick jump points at the full results page");
 });
 
 // ---------------------------------------------------------------------------------------------

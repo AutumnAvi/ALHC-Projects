@@ -72,7 +72,7 @@ export function FeedbackSubtaskButton({
       type="button"
       onClick={create}
       data-feedback-subtask=""
-      data-tooltip="Make a subtask of this task from this feedback"
+      data-tooltip="Turn this feedback into a new subtask of this task"
       className={`inline-flex h-6 items-center gap-1 rounded px-1.5 text-xs font-medium text-accent-700 hover:bg-accent-50 ${className}`}
     >
       <ListPlus className="size-3.5" aria-hidden />

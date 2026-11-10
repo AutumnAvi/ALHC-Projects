@@ -111,7 +111,7 @@ export function CuratedWork({
     <section aria-labelledby="team-curated-work">
       <div className="flex items-center gap-2">
         <h2 id="team-curated-work" className={`${SECTION_TITLE} flex-1`}>
-          Curated work
+          Pinned projects
         </h2>
         {curating ? <AddWork teamId={teamId} candidates={candidates} /> : null}
       </div>
@@ -120,7 +120,7 @@ export function CuratedWork({
         <>
           <p className="mt-2 flex items-start gap-1.5 rounded-md bg-zinc-50 px-2.5 py-2 text-xs text-zinc-600">
             <Info className="mt-px size-3.5 shrink-0 text-zinc-400" aria-hidden />
-            Curated work needs this release’s database update. Until it’s applied, here are this team’s projects
+            Pinned projects need this release’s database update. Until it’s applied, here are this team’s projects
             you’re a member of.
           </p>
           {fallback.length === 0 ? (
@@ -180,8 +180,8 @@ export function CuratedWork({
                           () => apply({ type: "remove", id: item.id }),
                         )
                       }
-                      aria-label={`Remove “${item.name}” from curated work`}
-                      data-tooltip="Remove from curated work"
+                      aria-label={`Unpin “${item.name}”`}
+                      data-tooltip="Unpin"
                       className="btn-icon size-6 hover:bg-red-50 hover:text-red-700"
                     >
                       <X className="size-3.5" />
@@ -252,7 +252,7 @@ function WorkList({
   );
 }
 
-// "+ Add work": find a project or portfolio you can open and pin it.
+// "+ Pin a project": find a project or portfolio you can open and pin it (Nov 10 audit, C92: one word, "pin").
 function AddWork({ teamId, candidates }: { teamId: string; candidates: CurationCandidate[] }) {
   const [pending, run] = useServerAction();
   const [query, setQuery] = useState("");
@@ -263,7 +263,7 @@ function AddWork({ teamId, candidates }: { teamId: string; candidates: CurationC
 
   return (
     <Popover
-      label="Add work"
+      label="Pin a project or portfolio"
       align="end"
       panelClassName="w-80 p-2"
       buttonClassName="btn-secondary"
@@ -273,7 +273,7 @@ function AddWork({ teamId, candidates }: { teamId: string; candidates: CurationC
       button={
         <>
           <Plus className="size-3.5" aria-hidden />
-          Add work
+          Pin a project
         </>
       }
     >

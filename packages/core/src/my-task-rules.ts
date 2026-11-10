@@ -68,8 +68,8 @@ export type MyTaskCondition = (typeof MY_TASK_CONDITIONS)[number]["value"];
 const V1_CONDITIONS = new Set<string>(["in_project", "not_in_project", "has_due_date", "no_due_date", "due_within", "task_type_is", "is_private"]);
 
 export const MY_TASK_ACTIONS = [
-  { value: "move_to_section", label: "Move to my section", group: "My tasks", description: "Moves it to one of your My tasks sections.", keywords: ["section", "today", "later"] },
-  { value: "complete_task", label: "Mark complete", group: "Task", description: "Completes it (if you can edit it and nothing blocks it). Approval tasks are skipped until they’re approved.", keywords: ["done"] },
+  { value: "move_to_section", label: "Move to my section (Sections view)", group: "My tasks", description: "Moves it to one of your My tasks sections. They show in the classic Sections view (My tasks → Options).", keywords: ["section", "today", "later"] },
+  { value: "complete_task", label: "Mark complete", group: "Task", description: "Completes it (if you can edit it and nothing blocks it). Approval tasks are skipped: only their approvers complete them.", keywords: ["done"] },
   { value: "reopen_task", label: "Mark incomplete", group: "Task", description: "Reopens it (if you can edit it).", keywords: ["undo", "reopen"] },
   { value: "set_title", label: "Rename task", group: "Task", description: "A new name; {{task.name}} keeps the old one in it.", keywords: ["title", "name", "prefix"] },
   { value: "set_task_type", label: "Set task type", group: "Task", description: "Make it a task or a milestone.", keywords: ["kind", "milestone"] },
@@ -336,7 +336,9 @@ export function describeMyTaskAction(a: MyTaskRuleItem, ctx: MyTaskRuleContext) 
     case "remove_followers": {
       const names = strings(a.people).map((id) => personName(id, ctx));
       const who = names.length ? names.join(", ") : "(choose people)";
-      return a.type === "add_followers" ? `add ${who} as followers` : `remove ${who} as followers`;
+      // C72: "add Dana as a follower", "add Dana, Sam as followers".
+      const as = names.length === 1 ? "a follower" : "followers";
+      return a.type === "add_followers" ? `add ${who} as ${as}` : `remove ${who} as ${as}`;
     }
     case "set_assignee":
       return typeof a.assignee === "string" && a.assignee ? `hand it to ${personName(a.assignee, ctx)}` : "hand it to (choose a person)";

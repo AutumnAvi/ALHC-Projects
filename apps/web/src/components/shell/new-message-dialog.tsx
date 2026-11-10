@@ -8,7 +8,8 @@ import { loadMessageProjects } from "@/lib/actions/shell";
 
 type Choice = { id: string; name: string };
 
-// Create → Message: a new thread in one of your projects' Messages tab (Commenters and above can post).
+// Create → Project message: a new thread in one of your projects' Messages tab (people who can comment
+// in the project can post).
 // Posting opens the thread; @Full Name mentions notify project members as usual.
 export function NewMessageDialog({ onClose }: { onClose: () => void }) {
   const [projects, setProjects] = useState<Choice[] | null>(null);
@@ -43,7 +44,7 @@ export function NewMessageDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Dialog title="New message" description="Start a thread in a project’s Messages tab." onClose={onClose} width="max-w-lg">
+    <Dialog title="New project message" description="Start a thread in a project’s Messages tab." onClose={onClose} width="max-w-lg">
       {failed ? (
         <p className="text-sm text-red-600">Couldn’t load your projects. Try again.</p>
       ) : projects === null ? (
@@ -52,8 +53,8 @@ export function NewMessageDialog({ onClose }: { onClose: () => void }) {
         </p>
       ) : projects.length === 0 ? (
         <p className="text-sm text-zinc-600">
-          You can post in projects where you’re a Commenter or above. Ask a project admin to invite you, or create a
-          project first.
+          You can post in projects where you can comment. Ask the project’s Owner to add you from its Share button, or
+          create a project first.
         </p>
       ) : (
         <form

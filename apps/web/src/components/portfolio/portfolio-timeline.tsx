@@ -22,6 +22,7 @@ import { PeriodNav, Segmented, TRAY_EMPTY, TRAY_HEADING, VIEW_BODY, VIEW_HINT, V
 import { addDays, formatDueDate, useToday } from "@/lib/dates";
 import type { PortfolioMilestone, PortfolioTimelineRow } from "@alhc/core/api/portfolios/model";
 import { OWN_PROJECTS_LABEL, PROJECT_STATUS_LABELS, isProjectStatus } from "@alhc/core/portfolios";
+import { DEFAULT_WORK_WEEK } from "@alhc/core/workdays";
 
 const LABEL_WIDTH = 256;
 const labelCell = { width: LABEL_WIDTH, minWidth: LABEL_WIDTH };
@@ -45,11 +46,14 @@ export function PortfolioTimeline({
   nested,
   hiddenCount,
   milestones = [],
+  workWeek = DEFAULT_WORK_WEEK,
 }: {
   rows: PortfolioTimelineRow[];
   nested: { id: string; name: string }[];
   hiddenCount: number;
   milestones?: PortfolioMilestone[];
+  // The workspace's workdays (0 = Sunday); the rest are shaded in the week zoom.
+  workWeek?: readonly number[];
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -122,7 +126,7 @@ export function PortfolioTimeline({
             <div aria-hidden className="pointer-events-none absolute inset-y-0" style={{ left: LABEL_WIDTH, width }}>
               {zoom === "week"
                 ? Array.from({ length: days }, (_, i) => i)
-                    .filter((i) => [0, 6].includes(weekday(addDays(start, i))))
+                    .filter((i) => !workWeek.includes(weekday(addDays(start, i))))
                     .map((i) => (
                       <div key={i} className="absolute inset-y-0 bg-zinc-50" style={{ left: i * dayWidth, width: dayWidth }} />
                     ))
@@ -274,14 +278,14 @@ function ProjectRow({
         <Link href={href} className="min-w-0 flex-1 truncate text-sm text-zinc-900 hover:underline">
           {row.name}
           <span className="sr-only">
-            , {spanLabel(span)}, {PROJECT_STATUS_LABELS[status]}, {row.openTasks} open tasks
+            , {spanLabel(span)}, {row.statusUnset ? "No status" : PROJECT_STATUS_LABELS[status]}, {row.openTasks} open tasks
             {milestones.length > 0
               ? `, milestones: ${milestones.map((m) => `${m.title} (${formatDueDate(m.dueOn)})`).join(", ")}`
               : ""}
           </span>
         </Link>
         <span aria-hidden>
-          <ProjectStatusBadge status={row.status} note={row.statusNote} />
+          <ProjectStatusBadge status={row.status} note={row.statusNote} unset={row.statusUnset} />
         </span>
       </div>
       <div className="relative" style={{ width: days * dayWidth }}>
@@ -303,8 +307,8 @@ function ProjectRow({
               href={href}
               tabIndex={-1}
               aria-hidden
-              title={`${row.name} · ${spanLabel(span)} · ${PROJECT_STATUS_LABELS[status]} · ${row.openTasks} open tasks`}
-              className={`absolute top-1.5 flex h-6 items-center rounded-md text-xs ${BAR_CLASS[status]} ${
+              title={`${row.name} · ${spanLabel(span)} · ${row.statusUnset ? "No status" : PROJECT_STATUS_LABELS[status]} · ${row.openTasks} open tasks`}
+              className={`absolute top-1.5 flex h-6 items-center rounded-md text-xs ${row.statusUnset ? "bg-zinc-400 text-white" : BAR_CLASS[status]} ${
                 from < 0 ? "rounded-l-none" : ""
               } ${to >= days ? "rounded-r-none" : ""}`}
               style={{ left, width: barWidth }}

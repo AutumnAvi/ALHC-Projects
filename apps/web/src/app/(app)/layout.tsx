@@ -45,6 +45,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             isWorkspaceAdmin={admin}
             workspace={{ name: workspace?.name ?? "ALHC Projects", logoUrl: shell.logoUrl }}
             goalsEnabled={goalsOn}
+            workWeek={shell.workWeek}
             initialSidebar={parseSidebarPrefs(cookieStore.get(SIDEBAR_COOKIE)?.value)}
           >
             <TagsEnabledProvider enabled={tagsOn}>

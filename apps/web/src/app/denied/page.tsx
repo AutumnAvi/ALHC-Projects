@@ -13,13 +13,13 @@ export default async function DeniedPage({ searchParams }: PageProps<"/denied">)
       <p className="text-sm text-zinc-600">
         {email ? (
           <>
-            <span className="font-medium text-zinc-900">{email}</span> isn’t on the ALHC Projects
-            allowlist.
+            <span className="font-medium text-zinc-900">{email}</span> hasn’t been given access to ALHC Projects
+            yet.
           </>
         ) : (
-          "That account isn’t on the ALHC Projects allowlist."
+          "That account hasn’t been given access to ALHC Projects yet."
         )}{" "}
-        You’ve been signed out. Ask an admin to add your email, or try a different account.
+        You’ve been signed out. Ask a workspace admin to add your email, or try a different account.
       </p>
       <Link
         href="/login"

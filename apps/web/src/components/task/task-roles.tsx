@@ -47,7 +47,7 @@ export function TaskRolesRow({ taskId, canEdit, kind }: { taskId: string; canEdi
 
   return (
     <>
-      <dt className={`${PANE_LABEL} self-start`}>Roles</dt>
+      <dt className={`${PANE_LABEL} self-start`}>Who does what</dt>
       <dd className="flex min-w-0 flex-wrap items-center gap-1.5 py-1">
         {linkedRoles.map((l) => (
           <span
@@ -76,8 +76,8 @@ export function TaskRolesRow({ taskId, canEdit, kind }: { taskId: string; canEdi
         ))}
         {canEdit ? (
           <Popover
-            label="Take people from a project role"
-            tooltip="Take the assignee, approvers, or followers from a project role"
+            label="Take people from Who does what"
+            tooltip="Take the assignee, approvers, or followers from the project’s Who does what"
             panelClassName="w-72 p-1.5"
             buttonClassName="inline-flex h-6 items-center gap-1 rounded-full border border-dashed border-zinc-300 px-2 text-xs text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50"
             button={
@@ -87,7 +87,7 @@ export function TaskRolesRow({ taskId, canEdit, kind }: { taskId: string; canEdi
             }
           >
             {(close) => (
-              <div role="group" aria-label="Project roles">
+              <div role="group" aria-label="Who does what">
                 {slots.map((slot) => (
                   <div key={slot.value}>
                     <p className="px-2 pb-0.5 pt-1.5 text-2xs font-medium uppercase tracking-wide text-zinc-400">{slot.label}</p>

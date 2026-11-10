@@ -5,6 +5,7 @@ import { SetupRequired } from "@/components/setup-required";
 import { getPublicForm } from "@/lib/data";
 import { isSupabaseConfigured } from "@/lib/env";
 import { isUuid } from "@alhc/core/ids";
+import { BRAND_LOGO_ALT, BRAND_LOGO_PATH, BRAND_LOGO_WIDTH, BRAND_SENDER_NAME } from "@/lib/email-design";
 
 export async function loadPublicForm(formId: string) {
   if (!isUuid(formId) || !isSupabaseConfigured()) return null;
@@ -37,8 +38,11 @@ export async function PublicFormPage({ formId, embed }: { formId: string; embed?
   return (
     <main className="min-h-full bg-zinc-50 px-4 py-10 sm:py-16">
       <div className="mx-auto w-full max-w-xl">
+        {/* C33 (Nov 10): the standalone form wears the brand the emails do (the embed stays plain). */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- a small static brand image */}
+        <img src={BRAND_LOGO_PATH} alt={BRAND_LOGO_ALT} width={BRAND_LOGO_WIDTH} className="mx-auto mb-6 block h-auto" />
         {body}
-        <p className="mt-6 text-center text-xs text-zinc-400">ALHC Projects</p>
+        <p className="mt-6 text-center text-xs text-zinc-400">{BRAND_SENDER_NAME}</p>
       </div>
     </main>
   );

@@ -108,7 +108,7 @@ export default async function TeamWorkPage({ params }: PageProps<"/teams/[teamId
         />
       )}
       <p className="mt-6 text-xs text-zinc-500">
-        Private projects only appear for their members. Ask a project’s owner or admin to invite you.
+        Private projects only appear for their members. Ask a project’s Owner to invite you.
       </p>
     </div>
   );

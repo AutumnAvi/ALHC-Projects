@@ -360,8 +360,8 @@ test("My tasks and Home: the assignee's approval task is theirs to send, even wi
   assert.match(home, /aria-label="Ready for approval: “Approve the copy”"/);
   assert.ok(!/aria-label="Ready for approval: “Viewer home approval”"/.test(home), "Home: a Viewer assignee gets the mark too");
 
-  // "Waiting on me to approve": an approval task's round is decided from its row (Approve opens the
-  // decision in the pane); an older request (an approval subtask) keeps the plain mark.
+  // "Waiting on you to approve": one way to decide (Nov 10 audit, C69) — a round's row has Open review
+  // (its review page) and the plain mark, never an Approve shortcut; an older request keeps the mark too.
   const awaiting = render(
     <MyTasksView
       {...myProps}
@@ -374,7 +374,8 @@ test("My tasks and Home: the assignee's approval task is theirs to send, even wi
     null,
     "/my-tasks",
   );
-  assert.match(awaiting, /aria-label="Approve “Spring flyer”"[^>]*data-approval-toggle="approve"/, "Approve on the round's row");
+  assert.ok(!/data-approval-toggle="approve"/.test(awaiting), "no Approve shortcut on the row");
+  assert.match(awaiting, /aria-label="Open review of “Spring flyer”"/, "Open review on the round's row");
   assert.ok(!/aria-label="Approve “Legal check”"/.test(awaiting), "an older request keeps the plain mark");
 });
 
@@ -587,7 +588,7 @@ test("the approval summary (Nov 4 notes, batch 27, 161): one row — status and 
   assert.match(deciding, />Request changes<\/button>/);
   assert.match(deciding, />Reject<\/button>/);
   assert.match(deciding, /aria-label="Waiting"/, "their own request shows as waiting");
-  assert.match(deciding, /Pending approval · Round 1/);
+  assert.match(deciding, /Waiting for approval · Round 1/);
 });
 
 test("seeds and the instant preview know the button too", () => {
@@ -614,9 +615,9 @@ test("toasts for a stale row control: the assignee is told it's their role, neve
 
 test("rules: Mark complete waits for the approval, and the run log says Skipped", () => {
   const complete = ACTIONS.find((a) => a.value === "complete_task");
-  assert.ok(complete && /Approval tasks are skipped until they’re approved/.test(complete.description ?? ""), complete?.description);
+  assert.ok(complete && /Approval tasks are skipped: only their approvers complete them/.test(complete.description ?? ""), complete?.description);
   const mine = MY_TASK_ACTIONS.find((a) => a.value === "complete_task");
-  assert.ok(mine && /Approval tasks are skipped until they’re approved/.test(mine.description ?? ""), mine?.description);
+  assert.ok(mine && /Approval tasks are skipped: only their approvers complete them/.test(mine.description ?? ""), mine?.description);
 
   // The engine logs outcome "skipped" ("Approval tasks are completed by their approvers") until approved.
   assert.equal(stepOutcomeLabel("skipped"), "Skipped", "a label, not the raw key");

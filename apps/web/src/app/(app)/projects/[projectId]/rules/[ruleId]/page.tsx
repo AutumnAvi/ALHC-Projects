@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { RuleCanvas } from "@/components/rules/rule-canvas";
 import { getProject, getProjectRole, listProjectRules, listRecentRuleRuns, listRuleTestTasks } from "@/lib/data";
 import { isUuid } from "@alhc/core/ids";
-import { hasRole } from "@alhc/core/roles";
+import { permissionsFor } from "@alhc/core/permissions";
 import { loadRuleContext, ruleBackHref } from "../context";
 
 export async function generateMetadata({ params }: PageProps<"/projects/[projectId]/rules/[ruleId]">): Promise<Metadata> {
@@ -37,7 +37,7 @@ export default async function RulePage({ params, searchParams }: PageProps<"/pro
       testTasks={testTasks}
       ctx={ctx}
       batch4
-      canEdit={hasRole(role, "admin")}
+      canEdit={permissionsFor(role).canBuild}
       backHref={ruleBackHref(projectId, back)}
     />
   );

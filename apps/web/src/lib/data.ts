@@ -93,6 +93,7 @@ export const countHiddenPortfolioProjects = bind(portfoliosApi.countHiddenPortfo
 export const portfolioReport = bind(portfoliosApi.portfolioReport);
 export const listPortfolioProgress = bind(portfoliosApi.listPortfolioProgress);
 export const listPortfolioChildren = bind(portfoliosApi.listPortfolioChildren);
+export const listPortfolioAncestorIds = bind(portfoliosApi.listPortfolioAncestorIds);
 export const listPortfolioRollupProjects = bind(portfoliosApi.listPortfolioRollupProjects);
 export const portfolioTimeline = bind(portfoliosApi.portfolioTimeline);
 export const listPortfolioMilestones = bind(portfoliosApi.listPortfolioMilestones);

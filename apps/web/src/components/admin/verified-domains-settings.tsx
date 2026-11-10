@@ -60,7 +60,7 @@ export function VerifiedDomainsSettings({
           <span className="font-medium text-zinc-900">Only verified domains get email conversations on requests</span>
           <span className="block text-xs text-zinc-500">
             {on
-              ? "Requesters at these domains can trade emails with the team from the task. Anyone else can still submit forms, but gets no email back-and-forth (workers see why in the task). A workspace admin can turn it on for a request or a submitter from the task."
+              ? "Requesters at these domains can trade emails with the team from the task. Anyone else can still submit forms, but gets no email back-and-forth (workers see why in the task)."
               : "Off: every form submitter can get responses by email and reply to them."}
           </span>
         </span>
