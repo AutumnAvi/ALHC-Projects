@@ -33,7 +33,7 @@ export async function sendReviewNudges(ctx: ApiContext, max = 20) {
         senderName: nudge.sender_name?.trim() || "The team",
         taskTitle: nudge.task_title ?? "A request",
         projectName: nudge.project_name,
-        message: null,
+        message: nudge.message,
         assets: (Array.isArray(nudge.files) ? nudge.files : []).map((f) => ({
           assetId: f.asset_id,
           name: f.name,
