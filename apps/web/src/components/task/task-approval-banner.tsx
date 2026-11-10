@@ -57,6 +57,7 @@ import { canAddSubtask } from "./task-subtasks";
 import { SendReviewDialog } from "./send-review-dialog";
 import { ExternalReviewBadge } from "@/components/project/task-meta";
 import { externallyApproved, isTwoStageApproval, reviewSendGate, twoStepSteps } from "@alhc/core/external-review";
+import { APPROVAL_SETUP_UNFINISHED } from "@alhc/core/approval-setup";
 
 // Oct 27 notes (batch 6, items 45 / 45b): the approval panel of an approval task's pane (since Nov 4
 // notes, batch 27, 161: a compact row with the field rows, Details in a dialog, feedback as pills).
@@ -332,7 +333,7 @@ function ApprovalPanel({
   const decider = latest?.decidedBy ?? null;
   if (status === "not_sent") {
     if (completed) headline = "The task is complete. It wasn’t sent for approval.";
-    else if (settings.approverIds.length === 0) headline = "Choose who approves this, then send it with Ready for approval.";
+    else if (settings.approverIds.length === 0) headline = `${APPROVAL_SETUP_UNFINISHED}. Choose who approves this before anything is sent.`;
     else if (latest?.status === "withdrawn") headline = "The request was withdrawn. Send it again with Ready for approval when it’s ready.";
     else headline = `Not sent yet. When it’s ready, Ready for approval sends it to ${joinNames(approverNames)}.`;
   } else if (status === "pending") {
@@ -522,7 +523,9 @@ function ApprovalPanel({
                 ) : null}
               </span>
             ) : (
-              <span className="text-xs text-zinc-500">No approver yet</span>
+              <span className="text-xs font-medium text-amber-800" data-approval-unfinished="">
+                {APPROVAL_SETUP_UNFINISHED}
+              </span>
             )}
             {settings.dueOn ? (
               <span className={`inline-flex shrink-0 items-center gap-1 text-xs ${dueOverdue ? "text-red-700" : "text-zinc-600"}`}>
@@ -625,7 +628,9 @@ function ApprovalPanel({
                       );
                     })
                   ) : (
-                    <span className="text-zinc-500">No approver yet</span>
+                    <span className="text-amber-800" data-approval-unfinished="">
+                      {APPROVAL_SETUP_UNFINISHED}
+                    </span>
                   )}
                   {approverPicker}
                 </div>

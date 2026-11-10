@@ -31,6 +31,16 @@ export function isTwoStageApproval(
   return reviewComesAfterApproval(task) && Boolean(task.externalReview?.reviewer);
 }
 
+// Note 184: the external-reviewer block starts open only when someone is already named (saved on the
+// task, the form's requester, or a review that is still open). Otherwise it stays collapsed.
+export function externalReviewerSectionOpen(input: {
+  savedEmail?: string | null;
+  submissionEmail?: string | null;
+  pendingReview?: boolean;
+}): boolean {
+  return Boolean(input.savedEmail?.trim() || input.submissionEmail?.trim() || input.pendingReview);
+}
+
 // Note 183: what "When it's approved" means on a two-stage task, said where the choice is shown.
 export const TWO_STAGE_FOLLOW_UP_NOTE =
   "This task also goes to an external reviewer, so approving it never completes it or runs the step below: it stays open for the external review. After the external reviewer approves it, its approvers or its assignee complete it by hand.";
