@@ -49,7 +49,7 @@ function TeamLoad({ lead }: { lead: LeadData }) {
       }
       footer={
         <span className="text-xs text-zinc-500">
-          {peopleCount > people.length ? `${peopleCount - people.length} more people · ` : ""}
+          {peopleCount > people.length ? `${plural(peopleCount - people.length, "more person", "more people")} · ` : ""}
           {unassigned > 0 ? `${plural(unassigned, "open task")} with nobody assigned` : "Every open task has someone"}
         </span>
       }

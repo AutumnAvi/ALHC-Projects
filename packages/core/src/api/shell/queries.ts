@@ -295,6 +295,13 @@ export async function loadMessageProjects(ctx: ApiContext): Promise<{ id: string
   return projects.filter((p) => hasRole(roles.get(p.id), "commenter")).map(({ id, name }) => ({ id, name }));
 }
 
+// Projects the person can add tasks to (Editor+), for Create → Task's "#project" (Nov 10 audit, C75).
+export async function loadTaskProjects(ctx: ApiContext): Promise<{ id: string; name: string }[]> {
+  if (!(await signedIn(ctx))) return [];
+  const [projects, roles] = await Promise.all([listProjects(ctx), listMyProjectRoles(ctx)]);
+  return projects.filter((p) => hasRole(roles.get(p.id), "editor")).map(({ id, name }) => ({ id, name }));
+}
+
 // What the New goal dialog needs, for Create → Goal. `timeZone` is the viewer's (the adapter reads it).
 export async function loadGoalDialog(ctx: ApiContext, timeZone: string) {
   if (!(await signedIn(ctx))) return null;

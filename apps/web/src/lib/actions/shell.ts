@@ -47,6 +47,11 @@ export async function loadMessageProjects(): Promise<{ id: string; name: string 
   return shellApi.loadMessageProjects(await actionContext());
 }
 
+// Projects the person can add tasks to, for Create → Task.
+export async function loadTaskProjects(): Promise<{ id: string; name: string }[]> {
+  return shellApi.loadTaskProjects(await actionContext());
+}
+
 // What the New goal dialog needs, for Create → Goal.
 export async function loadGoalDialog() {
   const [ctx, timeZone] = await Promise.all([actionContext(), getViewerTimeZone()]);
@@ -86,4 +91,11 @@ export async function loadCalendarFeeds(): Promise<CalendarFeed[] | null> {
 // Oct 26 notes (batch 4): a task the pane can't open may be in the Trash (null otherwise).
 export async function loadTrashedTask(taskId: string): Promise<{ id: string; title: string; deletedAt: string } | null> {
   return shellApi.loadTrashedTask(await actionContext(), taskId);
+}
+
+// Whether invite emails can go out here (the shell's Invite uses Admin console → Users' dialog, which
+// says so and offers the sign-up link when they can't).
+export async function loadInviteEmailReady(): Promise<boolean> {
+  await actionContext();
+  return isEmailConfigured();
 }

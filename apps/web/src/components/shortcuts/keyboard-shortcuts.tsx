@@ -21,7 +21,7 @@ function groups(mod: string): { title: string; note?: string; items: Shortcut[] 
       ],
     },
     {
-      title: "List views and My tasks",
+      title: "List views and My tasks (Sections and Due dates views)",
       items: [
         { keys: ["↑", "↓"], label: "Move to the previous or next task" },
         { keys: ["click"], label: "Open a task (the checkbox on the left selects it)" },

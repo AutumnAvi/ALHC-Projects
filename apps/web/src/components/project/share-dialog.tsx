@@ -542,7 +542,18 @@ function WhoHasAccess({
   change: Change;
   notify: (message: string) => void;
 }) {
+  const confirm = useConfirm();
   const isOwner = data.viewerRole === "owner";
+  // Nov 10 audit (C64): asks first, like Admin console → Users.
+  async function cancelInvite(invite: { id: string; email: string }) {
+    const ok = await confirm({
+      title: `Cancel the invite for ${invite.email}?`,
+      message: "They won’t join this project when they sign up. You can invite them again later.",
+      confirmLabel: "Cancel invite",
+      cancelLabel: "Keep it",
+    });
+    if (ok) change(() => cancelPendingInvite(invite.id));
+  }
   const grantable = assignableRoles(data.viewerRole, data.allowCommenter);
   const ownerCount = data.members.filter((m) => m.role === "owner").length;
   // Already in Asana's order (owners first; loadProjectShare sorts with compareMembers).
@@ -635,7 +646,7 @@ function WhoHasAccess({
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => change(() => cancelPendingInvite(invite.id))}
+                onClick={() => cancelInvite(invite)}
                 aria-label={`Cancel the invite for ${invite.email}`}
                 title="Cancel invite"
                 className="btn-icon h-6 w-12 hover:bg-red-50 hover:text-red-700"

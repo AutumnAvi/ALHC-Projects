@@ -19,7 +19,7 @@ export const metadata: Metadata = { title: "Home" };
 // Home (Nov 1 notes, batch 9b, item 65): a personal view for everyone — the greeting with what's due,
 // a checkable Today list (the My tasks checklist's Overdue and Today), Needs you (approvals, mentions,
 // new tasks without a date, the first few Inbox items), and My projects with progress. People who lead
-// projects (Owner / Admin of one, or workspace admins) also get four fixed cards about their team:
+// projects (Owner of one, or workspace admins) also get four fixed cards about their team:
 // Team load, Late & at risk, Project health, Done this week. No widget builder. `?task=` opens the pane.
 export default async function HomePage({ searchParams }: PageProps<"/">) {
   const { task } = await searchParams;
@@ -42,7 +42,8 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const undated = open.filter((t) => t.datePrompt && t.canEdit).length;
 
   const unreadItems = inbox.filter((item) => !item.readAt);
-  const mentions = unreadItems.filter((item) => item.kind === "mention").slice(0, NEEDS_YOU_INBOX);
+  // Every unread mention (the card counts them all and lists the first few).
+  const mentions = unreadItems.filter((item) => item.kind === "mention");
   // Approval requests are listed from the approvals themselves (they stay until decided).
   const others = unreadItems.filter((item) => item.kind !== "mention" && item.kind !== "approval_requested").slice(0, NEEDS_YOU_INBOX);
 

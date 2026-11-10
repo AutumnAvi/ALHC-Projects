@@ -17,7 +17,16 @@ const MY_TASKS = "";
 // forward to it from their own address becomes a task: the subject its name, the body its description,
 // the attachments its files — assigned to them, in the project they pick (while they can add tasks to it)
 // or their private My tasks. A new address replaces the old one at once.
-export function EmailForwardingSection({ forwarding, myEmail }: { forwarding: ForwardingSetup; myEmail: string }) {
+export function EmailForwardingSection({
+  forwarding,
+  myEmail,
+  onRetry,
+}: {
+  forwarding: ForwardingSetup;
+  myEmail: string;
+  // Loads Settings again when the address couldn't be read.
+  onRetry?: () => void;
+}) {
   return (
     <section aria-labelledby="forwarding-heading">
       <div className="flex items-center gap-2">
@@ -30,11 +39,18 @@ export function EmailForwardingSection({ forwarding, myEmail }: { forwarding: Fo
       {forwarding.state === "not_configured" ? (
         <p className="mt-1 text-sm text-zinc-600">
           Forwarding needs inbound email, which isn’t set up on this deployment yet (it uses the same Resend inbound
-          domain as replies to comment emails). Until it is, there’s no forwarding address to copy.
+          domain as replies from a form’s submitter). Until it is, there’s no forwarding address to copy.
         </p>
       ) : forwarding.state === "needs_update" ? (
-        <p className="mt-1 text-sm text-zinc-600">
-          Forwarding needs this release’s database update, which isn’t applied yet.
+        <p role="alert" className="mt-1 text-sm text-zinc-600">
+          Couldn’t load your forwarding address.{" "}
+          {onRetry ? (
+            <button type="button" onClick={onRetry} className="font-medium text-accent-700 hover:underline">
+              Try again
+            </button>
+          ) : (
+            "Close Settings and try again."
+          )}
         </p>
       ) : (
         <ReadyForwarding forwarding={forwarding} myEmail={myEmail} />

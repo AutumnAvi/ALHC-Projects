@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useServerAction } from "@/components/toast";
 import { SettingsCard } from "@/components/workspace/settings-chrome";
 import { updateWorkspaceSettings } from "@/lib/actions/workspace";
+import { BRAND_SENDER_NAME } from "@/lib/email-design";
 import { SENDER_NAME_MAX, senderNameProblem, senderPreview } from "@alhc/core/workspace";
 
 // Admin console → Email → Sender name (read-only on Settings → Workspace → Email for members). Shown in
@@ -30,14 +31,14 @@ export function SenderNameSettings({
     <SettingsCard
       id="workspace-sender"
       title="Sender name"
-      description="The name people see in their inbox on invites, comment emails, and automation emails. Leave it empty to use the address as configured."
+      description={`The name people see in their inbox on invites, comment emails, and automation emails. Left empty, emails to requesters come from “${BRAND_SENDER_NAME}” and emails to teammates show only the address.`}
       adminOnly
       isAdmin={isAdmin}
     >
       {/* Nov 1 notes (batch 11): members see the sender, not a disabled form. */}
       {!isAdmin ? (
         <p className="text-sm text-zinc-700">
-          {preview ? `Emails come from: ${preview}` : senderName ? senderName : "The address as configured."}
+          {preview ? `Emails come from: ${preview}${senderName ? "" : ` (requester emails as “${BRAND_SENDER_NAME}”)`}` : senderName ? senderName : `Requester emails come from “${BRAND_SENDER_NAME}”.`}
         </p>
       ) : (
         <form
@@ -67,7 +68,10 @@ export function SenderNameSettings({
             Save
           </button>
           <p id="workspace-sender-hint" className={`basis-full text-xs ${problem ? "text-red-600" : "text-zinc-500"}`}>
-            {problem ?? (preview ? `Emails come from: ${preview}` : "No sending address is configured yet, so emails aren’t sent.")}
+            {problem ??
+              (preview
+                ? `Emails come from: ${preview}${value.trim() ? "" : ` (requester emails as “${BRAND_SENDER_NAME}”)`}`
+                : "No sending address is configured yet, so emails aren’t sent.")}
           </p>
         </form>
       )}

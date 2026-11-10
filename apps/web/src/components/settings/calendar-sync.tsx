@@ -44,7 +44,21 @@ export function CalendarSyncSettings() {
     );
   }
   if (feeds === null) {
-    return <p className="text-sm text-zinc-600">Calendar sync needs this release’s database update, which isn’t applied yet.</p>;
+    return (
+      <p role="alert" className="text-sm text-zinc-600">
+        Couldn’t load this.{" "}
+        <button
+          type="button"
+          onClick={() => {
+            setFeeds("loading");
+            reload();
+          }}
+          className="font-medium text-accent-700 hover:underline"
+        >
+          Try again
+        </button>
+      </p>
+    );
   }
 
   const mine = feeds.find((f) => f.scope === "my_tasks");

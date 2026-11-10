@@ -46,7 +46,7 @@ export function TodayCard({
       header={
         <div className="flex flex-col gap-3 pb-3">
           <WidgetTitle id="home-today">Today</WidgetTitle>
-          <QuickAddBar projects={projects} people={people} workWeek={workWeek} compact placeholder="Add a task — “Call the vendor tomorrow #Project”" />
+          <QuickAddBar projects={projects} people={people} workWeek={workWeek} compact placeholder="Add a task — “Call the vendor today #Project”" />
         </div>
       }
       footer={

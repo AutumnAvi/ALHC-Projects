@@ -18,6 +18,7 @@ import type { Profile } from "@alhc/core/api/people/model";
 import { formatDueDate } from "@/lib/dates";
 import { displayTaskTitle } from "@alhc/core/request-numbers";
 import { seedFromTitle } from "@/lib/task-seed";
+import { saveMyTasksLayout } from "@/lib/my-tasks-cookie";
 import { Widget, WIDGET_FOOTER_LINK, WidgetTitle } from "./widget";
 
 // How many Inbox items Needs you shows besides mentions and approvals.
@@ -36,6 +37,7 @@ export function NeedsYouCard({
   actors,
 }: {
   approvals: AwaitingApproval[];
+  // Every unread mention; the card lists the first NEEDS_YOU_INBOX.
   mentions: InboxItem[];
   inbox: InboxItem[];
   // Every unread item in the Inbox (the footer's count).
@@ -67,7 +69,10 @@ export function NeedsYouCard({
         <div className="flex flex-col gap-3 px-3 pb-3">
           {undatedCount > 0 ? (
             <Link
-              href="/my-tasks#checklist-none"
+              // The checklist is the only view with the No date group and "Not now" (Nov 10 audit, C55):
+              // open it whatever My tasks view the person last used.
+              href="/my-tasks?view=checklist#checklist-none"
+              onClick={() => saveMyTasksLayout("checklist")}
               className="flex items-center gap-2 rounded-lg bg-accent-50 px-3 py-2 text-sm text-accent-900 hover:bg-accent-100"
             >
               <CalendarClock className="size-4 shrink-0 text-accent-600" aria-hidden />
@@ -78,8 +83,8 @@ export function NeedsYouCard({
             </Link>
           ) : null}
           {approvals.length > 0 ? (
-            <Group title="Approvals waiting on you" count={approvals.length}>
-              {approvals.slice(0, 5).map((item) => {
+            <Group title="Waiting on you to approve" count={approvals.length}>
+              {approvals.slice(0, NEEDS_YOU_INBOX).map((item) => {
                 const body = (
                   <>
                     <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-green-50 text-green-700">
@@ -116,13 +121,15 @@ export function NeedsYouCard({
                   </li>
                 );
               })}
+              <MoreLink count={approvals.length - NEEDS_YOU_INBOX} href="/my-tasks" where="in My tasks" />
             </Group>
           ) : null}
           {mentions.length > 0 ? (
             <Group title="Mentions" count={mentions.length}>
-              {mentions.map((item) => (
+              {mentions.slice(0, NEEDS_YOU_INBOX).map((item) => (
                 <InboxRow key={item.id} item={item} actors={actors} />
               ))}
+              <MoreLink count={mentions.length - NEEDS_YOU_INBOX} href="/inbox?tab=mentioned" where="in your Inbox" />
             </Group>
           ) : null}
           {inbox.length > 0 ? (
@@ -135,6 +142,17 @@ export function NeedsYouCard({
         </div>
       )}
     </Widget>
+  );
+}
+
+function MoreLink({ count, href, where }: { count: number; href: string; where: string }) {
+  if (count <= 0) return null;
+  return (
+    <li>
+      <Link href={href} className="block rounded-md px-2 py-1 text-xs font-medium text-accent-700 hover:bg-zinc-50">
+        {count} more {where}
+      </Link>
+    </li>
   );
 }
 
@@ -156,7 +174,7 @@ function InboxRow({ item, actors }: { item: InboxItem; actors: Profile[] }) {
   const memberId = useShellMemberId();
   const actor = actors.find((p) => p.id === item.actorId);
   const { verb, ruleName } = describeInboxItem(item);
-  const name = actor ? displayName(actor) : ruleName ? `Rule “${ruleName}”` : (item.emailFrom ?? "Someone");
+  const name = actor ? displayName(actor) : ruleName ? `Automation “${ruleName}”` : (item.emailFrom ?? "Someone");
   const markRead = () => {
     if (!item.readAt) run(() => markInboxRead([item.id]));
   };

@@ -392,8 +392,8 @@ export function WorkloadView({
         </section>
       ) : (
         <p className="mt-2 text-xs text-zinc-400">
-          Select a cell to see its tasks. With a weekly capacity set, cells over it turn red (a day’s capacity is a fifth
-          of the week’s; weekends have none).
+          Select a cell to see its tasks. With a weekly capacity set, cells over it turn red (the week’s capacity is
+          split evenly over the workspace’s workdays; days off have none).
         </p>
       )}
     </div>
