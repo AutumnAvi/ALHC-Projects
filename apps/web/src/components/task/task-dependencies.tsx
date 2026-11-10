@@ -8,7 +8,7 @@ import { SmartPicker } from "@/components/smart-picker";
 import { useServerAction } from "@/components/toast";
 import { removeTaskDependency, setTaskDependency } from "@/lib/actions/dependencies";
 import { slackLabel } from "@alhc/core/critical-path";
-import { DEPENDENCY_KINDS, MAX_LAG_DAYS, dependencyLabel, isDependencyKind, type DependencyKind } from "@alhc/core/dependencies";
+import { DEPENDENCY_KINDS, MAX_LAG_DAYS, dependencyKindHelp, dependencyLabel, isDependencyKind, type DependencyKind } from "@alhc/core/dependencies";
 import type { TaskDependency, TaskDetail } from "@alhc/core/api/task-pane/model";
 import { useTaskExtras } from "./task-pane-store";
 import { TaskLink } from "@/components/task/task-link";
@@ -146,12 +146,19 @@ function LinkOptions({ task, item }: { task: TaskDetail; item: TaskDependency })
                 if (kind !== item.kind && isDependencyKind(kind)) change(kind, item.lagDays);
               }}
               className="mt-1 w-full"
-              options={DEPENDENCY_KINDS.map((k) => ({ value: k.value, label: k.label }))}
+              options={DEPENDENCY_KINDS.map((k) => ({
+                value: k.value,
+                label: k.label,
+                description:
+                  item.relation === "blocked_by"
+                    ? dependencyKindHelp(k.value, "the other task", "this task")
+                    : dependencyKindHelp(k.value, "this task", "the other task"),
+              }))}
             />
           </div>
           <div>
             <label htmlFor={`dep-lag-${item.id}`} className="text-xs font-medium text-zinc-600">
-              Lag in days (negative = overlap)
+              Gap (workdays; negative = overlap)
             </label>
             <input
               id={`dep-lag-${item.id}`}

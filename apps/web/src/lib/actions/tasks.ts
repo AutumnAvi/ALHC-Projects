@@ -86,6 +86,27 @@ export async function restoreTask(taskId: string): Promise<ActionResult> {
   return run((ctx) => tasksApi.restoreTask(ctx, taskId), { revalidate: [["/", "layout"]] });
 }
 
+// Undo of a bulk delete: restores each task the delete trashed (restore_task checks Editor on each). A
+// task that can't come back is skipped; the answer says how many did.
+export async function restoreTasks(taskIds: string[]): Promise<ActionResult & { restored?: number; failed?: number }> {
+  return runWith(
+    async (ctx) => {
+      let restored = 0;
+      let failed = 0;
+      for (const taskId of taskIds.slice(0, 200)) {
+        try {
+          await tasksApi.restoreTask(ctx, taskId);
+          restored += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      return { restored, failed };
+    },
+    { revalidate: [["/", "layout"]] },
+  );
+}
+
 export async function moveTask(
   taskId: string,
   projectId: string,

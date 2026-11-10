@@ -5,9 +5,11 @@ import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronRight, GitBranch, GripV
 import { Avatar } from "@/components/avatar";
 import { displayName } from "@alhc/core/people";
 import { MenuItem, Popover } from "@/components/popover";
-import { useServerAction } from "@/components/toast";
+import { useNotify, useServerAction } from "@/components/toast";
+import { useConfirm } from "@/components/confirm";
+import { plural } from "@alhc/core/rule-feedback";
 import { RowCompleteControl } from "./row-complete-control";
-import { createSubtask, deleteSubtask, placeSubtask, updateSubtask, updateTask } from "@/lib/actions/tasks";
+import { createSubtask, deleteSubtask, placeSubtask, restoreTask, updateSubtask, updateTask } from "@/lib/actions/tasks";
 import { addDays, useToday } from "@/lib/dates";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { SubtaskItem } from "@alhc/core/api/tasks/model";
@@ -75,6 +77,8 @@ export function TaskSubtasks({
   memberId?: string;
 }) {
   const [, run] = useServerAction();
+  const confirm = useConfirm();
+  const notify = useNotify();
   // What a subtask row knows, drawn at once when it's opened (no navigation; Oct 19 notes).
   // The task's first project the viewer can read (stable order; Oct 29 notes, 55b).
   const firstProject = task.memberships[0];
@@ -131,6 +135,27 @@ export function TaskSubtasks({
     );
 
   if (allSubtasks.length === 0 && pendingAdds.length === 0 && !(canEdit && !atDepthLimit)) return null;
+
+  // The same confirm and Undo as the subtask's own "…" → Delete.
+  async function removeSubtask(subtask: SubtaskItem) {
+    const ok = await confirm({
+      title: `Delete subtask “${subtask.title}”?`,
+      message: "It moves to the Trash with its own subtasks, where Editors can restore it.",
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!ok) return;
+    run(
+      async () => {
+        const result = await deleteSubtask(subtask.id);
+        if (!result.error) {
+          notify("Subtask moved to the Trash", { label: "Undo", onClick: () => run(() => restoreTask(subtask.id)) });
+        }
+        return result;
+      },
+      () => change({ type: "remove", id: subtask.id }),
+    );
+  }
 
   function move(subtask: SubtaskItem, beforeId: string | null) {
     if (beforeId === subtask.id) return;
@@ -311,7 +336,7 @@ export function TaskSubtasks({
                 {subtask.subtaskCount > 0 ? (
                   <span
                     className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500"
-                    title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
+                    title={`${subtask.subtaskDoneCount} of ${plural(subtask.subtaskCount, "subtask")} done`}
                   >
                     <ListChecks className="size-3.5" aria-hidden />
                     <span className="sr-only">Subtasks done:</span>
@@ -363,10 +388,7 @@ export function TaskSubtasks({
                           danger
                           onClick={() => {
                             close();
-                            run(
-                              () => deleteSubtask(subtask.id),
-                              () => change({ type: "remove", id: subtask.id }),
-                            );
+                            void removeSubtask(subtask);
                           }}
                         >
                           <Trash2 className="size-4" aria-hidden /> Delete subtask

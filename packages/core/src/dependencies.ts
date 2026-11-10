@@ -14,6 +14,23 @@ export const DEPENDENCY_KINDS = [
   { value: "start_to_finish", label: "Start → finish", short: "SF" },
 ] as const;
 
+// One plain line per type, for the type picker: what the later task (`then`) waits for in the earlier
+// one (`first`), e.g. dependencyKindHelp("finish_to_start", "the other task", "this task") →
+// "This task starts after the other task is done."
+export function dependencyKindHelp(kind: DependencyKind, first: string, then: string): string {
+  const Then = then.charAt(0).toUpperCase() + then.slice(1);
+  switch (kind) {
+    case "finish_to_start":
+      return `${Then} starts after ${first} is done, and can’t be completed before it.`;
+    case "start_to_start":
+      return `${Then} starts once ${first} has started. It never blocks completing.`;
+    case "finish_to_finish":
+      return `${Then} finishes after ${first} is done, and can’t be completed before it.`;
+    case "start_to_finish":
+      return `${Then} finishes once ${first} has started, and can’t be completed before that.`;
+  }
+}
+
 // Kinds that anchor on the predecessor's start, and kinds that hold the successor's due date.
 export function fromPredecessorStart(kind: string) {
   return kind === "start_to_start" || kind === "start_to_finish";
@@ -48,14 +65,15 @@ export function dependencyKindLabel(kind: DependencyKind) {
   return DEPENDENCY_KINDS.find((k) => k.value === kind)?.label ?? kind;
 }
 
-// "+2 days", "−1 day" ("" for no lag).
+// "+2 workdays", "−1 workday" ("" for no lag). Shifting counts the gap in the workspace's workdays
+// (dependency-plan.ts), so it says so.
 export function lagLabel(lagDays: number) {
   if (!lagDays) return "";
   const n = Math.abs(lagDays);
-  return `${lagDays > 0 ? "+" : "−"}${n} day${n === 1 ? "" : "s"}`;
+  return `${lagDays > 0 ? "+" : "−"}${n} workday${n === 1 ? "" : "s"}`;
 }
 
-// One line for a link, e.g. "Finish → start +2 days".
+// One line for a link, e.g. "Finish → start +2 workdays".
 export function dependencyLabel(kind: DependencyKind, lagDays: number) {
   const lag = lagLabel(lagDays);
   return lag ? `${dependencyKindLabel(kind)} ${lag}` : dependencyKindLabel(kind);
