@@ -8,6 +8,16 @@
 export const TASK_KINDS = ["task", "milestone", "approval"] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
+// Note 187: arrow keys on the add-task kind control. Null when the key doesn't change the kind.
+export function taskKindFromKey(current: TaskKind, key: string): TaskKind | null {
+  const index = TASK_KINDS.indexOf(current);
+  if (key === "ArrowRight" || key === "ArrowDown") return TASK_KINDS[(index + 1) % TASK_KINDS.length];
+  if (key === "ArrowLeft" || key === "ArrowUp") return TASK_KINDS[(index - 1 + TASK_KINDS.length) % TASK_KINDS.length];
+  if (key === "Home") return "task";
+  if (key === "End") return "approval";
+  return null;
+}
+
 export const TASK_KIND_LABELS: Record<TaskKind, string> = {
   task: "Task",
   milestone: "Milestone",

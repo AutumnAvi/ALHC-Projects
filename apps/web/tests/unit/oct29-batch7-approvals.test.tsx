@@ -573,8 +573,9 @@ test("the approval summary (Nov 4 notes, batch 27, 161): one row — status and 
   assert.match(one, />Approver</, "one approver: singular");
 
   const none = render(<ApprovalTaskBanner task={approvalTask("editor", info({ approverIds: [] }))} profiles={people} memberId="me" />);
-  assert.match(none, /No approver yet/);
+  assert.match(none, /Approval setup not finished/);
   assert.match(none, /data-approval-finish-setup=""/, "with nobody approving yet, Finish setup is the row's step");
+  assert.doesNotMatch(none, />Ready for approval</, "nothing is sent until the setup has an approver");
 
   const deciding = render(
     <ApprovalTaskBanner

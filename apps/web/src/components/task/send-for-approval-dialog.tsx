@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { AlertCircle, Loader2, Upload, X } from "lucide-react";
 import { displayName } from "@alhc/core/people";
 import { Dialog } from "@/components/dialog";
@@ -14,7 +14,8 @@ import { sendForApproval } from "@/lib/actions/approvals";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { taskPermissions } from "@alhc/core/permissions";
-import { reviewerLabel } from "@alhc/core/external-review";
+import { reviewerLabel, TWO_STAGE_FOLLOW_UP_NOTE } from "@alhc/core/external-review";
+import { FOLLOW_UP_LABELS } from "@alhc/core/approval-setup";
 import type { AfterApproval } from "@alhc/core/task-kinds";
 
 // Oct 27 notes (batch 6, items 45 / 45b): "Ready for approval". The assignee (or an Editor) sends the
@@ -285,77 +286,65 @@ export function SendForApprovalDialog({
         </div>
 
         {externalReviewer ? (
-          <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600" data-two-step-note="">
-            After the internal approval, {approverNames.length ? joinNames(approverNames) : "the approver"} sends it to{" "}
-            {reviewerLabel(externalReviewer)} for the external review. Neither approval completes the task (note 183):
-            it stays open, and after the external reviewer approves it, its approvers or its assignee complete it.
-          </p>
-        ) : null}
-
-        {/* Note 183: on a two-stage task "when it's approved" never runs at the internal stage, so it isn't asked. */}
-        <div hidden={Boolean(externalReviewer)}>
-          <label className="flex items-start gap-2 text-sm text-zinc-800">
-            <input
-              type="checkbox"
-              checked={moreSteps}
-              onChange={(e) => setMoreSteps(e.currentTarget.checked)}
-              className="mt-0.5 size-3.5 accent-accent-600"
+          <div data-when-approved="">
+            <p className="mb-1 text-sm text-zinc-600">When it’s approved</p>
+            <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600" data-two-step-note="" data-two-stage-note="">
+              After the internal approval, {approverNames.length ? joinNames(approverNames) : "the approver"} sends it to{" "}
+              {reviewerLabel(externalReviewer)} for the external review. {TWO_STAGE_FOLLOW_UP_NOTE}
+            </p>
+          </div>
+        ) : (
+          <fieldset className="flex flex-col gap-2" data-when-approved="">
+            <legend className="mb-1 text-sm text-zinc-600">When it’s approved</legend>
+            <AfterChoice
+              name={`${ids}-after`}
+              selected={!moreSteps}
+              label={FOLLOW_UP_LABELS.complete.label}
+              hint={FOLLOW_UP_LABELS.complete.hint}
+              onSelect={() => setMoreSteps(false)}
             />
-            <span>
-              More steps after approval — don’t complete
-              <span className="block text-2xs text-zinc-500">
-                {moreSteps ? "Choose what happens when it’s approved. Its approvers complete the task afterwards." : "Otherwise approving it completes the task."}
-              </span>
-            </span>
-          </label>
-          {moreSteps ? (
-            <fieldset className="mt-2 ml-5.5 space-y-2">
-              <legend className="sr-only">When it’s approved</legend>
-              <label className={`flex items-start gap-2 text-sm ${canMove ? "text-zinc-800" : "text-zinc-400"}`}>
-                <input
-                  type="radio"
-                  name={`${ids}-after`}
-                  checked={effectiveChoice === "move_section"}
-                  disabled={!canMove}
-                  onChange={() => setChoice("move_section")}
-                  className="mt-0.5 size-3.5 accent-accent-600"
+            <AfterChoice
+              name={`${ids}-after`}
+              selected={moreSteps && effectiveChoice === "move_section"}
+              disabled={!canMove}
+              label={FOLLOW_UP_LABELS.move_section.label}
+              hint={
+                canMove
+                  ? FOLLOW_UP_LABELS.move_section.hint
+                  : task.isSubtask
+                    ? "Subtasks aren’t in sections."
+                    : "You can’t move it in any of its projects."
+              }
+              onSelect={() => {
+                setMoreSteps(true);
+                setChoice("move_section");
+              }}
+            >
+              {moreSteps && canMove && effectiveChoice === "move_section" ? (
+                <SmartPicker
+                  id={`${ids}-section`}
+                  label="Section to move it to on approval"
+                  placeholder="Choose a section…"
+                  value={moveSectionId}
+                  onChange={setMoveSectionId}
+                  searchable={sectionOptions.length > 7}
+                  className="mt-1.5 h-8 w-full"
+                  options={sectionOptions}
                 />
-                <span className="min-w-0 flex-1">
-                  Move it to a section
-                  {!canMove ? (
-                    <span className="block text-2xs">
-                      {task.isSubtask ? "Subtasks aren’t in sections." : "You can’t move it in any of its projects."}
-                    </span>
-                  ) : null}
-                </span>
-              </label>
-              {canMove && effectiveChoice === "move_section" ? (
-                <div className="ml-5.5">
-                  <SmartPicker
-                    id={`${ids}-section`}
-                    label="Section to move it to on approval"
-                    placeholder="Choose a section…"
-                    value={moveSectionId}
-                    onChange={setMoveSectionId}
-                    searchable={sectionOptions.length > 7}
-                    className="h-8 w-full"
-                    options={sectionOptions}
-                  />
-                </div>
               ) : null}
-              <label className="flex items-start gap-2 text-sm text-zinc-800">
-                <input
-                  type="radio"
-                  name={`${ids}-after`}
-                  checked={effectiveChoice === "notify"}
-                  onChange={() => setChoice("notify")}
-                  className="mt-0.5 size-3.5 accent-accent-600"
-                />
-                <span>Just notify</span>
-              </label>
-            </fieldset>
-          ) : null}
-        </div>
+            </AfterChoice>
+            <AfterChoice
+              name={`${ids}-after`}
+              selected={moreSteps && effectiveChoice === "notify"}
+              label={FOLLOW_UP_LABELS.notify.label}
+              hint={FOLLOW_UP_LABELS.notify.hint}
+              onSelect={() => {
+                setMoreSteps(true);
+                setChoice("notify");
+              }}
+            />
+          </fieldset>
+        )}
 
         {shownProblem ? (
           <p id={`${ids}-problem`} role="alert" className="text-sm text-red-700">
@@ -393,5 +382,45 @@ export function SendForApprovalDialog({
         />
       ) : null}
     </Dialog>
+  );
+}
+
+function AfterChoice({
+  name,
+  selected,
+  disabled,
+  label,
+  hint,
+  onSelect,
+  children,
+}: {
+  name: string;
+  selected: boolean;
+  disabled?: boolean;
+  label: string;
+  hint: string;
+  onSelect: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <label
+      className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+        selected ? "border-accent-400 bg-accent-50/50" : "border-zinc-200"
+      } ${disabled ? "text-zinc-400" : "text-zinc-800"}`}
+    >
+      <input
+        type="radio"
+        name={name}
+        checked={selected}
+        disabled={disabled}
+        onChange={onSelect}
+        className="mt-0.5 size-3.5 accent-accent-600"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="font-medium">{label}</span>
+        <span className="block text-xs text-zinc-500">{hint}</span>
+        {children}
+      </span>
+    </label>
   );
 }

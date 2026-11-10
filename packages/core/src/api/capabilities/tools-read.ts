@@ -1,6 +1,7 @@
 // AI builder round 5 (note 178): the registry's read tools. They run at once (nothing to confirm), with the
 // person's own access, only inside the Testing data pilot, and answer with refs (T12, C3, …) — never an id,
 // an email, or anyone's name beyond the page's own people — to the in-app assistant; with ids to MCP.
+import { APPROVAL_SETUP_UNFINISHED, approvalSetupUnfinished } from "../../approval-setup";
 import { matchPeople } from "../../ai-rule-steps";
 import type { Json } from "../../supabase/database.types";
 import { maybe, rows } from "../core/db";
@@ -34,7 +35,15 @@ function taskLine(env: ToolEnv, t: { ref: string; title: string; projectId: stri
 async function approvalSetupFor(env: ToolEnv, taskId: string) {
   const approvers = rows(await env.ctx.db.from("task_approvers").select("profile_id").eq("task_id", taskId).is("deleted_at", null).order("created_at"), "approvers");
   const settings = maybe(await env.ctx.db.from("task_approval_settings").select("mode, due_on, after_approval").eq("task_id", taskId).maybeSingle(), "approval settings");
-  return { approvers: approvers.map((a) => who(env, a.profile_id)), mode: settings?.mode ?? "any", due: settings?.due_on ?? null, after_approval: settings?.after_approval ?? "complete" };
+  const unfinished = approvalSetupUnfinished(approvers.length);
+  return {
+    approvers: approvers.map((a) => who(env, a.profile_id)),
+    mode: settings?.mode ?? "any",
+    due: settings?.due_on ?? null,
+    after_approval: settings?.after_approval ?? "complete",
+    setup_unfinished: unfinished,
+    ...(unfinished ? { setup_flag: APPROVAL_SETUP_UNFINISHED } : {}),
+  };
 }
 
 const searchTasks: ReadHandler = {
