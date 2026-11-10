@@ -451,7 +451,8 @@ test("the Ready for approval dialog: final text, the task's files, review check,
     />,
   );
   assert.match(again, /Final copy for the spring flyer/);
-  assert.match(again, /Also send a review check of these files to Sam Approver/);
+  // Nov 10 batch 36 (C25): Ready for approval never sends a review check to the internal approver.
+  assert.doesNotMatch(again, /review check/);
 
   const commenter = render(
     <SendForApprovalDialog task={approvalTask("commenter", info({ rounds: [round({ status: "withdrawn" })] }), { assigneeId: "me" })} profiles={people} onClose={() => {}} />,
@@ -474,7 +475,7 @@ test("the Filter editor has an Approval section with Waiting on me first, and ch
   const chips = filterChips({ approval: ["pending", "waiting_on_me"] }, context);
   const chip = chips.find((c) => c.key === "approval");
   assert.ok(chip);
-  assert.equal(chip.label, "Approval: Waiting on me to approve, Pending approval");
+  assert.equal(chip.label, "Approval: Waiting on me to approve, Waiting for approval");
   assert.deepEqual(chip.remove(), {});
   assert.equal(approvalFilterLabel(["paused"]), "Approval: Paused (feedback not received yet)");
 

@@ -3,6 +3,7 @@ import { PortfolioTimeline } from "@/components/portfolio/portfolio-timeline";
 import {
   countHiddenPortfolioProjects,
   getPortfolio,
+  getWorkWeek,
   listPortfolioChildren,
   listPortfolioMilestones,
   portfolioTimeline,
@@ -19,11 +20,13 @@ export async function generateMetadata({ params }: PageProps<"/portfolios/[portf
 // (portfolio_milestones()). Read-only: dates change in the projects themselves.
 export default async function PortfolioTimelinePage({ params }: PageProps<"/portfolios/[portfolioId]/timeline">) {
   const { portfolioId } = await params;
-  const [rows, children, hidden, milestones] = await Promise.all([
+  const [rows, children, hidden, milestones, workWeek] = await Promise.all([
     portfolioTimeline(portfolioId),
     listPortfolioChildren(portfolioId),
     countHiddenPortfolioProjects(portfolioId),
     listPortfolioMilestones(portfolioId),
+    // The workspace's workweek: the week zoom shades the days off (flaw audit C23).
+    getWorkWeek(),
   ]);
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -32,6 +35,7 @@ export default async function PortfolioTimelinePage({ params }: PageProps<"/port
         nested={children.map(({ id, name }) => ({ id, name }))}
         hiddenCount={hidden}
         milestones={milestones}
+        workWeek={workWeek}
       />
     </div>
   );

@@ -9,7 +9,7 @@ import { appLinkSegments, type AppLink } from "@alhc/core/app-links";
 import type { CommentRefs } from "@alhc/core/api/comments/model";
 import { seedFromTitle } from "@/lib/task-seed";
 import { Avatar } from "@/components/avatar";
-import { displayName } from "@alhc/core/people";
+import { displayName, personHref } from "@alhc/core/people";
 import { Timestamp } from "@/components/timestamp";
 import { ImageLightbox } from "./task-attachments";
 import { previewKind } from "@alhc/core/attachment-preview";
@@ -32,6 +32,9 @@ export function ProfileCard({ person, detail }: { person: MentionPerson; detail:
         <p className="truncate text-sm font-semibold text-zinc-900">{name}</p>
         <p className="truncate text-xs text-zinc-600">{person.email}</p>
         {detail ? <p className="mt-1 text-xs text-zinc-500">{detail}</p> : null}
+        <Link href={personHref(person.id)} className="mt-1.5 inline-block text-xs font-medium text-accent-700 hover:underline">
+          View profile
+        </Link>
       </div>
     </div>
   );
@@ -39,22 +42,24 @@ export function ProfileCard({ person, detail }: { person: MentionPerson; detail:
 
 const CARD_WIDTH = 256;
 
-// A highlighted pill with a card on hover or focus; a click does nothing (no navigation). Shared by
-// person and team mentions.
+// A highlighted pill with a card on hover or focus; a click opens `href` (a person's profile, a team's
+// page) like the name chips in task titles. Shared by person and team mentions.
 function HoverPill({
   label,
   title,
   ariaLabel,
   data,
   card,
+  href,
 }: {
   label: string;
   title?: string;
   ariaLabel: string;
   data: Record<string, string>;
   card: ReactNode;
+  href: string;
 }) {
-  const ref = useRef<HTMLSpanElement>(null);
+  const ref = useRef<HTMLAnchorElement>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number; above: boolean } | null>(null);
   const hideTimer = useRef<number | undefined>(undefined);
 
@@ -80,9 +85,9 @@ function HoverPill({
 
   return (
     <>
-      <span
+      <Link
         ref={ref}
-        tabIndex={0}
+        href={href}
         {...data}
         title={title}
         aria-label={ariaLabel}
@@ -90,11 +95,12 @@ function HoverPill({
         onMouseLeave={hide}
         onFocus={show}
         onBlur={hide}
-        onClick={(e) => e.preventDefault()}
-        className="cursor-default rounded bg-accent-50 px-1 py-px font-medium text-accent-700 outline-none hover:bg-accent-100 focus-visible:ring-2 focus-visible:ring-accent-400"
+        // Inside a row or card that opens something else on click: only the pill's own link.
+        onClick={(e) => e.stopPropagation()}
+        className="rounded bg-accent-50 px-1 py-px font-medium text-accent-700 outline-none hover:bg-accent-100 focus-visible:ring-2 focus-visible:ring-accent-400"
       >
         {label}
-      </span>
+      </Link>
       {anchor
         ? createPortal(
             <div
@@ -118,8 +124,8 @@ function HoverPill({
   );
 }
 
-// A highlighted @mention showing the person's real name. Hover or focus shows their card; a click does
-// nothing (no navigation).
+// A highlighted @mention showing the person's real name. Hover or focus shows their card; a click opens
+// their profile.
 export function MentionPill({ person, detail, raw }: { person: MentionPerson; detail: string | null; raw: string }) {
   // Never the whole email address (Nov 1 notes, batch 12): someone without a name is "@ann".
   const name = mentionName(person);
@@ -129,6 +135,7 @@ export function MentionPill({ person, detail, raw }: { person: MentionPerson; de
       title={raw === `@${name}` ? undefined : raw}
       ariaLabel={`@${name}, ${person.email}${detail ? `, ${detail}` : ""}`}
       data={{ "data-mention": person.id }}
+      href={personHref(person.id)}
       card={<ProfileCard person={person} detail={detail} />}
     />
   );
@@ -136,8 +143,7 @@ export function MentionPill({ person, detail, raw }: { person: MentionPerson; de
 
 const TEAM_CARD_MEMBERS = 8;
 
-// A team's card: its name and members (the first eight, then a count). Like a person's card, nothing
-// to click.
+// A team's card: its name and members (the first eight, then a count); the pill opens the team.
 export function TeamCard({ team }: { team: MentionTeam }) {
   const shown = team.members.slice(0, TEAM_CARD_MEMBERS);
   return (
@@ -170,7 +176,7 @@ export function TeamCard({ team }: { team: MentionTeam }) {
   );
 }
 
-// A highlighted @team mention: the team's name; hover or focus shows its members.
+// A highlighted @team mention: the team's name; hover or focus shows its members, a click opens the team.
 export function TeamMentionPill({ team, raw }: { team: MentionTeam; raw: string }) {
   return (
     <HoverPill
@@ -178,6 +184,7 @@ export function TeamMentionPill({ team, raw }: { team: MentionTeam; raw: string 
       title={raw === `@${team.name}` ? undefined : raw}
       ariaLabel={`@${team.name}, team of ${team.members.length}`}
       data={{ "data-team-mention": team.id }}
+      href={`/teams/${team.id}`}
       card={<TeamCard team={team} />}
     />
   );

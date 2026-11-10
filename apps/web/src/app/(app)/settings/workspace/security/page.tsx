@@ -15,16 +15,16 @@ export default async function WorkspaceSecurityPage() {
   if (await isWorkspaceAdmin()) redirect(ADMIN_PATH_FOR_SETTINGS["/settings/workspace/security"]);
   const google = isGoogleAuthEnabled();
   const methods = [
-    { name: "Email and password", state: "On", note: "People create an account at /signup and confirm their address by email." },
+    { name: "Email and password", state: "On", note: "People create an account on the sign-up page and confirm their address by email." },
     { name: "Email confirmation", state: "Required", note: "An account can’t get in until its address is confirmed." },
-    { name: "Google", state: google ? "On" : "Off", note: google ? "“Continue with Google” on the sign-in screen." : "Planned as the long-term sign-in method." },
+    { name: "Google", state: google ? "On" : "Off", note: google ? "“Continue with Google” on the sign-in screen." : "Not turned on yet." },
   ];
   return (
     <>
       <SettingsCard
         id="workspace-sign-in"
         title="Sign-in methods"
-        description="Shown for reference. These are set up in Supabase Auth, not here."
+        description="How people sign in to this workspace. Only whoever runs the workspace’s sign-in setup can change these."
         isAdmin={false}
         flush
       >

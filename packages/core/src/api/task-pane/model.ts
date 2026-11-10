@@ -65,6 +65,10 @@ export type TaskDetail = {
   // `name`: the requester's name from the form's required name question (Nov 1 notes, batch 8), else a
   // short answer to a question labelled like a name, else null.
   submission: { email: string; name: string | null; formId: string; formTitle: string | null; createdAt: string } | null;
+  // Nov 10 batch 36: the task's external review (the review check emailed to someone outside): who it's meant
+  // for (set ahead, else the form's submitter, else the latest round's address) and how its latest round
+  // stands. Separate from the internal approval; on an approval task with approvers it comes second.
+  externalReview?: ExternalReview;
   // The database has Comments and reply by email (20261014030000): responses to a form's submitter can
   // be sent (see canRespondToSubmitter()).
   submitterResponses: boolean;
@@ -374,3 +378,23 @@ export function parseSubmitterConversation(value: Record<string, Json | undefine
 // How many of a task's latest automation runs the activity shows (a scheduled automation can run on a
 // task every day; older markers aren't worth the payload).
 export const TASK_RUN_LIMIT = 100;
+
+// Nov 10 batch 36: a task's external review, as the pane reads it.
+export type ExternalReview = {
+  // Who it's meant for (null = nobody named yet). `source`: set on the task, the form's submitter, or the
+  // address the latest round went to.
+  reviewer: { email: string; name: string | null; source: "task" | "submitter" | "latest" } | null;
+  // The reviewer set on the task itself (what the approval setup shows and edits).
+  saved: { email: string; name: string | null } | null;
+  latest: {
+    id: string;
+    round: number;
+    status: "pending" | "approved" | "changes_requested" | "superseded" | "cancelled";
+    recipientEmail: string;
+    recipientName: string | null;
+    createdAt: string;
+    decidedAt: string | null;
+    nudgedAt: string | null;
+  } | null;
+};
+

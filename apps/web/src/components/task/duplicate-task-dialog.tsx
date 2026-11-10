@@ -29,7 +29,12 @@ export function DuplicateTaskDialog({
   const [pending, start] = useTransition();
   const [name, setName] = useState(`Copy of ${title}`);
   const [chosen, setChosen] = useState<Record<DuplicateTaskOptionKey, boolean>>(
-    () => Object.fromEntries(DUPLICATE_TASK_OPTIONS.map((o) => [o.key, true])) as Record<DuplicateTaskOptionKey, boolean>,
+    // Dependencies start off: a copied link also blocks every task the original blocks.
+    () =>
+      Object.fromEntries(DUPLICATE_TASK_OPTIONS.map((o) => [o.key, o.key !== "dependencies"])) as Record<
+        DuplicateTaskOptionKey,
+        boolean
+      >,
   );
 
   function submit() {
@@ -50,7 +55,11 @@ export function DuplicateTaskDialog({
   return (
     <Dialog
       title={isSubtask ? "Duplicate subtask" : "Duplicate task"}
-      description="The copy goes where you can edit: this task’s projects where you’re an Editor, right below the original. It starts open."
+      description={
+        isSubtask
+          ? "The copy goes right below this subtask, under the same parent task. It starts open."
+          : "The copy goes where you can edit: this task’s projects where you’re an Editor, right below the original. It starts open."
+      }
       onClose={onClose}
     >
       <form
@@ -89,8 +98,9 @@ export function DuplicateTaskDialog({
             ))}
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            Notes and the task type always come along. Comments, approvals, and recurrence don’t; people who can’t
-            see the copy aren’t kept as assignee or followers.
+            The description and the task type always come along. Comments, approvals, and recurrence don’t; people
+            who can’t see the copy aren’t kept as assignee or followers. Dependencies start unticked: the copy would
+            also block every task the original blocks.
           </p>
         </fieldset>
         <div className="mt-4 flex justify-end gap-2">

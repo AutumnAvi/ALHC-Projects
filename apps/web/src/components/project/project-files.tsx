@@ -56,8 +56,8 @@ export function ProjectFiles({
       {files.length === 0 ? (
         <div className="mt-6">
           <EmptyState icon={Files} title="No files yet">
-            Files attached to this project’s tasks show up here. Open a task and use Attachments in its pane to add
-            one.
+            Files attached to this project’s tasks show up here. To add one, open a task and use the paperclip at
+            the top of its pane.
           </EmptyState>
         </div>
       ) : shown.length === 0 ? (

@@ -53,6 +53,15 @@ export function retryDelaySeconds(failures: number): number {
   return RETRY_SECONDS[Math.min(Math.max(failures, 1), RETRY_SECONDS.length) - 1];
 }
 
+// The "Can't reach" screen's words (Nov 10 audit, C106): the internet only gets the blame when the computer
+// says it's offline; otherwise the server may be the one that's down. `seconds` counts down to the next try.
+export function unreachableText(online: boolean, seconds: number): { title: string; detail: string } {
+  const next = seconds > 0 ? ` Trying again in ${seconds} ${seconds === 1 ? "second" : "seconds"}.` : " Trying again…";
+  return online
+    ? { title: "Can’t reach the ALHC Projects server", detail: `It may be down for a moment.${next}` }
+    : { title: "You’re offline", detail: `Check your internet connection: the app needs to be online.${next}` };
+}
+
 // Whether this engine has RegExp lookbehind (Safari 16.4): the one feature of Next.js 16's target (Safari
 // 16.4: also class static blocks, which the app-router chunk uses) the launcher can test without eval, which
 // its CSP doesn't allow. A RegExp from a string isn't eval.

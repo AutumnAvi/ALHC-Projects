@@ -168,7 +168,11 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
     router.push(item.href);
   }
 
+  // The Search page lists tasks only (Nov 10 audit, C59): no "See all" from the People or Projects chip.
+  const canSeeAll = Boolean(trimmed) && (kind === null || kind === "tasks");
+
   function seeAll() {
+    if (!canSeeAll) return;
     onClose(false);
     router.push(`/search?${new URLSearchParams({ q: trimmed }).toString()}`);
   }
@@ -183,9 +187,9 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
       document.getElementById(optionId(next))?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if ((e.metaKey || e.ctrlKey) && trimmed) seeAll();
+      if ((e.metaKey || e.ctrlKey) && canSeeAll) seeAll();
       else if (activeIndex >= 0) go(items[activeIndex]);
-      else if (trimmed) seeAll();
+      else if (canSeeAll) seeAll();
     }
   }
 
@@ -279,7 +283,7 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
             <EmptyHint query={trimmed} loading={loading || (!trimmed && recents === null)} kind={kind} />
           ) : null}
         </div>
-        {trimmed ? (
+        {canSeeAll ? (
           // Nov 2 notes (batch 14, 101): ⌘K is the quick jump; the Search page is the full list with
           // filters. This row (or ⌘/Ctrl+Enter) opens it with the same words.
           <button
@@ -288,7 +292,7 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
             className="flex w-full items-center gap-2 border-t border-zinc-100 px-3 py-2 text-left text-xs font-medium text-accent-700 hover:bg-zinc-50"
           >
             <Search className="size-3.5 text-accent-600" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">See all results for “{trimmed}”</span>
+            <span className="min-w-0 flex-1 truncate">See all tasks matching “{trimmed}”</span>
             <kbd className="hidden shrink-0 rounded border border-zinc-200 px-1.5 font-sans text-2xs font-normal text-zinc-500 sm:inline">
               {isMac() ? "⌘" : "Ctrl"} Enter
             </kbd>

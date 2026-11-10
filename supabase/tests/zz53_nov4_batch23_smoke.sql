@@ -146,11 +146,14 @@ declare
   checked int := 0;
 begin
   assert (select count(*) from b23_exprs) > 150, 'every rewritten policy is listed';
-  -- Each listed policy's live expression is the new one (the migration applied them all).
+  -- Each listed policy's live expression is the new one (the migration applied them all). Nov 10 batch 36
+  -- renamed the rules / forms / portfolio_rules write policies to _editor (Owners and Editors build them).
   for e in select * from b23_exprs loop
     assert exists (
       select 1 from pg_catalog.pg_policy p
-      where p.polrelid = format('public.%I', e.tbl)::regclass and p.polname = e.policy
+      where p.polrelid = format('public.%I', e.tbl)::regclass
+        and (p.polname = e.policy
+          or (e.tbl in ('rules', 'forms', 'portfolio_rules') and p.polname = replace(e.policy, '_admin', '_editor')))
     ), format('%s.%s exists', e.tbl, e.policy);
   end loop;
   for who in select id from b23_people loop

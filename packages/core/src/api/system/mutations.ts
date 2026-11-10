@@ -206,3 +206,34 @@ export async function recordEmailEvent(
     bounce_subtype: input.bounceSubtype,
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// External review reminders (Nov 10 batch 36)
+// ---------------------------------------------------------------------------------------------
+
+// A round due its one automatic reminder (24 hours after it was sent, still undecided), with a fresh
+// reminder link (the token is handed back once; the first email's link keeps working).
+export type ReviewNudge = {
+  review_id: string;
+  task_id: string;
+  token: string;
+  recipient_email: string;
+  recipient_name: string | null;
+  round: number;
+  message: string | null;
+  task_title: string | null;
+  sender_name: string | null;
+  project_name: string | null;
+  sent_at: string;
+  expires_at: string;
+  files: { asset_id: string; name: string; content_type: string | null }[] | null;
+};
+
+export async function claimReviewNudges(ctx: ApiContext, max: number): Promise<DbAnswer<ReviewNudge[]>> {
+  const { data, error } = await ctx.db.rpc("claim_review_nudges", { max_items: max });
+  return { data: (data as unknown as ReviewNudge[] | null) ?? null, error };
+}
+
+export async function finishReviewNudge(ctx: ApiContext, reviewId: string, sent: boolean): Promise<void> {
+  await ctx.db.rpc("finish_review_nudge", { target_review: reviewId, sent });
+}

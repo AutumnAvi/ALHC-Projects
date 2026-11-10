@@ -30,9 +30,8 @@ import { scrollRowIntoView, useListKeys } from "@/components/shortcuts/keyboard"
 import { ShowMoreRows, useGroupPages } from "@/components/show-more";
 import { useOpenTaskId } from "@/components/shell/right-panel";
 import { useShell } from "@/components/shell/shell-context";
-import { ApprovalToggle } from "@/components/complete-toggle";
 import { RowCompleteControl } from "@/components/task/row-complete-control";
-import { useApprovalAction, useApprovalShortcut } from "@/components/task/approval-action";
+import { useApprovalShortcut } from "@/components/task/approval-action";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
 import { MoreTaskNumbers } from "@/components/task/task-number";
@@ -47,8 +46,10 @@ import {
 } from "@/lib/actions/my-tasks";
 import { createPrivateTask, setTaskCompleted, updateSubtask, updateTask } from "@/lib/actions/tasks";
 import { type ActionResult } from "@alhc/core/api/core/result";
-import { addDays, formatDueDate, useToday } from "@/lib/dates";
+import { formatDueDate, useToday } from "@/lib/dates";
 import { dayLabel } from "@alhc/core/date-input";
+import { checklistGroupOf } from "@alhc/core/checklist";
+import { plural } from "@alhc/core/rule-feedback";
 import { approverReviewHref } from "@alhc/core/approver-review";
 import {
   ExpandToggle,
@@ -65,7 +66,7 @@ import {
   type RowPatch,
   type SubtaskTrees,
 } from "@/components/project/inline-cells";
-import { ApprovalStatusBadge, DueDate, EmptyCellHint } from "@/components/project/task-meta";
+import { ApprovalStatusBadge, DueDate, EmptyCellHint, ExternalApprovedDot } from "@/components/project/task-meta";
 import type { AwaitingApproval, MyTask } from "@alhc/core/api/my-tasks/model";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { SubtaskItem } from "@alhc/core/api/tasks/model";
@@ -75,7 +76,7 @@ import { seedFromMyTask, seedFromSubtask, seedFromTitle, type TaskSeed } from "@
 import { trackCompletion } from "@/lib/completion-store";
 import { useLiveMyTasks } from "./use-live-my-tasks";
 import type { MyTaskPlacement, MyTaskSection, MyTasksLayout } from "@alhc/core/my-tasks";
-import { saveMyTasksLayout } from "@/lib/my-tasks-cookie";
+import { saveMyTasksLayout, showSavedMyTasksLayout } from "@/lib/my-tasks-cookie";
 
 type Group = { key: string; title: string; tasks: MyTask[]; section?: MyTaskSection };
 
@@ -88,24 +89,19 @@ const LAYOUTS = [
   { value: "due", label: "Due dates" },
 ] as const;
 
-// Asana-style buckets, evaluated against the viewer's local date. See AGENTS.md › My Tasks.
+// Due-date buckets, evaluated against the viewer's local date, with the checklist's meaning of "This week"
+// and "Next week" (calendar weeks; checklistGroupOf in @alhc/core/checklist). See AGENTS.md › My Tasks.
 function groupByDue(tasks: MyTask[], today: string): Group[] {
-  const weekEnd = addDays(today, 7);
   const groups: Group[] = [
     { key: "overdue", title: "Overdue", tasks: [] },
     { key: "today", title: "Today", tasks: [] },
-    { key: "next-7-days", title: "Next 7 days", tasks: [] },
+    { key: "week", title: "This week", tasks: [] },
+    { key: "next", title: "Next week", tasks: [] },
     { key: "later", title: "Later", tasks: [] },
-    { key: "no-date", title: "No due date", tasks: [] },
+    { key: "none", title: "No due date", tasks: [] },
   ];
-  const [overdue, dueToday, soon, later, noDate] = groups;
-  for (const task of tasks) {
-    if (!task.dueOn) noDate.tasks.push(task);
-    else if (task.dueOn < today) overdue.tasks.push(task);
-    else if (task.dueOn === today) dueToday.tasks.push(task);
-    else if (task.dueOn <= weekEnd) soon.tasks.push(task);
-    else later.tasks.push(task);
-  }
+  const byKey = new Map(groups.map((g) => [g.key, g]));
+  for (const task of tasks) byKey.get(checklistGroupOf(task.dueOn, today))!.tasks.push(task);
   return groups.filter((g) => g.tasks.length > 0);
 }
 
@@ -325,7 +321,7 @@ export function MyTasksView({
   function chooseLayout(next: MyTasksLayout) {
     saveMyTasksLayout(next);
     // The checklist is its own screen: the page renders it.
-    if (next === "checklist") router.refresh();
+    if (next === "checklist") showSavedMyTasksLayout(router);
     else setLayout(next);
   }
 
@@ -502,7 +498,7 @@ export function MyTasksView({
   // draggable; a row opens the task).
   const awaitingGroup =
     awaiting.length > 0 ? (
-      <TaskGroup id="awaiting" title="Waiting on me to approve" count={awaiting.length} {...collapseProps("awaiting")}>
+      <TaskGroup id="awaiting" title="Waiting on you to approve" count={awaiting.length} {...collapseProps("awaiting")}>
         {awaiting.map((item) => (
           <AwaitingRow key={item.requestId} item={item} openTaskId={openTaskId} />
         ))}
@@ -693,6 +689,7 @@ export function MyTasksView({
         context={bySections ? { ...bulk, mySections: orderedSections.map(({ id, name }) => ({ id, name })) } : bulk}
         bulk={bulkEdit}
         onClear={selection.clear}
+        privateTaskIds={selection.selected.filter((id) => tasksById.get(id)?.projectId === null)}
       />
       {/* "Move dependent tasks too?" after a date change in a row. */}
       {shift.dialog}
@@ -1267,10 +1264,11 @@ function MyTaskRow({
       {task.kind === "approval" && task.approvalStatus ? (
         <ApprovalStatusBadge status={task.approvalStatus} paused={task.approvalPaused} />
       ) : null}
+      {task.externalApproved ? <ExternalApprovedDot /> : null}
       {(task.subtaskCount ?? 0) > 0 ? (
         <span
           className="hidden shrink-0 items-center gap-1 text-xs tabular-nums text-zinc-500 sm:inline-flex"
-          title={`${task.subtaskDoneCount ?? 0} of ${task.subtaskCount} subtasks done`}
+          title={`${task.subtaskDoneCount ?? 0} of ${plural(task.subtaskCount ?? 0, "subtask")} done`}
         >
           {task.subtaskDoneCount ?? 0}/{task.subtaskCount}
           <span className="sr-only"> subtasks done</span>
@@ -1295,7 +1293,7 @@ function MyTaskRow({
       ) : (
         <span
           className="chip hidden shrink-0 sm:inline-flex"
-          title="Private: only you and its assignee can see it, until it’s added to a project"
+          title="Private: only the person who made it and its assignee can see it, until it’s added to a project"
         >
           <Lock className="size-3 shrink-0" aria-hidden />
           Private
@@ -1428,7 +1426,7 @@ function MySubtaskRow({
       {subtask.subtaskCount > 0 ? (
         <span
           className="inline-flex shrink-0 items-center text-xs tabular-nums text-zinc-500"
-          title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
+          title={`${subtask.subtaskDoneCount} of ${plural(subtask.subtaskCount, "subtask")} done`}
         >
           {subtask.subtaskDoneCount}/{subtask.subtaskCount}
         </span>
@@ -1463,9 +1461,8 @@ function MySubtaskRow({
 // date, and round.
 export function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; openTaskId: string | null }) {
   const openTask = useOpenTask();
-  const approvalAction = useApprovalAction();
-  // An approval task's round waits on the viewer: its control is Approve (opens the decision in the pane,
-  // Oct 29 notes, batch 7). Other requests (approval subtasks) are decided in the pane's Approvals list.
+  // An approval task's round waits on the viewer: "Open review" goes to its review page (Nov 5 note 164).
+  // Other requests (approval subtasks) are decided in the pane's Approvals list.
   const decides = item.isApprovalTask && item.roundNumber !== null;
   const title = displayTaskTitle(item.title, item.requestLabel);
   const seed = () =>
@@ -1492,18 +1489,13 @@ export function AwaitingRow({ item, openTaskId }: { item: AwaitingApproval; open
         open ? "bg-accent-50/60" : "hover:bg-zinc-50"
       }`}
     >
-      {decides ? (
-        <span className="ml-[1.375rem] inline-flex shrink-0">
-          <ApprovalToggle mode="approve" title={title} onAction={() => approvalAction(item.taskId, "decide", seed())} />
-        </span>
-      ) : (
-        <span
-          aria-hidden
-          className="ml-[1.375rem] inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-700"
-        >
-          <ThumbsUp className="size-[62%]" strokeWidth={2.5} />
-        </span>
-      )}
+      {/* Nov 10 audit (C69): one way to decide — "Open review" (the review page); the mark is only a mark. */}
+      <span
+        aria-hidden
+        className="ml-[1.375rem] inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-700"
+      >
+        <ThumbsUp className="size-[62%]" strokeWidth={2.5} />
+      </span>
       <span className="flex min-w-0 flex-1 items-center gap-1">
         <TaskLink
           taskId={item.taskId}

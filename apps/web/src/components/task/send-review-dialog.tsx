@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, useTransition, type DragEvent } from "react";
-import { AlertCircle, Copy, Loader2, Lock, Upload, X } from "lucide-react";
+import { AlertCircle, Copy, Loader2, Upload, X } from "lucide-react";
 import { Dialog } from "@/components/dialog";
 import { useNotify } from "@/components/toast";
 import { setActivityTab } from "@/components/task/pane-size";
@@ -11,6 +11,9 @@ import { previewKind } from "@alhc/core/attachment-preview";
 import { MAX_ATTACHMENT_LABEL } from "@alhc/core/attachments";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { MAX_REVIEW_ASSETS, MAX_REVIEW_MESSAGE, reviewMediaKind } from "@alhc/core/review-checks";
+import { reviewComesAfterApproval, TWO_STEP_NOTE } from "@alhc/core/external-review";
+import { taskPermissions } from "@alhc/core/permissions";
+import { formatDueDate } from "@/lib/dates";
 import { sendReviewCheck } from "@/lib/actions/reviews";
 import { finishPendingReview, startPendingReview } from "./review-events";
 
@@ -22,6 +25,11 @@ import { finishPendingReview, startPendingReview } from "./review-events";
 // Nov 1 notes (batch 8, item 61): Upload files on the left, big; "Files attached to this task" on the
 // right as thumbnails (click to preview: images in the pane's lightbox, PDFs / videos in the browser's
 // viewer); the reviewer's email is the requester's, read-only; their name comes from the form.
+// Nov 10 batch 36: the reviewer is prefilled — the external reviewer set on the task, else the form's
+// submitter, else whoever the last round went to — and can be changed (a facility contact, any outside
+// reviewer). An open round it would replace is named first. On an approval task with approvers this is the
+// second step, sent by an approver after the internal approval; approvers who aren't Editors pick from the
+// task's files (uploads need Editor).
 
 
 // The files the dialog lists: the task's attachments, then ones uploaded here that the task (refreshed
@@ -70,12 +78,14 @@ export function SendReviewDialog({
     setUploaded((current) => [...current, file]);
     setPicked((current) => pickWithLimit(current, file.id));
   });
-  // Item 61: the reviewer is the requester (the form's submitter), shown read-only; a task that didn't
-  // come from a form takes a typed address.
-  const requesterEmail = task.submission?.email ?? null;
-  const [email, setEmail] = useState("");
-  const recipient = (requesterEmail ?? email).trim();
-  const [name, setName] = useState(task.submission?.name ?? "");
+  const prefill = task.externalReview?.reviewer ?? (task.submission ? { email: task.submission.email, name: task.submission.name, source: "submitter" as const } : null);
+  const [email, setEmail] = useState(prefill?.email ?? "");
+  const recipient = email.trim();
+  const [name, setName] = useState(prefill?.name ?? "");
+  const canUpload = taskPermissions(task).canEdit;
+  const afterApproval = reviewComesAfterApproval(task);
+  const openRound = task.externalReview?.latest?.status === "pending" ? task.externalReview.latest : null;
+  const isSubmitter = Boolean(task.submission && recipient.toLowerCase() === task.submission.email.toLowerCase());
   const [message, setMessage] = useState(initialMessage.slice(0, MAX_REVIEW_MESSAGE));
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -182,8 +192,21 @@ export function SendReviewDialog({
       width="max-w-4xl"
     >
       <div className="flex flex-col gap-5">
-        <div className="grid gap-5 md:grid-cols-[16rem_minmax(0,1fr)]">
-          {/* Upload: first and prominent (Nov 1 notes, batch 8, item 61). */}
+        {afterApproval ? (
+          <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-900" data-two-step-note="">
+            Step 2 of 2: the internal approval is done. {TWO_STEP_NOTE}
+          </p>
+        ) : null}
+        {openRound ? (
+          <p role="note" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" data-replaces-open-review="">
+            Round {openRound.round} sent to {openRound.recipientName ?? openRound.recipientEmail} on{" "}
+            {formatDueDate(openRound.createdAt.slice(0, 10))} is still waiting for an answer. Sending this replaces it: their
+            link will stop working and only the new round can be answered.
+          </p>
+        ) : null}
+        <div className={canUpload ? "grid gap-5 md:grid-cols-[16rem_minmax(0,1fr)]" : "grid gap-5"}>
+          {/* Upload: first and prominent (Nov 1 notes, batch 8, item 61). Uploading needs Editor. */}
+          {canUpload ? (
           <section aria-labelledby={`${ids}-upload`} className="flex flex-col gap-2">
             <h3 id={`${ids}-upload`} className="text-sm font-semibold text-zinc-900">
               Upload files
@@ -259,6 +282,7 @@ export function SendReviewDialog({
               </ul>
             ) : null}
           </section>
+          ) : null}
 
           <section aria-labelledby={`${ids}-files`} className="flex min-w-0 flex-col gap-2">
             <div className="flex items-baseline gap-2">
@@ -271,7 +295,7 @@ export function SendReviewDialog({
             </div>
             {files.length === 0 ? (
               <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-10 text-center text-sm text-zinc-500">
-                No files on this task yet. Upload them on the left.
+                {canUpload ? "No files on this task yet. Upload them on the left." : "No files on this task yet. Ask the assignee to attach them."}
               </p>
             ) : (
               <ul className="grid max-h-[22rem] grid-cols-2 gap-2 overflow-y-auto overscroll-contain p-0.5 sm:grid-cols-3">
@@ -296,39 +320,22 @@ export function SendReviewDialog({
             <label htmlFor={`${ids}-email`} className="text-xs font-medium text-zinc-700">
               Reviewer’s email
             </label>
-            {requesterEmail ? (
-              <>
-                <div className="relative mt-1">
-                  <input
-                    id={`${ids}-email`}
-                    type="email"
-                    value={requesterEmail}
-                    readOnly
-                    aria-describedby={`${ids}-email-note`}
-                    className="field h-9 w-full bg-zinc-50 pr-8 text-zinc-700"
-                  />
-                  <Lock className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-                </div>
-                <p id={`${ids}-email-note`} className="mt-1 text-2xs text-zinc-500">
-                  The person who submitted the request. Review checks go to them.
-                </p>
-              </>
-            ) : (
-              <>
-                <input
-                  id={`${ids}-email`}
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.currentTarget.value)}
-                  placeholder="name@example.com"
-                  aria-describedby={`${ids}-email-note`}
-                  className="field mt-1 h-9 w-full"
-                />
-                <p id={`${ids}-email-note`} className="mt-1 text-2xs text-zinc-500">
-                  This task didn’t come from a form, so enter who should review it.
-                </p>
-              </>
-            )}
+            <input
+              id={`${ids}-email`}
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.currentTarget.value)}
+              placeholder="name@example.com"
+              aria-describedby={`${ids}-email-note`}
+              className="field mt-1 h-9 w-full"
+            />
+            <p id={`${ids}-email-note`} className="mt-1 text-2xs text-zinc-500">
+              {isSubmitter
+                ? "The person who submitted the request. You can send it to someone else instead."
+                : prefill?.source === "task" && recipient.toLowerCase() === prefill.email.toLowerCase()
+                  ? "The external reviewer chosen for this task."
+                  : "Anyone outside the team: the requester, a facility contact, another reviewer."}
+            </p>
           </div>
           <div>
             <label htmlFor={`${ids}-name`} className="text-xs font-medium text-zinc-700">
@@ -342,7 +349,7 @@ export function SendReviewDialog({
               placeholder="e.g. Jordan"
               className="field mt-1 h-9 w-full"
             />
-            {task.submission?.name && name.trim() === task.submission.name ? (
+            {isSubmitter && task.submission?.name && name.trim() === task.submission.name ? (
               <p className="mt-1 text-2xs text-zinc-500">From the request form</p>
             ) : null}
           </div>
@@ -383,7 +390,7 @@ export function SendReviewDialog({
             disabled={pending || uploading || picked.size === 0 || !recipient}
             className="btn-primary"
           >
-            {pending ? "Sending…" : "Send review check"}
+            {pending ? "Sending…" : openRound ? "Replace and send" : "Send review check"}
           </button>
         </div>
       </div>

@@ -322,16 +322,18 @@ test("Turn on & Finish turns on only this run's automations; Undo turns it off, 
   assert.ok(made.deleted_at);
 });
 
-test("Editors can't turn on an AI-made automation; one changed since the run made it is refused", async () => {
+test("a hand-changed AI-made automation is refused; Editors can turn an unchanged one on", async () => {
   const s = world("owner");
   const d = db(s);
   const prop = await propose(d, toolModel(newRule).p, "Whenever a task is done, move it to Done");
   const res = await apply(d, prop.runId, [0]);
-  s.rules.find((r) => r.id === res.createdRules[0].ruleId)!.name = "Edited by hand";
+  const made = s.rules.find((r) => r.id === res.createdRules[0].ruleId)!;
+  made.name = "Edited by hand";
   await assert.rejects(turnOnAssistantRules(createApiContext(d), prop.runId), reject("conflict"));
-  s.rules.find((r) => r.id === res.createdRules[0].ruleId)!.name = "Done to Done";
+  made.name = "Done to Done";
   s.project_members.find((m) => m.project_id === P1 && m.profile_id === ME)!.role = "editor";
-  await assert.rejects(turnOnAssistantRules(createApiContext(d), prop.runId), (e: unknown) => isApiError(e) && /Owners and Admins/.test(e.message));
+  await turnOnAssistantRules(createApiContext(d), prop.runId);
+  assert.equal(made.enabled, true);
 });
 
 test("an automation that would message people is drafted off and flagged; turning it on needs its own acknowledgement", async () => {

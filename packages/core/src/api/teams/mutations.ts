@@ -46,7 +46,7 @@ export async function createTeam(ctx: ApiContext, input: { name: unknown; descri
 // can be pinned, and each item shows only to people who can open it (RLS).
 // ---------------------------------------------------------------------------------------------
 
-const CURATE_NOT_ALLOWED = "Only people on this team (and workspace admins) can change its curated work";
+const CURATE_NOT_ALLOWED = "Only people on this team (and workspace admins) can change its pinned projects";
 
 export async function addTeamCuratedWork(
   ctx: ApiContext,

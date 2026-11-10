@@ -6,10 +6,12 @@
 import type { Json } from "./supabase/database.types";
 import { isIsoDate } from "./views";
 import { isUuid } from "./ids";
+import { dayLabel } from "./date-input";
 
 export const REPORT_STATUSES = [
   { value: "all", label: "Any status" },
-  { value: "open", label: "Open" },
+  // Every incomplete task, overdue ones included (Nov 10 audit, C90: "Incomplete", as the tables say).
+  { value: "open", label: "Incomplete" },
   { value: "completed", label: "Completed" },
   { value: "overdue", label: "Overdue" },
 ] as const;
@@ -149,6 +151,23 @@ export function isDefaultWindow(filters: ReportFilters, today: string): boolean 
   return filters.from === window.from && filters.to === window.to;
 }
 
+// Nov 10 audit (C4): on Reports → Overview the date range applies to the "Completed per week / day" series
+// only. Tiles, the status / project / assignee / section charts, and the Overdue list always count every
+// open and overdue task (an undated task, or one overdue for months, is the work a lead most needs to see).
+export function withoutDateRange(filters: ReportFilters): ReportFilters {
+  if (!filters.from && !filters.to) return filters;
+  const out = { ...filters };
+  delete out.from;
+  delete out.to;
+  return out;
+}
+
+// "Oct 27 – Nov 24" (a year only when it isn't this year): a date range in plain words.
+export function describeDateRange(from: string | undefined, to: string | undefined, currentYear = new Date().getFullYear()): string {
+  const day = (iso: string | undefined) => (iso ? dayLabel(iso, currentYear) : "…");
+  return `${day(from)} – ${day(to)}`;
+}
+
 export function hasReportFilters(filters: ReportFilters) {
   return Object.keys(parseReportFilters(filters)).length > 0;
 }
@@ -225,7 +244,7 @@ export function describeReportFilters(
     const tagNames = new Map(tags.map((t) => [t.id, t.name]));
     parts.push(`Tags: ${filters.tags.map((t) => tagNames.get(t) ?? "Deleted tag").join(", ")}`);
   }
-  if (filters.from || filters.to) parts.push(`Due or completed ${filters.from ?? "…"} – ${filters.to ?? "…"}`);
+  if (filters.from || filters.to) parts.push(`Due or completed ${describeDateRange(filters.from, filters.to)}`);
   if (filters.status) parts.push(`Status: ${REPORT_STATUSES.find((s) => s.value === filters.status)?.label}`);
   if (filters.include_subtasks) parts.push("Subtasks included");
   return parts;

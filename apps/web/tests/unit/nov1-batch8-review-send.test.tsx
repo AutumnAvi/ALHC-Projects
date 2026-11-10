@@ -77,11 +77,14 @@ function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
       { id: "doc1", fileName: "notes.docx", contentType: null, sizeBytes: 10, uploadedBy: "p", createdAt: "2026-11-01T00:00:00Z" },
     ],
     submission: { email: "robin@example.org", name: "Robin Requester", formId: "f", formTitle: "Design request", createdAt: "2026-11-01T00:00:00Z" },
+    viewerRole: "editor",
+    kind: "task",
+    approval: null,
     ...overrides,
   } as unknown as TaskDetail;
 }
 
-test("the dialog: Upload files first, the task's files as previews, the requester read-only with their name", () => {
+test("the dialog: Upload files first, the task's files as previews, the requester prefilled (changeable) with their name", () => {
   const html = renderToStaticMarkup(<SendReviewDialog task={task()} onClose={() => {}} initialMessage="Here's draft 1" />);
   const upload = html.indexOf(">Upload files<");
   const list = html.indexOf("Files attached to this task");
@@ -90,7 +93,10 @@ test("the dialog: Upload files first, the task's files as previews, the requeste
   assert.match(html, /aria-label="Preview poster\.png"/, "an image previews in the lightbox");
   assert.match(html, /href="\/attachments\/pdf1\?preview=1"[^>]*target="_blank"/, "a PDF opens in the browser's viewer");
   assert.match(html, /No preview for this file type/, "other files have no preview");
-  assert.match(html, /<input[^>]*readOnly=""[^>]*value="robin@example\.org"/, "the requester's email, read-only");
+  // Nov 10 batch 36: prefilled with the requester, but any outside reviewer can be entered instead.
+  assert.match(html, /<input[^>]*type="email"[^>]*value="robin@example\.org"/, "the requester's email, prefilled");
+  assert.doesNotMatch(html, /readOnly=""[^>]*value="robin@example\.org"/, "not locked");
+  assert.match(html, /The person who submitted the request\. You can send it to someone else instead\./);
   assert.match(html, /value="Robin Requester"/, "their name from the form");
   assert.match(html, />Here&#x27;s draft 1<\/textarea>/, "the comment box's text is the message");
 });
@@ -98,6 +104,6 @@ test("the dialog: Upload files first, the task's files as previews, the requeste
 test("a task that didn't come from a form takes a typed email", () => {
   const html = renderToStaticMarkup(<SendReviewDialog task={task({ submission: null })} onClose={() => {}} />);
   assert.doesNotMatch(html, /readOnly=""/);
-  assert.match(html, /didn’t come from a form/);
+  assert.match(html, /Anyone outside the team/);
   assert.match(html, /No files on this task yet|poster\.png/);
 });

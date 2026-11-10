@@ -30,7 +30,7 @@ export function SaveTaskTemplateDialog({
   return (
     <Dialog
       title="Save as task template"
-      description="Keeps the title, notes, subtasks, and this project’s field values. Comments, files, and dates are left out."
+      description="Keeps the title, description, subtasks, and this project’s field values. Comments, files, and dates are left out."
       onClose={onClose}
     >
       <form
@@ -44,7 +44,7 @@ export function SaveTaskTemplateDialog({
             });
             if (!result.error) {
               onClose();
-              notify("Task template saved — find it under “Add task” → Template");
+              notify("Task template saved — find it under “Add task” → From a template");
             }
             return result;
           });

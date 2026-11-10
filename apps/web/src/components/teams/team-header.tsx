@@ -40,6 +40,7 @@ export function TeamHeader({
   canManage,
   isDefault,
   requestCount = 0,
+  goalsOn = true,
 }: {
   teamId: string;
   name: string;
@@ -50,6 +51,8 @@ export function TeamHeader({
   isDefault: boolean;
   // Oct 26 notes (batch 4): open requests to join, for the people who decide (0 for everyone else).
   requestCount?: number;
+  // Whether the workspace uses Goals (Nov 10 audit, C91: no goals wording while it's off).
+  goalsOn?: boolean;
 }) {
   const pathname = usePathname();
   const [, run] = useServerAction();
@@ -104,7 +107,7 @@ export function TeamHeader({
           ) : (
             <h1 className="min-w-0 truncate px-1.5 text-xl font-semibold tracking-tight text-zinc-900">{name}</h1>
           )}
-          <TeamMenu teamId={teamId} name={name} canManage={canManage} isDefault={isDefault} />
+          <TeamMenu teamId={teamId} name={name} canManage={canManage} isDefault={isDefault} goalsOn={goalsOn} />
           {isDefault ? (
             <span
               className="chip ml-1.5 hidden bg-accent-50 text-accent-700 sm:inline-flex"
@@ -193,11 +196,13 @@ function TeamMenu({
   name,
   canManage,
   isDefault,
+  goalsOn,
 }: {
   teamId: string;
   name: string;
   canManage: boolean;
   isDefault: boolean;
+  goalsOn: boolean;
 }) {
   const notify = useNotify();
   const [pending, run] = useServerAction();
@@ -241,8 +246,9 @@ function TeamMenu({
                   if (
                     await confirm({
                       title: `Delete ${name}?`,
-                      message:
-                        "Its projects move to the default team and become private, project memberships stay as they are, and its goals keep working without a team.",
+                      message: `Its projects move to the default team and become private${
+                        goalsOn ? ", project memberships stay as they are, and its goals keep working without a team." : ", and project memberships stay as they are."
+                      }`,
                       confirmLabel: "Delete team",
                       tone: "danger",
                     })

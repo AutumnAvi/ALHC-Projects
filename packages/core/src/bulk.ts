@@ -54,7 +54,7 @@ export function bulkVerb(action: BulkOperation["action"]): string {
     case "reopen":
       return "Reopened";
     case "delete":
-      return "Moved to Trash";
+      return "Moved to the Trash";
     case "assign":
       return "Updated the assignee of";
     case "set_due":
@@ -75,6 +75,32 @@ export function bulkVerb(action: BulkOperation["action"]): string {
 
 export function taskCount(n: number) {
   return `${n} task${n === 1 ? "" : "s"}`;
+}
+
+// The toast / summary heading after a bulk change: "Moved 3 tasks to the Trash", "Added 2 tasks to
+// Marketing", "Completed 2 of 3 tasks". `count` is the counted phrase ("3 tasks", "2 of 3 tasks");
+// `target` is the project or section the tasks went to, when the bar knows its name.
+export function bulkDoneText(action: BulkOperation["action"], count: string, target?: string | null): string {
+  switch (action) {
+    case "delete":
+      return `Moved ${count} to the Trash`;
+    case "add_to_project":
+      return target ? `Added ${count} to ${target}` : `Added ${count} to the project`;
+    case "move_section":
+    case "my_section":
+      return target ? `Moved ${count} to ${target}` : `Moved ${count}`;
+    default:
+      return `${bulkVerb(action)} ${count}`;
+  }
+}
+
+// Where a bulk delete's tasks can be found again (the confirm dialog). Private tasks are in no project, so
+// no Trash lists them: Undo on the toast is the only way back.
+export function bulkDeleteNote(privateCount: number): string {
+  const trash = "Editors can restore them from each project’s Trash (project menu → Trash).";
+  if (privateCount <= 0) return trash;
+  const which = privateCount === 1 ? "1 of them is a private task" : `${privateCount} of them are private tasks`;
+  return `${trash} ${which} with no project, so no Trash lists ${privateCount === 1 ? "it" : "them"}: use Undo right after deleting to bring ${privateCount === 1 ? "it" : "them"} back.`;
 }
 
 // Nov 2 notes (batch 17, 127): what running one "Run manually" automation on the selected tasks did

@@ -22,14 +22,14 @@ import { displayTaskTitle } from "@alhc/core/request-numbers";
 import { TaskTitleText } from "@/components/task/title-text";
 import { fieldLockedFor, type FieldDef } from "@alhc/core/fields";
 import { LockedFieldValue } from "./field-lock";
-import { columnsOf, groupOf, orderSections, refFieldId, sameConfig, sortOf, type ViewConfig } from "@alhc/core/views";
+import { columnsOf, groupOf, hasActiveFilters, orderSections, refFieldId, sameConfig, sortOf, type ViewConfig } from "@alhc/core/views";
 import { trackCompletion } from "@/lib/completion-store";
 import { FieldValueChips, type FieldContext } from "./field-chips";
 import { blockedCount } from "./inline-cells";
 import { GroupTitle } from "./list-view";
 import { ADD_TASK_EVENT, AddSection, AddTaskInput, PendingTaskRows, SectionActions, addTaskKindOf } from "./shared";
 import { isPendingSection, useSectionsWithPending } from "./pending-sections";
-import { Assignee, CommentCount, DueDate, StartDate, TaskBadges } from "./task-meta";
+import { Assignee, AttachmentCount, CommentCount, DueDate, StartDate, TaskBadges } from "./task-meta";
 import { useProjectTaskSeeds } from "./task-seeds";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
 import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
@@ -360,7 +360,14 @@ export function BoardView({
 
             {group.tasks.length === 0 && !isTarget ? (
               <p className="rounded-lg border border-dashed border-zinc-300 bg-white/60 px-2 py-4 text-center text-xs text-zinc-600">
-                {dragging ? "Drop here" : group.target.kind === "section" && canEdit ? "No tasks yet. Add one above or drag a card here." : "No tasks"}
+                {/* Flaw audit C43: a column emptied by the filters says so, instead of "No tasks yet". */}
+                {dragging
+                  ? "Drop here"
+                  : hasActiveFilters(config.filters)
+                    ? "No matching tasks"
+                    : group.target.kind === "section" && canEdit
+                      ? "No tasks yet. Add one above or drag a card here."
+                      : "No tasks"}
               </p>
             ) : null}
 
@@ -433,7 +440,7 @@ function TaskCard({
   const due = showDue && task.dueOn;
   const start = showStart && task.startOn;
   const hasCounts =
-    task.approvalStatus !== null || task.recurring || task.blockedBy > 0 || task.subtaskCount > 0 || task.projectCount > 1 || task.commentCount > 0;
+    task.approvalStatus !== null || task.recurring || task.blockedBy > 0 || task.subtaskCount > 0 || task.projectCount > 1 || task.commentCount > 0 || (task.attachmentCount ?? 0) > 0;
 
   return (
     <article
@@ -499,6 +506,8 @@ function TaskCard({
           {showDue ? <DueDate task={task} /> : null}
           <span className="ml-auto flex items-center gap-2">
             <TaskBadges task={task} />
+            {/* Like List rows (flaw audit C99). */}
+            <AttachmentCount count={task.attachmentCount} />
             <CommentCount count={task.commentCount} />
           </span>
         </div>

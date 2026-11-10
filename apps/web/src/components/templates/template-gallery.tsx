@@ -43,14 +43,14 @@ export function TemplateGallery({
           {templates.length > 0 ? <span className="text-xs tabular-nums text-zinc-400">{templates.length}</span> : null}
         </div>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Shared with everyone in the workspace. Save one from a project’s … menu (project admins). The source
-          project’s admins and workspace admins can rename, replace, or delete a template. Automations in a template always
-          arrive turned off.
+          Shared with everyone in the workspace. A project’s Owners save one from the project’s menu →
+          Templates…. The source project’s Owners and workspace admins can rename, replace, or delete a template.
+          Automations in a template always arrive turned off.
         </p>
         {templates.length === 0 ? (
           <div className="mt-3">
             <EmptyState icon={LayoutTemplate} title="No project templates yet">
-              Open a project you run, choose … → Save as template, and it will show up here for everyone.
+              Open a project you own, choose Templates… in its menu, save it as a template, and it will show up here for everyone.
             </EmptyState>
           </div>
         ) : (
@@ -149,12 +149,12 @@ export function TemplateGallery({
           Task templates
         </h2>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Per project, for projects you’re a member of. Use them from “Add task” in List and Board.
+          Per project, for projects you’re a member of. Use them from + Add task → From a template.
         </p>
         {byProject.size === 0 ? (
           <div className="mt-3">
             <EmptyState icon={ListPlus} title="No task templates yet">
-              Open a task and use the template button in its header, or add one in a project’s Settings → Templates.
+              Open a task and choose … → Save as task template…, or add one in a project’s Settings → Templates.
             </EmptyState>
           </div>
         ) : (

@@ -20,7 +20,8 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/avatar";
 import { MenuItem, Popover } from "@/components/popover";
 import { SearchPalette } from "@/components/shell/search-palette";
-import { useShell } from "@/components/shell/shell-context";
+import { useOpenInvite, useShell } from "@/components/shell/shell-context";
+import { personHref } from "@alhc/core/people";
 import type { ShellDialog } from "@alhc/core/shell";
 
 // The dark bar across the top of the app (Asana parity, batch 1): ☰ and "+ Create" on the left, search
@@ -64,7 +65,8 @@ export function TopBar() {
 const CREATE_ITEMS: { kind: ShellDialog["kind"]; label: string; icon: LucideIcon; shortcut?: string[] }[] = [
   { kind: "task", label: "Task", icon: CircleCheck, shortcut: ["Tab", "Q"] },
   { kind: "project", label: "Project", icon: FolderKanban },
-  { kind: "message", label: "Message", icon: MessageSquare },
+  // A thread in a project's Messages tab (not email or a direct message).
+  { kind: "message", label: "Project message", icon: MessageSquare },
   { kind: "team", label: "Team", icon: Users },
   { kind: "portfolio", label: "Portfolio", icon: Briefcase },
   { kind: "goal", label: "Goal", icon: Target },
@@ -72,6 +74,7 @@ const CREATE_ITEMS: { kind: ShellDialog["kind"]; label: string; icon: LucideIcon
 
 function CreateMenu() {
   const { openDialog, goalsEnabled } = useShell();
+  const openInvite = useOpenInvite();
   const items = goalsEnabled ? CREATE_ITEMS : CREATE_ITEMS.filter((item) => item.kind !== "goal");
   return (
     <Popover
@@ -111,7 +114,7 @@ function CreateMenu() {
           <MenuItem
             onClick={() => {
               close();
-              openDialog({ kind: "invite" });
+              openInvite();
             }}
           >
             <UserPlus className="size-4 text-zinc-700" aria-hidden /> Invite
@@ -132,6 +135,7 @@ function shownName(name: string, email: string) {
 function AvatarMenu() {
   const router = useRouter();
   const { member, workspace, isWorkspaceAdmin, openDialog } = useShell();
+  const openInvite = useOpenInvite();
   const name = shownName(member.name, member.email);
   return (
     <Popover
@@ -166,10 +170,11 @@ function AvatarMenu() {
             <span className="truncate">{workspace.name}</span>
           </div>
           <hr className="my-1 border-zinc-100" />
+          {/* Nov 10 audit (C74): your profile page; Settings is the modal. */}
           <MenuItem
             onClick={() => {
               close();
-              openDialog({ kind: "settings", tab: "profile" });
+              router.push(personHref(member.id));
             }}
           >
             <UserRound className="size-4 text-zinc-500" aria-hidden /> Profile
@@ -195,7 +200,7 @@ function AvatarMenu() {
           <MenuItem
             onClick={() => {
               close();
-              openDialog({ kind: "invite" });
+              openInvite();
             }}
           >
             <UserPlus className="size-4 text-zinc-500" aria-hidden /> Invite

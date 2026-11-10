@@ -322,7 +322,7 @@ export async function editDraft(ctx: ApiContext, input: EditInput, provider: AiP
 }
 
 // "Ask AI for an automation" (note 170): a project of the pilot workspace where the caller may add
-// automations (Admin+, like the rule canvas); the model's draft is translated to the project's own ids
+// automations (Editor+, like the rule canvas); the model's draft is translated to the project's own ids
 // and checked by the rules engine's own checks, then stored for the normal rule canvas to open. Nothing is
 // saved, run, or sent here.
 export async function draftAutomation(ctx: ApiContext, input: AutomationInput, provider: AiProposalProvider): Promise<AutomationResult> {
@@ -333,8 +333,8 @@ export async function draftAutomation(ctx: ApiContext, input: AutomationInput, p
   const description = text(input.description, "Description", { max: AI_BUILDER_LIMITS.instructionMaxChars });
   const project = await getPilotProject(ctx, access.workspaceId, projectId);
   if (!project) throw new ApiError("forbidden", "AI automations are only for projects of the Testing data workspace");
-  if (project.archived || !hasRole(project.role as ProjectRole | null, "admin")) {
-    throw new ApiError("forbidden", "Only the project’s Owners and Admins can add automations");
+  if (project.archived || !hasRole(project.role as ProjectRole | null, "editor")) {
+    throw new ApiError("forbidden", "Only the project’s Owners and Editors can add automations");
   }
   const [sections, fields, members] = await Promise.all([
     ctx.db.from("sections").select("id, name").eq("project_id", projectId).is("deleted_at", null).order("sort_order"),

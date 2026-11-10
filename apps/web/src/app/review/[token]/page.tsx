@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { cache } from "react";
 import { connection } from "next/server";
 import { ReviewClosedNotice, ReviewPortal } from "@/components/review/review-portal";
-import { emailLogoUrl } from "@/lib/email";
+import { BRAND_LOGO_PATH } from "@/lib/email-design";
 import { isUuid } from "@alhc/core/ids";
 import { viewPublicReview } from "@alhc/core/api/reviews/queries";
 import { REVIEW_REFUSALS, type PublicReviewResult } from "@alhc/core/review-checks";
@@ -24,7 +24,8 @@ export async function generateMetadata({ params }: PageProps<"/review/[token]">)
   const { token } = await params;
   const result = await loadReview(token);
   return {
-    title: result.status === "ok" ? `Review: ${result.review.taskTitle}` : "Review",
+    // Nov 10 audit (G16): public pages carry the company's name, not the app's.
+    title: { absolute: `${result.status === "ok" ? `Review: ${result.review.taskTitle}` : "Review"} · Autumn Lake Marketing` },
     robots: { index: false, follow: false },
     referrer: "no-referrer",
   };
@@ -37,6 +38,6 @@ export default async function ReviewPage({ params, searchParams }: PageProps<"/r
   if (result.status !== "ok") return <ReviewClosedNotice message={REVIEW_REFUSALS[result.status]} />;
   const action = query.action === "approve" || query.action === "feedback" ? query.action : null;
   const file = typeof query.file === "string" && isUuid(query.file) ? query.file : null;
-  const logoUrl = result.review.workspaceLogoPath ? emailLogoUrl(result.review.workspaceLogoPath) : null;
-  return <ReviewPortal token={token} review={result.review} logoUrl={logoUrl} initialAction={action} initialFile={file} />;
+  // C33 (Nov 10): the review page wears the Autumn Lake brand, like the review emails.
+  return <ReviewPortal token={token} review={result.review} logoUrl={BRAND_LOGO_PATH} initialAction={action} initialFile={file} />;
 }

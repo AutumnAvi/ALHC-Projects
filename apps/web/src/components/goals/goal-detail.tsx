@@ -568,7 +568,7 @@ function LinksCard({
                 {link.name}
                 <span className="sr-only"> ({link.kind})</span>
               </Link>
-              {link.status ? <ProjectStatusBadge status={link.status} /> : <span className="chip">Portfolio</span>}
+              {link.status ? <ProjectStatusBadge status={link.status} unset={!link.statusSet} /> : <span className="chip">Portfolio</span>}
               {editable ? (
                 <button
                   type="button"

@@ -24,7 +24,7 @@ import { getPersonProfile } from "@/lib/data";
 import { type PersonTask } from "@alhc/core/api/people/model";
 import { dayLabel } from "@alhc/core/date-input";
 import { isUuid } from "@alhc/core/ids";
-import { PROFILE_TASK_LIMIT, activityVerb, personReportsHref } from "@alhc/core/people";
+import { PROFILE_TASK_LIMIT, activityVerb, personHref, personReportsHref } from "@alhc/core/people";
 import { projectColorClass } from "@/lib/project-colors";
 import { ROLE_LABELS, isProjectRole } from "@alhc/core/roles";
 import { TEAM_ROLE_LABELS } from "@alhc/core/teams";
@@ -100,7 +100,7 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
               <BarChart3 className="size-4" aria-hidden /> {self ? "My work in Reports" : "Their work in Reports"}
             </Link>
             {self ? (
-              <Link href="/?settings=profile" className="btn-ghost">
+              <Link href={`${personHref(person.id)}?settings=profile`} className="btn-ghost">
                 <Settings2 className="size-4" aria-hidden /> Settings
               </Link>
             ) : null}
@@ -134,7 +134,7 @@ export default async function PersonPage({ params, searchParams }: PageProps<"/p
                 {person.openTaskCount > PROFILE_TASK_LIMIT ? (
                   <p className="border-t border-zinc-100 px-4 py-2 text-xs text-zinc-500">
                     Showing the first {PROFILE_TASK_LIMIT}.{" "}
-                    <Link href={personReportsHref(person.id)} className="text-accent-700 hover:underline">
+                    <Link href={personReportsHref(person.id, { open: true })} className="text-accent-700 hover:underline">
                       See all in Reports
                     </Link>
                   </p>

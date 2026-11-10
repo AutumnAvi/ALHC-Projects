@@ -40,6 +40,9 @@ import { ConvertTaskDialog, convertMenuItem } from "./task-convert";
 import { prefetchParents } from "./parent-search";
 import { OPEN_REPEATS_EVENT } from "./task-dates";
 import { displayTaskTitle } from "@alhc/core/request-numbers";
+import { reviewSendGate } from "@alhc/core/external-review";
+import { listManualRules } from "@/lib/actions/automations";
+import { useShellMemberId } from "@/components/shell/shell-context";
 
 const KIND_ICONS: Record<TaskKind, LucideIcon> = { task: CircleCheck, milestone: Diamond, approval: ThumbsUp };
 const HEADING = "px-2 pb-0.5 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-zinc-500";
@@ -89,9 +92,28 @@ export function TaskMoreMenu({
   const editableProjects = task.memberships.filter((m) => task.editableProjectIds.includes(m.projectId));
   // Oct 27 notes (batch 6): a task → "Make a subtask of…", a subtask → "Convert to main task…".
   const convert = convertMenuItem(task);
+  // Nov 10 batch 36: who may send the external review check (an approval task with approvers: one of its
+  // approvers, after approving), and whether any "Run manually" automation can run here (C67: the item is
+  // hidden when there's none; looked up when the menu opens).
+  const reviewGate = reviewSendGate(task, useShellMemberId() ?? "");
+  const [manualRules, setManualRules] = useState<number | null>(null);
+  const canRunRules = !task.isSubtask && task.memberships.length > 0;
 
   async function changeKind(kind: TaskKind) {
     if (kind === task.kind) return;
+    // C27: leaving Approval while a round is pending withdraws it; say so first.
+    const pendingRound = task.kind === "approval" && task.approval?.rounds[0]?.status === "pending";
+    if (
+      pendingRound &&
+      !(await confirm({
+        title: `Change to ${TASK_KIND_LABELS[kind].toLowerCase()}?`,
+        message: "This withdraws the request waiting with the approvers. They won’t be asked any more, and anyone who can edit the task can complete it.",
+        confirmLabel: "Change and withdraw",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
     if (
       kind === "milestone" &&
       task.startOn &&
@@ -131,8 +153,8 @@ export function TaskMoreMenu({
       if (!result.error) {
         notify(
           closed
-            ? "Reply thread closed. The submitter’s replies won’t be posted."
-            : "Reply thread reopened. The submitter’s replies come back as comments.",
+            ? "Email conversation turned off. The submitter’s replies won’t be posted."
+            : "Email conversation back on. The submitter’s replies come back as comments.",
           { label: "Undo", onClick: () => run(() => setReplyThreadClosed(task.id, !closed)) },
         );
       }
@@ -187,6 +209,11 @@ export function TaskMoreMenu({
         // Nov 2 notes (batch 16, 124): "Make a subtask of…" opens with its list already loaded.
         onOpenChange={(open) => {
           if (open && convert?.to === "subtask") prefetchParents(task.id);
+          if (open && canEdit && canRunRules && manualRules === null) {
+            void listManualRules(task.id)
+              .then((r) => setManualRules(r.error ? 0 : r.rules.length))
+              .catch(() => setManualRules(0));
+          }
         }}
       >
         {(close) => (
@@ -199,8 +226,13 @@ export function TaskMoreMenu({
                   () => window.dispatchEvent(new Event(OPEN_REPEATS_EVENT)),
                   close,
                 )}
-                {/* Oct 26 notes (batch 3): files out for review by a client (or anyone) by email. */}
-                {item(Send, "Send review check…", () => setDialog("review"), close)}
+                {/* Oct 26 notes (batch 3): files out for review by a client (or anyone) by email. Nov 10
+                    batch 36: on an approval task with approvers the approver sends it, after approving. */}
+                {reviewGate.allowed
+                  ? item(Send, "Send review check…", () => setDialog("review"), close)
+                  : reviewGate.order === "after_approval"
+                    ? item(Send, "Send review check…", () => notify(reviewGate.reason ?? ""), close)
+                    : null}
                 {canAddSubtask ? item(ListPlus, "Add subtask", onAddSubtask, close) : null}
                 {item(Paperclip, "Attach files…", onAttach, close)}
                 <div role="separator" className="my-1 border-t border-zinc-100" />
@@ -230,14 +262,15 @@ export function TaskMoreMenu({
                 {editableProjects.length ? item(LayoutTemplate, "Save as task template…", () => setDialog("template"), close) : null}
                 {item(Copy, task.isSubtask ? "Duplicate subtask…" : "Duplicate task…", () => setDialog("duplicate"), close)}
                 {/* "Run manually" rules (Automations V2) run on top-level tasks of their project only. */}
-                {!task.isSubtask && task.memberships.length ? item(Workflow, "Run an automation…", () => setDialog("rule"), close) : null}
+                {canRunRules && manualRules ? item(Workflow, "Run an automation…", () => setDialog("rule"), close) : null}
                 {task.replyThread
                   ? task.replyThread.closed
-                    ? item(MailCheck, "Reopen reply thread", () => setThreadClosed(false), close)
-                    : item(MailX, "Close reply thread", () => setThreadClosed(true), close)
+                    ? item(MailCheck, "Turn the email conversation back on", () => setThreadClosed(false), close)
+                    : item(MailX, "Turn off the email conversation", () => setThreadClosed(true), close)
                   : null}
               </>
             ) : null}
+            {!canEdit && reviewGate.allowed ? item(Send, "Send review check…", () => setDialog("review"), close) : null}
             {item(Link2, "Copy task link", onCopyLink, close)}
             {item(Printer, "Print", printTask, close)}
             {canEdit ? (

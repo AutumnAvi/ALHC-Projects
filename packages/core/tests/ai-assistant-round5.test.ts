@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ASSISTANT_LIMITS, escalationReason, routeAssistant } from "@alhc/core/ai-assistant";
-import { aiStepTypes } from "@alhc/core/ai-rule-steps";
+import { OUTWARD_STEPS, aiStepTypes } from "@alhc/core/ai-rule-steps";
 import { structuredOutputIssues } from "@alhc/core/ai-builder";
 import { AI_TOOLS, TOOL_NAMES, WRITE_TOOLS, capabilityMatrix, capabilityRefusal, registryHelp, toolInputSchema, toolMeta, toolsFor, type ToolName } from "@alhc/core/ai-tools";
 import { createApiContext } from "@alhc/core/api/core/context";
@@ -39,7 +39,9 @@ const AVI = "this automation should be setting the task to an approval task and 
 // ---- Note 177 --------------------------------------------------------------------------------------
 
 test("177: the rule vocabulary has the approval / task-type steps (no more 'can't rewrite')", () => {
-  for (const t of ["set_task_type", "request_approval"]) assert.ok(aiStepTypes("project", "action").includes(t), t);
+  assert.ok(aiStepTypes("project", "action").includes("set_task_type"));
+  assert.ok(!aiStepTypes("project", "action").includes("request_approval"), "retired for new steps");
+  assert.ok(OUTWARD_STEPS.project.has("request_approval"));
   assert.ok(aiStepTypes("project", "trigger").includes("approval_decided"));
   assert.ok(aiStepTypes("project", "trigger").includes("task_type_changed"));
   for (const c of ["task_type_is", "task_type_is_not", "approval_status_is"]) assert.ok(aiStepTypes("project", "condition").includes(c), c);
@@ -96,7 +98,7 @@ test("177 on a task page: the task becomes an approval task with the asker as ap
   assert.equal(live(s).replace(/"approvers":\[[^\]]*\]/, ""), before.replace(/"approvers":\[[^\]]*\]/, ""));
 });
 
-test("177: an Editor can't change automations (plain reason); Commenters and Viewers get answers only", async () => {
+test("177: an Editor can change automations; Commenters and Viewers get answers only", async () => {
   const s = world("editor");
   const m = toolModel(
     once((ctx) => {
@@ -104,12 +106,14 @@ test("177: an Editor can't change automations (plain reason); Commenters and Vie
       return [{ name: "update_automation", input: { automation_ref: ctx.automations[0].ref, automation: { name: "Triage", ...steps, actions: [...steps.actions, { type: "set_task_type", kind: "approval", approvers: ["me"] }] } } }];
     }),
   );
-  await assert.rejects(propose(db(s), m.p, AVI, RULE_PAGE), reject("invalid", "only Owners and Admins"));
+  const prop = await propose(db(s), m.p, AVI, RULE_PAGE);
+  assert.equal(prop.ops.length, 1, JSON.stringify(prop.rejected));
+  assert.equal(prop.ops[0].op, "update_automation");
   for (const role of ["commenter", "viewer"]) {
     const m2 = toolModel(once(() => []));
-    const prop = await propose(db(world(role)), m2.p, AVI, RULE_PAGE);
-    assert.equal(prop.mode, "answer");
-    assert.equal(prop.answerOnly, true);
+    const prop2 = await propose(db(world(role)), m2.p, AVI, RULE_PAGE);
+    assert.equal(prop2.mode, "answer");
+    assert.equal(prop2.answerOnly, true);
     assert.equal(m2.calls.length, 0, "no tool conversation");
   }
 });
@@ -224,9 +228,11 @@ test("the role matrix comes from the registry and never exceeds manual permissio
   const matrix = capabilityMatrix();
   assert.equal(matrix.length, WRITE_TOOLS.length);
   const facts = (role: "owner" | "admin" | "editor" | "commenter" | "viewer", archived = false) => ({ projectName: "Launch", role, archived });
-  // Automations: Admin+ (as by hand); tasks: Editor+; members: Admin+; nothing in an archived project.
-  assert.equal(capabilityRefusal("create_automation", facts("admin")), null);
-  assert.match(capabilityRefusal("create_automation", facts("editor"))!, /only Owners and Admins/);
+  // Automations and forms: Editor+ (as by hand); tasks: Editor+; members: Admin+; nothing in an archived project.
+  assert.equal(capabilityRefusal("create_automation", facts("editor")), null);
+  assert.match(capabilityRefusal("create_automation", facts("commenter"))!, /only Owners and Editors/);
+  assert.equal(capabilityRefusal("create_form", facts("editor")), null);
+  assert.match(capabilityRefusal("create_form", facts("commenter"))!, /only Owners and Editors/);
   assert.equal(capabilityRefusal("rename_task", facts("editor")), null);
   assert.match(capabilityRefusal("rename_task", facts("commenter"))!, /doesn’t allow/);
   assert.match(capabilityRefusal("rename_task", facts("owner", true))!, /archived/);

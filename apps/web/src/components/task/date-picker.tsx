@@ -11,13 +11,15 @@ import {
   monthGrid,
   monthLabel,
   monthOf,
-  nextWeekMonday,
   parseDateInput,
   parseTimeInput,
   shiftDays,
   shiftMonth,
   shortDate,
+  weekdayOf,
 } from "@alhc/core/date-input";
+import { nextWeekWorkday } from "@alhc/core/checklist";
+import { useWorkWeek } from "@/components/shell/shell-context";
 
 // The task pane's date picker (Asana parity, batch 3): a month calendar with quick picks, an optional
 // start date, and room below for time and Repeats. It replaces the browser's mm/dd/yyyy and time
@@ -34,12 +36,16 @@ function useCalendarToday() {
   return useToday() ?? localToday();
 }
 
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 export function QuickPicks({ onPick }: { onPick: (day: string) => void }) {
   const today = useCalendarToday();
+  const nextWeek = nextWeekWorkday(today, useWorkWeek());
   const picks = [
     { label: "Today", day: today },
     { label: "Tomorrow", day: shiftDays(today, 1) },
-    { label: "Next week", day: nextWeekMonday(today) },
+    // Next week's first workday, like My tasks' chips and quick add (@alhc/core/checklist).
+    { label: `Next week · ${WEEKDAY_SHORT[weekdayOf(nextWeek)]}`, day: nextWeek },
   ];
   return (
     <div className="flex flex-wrap gap-1.5" role="group" aria-label="Quick picks">

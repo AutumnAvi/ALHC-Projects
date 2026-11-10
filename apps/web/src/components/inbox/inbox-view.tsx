@@ -141,10 +141,16 @@ export function InboxView({
     change([item.id], { read }, () => (read ? markInboxRead([item.id]) : markInboxUnread(item.id)));
 
   // "Mark all as read" on Activity covers every unread notification, older ones past the newest
-  // INBOX_LIMIT included; on the other tabs, the unread ones in that tab. They turn read at once.
-  const unreadIds = tabItems.filter((item) => !isRead(item)).map((item) => item.id);
+  // INBOX_LIMIT included; on the other tabs, the unread ones in that tab. With a filter on, only the unread
+  // ones it shows ("Mark these 4 as read", like Archive; Nov 10 audit, C31). They turn read at once.
+  const unreadIds = (filtering ? visible : tabItems).filter((item) => !isRead(item)).map((item) => item.id);
+  const markAllReadLabel = !filtering
+    ? "Mark all as read"
+    : unreadIds.length === 1
+      ? "Mark this one as read"
+      : `Mark these ${unreadIds.length} as read`;
   function markAllRead() {
-    change(unreadIds, { read: true }, () => markInboxRead(tab === "activity" ? "all" : unreadIds));
+    change(unreadIds, { read: true }, () => markInboxRead(tab === "activity" && !filtering ? "all" : unreadIds));
   }
 
   // Activity only. With a filter on it archives just the notifications shown; otherwise every one in
@@ -197,6 +203,7 @@ export function InboxView({
         onSortChange={setSort}
         categoryCounts={categoryCounts}
         canMarkAllRead={unreadIds.length > 0}
+        markAllReadLabel={markAllReadLabel}
         onMarkAllRead={markAllRead}
         archiveAll={archiveAll}
       />

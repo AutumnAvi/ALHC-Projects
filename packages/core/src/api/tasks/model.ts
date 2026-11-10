@@ -41,6 +41,8 @@ export type ProjectTask = {
   // The viewer is one of its approvers (Oct 29 notes, batch 7: only approvers complete an approval task;
   // everyone else's complete control is "Ready for approval"). Missing = not known.
   approvalIsApprover?: boolean;
+  // Nov 10 batch 36: the task's latest external review check was approved (the green dot; any kind of task).
+  externalApproved?: boolean;
   // Active tag links (ids; look names and colors up in listTags()).
   tagIds: string[];
   // Comments on the task (not deleted), for the speech-bubble count on List rows and Board cards.
@@ -87,6 +89,7 @@ export function projectTasksFromCards(data: Json): ProjectTask[] {
       approvalPaused: card.approval_paused === true,
       approvalWaitingOnMe: card.approval_waiting_on_me === true,
       approvalIsApprover: card.approval_is_approver === true,
+      externalApproved: card.external_approved === true,
       tagIds: Array.isArray(card.tag_ids) ? card.tag_ids.filter((tagId): tagId is string => typeof tagId === "string") : [],
       commentCount: typeof card.comment_count === "number" ? card.comment_count : 0,
       attachmentCount: typeof card.attachment_count === "number" ? card.attachment_count : 0,

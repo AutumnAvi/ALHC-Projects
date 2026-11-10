@@ -1,45 +1,47 @@
 "use client";
 
 import { useOptimistic } from "react";
+import { Hash } from "lucide-react";
 import { useServerAction } from "@/components/toast";
+import { OPEN_CUSTOMIZE_EVENT, type OpenCustomizeDetail } from "@/components/project/customize-panel";
 import { setDependencyShiftMode } from "@/lib/actions/dependencies";
-import { updateProjectWorkflow } from "@/lib/actions/numbering";
-import type { Project } from "@alhc/core/api/projects/model";
+import { nextTaskLabel } from "@alhc/core/customize";
+import type { TaskNumbering } from "@alhc/core/request-numbers";
 import { DEPENDENCY_SHIFT_MODES, DEPENDENCY_SHIFT_OPTIONS, type DependencyShiftMode } from "@alhc/core/dependencies";
 
-export function ProjectSettings({ project }: { project: Project }) {
-  const [pending, run] = useServerAction();
-
+// Settings → General → Task numbering (flaw audit C45): one editor for numbering, Customize → Task
+// numbering. Here a short summary and a button that opens it.
+export function TaskNumberingSummary({ projectId, numbering }: { projectId: string; numbering: TaskNumbering | null }) {
+  const on = Boolean(numbering?.enabled);
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-gutter py-5">
-      <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="approvals-settings-heading">
-        <h2 id="approvals-settings-heading" className="text-sm font-semibold text-zinc-900">
-          Approvals
+    <section className="rounded-lg border border-zinc-200 p-5" aria-labelledby="numbering-summary-heading">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="numbering-summary-heading" className="text-sm font-semibold text-zinc-900">
+          Task numbering
         </h2>
-        <p className="mt-1 text-sm text-zinc-600">
-          Deciding an approval always records the decision and completes its approval subtask (when approved or
-          rejected). Optionally, approving also completes the task itself.
-        </p>
-        <label className="mt-3 flex items-center gap-2 text-sm text-zinc-800">
-          <input
-            type="checkbox"
-            defaultChecked={project.approval_completes_task}
-            disabled={pending}
-            onChange={(e) => {
-              const approvalCompletesTask = e.currentTarget.checked;
-              run(() => updateProjectWorkflow(project.id, { approvalCompletesTask }));
-            }}
-            className="size-4 accent-zinc-900"
-          />
-          Complete the task when an approval on it is approved
-        </label>
-      </section>
-    </div>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent<OpenCustomizeDetail>(OPEN_CUSTOMIZE_EVENT, { detail: { projectId, view: "numbers" } }),
+            )
+          }
+        >
+          <Hash className="size-3.5" aria-hidden /> Change in Customize
+        </button>
+      </div>
+      <p className="mt-1 text-sm text-zinc-600">
+        {on && numbering
+          ? `On. The next task gets ${nextTaskLabel(numbering)}.`
+          : "Off. Turn it on to give each new task a number like Task #12."}
+      </p>
+    </section>
   );
 }
 
 // Settings → General → Dependencies (Oct 27 notes, batch 6): what happens to dependent tasks when a
-// task's dates change — Auto-shift, Ask me (the default), or Off. Admins and Owners change it (the
+// task's dates change — Auto-shift, Ask me (the default), or Off. Owners change it (the
 // database refuses anyone else); everyone else sees it read-only. The prompt links here (#dependencies).
 export function DependencyShiftSettings({
   projectId,
@@ -60,8 +62,8 @@ export function DependencyShiftSettings({
       </h2>
       <p className="mt-1 text-sm text-zinc-600">
         Tasks can wait on other tasks. When a task moves, the tasks that depend on it can move with it, later
-        or earlier, keeping the same gap. This applies everywhere dates change: the task, Calendar, Timeline,
-        Workload, and bulk edits.
+        or earlier, keeping the same gap. This applies everywhere dates change: the task, Calendar, Workload,
+        and bulk edits (Timeline drags use Shift / Alt instead).
       </p>
       <fieldset className="mt-3 min-w-0" disabled={!canEdit || pending} aria-describedby={canEdit ? undefined : "dependencies-read-only"}>
         <legend className="text-xs font-medium text-zinc-700">When a task’s dates change</legend>
@@ -104,7 +106,7 @@ export function DependencyShiftSettings({
       </fieldset>
       {canEdit ? null : (
         <p id="dependencies-read-only" className="mt-2 text-xs text-zinc-500">
-          Only the project’s Admins and Owners change this.
+          Only the project’s Owners change this.
         </p>
       )}
     </section>

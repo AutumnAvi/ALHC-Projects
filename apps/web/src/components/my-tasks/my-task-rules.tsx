@@ -191,7 +191,7 @@ export function MyTaskRulesDialog({ rules, ctx, onClose }: { rules: MyTaskRule[]
         <div className="flex flex-col gap-3">
           {rules.length === 0 ? (
             <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500">
-              No automations yet. For example: when a task is due tomorrow, move it to Do today.
+              No automations yet. For example: when a task is assigned to you with no due date, set it to 3 business days from today.
             </p>
           ) : (
             <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
@@ -519,7 +519,8 @@ export function MyTaskRuleEditor({ rule, ctx, onDone }: { rule: MyTaskRule | nul
       MY_TASK_TRIGGERS.find((t) => t.value === triggerType)?.label ?? triggerType,
       actions.map((a) =>
         withTarget(
-          MY_TASK_ACTIONS.find((x) => x.value === a.type)?.label ?? a.type,
+          // The picker's "(Sections view)" hint stays out of the name.
+          (MY_TASK_ACTIONS.find((x) => x.value === a.type)?.label ?? a.type).replace(/ \(Sections view\)$/, ""),
           a.type === "move_to_section" ? ctx.sections.find((x) => x.id === a.section_id)?.name : null,
           /\bmy section\b/,
         ),

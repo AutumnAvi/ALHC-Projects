@@ -103,10 +103,12 @@ export function parseInviteResult(value: unknown): InviteResult | null {
 
 export function describeInvites(results: InviteResult[]): string {
   const sent = results.filter((r) => r.status === "invited" || r.status === "restored").length;
-  const skipped = results.length - sent;
+  const member = results.filter((r) => r.status === "already_member").length;
+  const invited = results.filter((r) => r.status === "already_invited").length;
   const parts = [];
   if (sent) parts.push(`Invited ${sent} ${sent === 1 ? "person" : "people"}`);
-  if (skipped) parts.push(`${skipped} already in the workspace`);
+  if (member) parts.push(`${member} already in the workspace`);
+  if (invited) parts.push(`${invited} already invited`);
   return parts.join(" · ") || "No changes";
 }
 

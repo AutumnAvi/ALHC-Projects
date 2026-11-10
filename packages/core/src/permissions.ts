@@ -12,7 +12,9 @@ export type Permissions = {
   canComment: boolean;
   // Create, edit, complete, move, select, drag, add tasks and sections (Editor+).
   canEdit: boolean;
-  // Members, rules, forms, settings (Admin+ — owners, and older Admin memberships).
+  // Build automations and forms (Editor+: Owners and Editors, Nov 10).
+  canBuild: boolean;
+  // Members, integrations, settings (Admin+ — owners, and older Admin memberships).
   canManage: boolean;
   // Ownership and deleting the project.
   isOwner: boolean;
@@ -29,6 +31,7 @@ export function permissionsFor(role: ProjectRole | null | undefined): Permission
     canView: hasRole(known, "viewer"),
     canComment,
     canEdit,
+    canBuild: canEdit,
     canManage: hasRole(known, "admin"),
     isOwner: hasRole(known, "owner"),
     readOnlyNote: canEdit ? null : canComment ? "You can comment on this task" : "View only",

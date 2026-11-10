@@ -232,10 +232,14 @@ const SORT_BASE: { value: SortKey; label: string }[] = [
 export function sortOptions(fields: FieldDef[]) {
   return [
     ...SORT_BASE,
-    ...fields
-      .filter((f) => !f.boundToSections)
-      .map((f) => ({ value: fieldRef(f.id), label: f.name })),
+    ...fields.filter(fieldSortable).map((f) => ({ value: fieldRef(f.id), label: f.name })),
   ];
+}
+
+// Nov 10 (flaw audit C41): People and Multi-select values have no order people can read (they'd sort by
+// hidden ids), so those fields aren't offered as a sort; nor is the section-bound Status (sort by section).
+export function fieldSortable(field: Pick<FieldDef, "boundToSections" | "fieldType">): boolean {
+  return !field.boundToSections && field.fieldType !== "people" && field.fieldType !== "multi_select";
 }
 
 export function groupOptions(fields: FieldDef[], tags = true): { value: GroupBy; label: string }[] {
@@ -536,6 +540,21 @@ export function withoutTags(config: ViewConfig): ViewConfig {
   return out;
 }
 
+// Nov 10 (flaw audit C40): the toolbar's search is temporary. It never makes a view "changed" and is never
+// saved into one: saving keeps whatever search the saved view itself had (`withSearchOf(next, saved)`).
+export function withoutSearch(config: ViewConfig): ViewConfig {
+  if (!config.filters?.text) return config;
+  const filters = { ...config.filters };
+  delete filters.text;
+  return withFilters(config, filters);
+}
+
+export function withSearchOf(config: ViewConfig, source: ViewConfig): ViewConfig {
+  const next = withoutSearch(config);
+  const text = source.filters?.text;
+  return text ? withFilters(next, { ...(next.filters ?? {}), text }) : next;
+}
+
 export function hasActiveFilters(filters: ViewFilters | undefined) {
   return Boolean(filters && Object.keys(filters).length > 0);
 }
@@ -549,7 +568,11 @@ export function withFilters(config: ViewConfig, filters: ViewFilters): ViewConfi
 // Oct 27 notes (batch 5): Show / Hide completed in the List and Board toolbar, remembered per person per
 // project (project_person_settings.show_completed). It sets the config's completion filter: shown = all
 // tasks, hidden = incomplete (the default), and drops "completed in the last N days".
+//
+// Nov 10 (flaw audit C5): a view that shows only completed tasks ("Completed", "Completed in the last N
+// days") is about completed work, so the switch leaves it alone; it only ever flips incomplete ↔ all.
 export function withShowCompleted(config: ViewConfig, show: boolean): ViewConfig {
+  if (completionOf(config.filters) === "completed") return config;
   const filters: ViewFilters = { ...(config.filters ?? {}) };
   delete filters.completed_within_days;
   if (show) filters.completion = "all";

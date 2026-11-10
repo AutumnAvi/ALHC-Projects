@@ -71,11 +71,15 @@ export const PORTFOLIO_ROLE_LABELS: Record<PortfolioRole, string> = {
   viewer: "Viewer",
 };
 
+// Nov 10 audit (C78): portfolios offer the project role set — Owner, Editor, Viewer. Admin is no longer
+// given out; an existing Admin membership still shows as its current role.
+export const OFFERED_PORTFOLIO_ROLES: readonly PortfolioRole[] = ["owner", "editor", "viewer"];
+
 export const PORTFOLIO_ROLE_DESCRIPTIONS: Record<PortfolioRole, string> = {
-  owner: "Everything, including ownership and deleting the portfolio",
-  admin: "Invite people and change their roles",
-  editor: "Rename, edit notes, and add, remove, or reorder projects",
-  viewer: "Read only",
+  owner: "Everything, including members, ownership, and deleting the portfolio",
+  admin: "Invites people, changes their roles, and does everything an Editor does (no longer given out)",
+  editor: "Renames, edits notes, adds, removes, or reorders projects, and sets up automations",
+  viewer: "Can see the portfolio, but not change it",
 };
 
 const PORTFOLIO_RANK: Record<PortfolioRole, number> = { viewer: 1, editor: 2, admin: 3, owner: 4 };
@@ -88,10 +92,11 @@ export function hasPortfolioRole(role: PortfolioRole | null | undefined, min: Po
   return Boolean(role) && PORTFOLIO_RANK[role!] >= PORTFOLIO_RANK[min];
 }
 
-// Roles a portfolio member with `role` may hand out: admins up to admin, owners anything.
+// Roles a portfolio member with `role` may hand out: owners any offered role, an existing Admin any but
+// Owner. Admin itself is never offered (menus still show a member's current role).
 export function assignablePortfolioRoles(role: PortfolioRole | null | undefined): PortfolioRole[] {
-  if (role === "owner") return [...PORTFOLIO_ROLES];
-  if (role === "admin") return PORTFOLIO_ROLES.filter((r) => r !== "owner");
+  if (role === "owner") return [...OFFERED_PORTFOLIO_ROLES];
+  if (role === "admin") return OFFERED_PORTFOLIO_ROLES.filter((r) => r !== "owner");
   return [];
 }
 
@@ -119,6 +124,6 @@ export const COMMENTER_OFF_REASON = "Turn on in Admin console → Security";
 
 // Team roles (lead / member), for the same picker on team member lists.
 export const TEAM_ROLE_DESCRIPTIONS: Record<"lead" | "member", string> = {
-  lead: "Manages the team: its name, members, and curated work",
-  member: "Belongs to the team and sees its messages and work",
+  lead: "Manages the team: its name, members, and pinned projects",
+  member: "Belongs to the team and can see its work",
 };

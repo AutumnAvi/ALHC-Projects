@@ -61,6 +61,11 @@ export type CustomizeSummary = {
 
 type View = "home" | "rules" | "fields" | "forms" | "emails" | "apps" | "status" | "numbers" | "tabs";
 
+// Opens the project's Customize panel on one of its pages from elsewhere on the project's screens (Settings
+// → General's Task numbering summary: flaw audit C45). detail = { projectId, view }.
+export const OPEN_CUSTOMIZE_EVENT = "alhc:open-customize";
+export type OpenCustomizeDetail = { projectId: string; view: "numbers" };
+
 const VIEW_TITLES: Record<Exclude<View, "home">, string> = {
   rules: "Automations",
   fields: "Fields",
@@ -112,6 +117,17 @@ export function CustomizePanel({
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<OpenCustomizeDetail>).detail;
+      if (detail?.projectId !== projectId) return;
+      setView(detail.view);
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_CUSTOMIZE_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_CUSTOMIZE_EVENT, onOpen);
+  }, [projectId, setOpen]);
 
   // Focus the panel's first control whenever it opens or changes view.
   useEffect(() => {
@@ -197,7 +213,7 @@ export function CustomizePanel({
               ) : view === "fields" ? (
                 <FieldsPage projectId={projectId} base={base} summary={summary} />
               ) : view === "forms" ? (
-                <FormsPage projectId={projectId} base={base} forms={summary.forms} />
+                <FormsPage projectId={projectId} base={base} back={pathname} forms={summary.forms} />
               ) : view === "emails" ? (
                 <EmailsPage base={base} back={pathname} summary={summary} details={details === undefined ? "loading" : details} />
               ) : view === "apps" ? (

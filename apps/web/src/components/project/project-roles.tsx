@@ -45,7 +45,7 @@ export function ProjectRolesSection({
   return (
     <section aria-labelledby="overview-project-roles">
       <h2 id="overview-project-roles" className={titleClass}>
-        Project roles
+        Who does what
       </h2>
       <p className="mt-1 text-xs text-zinc-500">
         Name the jobs on this project — Approver, Designer, Lead — and who does each. Tasks and automations can say

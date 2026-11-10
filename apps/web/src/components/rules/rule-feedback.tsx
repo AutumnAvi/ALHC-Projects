@@ -6,7 +6,6 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react"
 import { createPortal } from "react-dom";
 import { AlertTriangle, CheckCircle2, ChevronDown, Loader2, XCircle, Zap } from "lucide-react";
 import { useRichToast, useToastDock } from "@/components/toast";
-import { onLocalMutationEnd, openMutationStarts, subscribeOpenMutations } from "@/lib/optimistic-session";
 import {
   LONG_MS,
   entryNeedsAttention,
@@ -17,7 +16,6 @@ import {
   indicatorVisible,
   nextTick,
   noteFinishedRuns,
-  noteWriteEnded,
   runningState,
   subscribeRunning,
   type RunningEntry,
@@ -148,44 +146,19 @@ export function RuleFeedbackLayer() {
 }
 
 // Nov 3 notes (batch 19, 141): bottom left, in the toast column (toasts stack above it). Shows once an
-// automation (or a change that may start some) has been running for a moment, with how many are running;
+// automation has been running for a moment, with how many are running;
 // a click lists each one with its target task: "Running…" until it's done, then "Ran".
 function RunningIndicator() {
   const dock = useToastDock();
   const panelId = useId();
   const { entries, lingerUntil } = useSyncExternalStore(subscribeRunning, runningState, runningState);
-  // The open writes' start times, as a string so the snapshot is stable.
-  const openKey = useSyncExternalStore(
-    subscribeOpenMutations,
-    () => openMutationStarts().join(","),
-    () => "",
-  );
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState(false);
 
-  useEffect(() => onLocalMutationEnd((startedAt) => noteWriteEnded(startedAt)), []);
-
-  // Writes still saving show as "Your change · Saving…" (unless a manual run covers them).
-  const automationRunning = entries.some((e) => e.kind === "automation" && e.status === "running");
-  const writes: RunningEntry[] = automationRunning
-    ? []
-    : openKey
-        .split(",")
-        .filter(Boolean)
-        .map((at, i) => ({
-          key: `write-${at}-${i}`,
-          kind: "write",
-          ruleId: null,
-          ruleName: null,
-          projectId: null,
-          tasks: [],
-          taskCount: 0,
-          status: "running",
-          startedAt: Number(at),
-          endedAt: null,
-          detail: null,
-        }));
-  const all = [...writes, ...entries];
+  // C38 (Nov 10): only automations show here — a manual run, or a run the feedback check reported. A slow
+  // save on its own (a comment, an upload, a profile change) never raises the pill: most writes start no
+  // automation, and the feedback toasts name the ones that did.
+  const all = entries;
 
   // Re-render when something crosses LONG_MS or the linger runs out (and every second while running).
   useEffect(() => {

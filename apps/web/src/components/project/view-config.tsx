@@ -2,7 +2,8 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useContext, useMemo, useOptimistic, useTransition, type ReactNode } from "react";
-import { encodeConfig, sameConfig, type ViewConfig } from "@alhc/core/views";
+import { useNotify } from "@/components/toast";
+import { encodeConfig, sameConfig, withoutSearch, type ViewConfig } from "@alhc/core/views";
 
 // The view's config as the page shows it, shared by the toolbar and the List's column header menus
 // (sort, hide, move): one optimistic draft that lives in ?f= until it's saved to the view or reset.
@@ -44,6 +45,7 @@ export function ViewConfigProvider({
   const [, startTransition] = useTransition();
   const [current, setCurrent] = useOptimistic(config);
   const [base, setBase] = useOptimistic(baseConfig);
+  const notify = useNotify();
 
   const value = useMemo<ViewConfigState>(() => {
     const urlFor = (next: ViewConfig | null) => {
@@ -60,7 +62,8 @@ export function ViewConfigProvider({
     return {
       current,
       base,
-      isDraft: !sameConfig(current, base),
+      // The toolbar's search is temporary (flaw audit C40): typing in it never counts as changing the view.
+      isDraft: !sameConfig(withoutSearch(current), withoutSearch(base)),
       urlFor,
       apply: (next) =>
         startTransition(() => {
@@ -73,11 +76,12 @@ export function ViewConfigProvider({
           if (nextBase) setBase(nextBase);
           const drafting = searchParams.has("f");
           const result = await save();
-          if (result.error) return;
+          // The switch goes back by itself; say why (flaw audit C99).
+          if (result.error) return notify(`Couldn’t save that: ${result.error}`);
           if (drafting || result.remembered === false) router.replace(urlFor(next), { scroll: false });
         }),
     };
-  }, [current, base, searchParams, pathname, router, setCurrent, setBase]);
+  }, [current, base, searchParams, pathname, router, setCurrent, setBase, notify]);
 
   return <ViewConfigContext.Provider value={value}>{children}</ViewConfigContext.Provider>;
 }

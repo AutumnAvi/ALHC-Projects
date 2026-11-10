@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { History } from "lucide-react";
-import { DependencyShiftSettings, ProjectSettings } from "@/components/project/project-settings";
-import { TaskNumberingForm } from "@/components/project/task-numbering";
+import { DependencyShiftSettings, TaskNumberingSummary } from "@/components/project/project-settings";
 import { ProjectStatusForm } from "@/components/project/project-status-form";
 import { ProjectStatusHistory } from "@/components/project/project-status-history";
 import { ProjectTeamSettings } from "@/components/project/project-team-settings";
@@ -13,8 +12,6 @@ import {
   getProjectOrigin,
   getProjectRole,
   getRequestSequence,
-  listProjectFields,
-  listSections,
   getWorkspace,
   listMyTeamIds,
   listProjectStatusUpdates,
@@ -37,11 +34,9 @@ export default async function ProjectSettingsPage({
   params,
 }: PageProps<"/projects/[projectId]/settings">) {
   const { projectId } = await params;
-  const [project, sequence, sections, fields, origin, timeZone, statusUpdates, workspace, teams, myTeams, shiftMode, role] = await Promise.all([
+  const [project, sequence, origin, timeZone, statusUpdates, workspace, teams, myTeams, shiftMode, role] = await Promise.all([
     getProject(projectId),
     getRequestSequence(projectId),
-    listSections(projectId),
-    listProjectFields(projectId),
     getProjectOrigin(projectId),
     getViewerTimeZone(),
     listProjectStatusUpdates(projectId),
@@ -64,18 +59,14 @@ export default async function ProjectSettingsPage({
       <ProjectStatusForm project={project} />
       <ProjectStatusHistory updates={statusUpdates} />
       {/* Nov 1 notes (batch 11): each part is shown only to the roles that can change it — Editors+ for
-          numbering, Admins+ for the rest — instead of a disabled form. */}
+          numbering, Owners for the rest — instead of a disabled form. */}
       {hasRole(role, "editor") ? (
         <div className="mx-auto max-w-3xl px-gutter pt-5">
-          <TaskNumberingForm
-            projectId={project.id}
-            sequence={sequence}
-            sections={sections.map((section) => ({ id: section.id, name: section.name }))}
-            fields={fields}
-          />
+          {/* Nov 10 (flaw audit C45): one numbering editor, Customize → Task numbering; here a summary. */}
+          <TaskNumberingSummary projectId={project.id} numbering={sequence} />
         </div>
       ) : null}
-      {/* Oct 27 notes (batch 6): Admin+ by their own role (archived projects cap everyone at Viewer). */}
+      {/* Oct 27 notes (batch 6): Owners by their own role (archived projects cap everyone at Viewer). */}
       {hasRole(role, "admin") ? (
         <>
           <div className="mx-auto max-w-3xl px-gutter pt-5">
@@ -87,7 +78,6 @@ export default async function ProjectSettingsPage({
             visibility={isProjectVisibility(project.visibility) ? project.visibility : "private"}
             teams={teamChoices}
           />
-          <ProjectSettings project={project} />
         </>
       ) : null}
     </>

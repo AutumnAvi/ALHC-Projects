@@ -340,7 +340,7 @@ function PrivateChip() {
   return (
     <span
       className="chip hidden shrink-0 @md:inline-flex"
-      title="Private: only you and its assignee can see it, until it’s added to a project"
+      title="Private: only the person who made it and its assignee can see it, until it’s added to a project"
     >
       <Lock className="size-3 shrink-0" aria-hidden />
       Private

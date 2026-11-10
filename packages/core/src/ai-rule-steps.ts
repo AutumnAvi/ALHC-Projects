@@ -19,6 +19,7 @@
 // and turning it on asks for a separate confirmation that names who gets messaged (outwardRecipients).
 import { autoRuleName } from "./rule-autoname";
 import { ruleProblems, stepParams, STEP_TYPES, type RuleParam, type RuleStep, type RuleSystem, type StepKind } from "./rule-params";
+import { RETIRED_ACTIONS } from "./rules";
 import type { Json } from "./supabase/database.types";
 
 export const AI_EXCLUDED_STEPS: Record<RuleSystem, ReadonlySet<string>> = {
@@ -37,7 +38,9 @@ export const OUTWARD_STEPS: Record<RuleSystem, ReadonlySet<string>> = {
 export const AI_RULE_LIMITS = { conditions: 20, actions: 10, branches: 5, keysPerStep: 20, textMax: 5000 } as const;
 
 export function aiStepTypes(system: RuleSystem, kind: StepKind): string[] {
-  return STEP_TYPES[system][kind].map((s) => s.value).filter((v) => kind !== "action" || !AI_EXCLUDED_STEPS[system].has(v));
+  return STEP_TYPES[system][kind]
+    .map((s) => s.value)
+    .filter((v) => kind !== "action" || (!AI_EXCLUDED_STEPS[system].has(v) && !RETIRED_ACTIONS.has(v)));
 }
 
 // One line per step type: its settings, which kind of value each takes, and the choices of a choice

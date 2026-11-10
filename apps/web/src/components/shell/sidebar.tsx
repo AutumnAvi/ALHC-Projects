@@ -17,7 +17,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import { useShell } from "@/components/shell/shell-context";
+import { useOpenInvite, useShell } from "@/components/shell/shell-context";
 import { UnreadBadge, useUnreadCount } from "@/components/shell/unread-count";
 import { Group, NAV_ICON, NAV_LINK } from "@/components/shell/sidebar-group";
 import { SidebarProjects, type SidebarProject } from "@/components/shell/sidebar-projects";
@@ -33,7 +33,8 @@ const TOP_LINKS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/inbox", label: "Inbox", icon: Inbox },
 ];
 const WORK_LINKS: { href: string; label: string; icon: LucideIcon }[] = [
-  { href: "/projects/browse", label: "Projects", icon: FolderKanban },
+  // "Browse projects": the collapsible "Projects" group below lists your own (Nov 10 audit, C76).
+  { href: "/projects/browse", label: "Browse projects", icon: FolderKanban },
   { href: "/portfolios", label: "Portfolios", icon: Briefcase },
   { href: "/goals", label: "Goals", icon: Target },
 ];
@@ -63,7 +64,8 @@ export function SidebarContent({
   unreadCount: number;
 }) {
   const pathname = usePathname();
-  const { member, openDialog, goalsEnabled } = useShell();
+  const { member, goalsEnabled } = useShell();
+  const openInvite = useOpenInvite();
   const workLinks = goalsEnabled ? WORK_LINKS : WORK_LINKS.filter((l) => l.href !== "/goals");
   const unread = useUnreadCount(unreadCount, member.id, "sidebar");
   const moreActive = MORE_LINKS.some((l) => isCurrent(pathname, l.href));
@@ -104,7 +106,7 @@ export function SidebarContent({
       <div className="shrink-0 border-t border-shell-line px-3 py-3">
         <button
           type="button"
-          onClick={() => openDialog({ kind: "invite" })}
+          onClick={openInvite}
           aria-haspopup="dialog"
           className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-shell-line text-sm text-shell-text hover:bg-shell-hover hover:text-white"
         >

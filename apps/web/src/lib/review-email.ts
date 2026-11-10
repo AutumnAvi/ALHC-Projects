@@ -34,6 +34,8 @@ export type ReviewEmailInput = {
   projectName: string | null;
   message: string | null;
   assets: ReviewEmailAsset[];
+  // Nov 10 batch 36: the one automatic reminder, 24 hours after the round was sent and still undecided.
+  reminder?: boolean;
 };
 
 // The email lists this many files; the rest are counted ("and 3 more files").
@@ -109,13 +111,16 @@ export function renderReviewEmail(input: ReviewEmailInput): Rendered {
     task_name: input.taskTitle,
     project_name: input.projectName,
   });
-  const heading = `Please review: ${input.taskTitle}`;
+  const heading = input.reminder ? `Reminder: please review ${input.taskTitle}` : `Please review: ${input.taskTitle}`;
   const greeting = input.recipientName ? `Hi ${input.recipientName.split(/\s+/)[0]},` : "Hi,";
   const count = input.assets.length === 1 ? "a file" : `${input.assets.length} files`;
   const intro = `${input.senderName} would like your review of ${count}${
     input.round > 1 ? ` (${roundLabel(input.round).toLowerCase()})` : ""
   }. Click a file to see it in full quality, pin comments right on it, and approve or leave feedback.`;
-  const paragraphs = [greeting, input.message?.trim() || "", intro].filter(Boolean);
+  const nudge = input.reminder
+    ? `Just a reminder: ${input.senderName} is still waiting for your review of ${count}. It only takes a minute.`
+    : null;
+  const paragraphs = (nudge ? [greeting, nudge, intro] : [greeting, input.message?.trim() || "", intro]).filter(Boolean);
 
   const grid = emailFileList(input.assets, (a) => urls.file(a.assetId));
   const buttons = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0 0 0"><tr><td bgcolor="${escapeHtml(
@@ -141,7 +146,9 @@ export function renderReviewEmail(input: ReviewEmailInput): Rendered {
   ].join("\n");
 
   return layout(heading, paragraphs, input.projectName ? [{ label: "Project", value: input.projectName }] : [], {
-    subject: `Review requested: ${input.taskTitle}${input.round > 1 ? ` (${roundLabel(input.round)})` : ""}`,
+    subject: `${input.reminder ? "Reminder: review requested" : "Review requested"}: ${input.taskTitle}${
+      input.round > 1 ? ` (${roundLabel(input.round)})` : ""
+    }`,
     alwaysBody: true,
     blocks: [{ html, text }],
     footer: [

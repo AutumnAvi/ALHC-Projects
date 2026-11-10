@@ -63,12 +63,16 @@ export const PROJECT_STATUSES = [
   { value: "complete", label: "Complete" },
 ] as const;
 
+// The roles Add members offers (C78, Nov 10: the project role set; Admin isn't given out any more, and
+// Commenter only while the workspace has it on — the builder leaves it out otherwise).
 export const MEMBER_ROLES = [
-  { value: "admin", label: "Admin" },
   { value: "editor", label: "Editor" },
   { value: "commenter", label: "Commenter" },
   { value: "viewer", label: "Viewer" },
 ] as const;
+
+// How an existing step's role reads (an older automation may still add people as Admins).
+const MEMBER_ROLE_LABELS = [...MEMBER_ROLES, { value: "admin", label: "Admin" }] as const;
 
 // Notify: the project's owner(s), all its members, or people.
 export const PROJECT_PEOPLE_ROLES = [
@@ -120,6 +124,8 @@ export type PortfolioRuleContext = {
   workWeek?: number[];
   // Nov 4 notes (batch 20, 150): the viewer's own workdays (null = not set).
   personalWorkWeek?: number[] | null;
+  // Whether the workspace gives out the Commenter role (Admin console → Security); absent = yes.
+  allowCommenter?: boolean;
 };
 
 function record(value: Json | undefined): Record<string, Json> {
@@ -347,7 +353,7 @@ export function describePortfolioAction(a: PortfolioRuleItem, ctx: PortfolioRule
     case "remove_members": {
       const names = strings(a.people).map((p) => portfolioPersonName(ctx, p));
       const who = names.length ? joinWords(names, "and") : a.type === "add_members" ? "(choose people to add)" : "(choose people to remove)";
-      return a.type === "add_members" ? `add ${who} as ${label(MEMBER_ROLES, a.role ?? "editor").toLowerCase()}` : `remove ${who}`;
+      return a.type === "add_members" ? `add ${who} as ${label(MEMBER_ROLE_LABELS, a.role ?? "editor").toLowerCase()}` : `remove ${who}`;
     }
     case "archive_project":
       return "archive the project";

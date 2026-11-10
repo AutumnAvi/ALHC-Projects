@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUpRight, Reply, Webhook } from "lucide-react";
+import { ArrowUpRight, Webhook } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { Segmented } from "@/components/project/view-chrome";
 import { CalendarSyncSettings } from "@/components/settings/calendar-sync";
@@ -30,6 +30,7 @@ import { SETTINGS_TABS, type EmailSetup, type SettingsTab } from "@alhc/core/she
 import { describeWorkWeek } from "@alhc/core/workdays";
 import { ONLY_ADMINS_NOTE, WORKSPACE_ROLE_LABELS } from "@alhc/core/workspace";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
+import { BRAND_SENDER_NAME } from "@/lib/email-design";
 
 export type SettingsData = { me: MySettings; email: EmailSetup };
 
@@ -40,11 +41,14 @@ export function SettingsPanel({
   data,
   tab,
   onTabChange,
+  onRetry,
 }: {
   // null while the modal is loading it.
   data: SettingsData | null;
   tab: SettingsTab;
   onTabChange: (tab: SettingsTab) => void;
+  // Loads the settings again (a part that didn't load says "Try again").
+  onRetry?: () => void;
 }) {
   const { closeDialog } = useShell();
   // "Email me about comments" once changed here (Notifications), so Email forwarding agrees with it.
@@ -128,9 +132,7 @@ export function SettingsPanel({
                   />
                 </div>
               ) : (
-                <p className="text-xs text-zinc-500">
-                  The email digest and scheduled report emails need this release’s database update.
-                </p>
+                <LoadFailed what="the email digest settings" onRetry={onRetry} />
               )}
               <NotificationMatrix
                 email={data.me.email}
@@ -140,7 +142,6 @@ export function SettingsPanel({
                 }}
                 onCommentEmailChange={setCommentEmails}
                 sending={data.email.sending}
-                replyByEmail={data.email.replyByEmail}
               />
             </div>
           ) : (
@@ -150,18 +151,12 @@ export function SettingsPanel({
                 enabled={commentEmails ?? data.me.emailComments}
                 onEnabledChange={setCommentEmails}
                 sending={data.email.sending}
-                replyByEmail={data.email.replyByEmail}
               />
               <InboxNotifications />
             </div>
           )
         ) : tab === "email_forwarding" ? (
-          <EmailForwardingTab
-            email={data.email}
-            myEmail={data.me.email}
-            commentEmails={commentEmails ?? data.me.emailComments}
-            onTabChange={onTabChange}
-          />
+          <EmailForwardingTab email={data.email} myEmail={data.me.email} onRetry={onRetry} />
         ) : tab === "calendar" ? (
           <CalendarSyncSettings />
         ) : tab === "account" ? (
@@ -169,10 +164,26 @@ export function SettingsPanel({
         ) : tab === "workspace" ? (
           <WorkspaceTab data={data.me} />
         ) : (
-          <DisplayTab data={data.me} />
+          <DisplayTab data={data.me} onRetry={onRetry} />
         )}
       </div>
     </div>
+  );
+}
+
+// A part of the modal that didn't load (Nov 10 audit, C29): plain words and a way to try again.
+export function LoadFailed({ what, onRetry }: { what?: string; onRetry?: () => void }) {
+  return (
+    <p role="alert" className="text-xs text-zinc-500">
+      Couldn’t load {what ?? "this"}.{" "}
+      {onRetry ? (
+        <button type="button" onClick={onRetry} className="font-medium text-accent-700 hover:underline">
+          Try again
+        </button>
+      ) : (
+        "Close Settings and try again."
+      )}
+    </p>
   );
 }
 
@@ -403,74 +414,32 @@ function ProfilePicture({
   );
 }
 
-// Email forwarding (Real features 1): the person's forwarding address, then the other email-ish ways in
-// (replying to a comment email, and a project's inbound webhooks).
-function EmailForwardingTab({
-  email,
-  myEmail,
-  commentEmails,
-  onTabChange,
-}: {
-  email: EmailSetup;
-  myEmail: string;
-  commentEmails: boolean;
-  onTabChange: (tab: SettingsTab) => void;
-}) {
+// Email forwarding (Real features 1): the person's forwarding address, then the other way in from outside
+// (a project's inbound webhooks). Replies to comment emails aren't read (only a form's submitter can reply
+// by email), so nothing here promises them (Nov 10 audit, C3).
+function EmailForwardingTab({ email, myEmail, onRetry }: { email: EmailSetup; myEmail: string; onRetry?: () => void }) {
   return (
     <div className="flex flex-col gap-6">
-      <EmailForwardingSection forwarding={email.forwarding} myEmail={myEmail} />
+      <EmailForwardingSection forwarding={email.forwarding} myEmail={myEmail} onRetry={onRetry} />
 
       <section aria-labelledby="works-today-heading">
         <h3 id="works-today-heading" className={HEADING}>
-          More ways in by email
+          More ways in
         </h3>
         <div className="mt-2 flex flex-col gap-3">
-          <div className={`${CARD} flex items-start gap-3`}>
-            <Reply aria-hidden className="mt-0.5 size-4 shrink-0 text-zinc-400" />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-medium text-zinc-900">Reply to comment emails</h4>
-                <span className={`chip ${email.replyByEmail ? "bg-green-50 text-green-700" : ""}`}>
-                  {email.replyByEmail ? "On" : "Off"}
-                </span>
-              </div>
-              <p className="mt-0.5 text-sm text-zinc-600">
-                {email.replyByEmail
-                  ? "Reply to an email about a comment on a task you follow, and your reply is posted on the task as a comment from you. Only the text above the quoted message is posted, and only while you can still comment on the task."
-                  : email.sending
-                    ? "Replies to comment emails aren’t set up for this workspace, so open the task from the email to comment."
-                    : "Emails aren’t sent from this workspace yet (no email provider is set up), so there are no comment emails to reply to."}
-              </p>
-              {email.replyByEmail && !commentEmails ? (
-                <p className="mt-1.5 text-sm text-zinc-600">
-                  Your comment emails are off, so there’s nothing to reply to.{" "}
-                  <button
-                    type="button"
-                    onClick={() => onTabChange("notifications")}
-                    className="text-accent-700 hover:underline"
-                  >
-                    Turn them on in Notifications
-                  </button>
-                </p>
-              ) : null}
-            </div>
-          </div>
-
           <div className={`${CARD} flex items-start gap-3`}>
             <Webhook aria-hidden className="mt-0.5 size-4 shrink-0 text-zinc-400" />
             <div className="min-w-0 flex-1">
               <h4 className="text-sm font-medium text-zinc-900">Create tasks from other tools</h4>
               <p className="mt-0.5 text-sm text-zinc-600">
                 Forms, scripts, and automation services that can send an HTTPS request can add tasks to a project
-                through an inbound webhook. A project’s admins set them up under Customize → Apps → Inbound webhooks.
+                through an inbound webhook. A project’s Owner sets them up under Customize → Apps → Inbound webhooks.
               </p>
               {email.inboundProjects.length === 0 ? (
-                <p className="mt-1.5 text-sm text-zinc-500">
-                  You don’t administer any project, so ask a project’s admin to set one up.
-                </p>
+                <p className="mt-1.5 text-sm text-zinc-500">You don’t own a project, so ask a project’s Owner to set one up.</p>
               ) : (
                 <>
-                  <p className="mt-2 text-xs font-medium text-zinc-500">Projects you administer</p>
+                  <p className="mt-2 text-xs font-medium text-zinc-500">Projects you own</p>
                   <ul className="mt-1 max-h-44 overflow-y-auto">
                     {email.inboundProjects.map((project) => (
                       <li key={project.id}>
@@ -510,7 +479,18 @@ function AccountTab({ data }: { data: MySettings }) {
         </div>
         <div className={ROW}>
           <dt className={TERM}>Signs in with</dt>
-          <dd className="text-sm text-zinc-900">{data.signInMethod === "google" ? "Google" : "Email and password"}</dd>
+          <dd className="text-sm text-zinc-900">
+            {data.signInMethod === "google" ? (
+              "Google"
+            ) : (
+              <>
+                Email and password{" · "}
+                <Link href="/reset-password" className="text-accent-700 hover:underline">
+                  Change password
+                </Link>
+              </>
+            )}
+          </dd>
         </div>
         <div className={ROW}>
           <dt className={TERM}>Member since</dt>
@@ -550,7 +530,13 @@ function WorkspaceTab({ data }: { data: MySettings }) {
         </div>
         <div className={ROW}>
           <dt className={TERM}>Email sender name</dt>
-          <dd className="text-sm text-zinc-900">{data.emailSenderName ?? data.workspaceName}</dd>
+          <dd className="text-sm text-zinc-900">
+            {data.emailSenderName ?? (
+              <>
+                Not set <span className="text-zinc-500">(requester emails come from “{BRAND_SENDER_NAME}”)</span>
+              </>
+            )}
+          </dd>
         </div>
         <div className={ROW}>
           <dt className={TERM}>Workweek</dt>
@@ -563,10 +549,15 @@ function WorkspaceTab({ data }: { data: MySettings }) {
       </dl>
       {data.isWorkspaceAdmin ? (
         <p className="mt-3 text-xs text-zinc-500">
-          You’re a workspace admin.{" "}
+          You’re a workspace admin. Change these in the Admin console:{" "}
           <Link href="/admin/organization" className="text-accent-700 hover:underline">
-            Change these in the Admin console
-          </Link>
+            Organization
+          </Link>{" "}
+          (name, team, workweek) and{" "}
+          <Link href="/admin/email" className="text-accent-700 hover:underline">
+            Email delivery
+          </Link>{" "}
+          (sender name).
         </p>
       ) : (
         <p className="mt-3 text-xs text-zinc-500">
@@ -595,7 +586,7 @@ const MY_TASKS_OPTIONS = [
 ] as const;
 
 // Display preferences live in this browser (the sidebar and My tasks in cookies, the pane in storage).
-function DisplayTab({ data }: { data: MySettings }) {
+function DisplayTab({ data, onRetry }: { data: MySettings; onRetry?: () => void }) {
   const { sidebar, setSidebarCollapsed } = useShell();
   const expanded = usePaneExpanded();
   const [myTasks, setMyTasks] = useState<MyTasksLayout>(data.myTasksLayout);
@@ -643,7 +634,7 @@ function DisplayTab({ data }: { data: MySettings }) {
           </dd>
         </div>
         <CheckedItemsRow saved={data.myTasksChecked} />
-        <OpenPersonalViewRow saved={data.openPersonalView} />
+        <OpenPersonalViewRow saved={data.openPersonalView} onRetry={onRetry} />
         <div className={ROW}>
           <dt className={TERM}>Time zone</dt>
           <dd>
@@ -695,7 +686,7 @@ function CheckedItemsRow({ saved }: { saved: CheckedMode }) {
 
 // Oct 26 notes (batch 4): open a project on your own saved view (when you have one there) instead of the
 // project's default view. Saved on your account.
-function OpenPersonalViewRow({ saved }: { saved: boolean | null }) {
+function OpenPersonalViewRow({ saved, onRetry }: { saved: boolean | null; onRetry?: () => void }) {
   const [pending, run] = useServerAction();
   const [on, setOn] = useState(Boolean(saved));
   return (
@@ -720,11 +711,15 @@ function OpenPersonalViewRow({ saved }: { saved: boolean | null }) {
           />
           Open my saved view by default
         </label>
-        <p className="mt-1 text-xs text-zinc-500">
-          {saved === null
-            ? "Needs this release’s database update."
-            : "When you’ve saved a view of your own in a project, it opens first. Otherwise the project’s default view does."}
-        </p>
+        {saved === null ? (
+          <div className="mt-1">
+            <LoadFailed what="this setting" onRetry={onRetry} />
+          </div>
+        ) : (
+          <p className="mt-1 text-xs text-zinc-500">
+            When you’ve saved a view of your own in a project, it opens first. Otherwise the project’s default view does.
+          </p>
+        )}
       </dd>
     </div>
   );

@@ -11,7 +11,7 @@ import { setMyTasksChecked } from "@/lib/actions/my-tasks";
 import { CHECKED_MODE_OPTIONS, completedToday, type CheckedMode } from "@alhc/core/checklist";
 import type { AwaitingApproval, MyTask } from "@alhc/core/api/my-tasks/model";
 import type { MyTasksLayout } from "@alhc/core/my-tasks";
-import { saveMyTasksLayout } from "@/lib/my-tasks-cookie";
+import { saveMyTasksLayout, showSavedMyTasksLayout } from "@/lib/my-tasks-cookie";
 import type { QuickAddPerson, QuickAddProject } from "@alhc/core/quick-add";
 import { ChecklistView, useChecklist } from "./checklist";
 import { AwaitingRow } from "./my-tasks-view";
@@ -108,7 +108,7 @@ function ChecklistOptions({ mode, onMode }: { mode: CheckedMode; onMode: (mode: 
   const [, run] = useServerAction();
   const openLayout = (layout: MyTasksLayout) => {
     saveMyTasksLayout(layout);
-    router.refresh();
+    showSavedMyTasksLayout(router);
   };
   return (
     <Popover
@@ -166,7 +166,7 @@ function ChecklistOptions({ mode, onMode }: { mode: CheckedMode; onMode: (mode: 
             className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
           >
             <LayoutList className="size-4 text-zinc-500" aria-hidden />
-            My sections
+            Sections
             <span className="ml-auto text-xs text-zinc-400">sort into your own sections</span>
           </button>
           <button
@@ -178,8 +178,8 @@ function ChecklistOptions({ mode, onMode }: { mode: CheckedMode; onMode: (mode: 
             className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
           >
             <LayoutList className="size-4 text-zinc-500" aria-hidden />
-            Due-date buckets
-            <span className="ml-auto text-xs text-zinc-400">with bulk edit</span>
+            Due dates
+            <span className="ml-auto text-xs text-zinc-400">grouped by due date</span>
           </button>
         </div>
       )}

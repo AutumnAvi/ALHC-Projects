@@ -1,24 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { Megaphone } from "lucide-react";
 import { ProjectStatusBadge } from "@/components/project-status-badge";
-import { SmartPicker } from "@/components/smart-picker";
 import { useProjectPermissions } from "@/components/project/project-access";
+import { useProjectPage } from "@/components/project/project-page-context";
 import { Timestamp } from "@/components/timestamp";
-import { useServerAction } from "@/components/toast";
-import { setProjectStatus } from "@/lib/actions/projects";
 import type { Project } from "@alhc/core/api/projects/model";
-import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, isProjectStatus, type ProjectStatus } from "@alhc/core/portfolios";
+import { isProjectStatus } from "@alhc/core/portfolios";
 
-const inputClass =
-  "field h-auto py-1.5";
-
-// Editors and above set the status (set_project_status); it shows as a badge on portfolio cards.
+// Settings → General → Project status. Nov 10 (flaw audit C20): one status editor, the status update panel
+// the header and the Overview open (title, summary, templates). Here the current status and, for Editors+,
+// "Post a status update" opening that panel. A project nobody rated reads "No status yet".
 export function ProjectStatusForm({ project }: { project: Project }) {
-  const [pending, run] = useServerAction();
   const canEdit = useProjectPermissions().canEdit;
-  const [status, setStatus] = useState<ProjectStatus>(isProjectStatus(project.status) ? project.status : "on_track");
-  const [note, setNote] = useState(project.status_note ?? "");
+  const { openStatusUpdate } = useProjectPage();
+  const status = isProjectStatus(project.status) ? project.status : null;
+  const set = status !== null && project.status_updated_at !== null;
 
   return (
     <div className="mx-auto max-w-3xl px-gutter pt-5">
@@ -27,67 +24,26 @@ export function ProjectStatusForm({ project }: { project: Project }) {
           <h2 id="status-heading" className="text-sm font-semibold text-zinc-900">
             Project status
           </h2>
-          <ProjectStatusBadge status={project.status} />
-        </div>
-        <p className="mt-1 text-sm text-zinc-600">
-          How this project is going, shown on portfolio cards and reports.
-          {project.status_updated_at ? (
-            <>
-              {" "}
-              Last updated <Timestamp iso={project.status_updated_at} />.
-            </>
+          {canEdit ? (
+            <button type="button" className="btn-secondary" onClick={() => openStatusUpdate(status ?? "on_track")}>
+              <Megaphone className="size-3.5" aria-hidden /> Post a status update
+            </button>
           ) : null}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-600">
+          {set ? <ProjectStatusBadge status={project.status} /> : <span className="text-zinc-500">No status yet.</span>}
+          {set && project.status_updated_at ? (
+            <span>
+              Last updated <Timestamp iso={project.status_updated_at} />.
+            </span>
+          ) : null}
+        </div>
+        {set && project.status_note ? (
+          <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-700">{project.status_note}</p>
+        ) : null}
+        <p className="mt-2 text-xs text-zinc-500">
+          Shown on the Overview, portfolio cards, and reports. Members get a notification when an update is posted.
         </p>
-        {/* Nov 1 notes (batch 11): below Editor the status reads as text — no form. */}
-        {!canEdit ? (
-          project.status_note ? <p className="mt-3 whitespace-pre-wrap text-sm text-zinc-700">{project.status_note}</p> : null
-        ) : (
-          <form
-            className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]"
-            onSubmit={(e) => {
-              e.preventDefault();
-              run(() => setProjectStatus(project.id, status, note));
-            }}
-          >
-            <fieldset disabled={pending} className="contents">
-              <div className="flex flex-col gap-1">
-                <label htmlFor="project-status" className="text-xs font-medium text-zinc-600">
-                  Status
-                </label>
-                <SmartPicker
-                  id="project-status"
-                  label="Status"
-                  value={status}
-                  disabled={pending}
-                  onChange={(next) => setStatus(next as ProjectStatus)}
-                  className="h-9"
-                  options={PROJECT_STATUSES.map((value) => ({ value, label: PROJECT_STATUS_LABELS[value] }))}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label htmlFor="project-status-note" className="text-xs font-medium text-zinc-600">
-                  Note (optional)
-                </label>
-                <input
-                  id="project-status-note"
-                  value={note}
-                  maxLength={2000}
-                  placeholder="What’s changed, what’s blocking"
-                  onChange={(e) => setNote(e.currentTarget.value)}
-                  className={inputClass}
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <button
-                  type="submit"
-                  className="rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
-                >
-                  Save status
-                </button>
-              </div>
-            </fieldset>
-          </form>
-        )}
       </section>
     </div>
   );

@@ -209,7 +209,7 @@ export const RULE_TEMPLATES: readonly RuleTemplate[] = [
         conditions: [{ type: "form_answer_contains", text: "rush" }],
         actions: [
           { type: "add_tag", tag_id: s.tag(["urgent", "rush", "priority", "hot"], "a tag like “Urgent”") },
-          { type: "notify", people: ["assignee"], message: "Rush request: {{task.name}} (due {{task.due_date}})" },
+          { type: "notify", people: ["assignee"], message: "Rush request: {{task.name}}" },
         ],
       })),
   },
@@ -244,19 +244,6 @@ export const RULE_TEMPLATES: readonly RuleTemplate[] = [
           { type: "set_assignee", assignee: s.person("the reviewer") },
           { type: "add_comment", body: "{assignee} “{{task.name}}” is ready for review." },
         ],
-      })),
-  },
-  {
-    key: "review_approval",
-    name: "Review → request approval",
-    category: "reviews",
-    sentence: "When a task moves into Review, ask the approver to approve it.",
-    build: (ctx) =>
-      make(ctx, "Request approval in Review", (s) => ({
-        triggerType: "section_changed",
-        triggerConfig: { section_id: s.section(REVIEW, "a section like “Review”") },
-        conditions: [],
-        actions: [{ type: "request_approval", approver: s.person("the approver"), note: "Please review “{{task.name}}”." }],
       })),
   },
   {
@@ -330,7 +317,7 @@ export const RULE_TEMPLATES: readonly RuleTemplate[] = [
             type: "send_email",
             to: "submitter",
             template: "requester_update",
-            message: "We’ve started on “{{task.name}}”. It’s due {{task.due_date}}.",
+            message: "We’ve started on “{{task.name}}”. We’ll let you know when it’s done.",
           },
         ],
       })),
@@ -353,18 +340,6 @@ export const RULE_TEMPLATES: readonly RuleTemplate[] = [
             message: "“{{task.name}}” is complete. Thanks for the request!",
           },
         ],
-      })),
-  },
-  {
-    key: "reply_notify",
-    name: "New comment on a request → notify the assignee",
-    category: "requester",
-    sentence: "When a comment is added to a form request, notify the assignee.",
-    build: (ctx) =>
-      make(ctx, "New comment: tell the assignee", () => ({
-        triggerType: "comment_added",
-        conditions: [{ type: "source_is", source: "form" }, { type: "assignee_is_set" }],
-        actions: [{ type: "notify", people: ["assignee"], message: "New comment on “{{task.name}}”" }],
       })),
   },
   // Deadlines
@@ -472,12 +447,12 @@ export const RULE_TEMPLATES: readonly RuleTemplate[] = [
     key: "handoff_comment",
     name: "Reassigned → post a handoff note",
     category: "handoffs",
-    sentence: "When the assignee changes, comment to the new assignee with the due date.",
+    sentence: "When the assignee changes, post a comment that hands the task to the new assignee.",
     build: (ctx) =>
       make(ctx, "Handoff note", () => ({
         triggerType: "assignee_changed",
         conditions: [{ type: "assignee_is_set" }, { type: "is_incomplete" }],
-        actions: [{ type: "add_comment", body: "{assignee} you’re up on “{{task.name}}” (due {{task.due_date}})." }],
+        actions: [{ type: "add_comment", body: "{assignee} you’re up on “{{task.name}}”." }],
       })),
   },
   {

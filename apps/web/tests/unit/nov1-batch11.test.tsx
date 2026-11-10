@@ -85,7 +85,7 @@ test("75: digests go out on workdays only — never Friday or Saturday by defaul
   assert.equal(digestWeekday(5, null), 0, "a Friday weekly digest reads as Sunday");
   assert.equal(digestWeekday(6, null), 0, "Saturday too");
   assert.equal(digestWeekday(5, [1, 2, 3, 4, 5]), 5, "a Monday–Friday workspace keeps Friday");
-  assert.equal(digestDaysNote(null), "Only sent on workdays — never on a Friday or Saturday.");
+  assert.equal(digestDaysNote(null), "Only sent on the workspace’s workdays — never on a Friday or Saturday.");
   assert.equal(digestDaysNote([0, 1, 2, 3, 4, 5, 6]), "Sent any day of the week.");
 });
 
@@ -186,7 +186,7 @@ test("74: management pages hide what the role can't use instead of disabling it"
     assert.ok(!readFileSync(`src/app/(app)/projects/[projectId]/${page}/page.tsx`, "utf8").includes("RoleGate"), page);
   }
   const form = readFileSync("src/components/forms/form-editor.tsx", "utf8");
-  assert.match(form, /\{canEdit \? \(\s*<section aria-label="Edit the form"/, "the form editor's editing side is for Admins+ only");
+  assert.match(form, /\{canEdit \? \(\s*<section\s+aria-label="Edit the form"/, "the form editor's editing side is for Owners and Editors only");
   assert.ok(!form.includes("View only: project admins and owners edit forms."));
   const canvas = readFileSync("src/components/rules/rule-canvas.tsx", "utf8");
   assert.ok(!canvas.includes("View only: project admins and owners change automations."));

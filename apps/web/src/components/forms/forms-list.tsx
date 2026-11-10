@@ -22,16 +22,19 @@ export function FormsList({
   origin: string;
 }) {
   const [pending, run] = useServerAction();
-  const canEdit = useProjectPermissions().canManage;
+  const canEdit = useProjectPermissions().canBuild;
   const add = () => run(() => createForm(projectId, "New form"));
 
   return (
     <div className="mx-auto max-w-3xl px-gutter py-5">
       <div className="flex flex-wrap items-start gap-3">
-        <p className="min-w-0 flex-1 text-sm text-zinc-600">
-          Forms turn requests from anyone, signed in or not, into tasks in this project. Answers can fill in the task
-          name, description, due date, section, and fields, and questions can show or hide based on earlier answers.
-        </p>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-base font-semibold text-zinc-900">Forms</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            Forms turn requests from anyone, signed in or not, into tasks in this project. Answers can fill in the task
+            name, description, due date, section, and fields, and questions can show or hide based on earlier answers.
+          </p>
+        </div>
         {canEdit ? (
           <button type="button" onClick={add} disabled={pending} className="btn-primary h-8 px-3">
             <Plus className="size-4" aria-hidden />

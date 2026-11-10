@@ -31,10 +31,13 @@ export function FieldsManager({
   return (
     <div className="mx-auto max-w-3xl px-gutter py-5">
       <div className="flex flex-wrap items-start gap-3">
-        <p className="min-w-0 flex-1 text-sm text-zinc-600">
-          Fields add the same detail to every task in this project. Fields shown in List and Board appear as columns
-          and as pills on cards.
-        </p>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-base font-semibold text-zinc-900">Fields</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            Fields add the same detail to every task in this project. Fields shown in List and Board appear as columns
+            and as pills on cards.
+          </p>
+        </div>
         {canEdit ? (
           <button type="button" onClick={() => setAdding(true)} className="btn-primary h-8 px-3">
             <Plus className="size-4" aria-hidden />

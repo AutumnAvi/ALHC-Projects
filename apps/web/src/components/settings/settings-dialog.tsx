@@ -14,6 +14,13 @@ export function SettingsDialog({ tab: initialTab, onClose }: { tab: SettingsTab;
   const [tab, setTab] = useState(initialTab);
   const [data, setData] = useState<SettingsData | null>(null);
   const [failed, setFailed] = useState(false);
+  // Bumped by "Try again" (here, or a part of the panel that didn't load).
+  const [attempt, setAttempt] = useState(0);
+  const retry = () => {
+    setFailed(false);
+    setData(null);
+    setAttempt((n) => n + 1);
+  };
 
   useEffect(() => {
     let live = true;
@@ -27,16 +34,19 @@ export function SettingsDialog({ tab: initialTab, onClose }: { tab: SettingsTab;
     return () => {
       live = false;
     };
-  }, []);
+  }, [attempt]);
 
   return (
     <Dialog title="Settings" onClose={onClose} width="max-w-3xl" compact>
       {failed ? (
         <p role="alert" className="text-sm text-red-600">
-          Couldn’t load your settings. Close this and try again.
+          Couldn’t load your settings.{" "}
+          <button type="button" onClick={retry} className="font-medium text-accent-700 hover:underline">
+            Try again
+          </button>
         </p>
       ) : (
-        <SettingsPanel data={data} tab={tab} onTabChange={setTab} />
+        <SettingsPanel data={data} tab={tab} onTabChange={setTab} onRetry={retry} />
       )}
     </Dialog>
   );
