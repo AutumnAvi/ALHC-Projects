@@ -206,7 +206,8 @@ test("not sent: the assignee (or an Editor) gets Ready for approval; Viewers onl
   assert.match(viewer, /Sam Approver/, "but see who approves");
 
   const noApprover = banner(approvalTask("editor", info({ approverIds: [] })));
-  assert.match(noApprover, /Choose who approves this, then send it with Ready for approval\./);
+  assert.match(noApprover, /Approval setup not finished\. Choose who approves this before anything is sent\./);
+  assert.ok(!button(noApprover, "Ready for approval"), "nothing is sent until an approver is chosen");
   assert.match(noApprover, /data-approval-finish-setup=""/, "the next step is the guided setup");
   assert.match(noApprover, /Add approver/);
 });
@@ -438,8 +439,9 @@ test("the Ready for approval dialog: final text, the task's files, review check,
   assert.match(first, /Goes to Sam Approver\./);
   assert.match(first, /Final text/);
   assert.match(first, /flyer\.pdf/);
-  assert.match(first, /More steps after approval — don’t complete/);
-  assert.match(first, /Otherwise approving it completes the task\./);
+  assert.match(first, /When it’s approved/);
+  assert.match(first, /Complete the task/);
+  assert.match(first, /Approving it finishes the task\./);
   assert.ok(!/review check/.test(first), "the review check option needs ticked files");
 
   // A new round starts from the last one's text and files, so the review check option is there.

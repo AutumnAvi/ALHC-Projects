@@ -3,12 +3,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  externalReviewerSectionOpen,
   externallyApproved,
   reviewComesAfterApproval,
   reviewSendGate,
   reviewerLabel,
   twoStepSteps,
 } from "@alhc/core/external-review";
+import { APPROVAL_SETUP_LEAVE, APPROVAL_SETUP_UNFINISHED, approvalSetupUnfinished } from "@alhc/core/approval-setup";
+import { taskKindFromKey } from "@alhc/core/task-kinds";
 import type { ApprovalRound, ExternalReview, TaskApprovalInfo } from "@alhc/core/api/task-pane/model";
 
 const round = (status: ApprovalRound["status"], decidedAt: string | null = null) =>
@@ -74,6 +77,34 @@ test("the approver's steps: approve, send, they review", () => {
   // A review from before the internal approval doesn't count as the second step.
   const early = { ...sent, latest: { ...sent.latest!, createdAt: "2026-11-09T09:00:00Z" } };
   assert.equal(twoStepSteps(approval(["al"], [round("approved", approvedAt)]), early)[1].state, "current");
+});
+
+test("note 184: the external reviewer section starts closed unless someone is already named", () => {
+  assert.equal(externalReviewerSectionOpen({}), false);
+  assert.equal(externalReviewerSectionOpen({ savedEmail: "  ", submissionEmail: "" }), false);
+  assert.equal(externalReviewerSectionOpen({ savedEmail: "jordan@client.com" }), true);
+  assert.equal(externalReviewerSectionOpen({ submissionEmail: "requester@client.com" }), true, "a form request");
+  assert.equal(externalReviewerSectionOpen({ pendingReview: true }), true, "a review still open");
+});
+
+test("note 185: an approval with no approver is unfinished, and leaving it asks first", () => {
+  assert.equal(approvalSetupUnfinished(0), true);
+  assert.equal(approvalSetupUnfinished(1), false);
+  assert.equal(APPROVAL_SETUP_UNFINISHED, "Approval setup not finished");
+  assert.equal(APPROVAL_SETUP_LEAVE.title, "Finish setting up this approval?");
+  assert.equal(APPROVAL_SETUP_LEAVE.confirmLabel, "Leave unfinished");
+  assert.equal(APPROVAL_SETUP_LEAVE.cancelLabel, "Keep editing");
+});
+
+test("note 187: arrow keys move the add-task kind, and Task is the start", () => {
+  assert.equal(taskKindFromKey("task", "ArrowRight"), "milestone");
+  assert.equal(taskKindFromKey("milestone", "ArrowRight"), "approval");
+  assert.equal(taskKindFromKey("approval", "ArrowRight"), "task");
+  assert.equal(taskKindFromKey("task", "ArrowLeft"), "approval");
+  assert.equal(taskKindFromKey("milestone", "ArrowUp"), "task");
+  assert.equal(taskKindFromKey("approval", "Home"), "task");
+  assert.equal(taskKindFromKey("task", "End"), "approval");
+  assert.equal(taskKindFromKey("task", "Enter"), null);
 });
 
 test("reviewer labels", () => {
