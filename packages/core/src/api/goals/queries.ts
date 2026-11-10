@@ -75,17 +75,26 @@ export const listGoalLinks = read(async (ctx: ApiContext, goalId: string): Promi
   const result = await supabase
     .from("goal_links")
     .select(
-      "id, project_id, portfolio_id, project:projects!goal_links_project_id_fkey(id, name, status, deleted_at), portfolio:portfolios!goal_links_portfolio_id_fkey(id, name, deleted_at)",
+      "id, project_id, portfolio_id, project:projects!goal_links_project_id_fkey(id, name, status, status_updated_at, deleted_at), portfolio:portfolios!goal_links_portfolio_id_fkey(id, name, deleted_at)",
     )
     .eq("goal_id", goalId)
     .is("deleted_at", null)
     .order("created_at");
   return rows(result, "goal links").flatMap((r): GoalLink[] => {
     if (r.project && r.project.deleted_at === null) {
-      return [{ id: r.id, kind: "project", targetId: r.project.id, name: r.project.name, status: r.project.status }];
+      return [
+        {
+          id: r.id,
+          kind: "project",
+          targetId: r.project.id,
+          name: r.project.name,
+          status: r.project.status,
+          statusSet: r.project.status_updated_at !== null,
+        },
+      ];
     }
     if (r.portfolio && r.portfolio.deleted_at === null) {
-      return [{ id: r.id, kind: "portfolio", targetId: r.portfolio.id, name: r.portfolio.name, status: null }];
+      return [{ id: r.id, kind: "portfolio", targetId: r.portfolio.id, name: r.portfolio.name, status: null, statusSet: false }];
     }
     return [];
   });

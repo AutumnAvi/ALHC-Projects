@@ -77,7 +77,9 @@ export function statTiles(counts: PortfolioCounts): Tile[] {
   const open = counts.incomplete - counts.overdue;
   const percent = progressPercent(counts.completed, counts.total);
   return [
-    { label: "Open", value: open, hint: "Incomplete, not overdue", icon: CircleDot, accent: "blue" },
+    // Nov 10 audit (C90): "Open" alone meant different things on different screens; this tile is the
+    // incomplete tasks that aren't overdue, and says so.
+    { label: "Open (not overdue)", value: open, hint: "Incomplete and not yet past due", icon: CircleDot, accent: "blue" },
     {
       label: "Overdue",
       value: counts.overdue,
@@ -137,7 +139,7 @@ export function StatTiles({ counts }: { counts: PortfolioCounts }) {
 // Status bars wear the status colors (open blue, overdue red, completed green) next to their labels.
 export function statusBars(counts: PortfolioCounts): BarDatum[] {
   return [
-    { key: "open", label: "Open", count: counts.incomplete - counts.overdue, tone: "blue" },
+    { key: "open", label: "Open (not overdue)", count: counts.incomplete - counts.overdue, tone: "blue" },
     { key: "overdue", label: "Overdue", count: counts.overdue, tone: "red" },
     { key: "completed", label: "Completed", count: counts.completed, tone: "green" },
   ];

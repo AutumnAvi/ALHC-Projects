@@ -27,12 +27,21 @@ export function EmailDeliveryCard({ isAdmin, invitesHref }: { isAdmin: boolean; 
         <dt className="text-zinc-500">Sending</dt>
         <dd className="text-zinc-900">
           {configured
-            ? "On — emails go out through Resend within about a minute"
-            : "Off — no email provider is configured, so emails are logged, not sent"}
+            ? isAdmin
+              ? "On — emails go out through Resend within about a minute"
+              : "On — emails go out within about a minute"
+            : isAdmin
+              ? "Off — no email provider is configured, so emails are logged, not sent"
+              : "Off — email isn’t set up yet, so nothing is sent"}
         </dd>
         <dt className="text-zinc-500">Senders</dt>
         <dd className="text-zinc-900">
-          <SenderLines replyable={fromAddress()} noReply={noReplyFromAddress()} separate={Boolean(process.env.EMAIL_FROM_NOREPLY?.trim())} />
+          <SenderLines
+            replyable={fromAddress()}
+            noReply={noReplyFromAddress()}
+            separate={Boolean(process.env.EMAIL_FROM_NOREPLY?.trim())}
+            isAdmin={isAdmin}
+          />
         </dd>
         <dt className="text-zinc-500">Reply by email</dt>
         <dd className="text-zinc-900">
@@ -43,8 +52,12 @@ export function EmailDeliveryCard({ isAdmin, invitesHref }: { isAdmin: boolean; 
         <dt className="text-zinc-500">Bounces and complaints</dt>
         <dd className="text-zinc-900">
           {isInboundEmailConfigured()
-            ? "Tracked from the Resend webhook’s delivery events; bounced and spam-reporting addresses stop getting email"
-            : "Off — needs the Resend webhook (the same one reply by email uses)"}
+            ? isAdmin
+              ? "Tracked from the Resend webhook’s delivery events; bounced and spam-reporting addresses stop getting email"
+              : "Tracked: addresses that bounce or report spam stop getting email"
+            : isAdmin
+              ? "Off — needs the Resend webhook (the same one reply by email uses)"
+              : "Not tracked yet"}
         </dd>
         <dt className="text-zinc-500">Invites</dt>
         <dd className="text-zinc-900">
@@ -73,13 +86,24 @@ export function EmailDeliveryCard({ isAdmin, invitesHref }: { isAdmin: boolean; 
 
 // The two senders (Nov 1 notes, batch 8): replyable emails from EMAIL_FROM, everything else from
 // EMAIL_FROM_NOREPLY (or EMAIL_FROM when it isn't set).
-export function SenderLines({ replyable, noReply, separate }: { replyable: string | null; noReply: string | null; separate: boolean }) {
-  if (!replyable) return <>No sending address is configured yet</>;
+// Nov 10 audit (C87): the environment hint (EMAIL_FROM_NOREPLY) is for workspace admins only.
+export function SenderLines({
+  replyable,
+  noReply,
+  separate,
+  isAdmin = false,
+}: {
+  replyable: string | null;
+  noReply: string | null;
+  separate: boolean;
+  isAdmin?: boolean;
+}) {
+  if (!replyable) return <>No sending address is set up yet</>;
   return (
     <ul className="space-y-0.5">
       <li>
         <span className="font-mono text-xs">{noReply ?? replyable}</span>
-        <span className="text-zinc-500"> — every email that can’t be replied to{separate ? "" : " (set EMAIL_FROM_NOREPLY for a separate no-reply address)"}</span>
+        <span className="text-zinc-500"> — every email that can’t be replied to{separate || !isAdmin ? "" : " (set EMAIL_FROM_NOREPLY for a separate no-reply address)"}</span>
       </li>
       <li>
         <span className="font-mono text-xs">{replyable}</span>

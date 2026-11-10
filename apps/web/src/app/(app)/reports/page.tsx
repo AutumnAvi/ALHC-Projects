@@ -30,12 +30,14 @@ import {
 } from "@/lib/data";
 import { EMPTY_COUNTS, RECENT_DAYS } from "@alhc/core/portfolios";
 import {
+  describeDateRange,
   describeReportFilters,
   filtersFromParams,
   filtersToParams,
   isDefaultWindow,
   isSeriesInterval,
   withDefaultWindow,
+  withoutDateRange,
   withoutReportTags,
 } from "@alhc/core/reports";
 import { softRead } from "@alhc/core/api/core/soft-read";
@@ -58,6 +60,9 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // page runs with (Nov 2 notes, batch 13: 30 days centered on today unless the URL says otherwise).
   const urlFilters = withoutReportTags(filtersFromParams(params), await tagsEnabled());
   const filters = withDefaultWindow(urlFilters, params, today);
+  // Nov 10 audit (C4): the date range (the default ±2 weeks included) narrows the completed series only;
+  // every other number counts every open and overdue task, whatever its due date (or none).
+  const countFilters = withoutDateRange(filters);
   const interval = isSeriesInterval(params.int) ? params.int : "week";
 
   // Nov 3 notes (batch 19, 144): one wave of reads (the overdue list no longer waits for the rest), and the
@@ -65,28 +70,30 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const [context, totals, byProject, byAssignee, bySection, series, hidden, member, people, overdueTasks] =
     await Promise.all([
       loadReportContext(timeZone),
-      workspaceReport(filters, "none", timeZone),
-      workspaceReport(filters, "project", timeZone),
-      workspaceReport(filters, "assignee", timeZone),
-      workspaceReport(filters, "section", timeZone),
+      workspaceReport(countFilters, "none", timeZone),
+      workspaceReport(countFilters, "project", timeZone),
+      workspaceReport(countFilters, "assignee", timeZone),
+      workspaceReport(countFilters, "section", timeZone),
       reportCompletedSeries(filters, interval, timeZone),
       softRead("reports hidden count", countHiddenWorkspaceProjects(), 0),
       requireMember(),
       softRead("reports people", listActivePeople(), []),
-      reportOverdueTasks(filters, timeZone),
+      reportOverdueTasks(countFilters, timeZone),
     ]);
   const sections = await sectionBars(bySection, context);
   const overdue = overdueRows(overdueTasks, context);
   const counts = totals[0] ?? EMPTY_COUNTS;
-  const query = filtersToParams(filters);
   const exportHref = (table: string, extra?: Record<string, string>) => {
-    const p = new URLSearchParams(query);
+    // The series export keeps the date range; the breakdown and overdue exports count every task, like the page.
+    const p = filtersToParams(table === "series" ? filters : countFilters);
     p.set("table", table);
     for (const [k, v] of Object.entries(extra ?? {})) p.set(k, v);
     return `/export/report?${p.toString()}`;
   };
-  const summary = describeReportFilters(filters, context.projects, context.people, context.tags);
+  const summary = describeReportFilters(countFilters, context.projects, context.people, context.tags);
   const aroundToday = isDefaultWindow(filters, today);
+  const currentYear = Number(today.slice(0, 4));
+  const range = filters.from || filters.to ? describeDateRange(filters.from, filters.to, currentYear) : null;
 
   return (
     <div className="space-y-5 bg-zinc-50/50 px-gutter py-5">
@@ -115,9 +122,11 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         <span className="font-medium text-zinc-700">
           {summary.length ? summary.join(" · ") : "Every task in every project you can open."}
         </span>
-        {aroundToday ? " (30 days centered on today; tasks due or completed in that window)." : null} Overdue means
-        incomplete and due before today in your time zone. Subtasks count through their top-level task’s projects when
-        included.
+        {range
+          ? ` The date range (${range}${aroundToday ? ", two weeks either side of today" : ""}) applies to Completed per ${interval} only; every other number counts every task, with or without a due date.`
+          : null}{" "}
+        Overdue means incomplete and due before today in your time zone. Subtasks count through their top-level task’s
+        projects when included.
       </p>
       <HiddenProjectsNote count={hidden} />
 
@@ -128,7 +137,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
           id="report-series"
           title={`Completed per ${interval}`}
           subtitle={`Local ${interval === "week" ? "weeks (starting Sunday)" : "days"} in your time zone${
-            filters.from || filters.to ? ", within the date range" : `; the last ${interval === "week" ? "12 weeks" : "30 days"}`
+            range ? `, ${range}` : `; the last ${interval === "week" ? "12 weeks" : "30 days"}`
           } · ${counts.completedRecent.toLocaleString("en-US")} in the last ${RECENT_DAYS} days`}
           wide
           actions={

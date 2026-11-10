@@ -32,10 +32,18 @@ export function SearchResults({
   query,
   results,
   tags,
+  filtered = false,
+  limit = 50,
+  capped = false,
 }: {
   query: string;
   results: SearchResult[];
   tags: Tag[];
+  // The Status / Project filters are on (Nov 10 audit, C59): an empty list means the filters hid the matches.
+  filtered?: boolean;
+  // How many matches the search read, and whether it read that many (there may be more).
+  limit?: number;
+  capped?: boolean;
 }) {
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
@@ -44,12 +52,19 @@ export function SearchResults({
   return (
     <section className="mt-4" aria-label="Search results">
       {results.length === 0 ? (
-        <EmptyState icon={SearchX} title={`No tasks match “${query}”`}>
-          Try a shorter word or another spelling. Search only covers projects you’re a member of and your private tasks.
-        </EmptyState>
+        filtered ? (
+          <EmptyState icon={SearchX} title={`No tasks match “${query}” with these filters`}>
+            Choose “All” or “Any” above to see every match{capped ? `, or search for something more specific (filters cover the first ${limit} matches)` : ""}.
+          </EmptyState>
+        ) : (
+          <EmptyState icon={SearchX} title={`No tasks match “${query}”`}>
+            Try a shorter word or another spelling. Search only covers projects you’re a member of and your private tasks.
+          </EmptyState>
+        )
       ) : (
         <p className="text-xs text-zinc-500">
-          {`${results.length}${results.length === 50 ? "+" : ""} ${results.length === 1 ? "task" : "tasks"} matching “${query}”`}
+          {`${results.length}${capped && !filtered ? "+" : ""} ${results.length === 1 ? "task" : "tasks"} matching “${query}”`}
+          {filtered && capped ? ` (filters cover the first ${limit} matches; search for something more specific to narrow them)` : ""}
         </p>
       )}
       {results.length > 0 ? (

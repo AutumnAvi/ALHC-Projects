@@ -1,3 +1,5 @@
+import { plural } from "@alhc/core/rule-feedback";
+
 // Nov 2 notes (batch 13, note 91): one light hue per chart (a bar's own tone wins — status bars wear the
 // status colors). Values and labels stay in text ink; the color only marks the bar.
 export type BarTone = "blue" | "teal" | "violet" | "amber" | "red" | "green";
@@ -25,7 +27,7 @@ export function CountBarChart({ data, caption, tone = "blue" }: { data: BarDatum
     <figure>
       <div aria-hidden className="flex flex-col gap-2 text-xs">
         {data.map((item) => (
-          <div key={item.key} className="grid grid-cols-[7.5rem_minmax(0,1fr)_2.5rem] items-center gap-2" title={`${item.label}: ${item.count} tasks`}>
+          <div key={item.key} className="grid grid-cols-[7.5rem_minmax(0,1fr)_2.5rem] items-center gap-2" title={`${item.label}: ${plural(item.count, "task")}`}>
             <span className="truncate text-zinc-700" title={item.label}>
               {shortLabel(item.label)}
             </span>

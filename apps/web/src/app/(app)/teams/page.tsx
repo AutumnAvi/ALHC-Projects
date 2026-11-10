@@ -5,7 +5,7 @@ import { Avatar } from "@/components/avatar";
 import { OpenDialogButton } from "@/components/shell/open-dialog-button";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { getWorkspace, listTeams, listViewableTeamIds } from "@/lib/data";
+import { getWorkspace, goalsEnabled, listTeams, listViewableTeamIds } from "@/lib/data";
 import { type Team } from "@alhc/core/api/teams/model";
 
 export const metadata: Metadata = { title: "Teams" };
@@ -16,11 +16,12 @@ export const metadata: Metadata = { title: "Teams" };
 // team (Create team, the shell's New team dialog) and becomes its lead. Every project belongs to a team;
 // team members can find and join the team's public projects (Browse projects).
 export default async function TeamsPage() {
-  const [member, teams, workspace, viewable] = await Promise.all([
+  const [member, teams, workspace, viewable, goalsOn] = await Promise.all([
     requireMember(),
     listTeams(),
     getWorkspace(),
     listViewableTeamIds(),
+    goalsEnabled(),
   ]);
   const mine = teams.filter((t) => t.members.some((m) => m.profileId === member.id));
   const others = teams.filter((t) => !mine.includes(t));
@@ -36,14 +37,15 @@ export default async function TeamsPage() {
       <PageHeader
         icon={Users}
         title="Teams"
-        description="Who works together, for goals and adding people to projects in one go"
+        description={goalsOn ? "Who works together, for goals and adding people to projects in one go" : "Who works together, for adding people to projects in one go"}
         actions={create}
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-gutter py-6">
           {teams.length === 0 ? (
             <EmptyState icon={Users} title="No teams yet" action={create}>
-              Create the first team, then add people to it. Teams can own goals and be added to projects together.
+              Create the first team, then add people to it. Teams {goalsOn ? "can own goals and " : ""}can be added to projects
+              together.
             </EmptyState>
           ) : (
             <div className="flex flex-col gap-8">

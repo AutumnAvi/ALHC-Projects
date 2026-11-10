@@ -346,9 +346,9 @@ export async function taskAccessSets(ctx: ApiContext, taskIds: string[]): Promis
   return accessFromRows(ids, [...tasks, ...roots], memberships, roles, user.id);
 }
 
-export const searchTasks = read(async (ctx: ApiContext, query: string) => {
+export const searchTasks = read(async (ctx: ApiContext, query: string, maxResults = 50) => {
   const supabase = ctx.db;
-  const result = await supabase.rpc("search_tasks", { query, max_results: 50 });
+  const result = await supabase.rpc("search_tasks", { query, max_results: maxResults });
   const found = rows(result, "search results");
   // search_tasks names each task's first project the viewer can read (its home_project_* columns; Oct 29
   // notes, 55b: there's no home project, the names are the database's); the numbers come from the same

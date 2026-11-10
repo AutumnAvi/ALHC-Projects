@@ -65,7 +65,7 @@ export function GeneralSettings({
       <SettingsCard
         id="workspace-general"
         title="Workspace"
-        description="The name and logo everyone sees in the sidebar."
+        description="The workspace’s name and logo (the logo shows in the Admin console’s bar)."
         adminOnly
         isAdmin={isAdmin}
       >

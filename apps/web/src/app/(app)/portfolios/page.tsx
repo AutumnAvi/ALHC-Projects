@@ -44,7 +44,7 @@ export default async function PortfoliosPage() {
                   </OpenDialogButton>
                 }
               >
-                Create one, then add the projects you want to follow, or ask a portfolio’s owner or admin to invite you.
+                Create one, then add the projects you want to follow, or ask a portfolio’s Owner to invite you.
               </EmptyState>
             </div>
           ) : (

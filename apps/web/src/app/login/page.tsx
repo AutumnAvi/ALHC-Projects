@@ -7,6 +7,7 @@ import Link from "next/link";
 import { getViewer, safeNextPath } from "@/lib/auth";
 import { isGoogleAuthEnabled, isSupabaseConfigured } from "@/lib/env";
 import { PASSWORD_UPDATED } from "@alhc/core/password-reset";
+import { signInErrorMessage } from "@alhc/core/sign-in-errors";
 import { GoogleSignInButton } from "./google-sign-in-button";
 import { PasswordSignInForm } from "./password-sign-in-form";
 
@@ -18,7 +19,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
 
   const params = await searchParams;
   const next = safeNextPath(typeof params.next === "string" ? params.next : null);
-  const error = typeof params.error === "string" ? params.error : null;
+  const error = signInErrorMessage(typeof params.error === "string" ? params.error : null);
   const passwordUpdated = params.reset === "done";
 
   const { user, allowlisted } = await getViewer();

@@ -55,7 +55,7 @@ export default async function AdminEmailPage() {
   });
 
   return (
-    <AdminPage title="Email" description="How the workspace’s emails look and whether they went out.">
+    <AdminPage title="Email" description="Who the workspace’s emails come from and whether they went out.">
       <SenderNameSettings senderName={workspace?.emailSenderName ?? null} fromAddress={fromAddress()} noReplyAddress={noReplyFromAddress()} isAdmin />
       <EmailDeliveryCard isAdmin invitesHref="/admin/users?tab=invited" />
 
@@ -210,13 +210,13 @@ export default async function AdminEmailPage() {
       <SettingsCard
         id="admin-project-deliveries"
         title="Project deliveries"
-        description="Every project keeps its own log of emails, Slack messages, and webhooks (status, attempts, last error) under its Settings → Deliveries, for that project’s admins."
+        description="Every project keeps its own log of emails, Slack messages, and webhooks (status, attempts, last error) under its Settings → Deliveries, for that project’s Owners."
         isAdmin
         flush
       >
         {administered.length === 0 ? (
           <EmptyState icon={MailCheck} title="No project logs to open" size="inline">
-            You don’t administer any project yet. Each project’s admins see its log; being a workspace admin doesn’t open
+            You don’t own any project yet. Each project’s Owners see its log; being a workspace admin doesn’t open
             one.
           </EmptyState>
         ) : (

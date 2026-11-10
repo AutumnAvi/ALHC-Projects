@@ -47,6 +47,8 @@ export type GoalLink = {
   targetId: string;
   name: string;
   status: string | null;
+  // False until someone set the project's status (Nov 10 audit, C14: "No status", never a default "On track").
+  statusSet: boolean;
 };
 
 export type GoalStatusUpdate = {

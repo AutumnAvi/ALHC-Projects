@@ -4,7 +4,7 @@
 import type { MemberStatus } from "@alhc/core/workspace";
 
 export const ADMIN_SECTIONS = [
-  { key: "users", href: "/admin/users", label: "Users", description: "Everyone on the workspace's allowlist" },
+  { key: "users", href: "/admin/users", label: "Users", description: "Everyone who can sign in to the workspace" },
   { key: "teams", href: "/admin/teams", label: "Teams", description: "Every team and the default team" },
   { key: "security", href: "/admin/security", label: "Security", description: "Sign-in methods and who can get in" },
   { key: "organization", href: "/admin/organization", label: "Organization", description: "Name, logo, and default team" },
